@@ -11,6 +11,7 @@ pub mod background;
 pub mod commands;
 pub mod db;
 pub mod errors;
+pub mod migrations;
 pub mod models;
 pub mod security;
 pub mod services;

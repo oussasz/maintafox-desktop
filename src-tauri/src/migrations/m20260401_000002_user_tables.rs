@@ -1,0 +1,244 @@
+use sea_orm_migration::prelude::*;
+
+pub struct Migration;
+
+impl MigrationName for Migration {
+    fn name(&self) -> &str {
+        "m20260401_000002_user_tables"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // user_accounts: local identity records synced from VPS or created locally
+        manager
+            .create_table(
+                Table::create()
+                    .table(Alias::new("user_accounts"))
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .text()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("username"))
+                            .string()
+                            .not_null()
+                            .unique_key(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("identity_mode"))
+                            .string()
+                            .not_null()
+                            .default("local"),
+                    )
+                    .col(ColumnDef::new(Alias::new("personnel_id")).text())
+                    .col(
+                        ColumnDef::new(Alias::new("is_active"))
+                            .boolean()
+                            .not_null()
+                            .default(true),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("force_password_change"))
+                            .boolean()
+                            .not_null()
+                            .default(true),
+                    )
+                    .col(ColumnDef::new(Alias::new("last_seen_at")).timestamp())
+                    .col(
+                        ColumnDef::new(Alias::new("created_at"))
+                            .timestamp()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("updated_at"))
+                            .timestamp()
+                            .not_null(),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // roles: system and custom authorization roles
+        manager
+            .create_table(
+                Table::create()
+                    .table(Alias::new("roles"))
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .text()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("name"))
+                            .string()
+                            .not_null()
+                            .unique_key(),
+                    )
+                    .col(ColumnDef::new(Alias::new("description")).text())
+                    .col(
+                        ColumnDef::new(Alias::new("is_system"))
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("role_type"))
+                            .string()
+                            .not_null()
+                            .default("custom"),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("status"))
+                            .string()
+                            .not_null()
+                            .default("active"),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("created_at"))
+                            .timestamp()
+                            .not_null(),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // permissions: fine-grained permission definitions (dot-notation names)
+        manager
+            .create_table(
+                Table::create()
+                    .table(Alias::new("permissions"))
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .text()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("name"))
+                            .string()
+                            .not_null()
+                            .unique_key(),
+                    )
+                    .col(ColumnDef::new(Alias::new("description")).text())
+                    .col(ColumnDef::new(Alias::new("category")).string())
+                    .col(
+                        ColumnDef::new(Alias::new("is_dangerous"))
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("requires_step_up"))
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // role_permissions: many-to-many join between roles and permissions
+        manager
+            .create_table(
+                Table::create()
+                    .table(Alias::new("role_permissions"))
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(Alias::new("role_id"))
+                            .text()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("permission_id"))
+                            .text()
+                            .not_null(),
+                    )
+                    .primary_key(
+                        Index::create()
+                            .col(Alias::new("role_id"))
+                            .col(Alias::new("permission_id")),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // user_scope_assignments: scoped role assignments for users
+        manager
+            .create_table(
+                Table::create()
+                    .table(Alias::new("user_scope_assignments"))
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .text()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("user_id"))
+                            .text()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("role_id"))
+                            .text()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("scope_type"))
+                            .string()
+                            .not_null(),
+                    )
+                    .col(ColumnDef::new(Alias::new("scope_reference")).text())
+                    .col(ColumnDef::new(Alias::new("valid_from")).timestamp())
+                    .col(ColumnDef::new(Alias::new("valid_to")).timestamp())
+                    .to_owned(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(Alias::new("user_scope_assignments"))
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(Alias::new("role_permissions"))
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(Alias::new("permissions"))
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_table(Table::drop().table(Alias::new("roles")).to_owned())
+            .await?;
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(Alias::new("user_accounts"))
+                    .to_owned(),
+            )
+            .await?;
+        Ok(())
+    }
+}
