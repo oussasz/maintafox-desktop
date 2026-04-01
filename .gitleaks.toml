@@ -1,11 +1,14 @@
 [allowlist]
-description = "Known safe patterns in this repository"
+description = "Safe patterns -- placeholder key names without values"
 paths = [
   ".env.example",
   "docs/SECRETS_MANAGEMENT.md",
+  ".github/environments.md",
   "docs/CODE_REVIEW_GUIDE.md",
 ]
 regexes = [
   '''TAURI_SIGNING_PRIVATE_KEY=$''',
-  '''# DO NOT set TAURI_SIGNING''',
+  '''TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$''',
+  '''# TAURI_SIGNING''',
+  '''MAINTAFOX_VPS_API_TOKEN=$''',
 ]
