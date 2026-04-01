@@ -1,0 +1,7 @@
+{
+  "app": {
+    "name": "Maintafox",
+    "loading": "Chargement en cours…",
+    "error": "Une erreur est survenue"
+  }
+}

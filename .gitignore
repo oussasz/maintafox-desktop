@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.tauri/
+
+# Rust build artifacts
+src-tauri/target/
+
+# Environment files (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+dev-data/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor files
+.vscode/settings.json
+.idea/
+*.suo
+*.user
+
+# CI artifacts
+coverage/
+*.lcov
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Tauri
+WixTools/
