@@ -1,0 +1,11 @@
+[allowlist]
+description = "Known safe patterns in this repository"
+paths = [
+  ".env.example",
+  "docs/SECRETS_MANAGEMENT.md",
+  "docs/CODE_REVIEW_GUIDE.md",
+]
+regexes = [
+  '''TAURI_SIGNING_PRIVATE_KEY=$''',
+  '''# DO NOT set TAURI_SIGNING''',
+]

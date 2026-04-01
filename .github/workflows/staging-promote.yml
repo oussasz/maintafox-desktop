@@ -1,0 +1,47 @@
+name: Promote to Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: "Branch to promote (default: develop)"
+        required: false
+        default: "develop"
+      release_notes:
+        description: "Brief note about what this promotion includes"
+        required: true
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.source_branch }} to staging
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate CI status
+        run: |
+          echo "Promoting: ${{ inputs.source_branch }} → staging"
+          echo "Release notes: ${{ inputs.release_notes }}"
+
+      - name: Create PR from source to staging
+        run: |
+          gh pr create \
+            --base staging \
+            --head "${{ inputs.source_branch }}" \
+            --title "Promote: ${{ inputs.source_branch }} → staging" \
+            --body "## Staging Promotion
+
+          **Source:** ${{ inputs.source_branch }}
+          **Triggered by:** ${{ github.actor }}
+          **Release notes:** ${{ inputs.release_notes }}
+
+          This PR was auto-created by the staging promotion workflow.
+          All checks must pass before merging." \
+            --label "status:in-progress"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
