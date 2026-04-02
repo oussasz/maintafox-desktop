@@ -27,7 +27,8 @@
     "test:rust": "cd src-tauri && cargo test",
     "clean": "rimraf dist src-tauri/target node_modules/.cache",
     "db:seed": "pnpm tsx scripts/dev-db-seed.ts",
-    "db:reset": "pnpm tsx scripts/dev-db-reset.ts"
+    "db:reset": "pnpm tsx scripts/dev-db-reset.ts",
+    "audit:tauri-conf": "pnpm tsx scripts/audit-tauri-conf.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
@@ -57,6 +58,7 @@
     "postcss": "^8.4.0",
     "prettier": "^3.4.0",
     "rimraf": "^6.0.0",
+    "svgo": "^4.0.1",
     "tailwindcss": "^3.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

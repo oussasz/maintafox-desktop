@@ -48,6 +48,23 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   request protocol, and escalation conditions (WORKING_AGREEMENTS.md)
 - Agent onboarding guide with environment setup, branch naming convention, sprint
   execution rules, and "What You Must Never Do" constraints (ONBOARDING_GUIDE.md)
+- Desktop shell: Tauri window configuration with minimum 1024×600, hidden at startup
+- Desktop shell: Single-instance enforcement (second launch focuses existing window)
+- Desktop shell: Startup sequence (DB ready → migrations → entitlement cache → ready)
+- Desktop shell: System tray with Show/Hide/Quit (French labels)
+- Desktop shell: Window state persistence (size, position, maximized state)
+- Desktop shell: Minimize-to-tray on OS close-button
+- Tests: WindowState serialization, StartupEvent serialization (8 unit tests)
+- Scripts: audit-tauri-conf.ts for CSP, capability, and window constraint verification
+- Rust core: `AppState` struct with db pool, config cache, session stub, and task supervisor (`state.rs`)
+- Rust core: `BackgroundTaskSupervisor` with spawn, cancel, status, and graceful shutdown (`background/mod.rs`)
+- Rust core: Graceful shutdown hooked into Tauri `WindowEvent::Destroyed`
+- Rust core: IPC commands `get_app_info` and `get_task_status` (`commands/app.rs`)
+- Frontend: `src/services/app.service.ts` — typed service wrappers for `health_check`, `get_app_info`, `get_task_status`
+- Frontend: `src/assets/logo/` — SVG and PNG logo assets with color and white variants; barrel export via `index.ts`
+- Frontend: `src/vite-env.d.ts` — Vite client type reference for asset imports
+- Docs: `IPC_COMMAND_REGISTRY.md` updated to 3 commands with summary table and rules
+- Shared: `AppInfoResponse` and `TaskStatusEntry` types added to `shared/ipc-types.ts`
 
 ---
 
