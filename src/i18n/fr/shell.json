@@ -1,0 +1,62 @@
+{
+  "sidebar": { "toggle": "Afficher/masquer le menu" },
+  "search": { "placeholder": "Rechercher ou ouvrir un module…" },
+  "notifications": { "label": "{{count}} notifications non lues" },
+  "user": { "menu": "Menu utilisateur" },
+  "sync": {
+    "offline": "Hors ligne",
+    "syncing": "Synchronisation…",
+    "error": "Erreur de sync"
+  },
+  "status": {
+    "online": "En ligne",
+    "offline": "Hors ligne",
+    "db": "BDD",
+    "dbHealthy": "Base de données opérationnelle",
+    "pendingSync": "{{count}} en attente"
+  },
+  "startup": {
+    "loading": "Démarrage en cours…",
+    "errorTitle": "Erreur de démarrage",
+    "retry": "Réessayer"
+  },
+  "placeholder": {
+    "notYetImplemented": "Ce module sera implémenté lors de la {{phase}}."
+  },
+  "nav": {
+    "groups": {
+      "core": "Opérations",
+      "planning": "Planification",
+      "compliance": "Conformité",
+      "inventory": "Stocks",
+      "analytics": "Analytique",
+      "admin": "Administration"
+    },
+    "dashboard": "Tableau de bord",
+    "equipment": "Équipements",
+    "requests": "Demandes d'intervention",
+    "workOrders": "Ordres de travail",
+    "planning": "Planification",
+    "pm": "Maintenance préventive",
+    "permits": "Permis de travail",
+    "inspections": "Rondes et checklists",
+    "inventory": "Pièces de rechange",
+    "personnel": "Personnel",
+    "training": "Formations & habilitations",
+    "analytics": "Tableaux de bord",
+    "reliability": "Fiabilité (RAMS)",
+    "budget": "Budget & coûts",
+    "archive": "Archivage",
+    "lookups": "Données de référence",
+    "notifications": "Notifications",
+    "documentation": "Documentation",
+    "iot": "Passerelle IoT",
+    "erp": "Connecteurs ERP",
+    "activity": "Journal d'activité",
+    "settings": "Paramètres",
+    "users": "Utilisateurs & rôles",
+    "org": "Organisation",
+    "configuration": "Configuration",
+    "profile": "Mon profil"
+  }
+}

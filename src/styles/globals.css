@@ -1,25 +1,196 @@
+/* Self-hosted Inter variable font — no CDN; offline-safe */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-variable.woff2") format("woff2");
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ── CSS Custom Properties (design tokens, referenced by JS where Tailwind is
+       insufficient, e.g. D3 chart rendering) ───────────────────────────── */
+:root {
+  /* Brand */
+  --color-primary: #003d8f;
+  --color-primary-dark: #002b6a;
+  --color-primary-light: #4d7bc5;
+  --color-primary-bg: #e8eef8;
+  --color-accent: #f0a500;
+
+  /* Status */
+  --color-success: #198754;
+  --color-danger: #dc3545;
+  --color-warning: #ffc107;
+  --color-info: #0dcaf0;
+
+  /* Surface */
+  --surface-0: #0f172a;
+  --surface-1: #1e293b;
+  --surface-2: #263244;
+  --surface-3: #334155;
+  --surface-border: #2d3f55;
+
+  /* Text */
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  /* Layout */
+  --sidebar-width: 240px;
+  --sidebar-width-sm: 64px;
+  --topbar-height: 52px;
+  --statusbar-height: 24px;
+
+  /* Transitions */
+  --transition-fast: 100ms;
+  --transition-base: 150ms;
+  --transition-normal: 200ms;
+  --transition-slow: 300ms;
+}
+
 @layer base {
-  :root {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  body {
     font-family:
+      Inter,
+      ui-sans-serif,
       system-ui,
       -apple-system,
       BlinkMacSystemFont,
       "Segoe UI",
       Roboto,
-      "Helvetica Neue",
-      Arial,
       sans-serif;
     font-size: 14px;
     line-height: 1.5;
+    background-color: var(--surface-0);
+    color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    user-select: none;
   }
 
-  * {
-    box-sizing: border-box;
+  /* Re-enable selection inside text content areas */
+  p,
+  span,
+  td,
+  th,
+  li,
+  .selectable {
+    user-select: text;
+  }
+
+  :focus {
+    outline: none;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-primary-light);
+    outline-offset: 2px;
+  }
+
+  /* Scrollbar styling — industrial dark theme */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--surface-1);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--surface-3);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
+
+  /* Tauri drag region for title-bar-less windows */
+  [data-tauri-drag-region] {
+    -webkit-app-region: drag;
+    cursor: default;
+  }
+  [data-tauri-drag-region] * {
+    -webkit-app-region: no-drag;
+  }
+}
+
+@layer components {
+  /* ── Status badge base ───────────────────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium;
+  }
+  .badge-success {
+    @apply bg-status-success/20 text-status-success;
+  }
+  .badge-danger {
+    @apply bg-status-danger/20 text-status-danger;
+  }
+  .badge-warning {
+    @apply bg-status-warning/20 text-text-warning;
+  }
+  .badge-info {
+    @apply bg-status-info/20 text-status-info;
+  }
+  .badge-neutral {
+    @apply bg-surface-3 text-text-secondary;
+  }
+
+  /* ── Button primitives ───────────────────────────────────────────── */
+  .btn-primary {
+    @apply inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5
+           text-sm font-medium text-white transition-colors duration-fast
+           hover:bg-primary-dark focus-visible:ring-2 focus-visible:ring-primary-light
+           disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm
+           font-medium text-text-secondary transition-colors duration-fast
+           hover:bg-surface-3 hover:text-text-primary disabled:opacity-50;
+  }
+  .btn-danger {
+    @apply inline-flex items-center gap-1.5 rounded-md bg-status-danger px-3 py-1.5
+           text-sm font-medium text-white transition-colors duration-fast
+           hover:brightness-90 disabled:opacity-50;
+  }
+
+  /* ── Form field primitives ───────────────────────────────────────── */
+  .field-label {
+    @apply block text-xs font-medium text-text-secondary uppercase tracking-wide mb-1;
+  }
+  .field-input {
+    @apply w-full rounded-md border border-surface-border bg-surface-2 px-3 py-1.5
+           text-sm text-text-primary placeholder-text-muted
+           focus-visible:border-primary-light focus-visible:ring-1
+           focus-visible:ring-primary-light transition-colors duration-fast;
+  }
+  .field-error {
+    @apply mt-1 text-xs text-text-danger;
+  }
+
+  /* ── Table primitives ───────────────────────────────────────────── */
+  .tbl-header {
+    @apply bg-surface-2 text-xs font-semibold uppercase tracking-wide text-text-secondary;
+  }
+  .tbl-row {
+    @apply border-b border-surface-border transition-colors duration-fast hover:bg-surface-3;
+  }
+  .tbl-cell {
+    @apply px-3 py-2 text-sm text-text-primary;
   }
 }

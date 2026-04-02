@@ -1,4 +1,37 @@
-// Shared TypeScript type definitions for the Maintafox frontend.
-// Module-specific types live alongside their module files.
-// IPC contract types live in shared/ipc-types.ts.
-export {};
+/** Application-level status values used in the UI */
+export type AppStatus = "loading" | "ready" | "error" | "offline";
+
+/** Semantic status badge variants */
+export type StatusVariant = "success" | "danger" | "warning" | "info" | "neutral";
+
+/** Module identifier keys — one per PRD §6 module */
+export type ModuleKey =
+  | "dashboard"
+  | "auth"
+  | "org"
+  | "equipment"
+  | "requests"
+  | "work-orders"
+  | "personnel"
+  | "users"
+  | "inventory"
+  | "pm"
+  | "reliability"
+  | "analytics"
+  | "archive"
+  | "lookups"
+  | "notifications"
+  | "documentation"
+  | "planning"
+  | "activity"
+  | "settings"
+  | "profile"
+  | "training"
+  | "iot"
+  | "erp"
+  | "permits"
+  | "budget"
+  | "inspections"
+  | "configuration";
+
+export type Theme = "dark" | "light";

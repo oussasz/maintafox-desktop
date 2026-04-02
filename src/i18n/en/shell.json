@@ -1,0 +1,62 @@
+{
+  "sidebar": { "toggle": "Toggle sidebar" },
+  "search": { "placeholder": "Search or open a module…" },
+  "notifications": { "label": "{{count}} unread notifications" },
+  "user": { "menu": "User menu" },
+  "sync": {
+    "offline": "Offline",
+    "syncing": "Syncing…",
+    "error": "Sync error"
+  },
+  "status": {
+    "online": "Online",
+    "offline": "Offline",
+    "db": "DB",
+    "dbHealthy": "Database operational",
+    "pendingSync": "{{count}} pending"
+  },
+  "startup": {
+    "loading": "Starting up…",
+    "errorTitle": "Startup error",
+    "retry": "Retry"
+  },
+  "placeholder": {
+    "notYetImplemented": "This module will be implemented in {{phase}}."
+  },
+  "nav": {
+    "groups": {
+      "core": "Operations",
+      "planning": "Planning",
+      "compliance": "Compliance",
+      "inventory": "Inventory",
+      "analytics": "Analytics",
+      "admin": "Administration"
+    },
+    "dashboard": "Dashboard",
+    "equipment": "Equipment",
+    "requests": "Intervention Requests",
+    "workOrders": "Work Orders",
+    "planning": "Planning",
+    "pm": "Preventive Maintenance",
+    "permits": "Work Permits",
+    "inspections": "Inspection Rounds",
+    "inventory": "Spare Parts",
+    "personnel": "Personnel",
+    "training": "Training & Habilitation",
+    "analytics": "Dashboards",
+    "reliability": "Reliability (RAMS)",
+    "budget": "Budget & Costs",
+    "archive": "Archive",
+    "lookups": "Reference Data",
+    "notifications": "Notifications",
+    "documentation": "Documentation",
+    "iot": "IoT Gateway",
+    "erp": "ERP Connectors",
+    "activity": "Activity Log",
+    "settings": "Settings",
+    "users": "Users & Roles",
+    "org": "Organization",
+    "configuration": "Configuration",
+    "profile": "My Profile"
+  }
+}

@@ -86,6 +86,7 @@
     "react-dom": "^18.3.0",
     "react-hook-form": "^7.54.0",
     "react-i18next": "^15.0.0",
+    "react-router-dom": "^6.28.0",
     "tailwind-merge": "^2.5.0",
     "zod": "^3.24.0",
     "zustand": "^5.0.0"
