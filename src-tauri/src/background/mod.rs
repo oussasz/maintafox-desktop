@@ -2,7 +2,7 @@
 //!
 //! Rules:
 //!   - All long-running background work is spawned through this supervisor.
-//!   - Each task receives a CancellationToken it must poll regularly.
+//!   - Each task receives a `CancellationToken` it must poll regularly.
 //!   - Graceful shutdown broadcasts cancellation and joins all handles with a timeout.
 //!   - Task identifiers are stable strings (e.g. "sync", "updater", "analytics").
 
@@ -80,6 +80,7 @@ impl BackgroundTaskSupervisor {
         });
 
         tasks.insert(id, TaskEntry { handle, token: child_token });
+        drop(tasks);
         info!("background: spawned task '{id}'");
     }
 
@@ -108,7 +109,7 @@ impl BackgroundTaskSupervisor {
                 } else {
                     TaskStatus::Running
                 };
-                (id.to_string(), status)
+                ((*id).to_string(), status)
             })
             .collect()
     }
@@ -132,6 +133,7 @@ impl BackgroundTaskSupervisor {
                 Err(_) => warn!("background: task '{id}' did not finish within timeout"),
             }
         }
+        drop(tasks);
 
         info!("background: shutdown complete");
     }

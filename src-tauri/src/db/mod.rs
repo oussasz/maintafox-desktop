@@ -6,14 +6,15 @@ use std::time::Duration;
 
 use crate::errors::AppResult;
 
-/// Initialize the SQLite database connection and apply WAL + performance pragmas.
+/// Initialize the `SQLite` database connection and apply WAL + performance pragmas.
 ///
 /// `db_path` is the absolute path to the `.db` file.
 /// The directory must already exist before calling this function.
 pub async fn init_db(db_path: &str) -> AppResult<DatabaseConnection> {
+    use sea_orm::ConnectionTrait;
     tracing::info!("Opening database: {}", db_path);
 
-    let url = format!("sqlite://{}?mode=rwc", db_path);
+    let url = format!("sqlite://{db_path}?mode=rwc");
 
     let mut opts = ConnectOptions::new(url);
     opts.max_connections(5)
@@ -29,7 +30,6 @@ pub async fn init_db(db_path: &str) -> AppResult<DatabaseConnection> {
     let db = Database::connect(opts).await?;
 
     // Apply SQLite pragmas for WAL mode, foreign keys, and performance
-    use sea_orm::ConnectionTrait;
     db.execute_unprepared("PRAGMA journal_mode=WAL;").await?;
     db.execute_unprepared("PRAGMA foreign_keys=ON;").await?;
     db.execute_unprepared("PRAGMA busy_timeout=5000;").await?;

@@ -1,8 +1,8 @@
 //! Application-wide shared state injected into all Tauri IPC commands.
 //!
 //! Rules:
-//!   - AppState is immutable after initialization (Arc wraps mutable sub-components).
-//!   - No global statics — all access is through tauri::State<AppState>.
+//!   - `AppState` is immutable after initialization (Arc wraps mutable sub-components).
+//!   - No global statics — all access is through `tauri::State<AppState>`.
 //!   - Session manager is a stub in Phase 1; Sub-phase 04 replaces the inner type.
 
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use crate::background::BackgroundTaskSupervisor;
 
 /// Database connection pool managed by sea-orm.
-/// Concrete type is sea_orm::DatabaseConnection; SQLite in WAL mode.
+/// Concrete type is `sea_orm::DatabaseConnection`; `SQLite` in WAL mode.
 pub type DbPool = sea_orm::DatabaseConnection;
 
 /// Application-wide configuration cache.

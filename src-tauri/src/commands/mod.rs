@@ -5,7 +5,7 @@ use tauri::State;
 use crate::errors::AppResult;
 use crate::state::AppState;
 
-/// Typed response for the health_check IPC command.
+/// Typed response for the `health_check` IPC command.
 #[derive(serde::Serialize)]
 pub struct HealthCheckResponse {
     pub status: String,

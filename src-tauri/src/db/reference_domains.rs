@@ -8,7 +8,7 @@ pub async fn verify_reference_domain_tables(db: &DatabaseConnection) -> AppResul
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     for table in &["lookup_domains", "lookup_values", "lookup_value_aliases"] {
-        let sql = format!("SELECT COUNT(*) FROM {};", table);
+        let sql = format!("SELECT COUNT(*) FROM {table};");
         db.execute(Statement::from_string(DbBackend::Sqlite, sql))
             .await?;
     }

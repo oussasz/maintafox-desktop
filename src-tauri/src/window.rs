@@ -35,6 +35,7 @@ fn state_path(app: &AppHandle) -> AppResult<PathBuf> {
     Ok(dir.join("window_state.json"))
 }
 
+#[allow(clippy::option_if_let_else)]
 pub fn load_state(app: &AppHandle) -> WindowState {
     match state_path(app) {
         Ok(path) => {

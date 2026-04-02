@@ -26,6 +26,7 @@ pub enum StartupEvent {
 ///
 /// Returns `(elapsed_ms, within_budget)`.
 /// Cold start budget: PRD §14.1 = 4 000 ms.
+#[allow(clippy::cast_possible_truncation)]
 pub fn validate_startup_duration(start: Instant, budget_ms: u64) -> (u64, bool) {
     let elapsed_ms = start.elapsed().as_millis() as u64;
     (elapsed_ms, elapsed_ms <= budget_ms)
@@ -50,6 +51,7 @@ pub fn format_startup_message(elapsed_ms: u64, within_budget: bool, budget_ms: u
 /// On success, emits `StartupEvent::Ready` and calls `window.show()`.
 /// On failure, emits `StartupEvent::Failed` and shows the window with a
 /// minimal error surface so the user is not left with an invisible process.
+#[allow(clippy::cast_possible_truncation)]
 pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     let startup_start = Instant::now();
 

@@ -54,14 +54,11 @@ pub fn setup_tray(app: &mut tauri::App) -> AppResult<()> {
             {
                 let app = tray.app_handle();
                 if let Some(w) = app.get_webview_window("main") {
-                    match w.is_visible() {
-                        Ok(true) => {
-                            w.hide().ok();
-                        }
-                        _ => {
-                            w.show().ok();
-                            w.set_focus().ok();
-                        }
+                    if matches!(w.is_visible(), Ok(true)) {
+                        w.hide().ok();
+                    } else {
+                        w.show().ok();
+                        w.set_focus().ok();
                     }
                 }
             }
