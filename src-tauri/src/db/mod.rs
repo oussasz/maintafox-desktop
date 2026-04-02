@@ -1,3 +1,6 @@
+pub mod org_schema;
+pub mod reference_domains;
+
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::time::Duration;
 

@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 
-import { getAppInfo } from "@/services/app.service";
+import { getAppInfo, healthCheck } from "@/services/app.service";
 import { useAppStore } from "@/store/app-store";
 import type { StartupEvent } from "@shared/ipc-types";
 
@@ -50,6 +50,18 @@ export function useStartupBridge(): void {
           return;
         }
         unlisten = unlistenFn;
+
+        // Guard against race condition: if the Rust backend emitted "ready"
+        // before this listener was registered, the event was missed.
+        // Call health_check as a fallback — if it succeeds, the backend is up.
+        try {
+          const hc = await healthCheck();
+          if (!cancelled && hc.db_connected && useAppStore.getState().appStatus === "loading") {
+            setAppStatus("ready");
+          }
+        } catch {
+          // Backend not ready yet — the event listener will handle it
+        }
 
         // Fetch app version via IPC
         try {
