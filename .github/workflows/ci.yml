@@ -52,6 +52,9 @@ jobs:
       - name: Prettier format check
         run: pnpm run format:check
 
+      - name: Migration integrity check
+        run: pnpm run migrate:check
+
       - name: Check CHANGELOG has Unreleased entry (PRs to main only)
         if: github.base_ref == 'main'
         run: |
@@ -107,6 +110,10 @@ jobs:
       - name: Rust unit tests
         working-directory: src-tauri
         run: cargo test
+
+      - name: Rust schema integration tests
+        working-directory: src-tauri
+        run: cargo test db::schema_integration_test -- --nocapture
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Job 3: Frontend tests with coverage

@@ -28,6 +28,8 @@
     "clean": "rimraf dist src-tauri/target node_modules/.cache",
     "db:seed": "pnpm tsx scripts/dev-db-seed.ts",
     "db:reset": "pnpm tsx scripts/dev-db-reset.ts",
+    "db:reset:ci": "pnpm tsx scripts/dev-db-reset.ts --yes",
+    "migrate:check": "tsx scripts/check-migrations.ts",
     "audit:tauri-conf": "pnpm tsx scripts/audit-tauri-conf.ts"
   },
   "devDependencies": {

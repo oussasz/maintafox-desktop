@@ -1,4 +1,5 @@
 use std::time::Instant;
+use std::path::PathBuf;
 
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::{error, info, warn};
@@ -41,6 +42,54 @@ pub fn format_startup_message(elapsed_ms: u64, within_budget: bool, budget_ms: u
             "WARNING: Startup took {elapsed_ms}ms which exceeds the {budget_ms}ms cold-start budget"
         )
     }
+}
+
+/// Forces a WAL checkpoint on the local SQLite database.
+/// Must be called before any destructive migration is applied.
+/// Returns Ok(()) on success or an error if the checkpoint fails.
+pub async fn force_wal_checkpoint(db: &sea_orm::DatabaseConnection) -> crate::errors::AppResult<()> {
+    use sea_orm::{ConnectionTrait, Statement, DbBackend};
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "PRAGMA wal_checkpoint(FULL);".to_string(),
+    ))
+    .await
+    .map(|_| ())
+    .map_err(|e| crate::errors::AppError::Database(
+        sea_orm::DbErr::Custom(format!("WAL checkpoint failed: {}", e))
+    ))
+}
+
+/// Creates a pre-migration backup of the database file.
+/// Called when detecting that a pending migration is classified as destructive.
+pub fn backup_database(
+    db_path: &PathBuf,
+    backup_dir: &PathBuf,
+) -> crate::errors::AppResult<PathBuf> {
+    use std::time::SystemTime;
+    use chrono::{DateTime, Utc};
+
+    let timestamp = DateTime::<Utc>::from(SystemTime::now())
+        .format("%Y%m%d_%H%M%S")
+        .to_string();
+
+    let backup_filename = format!("pre_migration_{}.db", timestamp);
+    let backup_path = backup_dir.join(&backup_filename);
+
+    std::fs::create_dir_all(backup_dir)
+        .map_err(crate::errors::AppError::Io)?;
+
+    std::fs::copy(db_path, &backup_path)
+        .map_err(|e| crate::errors::AppError::Io(
+            std::io::Error::new(std::io::ErrorKind::Other, format!("Pre-migration backup failed: {}", e))
+        ))?;
+
+    tracing::info!(
+        backup_path = %backup_path.display(),
+        "startup::pre_migration_backup_complete"
+    );
+
+    Ok(backup_path)
 }
 
 // ── Startup sequence ────────────────────────────────────────────────────────

@@ -1,5 +1,7 @@
 pub mod org_schema;
 pub mod reference_domains;
+pub mod migration_integrity;
+pub mod schema_integration_test;
 
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::time::Duration;

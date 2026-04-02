@@ -1,154 +1,106 @@
-import Database from "better-sqlite3";
-import { execSync } from "child_process";
-import { rmSync, existsSync, mkdirSync } from "fs";
-import { resolve } from "path";
+import * as fs from "fs";
+import * as path from "path";
+import * as readline from "readline";
+import * as os from "os";
+import * as process from "process";
 
-const dbPath = resolve(process.cwd(), "dev-data", "maintafox_dev.db");
-const dbDir = resolve(process.cwd(), "dev-data");
+// Resolve the database path from .env or default
+function getDbPath(): string {
+  const envFile = path.join(process.cwd(), ".env");
+  if (fs.existsSync(envFile)) {
+    const content = fs.readFileSync(envFile, "utf8");
+    const match = content.match(/^DATABASE_URL\s*=\s*(.+)$/m);
+    if (match) {
+      return match[1].trim().replace("sqlite://", "").replace(/\?.*/, "");
+    }
+  }
+  // Dev-data path (matches existing convention from Sub-phase 01)
+  const devDataPath = path.resolve(process.cwd(), "dev-data", "maintafox_dev.db");
+  if (fs.existsSync(devDataPath) || fs.existsSync(path.dirname(devDataPath))) {
+    return devDataPath;
+  }
+  // Tauri default: %APPDATA%/maintafox/maintafox.db on Windows
+  const appData = process.env.APPDATA ?? path.join(os.homedir(), ".local", "share");
+  return path.join(appData, "maintafox", "maintafox.db");
+}
 
-console.log("Resetting development database...");
+function getBackupsDir(dbPath: string): string {
+  return path.join(path.dirname(dbPath), "backups");
+}
 
-// Remove existing DB and WAL/SHM files
-for (const suffix of ["", "-wal", "-shm"]) {
-  const file = dbPath + suffix;
-  if (existsSync(file)) {
-    rmSync(file);
+async function confirm(message: string): Promise<boolean> {
+  // In CI, auto-confirm
+  if (process.env.CI === "true" || process.argv.includes("--yes")) {
+    return true;
+  }
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  return new Promise((resolve) => {
+    rl.question(`${message} [y/N]: `, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase() === "y");
+    });
+  });
+}
+
+function cleanOldBackups(backupsDir: string, maxAgeDays = 30): void {
+  if (!fs.existsSync(backupsDir)) return;
+  const now = Date.now();
+  const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+  const entries = fs.readdirSync(backupsDir);
+  let deleted = 0;
+  for (const entry of entries) {
+    if (!entry.startsWith("pre_migration_")) continue;
+    const fullPath = path.join(backupsDir, entry);
+    const stat = fs.statSync(fullPath);
+    if (now - stat.mtimeMs > maxAgeMs) {
+      fs.unlinkSync(fullPath);
+      deleted++;
+    }
+  }
+  if (deleted > 0) {
+    console.log(`Cleaned ${deleted} backup(s) older than ${maxAgeDays} days.`);
   }
 }
-if (existsSync(dbPath)) {
-  console.log("  Removed existing database file.");
+
+async function main(): Promise<void> {
+  const dbPath = getDbPath();
+  const backupsDir = getBackupsDir(dbPath);
+
+  console.log("=== Maintafox Dev DB Reset ===");
+  console.log(`Database: ${path.resolve(dbPath)}`);
+
+  if (!fs.existsSync(dbPath)) {
+    console.log("Database file does not exist. Nothing to delete.");
+    console.log("Run 'pnpm run dev' to create and migrate the database.");
+    process.exit(0);
+  }
+
+  const ok = await confirm("This will DELETE the local database and all its data. Continue?");
+  if (!ok) {
+    console.log("Reset cancelled.");
+    process.exit(0);
+  }
+
+  // Also delete WAL and SHM companion files
+  for (const ext of ["", "-wal", "-shm"]) {
+    const p = `${dbPath}${ext}`;
+    if (fs.existsSync(p)) {
+      fs.unlinkSync(p);
+      console.log(`Deleted: ${p}`);
+    }
+  }
+
+  cleanOldBackups(backupsDir);
+
+  console.log("\nDatabase reset complete.");
+  console.log("Run 'pnpm run dev' to recreate and run all migrations.");
+  console.log("Run 'pnpm run db:seed' after startup to restore development seed data.");
 }
 
-if (!existsSync(dbDir)) {
-  mkdirSync(dbDir, { recursive: true });
-  console.log("  Created dev-data/ directory.");
-}
-
-// Create DB and apply migrations (matches sea-orm migration definitions)
-console.log("  Applying migrations...");
-const db = new Database(dbPath);
-
-// SQLite pragmas
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
-db.pragma("busy_timeout = 5000");
-db.pragma("cache_size = -20000");
-db.pragma("temp_store = MEMORY");
-
-// Migration 1: system tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS system_config (
-    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    key TEXT NOT NULL UNIQUE,
-    value TEXT,
-    updated_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS trusted_devices (
-    id TEXT NOT NULL PRIMARY KEY,
-    device_fingerprint TEXT NOT NULL UNIQUE,
-    device_label TEXT,
-    user_id TEXT NOT NULL,
-    trusted_at TEXT NOT NULL,
-    last_seen_at TEXT,
-    is_revoked INTEGER NOT NULL DEFAULT 0,
-    revoked_at TEXT,
-    revoked_reason TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS audit_events (
-    id TEXT NOT NULL PRIMARY KEY,
-    event_type TEXT NOT NULL,
-    actor_id TEXT,
-    actor_name TEXT,
-    entity_type TEXT,
-    entity_id TEXT,
-    summary TEXT,
-    detail_json TEXT,
-    device_id TEXT,
-    occurred_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS app_sessions (
-    id TEXT NOT NULL PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    device_id TEXT,
-    created_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    last_activity_at TEXT,
-    is_revoked INTEGER NOT NULL DEFAULT 0
-  );
-`);
-
-// Migration 2: user tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS user_accounts (
-    id TEXT NOT NULL PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE,
-    identity_mode TEXT NOT NULL DEFAULT 'local',
-    personnel_id TEXT,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    force_password_change INTEGER NOT NULL DEFAULT 1,
-    last_seen_at TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS roles (
-    id TEXT NOT NULL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    description TEXT,
-    is_system INTEGER NOT NULL DEFAULT 0,
-    role_type TEXT NOT NULL DEFAULT 'custom',
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS permissions (
-    id TEXT NOT NULL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    description TEXT,
-    category TEXT,
-    is_dangerous INTEGER NOT NULL DEFAULT 0,
-    requires_step_up INTEGER NOT NULL DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS role_permissions (
-    role_id TEXT NOT NULL,
-    permission_id TEXT NOT NULL,
-    PRIMARY KEY (role_id, permission_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS user_scope_assignments (
-    id TEXT NOT NULL PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    role_id TEXT NOT NULL,
-    scope_type TEXT NOT NULL,
-    scope_reference TEXT,
-    valid_from TEXT,
-    valid_to TEXT
-  );
-
-  -- sea-orm migration tracking table
-  CREATE TABLE IF NOT EXISTS seaql_migrations (
-    version TEXT NOT NULL PRIMARY KEY,
-    applied_at INTEGER NOT NULL
-  );
-`);
-
-// Record migrations as applied so sea-orm doesn't re-run them at app startup
-const now = Math.floor(Date.now() / 1000);
-const insertMigration = db.prepare(
-  "INSERT OR IGNORE INTO seaql_migrations (version, applied_at) VALUES (?, ?)",
-);
-insertMigration.run("m20260401_000001_system_tables", now);
-insertMigration.run("m20260401_000002_user_tables", now);
-
-db.close();
-console.log("  Migrations applied.");
-
-// Seed baseline data
-console.log("  Seeding baseline data...");
-execSync("pnpm tsx scripts/dev-db-seed.ts", { stdio: "inherit" });
-
-console.log("\nDatabase reset complete: dev-data/maintafox_dev.db");
+main().catch((e) => {
+  console.error("Reset failed:", e);
+  process.exit(1);
+});
