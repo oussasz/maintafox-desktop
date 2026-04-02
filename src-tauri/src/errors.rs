@@ -53,7 +53,13 @@ impl serde::Serialize for AppError {
             Self::Internal(_) => "INTERNAL_ERROR",
         };
         state.serialize_field("code", code)?;
-        state.serialize_field("message", &self.to_string())?;
+
+        // Security: Internal errors must never leak raw details to the frontend.
+        let message = match self {
+            Self::Internal(_) => "Une erreur interne s'est produite.".to_string(),
+            _ => self.to_string(),
+        };
+        state.serialize_field("message", &message)?;
         state.end()
     }
 }

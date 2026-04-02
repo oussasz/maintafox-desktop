@@ -9,14 +9,15 @@ export default defineConfig({
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     coverage: {
       provider: "v8",
-      include: ["src/**/*.{ts,tsx}"],
-      exclude: ["src/test/**", "src/main.tsx", "src/i18n/**"],
+      include: ["src/services/**", "src/hooks/**", "src/store/**"],
+      exclude: ["src/test/**", "**/*.d.ts"],
       thresholds: {
-        lines: 60,
+        lines: 70,
         functions: 60,
-        branches: 50,
-        statements: 60,
+        branches: 60,
+        statements: 70,
       },
+      reporter: ["text", "lcov"],
     },
   },
   resolve: {

@@ -30,3 +30,4 @@ pub async fn health_check(state: State<'_, AppState>) -> AppResult<HealthCheckRe
 
 pub use app::get_app_info;
 pub use app::get_task_status;
+pub use app::shutdown_app;

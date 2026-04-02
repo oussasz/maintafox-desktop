@@ -22,7 +22,13 @@ pub mod tray;
 pub mod window;
 
 #[cfg(test)]
+mod background_tests;
+#[cfg(test)]
+mod errors_tests;
+#[cfg(test)]
 mod startup_tests;
+#[cfg(test)]
+mod state_tests;
 #[cfg(test)]
 mod window_tests;
 
@@ -86,6 +92,7 @@ pub fn run() {
             commands::health_check,
             commands::app::get_app_info,
             commands::app::get_task_status,
+            commands::app::shutdown_app,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

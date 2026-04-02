@@ -1,7 +1,14 @@
 import "@testing-library/jest-dom";
-import { vi } from "vitest";
+import { cleanup } from "@testing-library/react";
+import { vi, afterEach } from "vitest";
 
 // Mock the Tauri IPC runtime. Tests do not have access to the Tauri binary.
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(null),
 }));
+
+afterEach(() => {
+  cleanup();
+  // Reset localStorage to prevent Zustand persist cross-contamination
+  localStorage.clear();
+});

@@ -1,7 +1,12 @@
+use std::time::Instant;
+
 use tauri::{AppHandle, Emitter, Manager};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::errors::AppResult;
+
+/// Cold-start budget from PRD §14.1 (milliseconds).
+const COLD_START_BUDGET_MS: u64 = 4_000;
 
 /// Events emitted to the frontend during startup.
 /// Corresponding TypeScript types live in shared/ipc-types.ts.
@@ -15,6 +20,30 @@ pub enum StartupEvent {
     Failed { reason: String },
 }
 
+// ── Pure helpers (unit-testable without Tauri runtime) ──────────────────────
+
+/// Validates that the startup duration is within the given budget.
+///
+/// Returns `(elapsed_ms, within_budget)`.
+/// Cold start budget: PRD §14.1 = 4 000 ms.
+pub fn validate_startup_duration(start: Instant, budget_ms: u64) -> (u64, bool) {
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    (elapsed_ms, elapsed_ms <= budget_ms)
+}
+
+/// Builds a human-readable startup diagnostic message for tracing output.
+pub fn format_startup_message(elapsed_ms: u64, within_budget: bool, budget_ms: u64) -> String {
+    if within_budget {
+        format!("Startup complete in {elapsed_ms}ms (within {budget_ms}ms budget)")
+    } else {
+        format!(
+            "WARNING: Startup took {elapsed_ms}ms which exceeds the {budget_ms}ms cold-start budget"
+        )
+    }
+}
+
+// ── Startup sequence ────────────────────────────────────────────────────────
+
 /// Run the ordered startup sequence.
 ///
 /// Called once from the `setup` hook in lib.rs after the window is created.
@@ -22,6 +51,8 @@ pub enum StartupEvent {
 /// On failure, emits `StartupEvent::Failed` and shows the window with a
 /// minimal error surface so the user is not left with an invisible process.
 pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
+    let startup_start = Instant::now();
+
     let window = app
         .get_webview_window("main")
         .expect("main window must exist");
@@ -31,9 +62,12 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     let db_path = resolve_db_path(&app)?;
     match crate::db::init_db(&db_path).await {
         Ok(conn) => {
-            // Build AppState and inject into managed state
             let state = crate::state::AppState::new(conn);
             app.manage(state);
+            info!(
+                elapsed_ms = startup_start.elapsed().as_millis() as u64,
+                "startup::db_ready"
+            );
             emit_event(&app, StartupEvent::DbReady);
         }
         Err(e) => {
@@ -50,7 +84,10 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     let app_state = app.state::<crate::state::AppState>();
     match crate::db::run_migrations(&app_state.db).await {
         Ok(()) => {
-            // run_migrations returns () — emit 0 applied (count not tracked yet)
+            info!(
+                elapsed_ms = startup_start.elapsed().as_millis() as u64,
+                "startup::migrations_complete"
+            );
             emit_event(&app, StartupEvent::MigrationsComplete { applied: 0 });
         }
         Err(e) => {
@@ -64,10 +101,26 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
 
     // Phase 3: entitlement cache (stub for Phase 4 — always succeeds here)
     info!("startup: loading entitlement cache");
+    info!(
+        elapsed_ms = startup_start.elapsed().as_millis() as u64,
+        "startup::entitlement_cache_loaded"
+    );
     emit_event(&app, StartupEvent::EntitlementCacheLoaded);
 
-    // All phases passed — show the window
-    info!("startup: sequence complete, showing window");
+    // ── Budget check and ready ──────────────────────────────────────────
+    let (total_ms, within_budget) =
+        validate_startup_duration(startup_start, COLD_START_BUDGET_MS);
+
+    if within_budget {
+        info!(elapsed_ms = total_ms, "startup::complete");
+    } else {
+        warn!(
+            elapsed_ms = total_ms,
+            budget_ms = COLD_START_BUDGET_MS,
+            "startup::COLD_START_BUDGET_EXCEEDED — review DB init and migration time"
+        );
+    }
+
     emit_event(&app, StartupEvent::Ready);
     window
         .show()

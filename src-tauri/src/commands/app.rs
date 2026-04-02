@@ -57,3 +57,24 @@ pub async fn get_task_status(
         .map(|(id, status)| TaskStatusEntry { id, status })
         .collect())
 }
+
+/// Gracefully shuts down the application.
+///
+/// Intended for the quit menu item and tray "Quit" action. Ensures all background
+/// tasks are cancelled and the database pool is dropped before the process exits.
+#[tauri::command]
+pub async fn shutdown_app(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    tracing::info!("shutdown_app: initiating graceful shutdown");
+
+    // 1. Signal all background tasks to stop and await with 5s timeout
+    state.tasks.shutdown(5).await;
+
+    // 2. Close the database pool (sea-orm connection is dropped when AppState drops)
+    tracing::info!("shutdown_app: complete — exiting");
+
+    app.exit(0);
+    Ok(())
+}

@@ -61,20 +61,33 @@ export const useAppStore = create<AppStore>()(
       sidebarCollapsed: false,
       activePath: "/",
 
-      setAppStatus: (appStatus, startupMessage): void =>
+      setAppStatus: (appStatus, startupMessage): void => {
         set({
           appStatus,
           startupMessage: startupMessage ?? "",
-        }),
-      setAppVersion: (appVersion): void => set({ appVersion }),
-      setOnline: (isOnline): void => set({ isOnline }),
-      setSyncStatus: (s): void => set((st) => ({ syncStatus: { ...st.syncStatus, ...s } })),
-      setUnreadNotificationCount: (unreadNotificationCount): void =>
-        set({ unreadNotificationCount }),
-      setSessionStub: (hasActiveSession, currentUserDisplayName): void =>
-        set({ hasActiveSession, currentUserDisplayName }),
-      toggleSidebar: (): void => set((st) => ({ sidebarCollapsed: !st.sidebarCollapsed })),
-      setActivePath: (activePath): void => set({ activePath }),
+        });
+      },
+      setAppVersion: (appVersion): void => {
+        set({ appVersion });
+      },
+      setOnline: (isOnline): void => {
+        set({ isOnline });
+      },
+      setSyncStatus: (s): void => {
+        set((st) => ({ syncStatus: { ...st.syncStatus, ...s } }));
+      },
+      setUnreadNotificationCount: (unreadNotificationCount): void => {
+        set({ unreadNotificationCount });
+      },
+      setSessionStub: (hasActiveSession, currentUserDisplayName): void => {
+        set({ hasActiveSession, currentUserDisplayName });
+      },
+      toggleSidebar: (): void => {
+        set((st) => ({ sidebarCollapsed: !st.sidebarCollapsed }));
+      },
+      setActivePath: (activePath): void => {
+        set({ activePath });
+      },
     }),
     {
       name: "maintafox-app",

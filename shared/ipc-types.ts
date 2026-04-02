@@ -44,3 +44,8 @@ export interface TaskStatusEntry {
   id: string;
   status: TaskStatusKind;
 }
+
+// ─── Shutdown ──────────────────────────────────────────────────────────────
+
+// shutdown_app — no response type; the Rust command calls app.exit(0).
+// Frontend invokes via: invoke("shutdown_app")

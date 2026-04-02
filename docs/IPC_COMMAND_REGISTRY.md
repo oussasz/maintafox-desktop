@@ -64,6 +64,22 @@ Each entry must include:
 
 ---
 
+### `shutdown_app`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/app.rs` |
+| **Input** | None |
+| **Output** | None (process exits) |
+| **TS Type** | — |
+| **Auth required** | No (local desktop, any session) |
+| **AppState fields** | `tasks` (shutdown) |
+| **TS Service** | `invoke("shutdown_app")` |
+| **Phase** | Phase 1 · Sub-phase 02 · File 04 · Sprint S3 |
+| **Description** | Gracefully shuts down the application. Cancels all background tasks via the supervisor, then calls `app.exit(0)`. Intended for the quit menu item and tray "Quit" action. |
+| **PRD Ref** | §14.2 — Reliability and Recovery |
+
+---
+
 ## Command Summary
 
 | Command | Rust handler | Auth required | AppState fields used | TypeScript service |
@@ -71,6 +87,7 @@ Each entry must include:
 | `health_check` | `commands::health_check` | No | `config` (read) | `app.service.ts::healthCheck` |
 | `get_app_info` | `commands::app::get_app_info` | No | `config` (read) | `app.service.ts::getAppInfo` |
 | `get_task_status` | `commands::app::get_task_status` | No | `tasks` (read) | `app.service.ts::getTaskStatus` |
+| `shutdown_app` | `commands::app::shutdown_app` | No | `tasks` (shutdown) | `invoke("shutdown_app")` |
 
 ## Rules
 
