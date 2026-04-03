@@ -220,4 +220,116 @@ mod tests {
         assert!(info.user_id.is_none(), "V4 FAIL: user_id must be null after logout");
         assert!(info.username.is_none(), "V4 FAIL: username must be null after logout");
     }
+
+    // ── V5 — audit::emit writes login.success row to audit_events ───────
+
+    #[tokio::test]
+    async fn v5_audit_login_success_writes_row() {
+        let db = setup_db().await;
+
+        crate::audit::emit(
+            &db,
+            crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::LOGIN_SUCCESS,
+                actor_id: Some(1),
+                actor_name: Some("admin"),
+                summary: "Successful login",
+                detail_json: Some(r#"{"offline":false}"#.to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT event_type, actor_id, summary FROM audit_events WHERE event_type = ?",
+                [crate::audit::event_type::LOGIN_SUCCESS.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("V5 FAIL: no login.success row in audit_events");
+
+        let et: String = row.try_get("", "event_type").unwrap();
+        let actor: String = row.try_get("", "actor_id").unwrap();
+        let summary: String = row.try_get("", "summary").unwrap();
+
+        assert_eq!(et, "login.success", "V5 FAIL: event_type mismatch");
+        assert_eq!(actor, "1", "V5 FAIL: actor_id mismatch");
+        assert_eq!(summary, "Successful login", "V5 FAIL: summary mismatch");
+    }
+
+    // ── V6 — audit::emit writes login.failure row to audit_events ───────
+
+    #[tokio::test]
+    async fn v6_audit_login_failure_writes_row() {
+        let db = setup_db().await;
+
+        crate::audit::emit(
+            &db,
+            crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::LOGIN_FAILURE,
+                summary: "Failed login attempt — wrong password",
+                detail_json: Some(r#"{"username_provided":true}"#.to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT event_type, summary, detail_json FROM audit_events WHERE event_type = ?",
+                [crate::audit::event_type::LOGIN_FAILURE.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("V6 FAIL: no login.failure row in audit_events");
+
+        let et: String = row.try_get("", "event_type").unwrap();
+        assert_eq!(et, "login.failure", "V6 FAIL: event_type mismatch");
+
+        let detail: String = row.try_get("", "detail_json").unwrap();
+        assert!(
+            detail.contains("username_provided"),
+            "V6 FAIL: detail_json should contain username_provided"
+        );
+    }
+
+    // ── V7 — audit::emit writes step_up.success row to audit_events ─────
+
+    #[tokio::test]
+    async fn v7_audit_step_up_success_writes_row() {
+        let db = setup_db().await;
+
+        crate::audit::emit(
+            &db,
+            crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::STEP_UP_SUCCESS,
+                actor_id: Some(1),
+                summary: "Step-up reauthentication verified",
+                ..Default::default()
+            },
+        )
+        .await;
+
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT event_type, actor_id, summary FROM audit_events WHERE event_type = ?",
+                [crate::audit::event_type::STEP_UP_SUCCESS.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("V7 FAIL: no step_up.success row in audit_events");
+
+        let et: String = row.try_get("", "event_type").unwrap();
+        let actor: String = row.try_get("", "actor_id").unwrap();
+
+        assert_eq!(et, "step_up.success", "V7 FAIL: event_type mismatch");
+        assert_eq!(actor, "1", "V7 FAIL: actor_id mismatch");
+    }
 }
