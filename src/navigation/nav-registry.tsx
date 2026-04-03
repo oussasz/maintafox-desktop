@@ -25,6 +25,7 @@ import {
   DollarSign,
   CheckSquare,
   Sliders,
+  HeartPulse,
 } from "lucide-react";
 
 import type { NavItem } from "@/components/layout/Sidebar";
@@ -195,6 +196,12 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.configuration",
     path: "/configuration",
     icon: <Sliders className="h-4 w-4" />,
+  },
+  {
+    key: "diagnostics",
+    labelKey: "nav.diagnostics",
+    path: "/diagnostics",
+    icon: <HeartPulse className="h-4 w-4" />,
   },
   { key: "profile", labelKey: "nav.profile", path: "/profile", icon: <User className="h-4 w-4" /> },
 ];

@@ -150,7 +150,74 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         }
     }
 
-    // Phase 3: entitlement cache (stub for Phase 4 — always succeeds here)
+    // Phase 3: seed system data (idempotent — safe on every startup)
+    info!("startup: seeding system data");
+    match crate::db::seeder::seed_system_data(&app_state.db).await {
+        Ok(()) => {
+            info!(
+                elapsed_ms = startup_start.elapsed().as_millis() as u64,
+                "startup::seed_complete"
+            );
+        }
+        Err(e) => {
+            let reason = format!("System seed data failed: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    }
+
+    // Phase 4: integrity check
+    info!("startup: running integrity check");
+    match crate::db::integrity::run_integrity_check(&app_state.db).await {
+        Ok(report) => {
+            if report.is_healthy {
+                info!(
+                    elapsed_ms = startup_start.elapsed().as_millis() as u64,
+                    domains = report.domain_count,
+                    values = report.value_count,
+                    "startup::integrity_check_passed"
+                );
+            } else if report.is_recoverable {
+                warn!(
+                    issues = report.issues.len(),
+                    "startup::integrity_warning \u{2014} recoverable issues found, proceeding"
+                );
+            } else {
+                let reason = report
+                    .issues
+                    .first()
+                    .map_or_else(
+                        || "Unknown integrity failure".to_string(),
+                        |i| i.description.clone(),
+                    );
+                error!(
+                    issues = report.issues.len(),
+                    "startup::integrity_fatal \u{2014} unrecoverable integrity issues"
+                );
+                emit_event(
+                    &app,
+                    StartupEvent::Failed {
+                        reason: format!("Erreur d'int\u{00e9}grit\u{00e9} : {reason}"),
+                    },
+                );
+                window.show().ok();
+                return Err(crate::errors::AppError::Internal(anyhow::anyhow!(
+                    "Startup integrity check failed with unrecoverable issues"
+                )));
+            }
+        }
+        Err(e) => {
+            let reason = format!("Integrity check failed: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    }
+
+    // Phase 5: entitlement cache (stub for roadmap Phase 4 \u{2014} always succeeds here)
     info!("startup: loading entitlement cache");
     info!(
         elapsed_ms = startup_start.elapsed().as_millis() as u64,

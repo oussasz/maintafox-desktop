@@ -1,0 +1,355 @@
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use chrono::Utc;
+use uuid::Uuid;
+use crate::errors::{AppError, AppResult};
+
+/// Current version of the system seed data set.
+/// Increment this when adding new system domains or values in a release.
+pub const SEED_SCHEMA_VERSION: i32 = 1;
+
+/// Inserts all system-governed lookup domains and values idempotently.
+/// Safe to call on every startup: uses INSERT OR IGNORE semantics.
+/// On completion, records `seed_schema_version = SEED_SCHEMA_VERSION` in system_config.
+pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
+    tracing::info!("seeder::starting system seed (version {})", SEED_SCHEMA_VERSION);
+
+    // ── 1. Insert all domain definitions ─────────────────────────────────
+    seed_domain(db, "equipment.criticality",
+        "Criticité équipement", "system", false, true).await?;
+    seed_domain(db, "equipment.lifecycle_status",
+        "Statut cycle de vie équipement", "system", false, false).await?;
+    seed_domain(db, "equipment.hierarchy_relationship",
+        "Type de relation hiérarchique équipement", "system", false, false).await?;
+    seed_domain(db, "intervention_request.type",
+        "Type de demande d'intervention", "tenant", false, true).await?;
+    seed_domain(db, "intervention_request.urgency",
+        "Urgence demande d'intervention", "system", true, true).await?;
+    seed_domain(db, "intervention_request.status",
+        "Statut demande d'intervention", "system", false, false).await?;
+    seed_domain(db, "work_order.type",
+        "Type d'ordre de travail", "tenant", false, true).await?;
+    seed_domain(db, "work_order.status",
+        "Statut ordre de travail", "system", false, false).await?;
+    seed_domain(db, "work_order.priority",
+        "Priorité ordre de travail", "system", true, true).await?;
+    seed_domain(db, "failure.mode",
+        "Mode de défaillance", "tenant", false, true).await?;
+    seed_domain(db, "failure.cause",
+        "Cause de défaillance", "tenant", false, true).await?;
+    seed_domain(db, "work_order.closure_reason",
+        "Motif de clôture OT", "tenant", false, true).await?;
+    seed_domain(db, "personnel.skill_proficiency",
+        "Niveau de compétence", "system", true, false).await?;
+    seed_domain(db, "personnel.contract_type",
+        "Type de contrat", "tenant", false, true).await?;
+    seed_domain(db, "inventory.unit_of_measure",
+        "Unité de mesure stock", "tenant", false, true).await?;
+    seed_domain(db, "inventory.movement_type",
+        "Type de mouvement stock", "system", false, false).await?;
+    seed_domain(db, "org.responsibility_type",
+        "Type de responsabilité organisationnelle", "system", false, true).await?;
+    seed_domain(db, "permit.type",
+        "Type de permis de travail", "tenant", false, true).await?;
+
+    // ── 2. Resolve domain ids and insert values per domain ────────────────
+
+    // equipment.criticality
+    {
+        let d = get_domain_id(db, "equipment.criticality").await?;
+        seed_value(db, d, "CRITIQUE",       "Critique",      "Critique",    "Critical",     Some("#dc3545"),  1, true).await?;
+        seed_value(db, d, "IMPORTANT",      "Important",     "Important",   "Important",    Some("#ffc107"),  2, true).await?;
+        seed_value(db, d, "STANDARD",       "Standard",      "Standard",    "Standard",     Some("#0dcaf0"),  3, true).await?;
+        seed_value(db, d, "NON_CRITIQUE",   "Non-critique",  "Non-critique","Non-critical", Some("#198754"),  4, true).await?;
+    }
+
+    // equipment.lifecycle_status
+    {
+        let d = get_domain_id(db, "equipment.lifecycle_status").await?;
+        seed_value(db, d, "ACTIVE_IN_SERVICE",  "En service",         "En service",        "In Service",        Some("#198754"),  1, true).await?;
+        seed_value(db, d, "IN_STOCK",           "En stock",           "En stock",          "In Stock",          Some("#0dcaf0"),  2, true).await?;
+        seed_value(db, d, "UNDER_MAINTENANCE",  "En maintenance",     "En maintenance",    "Under Maintenance", Some("#ffc107"),  3, true).await?;
+        seed_value(db, d, "DECOMMISSIONED",     "Mis hors service",   "Mis hors service",  "Decommissioned",    Some("#6c757d"),  4, true).await?;
+        seed_value(db, d, "SCRAPPED",           "Mis au rebut",       "Mis au rebut",      "Scrapped",          Some("#dc3545"),  5, true).await?;
+        seed_value(db, d, "SPARE",              "Pièce de rechange",  "Pièce de rechange", "Spare",             Some("#6c757d"),  6, true).await?;
+    }
+
+    // equipment.hierarchy_relationship
+    {
+        let d = get_domain_id(db, "equipment.hierarchy_relationship").await?;
+        seed_value(db, d, "PARENT_CHILD", "Parent \u{2014} Enfant",    "Parent \u{2014} Enfant",    "Parent \u{2014} Child",   None, 1, true).await?;
+        seed_value(db, d, "INSTALLED_IN", "Install\u{00e9} dans",      "Install\u{00e9} dans",      "Installed In",            None, 2, true).await?;
+        seed_value(db, d, "DRIVES",       "Entra\u{00ee}ne",           "Entra\u{00ee}ne",           "Drives",                  None, 3, true).await?;
+        seed_value(db, d, "FEEDS",        "Alimente",                  "Alimente",                  "Feeds",                   None, 4, true).await?;
+    }
+
+    // intervention_request.type (tenant-extensible examples)
+    {
+        let d = get_domain_id(db, "intervention_request.type").await?;
+        seed_value(db, d, "CORRECTIVE",   "Corrective",        "Corrective",    "Corrective",    None, 1, true).await?;
+        seed_value(db, d, "SIGNALEMENT",  "Signalement",       "Signalement",   "Observation",   None, 2, true).await?;
+        seed_value(db, d, "AMELIORATION", "Am\u{00e9}lioration","Am\u{00e9}lioration","Improvement", None, 3, false).await?;
+    }
+
+    // intervention_request.urgency
+    {
+        let d = get_domain_id(db, "intervention_request.urgency").await?;
+        seed_value(db, d, "IMMEDIATE",  "Imm\u{00e9}diate",    "Imm\u{00e9}diate",    "Immediate",    Some("#dc3545"),  1, true).await?;
+        seed_value(db, d, "URGENT",     "Urgente",              "Urgente",              "Urgent",       Some("#ffc107"),  2, true).await?;
+        seed_value(db, d, "NORMALE",    "Normale",              "Normale",              "Normal",       Some("#198754"),  3, true).await?;
+        seed_value(db, d, "PLANIFIEE",  "Planifi\u{00e9}e",    "Planifi\u{00e9}e",    "Planned",      Some("#0dcaf0"),  4, true).await?;
+    }
+
+    // intervention_request.status
+    {
+        let d = get_domain_id(db, "intervention_request.status").await?;
+        seed_value(db, d, "DRAFT",          "Brouillon",      "Brouillon",      "Draft",          Some("#6c757d"),  1, true).await?;
+        seed_value(db, d, "SUBMITTED",      "Soumise",        "Soumise",        "Submitted",      Some("#0dcaf0"),  2, true).await?;
+        seed_value(db, d, "ACKNOWLEDGED",   "Accus\u{00e9}e", "Accus\u{00e9}e", "Acknowledged",   Some("#ffc107"),  3, true).await?;
+        seed_value(db, d, "IN_PROGRESS",    "En cours",       "En cours",       "In Progress",    Some("#003d8f"),  4, true).await?;
+        seed_value(db, d, "COMPLETED",      "Cl\u{00f4}tur\u{00e9}e","Cl\u{00f4}tur\u{00e9}e","Completed", Some("#198754"),  5, true).await?;
+        seed_value(db, d, "REJECTED",       "Rejet\u{00e9}e", "Rejet\u{00e9}e", "Rejected",       Some("#dc3545"),  6, true).await?;
+        seed_value(db, d, "CANCELLED",      "Annul\u{00e9}e", "Annul\u{00e9}e", "Cancelled",      Some("#6c757d"),  7, true).await?;
+    }
+
+    // work_order.type
+    {
+        let d = get_domain_id(db, "work_order.type").await?;
+        seed_value(db, d, "CORRECTIVE",   "Corrective",       "Corrective",       "Corrective",      None, 1, true).await?;
+        seed_value(db, d, "PREVENTIVE",   "Pr\u{00e9}ventive","Pr\u{00e9}ventive","Preventive",      None, 2, true).await?;
+        seed_value(db, d, "PREDICTIVE",   "Pr\u{00e9}dictive","Pr\u{00e9}dictive","Predictive",      None, 3, true).await?;
+        seed_value(db, d, "AMELIORATIVE", "Am\u{00e9}liorative","Am\u{00e9}liorative","Improvement",  None, 4, true).await?;
+        seed_value(db, d, "INSPECTION",   "Inspection",       "Inspection",       "Inspection",      None, 5, true).await?;
+    }
+
+    // work_order.status
+    {
+        let d = get_domain_id(db, "work_order.status").await?;
+        seed_value(db, d, "DRAFT",          "Brouillon",       "Brouillon",       "Draft",           Some("#6c757d"),  1, true).await?;
+        seed_value(db, d, "PLANNED",        "Planifi\u{00e9}", "Planifi\u{00e9}", "Planned",         Some("#0dcaf0"),  2, true).await?;
+        seed_value(db, d, "RELEASED",       "Lanc\u{00e9}",    "Lanc\u{00e9}",    "Released",        Some("#003d8f"),  3, true).await?;
+        seed_value(db, d, "IN_PROGRESS",    "En cours",        "En cours",        "In Progress",     Some("#ffc107"),  4, true).await?;
+        seed_value(db, d, "ON_HOLD",        "En attente",      "En attente",      "On Hold",         Some("#f0a500"),  5, true).await?;
+        seed_value(db, d, "COMPLETED",      "Termin\u{00e9}",  "Termin\u{00e9}",  "Completed",       Some("#198754"),  6, true).await?;
+        seed_value(db, d, "CLOSED",         "Cl\u{00f4}tur\u{00e9}","Cl\u{00f4}tur\u{00e9}","Closed",Some("#6c757d"),  7, true).await?;
+        seed_value(db, d, "CANCELLED",      "Annul\u{00e9}",   "Annul\u{00e9}",   "Cancelled",       Some("#dc3545"),  8, true).await?;
+    }
+
+    // work_order.priority
+    {
+        let d = get_domain_id(db, "work_order.priority").await?;
+        seed_value(db, d, "P1_CRITICAL",  "P1 \u{2014} Critique",  "P1 \u{2014} Critique",  "P1 \u{2014} Critical",  Some("#dc3545"),  1, true).await?;
+        seed_value(db, d, "P2_HIGH",      "P2 \u{2014} Haute",     "P2 \u{2014} Haute",     "P2 \u{2014} High",      Some("#ffc107"),  2, true).await?;
+        seed_value(db, d, "P3_MEDIUM",    "P3 \u{2014} Moyenne",   "P3 \u{2014} Moyenne",   "P3 \u{2014} Medium",    Some("#0dcaf0"),  3, true).await?;
+        seed_value(db, d, "P4_LOW",       "P4 \u{2014} Basse",     "P4 \u{2014} Basse",     "P4 \u{2014} Low",       Some("#198754"),  4, true).await?;
+    }
+
+    // failure.mode (examples — tenant-extensible)
+    {
+        let d = get_domain_id(db, "failure.mode").await?;
+        seed_value(db, d, "VIBRATION",   "Vibration",              "Vibration",              "Vibration",       None, 1, true).await?;
+        seed_value(db, d, "CORROSION",   "Corrosion",              "Corrosion",              "Corrosion",       None, 2, true).await?;
+        seed_value(db, d, "BRUIT",       "Bruit anormal",          "Bruit anormal",          "Abnormal Noise",  None, 3, true).await?;
+        seed_value(db, d, "FUITE",       "Fuite",                  "Fuite",                  "Leak",            None, 4, true).await?;
+        seed_value(db, d, "SURCHAUFFE",  "Surchauffe",             "Surchauffe",             "Overheating",     None, 5, true).await?;
+        seed_value(db, d, "PANNE_ELEC",  "Panne \u{00e9}lectrique","Panne \u{00e9}lectrique","Electrical Fault", None, 6, true).await?;
+        seed_value(db, d, "AUTRE",       "Autre",                  "Autre",                  "Other",           None, 99, true).await?;
+    }
+
+    // failure.cause
+    {
+        let d = get_domain_id(db, "failure.cause").await?;
+        seed_value(db, d, "USURE_NORMALE",   "Usure normale",             "Usure normale",             "Normal Wear",          None, 1, true).await?;
+        seed_value(db, d, "MAUVAIS_USAGE",   "Mauvais usage",             "Mauvais usage",             "Misuse",               None, 2, true).await?;
+        seed_value(db, d, "DEFAUT_ENTRETIEN","D\u{00e9}faut d'entretien","D\u{00e9}faut d'entretien","Maintenance Defect",    None, 3, true).await?;
+        seed_value(db, d, "DEFAUT_INSTALL",  "D\u{00e9}faut d'installation","D\u{00e9}faut d'installation","Installation Defect",None, 4, true).await?;
+        seed_value(db, d, "DEFAUT_MATERIEL", "D\u{00e9}faut mat\u{00e9}riel","D\u{00e9}faut mat\u{00e9}riel","Material Defect", None, 5, true).await?;
+        seed_value(db, d, "INCONNU",         "Inconnu",                   "Inconnu",                   "Unknown",              None, 99, true).await?;
+    }
+
+    // work_order.closure_reason
+    {
+        let d = get_domain_id(db, "work_order.closure_reason").await?;
+        seed_value(db, d, "REPARE",          "R\u{00e9}par\u{00e9}",       "R\u{00e9}par\u{00e9}",       "Repaired",     Some("#198754"),  1, true).await?;
+        seed_value(db, d, "REPORTE",         "Report\u{00e9}",             "Report\u{00e9}",             "Deferred",     Some("#ffc107"),  2, true).await?;
+        seed_value(db, d, "NON_NECESSAIRE",  "Non n\u{00e9}cessaire",      "Non n\u{00e9}cessaire",      "Not Required", Some("#6c757d"),  3, true).await?;
+        seed_value(db, d, "REMPLACE",        "Remplac\u{00e9}",            "Remplac\u{00e9}",            "Replaced",     Some("#0dcaf0"),  4, true).await?;
+    }
+
+    // personnel.skill_proficiency
+    {
+        let d = get_domain_id(db, "personnel.skill_proficiency").await?;
+        seed_value(db, d, "NIVEAU_1", "Niveau 1 \u{2014} Notions",              "Niveau 1 \u{2014} Notions",              "Level 1 \u{2014} Awareness",      None, 1, true).await?;
+        seed_value(db, d, "NIVEAU_2", "Niveau 2 \u{2014} Appliqu\u{00e9}",      "Niveau 2 \u{2014} Appliqu\u{00e9}",      "Level 2 \u{2014} Applied",        None, 2, true).await?;
+        seed_value(db, d, "NIVEAU_3", "Niveau 3 \u{2014} Ma\u{00ee}tris\u{00e9}","Niveau 3 \u{2014} Ma\u{00ee}tris\u{00e9}","Level 3 \u{2014} Proficient",   None, 3, true).await?;
+        seed_value(db, d, "NIVEAU_4", "Niveau 4 \u{2014} Expert",               "Niveau 4 \u{2014} Expert",               "Level 4 \u{2014} Expert",         None, 4, true).await?;
+        seed_value(db, d, "NIVEAU_5", "Niveau 5 \u{2014} Ma\u{00ee}tre formateur","Niveau 5 \u{2014} Ma\u{00ee}tre formateur","Level 5 \u{2014} Master Trainer",None, 5, true).await?;
+    }
+
+    // personnel.contract_type
+    {
+        let d = get_domain_id(db, "personnel.contract_type").await?;
+        seed_value(db, d, "CDI",         "CDI",                    "CDI",                    "Permanent",        None, 1, true).await?;
+        seed_value(db, d, "CDD",         "CDD",                    "CDD",                    "Fixed-term",       None, 2, true).await?;
+        seed_value(db, d, "INTERIMAIRE", "Int\u{00e9}rimaire",     "Int\u{00e9}rimaire",     "Temporary Agency", None, 3, true).await?;
+        seed_value(db, d, "PRESTATAIRE", "Prestataire externe",    "Prestataire externe",    "Contractor",       None, 4, true).await?;
+        seed_value(db, d, "STAGIAIRE",   "Stagiaire",              "Stagiaire",              "Intern",           None, 5, false).await?;
+    }
+
+    // inventory.unit_of_measure
+    {
+        let d = get_domain_id(db, "inventory.unit_of_measure").await?;
+        seed_value(db, d, "U",    "Unit\u{00e9}",  "Unit\u{00e9}",  "Unit",  None,  1, true).await?;
+        seed_value(db, d, "KG",   "kg",             "kg",             "kg",    None,  2, true).await?;
+        seed_value(db, d, "L",    "L",              "L",              "L",     None,  3, true).await?;
+        seed_value(db, d, "M",    "m",              "m",              "m",     None,  4, true).await?;
+        seed_value(db, d, "M2",   "m\u{00b2}",     "m\u{00b2}",     "m\u{00b2}", None,  5, true).await?;
+        seed_value(db, d, "BOX",  "Bo\u{00ee}te",  "Bo\u{00ee}te",  "Box",   None,  6, true).await?;
+        seed_value(db, d, "ROUL", "Rouleau",        "Rouleau",        "Roll",  None,  7, true).await?;
+        seed_value(db, d, "PAIRE","Paire",          "Paire",          "Pair",  None,  8, true).await?;
+    }
+
+    // inventory.movement_type
+    {
+        let d = get_domain_id(db, "inventory.movement_type").await?;
+        seed_value(db, d, "SORTIE_OT",      "Sortie sur OT",          "Sortie sur OT",          "Issue to WO",          None, 1, true).await?;
+        seed_value(db, d, "ENTREE_ACHAT",   "Entr\u{00e9}e achat",    "Entr\u{00e9}e achat",    "Purchase Receipt",     None, 2, true).await?;
+        seed_value(db, d, "RETOUR_OT",      "Retour d'OT",            "Retour d'OT",            "Return from WO",       None, 3, true).await?;
+        seed_value(db, d, "AJUSTEMENT",     "Ajustement inventaire",  "Ajustement inventaire",  "Inventory Adjustment", None, 4, true).await?;
+        seed_value(db, d, "INVENTAIRE",     "Saisie inventaire",      "Saisie inventaire",      "Stock Count Entry",    None, 5, true).await?;
+    }
+
+    // org.responsibility_type
+    {
+        let d = get_domain_id(db, "org.responsibility_type").await?;
+        seed_value(db, d, "MAINTENANCE_OWNER",  "Responsable maintenance", "Responsable maintenance", "Maintenance Owner", None, 1, true).await?;
+        seed_value(db, d, "PRODUCTION_OWNER",   "Responsable production",  "Responsable production",  "Production Owner",  None, 2, true).await?;
+        seed_value(db, d, "HSE_OWNER",          "Responsable HSE",         "Responsable HSE",         "HSE Owner",         None, 3, true).await?;
+        seed_value(db, d, "PLANNER",            "Planificateur",           "Planificateur",           "Planner",           None, 4, true).await?;
+        seed_value(db, d, "APPROVER",           "Approbateur",             "Approbateur",             "Approver",          None, 5, true).await?;
+    }
+
+    // permit.type
+    {
+        let d = get_domain_id(db, "permit.type").await?;
+        seed_value(db, d, "PERMIS_FEU",       "Permis de feu",           "Permis de feu",           "Hot Work Permit",    None, 1, true).await?;
+        seed_value(db, d, "PERMIS_ELECTRIQUE","Permis \u{00e9}lectrique","Permis \u{00e9}lectrique","Electrical Permit",  None, 2, true).await?;
+        seed_value(db, d, "PERMIS_HAUTEUR",   "Travail en hauteur",      "Travail en hauteur",      "Work at Height",     None, 3, true).await?;
+        seed_value(db, d, "PERMIS_ESPACE",    "Espace confin\u{00e9}",   "Espace confin\u{00e9}",   "Confined Space",     None, 4, true).await?;
+        seed_value(db, d, "PERMIS_GENERAL",   "Permis g\u{00e9}n\u{00e9}ral","Permis g\u{00e9}n\u{00e9}ral","General Permit", None, 5, true).await?;
+    }
+
+    // ── 3. Record seed schema version in system_config ────────────────────
+    let now = Utc::now().to_rfc3339();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r#"INSERT INTO system_config (key, value, updated_at)
+           VALUES ('seed_schema_version', ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"#,
+        [SEED_SCHEMA_VERSION.to_string().into(), now.into()],
+    ))
+    .await?;
+
+    tracing::info!("seeder::complete — system seed version {} applied", SEED_SCHEMA_VERSION);
+    Ok(())
+}
+
+// ── Helper: insert domain if not exists ───────────────────────────────────
+async fn seed_domain(
+    db: &DatabaseConnection,
+    domain_key: &str,
+    display_name: &str,
+    domain_type: &str,
+    is_ordered: bool,
+    is_extensible: bool,
+) -> AppResult<()> {
+    let now = Utc::now().to_rfc3339();
+    let sync_id = Uuid::new_v4().to_string();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r#"INSERT OR IGNORE INTO lookup_domains
+               (sync_id, domain_key, display_name, domain_type,
+                is_ordered, is_extensible, is_locked, schema_version,
+                created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)"#,
+        [
+            sync_id.into(),
+            domain_key.into(),
+            display_name.into(),
+            domain_type.into(),
+            (is_ordered as i32).into(),
+            (is_extensible as i32).into(),
+            now.clone().into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+// ── Helper: resolve domain id by key ─────────────────────────────────────
+async fn get_domain_id(
+    db: &DatabaseConnection,
+    domain_key: &str,
+) -> AppResult<i32> {
+    let row = db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT id FROM lookup_domains WHERE domain_key = ? AND deleted_at IS NULL",
+        [domain_key.into()],
+    ))
+    .await?;
+
+    row.and_then(|r| r.try_get::<i32>("", "id").ok())
+        .ok_or_else(|| AppError::NotFound {
+            entity: "lookup_domain".into(),
+            id: domain_key.to_string(),
+        })
+}
+
+// ── Helper: insert value if not exists ───────────────────────────────────
+async fn seed_value(
+    db: &DatabaseConnection,
+    domain_id: i32,
+    code: &str,
+    label: &str,
+    fr_label: &str,
+    en_label: &str,
+    color: Option<&str>,
+    sort_order: i32,
+    is_system: bool,
+) -> AppResult<()> {
+    let now = Utc::now().to_rfc3339();
+    let sync_id = Uuid::new_v4().to_string();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r#"INSERT OR IGNORE INTO lookup_values
+               (sync_id, domain_id, code, label, fr_label, en_label,
+                color, sort_order, is_active, is_system,
+                created_at, updated_at, row_version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 1)"#,
+        [
+            sync_id.into(),
+            domain_id.into(),
+            code.into(),
+            label.into(),
+            fr_label.into(),
+            en_label.into(),
+            color.map(|s| s.to_string()).into(),
+            sort_order.into(),
+            (is_system as i32).into(),
+            now.clone().into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seed_schema_version_is_positive() {
+        assert!(SEED_SCHEMA_VERSION > 0, "Seed schema version must be a positive integer");
+    }
+}

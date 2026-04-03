@@ -29,4 +29,27 @@ export const fixtures = {
     { id: "bg-sync-001", status: "running" as const },
     { id: "bg-cleanup-002", status: "finished" as const },
   ],
+  integrityReportHealthy: {
+    is_healthy: true,
+    is_recoverable: true,
+    issues: [],
+    seed_schema_version: 1,
+    domain_count: 18,
+    value_count: 95,
+  },
+  integrityReportUnhealthy: {
+    is_healthy: false,
+    is_recoverable: true,
+    issues: [
+      {
+        code: "MISSING_DOMAIN",
+        description: "Domaine requis manquant",
+        is_auto_repairable: true,
+        subject: "equipment.criticality",
+      },
+    ],
+    seed_schema_version: 1,
+    domain_count: 17,
+    value_count: 90,
+  },
 } as const;

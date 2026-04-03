@@ -82,6 +82,9 @@ const ConfigurationPage = lazy(() =>
 const ProfilePage = lazy(() =>
   import("@/pages/ProfilePage").then((m) => ({ default: m.ProfilePage })),
 );
+const DiagnosticsPage = lazy(() =>
+  import("@/pages/DiagnosticsPage").then((m) => ({ default: m.DiagnosticsPage })),
+);
 
 function PageSuspense() {
   return (
@@ -137,6 +140,7 @@ const routes: RouteObject[] = [
           { path: "activity", element: <ActivityPage /> },
           { path: "settings", element: <SettingsPage /> },
           { path: "configuration", element: <ConfigurationPage /> },
+          { path: "diagnostics", element: <DiagnosticsPage /> },
           { path: "profile", element: <ProfilePage /> },
         ],
       },

@@ -15,6 +15,7 @@ pub mod db;
 pub mod errors;
 pub mod migrations;
 pub mod models;
+pub mod repository;
 pub mod security;
 pub mod services;
 pub mod startup;
@@ -95,6 +96,11 @@ pub fn run() {
             commands::app::get_app_info,
             commands::app::get_task_status,
             commands::app::shutdown_app,
+            commands::lookup::list_lookup_domains,
+            commands::lookup::get_lookup_values,
+            commands::lookup::get_lookup_value_by_id,
+            commands::diagnostics::run_integrity_check,
+            commands::diagnostics::repair_seed_data,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

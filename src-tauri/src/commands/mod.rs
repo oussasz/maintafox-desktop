@@ -1,4 +1,6 @@
 pub mod app;
+pub mod diagnostics;
+pub mod lookup;
 
 use tauri::State;
 

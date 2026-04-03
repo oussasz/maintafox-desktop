@@ -23,6 +23,22 @@
   "placeholder": {
     "notYetImplemented": "This module will be implemented in {{phase}}."
   },
+  "diagnostics": {
+    "title": "Diagnostics",
+    "subtitle": "Seed data integrity check and automatic repair.",
+    "checking": "Checking integrity…",
+    "repairing": "Repairing seed data…",
+    "errorTitle": "Diagnostic error",
+    "healthy": "All checks passed.",
+    "unhealthy": "Issues detected.",
+    "seedVersion": "Seed version",
+    "domainCount": "Domains",
+    "valueCount": "Values",
+    "issuesTitle": "{{count}} issue(s) detected",
+    "autoRepairable": "(repairable)",
+    "recheck": "Re-check",
+    "repairBtn": "Repair seed data"
+  },
   "nav": {
     "groups": {
       "core": "Operations",
@@ -57,6 +73,7 @@
     "users": "Users & Roles",
     "org": "Organization",
     "configuration": "Configuration",
+    "diagnostics": "Diagnostics",
     "profile": "My Profile"
   }
 }

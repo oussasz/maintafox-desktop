@@ -80,6 +80,89 @@ Each entry must include:
 
 ---
 
+### `list_lookup_domains`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/lookup.rs` |
+| **Input** | `filter?: LookupDomainFilter`, `page?: PageRequest` |
+| **Output** | `AppResult<Page<LookupDomainSummary>>` |
+| **TS Type** | `Page<LookupDomainSummary>` in `shared/ipc-types.ts` |
+| **Auth required** | No (Phase 1; RBAC added in Sub-phase 04) |
+| **AppState fields** | `db` (read) |
+| **TS Service** | `lookup-service.ts::listLookupDomains` |
+| **Phase** | Phase 1 · Sub-phase 03 · File 03 · Sprint S3 |
+| **Description** | Returns a paginated list of all lookup domains. Called by the Lookup Manager admin page and any filter panel that needs to enumerate available governed vocabularies. |
+| **PRD Ref** | §6.13 Lookup Reference Data Manager |
+
+---
+
+### `get_lookup_values`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/lookup.rs` |
+| **Input** | `domain_key: string` |
+| **Output** | `AppResult<Vec<LookupValueOption>>` → `LookupValueOption[]` |
+| **TS Type** | `LookupValueOption` in `shared/ipc-types.ts` |
+| **Auth required** | No (read-only reference data) |
+| **AppState fields** | `db` (read) |
+| **TS Service** | `lookup-service.ts::getLookupValues` |
+| **Phase** | Phase 1 · Sub-phase 03 · File 03 · Sprint S3 |
+| **Description** | Returns all active values for a given domain key. Primary call for populating dropdowns, filter chips, and badge resolvers across all modules. |
+| **PRD Ref** | §6.13 |
+
+---
+
+### `get_lookup_value_by_id`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/lookup.rs` |
+| **Input** | `value_id: i32` |
+| **Output** | `AppResult<LookupValueRecord>` |
+| **TS Type** | `LookupValueRecord` in `shared/ipc-types.ts` |
+| **Auth required** | No |
+| **AppState fields** | `db` (read) |
+| **TS Service** | `lookup-service.ts::getLookupValueById` |
+| **Phase** | Phase 1 · Sub-phase 03 · File 03 · Sprint S3 |
+| **Description** | Resolves a single lookup value by its integer id. Called when rendering a stored FK as a labeled badge or detail field. |
+| **Errors** | `NOT_FOUND`, `DATABASE_ERROR` |
+| **PRD Ref** | §6.13 |
+
+---
+
+### `run_integrity_check`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/diagnostics.rs` |
+| **Input** | None |
+| **Output** | `AppResult<IntegrityReport>` → `{ is_healthy, is_recoverable, issues, seed_schema_version, domain_count, value_count }` |
+| **TS Type** | `IntegrityReport` in `shared/ipc-types.ts` |
+| **Auth required** | No |
+| **AppState fields** | `db` (read) |
+| **TS Service** | `diagnostics-service.ts::runIntegrityCheck` |
+| **Phase** | Phase 1 · Sub-phase 03 · File 04 · Sprint S2 |
+| **Description** | Runs the database integrity check and returns a structured report. Called by the frontend on startup and from the diagnostics panel. Checks table existence, seed version, required domains, and minimum value counts. |
+| **Errors** | `DATABASE_ERROR` |
+| **PRD Ref** | §14.2 Reliability and Recovery |
+
+---
+
+### `repair_seed_data`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/diagnostics.rs` |
+| **Input** | None |
+| **Output** | `AppResult<IntegrityReport>` → post-repair `IntegrityReport` |
+| **TS Type** | `IntegrityReport` in `shared/ipc-types.ts` |
+| **Auth required** | No (only callable during startup recovery screen) |
+| **AppState fields** | `db` (read + write) |
+| **TS Service** | `diagnostics-service.ts::repairSeedData` |
+| **Phase** | Phase 1 · Sub-phase 03 · File 04 · Sprint S2 |
+| **Description** | Re-applies the system seed data idempotently and re-runs the integrity check. Used for self-repair when the integrity check found recoverable issues. Safe to call even if seed data is already present. |
+| **Errors** | `DATABASE_ERROR` |
+| **PRD Ref** | §14.2 Reliability and Recovery |
+
+---
+
 ## Command Summary
 
 | Command | Rust handler | Auth required | AppState fields used | TypeScript service |
@@ -88,6 +171,11 @@ Each entry must include:
 | `get_app_info` | `commands::app::get_app_info` | No | `config` (read) | `app.service.ts::getAppInfo` |
 | `get_task_status` | `commands::app::get_task_status` | No | `tasks` (read) | `app.service.ts::getTaskStatus` |
 | `shutdown_app` | `commands::app::shutdown_app` | No | `tasks` (shutdown) | `invoke("shutdown_app")` |
+| `list_lookup_domains` | `commands::lookup::list_lookup_domains` | No | `db` (read) | `lookup-service.ts::listLookupDomains` |
+| `get_lookup_values` | `commands::lookup::get_lookup_values` | No | `db` (read) | `lookup-service.ts::getLookupValues` |
+| `get_lookup_value_by_id` | `commands::lookup::get_lookup_value_by_id` | No | `db` (read) | `lookup-service.ts::getLookupValueById` |
+| `run_integrity_check` | `commands::diagnostics::run_integrity_check` | No | `db` (read) | `diagnostics-service.ts::runIntegrityCheck` |
+| `repair_seed_data` | `commands::diagnostics::repair_seed_data` | No | `db` (read + write) | `diagnostics-service.ts::repairSeedData` |
 
 ## Rules
 

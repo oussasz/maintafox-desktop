@@ -48,4 +48,85 @@ export interface TaskStatusEntry {
 // ─── Shutdown ──────────────────────────────────────────────────────────────
 
 // shutdown_app — no response type; the Rust command calls app.exit(0).
+
+// ── Pagination ────────────────────────────────────────────────────────────
+
+export interface PageRequest {
+  page: number;
+  per_page: number;
+}
+
+export interface Page<T> {
+  items: T[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
+// ── Lookup domain types ───────────────────────────────────────────────────
+
+export interface LookupDomainSummary {
+  id: number;
+  sync_id: string;
+  domain_key: string;
+  display_name: string;
+  domain_type: "system" | "tenant" | "module";
+  is_extensible: number;
+  is_locked: number;
+  schema_version: number;
+  value_count: number | null;
+}
+
+export interface LookupValueOption {
+  id: number;
+  code: string;
+  label: string;
+  fr_label: string | null;
+  en_label: string | null;
+  color: string | null;
+  is_active: number;
+}
+
+export interface LookupValueRecord {
+  id: number;
+  sync_id: string;
+  domain_id: number;
+  code: string;
+  label: string;
+  fr_label: string | null;
+  en_label: string | null;
+  description: string | null;
+  sort_order: number;
+  is_active: number;
+  is_system: number;
+  color: string | null;
+  parent_value_id: number | null;
+}
+
+export interface LookupDomainFilter {
+  domain_type?: string;
+  query?: string;
+  include_deleted?: boolean;
+  include_inactive?: boolean;
+}
+
+// ─── Diagnostics / Integrity ───────────────────────────────────────────────
+
+export interface IntegrityIssue {
+  code: string;
+  description: string;
+  is_auto_repairable: boolean;
+  subject: string;
+}
+
+export interface IntegrityReport {
+  is_healthy: boolean;
+  is_recoverable: boolean;
+  issues: IntegrityIssue[];
+  seed_schema_version: number | null;
+  domain_count: number;
+  value_count: number;
+}
+
 // Frontend invokes via: invoke("shutdown_app")

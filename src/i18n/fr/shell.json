@@ -23,6 +23,22 @@
   "placeholder": {
     "notYetImplemented": "Ce module sera implémenté lors de la {{phase}}."
   },
+  "diagnostics": {
+    "title": "Diagnostics",
+    "subtitle": "Vérification de l'intégrité des données de référence et réparation automatique.",
+    "checking": "Vérification en cours…",
+    "repairing": "Réparation en cours…",
+    "errorTitle": "Erreur de diagnostic",
+    "healthy": "Toutes les vérifications sont réussies.",
+    "unhealthy": "Des problèmes ont été détectés.",
+    "seedVersion": "Version seed",
+    "domainCount": "Domaines",
+    "valueCount": "Valeurs",
+    "issuesTitle": "{{count}} problème(s) détecté(s)",
+    "autoRepairable": "(réparable)",
+    "recheck": "Revérifier",
+    "repairBtn": "Réparer les données"
+  },
   "nav": {
     "groups": {
       "core": "Opérations",
@@ -57,6 +73,7 @@
     "users": "Utilisateurs & rôles",
     "org": "Organisation",
     "configuration": "Configuration",
+    "diagnostics": "Diagnostics",
     "profile": "Mon profil"
   }
 }
