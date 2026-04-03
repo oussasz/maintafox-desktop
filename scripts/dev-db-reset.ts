@@ -10,8 +10,9 @@ function getDbPath(): string {
   if (fs.existsSync(envFile)) {
     const content = fs.readFileSync(envFile, "utf8");
     const match = content.match(/^DATABASE_URL\s*=\s*(.+)$/m);
-    if (match) {
-      return match[1].trim().replace("sqlite://", "").replace(/\?.*/, "");
+    const dbUrl = match?.[1];
+    if (dbUrl) {
+      return dbUrl.trim().replace("sqlite://", "").replace(/\?.*/, "");
     }
   }
   // Dev-data path (matches existing convention from Sub-phase 01)
@@ -20,7 +21,7 @@ function getDbPath(): string {
     return devDataPath;
   }
   // Tauri default: %APPDATA%/maintafox/maintafox.db on Windows
-  const appData = process.env.APPDATA ?? path.join(os.homedir(), ".local", "share");
+  const appData = process.env["APPDATA"] ?? path.join(os.homedir(), ".local", "share");
   return path.join(appData, "maintafox", "maintafox.db");
 }
 
@@ -30,7 +31,7 @@ function getBackupsDir(dbPath: string): string {
 
 async function confirm(message: string): Promise<boolean> {
   // In CI, auto-confirm
-  if (process.env.CI === "true" || process.argv.includes("--yes")) {
+  if (process.env["CI"] === "true" || process.argv.includes("--yes")) {
     return true;
   }
   const rl = readline.createInterface({

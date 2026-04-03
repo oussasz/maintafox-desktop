@@ -14,6 +14,12 @@ pub struct WindowState {
     pub maximized: bool,
 }
 
+const MIN_WIDTH: u32 = 640;
+const MIN_HEIGHT: u32 = 480;
+const DEFAULT_WIDTH: u32 = 1280;
+const DEFAULT_HEIGHT: u32 = 800;
+const MINIMIZED_SENTINEL: i32 = -32000;
+
 impl Default for WindowState {
     fn default() -> Self {
         Self {
@@ -40,7 +46,7 @@ pub fn load_state(app: &AppHandle) -> WindowState {
     match state_path(app) {
         Ok(path) => {
             if let Ok(text) = std::fs::read_to_string(&path) {
-                serde_json::from_str(&text).unwrap_or_default()
+                sanitize_state(serde_json::from_str(&text).unwrap_or_default())
             } else {
                 WindowState::default()
             }
@@ -50,6 +56,24 @@ pub fn load_state(app: &AppHandle) -> WindowState {
             WindowState::default()
         }
     }
+}
+
+fn is_minimized_position(x: i32, y: i32) -> bool {
+    x <= MINIMIZED_SENTINEL || y <= MINIMIZED_SENTINEL
+}
+
+fn sanitize_state(mut state: WindowState) -> WindowState {
+    if state.width < MIN_WIDTH {
+        state.width = DEFAULT_WIDTH;
+    }
+    if state.height < MIN_HEIGHT {
+        state.height = DEFAULT_HEIGHT;
+    }
+    if is_minimized_position(state.x, state.y) {
+        state.x = 0;
+        state.y = 0;
+    }
+    state
 }
 
 pub fn save_state(app: &AppHandle, state: &WindowState) {
@@ -99,6 +123,10 @@ pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
         window.on_window_event(move |event| {
             match event {
                 tauri::WindowEvent::Resized(size) => {
+                    // Ignore transient minimized/hidden sizes that would make next startup invisible.
+                    if size.width < MIN_WIDTH || size.height < MIN_HEIGHT {
+                        return;
+                    }
                     debug!("Window resized: {size:?}");
                     let s = load_state(&handle);
                     save_state(
@@ -112,6 +140,10 @@ pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
                     );
                 }
                 tauri::WindowEvent::Moved(pos) => {
+                    // Ignore minimized sentinel coordinates (e.g. -32000 on Windows).
+                    if is_minimized_position(pos.x, pos.y) {
+                        return;
+                    }
                     debug!("Window moved: {pos:?}");
                     let s = load_state(&handle);
                     save_state(

@@ -6,7 +6,12 @@ import { router } from "@/router";
 export function App() {
   return (
     <ThemeProvider>
-      <RouterProvider router={router} />
+      <RouterProvider
+        router={router}
+        future={{
+          v7_startTransition: true,
+        }}
+      />
     </ThemeProvider>
   );
 }

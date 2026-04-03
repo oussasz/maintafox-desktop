@@ -39,16 +39,16 @@ function getRegisteredMigrations(): string[] {
 }
 
 function extractSeqNumber(name: string): number {
-  const parts = name.split("_");
-  return parseInt(parts[1], 10);
+  const [, seq = "0"] = name.split("_");
+  return parseInt(seq, 10);
 }
 
 function checkNamingConvention(names: string[]): CheckResult {
   const bad = names.filter((n) => {
     const parts = n.split("_");
     if (parts.length < 3) return true;
-    const date = parts[0].slice(1); // remove leading 'm'
-    const seq = parts[1];
+    const [first = "", seq = ""] = parts;
+    const date = first.slice(1); // remove leading 'm'
     return !/^\d{8}$/.test(date) || !/^\d{6}$/.test(seq);
   });
   return {
