@@ -99,6 +99,8 @@ pub fn run() {
             commands::auth::login,
             commands::auth::logout,
             commands::auth::get_session_info,
+            commands::auth::get_device_trust_status,
+            commands::auth::revoke_device_trust,
             commands::lookup::list_lookup_domains,
             commands::lookup::get_lookup_values,
             commands::lookup::get_lookup_value_by_id,

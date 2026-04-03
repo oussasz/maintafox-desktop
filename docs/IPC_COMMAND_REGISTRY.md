@@ -213,6 +213,40 @@ Each entry must include:
 
 ---
 
+### `get_device_trust_status`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/auth.rs` |
+| **Input** | None |
+| **Output** | `AppResult<DeviceTrustStatus>` → `DeviceTrustStatus` |
+| **TS Type** | `DeviceTrustStatus` in `shared/ipc-types.ts` |
+| **Auth required** | Yes |
+| **AppState fields** | `db` (read), `session` (read) |
+| **TS Service** | `auth-service.ts::getDeviceTrustStatus` |
+| **Phase** | Phase 1 · Sub-phase 04 · File 02 · Sprint S3 |
+| **Description** | Returns the trust status of the current device for the logged-in user, including whether offline access is currently allowed and how many hours remain in the grace window. |
+| **Errors** | `AUTH_ERROR` if no session |
+| **PRD Ref** | §6.1 Trusted Device Registration |
+
+---
+
+### `revoke_device_trust`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/auth.rs` |
+| **Input** | `{ device_id: string }` |
+| **Output** | `AppResult<()>` → `null` |
+| **TS Type** | — |
+| **Auth required** | Yes + adm.users permission (SP04-F03) |
+| **AppState fields** | `db` (read + write), `session` (read) |
+| **TS Service** | `auth-service.ts::revokeDeviceTrust` |
+| **Phase** | Phase 1 · Sub-phase 04 · File 02 · Sprint S3 |
+| **Description** | Revokes offline trust for a specific device by row id. The device can still log in online. Used when a laptop is lost or stolen to prevent offline access with cached credentials. |
+| **Errors** | `NOT_FOUND`, `AUTH_ERROR` |
+| **PRD Ref** | §6.1, §12 Security |
+
+---
+
 ## Command Summary
 
 | Command | Rust handler | Auth required | AppState fields used | TypeScript service |
@@ -229,6 +263,8 @@ Each entry must include:
 | `login` | `commands::auth::login` | No | `db` (read + write), `session` (write) | `auth-service.ts::login` |
 | `logout` | `commands::auth::logout` | No | `session` (write) | `auth-service.ts::logout` |
 | `get_session_info` | `commands::auth::get_session_info` | No | `session` (read) | `auth-service.ts::getSessionInfo` |
+| `get_device_trust_status` | `commands::auth::get_device_trust_status` | Yes | `db` (read), `session` (read) | `auth-service.ts::getDeviceTrustStatus` |
+| `revoke_device_trust` | `commands::auth::revoke_device_trust` | Yes + adm.users | `db` (read + write), `session` (read) | `auth-service.ts::revokeDeviceTrust` |
 
 ## Rules
 

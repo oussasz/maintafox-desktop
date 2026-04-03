@@ -12,6 +12,7 @@ use tracing::warn;
 
 use crate::auth::{password, session_manager};
 use crate::errors::{AppError, AppResult};
+use crate::require_session;
 use crate::state::AppState;
 
 /// Input for the login command. Received from the React login form.
@@ -80,6 +81,71 @@ pub async fn login(
         ));
     }
 
+    // ── Device trust enforcement ─────────────────────────────────────────
+    let fingerprint = crate::auth::device::derive_device_fingerprint()
+        .unwrap_or_else(|_| "unknown-fingerprint".to_string());
+
+    let is_online = crate::auth::device::is_network_available();
+
+    // Get existing trust record for this user+device
+    let trust = crate::auth::device::get_device_trust(&state.db, user_id, &fingerprint).await?;
+
+    match (&trust, is_online) {
+        // First login: device not yet trusted. Requires connectivity.
+        (None, false) => {
+            warn!(username = %username, "login::first_login_requires_online");
+            return Err(AppError::Auth(
+                "La premi\u{00e8}re connexion sur cet appareil n\u{00e9}cessite une connexion r\u{00e9}seau.".into(),
+            ));
+        }
+        // First login: register trust now (online)
+        (None, true) => {
+            crate::auth::device::register_device_trust(
+                &state.db,
+                user_id,
+                &fingerprint,
+                None,
+            )
+            .await?;
+            tracing::info!(username = %username, "login::device_trust_registered");
+        }
+        // Known device but revoked: allow online login only
+        (Some(t), _) if t.is_revoked => {
+            if !is_online {
+                return Err(AppError::Auth(
+                    "Cet appareil a \u{00e9}t\u{00e9} r\u{00e9}voqu\u{00e9}. Connexion en ligne requise.".into(),
+                ));
+            }
+            // Online + revoked: allow login but do not re-register trust
+        }
+        // Known device, offline: check grace window
+        (Some(_), false) => {
+            let (allowed, _) = crate::auth::device::check_offline_access(
+                &state.db,
+                user_id,
+                &fingerprint,
+            )
+            .await?;
+            if !allowed {
+                return Err(AppError::Auth(
+                    "Fen\u{00ea}tre de connexion hors ligne expir\u{00e9}e. Connexion en ligne requise.".into(),
+                ));
+            }
+            tracing::info!(username = %username, "login::offline_access_granted");
+        }
+        // Known device, online: update last_seen_at
+        (Some(_), true) => {
+            crate::auth::device::register_device_trust(
+                &state.db,
+                user_id,
+                &fingerprint,
+                None,
+            )
+            .await?;
+        }
+    }
+
+    // ── Create session ────────────────────────────────────────────────────
     // Password correct — create session
     let auth_user = session_manager::AuthenticatedUser {
         user_id,
@@ -123,4 +189,50 @@ pub async fn get_session_info(
     state: State<'_, AppState>,
 ) -> AppResult<session_manager::SessionInfo> {
     Ok(state.session.read().await.session_info())
+}
+
+// ── Device trust IPC commands ─────────────────────────────────────────────────
+
+use crate::auth::device;
+
+/// Get the trust status of the current device for the currently logged-in user.
+/// Requires an active session.
+#[tauri::command]
+pub async fn get_device_trust_status(
+    state: State<'_, AppState>,
+) -> AppResult<device::DeviceTrustStatus> {
+    let user = require_session!(state);
+
+    let fingerprint = device::derive_device_fingerprint()
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    let trust = device::get_device_trust(&state.db, user.user_id, &fingerprint).await?;
+    let (offline_allowed, offline_hours) = device::check_offline_access(
+        &state.db,
+        user.user_id,
+        &fingerprint,
+    )
+    .await?;
+
+    Ok(device::DeviceTrustStatus {
+        device_fingerprint: fingerprint,
+        is_trusted: trust.is_some() && !trust.as_ref().map(|t| t.is_revoked).unwrap_or(false),
+        is_revoked: trust.as_ref().map(|t| t.is_revoked).unwrap_or(false),
+        offline_allowed,
+        offline_hours_remaining: offline_hours,
+        device_label: trust.as_ref().and_then(|t| t.device_label.clone()),
+        trusted_at: trust.as_ref().map(|t| t.trusted_at.clone()),
+    })
+}
+
+/// Revoke trust for a specific trusted device by row id.
+/// Use this to remove offline access for a lost or stolen device.
+/// Requires admin permissions (enforced in SP04-F03).
+#[tauri::command]
+pub async fn revoke_device_trust(
+    device_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    device::revoke_device_trust(&state.db, &device_id, user.user_id).await
 }

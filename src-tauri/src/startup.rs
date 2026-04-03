@@ -168,6 +168,25 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         }
     }
 
+    // Phase 3b: initialize device secret on first launch (non-fatal)
+    match crate::auth::device::get_device_secret() {
+        Ok(None) => {
+            // First launch: generate and store the device secret
+            crate::auth::device::initialize_device_secret()
+                .inspect_err(|e| tracing::warn!("device_secret_init_failed: {}", e))
+                .ok();
+        }
+        Ok(Some(_)) => {
+            tracing::debug!("startup::device_secret already exists");
+        }
+        Err(e) => {
+            tracing::warn!(
+                "startup::keyring_unavailable: {} \u{2014} offline trust material will not persist",
+                e
+            );
+        }
+    }
+
     // Phase 4: integrity check
     info!("startup: running integrity check");
     match crate::db::integrity::run_integrity_check(&app_state.db).await {

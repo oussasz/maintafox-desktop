@@ -152,4 +152,21 @@ export interface LoginResponse {
   session_info: SessionInfo;
 }
 
+// ─── Device Trust ──────────────────────────────────────────────────────────
+
+export interface TrustedDevice {
+  id: string; // UUID
+  user_id: number;
+  device_fingerprint: string; // 64-char hex SHA-256
+  device_label: string | null;
+  is_revoked: boolean;
+  last_seen_at: string | null; // ISO 8601
+  registered_at: string; // ISO 8601
+}
+
+export type DeviceTrustStatus =
+  | { status: "trusted"; device: TrustedDevice }
+  | { status: "unknown" }
+  | { status: "revoked" };
+
 // Frontend invokes via: invoke("shutdown_app")
