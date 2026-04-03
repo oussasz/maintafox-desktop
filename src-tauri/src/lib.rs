@@ -8,6 +8,7 @@
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::unnecessary_literal_bound)]
 
+pub mod audit;
 pub mod auth;
 pub mod background;
 pub mod commands;
@@ -106,6 +107,8 @@ pub fn run() {
             commands::lookup::get_lookup_value_by_id,
             commands::diagnostics::run_integrity_check,
             commands::diagnostics::repair_seed_data,
+            commands::rbac::get_my_permissions,
+            commands::rbac::verify_step_up,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

@@ -54,6 +54,12 @@ pub async fn login(
                 // User not found — run a dummy hash to consume constant time
                 let _ = password::hash_password("timing_sink_unused");
                 warn!(username = %username, "login::user_not_found");
+                crate::audit::emit(&state.db, crate::audit::AuditEvent {
+                    event_type: crate::audit::event_type::LOGIN_FAILURE,
+                    summary:    "Failed login attempt — user not found",
+                    detail_json: Some(format!(r#"{{"username_provided":true}}"#)),
+                    ..Default::default()
+                }).await;
                 return Err(AppError::Auth(
                     "Identifiant ou mot de passe invalide.".into(),
                 ));
@@ -65,6 +71,12 @@ pub async fn login(
     let stored_hash = match pw_hash {
         None => {
             warn!(username = %username, "login::no_password_hash_sso_only");
+            crate::audit::emit(&state.db, crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::LOGIN_FAILURE,
+                actor_id:   Some(user_id),
+                summary:    "Failed login attempt — no local password configured",
+                ..Default::default()
+            }).await;
             return Err(AppError::Auth(
                 "Identifiant ou mot de passe invalide.".into(),
             ));
@@ -76,6 +88,13 @@ pub async fn login(
     if !password_ok {
         session_manager::record_failed_login(&state.db, user_id).await?;
         warn!(username = %username, "login::wrong_password");
+        crate::audit::emit(&state.db, crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::LOGIN_FAILURE,
+            actor_id:   Some(user_id),
+            summary:    "Failed login attempt — wrong password",
+            detail_json: Some(format!(r#"{{"username_provided":true}}"#)),
+            ..Default::default()
+        }).await;
         return Err(AppError::Auth(
             "Identifiant ou mot de passe invalide.".into(),
         ));
@@ -107,6 +126,14 @@ pub async fn login(
                 None,
             )
             .await?;
+            crate::audit::emit(&state.db, crate::audit::AuditEvent {
+                event_type:  crate::audit::event_type::DEVICE_TRUST_REGISTERED,
+                actor_id:    Some(user_id),
+                entity_type: Some("trusted_device"),
+                entity_id:   Some(&fingerprint),
+                summary:     "Device trust registered on first online login",
+                ..Default::default()
+            }).await;
             tracing::info!(username = %username, "login::device_trust_registered");
         }
         // Known device but revoked: allow online login only
@@ -168,6 +195,17 @@ pub async fn login(
     session_manager::create_session_record(&state.db, &session_id, user_id, &expires_rfc3339)
         .await?;
 
+    // ── Audit: successful login ───────────────────────────────────────
+    crate::audit::emit(&state.db, crate::audit::AuditEvent {
+        event_type:  crate::audit::event_type::LOGIN_SUCCESS,
+        actor_id:    Some(user_id),
+        actor_name:  Some(&username),
+        summary:     "Successful login",
+        detail_json: Some(format!(r#"{{"offline":{}}}"#, !is_online)),
+        device_id:   Some(&fingerprint),
+        ..Default::default()
+    }).await;
+
     let info = state.session.read().await.session_info();
     Ok(LoginResponse { session_info: info })
 }
@@ -175,10 +213,22 @@ pub async fn login(
 /// Log the current user out and clear the active session.
 #[tauri::command]
 pub async fn logout(state: State<'_, AppState>) -> AppResult<()> {
+    // Capture actor before clearing the session
+    let actor_id = state.session.read().await.current.as_ref().map(|s| s.user.user_id);
+
     let mut session_guard = state.session.write().await;
     if let Some(session_id) = session_guard.clear_session() {
         tracing::info!(session_id = %session_id, "auth::logout");
     }
+    drop(session_guard);
+
+    crate::audit::emit(&state.db, crate::audit::AuditEvent {
+        event_type: crate::audit::event_type::LOGOUT,
+        actor_id,
+        summary:    "User logged out",
+        ..Default::default()
+    }).await;
+
     Ok(())
 }
 
@@ -234,5 +284,16 @@ pub async fn revoke_device_trust(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    device::revoke_device_trust(&state.db, &device_id, user.user_id).await
+    device::revoke_device_trust(&state.db, &device_id, user.user_id).await?;
+
+    crate::audit::emit(&state.db, crate::audit::AuditEvent {
+        event_type:  crate::audit::event_type::DEVICE_TRUST_REVOKED,
+        actor_id:    Some(user.user_id),
+        entity_type: Some("trusted_device"),
+        entity_id:   Some(&device_id),
+        summary:     "Device trust revoked",
+        ..Default::default()
+    }).await;
+
+    Ok(())
 }

@@ -169,4 +169,23 @@ export type DeviceTrustStatus =
   | { status: "unknown" }
   | { status: "revoked" };
 
+// ─── RBAC / Permissions ────────────────────────────────────────────────────
+
+export interface PermissionRecord {
+  name: string;
+  description: string;
+  category: string;
+  is_dangerous: boolean;
+  requires_step_up: boolean;
+}
+
+export interface StepUpRequest {
+  password: string;
+}
+
+export interface StepUpResponse {
+  success: boolean;
+  expires_at: string; // ISO 8601
+}
+
 // Frontend invokes via: invoke("shutdown_app")

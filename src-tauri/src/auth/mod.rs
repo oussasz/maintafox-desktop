@@ -11,6 +11,7 @@
 
 pub mod device;
 pub mod password;
+pub mod rbac;
 pub mod session_manager;
 
 #[cfg(test)]
@@ -34,6 +35,63 @@ macro_rules! require_session {
         }
         // SAFETY: is_authenticated() guarantees current is Some and non-expired
         guard.current.as_ref().unwrap().user.clone()
+    }};
+}
+
+/// Short-circuit an IPC command if the authenticated user does NOT hold
+/// the given permission (checked against the database).
+///
+/// Usage inside an `async` Tauri command:
+/// ```ignore
+/// let user = require_session!(state);
+/// require_permission!(state, &user, "eq.delete", PermissionScope::Global);
+/// ```
+#[macro_export]
+macro_rules! require_permission {
+    ($state:expr, $user:expr, $perm:expr, $scope:expr) => {{
+        let has = $crate::auth::rbac::check_permission(
+            &*$state.db,
+            $user.user_id,
+            $perm,
+            &$scope,
+        )
+        .await?;
+
+        if !has {
+            return Err($crate::errors::AppError::PermissionDenied(
+                format!("Permission requise : {}", $perm),
+            ));
+        }
+
+        // If the permission requires step-up, verify it
+        let guard = $state.session.read().await;
+        let needs_step_up = $crate::auth::rbac::permission_requires_step_up(
+            &*$state.db,
+            $perm,
+        )
+        .await
+        .unwrap_or(false);
+
+        if needs_step_up && !guard.is_step_up_valid() {
+            return Err($crate::errors::AppError::StepUpRequired);
+        }
+    }};
+}
+
+/// Short-circuit an IPC command if no valid step-up verification exists.
+///
+/// Usage inside an `async` Tauri command:
+/// ```ignore
+/// let user = require_session!(state);
+/// require_step_up!(state);
+/// ```
+#[macro_export]
+macro_rules! require_step_up {
+    ($state:expr) => {{
+        let guard = $state.session.read().await;
+        if !guard.is_step_up_valid() {
+            return Err($crate::errors::AppError::StepUpRequired);
+        }
     }};
 }
 

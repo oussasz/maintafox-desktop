@@ -2,6 +2,7 @@ pub mod app;
 pub mod auth;
 pub mod diagnostics;
 pub mod lookup;
+pub mod rbac;
 
 use tauri::State;
 

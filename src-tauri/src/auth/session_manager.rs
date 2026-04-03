@@ -7,6 +7,8 @@
 //!   - The app_sessions row is the lifecycle record; expiry is enforced here in memory.
 //!   - Every write (login, logout, expire) emits an audit event via the db.
 
+use std::time::Instant;
+
 use chrono::{DateTime, TimeDelta, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
@@ -18,6 +20,8 @@ use crate::errors::AppResult;
 pub const SESSION_DURATION_HOURS: i64 = 8;
 /// Idle timeout: session is locked (not expired) after 30 minutes of no activity.
 pub const IDLE_LOCK_MINUTES: i64 = 30;
+/// Step-up verification window: 120 seconds after re-entering password.
+pub const STEP_UP_DURATION_SECS: u64 = 120;
 
 /// The identity of an authenticated user, embedded in the active session.
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +43,10 @@ pub struct LocalSession {
     pub expires_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
     pub is_locked: bool,
+    /// When the user last completed step-up password verification.
+    /// `None` means no step-up has been performed this session.
+    #[serde(skip)]
+    pub step_up_verified_at: Option<Instant>,
 }
 
 impl LocalSession {
@@ -52,6 +60,13 @@ impl LocalSession {
         let idle_deadline =
             self.last_activity_at + TimeDelta::minutes(IDLE_LOCK_MINUTES);
         self.is_locked || Utc::now() > idle_deadline
+    }
+
+    /// True if a step-up verification was completed within `STEP_UP_DURATION_SECS`.
+    pub fn is_step_up_valid(&self) -> bool {
+        self.step_up_verified_at
+            .map(|t| t.elapsed().as_secs() < STEP_UP_DURATION_SECS)
+            .unwrap_or(false)
     }
 }
 
@@ -118,6 +133,7 @@ impl SessionManager {
             expires_at: now + TimeDelta::hours(SESSION_DURATION_HOURS),
             last_activity_at: now,
             is_locked: false,
+            step_up_verified_at: None,
         };
         self.current = Some(session);
         self.current.as_ref().unwrap()
@@ -128,6 +144,21 @@ impl SessionManager {
         if let Some(session) = &mut self.current {
             session.is_locked = true;
         }
+    }
+
+    /// Record a successful step-up password verification.
+    pub fn record_step_up(&mut self) {
+        if let Some(session) = &mut self.current {
+            session.step_up_verified_at = Some(Instant::now());
+        }
+    }
+
+    /// True if the current session has a valid (non-expired) step-up verification.
+    pub fn is_step_up_valid(&self) -> bool {
+        self.current
+            .as_ref()
+            .map(|s| s.is_step_up_valid())
+            .unwrap_or(false)
     }
 
     /// Clear the current session (logout or forced expiry).
@@ -331,5 +362,26 @@ mod tests {
         assert_eq!(info.user_id, Some(1));
         assert_eq!(info.username.as_deref(), Some("test_user"));
         assert_eq!(info.is_admin, Some(false));
+    }
+
+    #[test]
+    fn step_up_not_valid_by_default() {
+        let mut mgr = SessionManager::new();
+        mgr.create_session(make_user());
+        assert!(!mgr.is_step_up_valid());
+    }
+
+    #[test]
+    fn record_step_up_makes_it_valid() {
+        let mut mgr = SessionManager::new();
+        mgr.create_session(make_user());
+        mgr.record_step_up();
+        assert!(mgr.is_step_up_valid());
+    }
+
+    #[test]
+    fn step_up_on_no_session_is_not_valid() {
+        let mgr = SessionManager::new();
+        assert!(!mgr.is_step_up_valid());
     }
 }

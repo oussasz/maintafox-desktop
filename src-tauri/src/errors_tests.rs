@@ -108,6 +108,11 @@ mod errors_tests {
                 "PERMISSION_DENIED",
             ),
             (
+                AppError::PermissionDenied("x".into()),
+                "PERMISSION_DENIED",
+            ),
+            (AppError::StepUpRequired, "STEP_UP_REQUIRED"),
+            (
                 AppError::Internal(anyhow::anyhow!("boom")),
                 "INTERNAL_ERROR",
             ),

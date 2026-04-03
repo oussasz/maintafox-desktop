@@ -247,6 +247,40 @@ Each entry must include:
 
 ---
 
+### `get_my_permissions`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/rbac.rs` |
+| **Input** | None |
+| **Output** | `AppResult<Vec<PermissionRecord>>` → `PermissionRecord[]` |
+| **TS Type** | `PermissionRecord` in `shared/ipc-types.ts` |
+| **Auth required** | Yes |
+| **AppState fields** | `db` (read), `session` (read) |
+| **TS Service** | `rbac-service.ts::getMyPermissions` |
+| **Phase** | Phase 1 · Sub-phase 04 · File 03 · Sprint S3 |
+| **Description** | Returns the effective permission set for the currently authenticated user. Called after login to populate the frontend permission store so that `<PermissionGate>` and `usePermissions().can()` work without per-check round-trips. |
+| **Errors** | `AUTH_ERROR` if no session |
+| **PRD Ref** | §6.7 Role-Based Access Control |
+
+---
+
+### `verify_step_up`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/rbac.rs` |
+| **Input** | `StepUpRequest { password: string }` |
+| **Output** | `AppResult<StepUpResponse>` → `{ success: boolean, expires_at: string }` |
+| **TS Type** | `StepUpRequest`, `StepUpResponse` in `shared/ipc-types.ts` |
+| **Auth required** | Yes |
+| **AppState fields** | `db` (read), `session` (read + write) |
+| **TS Service** | `rbac-service.ts::verifyStepUp` |
+| **Phase** | Phase 1 · Sub-phase 04 · File 03 · Sprint S2 |
+| **Description** | Verifies the user's password for dangerous-action step-up authorization. On success, records the verification timestamp in the in-memory session. The step-up window (120 seconds) starts from this moment. Subsequent calls to `require_step_up!` or `require_permission!` (for dangerous permissions) will pass within this window. |
+| **Errors** | `AUTH_ERROR` if no session or wrong password |
+| **PRD Ref** | §6.7 Dangerous Action Guards |
+
+---
+
 ## Command Summary
 
 | Command | Rust handler | Auth required | AppState fields used | TypeScript service |
@@ -265,6 +299,8 @@ Each entry must include:
 | `get_session_info` | `commands::auth::get_session_info` | No | `session` (read) | `auth-service.ts::getSessionInfo` |
 | `get_device_trust_status` | `commands::auth::get_device_trust_status` | Yes | `db` (read), `session` (read) | `auth-service.ts::getDeviceTrustStatus` |
 | `revoke_device_trust` | `commands::auth::revoke_device_trust` | Yes + adm.users | `db` (read + write), `session` (read) | `auth-service.ts::revokeDeviceTrust` |
+| `get_my_permissions` | `commands::rbac::get_my_permissions` | Yes | `db` (read), `session` (read) | `rbac-service.ts::getMyPermissions` |
+| `verify_step_up` | `commands::rbac::verify_step_up` | Yes | `db` (read), `session` (read + write) | `rbac-service.ts::verifyStepUp` |
 
 ## Rules
 

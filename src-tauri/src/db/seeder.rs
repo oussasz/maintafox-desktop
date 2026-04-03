@@ -238,7 +238,11 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         seed_value(db, d, "PERMIS_GENERAL",   "Permis g\u{00e9}n\u{00e9}ral","Permis g\u{00e9}n\u{00e9}ral","General Permit", None, 5, true).await?;
     }
 
-    // ── 3. Record seed schema version in system_config ────────────────────
+    // ── 3. Seed RBAC: permissions and system roles ───────────────────────
+    seed_permissions(db).await?;
+    seed_system_roles(db).await?;
+
+    // ── 4. Record seed schema version in system_config ────────────────────
     let now = Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -249,7 +253,7 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     ))
     .await?;
 
-    // ── 4. Seed bootstrap admin account ───────────────────────────────────
+    // ── 5. Seed bootstrap admin account ───────────────────────────────────
     seed_admin_account(db).await?;
 
     tracing::info!("seeder::complete — system seed version {} applied", SEED_SCHEMA_VERSION);
@@ -342,6 +346,294 @@ async fn seed_value(
             now.clone().into(),
             now.into(),
         ],
+    ))
+    .await?;
+    Ok(())
+}
+
+// ── Helper: seed bootstrap admin account ──────────────────────────────────
+
+// ── RBAC seeding: permissions and system roles ────────────────────────────
+
+/// Seeds the full permission catalogue from PRD §6.7.
+/// Uses INSERT OR IGNORE — safe to call multiple times.
+/// Permissions are ordered by domain prefix then action suffix.
+/// All seeded permissions have is_system = 1 and cannot be deleted.
+async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
+    // Permission rows: (name, description, category, is_dangerous, requires_step_up)
+    // Format: dot-notation `domain.action`
+    let permissions: &[(&str, &str, &str, bool, bool)] = &[
+        // ── Equipment (eq) ──────────────────────────────────────────────────
+        ("eq.view",          "View equipment registry",              "equipment",       false, false),
+        ("eq.manage",        "Create/edit equipment records",        "equipment",       false, false),
+        ("eq.import",        "Import equipment from CSV / ERP",      "equipment",       false, false),
+        ("eq.delete",        "Soft-delete equipment records",        "equipment",       true,  true),
+        // ── Intervention Requests (di) ────────────────────────────────────
+        ("di.view",          "View intervention requests",           "intervention",    false, false),
+        ("di.create",        "Create intervention requests",         "intervention",    false, false),
+        ("di.edit",          "Edit intervention requests",           "intervention",    false, false),
+        ("di.delete",        "Delete intervention requests",         "intervention",    true,  true),
+        ("di.close",         "Close/resolve intervention requests",  "intervention",    false, false),
+        // ── Work Orders (ot) ──────────────────────────────────────────────
+        ("ot.view",          "View work orders",                     "work_order",      false, false),
+        ("ot.create",        "Create work orders",                   "work_order",      false, false),
+        ("ot.edit",          "Edit work orders",                     "work_order",      false, false),
+        ("ot.delete",        "Delete work orders",                   "work_order",      true,  true),
+        ("ot.close",         "Close work orders",                    "work_order",      false, false),
+        ("ot.approve",       "Approve work order execution",         "work_order",      false, false),
+        // ── Organization (org) ───────────────────────────────────────────
+        ("org.view",         "View organizational structure",        "organization",    false, false),
+        ("org.manage",       "Create/edit org nodes and entities",   "organization",    false, false),
+        // ── Personnel (per) ──────────────────────────────────────────────
+        ("per.view",         "View personnel records",               "personnel",       false, false),
+        ("per.manage",       "Create/edit personnel records",        "personnel",       false, false),
+        ("per.sensitiveview","View sensitive personnel fields",      "personnel",       false, false),
+        // ── Reference Data (ref) ─────────────────────────────────────────
+        ("ref.view",         "View reference/lookup values",         "reference",       false, false),
+        ("ref.manage",       "Create/edit governed reference values", "reference",      false, false),
+        ("ref.publish",      "Publish reference changes",            "reference",       true,  true),
+        // ── Inventory (inv) ──────────────────────────────────────────────
+        ("inv.view",         "View inventory and stock levels",      "inventory",       false, false),
+        ("inv.manage",       "Create/edit inventory records",        "inventory",       false, false),
+        ("inv.adjust",       "Post inventory adjustments",           "inventory",       true,  true),
+        ("inv.order",        "Create purchase / replenishment orders","inventory",      false, false),
+        // ── Preventive Maintenance (pm) ──────────────────────────────────
+        ("pm.view",          "View PM plans and schedules",          "maintenance",     false, false),
+        ("pm.manage",        "Create/edit PM plans",                 "maintenance",     false, false),
+        ("pm.approve",       "Approve PM plan changes",              "maintenance",     false, false),
+        // ── RAMS / Reliability (ram) ─────────────────────────────────────
+        ("ram.view",         "View RAMS / reliability data",         "reliability",     false, false),
+        ("ram.manage",       "Edit RAMS records and failure modes",  "reliability",     false, false),
+        // ── Reports & Analytics (rep) ─────────────────────────────────────
+        ("rep.view",         "View standard reports",                "reporting",       false, false),
+        ("rep.export",       "Export report data",                   "reporting",       false, false),
+        ("rep.manage",       "Create/edit custom reports",           "reporting",       false, false),
+        // ── Archive Explorer (arc) ────────────────────────────────────────
+        ("arc.view",         "Browse archive entries",               "archive",         false, false),
+        ("arc.export",       "Export archived data",                 "archive",         false, false),
+        // ── Documentation (doc) ──────────────────────────────────────────
+        ("doc.view",         "View documentation and help content",  "documentation",   false, false),
+        ("doc.manage",       "Create/edit documentation articles",   "documentation",   false, false),
+        // ── Administration (adm) ─────────────────────────────────────────
+        ("adm.users",        "Manage user accounts",                 "administration",  true,  true),
+        ("adm.roles",        "Manage roles and permissions",         "administration",  true,  true),
+        ("adm.permissions",  "Assign permissions to roles",          "administration",  true,  true),
+        ("adm.settings",     "Manage application settings",          "administration",  false, false),
+        ("adm.audit",        "View the full audit log",              "administration",  false, false),
+        // ── Planning (plan) ──────────────────────────────────────────────
+        ("plan.view",        "View planning and scheduling data",    "planning",        false, false),
+        ("plan.manage",      "Manage planning schedules",            "planning",        false, false),
+        // ── Audit Log (log) ──────────────────────────────────────────────
+        ("log.view",         "View activity feed",                   "audit",           false, false),
+        ("log.export",       "Export audit log data",                "audit",           true,  true),
+        // ── Training (trn) ───────────────────────────────────────────────
+        ("trn.view",         "View training and certification records","training",      false, false),
+        ("trn.manage",       "Manage training records and plans",    "training",        false, false),
+        ("trn.certify",      "Issue or revoke certifications",       "training",        true,  true),
+        // ── IoT Integration (iot) ────────────────────────────────────────
+        ("iot.view",         "View IoT device data and readings",    "integration",     false, false),
+        ("iot.manage",       "Configure IoT gateways and devices",   "integration",     false, false),
+        // ── ERP Connector (erp) ──────────────────────────────────────────
+        ("erp.view",         "View ERP sync status and mappings",    "integration",     false, false),
+        ("erp.manage",       "Configure ERP integration settings",   "integration",     true,  true),
+        ("erp.sync",         "Trigger manual ERP synchronization",   "integration",     true,  true),
+        // ── Work Permits (ptw) ───────────────────────────────────────────
+        ("ptw.view",         "View work permits",                    "safety",          false, false),
+        ("ptw.create",       "Create work permits",                  "safety",          false, false),
+        ("ptw.approve",      "Approve or reject work permits",       "safety",          true,  true),
+        ("ptw.cancel",       "Cancel active work permits",           "safety",          true,  true),
+        // ── Budget / Finance (fin) ───────────────────────────────────────
+        ("fin.view",         "View budgets and cost data",           "finance",         false, false),
+        ("fin.manage",       "Manage budgets and cost centers",      "finance",         false, false),
+        ("fin.approve",      "Approve budget changes",               "finance",         true,  true),
+        // ── Inspection (ins) ─────────────────────────────────────────────
+        ("ins.view",         "View inspection rounds and checklists","inspection",      false, false),
+        ("ins.manage",       "Create/edit inspection rounds",        "inspection",      false, false),
+        ("ins.complete",     "Complete inspection round executions",  "inspection",     false, false),
+        // ── Configuration Engine (cfg) ───────────────────────────────────
+        ("cfg.view",         "View tenant configuration",            "configuration",   false, false),
+        ("cfg.manage",       "Manage tenant configuration rules",    "configuration",   true,  true),
+        ("cfg.publish",      "Publish configuration changes",        "configuration",   true,  true),
+    ];
+
+    let now = Utc::now().to_rfc3339();
+
+    for (name, desc, category, is_dangerous, requires_step_up) in permissions {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r#"INSERT OR IGNORE INTO permissions
+                   (name, description, category, is_dangerous, requires_step_up, is_system, created_at)
+               VALUES (?, ?, ?, ?, ?, 1, ?)"#,
+            [
+                (*name).into(),
+                (*desc).into(),
+                (*category).into(),
+                (*is_dangerous as i32).into(),
+                (*requires_step_up as i32).into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+    }
+
+    tracing::info!(count = permissions.len(), "seeder::permissions_seeded");
+    Ok(())
+}
+
+/// Seeds the 4 system roles and assigns their initial permissions.
+/// System roles are non-deletable and are the baseline for role templates.
+async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
+    let now = Utc::now().to_rfc3339();
+
+    let system_roles: &[(&str, &str, &str)] = &[
+        ("Administrator", "Full system access. Cannot be deleted.", "system"),
+        ("Supervisor",    "Full operational access. Can manage work, personnel, inventory.", "system"),
+        ("Operator",      "Day-to-day CMMS use: view all, create and edit operational records.", "system"),
+        ("Readonly",      "Read-only access to all operational modules.", "system"),
+    ];
+
+    for (name, desc, role_type) in system_roles {
+        let sync_id = Uuid::new_v4().to_string();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r#"INSERT OR IGNORE INTO roles
+                   (sync_id, name, description, is_system, role_type, status, created_at, updated_at, row_version)
+               VALUES (?, ?, ?, 1, ?, 'active', ?, ?, 1)"#,
+            [
+                sync_id.into(),
+                (*name).into(),
+                (*desc).into(),
+                (*role_type).into(),
+                now.clone().into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+    }
+
+    // ── Assign permissions to roles using name-based resolution ───────────
+
+    // Administrator -> all permissions
+    if let Some(rid) = get_role_id_by_name(db, "Administrator").await? {
+        assign_all_permissions_to_role(db, rid, &now).await?;
+    }
+
+    // Supervisor -> all operational permissions (excludes admin-only and config-only)
+    let excluded_for_supervisor = [
+        "adm.users", "adm.roles", "adm.permissions",
+        "cfg.manage", "cfg.publish",
+        "erp.manage", "erp.sync",
+        "log.export",
+    ];
+    if let Some(rid) = get_role_id_by_name(db, "Supervisor").await? {
+        assign_permissions_excluding(db, rid, &excluded_for_supervisor, &now).await?;
+    }
+
+    // Operator -> view + create/edit operational modules, no delete/approve/dangerous
+    let operator_permissions = [
+        "eq.view", "eq.manage",
+        "di.view", "di.create", "di.edit", "di.close",
+        "ot.view", "ot.create", "ot.edit",
+        "org.view",
+        "per.view",
+        "ref.view",
+        "inv.view", "inv.manage",
+        "pm.view",
+        "ram.view",
+        "rep.view",
+        "arc.view",
+        "doc.view",
+        "plan.view",
+        "log.view",
+        "trn.view",
+        "iot.view",
+        "erp.view",
+        "ptw.view", "ptw.create",
+        "fin.view",
+        "ins.view", "ins.complete",
+        "cfg.view",
+        "adm.settings",
+    ];
+    if let Some(rid) = get_role_id_by_name(db, "Operator").await? {
+        for perm_name in &operator_permissions {
+            assign_permission_by_name(db, rid, perm_name, &now).await?;
+        }
+    }
+
+    // Readonly -> only *.view permissions (subset of operator's list)
+    if let Some(rid) = get_role_id_by_name(db, "Readonly").await? {
+        let view_perms: Vec<&str> = operator_permissions.iter()
+            .copied()
+            .filter(|p| p.ends_with(".view"))
+            .collect();
+        for perm_name in view_perms {
+            assign_permission_by_name(db, rid, perm_name, &now).await?;
+        }
+    }
+
+    tracing::info!("seeder::system_roles_seeded");
+    Ok(())
+}
+
+// ── RBAC seeder helpers ───────────────────────────────────────────────────
+
+async fn get_role_id_by_name(db: &DatabaseConnection, name: &str) -> AppResult<Option<i32>> {
+    let row = db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT id FROM roles WHERE name = ? AND deleted_at IS NULL",
+        [name.into()],
+    ))
+    .await?;
+    Ok(row.and_then(|r| r.try_get::<i32>("", "id").ok()))
+}
+
+async fn assign_all_permissions_to_role(
+    db: &DatabaseConnection,
+    role_id: i32,
+    now: &str,
+) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r#"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
+           SELECT ?, id, ? FROM permissions WHERE is_system = 1"#,
+        [role_id.into(), now.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+async fn assign_permissions_excluding(
+    db: &DatabaseConnection,
+    role_id: i32,
+    excluded: &[&str],
+    now: &str,
+) -> AppResult<()> {
+    let placeholders = excluded.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        r#"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
+           SELECT ?, id, ? FROM permissions
+           WHERE is_system = 1 AND name NOT IN ({placeholders})"#,
+    );
+    let mut values: Vec<sea_orm::Value> = vec![role_id.into(), now.into()];
+    for e in excluded {
+        values.push((*e).into());
+    }
+    db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+        .await?;
+    Ok(())
+}
+
+async fn assign_permission_by_name(
+    db: &DatabaseConnection,
+    role_id: i32,
+    permission_name: &str,
+    now: &str,
+) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r#"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
+           SELECT ?, id, ? FROM permissions WHERE name = ?"#,
+        [role_id.into(), now.into(), permission_name.into()],
     ))
     .await?;
     Ok(())
