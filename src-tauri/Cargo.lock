@@ -2775,6 +2775,7 @@ dependencies = [
  "argon2",
  "chrono",
  "keyring",
+ "rand_core 0.6.4",
  "sea-orm",
  "sea-orm-migration",
  "serde",

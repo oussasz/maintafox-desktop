@@ -129,4 +129,27 @@ export interface IntegrityReport {
   value_count: number;
 }
 
+// ─── Authentication & Session ──────────────────────────────────────────────
+
+export interface SessionInfo {
+  is_authenticated: boolean;
+  is_locked: boolean;
+  user_id: number | null;
+  username: string | null;
+  display_name: string | null;
+  is_admin: boolean | null;
+  force_password_change: boolean | null;
+  expires_at: string | null; // ISO 8601
+  last_activity_at: string | null; // ISO 8601
+}
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  session_info: SessionInfo;
+}
+
 // Frontend invokes via: invoke("shutdown_app")

@@ -3,11 +3,12 @@
 //! Rules:
 //!   - `AppState` is immutable after initialization (Arc wraps mutable sub-components).
 //!   - No global statics — all access is through `tauri::State<AppState>`.
-//!   - Session manager is a stub in Phase 1; Sub-phase 04 replaces the inner type.
+//!   - Session manager holds the active user session (login/logout/idle-lock).
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::auth::session_manager::SessionManager;
 use crate::background::BackgroundTaskSupervisor;
 
 /// Database connection pool managed by sea-orm.
@@ -33,14 +34,6 @@ impl Default for AppConfig {
     }
 }
 
-/// Phase 1 session manager stub.
-/// Sub-phase 04 replaces this with a real session keying and lifecycle implementation.
-#[derive(Debug, Default)]
-pub struct SessionManagerStub {
-    /// Whether there is an active authenticated session.
-    pub has_active_session: bool,
-}
-
 /// Central application state shared across all IPC commands.
 ///
 /// Obtain via `tauri::State<AppState>` in command handlers.
@@ -52,8 +45,8 @@ pub struct AppState {
     pub db: DbPool,
     /// Application configuration cache. `Arc<RwLock<>>` so Settings module can hot-reload.
     pub config: Arc<RwLock<AppConfig>>,
-    /// Session manager stub (Phase 1). Replaced in Sub-phase 04.
-    pub session: Arc<RwLock<SessionManagerStub>>,
+    /// Session manager: owns the in-memory session and enforces expiry/idle-lock.
+    pub session: Arc<RwLock<SessionManager>>,
     /// Background task supervisor. Clone is cheap (Arc inside).
     pub tasks: BackgroundTaskSupervisor,
 }
@@ -64,7 +57,7 @@ impl AppState {
         Self {
             db,
             config: Arc::new(RwLock::new(AppConfig::default())),
-            session: Arc::new(RwLock::new(SessionManagerStub::default())),
+            session: Arc::new(RwLock::new(SessionManager::new())),
             tasks: BackgroundTaskSupervisor::new(),
         }
     }

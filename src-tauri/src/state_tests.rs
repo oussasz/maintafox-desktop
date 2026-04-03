@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod state_tests {
-    use crate::state::{AppConfig, SessionManagerStub};
+    use crate::auth::session_manager::SessionManager;
+    use crate::state::AppConfig;
 
     // ── AppConfig defaults ──────────────────────────────────────────────
 
@@ -31,18 +32,18 @@ mod state_tests {
         assert_eq!(cloned.app_name, "Changed");
     }
 
-    // ── SessionManagerStub ──────────────────────────────────────────────
+    // ── SessionManager (replaces SessionManagerStub from SP02) ──────────
 
     #[test]
-    fn session_stub_default_has_no_active_session() {
-        let stub = SessionManagerStub::default();
-        assert!(!stub.has_active_session);
+    fn session_manager_default_has_no_active_session() {
+        let mgr = SessionManager::new();
+        assert!(!mgr.is_authenticated());
     }
 
     #[test]
-    fn session_stub_can_be_toggled() {
-        let mut stub = SessionManagerStub::default();
-        stub.has_active_session = true;
-        assert!(stub.has_active_session);
+    fn session_manager_current_is_none_by_default() {
+        let mgr = SessionManager::new();
+        assert!(mgr.current.is_none());
+        assert!(mgr.current_user().is_none());
     }
 }

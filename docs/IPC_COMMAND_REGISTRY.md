@@ -163,6 +163,56 @@ Each entry must include:
 
 ---
 
+### `login`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/auth.rs` |
+| **Input** | `LoginRequest { username: string, password: string }` |
+| **Output** | `AppResult<LoginResponse>` → `{ session_info: SessionInfo }` |
+| **TS Type** | `LoginRequest`, `LoginResponse`, `SessionInfo` in `shared/ipc-types.ts` |
+| **Auth required** | No |
+| **AppState fields** | `db` (read + write), `session` (write) |
+| **TS Service** | `auth-service.ts::login` |
+| **Phase** | Phase 1 · Sub-phase 04 · File 01 · Sprint S2 |
+| **Description** | Authenticate with a local username and password. On success, creates an in-memory session and returns session info. On failure, always returns the same opaque error message to prevent user enumeration. |
+| **Errors** | `AUTH_ERROR: "Identifiant ou mot de passe invalide."` |
+| **PRD Ref** | §6.1 Authentication & Session Management |
+
+---
+
+### `logout`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/auth.rs` |
+| **Input** | None |
+| **Output** | `AppResult<()>` → `null` |
+| **TS Type** | — |
+| **Auth required** | No (safe to call without session) |
+| **AppState fields** | `session` (write) |
+| **TS Service** | `auth-service.ts::logout` |
+| **Phase** | Phase 1 · Sub-phase 04 · File 01 · Sprint S2 |
+| **Description** | Clears the active session. Always succeeds, even if no session is active. |
+| **Errors** | None |
+
+---
+
+### `get_session_info`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/auth.rs` |
+| **Input** | None |
+| **Output** | `AppResult<SessionInfo>` → `SessionInfo` |
+| **TS Type** | `SessionInfo` in `shared/ipc-types.ts` |
+| **Auth required** | No |
+| **AppState fields** | `session` (read) |
+| **TS Service** | `auth-service.ts::getSessionInfo` |
+| **Phase** | Phase 1 · Sub-phase 04 · File 01 · Sprint S2 |
+| **Description** | Returns the current session state. Always returns a valid `SessionInfo` with `is_authenticated: false` when no session is active. Called by the frontend on startup to determine which screen to show. |
+| **Errors** | None |
+| **PRD Ref** | §6.1 |
+
+---
+
 ## Command Summary
 
 | Command | Rust handler | Auth required | AppState fields used | TypeScript service |
@@ -176,6 +226,9 @@ Each entry must include:
 | `get_lookup_value_by_id` | `commands::lookup::get_lookup_value_by_id` | No | `db` (read) | `lookup-service.ts::getLookupValueById` |
 | `run_integrity_check` | `commands::diagnostics::run_integrity_check` | No | `db` (read) | `diagnostics-service.ts::runIntegrityCheck` |
 | `repair_seed_data` | `commands::diagnostics::repair_seed_data` | No | `db` (read + write) | `diagnostics-service.ts::repairSeedData` |
+| `login` | `commands::auth::login` | No | `db` (read + write), `session` (write) | `auth-service.ts::login` |
+| `logout` | `commands::auth::logout` | No | `session` (write) | `auth-service.ts::logout` |
+| `get_session_info` | `commands::auth::get_session_info` | No | `session` (read) | `auth-service.ts::getSessionInfo` |
 
 ## Rules
 

@@ -249,6 +249,9 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     ))
     .await?;
 
+    // ── 4. Seed bootstrap admin account ───────────────────────────────────
+    seed_admin_account(db).await?;
+
     tracing::info!("seeder::complete — system seed version {} applied", SEED_SCHEMA_VERSION);
     Ok(())
 }
@@ -341,6 +344,60 @@ async fn seed_value(
         ],
     ))
     .await?;
+    Ok(())
+}
+
+// ── Helper: seed bootstrap admin account ──────────────────────────────────
+
+/// Seeds the initial admin account for first launch.
+/// Uses username "admin" with a known dev password "Admin#2026!" that forces
+/// a password change on first login (`force_password_change = 1`).
+///
+/// This is only a development bootstrap credential. In production, the
+/// first-launch wizard sets the administrator password interactively.
+///
+/// Safety: checks for existing admin and skips if present — will not
+/// overwrite an existing admin account or its password.
+async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
+    use crate::auth::password::hash_password;
+
+    let existing = db.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT id FROM user_accounts WHERE username = ?",
+        ["admin".into()],
+    ))
+    .await?;
+
+    if existing.is_some() {
+        tracing::debug!("seeder::admin_account already exists, skipping");
+        return Ok(());
+    }
+
+    let password_hash = hash_password("Admin#2026!")?;
+
+    let now = Utc::now().to_rfc3339();
+    let sync_id = Uuid::new_v4().to_string();
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r#"INSERT OR IGNORE INTO user_accounts
+               (sync_id, username, display_name, identity_mode, password_hash,
+                is_active, is_admin, force_password_change,
+                failed_login_attempts, created_at, updated_at, row_version)
+           VALUES (?, ?, ?, ?, ?, 1, 1, 1, 0, ?, ?, 1)"#,
+        [
+            sync_id.into(),
+            "admin".into(),
+            "Administrateur Maintafox".into(),
+            "local".into(),
+            password_hash.into(),
+            now.clone().into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+
+    tracing::info!("seeder::admin_account created (force_password_change=1)");
     Ok(())
 }
 
