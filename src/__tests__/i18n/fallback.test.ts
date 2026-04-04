@@ -44,11 +44,13 @@ describe("i18n fallback chain", () => {
 
   it("returns English fallback when key is missing in fr but exists in en", () => {
     // "action.onlyInEnglish" is not in the fr resources
+    // @ts-expect-error — deliberate test key not in typed namespace
     const result = i18n.t("action.onlyInEnglish", { ns: "common" });
     expect(result).toBe("Only in English");
   });
 
   it("returns [key] pattern when key is missing in BOTH fr and en", () => {
+    // @ts-expect-error — deliberate test key not in typed namespace
     const result = i18n.t("action.nonExistentKey", { ns: "common" });
     // parseMissingKeyHandler returns "[key]" not an empty string
     expect(result).toContain("nonExistentKey");
