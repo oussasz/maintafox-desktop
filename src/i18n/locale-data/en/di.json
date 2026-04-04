@@ -1,0 +1,95 @@
+{
+  "page": {
+    "title": "Intervention Requests",
+    "titleDetail": "Request detail",
+    "titleNew": "New request",
+    "titleEdit": "Edit request"
+  },
+  "list": {
+    "columns": {
+      "number": "No.",
+      "subject": "Subject",
+      "equipment": "Equipment",
+      "status": "Status",
+      "priority": "Priority",
+      "reportedBy": "Reported by",
+      "reportedAt": "Reported on",
+      "assignedTo": "Assigned to",
+      "sla": "SLA"
+    },
+    "filters": {
+      "status": "Status",
+      "priority": "Priority",
+      "assignedTo": "Assigned to",
+      "dateRange": "Date range"
+    }
+  },
+  "detail": {
+    "sections": {
+      "request": "Request",
+      "analysis": "Analysis",
+      "resolution": "Resolution",
+      "history": "History"
+    },
+    "fields": {
+      "number": "Number",
+      "subject": "Subject",
+      "description": "Description",
+      "equipment": "Equipment",
+      "priority": "Priority",
+      "status": "Status",
+      "reportedBy": "Reported by",
+      "reportedAt": "Reported on",
+      "assignedTo": "Assigned to",
+      "dueDate": "Due date",
+      "closedAt": "Closed on",
+      "conclusion": "Conclusion"
+    }
+  },
+  "form": {
+    "subject": {
+      "label": "Subject",
+      "placeholder": "Briefly describe the problem"
+    },
+    "description": {
+      "label": "Detailed description",
+      "placeholder": "Describe the symptom, conditions..."
+    },
+    "equipment": {
+      "label": "Equipment",
+      "placeholder": "Select equipment"
+    },
+    "priority": {
+      "label": "Priority"
+    }
+  },
+  "status": {
+    "new": "New",
+    "inReview": "In review",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "inProgress": "In progress",
+    "resolved": "Resolved",
+    "closed": "Closed",
+    "cancelled": "Cancelled"
+  },
+  "priority": {
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "critical": "Critical"
+  },
+  "action": {
+    "approve": "Approve",
+    "reject": "Reject",
+    "assignTo": "Assign to",
+    "convertToWO": "Convert to Work Order",
+    "close": "Close",
+    "addComment": "Add comment"
+  },
+  "empty": {
+    "list": "No intervention requests found.",
+    "listHint": "Create a new request or adjust the filters.",
+    "noComments": "No comments for this request."
+  }
+}

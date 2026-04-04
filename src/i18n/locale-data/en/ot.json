@@ -1,0 +1,104 @@
+{
+  "page": {
+    "title": "Work Orders",
+    "titleDetail": "Work order detail",
+    "titleNew": "New work order",
+    "titleEdit": "Edit work order"
+  },
+  "list": {
+    "columns": {
+      "number": "WO No.",
+      "title": "Title",
+      "equipment": "Equipment",
+      "type": "Type",
+      "status": "Status",
+      "priority": "Priority",
+      "assignedTo": "Assigned to",
+      "plannedStart": "Planned start",
+      "plannedEnd": "Planned end",
+      "closedAt": "Closed on"
+    },
+    "filters": {
+      "status": "Status",
+      "type": "Type",
+      "priority": "Priority",
+      "assignedTo": "Assigned to"
+    }
+  },
+  "detail": {
+    "sections": {
+      "general": "General",
+      "planning": "Planning",
+      "labor": "Labor",
+      "parts": "Parts & materials",
+      "delays": "Delays",
+      "closeout": "Closeout",
+      "history": "History"
+    },
+    "fields": {
+      "number": "Number",
+      "title": "Title",
+      "description": "Description",
+      "equipment": "Equipment",
+      "type": "Work type",
+      "priority": "Priority",
+      "status": "Status",
+      "assignedTo": "Assigned to",
+      "team": "Team",
+      "plannedStart": "Planned start",
+      "plannedEnd": "Planned end",
+      "actualStart": "Actual start",
+      "actualEnd": "Actual end",
+      "estimatedHours": "Estimated hours",
+      "actualHours": "Actual hours",
+      "conclusion": "Closeout report"
+    }
+  },
+  "form": {
+    "title": {
+      "label": "Title",
+      "placeholder": "Short description of the work"
+    },
+    "description": {
+      "label": "Description",
+      "placeholder": "Detailed instructions for the technician"
+    }
+  },
+  "status": {
+    "draft": "Draft",
+    "planned": "Planned",
+    "released": "Released",
+    "inProgress": "In progress",
+    "onHold": "On hold",
+    "completed": "Completed",
+    "verified": "Verified",
+    "closed": "Closed",
+    "cancelled": "Cancelled"
+  },
+  "type": {
+    "corrective": "Corrective",
+    "preventive": "Preventive",
+    "predictive": "Predictive",
+    "improvement": "Improvement",
+    "inspection": "Inspection",
+    "permit": "Work permit"
+  },
+  "action": {
+    "release": "Release WO",
+    "start": "Start",
+    "pause": "Put on hold",
+    "complete": "Mark complete",
+    "verify": "Verify and approve",
+    "close": "Close",
+    "addLabor": "Add labor",
+    "addPart": "Add part",
+    "addDelay": "Record delay"
+  },
+  "empty": {
+    "list": "No work orders found.",
+    "listHint": "Create a new work order or adjust the filters.",
+    "noParts": "No parts consumed.",
+    "noLabor": "No labor recorded.",
+    "noDelays": "No delays recorded."
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "required": "This field is required.",
+  "minLength": "Minimum {{min}} characters required.",
+  "maxLength": "Maximum {{max}} characters allowed.",
+  "minValue": "Minimum value is {{min}}.",
+  "maxValue": "Maximum value is {{max}}.",
+  "pattern": {
+    "generic": "Invalid format.",
+    "email": "Invalid email address.",
+    "phone": "Invalid phone number.",
+    "url": "Invalid URL.",
+    "alphanumeric": "Letters and numbers only.",
+    "numeric": "Only digits are allowed.",
+    "code": "Invalid code (uppercase letters, numbers, hyphens and underscores only).",
+    "noSpecialChars": "Special characters are not allowed.",
+    "permissionName": "Invalid permission format (e.g., eq.view).",
+    "date": "Invalid date. Expected format: MM/DD/YYYY.",
+    "positiveNumber": "Value must be a positive number.",
+    "ipAddress": "Invalid IP address.",
+    "macAddress": "Invalid MAC address."
+  },
+  "unique": "This value already exists.",
+  "password": {
+    "tooShort": "Password must be at least 10 characters.",
+    "tooWeak": "Password must include uppercase, lowercase, numbers and special characters.",
+    "mismatch": "Passwords do not match.",
+    "sameAsCurrent": "New password must differ from the current one.",
+    "compromised": "This password is too common. Please choose another."
+  },
+  "date": {
+    "invalid": "Invalid date.",
+    "beforeMin": "Date cannot be before {{min}}.",
+    "afterMax": "Date cannot be after {{max}}.",
+    "endBeforeStart": "End date must be after start date."
+  },
+  "file": {
+    "tooLarge": "File too large. Maximum size: {{maxSizeMb}} MB.",
+    "invalidType": "File type not allowed. Accepted types: {{types}}.",
+    "required": "Please select a file.",
+    "uploadFailed": "File upload failed."
+  },
+  "form": {
+    "hasErrors": "The form contains errors. Please correct them before submitting.",
+    "saved": "Saved successfully.",
+    "saveError": "Save failed. Please try again.",
+    "unsavedChanges": "You have unsaved changes.",
+    "confirmDiscard": "Do you want to discard the changes?"
+  }
+}

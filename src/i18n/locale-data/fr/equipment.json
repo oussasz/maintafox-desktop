@@ -1,0 +1,91 @@
+{
+  "page": {
+    "title": "Équipements",
+    "titleDetail": "Détail de l'équipement",
+    "titleNew": "Nouvel équipement",
+    "titleEdit": "Modifier l'équipement"
+  },
+  "list": {
+    "columns": {
+      "code": "Code",
+      "name": "Désignation",
+      "class": "Classe",
+      "site": "Site",
+      "status": "Statut",
+      "criticality": "Criticité",
+      "family": "Famille",
+      "parentName": "Équipement parent"
+    },
+    "filters": {
+      "status": "Statut",
+      "class": "Classe",
+      "site": "Site",
+      "criticality": "Criticité"
+    }
+  },
+  "detail": {
+    "sections": {
+      "identity": "Identité",
+      "location": "Localisation",
+      "technical": "Données techniques",
+      "lifecycle": "Cycle de vie",
+      "meters": "Compteurs",
+      "documents": "Documents",
+      "history": "Historique"
+    },
+    "fields": {
+      "code": "Code équipement",
+      "name": "Désignation",
+      "class": "Classe",
+      "family": "Famille",
+      "parentEquipment": "Équipement parent",
+      "criticality": "Criticité",
+      "status": "Statut",
+      "site": "Site",
+      "entity": "Entité",
+      "manufacturer": "Fabricant",
+      "model": "Modèle",
+      "serialNumber": "N° de série",
+      "commissioningDate": "Date de mise en service",
+      "endOfLifeDate": "Date de fin de vie",
+      "technicalNotes": "Notes techniques"
+    }
+  },
+  "form": {
+    "identity": {
+      "title": "Identité de l'équipement",
+      "code": {
+        "label": "Code équipement",
+        "placeholder": "EQ-001",
+        "hint": "Code unique identifiant l'équipement."
+      },
+      "name": {
+        "label": "Désignation",
+        "placeholder": "Nom descriptif de l'équipement"
+      }
+    },
+    "classification": {
+      "title": "Classification"
+    }
+  },
+  "status": {
+    "operational": "En service",
+    "maintenance": "En maintenance",
+    "decommissioned": "Déclassé",
+    "standby": "En veille",
+    "scrapped": "Mis au rebut"
+  },
+  "action": {
+    "addMeter": "Ajouter un compteur",
+    "attachDocument": "Joindre un document",
+    "viewHistory": "Voir l'historique",
+    "reportFault": "Signaler une panne",
+    "createDI": "Créer une demande d'intervention"
+  },
+  "empty": {
+    "list": "Aucun équipement trouvé.",
+    "listHint": "Créez votre premier équipement ou ajustez les filtres.",
+    "noMeters": "Aucun compteur enregistré.",
+    "noDocuments": "Aucun document joint."
+  }
+}

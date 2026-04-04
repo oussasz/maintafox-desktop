@@ -1,0 +1,91 @@
+{
+  "page": {
+    "title": "Equipment",
+    "titleDetail": "Equipment detail",
+    "titleNew": "New equipment",
+    "titleEdit": "Edit equipment"
+  },
+  "list": {
+    "columns": {
+      "code": "Code",
+      "name": "Name",
+      "class": "Class",
+      "site": "Site",
+      "status": "Status",
+      "criticality": "Criticality",
+      "family": "Family",
+      "parentName": "Parent equipment"
+    },
+    "filters": {
+      "status": "Status",
+      "class": "Class",
+      "site": "Site",
+      "criticality": "Criticality"
+    }
+  },
+  "detail": {
+    "sections": {
+      "identity": "Identity",
+      "location": "Location",
+      "technical": "Technical data",
+      "lifecycle": "Lifecycle",
+      "meters": "Meters",
+      "documents": "Documents",
+      "history": "History"
+    },
+    "fields": {
+      "code": "Equipment code",
+      "name": "Name",
+      "class": "Class",
+      "family": "Family",
+      "parentEquipment": "Parent equipment",
+      "criticality": "Criticality",
+      "status": "Status",
+      "site": "Site",
+      "entity": "Entity",
+      "manufacturer": "Manufacturer",
+      "model": "Model",
+      "serialNumber": "Serial number",
+      "commissioningDate": "Commissioning date",
+      "endOfLifeDate": "End-of-life date",
+      "technicalNotes": "Technical notes"
+    }
+  },
+  "form": {
+    "identity": {
+      "title": "Equipment identity",
+      "code": {
+        "label": "Equipment code",
+        "placeholder": "EQ-001",
+        "hint": "Unique code identifying this equipment."
+      },
+      "name": {
+        "label": "Name",
+        "placeholder": "Descriptive equipment name"
+      }
+    },
+    "classification": {
+      "title": "Classification"
+    }
+  },
+  "status": {
+    "operational": "Operational",
+    "maintenance": "Under maintenance",
+    "decommissioned": "Decommissioned",
+    "standby": "Standby",
+    "scrapped": "Scrapped"
+  },
+  "action": {
+    "addMeter": "Add meter",
+    "attachDocument": "Attach document",
+    "viewHistory": "View history",
+    "reportFault": "Report fault",
+    "createDI": "Create intervention request"
+  },
+  "empty": {
+    "list": "No equipment found.",
+    "listHint": "Create your first equipment record or adjust the filters.",
+    "noMeters": "No meters recorded.",
+    "noDocuments": "No documents attached."
+  }
+}

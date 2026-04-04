@@ -56,7 +56,7 @@ export function Sidebar({ items }: SidebarProps) {
                 className="px-2 pt-3 pb-1 text-2xs font-semibold uppercase
                            tracking-wider text-text-muted"
               >
-                {t(group.header.labelKey)}
+                {t(group.header.labelKey as never)}
               </div>
             )}
             {/* Nav items */}
@@ -69,7 +69,7 @@ export function Sidebar({ items }: SidebarProps) {
                 <Link
                   key={item.key}
                   to={item.path}
-                  title={collapsed ? t(item.labelKey) : undefined}
+                  title={collapsed ? t(item.labelKey as never) : undefined}
                   className={cn(
                     "flex items-center gap-2.5 rounded-md px-2 py-1.5",
                     "text-sm transition-colors duration-fast",
@@ -81,7 +81,7 @@ export function Sidebar({ items }: SidebarProps) {
                   )}
                 >
                   <span className="h-4 w-4 shrink-0">{item.icon}</span>
-                  {!collapsed && <span className="truncate">{t(item.labelKey)}</span>}
+                  {!collapsed && <span className="truncate">{t(item.labelKey as never)}</span>}
                 </Link>
               );
             })}

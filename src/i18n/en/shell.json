@@ -1,11 +1,34 @@
 {
-  "sidebar": { "toggle": "Toggle sidebar" },
-  "search": { "placeholder": "Search or open a module…" },
-  "notifications": { "label": "{{count}} unread notifications" },
-  "user": { "menu": "User menu" },
+  "topBar": {
+    "notifications": "Notifications",
+    "noNotifications": "No notifications",
+    "userMenu": "User menu",
+    "profile": "My profile",
+    "settings": "Settings",
+    "language": "Language",
+    "logout": "Sign out",
+    "help": "Help",
+    "about": "About"
+  },
+  "sidebar": {
+    "toggle": "Toggle sidebar",
+    "expand": "Expand menu",
+    "collapse": "Collapse menu"
+  },
+  "search": {
+    "placeholder": "Global search...",
+    "noResults": "No results for \"{{query}}\"",
+    "hint": "Press Enter to search"
+  },
+  "notifications": {
+    "label": "{{count}} unread notifications"
+  },
+  "user": {
+    "menu": "User menu"
+  },
   "sync": {
     "offline": "Offline",
-    "syncing": "Syncing…",
+    "syncing": "Syncing\u2026",
     "error": "Sync error"
   },
   "status": {
@@ -15,8 +38,24 @@
     "dbHealthy": "Database operational",
     "pendingSync": "{{count}} pending"
   },
+  "statusBar": {
+    "online": "Online",
+    "offline": "Offline",
+    "syncing": "Syncing...",
+    "syncError": "Sync error",
+    "lastSync": "Last sync: {{time}}",
+    "appVersion": "Maintafox {{version}}"
+  },
+  "tray": {
+    "show": "Show Maintafox",
+    "hide": "Hide",
+    "quit": "Quit"
+  },
+  "session": {
+    "timeRemaining": "Session expires in {{minutes}} min"
+  },
   "startup": {
-    "loading": "Starting up…",
+    "loading": "Starting up\u2026",
     "errorTitle": "Startup error",
     "retry": "Retry"
   },
@@ -26,8 +65,8 @@
   "diagnostics": {
     "title": "Diagnostics",
     "subtitle": "Seed data integrity check and automatic repair.",
-    "checking": "Checking integrity…",
-    "repairing": "Repairing seed data…",
+    "checking": "Checking integrity\u2026",
+    "repairing": "Repairing seed data\u2026",
     "errorTitle": "Diagnostic error",
     "healthy": "All checks passed.",
     "unhealthy": "Issues detected.",
@@ -74,6 +113,9 @@
     "org": "Organization",
     "configuration": "Configuration",
     "diagnostics": "Diagnostics",
-    "profile": "My Profile"
+    "profile": "My Profile",
+    "help": "Help & Documentation",
+    "reports": "Reports",
+    "admin": "Administration"
   }
 }
