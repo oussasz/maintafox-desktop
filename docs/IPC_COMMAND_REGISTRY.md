@@ -281,6 +281,39 @@ Each entry must include:
 
 ---
 
+### `get_locale_preference`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/locale.rs` |
+| **Input** | None |
+| **Output** | `AppResult<LocalePreference>` |
+| **TS Type** | `LocalePreference` in `shared/ipc-types.ts` |
+| **Auth required** | No |
+| **AppState fields** | `db` (read) |
+| **TS Service** | `locale-service.ts::getLocalePreference` |
+| **Phase** | Phase 1 · Sub-phase 05 · File 01 · Sprint S3 |
+| **Description** | Resolves locale through the precedence chain: user preference, tenant default, OS locale, then hard fallback (`fr`). Exposed without session so the login screen can initialize language correctly. |
+| **PRD Ref** | §2.2 Strategic Objectives (Multilingual by design), §6.18 Settings |
+
+---
+
+### `set_locale_preference`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/locale.rs` |
+| **Input** | `SetLocalePayload { locale: string, as_tenant_default?: boolean }` |
+| **Output** | `AppResult<LocalePreference>` |
+| **TS Type** | `LocalePreference` in `shared/ipc-types.ts` |
+| **Auth required** | Yes (`require_session!`) |
+| **AppState fields** | `db` (read + write), `session` (read) |
+| **TS Service** | `locale-service.ts::setLocalePreference` |
+| **Phase** | Phase 1 · Sub-phase 05 · File 01 · Sprint S3 |
+| **Description** | Persists locale preference in `system_config`. Writes `locale.user_language` for user-level changes, or `locale.default_language` for tenant-level changes with `adm.settings` permission. Returns resolved locale payload after update. |
+| **Errors** | `AUTH_ERROR` if no session, `PERMISSION_DENIED` for tenant-default without `adm.settings`, `VALIDATION_ERROR` for unsupported locale |
+| **PRD Ref** | §2.2 Strategic Objectives (Multilingual by design), §6.18 Settings, §6.7 RBAC |
+
+---
+
 ## Command Summary
 
 | Command | Rust handler | Auth required | AppState fields used | TypeScript service |
@@ -301,6 +334,8 @@ Each entry must include:
 | `revoke_device_trust` | `commands::auth::revoke_device_trust` | Yes + adm.users | `db` (read + write), `session` (read) | `auth-service.ts::revokeDeviceTrust` |
 | `get_my_permissions` | `commands::rbac::get_my_permissions` | Yes | `db` (read), `session` (read) | `rbac-service.ts::getMyPermissions` |
 | `verify_step_up` | `commands::rbac::verify_step_up` | Yes | `db` (read), `session` (read + write) | `rbac-service.ts::verifyStepUp` |
+| `get_locale_preference` | `commands::locale::get_locale_preference` | No | `db` (read) | `locale-service.ts::getLocalePreference` |
+| `set_locale_preference` | `commands::locale::set_locale_preference` | Yes | `db` (read + write), `session` (read) | `locale-service.ts::setLocalePreference` |
 
 ## Rules
 

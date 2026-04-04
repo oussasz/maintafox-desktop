@@ -129,6 +129,16 @@ export interface IntegrityReport {
   value_count: number;
 }
 
+// ─── Locale / i18n ─────────────────────────────────────────────────────────
+
+export interface LocalePreference {
+  active_locale: string;
+  user_locale: string | null;
+  tenant_locale: string | null;
+  os_locale: string | null;
+  supported_locales: string[];
+}
+
 // ─── Authentication & Session ──────────────────────────────────────────────
 
 export interface SessionInfo {

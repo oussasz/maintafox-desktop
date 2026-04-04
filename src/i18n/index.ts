@@ -1,22 +1,6 @@
-import i18n from "i18next";
-import { initReactI18next } from "react-i18next";
-
-import enCommon from "./en/common.json";
-import enShell from "./en/shell.json";
-import frCommon from "./fr/common.json";
-import frShell from "./fr/shell.json";
-
-void i18n.use(initReactI18next).init({
-  resources: {
-    fr: { common: frCommon, shell: frShell },
-    en: { common: enCommon, shell: enShell },
-  },
-  lng: "fr",
-  fallbackLng: "en",
-  defaultNS: "common",
-  interpolation: {
-    escapeValue: false,
-  },
-});
-
-export default i18n;
+// src/i18n/index.ts
+// Entry point for i18n. Call initI18n() before rendering the React tree.
+import "./types";
+export { i18n, initI18n, DEFAULT_LOCALE, FALLBACK_LOCALE } from "./config";
+export { ALL_NAMESPACES, SUPPORTED_LOCALES, LOCALE_DISPLAY_NAMES } from "./namespaces";
+export type { AppNamespace, SupportedLocale, EagerNamespace, ModuleNamespace } from "./namespaces";

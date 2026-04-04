@@ -1,9 +1,13 @@
-import "@/i18n";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
+import { initI18n } from "@/i18n";
+
 import { App } from "./App";
 import "./styles/globals.css";
+
+// Initialize i18n before anything else.
+initI18n();
 
 type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 

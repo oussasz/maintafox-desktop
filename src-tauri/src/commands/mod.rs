@@ -2,6 +2,7 @@ pub mod app;
 pub mod auth;
 pub mod diagnostics;
 pub mod lookup;
+pub mod locale;
 pub mod rbac;
 
 use tauri::State;
@@ -35,3 +36,5 @@ pub async fn health_check(state: State<'_, AppState>) -> AppResult<HealthCheckRe
 pub use app::get_app_info;
 pub use app::get_task_status;
 pub use app::shutdown_app;
+pub use locale::get_locale_preference;
+pub use locale::set_locale_preference;

@@ -37,6 +37,7 @@ keyring = { version = "2.3", features = ["platform-windows", "platform-macos", "
 sha2 = "0.10"
 hex = "0.4"
 hostname = "0.3"
+sys-locale = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

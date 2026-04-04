@@ -23,6 +23,7 @@ pub mod startup;
 pub mod state;
 pub mod sync;
 pub mod tray;
+pub mod locale;
 pub mod window;
 
 #[cfg(test)]
@@ -109,6 +110,8 @@ pub fn run() {
             commands::diagnostics::repair_seed_data,
             commands::rbac::get_my_permissions,
             commands::rbac::verify_step_up,
+            commands::locale::get_locale_preference,
+            commands::locale::set_locale_preference,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or
