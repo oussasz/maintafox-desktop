@@ -79,6 +79,7 @@ mod tests {
             "m20260402_000004_org_schema".into(),
             "m20260402_000005_equipment_schema".into(),
             "m20260402_000006_teams_and_skills".into(),
+            "m20260404_000007_settings_tables".into(),
         ]
     }
 }

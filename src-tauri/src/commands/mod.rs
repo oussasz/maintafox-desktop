@@ -4,6 +4,7 @@ pub mod diagnostics;
 pub mod lookup;
 pub mod locale;
 pub mod rbac;
+pub mod settings;
 
 use tauri::State;
 

@@ -50,7 +50,7 @@ macro_rules! require_session {
 macro_rules! require_permission {
     ($state:expr, $user:expr, $perm:expr, $scope:expr) => {{
         let has = $crate::auth::rbac::check_permission(
-            &*$state.db,
+            &$state.db,
             $user.user_id,
             $perm,
             &$scope,
@@ -66,7 +66,7 @@ macro_rules! require_permission {
         // If the permission requires step-up, verify it
         let guard = $state.session.read().await;
         let needs_step_up = $crate::auth::rbac::permission_requires_step_up(
-            &*$state.db,
+            &$state.db,
             $perm,
         )
         .await

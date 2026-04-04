@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    /// Tests that all 6 Phase 1 migrations apply cleanly against a
+    /// Tests that all 7 Phase 1 migrations apply cleanly against a
     /// freshly created in-memory SQLite database.
     ///
     /// This test is the primary fast-feedback guard against:
@@ -55,6 +55,11 @@ mod tests {
             "skill_definitions",
             "teams",
             "team_skill_requirements",
+            "app_settings",
+            "secure_secret_refs",
+            "connection_profiles",
+            "policy_snapshots",
+            "settings_change_events",
         ];
 
         for table in &expected_tables {
@@ -146,6 +151,57 @@ mod tests {
         assert!(
             !columns.contains(&"updated_at".to_string()),
             "equipment_lifecycle_events must NOT have updated_at — it is append-only"
+        );
+    }
+
+    #[tokio::test]
+    async fn default_settings_seed_populates_14_rows_and_keeps_settings_audit_empty() {
+        let db = sea_orm::Database::connect("sqlite::memory:")
+            .await
+            .expect("In-memory DB");
+
+        use sea_orm_migration::MigratorTrait;
+        crate::migrations::Migrator::up(&db, None)
+            .await
+            .expect("Migrations");
+
+        crate::db::seeder::seed_default_settings(&db)
+            .await
+            .expect("Default settings seeding should succeed");
+
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+        let settings_row = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS cnt FROM app_settings;".to_string(),
+            ))
+            .await
+            .expect("Count query for app_settings should succeed")
+            .expect("Count query for app_settings should return one row");
+        let settings_count = settings_row
+            .try_get::<i64>("", "cnt")
+            .expect("Count column should be readable");
+
+        let events_row = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS cnt FROM settings_change_events;".to_string(),
+            ))
+            .await
+            .expect("Count query for settings_change_events should succeed")
+            .expect("Count query for settings_change_events should return one row");
+        let events_count = events_row
+            .try_get::<i64>("", "cnt")
+            .expect("Count column should be readable");
+
+        assert_eq!(
+            settings_count, 14,
+            "Default settings seed should insert exactly 14 rows"
+        );
+        assert_eq!(
+            events_count, 0,
+            "settings_change_events must remain empty during read-only seeding"
         );
     }
 }

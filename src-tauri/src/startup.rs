@@ -168,7 +168,25 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         }
     }
 
-    // Phase 3b: initialize device secret on first launch (non-fatal)
+    // Phase 3b: seed default app settings (idempotent)
+    info!("startup: seeding default settings");
+    match crate::db::seeder::seed_default_settings(&app_state.db).await {
+        Ok(()) => {
+            info!(
+                elapsed_ms = startup_start.elapsed().as_millis() as u64,
+                "startup::settings_seed_complete"
+            );
+        }
+        Err(e) => {
+            let reason = format!("Default settings seed failed: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    }
+
+    // Phase 3c: initialize device secret on first launch (non-fatal)
     match crate::auth::device::get_device_secret() {
         Ok(None) => {
             // First launch: generate and store the device secret

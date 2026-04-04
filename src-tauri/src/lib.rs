@@ -19,6 +19,7 @@ pub mod models;
 pub mod repository;
 pub mod security;
 pub mod services;
+pub mod settings;
 pub mod startup;
 pub mod state;
 pub mod sync;
@@ -115,6 +116,11 @@ pub fn run() {
             commands::rbac::verify_step_up,
             commands::locale::get_locale_preference,
             commands::locale::set_locale_preference,
+            commands::settings::get_setting,
+            commands::settings::set_setting,
+            commands::settings::get_policy_snapshot,
+            commands::settings::get_session_policy,
+            commands::settings::list_setting_change_events,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

@@ -14,42 +14,71 @@
 /* ── CSS Custom Properties (design tokens, referenced by JS where Tailwind is
        insufficient, e.g. D3 chart rendering) ───────────────────────────── */
 :root {
-  /* Brand */
+  /* Brand — invariant across themes */
   --color-primary: #003d8f;
   --color-primary-dark: #002b6a;
   --color-primary-light: #4d7bc5;
   --color-primary-bg: #e8eef8;
   --color-accent: #f0a500;
 
-  /* Status */
+  /* Status — invariant across themes */
   --color-success: #198754;
   --color-danger: #dc3545;
   --color-warning: #ffc107;
   --color-info: #0dcaf0;
 
-  /* Surface */
+  /* Layout — invariant across themes */
+  --sidebar-width: 240px;
+  --sidebar-width-sm: 64px;
+  --topbar-height: 52px;
+  --statusbar-height: 24px;
+
+  /* Transitions — invariant across themes */
+  --transition-fast: 100ms;
+  --transition-base: 150ms;
+  --transition-normal: 200ms;
+  --transition-slow: 300ms;
+}
+
+/* ── Dark theme (default fallback) ──────────────────────────────────────── */
+:root,
+.dark {
   --surface-0: #0f172a;
   --surface-1: #1e293b;
   --surface-2: #263244;
   --surface-3: #334155;
   --surface-border: #2d3f55;
 
-  /* Text */
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
+  --text-danger: #f87171;
+  --text-success: #4ade80;
+  --text-warning: #fbbf24;
 
-  /* Layout */
-  --sidebar-width: 240px;
-  --sidebar-width-sm: 64px;
-  --topbar-height: 52px;
-  --statusbar-height: 24px;
+  --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.4);
+  --shadow-panel: 0 4px 16px 0 rgba(0, 0, 0, 0.5);
+  --shadow-focus: 0 0 0 2px #4d7bc5;
+}
 
-  /* Transitions */
-  --transition-fast: 100ms;
-  --transition-base: 150ms;
-  --transition-normal: 200ms;
-  --transition-slow: 300ms;
+/* ── Light theme — professional, clean ──────────────────────────────────── */
+.light {
+  --surface-0: #f4f6f9;
+  --surface-1: #ffffff;
+  --surface-2: #f0f3f7;
+  --surface-3: #e5eaf1;
+  --surface-border: #dde2eb;
+
+  --text-primary: #0d1b2e;
+  --text-secondary: #455778;
+  --text-muted: #8898aa;
+  --text-danger: #b91c1c;
+  --text-success: #15803d;
+  --text-warning: #b45309;
+
+  --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.07), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+  --shadow-panel: 0 4px 20px 0 rgba(0, 0, 0, 0.09), 0 2px 6px -1px rgba(0, 0, 0, 0.05);
+  --shadow-focus: 0 0 0 3px rgba(77, 123, 197, 0.28);
 }
 
 @layer base {
@@ -104,16 +133,16 @@
     outline-offset: 2px;
   }
 
-  /* Scrollbar styling — industrial dark theme */
+  /* Scrollbar styling — adapts to active theme */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
   ::-webkit-scrollbar-track {
-    background: var(--surface-1);
+    background: var(--surface-2);
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--surface-3);
+    background: var(--surface-border);
     border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
@@ -183,6 +212,45 @@
     @apply mt-1 text-xs text-text-danger;
   }
 
+  /* ── Login page animations ───────────────────────────────────────── */
+  .login-panel {
+    @apply relative hidden md:flex md:w-[45%] flex-col overflow-hidden;
+    background-color: #002a63;
+  }
+}
+
+/* ── Login page keyframes ─────────────────────────────────────────────────── */
+@keyframes login-spin {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-50%);
+  }
+}
+
+@keyframes login-float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes login-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@layer components {
   /* ── Table primitives ───────────────────────────────────────────── */
   .tbl-header {
     @apply bg-surface-2 text-xs font-semibold uppercase tracking-wide text-text-secondary;

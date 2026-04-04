@@ -198,6 +198,52 @@ export interface StepUpResponse {
   expires_at: string; // ISO 8601
 }
 
+// ─── Settings / Configuration Center (SP06-F01) ────────────────────────────
+
+export interface AppSetting {
+  id: number;
+  setting_key: string;
+  setting_scope: string;
+  setting_value_json: string;
+  category: string;
+  setting_risk: "low" | "high";
+  validation_status: "valid" | "draft" | "error" | "untested";
+  secret_ref_id: number | null;
+  last_modified_by_id: number | null;
+  last_modified_at: string; // ISO 8601
+}
+
+export interface PolicySnapshot {
+  id: number;
+  policy_domain: string;
+  version_no: number;
+  snapshot_json: string; // JSON-encoded policy document
+  is_active: boolean;
+  activated_at: string | null;
+  activated_by_id: number | null;
+}
+
+export interface SettingsChangeEvent {
+  id: number;
+  setting_key_or_domain: string;
+  change_summary: string;
+  old_value_hash: string | null;
+  new_value_hash: string | null;
+  changed_by_id: number | null;
+  changed_at: string; // ISO 8601
+  required_step_up: boolean;
+  apply_result: string;
+}
+
+export interface SessionPolicy {
+  idle_timeout_minutes: number;
+  absolute_session_minutes: number;
+  offline_grace_hours: number;
+  step_up_window_minutes: number;
+  max_failed_attempts: number;
+  lockout_minutes: number;
+}
+
 // ─── Auth UI Commands ──────────────────────────────────────────────────────
 
 export interface UnlockSessionRequest {

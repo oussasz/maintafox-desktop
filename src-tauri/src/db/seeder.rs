@@ -7,6 +7,25 @@ use crate::errors::{AppError, AppResult};
 /// Increment this when adding new system domains or values in a release.
 pub const SEED_SCHEMA_VERSION: i32 = 1;
 
+/// Baseline settings seeded on first startup after settings migration is applied.
+/// Tuple format: (setting_key, category, setting_scope, setting_value_json)
+const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
+    ("locale.primary_language", "localization", "tenant", r#""fr""#),
+    ("locale.fallback_language", "localization", "tenant", r#""en""#),
+    ("locale.date_format", "localization", "tenant", r#""DD/MM/YYYY""#),
+    ("locale.number_format", "localization", "tenant", r#""fr-FR""#),
+    ("locale.week_start_day", "localization", "tenant", r#"1"#),
+    ("appearance.color_mode", "appearance", "tenant", r#""light""#),
+    ("appearance.density", "appearance", "tenant", r#""standard""#),
+    ("appearance.text_scale", "appearance", "tenant", r#"1.0"#),
+    ("updater.release_channel", "system", "device", r#""stable""#),
+    ("updater.auto_check", "system", "device", r#"true"#),
+    ("backup.retention_daily", "backup", "tenant", r#"7"#),
+    ("backup.retention_weekly", "backup", "tenant", r#"4"#),
+    ("backup.retention_monthly", "backup", "tenant", r#"12"#),
+    ("diagnostics.log_retention_days", "system", "device", r#"30"#),
+];
+
 /// Inserts all system-governed lookup domains and values idempotently.
 /// Safe to call on every startup: uses INSERT OR IGNORE semantics.
 /// On completion, records `seed_schema_version = SEED_SCHEMA_VERSION` in system_config.
@@ -257,6 +276,56 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     seed_admin_account(db).await?;
 
     tracing::info!("seeder::complete — system seed version {} applied", SEED_SCHEMA_VERSION);
+    Ok(())
+}
+
+/// Seeds baseline rows in app_settings if the table is still empty.
+/// Safe to call on every startup after migrations.
+pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
+    let count_row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS cnt FROM app_settings;".to_string(),
+        ))
+        .await?;
+
+    let count = count_row
+        .and_then(|r| r.try_get::<i64>("", "cnt").ok())
+        .unwrap_or(0);
+
+    if count > 0 {
+        tracing::debug!(
+            count,
+            "seed_default_settings: existing settings detected, skipping defaults"
+        );
+        return Ok(());
+    }
+
+    let now = Utc::now().to_rfc3339();
+
+    for (setting_key, category, setting_scope, setting_value_json) in DEFAULT_SETTINGS {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r#"INSERT OR IGNORE INTO app_settings
+                   (setting_key, category, setting_scope, setting_value_json,
+                    setting_risk, validation_status, last_modified_at)
+               VALUES (?, ?, ?, ?, 'low', 'valid', ?)"#,
+            [
+                (*setting_key).into(),
+                (*category).into(),
+                (*setting_scope).into(),
+                (*setting_value_json).into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+    }
+
+    tracing::info!(
+        count = DEFAULT_SETTINGS.len(),
+        "seed_default_settings: baseline settings inserted"
+    );
+
     Ok(())
 }
 
@@ -700,5 +769,14 @@ mod tests {
     #[test]
     fn seed_schema_version_is_positive() {
         assert!(SEED_SCHEMA_VERSION > 0, "Seed schema version must be a positive integer");
+    }
+
+    #[test]
+    fn default_settings_count_is_expected() {
+        assert_eq!(
+            DEFAULT_SETTINGS.len(),
+            14,
+            "Default settings count changed; update migration and verification checks"
+        );
     }
 }

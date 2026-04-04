@@ -12,15 +12,15 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
-    const saved = localStorage.getItem("maintafox:theme");
-    return saved === "light" ? "light" : "dark";
+    const saved = localStorage.getItem("maintafox:theme:v2");
+    return saved === "dark" ? "dark" : "light";
   });
 
   useEffect(() => {
     const root = document.documentElement;
     root.classList.remove("light", "dark");
     root.classList.add(theme);
-    localStorage.setItem("maintafox:theme", theme);
+    localStorage.setItem("maintafox:theme:v2", theme);
   }, [theme]);
 
   function setTheme(t: Theme) {
