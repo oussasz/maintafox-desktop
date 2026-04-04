@@ -146,6 +146,20 @@ impl SessionManager {
         }
     }
 
+    /// Unlock an idle-locked session. Returns `true` if the session was
+    /// successfully unlocked, `false` if the session is expired or absent.
+    /// The caller MUST verify the user's password before calling this.
+    pub fn unlock_session(&mut self) -> bool {
+        match &mut self.current {
+            Some(session) if !session.is_expired() => {
+                session.is_locked = false;
+                session.last_activity_at = Utc::now();
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Record a successful step-up password verification.
     pub fn record_step_up(&mut self) {
         if let Some(session) = &mut self.current {

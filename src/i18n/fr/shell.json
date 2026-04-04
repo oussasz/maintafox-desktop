@@ -24,7 +24,10 @@
     "label": "{{count}} notifications non lues"
   },
   "user": {
-    "menu": "Menu utilisateur"
+    "menu": "Menu utilisateur",
+    "profile": "Mon profil",
+    "settings": "Paramètres",
+    "logout": "Déconnexion"
   },
   "sync": {
     "offline": "Hors ligne",

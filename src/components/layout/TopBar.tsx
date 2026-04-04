@@ -1,6 +1,18 @@
-import { Menu, Bell, RefreshCw, AlertCircle, User } from "lucide-react";
+import {
+  Menu,
+  Bell,
+  RefreshCw,
+  AlertCircle,
+  User,
+  LogOut,
+  Settings,
+  UserCircle,
+} from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate, Link } from "react-router-dom";
 
+import { logout as authLogout } from "@/services/auth-service";
 import { useAppStore } from "@/store/app-store";
 
 export function TopBar() {
@@ -10,6 +22,32 @@ export function TopBar() {
   const unreadCount = useAppStore((s) => s.unreadNotificationCount);
   const isOnline = useAppStore((s) => s.isOnline);
   const displayName = useAppStore((s) => s.currentUserDisplayName);
+
+  const navigate = useNavigate();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    }
+    if (userMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [userMenuOpen]);
+
+  const handleLogout = useCallback(async () => {
+    setUserMenuOpen(false);
+    try {
+      await authLogout();
+    } finally {
+      navigate("/login", { replace: true });
+    }
+  }, [navigate]);
 
   return (
     <header
@@ -63,23 +101,76 @@ export function TopBar() {
           )}
         </button>
 
-        {/* User menu trigger */}
-        <button
-          aria-label={displayName ?? t("user.menu")}
-          className="btn-ghost flex items-center gap-2 px-2 py-1.5"
-        >
-          <div
-            className="flex h-6 w-6 items-center justify-center
-                       rounded-full bg-primary text-xs font-semibold text-white"
+        {/* User menu */}
+        <div ref={userMenuRef} className="relative">
+          <button
+            onClick={() => setUserMenuOpen((v) => !v)}
+            aria-label={displayName ?? t("user.menu")}
+            aria-expanded={userMenuOpen}
+            aria-haspopup="true"
+            className="btn-ghost flex items-center gap-2 px-2 py-1.5"
           >
-            {displayName ? displayName.charAt(0).toUpperCase() : <User className="h-3.5 w-3.5" />}
-          </div>
-          {displayName && (
-            <span className="hidden lg:inline text-sm text-text-secondary max-w-32 truncate">
-              {displayName}
-            </span>
+            <div
+              className="flex h-6 w-6 items-center justify-center
+                         rounded-full bg-primary text-xs font-semibold text-white"
+            >
+              {displayName ? displayName.charAt(0).toUpperCase() : <User className="h-3.5 w-3.5" />}
+            </div>
+            {displayName && (
+              <span className="hidden lg:inline text-sm text-text-secondary max-w-32 truncate">
+                {displayName}
+              </span>
+            )}
+          </button>
+
+          {/* Dropdown */}
+          {userMenuOpen && (
+            <div
+              className="absolute right-0 top-full mt-1 w-48 rounded-md border
+                         border-surface-border bg-surface-1 py-1 shadow-lg z-50"
+              role="menu"
+            >
+              {displayName && (
+                <div
+                  className="px-3 py-2 text-sm font-medium text-text-primary
+                                border-b border-surface-border truncate"
+                >
+                  {displayName}
+                </div>
+              )}
+              <Link
+                to="/profile"
+                onClick={() => setUserMenuOpen(false)}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-text-secondary
+                           hover:bg-surface-2 transition-colors"
+                role="menuitem"
+              >
+                <UserCircle className="h-4 w-4" />
+                {t("user.profile")}
+              </Link>
+              <Link
+                to="/settings"
+                onClick={() => setUserMenuOpen(false)}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-text-secondary
+                           hover:bg-surface-2 transition-colors"
+                role="menuitem"
+              >
+                <Settings className="h-4 w-4" />
+                {t("user.settings")}
+              </Link>
+              <div className="border-t border-surface-border my-1" />
+              <button
+                onClick={handleLogout}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm
+                           text-status-danger hover:bg-surface-2 transition-colors"
+                role="menuitem"
+              >
+                <LogOut className="h-4 w-4" />
+                {t("user.logout")}
+              </button>
+            </div>
           )}
-        </button>
+        </div>
       </div>
     </header>
   );

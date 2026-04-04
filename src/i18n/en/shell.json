@@ -24,7 +24,10 @@
     "label": "{{count}} unread notifications"
   },
   "user": {
-    "menu": "User menu"
+    "menu": "User menu",
+    "profile": "My profile",
+    "settings": "Settings",
+    "logout": "Sign out"
   },
   "sync": {
     "offline": "Offline",

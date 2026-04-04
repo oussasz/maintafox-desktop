@@ -7,6 +7,7 @@
 //!   - The session token is not returned in any IPC response.
 
 use serde::{Deserialize, Serialize};
+use sea_orm::ConnectionTrait;
 use tauri::State;
 use tracing::warn;
 
@@ -296,4 +297,189 @@ pub async fn revoke_device_trust(
     }).await;
 
     Ok(())
+}
+
+// ── Unlock Session ────────────────────────────────────────────────────────────
+
+/// Input for the unlock_session command.
+#[derive(Debug, Deserialize)]
+pub struct UnlockSessionRequest {
+    pub password: String,
+}
+
+/// Unlock an idle-locked session by verifying the user's password.
+///
+/// The session must exist and not be expired. If the session has expired,
+/// the user is told to log in again. If the password is wrong, an opaque
+/// auth error is returned.
+#[tauri::command]
+pub async fn unlock_session(
+    payload: UnlockSessionRequest,
+    state: State<'_, AppState>,
+) -> AppResult<session_manager::SessionInfo> {
+    // Read session to get the user — even locked sessions have a user
+    let user = {
+        let sm = state.session.read().await;
+        match &sm.current {
+            Some(s) if !s.is_expired() => s.user.clone(),
+            _ => {
+                return Err(AppError::Auth(
+                    "Session expir\u{00e9}e. Veuillez vous reconnecter.".into(),
+                ));
+            }
+        }
+    };
+
+    // Verify password against the database
+    let user_record =
+        session_manager::find_active_user(&state.db, &user.username).await?;
+
+    let pw_hash = match user_record.and_then(|r| r.5) {
+        Some(h) => h,
+        None => {
+            return Err(AppError::Auth(
+                "Mot de passe incorrect.".into(),
+            ));
+        }
+    };
+
+    let valid = password::verify_password(&payload.password, &pw_hash)?;
+    if !valid {
+        warn!(username = %user.username, "unlock_session::wrong_password");
+        crate::audit::emit(
+            &state.db,
+            crate::audit::AuditEvent {
+                event_type: crate::audit::event_type::STEP_UP_FAILURE,
+                actor_id: Some(user.user_id),
+                summary: "Unlock failed: wrong password",
+                ..Default::default()
+            },
+        )
+        .await;
+        return Err(AppError::Auth(
+            "Mot de passe incorrect.".into(),
+        ));
+    }
+
+    // Unlock the session
+    let mut sm = state.session.write().await;
+    if !sm.unlock_session() {
+        return Err(AppError::Auth(
+            "Session expir\u{00e9}e. Veuillez vous reconnecter.".into(),
+        ));
+    }
+
+    crate::audit::emit(
+        &state.db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::LOGIN_SUCCESS,
+            actor_id: Some(user.user_id),
+            summary: "Session unlocked after idle lock",
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let info = sm.session_info();
+    Ok(info)
+}
+
+// ── Force Change Password ─────────────────────────────────────────────────────
+
+/// Input for the force_change_password command.
+#[derive(Debug, Deserialize)]
+pub struct ForceChangePasswordRequest {
+    pub new_password: String,
+}
+
+/// Response returned after a successful force password change.
+#[derive(Debug, Serialize)]
+pub struct ForceChangePasswordResponse {
+    pub session_info: session_manager::SessionInfo,
+}
+
+/// Change the password for a user who has `force_password_change = true`.
+///
+/// This command is only callable when the current session has
+/// `force_password_change` set. It hashes the new password with argon2id,
+/// updates the database, clears the flag, and returns the updated session.
+#[tauri::command]
+pub async fn force_change_password(
+    payload: ForceChangePasswordRequest,
+    state: State<'_, AppState>,
+) -> AppResult<ForceChangePasswordResponse> {
+    // Read current session — must be authenticated with force_password_change
+    let user = {
+        let sm = state.session.read().await;
+        match &sm.current {
+            Some(s) if !s.is_expired() && s.user.force_password_change => {
+                s.user.clone()
+            }
+            Some(_) => {
+                return Err(AppError::Auth(
+                    "Le changement de mot de passe n'est pas requis.".into(),
+                ));
+            }
+            None => {
+                return Err(AppError::Auth(
+                    "Non authentifi\u{00e9}.".into(),
+                ));
+            }
+        }
+    };
+
+    // Validate password strength (minimum 8 characters)
+    let new_password = payload.new_password.trim();
+    if new_password.len() < 8 {
+        return Err(AppError::ValidationFailed(vec![
+            "Le mot de passe doit contenir au moins 8 caract\u{00e8}res.".into(),
+        ]));
+    }
+
+    // Hash the new password with argon2id
+    let new_hash = password::hash_password(new_password)?;
+
+    // Update user_accounts in the database
+    let now = chrono::Utc::now().to_rfc3339();
+    state
+        .db
+        .execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            r#"UPDATE user_accounts
+               SET password_hash = ?,
+                   force_password_change = 0,
+                   updated_at = ?
+               WHERE id = ?"#,
+            [
+                new_hash.into(),
+                now.clone().into(),
+                user.user_id.into(),
+            ],
+        ))
+        .await?;
+
+    // Update the in-memory session
+    let mut sm = state.session.write().await;
+    if let Some(session) = &mut sm.current {
+        session.user.force_password_change = false;
+    }
+
+    crate::audit::emit(
+        &state.db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::FORCE_CHANGE_SET,
+            actor_id: Some(user.user_id),
+            summary: "Password changed via force-change flow",
+            ..Default::default()
+        },
+    )
+    .await;
+
+    tracing::info!(
+        user_id = user.user_id,
+        "force_change_password completed"
+    );
+
+    let info = sm.session_info();
+    Ok(ForceChangePasswordResponse { session_info: info })
 }

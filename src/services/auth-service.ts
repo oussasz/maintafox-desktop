@@ -50,3 +50,27 @@ export async function getSessionInfo(): Promise<SessionInfo> {
   const raw = await invoke<unknown>("get_session_info");
   return sessionInfoSchema.parse(raw);
 }
+
+/**
+ * Unlock an idle-locked session by verifying the user's password.
+ * Returns the updated session info on success.
+ */
+export async function unlockSession(password: string): Promise<SessionInfo> {
+  const raw = await invoke<unknown>("unlock_session", {
+    payload: { password },
+  });
+  return sessionInfoSchema.parse(raw);
+}
+
+/**
+ * Change the password for a user with force_password_change = true.
+ * Returns the updated session info on success.
+ */
+export async function forceChangePassword(newPassword: string): Promise<SessionInfo> {
+  const raw = await invoke<unknown>("force_change_password", {
+    payload: { new_password: newPassword },
+  });
+  // The response wraps session_info
+  const parsed = z.object({ session_info: sessionInfoSchema }).parse(raw);
+  return parsed.session_info;
+}

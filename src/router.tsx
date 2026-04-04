@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { createBrowserRouter, Outlet, type RouteObject } from "react-router-dom";
 
+import { AuthGuard } from "@/components/auth/AuthGuard";
 import { AppShell } from "@/components/layout/AppShell";
 import { DashboardPage } from "@/pages/DashboardPage";
 
@@ -85,6 +86,9 @@ const ProfilePage = lazy(() =>
 const DiagnosticsPage = lazy(() =>
   import("@/pages/DiagnosticsPage").then((m) => ({ default: m.DiagnosticsPage })),
 );
+const LoginPage = lazy(() =>
+  import("@/pages/auth/LoginPage").then((m) => ({ default: m.LoginPage })),
+);
 
 function PageSuspense() {
   return (
@@ -109,39 +113,60 @@ function ShellLayout() {
 }
 
 const routes: RouteObject[] = [
+  // ── Public routes (no shell, no auth required) ───────────────────────
   {
-    element: <ShellLayout />,
+    path: "login",
+    element: (
+      <Suspense
+        fallback={
+          <div className="flex h-screen items-center justify-center bg-surface-0">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
+          </div>
+        }
+      >
+        <LoginPage />
+      </Suspense>
+    ),
+  },
+  // ── Protected routes (auth required → shell layout) ──────────────────
+  {
+    element: <AuthGuard />,
     children: [
-      { index: true, element: <DashboardPage /> },
       {
-        element: <PageSuspense />,
+        element: <ShellLayout />,
         children: [
-          { path: "equipment", element: <EquipmentPage /> },
-          { path: "requests", element: <RequestsPage /> },
-          { path: "work-orders", element: <WorkOrdersPage /> },
-          { path: "planning", element: <PlanningPage /> },
-          { path: "pm", element: <PmPage /> },
-          { path: "permits", element: <PermitsPage /> },
-          { path: "inspections", element: <InspectionsPage /> },
-          { path: "training", element: <TrainingPage /> },
-          { path: "inventory", element: <InventoryPage /> },
-          { path: "analytics", element: <AnalyticsPage /> },
-          { path: "reliability", element: <ReliabilityPage /> },
-          { path: "budget", element: <BudgetPage /> },
-          { path: "personnel", element: <PersonnelPage /> },
-          { path: "users", element: <UsersPage /> },
-          { path: "org", element: <OrgPage /> },
-          { path: "lookups", element: <LookupsPage /> },
-          { path: "notifications", element: <NotificationsPage /> },
-          { path: "documentation", element: <DocumentationPage /> },
-          { path: "iot", element: <IotPage /> },
-          { path: "erp", element: <ErpPage /> },
-          { path: "archive", element: <ArchivePage /> },
-          { path: "activity", element: <ActivityPage /> },
-          { path: "settings", element: <SettingsPage /> },
-          { path: "configuration", element: <ConfigurationPage /> },
-          { path: "diagnostics", element: <DiagnosticsPage /> },
-          { path: "profile", element: <ProfilePage /> },
+          { index: true, element: <DashboardPage /> },
+          {
+            element: <PageSuspense />,
+            children: [
+              { path: "equipment", element: <EquipmentPage /> },
+              { path: "requests", element: <RequestsPage /> },
+              { path: "work-orders", element: <WorkOrdersPage /> },
+              { path: "planning", element: <PlanningPage /> },
+              { path: "pm", element: <PmPage /> },
+              { path: "permits", element: <PermitsPage /> },
+              { path: "inspections", element: <InspectionsPage /> },
+              { path: "training", element: <TrainingPage /> },
+              { path: "inventory", element: <InventoryPage /> },
+              { path: "analytics", element: <AnalyticsPage /> },
+              { path: "reliability", element: <ReliabilityPage /> },
+              { path: "budget", element: <BudgetPage /> },
+              { path: "personnel", element: <PersonnelPage /> },
+              { path: "users", element: <UsersPage /> },
+              { path: "org", element: <OrgPage /> },
+              { path: "lookups", element: <LookupsPage /> },
+              { path: "notifications", element: <NotificationsPage /> },
+              { path: "documentation", element: <DocumentationPage /> },
+              { path: "iot", element: <IotPage /> },
+              { path: "erp", element: <ErpPage /> },
+              { path: "archive", element: <ArchivePage /> },
+              { path: "activity", element: <ActivityPage /> },
+              { path: "settings", element: <SettingsPage /> },
+              { path: "configuration", element: <ConfigurationPage /> },
+              { path: "diagnostics", element: <DiagnosticsPage /> },
+              { path: "profile", element: <ProfilePage /> },
+            ],
+          },
         ],
       },
     ],

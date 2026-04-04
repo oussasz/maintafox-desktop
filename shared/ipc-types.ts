@@ -198,4 +198,18 @@ export interface StepUpResponse {
   expires_at: string; // ISO 8601
 }
 
+// ─── Auth UI Commands ──────────────────────────────────────────────────────
+
+export interface UnlockSessionRequest {
+  password: string;
+}
+
+export interface ForceChangePasswordRequest {
+  new_password: string;
+}
+
+export interface ForceChangePasswordResponse {
+  session_info: SessionInfo;
+}
+
 // Frontend invokes via: invoke("shutdown_app")

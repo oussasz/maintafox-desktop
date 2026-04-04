@@ -103,6 +103,9 @@ pub fn run() {
             commands::auth::get_session_info,
             commands::auth::get_device_trust_status,
             commands::auth::revoke_device_trust,
+            // SP04-F05 — auth UI support
+            commands::auth::unlock_session,
+            commands::auth::force_change_password,
             commands::lookup::list_lookup_domains,
             commands::lookup::get_lookup_values,
             commands::lookup::get_lookup_value_by_id,
