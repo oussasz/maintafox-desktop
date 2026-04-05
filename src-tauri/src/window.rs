@@ -58,11 +58,11 @@ pub fn load_state(app: &AppHandle) -> WindowState {
     }
 }
 
-fn is_minimized_position(x: i32, y: i32) -> bool {
+const fn is_minimized_position(x: i32, y: i32) -> bool {
     x <= MINIMIZED_SENTINEL || y <= MINIMIZED_SENTINEL
 }
 
-fn sanitize_state(mut state: WindowState) -> WindowState {
+const fn sanitize_state(mut state: WindowState) -> WindowState {
     if state.width < MIN_WIDTH {
         state.width = DEFAULT_WIDTH;
     }

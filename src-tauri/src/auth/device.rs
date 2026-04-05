@@ -1,11 +1,11 @@
 //! Device identity, trust registration, and offline grace management.
 //!
 //! Security rules:
-//!   - Device fingerprint is SHA-256(machine_id : hostname : os_type).
+//!   - Device fingerprint is SHA-256(machine_id : hostname : `os_type`).
 //!     This prevents correlating the raw hardware ID outside Maintafox.
 //!   - The device secret (32-byte random) is stored in the OS keyring only.
 //!     It is used as an HMAC key for device challenge binding in Phase 3 sync.
-//!   - trusted_devices table enforces UNIQUE(device_fingerprint) â€” no duplicates.
+//!   - `trusted_devices` table enforces `UNIQUE(device_fingerprint)` â€” no duplicates.
 
 use chrono::Utc;
 use hex::encode;
@@ -29,8 +29,8 @@ const KEYRING_DEVICE_SECRET_KEY: &str = "device-installation-secret";
 /// It changes when the OS is re-installed or the machine ID is reset by the OS.
 ///
 /// Inputs (in order, separator ":"):
-///   1. Machine ID (from /etc/machine-id on Linux, MachineGuid on Windows,
-///      IOPlatformUUID on macOS) â€” falls back to hostname if unavailable.
+///   1. Machine ID (from /etc/machine-id on Linux, `MachineGuid` on Windows,
+///      `IOPlatformUUID` on macOS) â€” falls back to hostname if unavailable.
 ///   2. Hostname
 ///   3. OS type ("windows" | "macos" | "linux")
 pub fn derive_device_fingerprint() -> AppResult<String> {
@@ -177,10 +177,10 @@ pub async fn get_device_trust(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"SELECT id, device_label, user_id, trusted_at, last_seen_at,
+            r"SELECT id, device_label, user_id, trusted_at, last_seen_at,
                       is_revoked, revoked_at
                FROM trusted_devices
-               WHERE user_id = ? AND device_fingerprint = ?"#,
+               WHERE user_id = ? AND device_fingerprint = ?",
             [user_id.into(), fingerprint.into()],
         ))
         .await
@@ -210,13 +210,13 @@ pub async fn register_device_trust(
     let id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"INSERT OR IGNORE INTO trusted_devices
+        r"INSERT OR IGNORE INTO trusted_devices
                (id, device_fingerprint, device_label, user_id, trusted_at, is_revoked)
-           VALUES (?, ?, ?, ?, ?, 0)"#,
+           VALUES (?, ?, ?, ?, ?, 0)",
         [
             id.into(),
             fingerprint.into(),
-            device_label.map(|s| s.to_string()).into(),
+            device_label.map(std::string::ToString::to_string).into(),
             user_id.into(),
             now.into(),
         ],
@@ -228,8 +228,8 @@ pub async fn register_device_trust(
     let now2 = Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"UPDATE trusted_devices SET last_seen_at = ?
-           WHERE user_id = ? AND device_fingerprint = ?"#,
+        r"UPDATE trusted_devices SET last_seen_at = ?
+           WHERE user_id = ? AND device_fingerprint = ?",
         [now2.into(), user_id.into(), fingerprint.into()],
     ))
     .await
@@ -239,7 +239,7 @@ pub async fn register_device_trust(
     Ok(())
 }
 
-/// Revoke trust for a specific device, by trusted_device.id.
+/// Revoke trust for a specific device, by `trusted_device.id`.
 /// A revoked device can no longer use offline sign-in.
 pub async fn revoke_device_trust(
     db: &DatabaseConnection,
@@ -250,10 +250,10 @@ pub async fn revoke_device_trust(
     let affected = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"UPDATE trusted_devices
+            r"UPDATE trusted_devices
                SET is_revoked = 1, revoked_at = ?,
                    revoked_reason = ?
-               WHERE id = ? AND is_revoked = 0"#,
+               WHERE id = ? AND is_revoked = 0",
             [
                 now.into(),
                 format!("revoked by user_id={revoked_by_user_id}").into(),
@@ -285,10 +285,10 @@ pub const MAX_OFFLINE_GRACE_HOURS: i64 = 168; // 7 days
 /// Logic:
 ///   1. If the device has no trust record → offline denied
 ///   2. If the device trust is revoked → offline denied
-///   3. Read `offline_grace_hours` from system_config (default 72)
+///   3. Read `offline_grace_hours` from `system_config` (default 72)
 ///   4. If `last_seen_at` is within the grace window → offline allowed
 ///
-/// Returns (is_allowed, hours_remaining).
+/// Returns (`is_allowed`, `hours_remaining`).
 /// `hours_remaining` is None if the trust is not found or is revoked.
 pub async fn check_offline_access(
     db: &DatabaseConnection,
@@ -333,9 +333,9 @@ pub async fn check_offline_access(
     }
 }
 
-/// Read the `offline_grace_hours` value from system_config.
+/// Read the `offline_grace_hours` value from `system_config`.
 /// Returns the default (72) if the key is absent or unparseable.
-/// Caps at MAX_OFFLINE_GRACE_HOURS to prevent policy bypass via DB edit.
+/// Caps at `MAX_OFFLINE_GRACE_HOURS` to prevent policy bypass via DB edit.
 async fn read_offline_grace_hours(db: &DatabaseConnection) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -357,6 +357,7 @@ async fn read_offline_grace_hours(db: &DatabaseConnection) -> AppResult<i64> {
 // ── Network availability ──────────────────────────────────────────────────────
 
 /// Best-effort check for network availability.
+///
 /// Returns true if any non-loopback network interface has an assigned IP.
 /// This is NOT a VPS round-trip — it is local-only; used only to gate
 /// first-login requirement and offline grace bypass detection.

@@ -150,9 +150,9 @@ pub async fn run_integrity_check(db: &DatabaseConnection) -> AppResult<Integrity
         let actual = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                r#"SELECT COUNT(*) as cnt FROM lookup_values lv
+                r"SELECT COUNT(*) as cnt FROM lookup_values lv
                    INNER JOIN lookup_domains ld ON ld.id = lv.domain_id
-                   WHERE ld.domain_key = ? AND lv.is_active = 1 AND lv.deleted_at IS NULL"#,
+                   WHERE ld.domain_key = ? AND lv.is_active = 1 AND lv.deleted_at IS NULL",
                 [domain_key.into()],
             ))
             .await

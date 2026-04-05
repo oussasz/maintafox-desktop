@@ -1,12 +1,12 @@
 //! Authentication and identity domain.
 //!
 //! Module layout:
-//!   auth::password         — argon2id hash/verify
-//!   auth::session_manager  — SessionManager, AuthenticatedUser, LocalSession
+//!   `auth::password`         — argon2id hash/verify
+//!   `auth::session_manager`  — `SessionManager`, `AuthenticatedUser`, `LocalSession`
 //!
 //! Architecture rules:
-//!   - No session token is ever stored in SQLite in plaintext.
-//!   - The SessionManager is the single authoritative source of who is logged in.
+//!   - No session token is ever stored in `SQLite` in plaintext.
+//!   - The `SessionManager` is the single authoritative source of who is logged in.
 //!   - All IPC commands that need auth call `require_session!(&state)`.
 
 pub mod device;

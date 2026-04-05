@@ -83,17 +83,12 @@ pub async fn list_lookup_domains(
             .search
             .query
             .as_ref()
-            .map(|_| " AND (display_name LIKE ? OR domain_key LIKE ?)")
-            .unwrap_or(""),
-        filter
-            .domain_type
-            .as_ref()
-            .map(|_| " AND domain_type = ?")
-            .unwrap_or(""),
+            .map_or("", |_| " AND (display_name LIKE ? OR domain_key LIKE ?)"),
+        filter.domain_type.as_ref().map_or("", |_| " AND domain_type = ?"),
     );
     // List query with value count
     let list_sql = format!(
-        r#"
+        r"
         SELECT
             ld.id, ld.sync_id, ld.domain_key, ld.display_name, ld.domain_type,
             ld.is_extensible, ld.is_locked, ld.schema_version,
@@ -103,18 +98,13 @@ pub async fn list_lookup_domains(
         WHERE ld.deleted_at IS NULL{}{}
         ORDER BY ld.domain_key ASC
         LIMIT {} OFFSET {}
-        "#,
+        ",
         filter
             .search
             .query
             .as_ref()
-            .map(|_| " AND (ld.display_name LIKE ? OR ld.domain_key LIKE ?)")
-            .unwrap_or(""),
-        filter
-            .domain_type
-            .as_ref()
-            .map(|_| " AND ld.domain_type = ?")
-            .unwrap_or(""),
+            .map_or("", |_| " AND (ld.display_name LIKE ? OR ld.domain_key LIKE ?)"),
+        filter.domain_type.as_ref().map_or("", |_| " AND ld.domain_type = ?"),
         page.limit(),
         page.offset(),
     );
@@ -150,7 +140,7 @@ pub async fn list_lookup_domains(
     Ok(Page::new(rows, total, page))
 }
 
-/// Returns all active values for a given domain, ordered by sort_order.
+/// Returns all active values for a given domain, ordered by `sort_order`.
 /// This is the hot path for dropdown population — must be fast.
 pub async fn get_domain_values(
     db: &DatabaseConnection,
@@ -159,7 +149,7 @@ pub async fn get_domain_values(
 ) -> AppResult<Vec<LookupValueOption>> {
     let active_clause = if active_only { " AND lv.is_active = 1" } else { "" };
     let sql = format!(
-        r#"
+        r"
         SELECT lv.id, lv.code, lv.label, lv.fr_label, lv.en_label, lv.color, lv.is_active
         FROM lookup_values lv
         INNER JOIN lookup_domains ld ON ld.id = lv.domain_id
@@ -167,7 +157,7 @@ pub async fn get_domain_values(
           AND lv.deleted_at IS NULL
           {active_clause}
         ORDER BY lv.sort_order ASC, lv.label ASC
-        "#,
+        ",
     );
     let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, &sql, [domain_key.into()]);
     Ok(LookupValueOption::find_by_statement(stmt).all(db).await?)
@@ -176,12 +166,12 @@ pub async fn get_domain_values(
 /// Resolves a single lookup value by its integer id.
 /// Used at render time to convert a stored FK to a displayable label.
 pub async fn get_value_by_id(db: &DatabaseConnection, value_id: i32) -> AppResult<LookupValueRecord> {
-    let sql = r#"
+    let sql = r"
         SELECT id, sync_id, domain_id, code, label, fr_label, en_label,
                description, sort_order, is_active, is_system, color, parent_value_id
         FROM lookup_values
         WHERE id = ? AND deleted_at IS NULL
-    "#;
+    ";
     let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, [value_id.into()]);
     LookupValueRecord::find_by_statement(stmt)
         .one(db)
@@ -195,14 +185,14 @@ pub async fn get_value_by_id(db: &DatabaseConnection, value_id: i32) -> AppResul
 /// Looks up a value by its code within a named domain.
 /// Used for import mapping and controlled vocabulary enforcement.
 pub async fn get_value_by_code(db: &DatabaseConnection, domain_key: &str, code: &str) -> AppResult<LookupValueRecord> {
-    let sql = r#"
+    let sql = r"
         SELECT lv.id, lv.sync_id, lv.domain_id, lv.code, lv.label, lv.fr_label,
                lv.en_label, lv.description, lv.sort_order, lv.is_active, lv.is_system,
                lv.color, lv.parent_value_id
         FROM lookup_values lv
         INNER JOIN lookup_domains ld ON ld.id = lv.domain_id
         WHERE ld.domain_key = ? AND lv.code = ? AND lv.deleted_at IS NULL
-    "#;
+    ";
     let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, [domain_key.into(), code.into()]);
     LookupValueRecord::find_by_statement(stmt)
         .one(db)
@@ -216,6 +206,7 @@ pub async fn get_value_by_code(db: &DatabaseConnection, domain_key: &str, code: 
 /// Inserts a new lookup value into a domain.
 /// Enforces: code must be unique within domain (via DB constraint).
 /// Returns the newly assigned integer id.
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_lookup_value(
     db: &DatabaseConnection,
     domain_id: i32,
@@ -233,13 +224,13 @@ pub async fn insert_lookup_value(
     let sync_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
-    let sql = r#"
+    let sql = r"
         INSERT INTO lookup_values
             (sync_id, domain_id, code, label, fr_label, en_label,
              sort_order, is_active, is_system, color,
              created_at, updated_at, row_version)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, 1)
-    "#;
+    ";
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         sql,
@@ -248,10 +239,10 @@ pub async fn insert_lookup_value(
             domain_id.into(),
             code.into(),
             label.into(),
-            fr_label.map(|s| s.to_string()).into(),
-            en_label.map(|s| s.to_string()).into(),
+            fr_label.map(std::string::ToString::to_string).into(),
+            en_label.map(std::string::ToString::to_string).into(),
             sort_order.into(),
-            color.map(|s| s.to_string()).into(),
+            color.map(std::string::ToString::to_string).into(),
             now.clone().into(),
             now.into(),
         ],

@@ -54,7 +54,7 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
                 crate::audit::AuditEvent {
                     event_type: crate::audit::event_type::LOGIN_FAILURE,
                     summary: "Failed login attempt — user not found",
-                    detail_json: Some(format!(r#"{{"username_provided":true}}"#)),
+                    detail_json: Some(r#"{"username_provided":true}"#.to_string()),
                     ..Default::default()
                 },
             )
@@ -93,7 +93,7 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
                 event_type: crate::audit::event_type::LOGIN_FAILURE,
                 actor_id: Some(user_id),
                 summary: "Failed login attempt — wrong password",
-                detail_json: Some(format!(r#"{{"username_provided":true}}"#)),
+                detail_json: Some(r#"{"username_provided":true}"#.to_string()),
                 ..Default::default()
             },
         )
@@ -251,8 +251,8 @@ pub async fn get_device_trust_status(state: State<'_, AppState>) -> AppResult<de
 
     Ok(device::DeviceTrustStatus {
         device_fingerprint: fingerprint,
-        is_trusted: trust.is_some() && !trust.as_ref().map(|t| t.is_revoked).unwrap_or(false),
-        is_revoked: trust.as_ref().map(|t| t.is_revoked).unwrap_or(false),
+        is_trusted: trust.is_some() && !trust.as_ref().is_some_and(|t| t.is_revoked),
+        is_revoked: trust.as_ref().is_some_and(|t| t.is_revoked),
         offline_allowed,
         offline_hours_remaining: offline_hours,
         device_label: trust.as_ref().and_then(|t| t.device_label.clone()),
@@ -286,7 +286,7 @@ pub async fn revoke_device_trust(device_id: String, state: State<'_, AppState>) 
 
 // ── Unlock Session ────────────────────────────────────────────────────────────
 
-/// Input for the unlock_session command.
+/// Input for the `unlock_session` command.
 #[derive(Debug, Deserialize)]
 pub struct UnlockSessionRequest {
     pub password: String,
@@ -366,7 +366,7 @@ pub async fn unlock_session(
 
 // ── Force Change Password ─────────────────────────────────────────────────────
 
-/// Input for the force_change_password command.
+/// Input for the `force_change_password` command.
 #[derive(Debug, Deserialize)]
 pub struct ForceChangePasswordRequest {
     pub new_password: String,
@@ -419,11 +419,11 @@ pub async fn force_change_password(
         .db
         .execute(sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Sqlite,
-            r#"UPDATE user_accounts
+            r"UPDATE user_accounts
                SET password_hash = ?,
                    force_password_change = 0,
                    updated_at = ?
-               WHERE id = ?"#,
+               WHERE id = ?",
             [new_hash.into(), now.clone().into(), user.user_id.into()],
         ))
         .await?;

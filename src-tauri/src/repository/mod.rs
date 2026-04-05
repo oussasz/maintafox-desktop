@@ -41,7 +41,7 @@ impl PageRequest {
 
 /// Standard paginated response wrapper.
 #[derive(Debug, Clone, Serialize)]
-pub struct Page<T: Serialize> {
+pub struct Page<T> {
     pub items: Vec<T>,
     pub total: u64,
     pub page: u64,
@@ -52,11 +52,7 @@ pub struct Page<T: Serialize> {
 impl<T: Serialize> Page<T> {
     pub fn new(items: Vec<T>, total: u64, request: &PageRequest) -> Self {
         let per_page = request.per_page.min(PageRequest::MAX_PER_PAGE);
-        let total_pages = if per_page == 0 {
-            0
-        } else {
-            (total + per_page - 1) / per_page
-        };
+        let total_pages = if per_page == 0 { 0 } else { total.div_ceil(per_page) };
         Self {
             items,
             total,

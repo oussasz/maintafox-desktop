@@ -1,5 +1,5 @@
 //! Service layer for lookup domain and value management.
-//! Wraps lookup_repository with business rules:
+//! Wraps `lookup_repository` with business rules:
 //! - Prevents insertion into locked or non-extensible domains
 //! - Validates code format (alphanumeric + underscore, uppercase, max 64 chars)
 //! - Flushes relevant caches on mutation (Phase 2 will add caching here)
