@@ -42,4 +42,14 @@ export { Badge, badgeVariants } from "./badge";
 export type { BadgeProps } from "./badge";
 export { Separator } from "./separator";
 export { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs";
+export {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "./table";
 export { FormField } from "./FormField";

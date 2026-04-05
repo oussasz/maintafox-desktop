@@ -115,7 +115,15 @@
     "firstPage": "Premi\u00e8re page",
     "lastPage": "Derni\u00e8re page",
     "nextPage": "Page suivante",
-    "previousPage": "Page pr\u00e9c\u00e9dente"
+    "previousPage": "Page pr\u00e9c\u00e9dente",
+    "pageOf": "Page {{page}} sur {{total}}"
+  },
+  "table": {
+    "sortAscending": "Trier par ordre croissant",
+    "sortDescending": "Trier par ordre d\u00e9croissant",
+    "clearSort": "Effacer le tri",
+    "searchPlaceholder": "Rechercher...",
+    "loading": "Chargement des donn\u00e9es..."
   },
   "time": {
     "just_now": "\u00c0 l'instant",
