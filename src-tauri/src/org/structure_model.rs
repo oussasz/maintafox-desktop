@@ -137,7 +137,12 @@ pub async fn create_model(
         ))
         .await?;
     let max_version: i32 = max_row
-        .map_or(0, |r| r.try_get::<i32>("", "max_ver").unwrap_or(0));
+        .and_then(|r| {
+            r.try_get::<i64>("", "max_ver")
+                .ok()
+                .and_then(|v| i32::try_from(v).ok())
+        })
+        .unwrap_or(0);
     let next_version = max_version + 1;
 
     db.execute(Statement::from_sql_and_values(
