@@ -1,7 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability set for Maintafox Desktop",
+  "description": "Maintafox default capability set. Keep minimal. No additional permissions without ADR.",
+  "platforms": ["linux", "macOS", "windows"],
   "windows": ["main"],
   "permissions": [
     "core:default",

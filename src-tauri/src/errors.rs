@@ -28,6 +28,12 @@ pub enum AppError {
     #[error("Permission denied: action '{action}' on resource '{resource}'")]
     Permission { action: String, resource: String },
 
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+
+    #[error("Step-up verification required for this action")]
+    StepUpRequired,
+
     #[error("Internal error: {0}")]
     Internal(#[from] anyhow::Error),
 }
@@ -50,10 +56,18 @@ impl serde::Serialize for AppError {
             Self::Io(_) => "IO_ERROR",
             Self::Serialization(_) => "SERIALIZATION_ERROR",
             Self::Permission { .. } => "PERMISSION_DENIED",
+            Self::PermissionDenied(_) => "PERMISSION_DENIED",
+            Self::StepUpRequired => "STEP_UP_REQUIRED",
             Self::Internal(_) => "INTERNAL_ERROR",
         };
         state.serialize_field("code", code)?;
-        state.serialize_field("message", &self.to_string())?;
+
+        // Security: Internal errors must never leak raw details to the frontend.
+        let message = match self {
+            Self::Internal(_) => "Une erreur interne s'est produite.".to_string(),
+            _ => self.to_string(),
+        };
+        state.serialize_field("message", &message)?;
         state.end()
     }
 }

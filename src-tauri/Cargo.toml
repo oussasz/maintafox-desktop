@@ -13,23 +13,38 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
+sea-orm-migration = { version = "1", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+sysinfo = "0.30"
+regex = "1"
 anyhow = "1"
 thiserror = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-argon2 = "0.5"
-keyring = "2"
+argon2 = { version = "0.5", features = ["rand"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+keyring = { version = "2.3", features = ["platform-windows", "platform-macos", "platform-linux"] }
+sha2 = "0.10"
+hex = "0.4"
+hostname = "0.3"
+sys-locale = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 lto = "thin"

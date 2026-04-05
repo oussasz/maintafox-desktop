@@ -1,0 +1,49 @@
+{
+  "required": "Ce champ est obligatoire.",
+  "minLength": "Minimum {{min}} caract\u00e8res requis.",
+  "maxLength": "Maximum {{max}} caract\u00e8res autoris\u00e9s.",
+  "minValue": "La valeur minimale est {{min}}.",
+  "maxValue": "La valeur maximale est {{max}}.",
+  "pattern": {
+    "generic": "Format invalide.",
+    "email": "Adresse e-mail invalide.",
+    "phone": "Num\u00e9ro de t\u00e9l\u00e9phone invalide.",
+    "url": "URL invalide.",
+    "alphanumeric": "Lettres et chiffres uniquement.",
+    "numeric": "Seuls les chiffres sont autoris\u00e9s.",
+    "code": "Code invalide (lettres majuscules, chiffres, tirets et underscores uniquement).",
+    "noSpecialChars": "Les caract\u00e8res sp\u00e9ciaux ne sont pas autoris\u00e9s.",
+    "permissionName": "Format de permission invalide (ex.: eq.view).",
+    "date": "Date invalide. Format attendu : JJ/MM/AAAA.",
+    "positiveNumber": "La valeur doit \u00eatre un nombre positif.",
+    "ipAddress": "Adresse IP invalide.",
+    "macAddress": "Adresse MAC invalide."
+  },
+  "unique": "Cette valeur existe d\u00e9j\u00e0.",
+  "password": {
+    "tooShort": "Le mot de passe doit comporter au moins 10 caract\u00e8res.",
+    "tooWeak": "Le mot de passe doit contenir majuscules, minuscules, chiffres et caract\u00e8res sp\u00e9ciaux.",
+    "mismatch": "Les mots de passe ne correspondent pas.",
+    "sameAsCurrent": "Le nouveau mot de passe doit \u00eatre diff\u00e9rent de l'actuel.",
+    "compromised": "Ce mot de passe est trop courant. Choisissez-en un autre."
+  },
+  "date": {
+    "invalid": "Date invalide.",
+    "beforeMin": "La date ne peut pas \u00eatre ant\u00e9rieure au {{min}}.",
+    "afterMax": "La date ne peut pas \u00eatre post\u00e9rieure au {{max}}.",
+    "endBeforeStart": "La date de fin doit \u00eatre post\u00e9rieure \u00e0 la date de d\u00e9but."
+  },
+  "file": {
+    "tooLarge": "Fichier trop volumineux. Taille maximale : {{maxSizeMb}} Mo.",
+    "invalidType": "Type de fichier non autoris\u00e9. Types accept\u00e9s : {{types}}.",
+    "required": "Veuillez s\u00e9lectionner un fichier.",
+    "uploadFailed": "\u00c9chec de l'envoi du fichier."
+  },
+  "form": {
+    "hasErrors": "Le formulaire contient des erreurs. Veuillez les corriger avant de soumettre.",
+    "saved": "Enregistrement r\u00e9ussi.",
+    "saveError": "\u00c9chec de l'enregistrement. Veuillez r\u00e9essayer.",
+    "unsavedChanges": "Vous avez des modifications non enregistr\u00e9es.",
+    "confirmDiscard": "Voulez-vous abandonner les modifications ?"
+  }
+}

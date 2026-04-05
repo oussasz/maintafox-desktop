@@ -1,7 +1,25 @@
+import { useEffect } from "react";
+import { RouterProvider } from "react-router-dom";
+
+import { LocaleHtmlDir } from "@/components/locale-html-dir";
+import { ThemeProvider } from "@/components/ui/ThemeProvider";
+import { router } from "@/router";
+import { useSettingsStore } from "@/stores/settings-store";
+
 export function App() {
+  useEffect(() => {
+    void useSettingsStore.getState().loadSessionPolicy();
+  }, []);
+
   return (
-    <div className="flex h-screen items-center justify-center bg-maintafox-900 text-white">
-      <p className="text-xl font-semibold">Maintafox — initializing</p>
-    </div>
+    <ThemeProvider>
+      <LocaleHtmlDir />
+      <RouterProvider
+        router={router}
+        future={{
+          v7_startTransition: true,
+        }}
+      />
+    </ThemeProvider>
   );
 }
