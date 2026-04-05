@@ -54,8 +54,17 @@
     "hide": "Masquer",
     "quit": "Quitter"
   },
+  "commandPalette": {
+    "title": "Palette de commandes"
+  },
   "session": {
-    "timeRemaining": "Session expire dans {{minutes}} min"
+    "timeRemaining": "Session expire dans {{minutes}} min",
+    "expired": "Session expirée",
+    "active": "Session active"
+  },
+  "device": {
+    "trusted": "Appareil de confiance",
+    "untrusted": "Appareil non v\u00e9rifi\u00e9"
   },
   "startup": {
     "loading": "D\u00e9marrage en cours\u2026",

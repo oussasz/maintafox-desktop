@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 
+import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 
@@ -12,6 +13,8 @@ export interface NavItem {
   icon: ReactNode;
   groupKey?: string;
   isGroupHeader?: boolean;
+  /** Permission required to see this nav item. If undefined, always visible. */
+  requiredPermission?: string;
 }
 
 interface SidebarProps {
@@ -21,22 +24,30 @@ interface SidebarProps {
 export function Sidebar({ items }: SidebarProps) {
   const { t } = useTranslation("shell");
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
+  const { can } = usePermissions();
   const location = useLocation();
 
+  // Filter non-header items by permission, then group — hide empty groups
+  const visibleItems = items.filter(
+    (item) => item.isGroupHeader || !item.requiredPermission || can(item.requiredPermission),
+  );
+
   type Group = { header: NavItem | null; children: NavItem[] };
-  const groups = items.reduce<Group[]>((acc, item) => {
-    if (item.isGroupHeader) {
-      acc.push({ header: item, children: [] });
-    } else {
-      const lastGroup = acc[acc.length - 1];
-      if (lastGroup) {
-        lastGroup.children.push(item);
+  const groups = visibleItems
+    .reduce<Group[]>((acc, item) => {
+      if (item.isGroupHeader) {
+        acc.push({ header: item, children: [] });
       } else {
-        acc.push({ header: null, children: [item] });
+        const lastGroup = acc[acc.length - 1];
+        if (lastGroup) {
+          lastGroup.children.push(item);
+        } else {
+          acc.push({ header: null, children: [item] });
+        }
       }
-    }
-    return acc;
-  }, []);
+      return acc;
+    }, [])
+    .filter((group) => group.children.length > 0);
 
   return (
     <nav

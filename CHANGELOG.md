@@ -14,6 +14,22 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Shell: Role-scoped sidebar — nav items filtered by `usePermissions().can()` with
+  `requiredPermission` field on 24 of 27 items; 3 always-visible (dashboard,
+  notifications, profile); empty groups auto-hidden (P2-SP00-F03-S1)
+- Shell: Command palette (`⌘K` / `Ctrl+K`) — Dialog-based search over nav-registry
+  with bilingual matching, permission filtering, and keyboard navigation (P2-SP00-F03-S2)
+- Shell: `useNotificationCount` polling hook — queries `get_unread_notification_count`
+  IPC every 30 s with silent fallback to 0 when backend unavailable (P2-SP00-F03-S3)
+- Shell: `useDeviceTrustStatus` hook — fetches device trust status from Rust backend
+  with silent fallback to `unknown` (P2-SP00-F03-S3)
+- Shell: User menu enhancements — session time-remaining indicator and device trust
+  badge (`SessionTimeIndicator`, `DeviceTrustBadge`) in TopBar dropdown (P2-SP00-F03-S3)
+- Shell: Sidebar verification tests — 4 tests covering admin/non-admin/always-visible/
+  empty-group scenarios (P2-SP00-F03-S1)
+- i18n: Added `commandPalette.title`, `session.timeRemaining`, `session.expired`,
+  `session.active`, `device.trusted`, `device.untrusted` keys to FR and EN shell
+  namespaces (P2-SP00-F03)
 - Monorepo scaffold: Tauri 2.x + React 18 + TypeScript 5 workspace structure
 - Rust application core with `AppError` typed error system and `AppResult<T>` alias
 - `health_check` IPC command with typed `HealthCheckResponse` contract in `shared/ipc-types.ts`
