@@ -22,7 +22,13 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("equipment_classes"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("name")).text().not_null())
@@ -48,14 +54,30 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("equipment"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
-                    .col(ColumnDef::new(Alias::new("asset_id_code")).text().not_null().unique_key())
+                    .col(
+                        ColumnDef::new(Alias::new("asset_id_code"))
+                            .text()
+                            .not_null()
+                            .unique_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("name")).text().not_null())
                     .col(ColumnDef::new(Alias::new("class_id")).integer())
                     // "active_in_service" | "in_stock" | "under_maintenance" | "decommissioned" |
                     // "scrapped" | "transferred" | "spare"
-                    .col(ColumnDef::new(Alias::new("lifecycle_status")).text().not_null().default("active_in_service"))
+                    .col(
+                        ColumnDef::new(Alias::new("lifecycle_status"))
+                            .text()
+                            .not_null()
+                            .default("active_in_service"),
+                    )
                     // criticality references lookup_values.id from domain "equipment.criticality"
                     .col(ColumnDef::new(Alias::new("criticality_value_id")).integer())
                     // primary org node this asset is installed at
@@ -84,7 +106,12 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("deleted_at")).text())
-                    .col(ColumnDef::new(Alias::new("row_version")).integer().not_null().default(1))
+                    .col(
+                        ColumnDef::new(Alias::new("row_version"))
+                            .integer()
+                            .not_null()
+                            .default(1),
+                    )
                     .col(ColumnDef::new(Alias::new("origin_machine_id")).text())
                     .col(ColumnDef::new(Alias::new("last_synced_checkpoint")).text())
                     .to_owned(),
@@ -120,10 +147,21 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("equipment_hierarchy"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("parent_equipment_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("child_equipment_id")).integer().not_null())
-                    .col(ColumnDef::new(Alias::new("relationship_type")).text().not_null().default("parent_child"))
+                    .col(
+                        ColumnDef::new(Alias::new("relationship_type"))
+                            .text()
+                            .not_null()
+                            .default("parent_child"),
+                    )
                     .col(ColumnDef::new(Alias::new("position_label")).text())
                     .col(ColumnDef::new(Alias::new("installed_at")).text())
                     .col(ColumnDef::new(Alias::new("removed_at")).text())
@@ -140,13 +178,29 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("equipment_meters"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("equipment_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("name")).text().not_null())
-                    .col(ColumnDef::new(Alias::new("meter_type")).text().not_null().default("hours"))
+                    .col(
+                        ColumnDef::new(Alias::new("meter_type"))
+                            .text()
+                            .not_null()
+                            .default("hours"),
+                    )
                     .col(ColumnDef::new(Alias::new("unit")).text().not_null())
-                    .col(ColumnDef::new(Alias::new("current_reading")).double().not_null().default(0.0))
+                    .col(
+                        ColumnDef::new(Alias::new("current_reading"))
+                            .double()
+                            .not_null()
+                            .default(0.0),
+                    )
                     .col(ColumnDef::new(Alias::new("last_read_at")).text())
                     .col(ColumnDef::new(Alias::new("expected_rate_per_day")).double())
                     .col(ColumnDef::new(Alias::new("is_primary")).integer().not_null().default(0))
@@ -167,7 +221,13 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("equipment_lifecycle_events"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("equipment_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("event_type")).text().not_null())

@@ -49,28 +49,20 @@ macro_rules! require_session {
 #[macro_export]
 macro_rules! require_permission {
     ($state:expr, $user:expr, $perm:expr, $scope:expr) => {{
-        let has = $crate::auth::rbac::check_permission(
-            &$state.db,
-            $user.user_id,
-            $perm,
-            &$scope,
-        )
-        .await?;
+        let has = $crate::auth::rbac::check_permission(&$state.db, $user.user_id, $perm, &$scope).await?;
 
         if !has {
-            return Err($crate::errors::AppError::PermissionDenied(
-                format!("Permission requise : {}", $perm),
-            ));
+            return Err($crate::errors::AppError::PermissionDenied(format!(
+                "Permission requise : {}",
+                $perm
+            )));
         }
 
         // If the permission requires step-up, verify it
         let guard = $state.session.read().await;
-        let needs_step_up = $crate::auth::rbac::permission_requires_step_up(
-            &$state.db,
-            $perm,
-        )
-        .await
-        .unwrap_or(false);
+        let needs_step_up = $crate::auth::rbac::permission_requires_step_up(&$state.db, $perm)
+            .await
+            .unwrap_or(false);
 
         if needs_step_up && !guard.is_step_up_valid() {
             return Err($crate::errors::AppError::StepUpRequired);
@@ -94,4 +86,3 @@ macro_rules! require_step_up {
         }
     }};
 }
-

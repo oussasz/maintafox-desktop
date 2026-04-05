@@ -57,8 +57,7 @@ impl LocalSession {
 
     /// True if the session is idle-locked (no activity for `IDLE_LOCK_MINUTES`).
     pub fn is_idle_locked(&self) -> bool {
-        let idle_deadline =
-            self.last_activity_at + TimeDelta::minutes(IDLE_LOCK_MINUTES);
+        let idle_deadline = self.last_activity_at + TimeDelta::minutes(IDLE_LOCK_MINUTES);
         self.is_locked || Utc::now() > idle_deadline
     }
 
@@ -109,10 +108,7 @@ impl SessionManager {
     /// Returns a reference to the current authenticated user, if any.
     /// Returns `None` if there is no session, or if the session is expired/locked.
     pub fn current_user(&self) -> Option<&AuthenticatedUser> {
-        self.current
-            .as_ref()
-            .filter(|s| !s.is_expired())
-            .map(|s| &s.user)
+        self.current.as_ref().filter(|s| !s.is_expired()).map(|s| &s.user)
     }
 
     /// Updates the `last_activity_at` timestamp to prevent idle lock.
@@ -169,10 +165,7 @@ impl SessionManager {
 
     /// True if the current session has a valid (non-expired) step-up verification.
     pub fn is_step_up_valid(&self) -> bool {
-        self.current
-            .as_ref()
-            .map(|s| s.is_step_up_valid())
-            .unwrap_or(false)
+        self.current.as_ref().map(|s| s.is_step_up_valid()).unwrap_or(false)
     }
 
     /// Clear the current session (logout or forced expiry).
@@ -274,12 +267,7 @@ pub async fn record_successful_login(db: &DatabaseConnection, user_id: i32) -> A
                last_seen_at = ?,
                updated_at = ?
            WHERE id = ?"#,
-        [
-            now.clone().into(),
-            now.clone().into(),
-            now.into(),
-            user_id.into(),
-        ],
+        [now.clone().into(), now.clone().into(), now.into(), user_id.into()],
     ))
     .await?;
     Ok(())
@@ -297,12 +285,7 @@ pub async fn create_session_record(
         DbBackend::Sqlite,
         r#"INSERT INTO app_sessions (id, user_id, created_at, expires_at, is_revoked)
            VALUES (?, ?, ?, ?, 0)"#,
-        [
-            session_db_id.into(),
-            user_id.into(),
-            now.into(),
-            expires_at.into(),
-        ],
+        [session_db_id.into(), user_id.into(), now.into(), expires_at.into()],
     ))
     .await?;
     Ok(())
@@ -351,10 +334,7 @@ mod tests {
         let mut mgr = SessionManager::new();
         mgr.create_session(make_user());
         mgr.lock_session();
-        assert!(
-            !mgr.is_authenticated(),
-            "Locked session must not be 'authenticated'"
-        );
+        assert!(!mgr.is_authenticated(), "Locked session must not be 'authenticated'");
         assert!(mgr.current.as_ref().unwrap().is_locked);
     }
 

@@ -28,12 +28,7 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("sync_id"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
+                    .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
                     .col(
                         ColumnDef::new(Alias::new("version_number"))
                             .integer()
@@ -41,26 +36,13 @@ impl MigrationTrait for Migration {
                             .default(1),
                     )
                     // "draft" | "active" | "superseded" | "archived"
-                    .col(
-                        ColumnDef::new(Alias::new("status"))
-                            .text()
-                            .not_null()
-                            .default("draft"),
-                    )
+                    .col(ColumnDef::new(Alias::new("status")).text().not_null().default("draft"))
                     .col(ColumnDef::new(Alias::new("description")).text())
                     .col(ColumnDef::new(Alias::new("activated_at")).text())
                     .col(ColumnDef::new(Alias::new("activated_by_id")).integer())
                     .col(ColumnDef::new(Alias::new("superseded_at")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("updated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -81,17 +63,8 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("sync_id"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("structure_model_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
+                    .col(ColumnDef::new(Alias::new("structure_model_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("code")).text().not_null())
                     .col(ColumnDef::new(Alias::new("label")).text().not_null())
                     .col(ColumnDef::new(Alias::new("icon_key")).text())
@@ -133,22 +106,9 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(0),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("is_active"))
-                            .integer()
-                            .not_null()
-                            .default(1),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("updated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("is_active")).integer().not_null().default(1))
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -168,29 +128,13 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("structure_model_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("parent_type_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("child_type_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("structure_model_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("parent_type_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("child_type_id")).integer().not_null())
                     // min/max child count (NULL = unrestricted)
                     .col(ColumnDef::new(Alias::new("min_children")).integer())
                     .col(ColumnDef::new(Alias::new("max_children")).integer())
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -212,19 +156,10 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("sync_id"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
+                    .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("code")).text().not_null())
                     .col(ColumnDef::new(Alias::new("name")).text().not_null())
-                    .col(
-                        ColumnDef::new(Alias::new("node_type_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("node_type_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("parent_id")).integer())
                     // hierarchy path string for fast descendant queries
                     // format: "/1/4/17/" — id path from root to this node
@@ -235,36 +170,18 @@ impl MigrationTrait for Migration {
                             .default("/"),
                     )
                     // depth in the hierarchy tree (0 = root)
-                    .col(
-                        ColumnDef::new(Alias::new("depth"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("depth")).integer().not_null().default(0))
                     .col(ColumnDef::new(Alias::new("description")).text())
                     .col(ColumnDef::new(Alias::new("cost_center_code")).text())
                     .col(ColumnDef::new(Alias::new("external_reference")).text())
                     // "active" | "inactive" | "decommissioned" | "under_construction"
-                    .col(
-                        ColumnDef::new(Alias::new("status"))
-                            .text()
-                            .not_null()
-                            .default("active"),
-                    )
+                    .col(ColumnDef::new(Alias::new("status")).text().not_null().default("active"))
                     .col(ColumnDef::new(Alias::new("effective_from")).text())
                     .col(ColumnDef::new(Alias::new("effective_to")).text())
                     .col(ColumnDef::new(Alias::new("erp_reference")).text())
                     .col(ColumnDef::new(Alias::new("notes")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("updated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("deleted_at")).text())
                     .col(
                         ColumnDef::new(Alias::new("row_version"))
@@ -315,32 +232,16 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("node_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("responsibility_type"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("node_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("responsibility_type")).text().not_null())
                     // references personnel.id (table created in a later migration)
                     .col(ColumnDef::new(Alias::new("person_id")).integer())
                     // references teams.id (table created in migration 006)
                     .col(ColumnDef::new(Alias::new("team_id")).integer())
                     .col(ColumnDef::new(Alias::new("valid_from")).text())
                     .col(ColumnDef::new(Alias::new("valid_to")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("updated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -360,40 +261,15 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("node_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("binding_type"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("node_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("binding_type")).text().not_null())
                     // "erp_plant" | "erp_cost_center" | "sap_fl" | "legacy_code" | "external_api"
-                    .col(
-                        ColumnDef::new(Alias::new("external_system"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("external_id"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("is_primary"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("external_system")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("external_id")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("is_primary")).integer().not_null().default(0))
                     .col(ColumnDef::new(Alias::new("valid_from")).text())
                     .col(ColumnDef::new(Alias::new("valid_to")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .to_owned(),
             )
             .await?;

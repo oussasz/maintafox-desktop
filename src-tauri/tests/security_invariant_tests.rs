@@ -58,14 +58,8 @@ fn sec3_argon2id_parameters_match_owasp() {
         hash.contains("m=65536"),
         "SEC-3 FAIL: memory cost must be 65536 KiB (64 MiB)"
     );
-    assert!(
-        hash.contains("t=3"),
-        "SEC-3 FAIL: time cost must be 3 iterations"
-    );
-    assert!(
-        hash.contains("p=1"),
-        "SEC-3 FAIL: parallelism must be 1"
-    );
+    assert!(hash.contains("t=3"), "SEC-3 FAIL: time cost must be 3 iterations");
+    assert!(hash.contains("p=1"), "SEC-3 FAIL: parallelism must be 1");
 }
 
 // ── SEC-4 — Step-up re-auth window pinned to 120 seconds ───────────────

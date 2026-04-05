@@ -258,4 +258,71 @@ export interface ForceChangePasswordResponse {
   session_info: SessionInfo;
 }
 
+// ─── Updater ──────────────────────────────────────────────────────────────
+// Mirrors UpdateCheckResult in src-tauri/src/commands/updater.rs
+
+export interface UpdateCheckResult {
+  available: boolean;
+  version: string | null;
+  notes: string | null;
+  pub_date: string | null;
+}
+
+// ─── Diagnostics / Support Bundle (SP06-F03) ──────────────────────────────
+
+/** Rich application metadata from `get_diagnostics_info` (session-gated). */
+export interface DiagnosticsAppInfo {
+  app_version: string;
+  os_name: string;
+  os_version: string;
+  arch: string;
+  db_schema_version: number;
+  active_locale: string;
+  sync_status: string;
+  uptime_seconds: number;
+}
+
+/** Sanitized support bundle returned by `generate_support_bundle`. */
+export interface SupportBundle {
+  generated_at: string;
+  app_info: DiagnosticsAppInfo;
+  log_lines: string[];
+  collection_warnings: string[];
+}
+
 // Frontend invokes via: invoke("shutdown_app")
+
+// ─── Backup & Restore Preflight (SP06-F04) ────────────────────────────────
+
+export interface BackupRunRecord {
+  id: number;
+  trigger: string;
+  status: string;
+  output_path: string;
+  file_size_bytes: number | null;
+  sha256_checksum: string | null;
+  encryption_mode: string;
+  db_schema_version: number | null;
+  started_at: string;
+  completed_at: string | null;
+  error_message: string | null;
+  initiated_by_id: number | null;
+}
+
+export interface BackupRunResult {
+  run_id: number;
+  output_path: string;
+  file_size_bytes: number;
+  sha256_checksum: string;
+  status: string;
+}
+
+export interface RestoreTestResult {
+  backup_path: string;
+  integrity_ok: boolean;
+  stored_checksum: string | null;
+  computed_checksum: string;
+  checksum_match: boolean;
+  integrity_check_output: string;
+  warnings: string[];
+}

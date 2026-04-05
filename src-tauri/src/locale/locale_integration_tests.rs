@@ -7,10 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::locale::{
-        detect_os_locale, read_locale_config, resolve_locale_preference,
-        write_locale_config,
-    };
+    use crate::locale::{detect_os_locale, read_locale_config, resolve_locale_preference, write_locale_config};
 
     /// Helper: create an in-memory DB with all migrations applied.
     async fn setup_db() -> sea_orm::DatabaseConnection {
@@ -27,9 +24,7 @@ mod tests {
         .expect("enable FK");
 
         use sea_orm_migration::MigratorTrait;
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations");
+        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
 
         db
     }
@@ -82,7 +77,10 @@ mod tests {
 
         // After: user_locale = "en", active_locale = "en" (highest priority)
         let after = resolve_locale_preference(&db).await.expect("resolve after");
-        println!("[V2] after set_locale: active={}, user={:?}", after.active_locale, after.user_locale);
+        println!(
+            "[V2] after set_locale: active={}, user={:?}",
+            after.active_locale, after.user_locale
+        );
         assert_eq!(after.user_locale, Some("en".to_string()));
         assert_eq!(after.active_locale, "en");
 
@@ -92,7 +90,10 @@ mod tests {
             .expect("write fr");
 
         let switched = resolve_locale_preference(&db).await.expect("resolve switched");
-        println!("[V2] after switch back: active={}, user={:?}", switched.active_locale, switched.user_locale);
+        println!(
+            "[V2] after switch back: active={}, user={:?}",
+            switched.active_locale, switched.user_locale
+        );
         assert_eq!(switched.user_locale, Some("fr".to_string()));
         assert_eq!(switched.active_locale, "fr");
     }
@@ -103,7 +104,10 @@ mod tests {
         let db = setup_db().await;
         let result = write_locale_config(&db, "locale.user_language", "de").await;
         assert!(result.is_err(), "writing unsupported locale 'de' should fail");
-        println!("[V2b] Correctly rejected unsupported locale 'de': {:?}", result.unwrap_err());
+        println!(
+            "[V2b] Correctly rejected unsupported locale 'de': {:?}",
+            result.unwrap_err()
+        );
     }
 
     /// V3 — Locale preference is persisted across re-reads (simulates restart).
@@ -118,7 +122,10 @@ mod tests {
 
         // Re-read (simulates app restart — the DB is the same)
         let pref = resolve_locale_preference(&db).await.expect("resolve");
-        println!("[V3] persisted: active={}, user={:?}", pref.active_locale, pref.user_locale);
+        println!(
+            "[V3] persisted: active={}, user={:?}",
+            pref.active_locale, pref.user_locale
+        );
         assert_eq!(pref.user_locale, Some("en".to_string()));
         assert_eq!(pref.active_locale, "en");
 
@@ -141,11 +148,16 @@ mod tests {
             .expect("write tenant default");
 
         let pref = resolve_locale_preference(&db).await.expect("resolve");
-        println!("[V3b] tenant default: active={}, tenant={:?}, user={:?}",
-            pref.active_locale, pref.tenant_locale, pref.user_locale);
+        println!(
+            "[V3b] tenant default: active={}, tenant={:?}, user={:?}",
+            pref.active_locale, pref.tenant_locale, pref.user_locale
+        );
         assert_eq!(pref.tenant_locale, Some("en".to_string()));
         assert!(pref.user_locale.is_none());
-        assert_eq!(pref.active_locale, "en", "tenant default should be used when no user pref");
+        assert_eq!(
+            pref.active_locale, "en",
+            "tenant default should be used when no user pref"
+        );
     }
 
     /// V3c — User preference overrides tenant default.
@@ -162,8 +174,10 @@ mod tests {
             .expect("write user");
 
         let pref = resolve_locale_preference(&db).await.expect("resolve");
-        println!("[V3c] precedence: active={}, user={:?}, tenant={:?}",
-            pref.active_locale, pref.user_locale, pref.tenant_locale);
+        println!(
+            "[V3c] precedence: active={}, user={:?}, tenant={:?}",
+            pref.active_locale, pref.user_locale, pref.tenant_locale
+        );
         assert_eq!(pref.active_locale, "fr", "user preference must override tenant default");
         assert_eq!(pref.user_locale, Some("fr".to_string()));
         assert_eq!(pref.tenant_locale, Some("en".to_string()));

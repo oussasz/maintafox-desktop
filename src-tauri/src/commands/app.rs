@@ -48,9 +48,7 @@ pub struct TaskStatusEntry {
 /// Returns the current status of all tracked background tasks.
 /// Supervisor returns empty list before any tasks are spawned (Phase 1 normal state).
 #[tauri::command]
-pub async fn get_task_status(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<TaskStatusEntry>> {
+pub async fn get_task_status(state: State<'_, AppState>) -> AppResult<Vec<TaskStatusEntry>> {
     let entries = state.tasks.status().await;
     Ok(entries
         .into_iter()
@@ -63,10 +61,7 @@ pub async fn get_task_status(
 /// Intended for the quit menu item and tray "Quit" action. Ensures all background
 /// tasks are cancelled and the database pool is dropped before the process exits.
 #[tauri::command]
-pub async fn shutdown_app(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn shutdown_app(app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     tracing::info!("shutdown_app: initiating graceful shutdown");
 
     // 1. Signal all background tasks to stop and await with 5s timeout

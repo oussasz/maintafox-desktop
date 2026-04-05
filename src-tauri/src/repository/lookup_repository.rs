@@ -1,10 +1,7 @@
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult,
-    Statement,
-};
-use serde::{Deserialize, Serialize};
-use crate::errors::{AppError, AppResult};
 use super::{Page, PageRequest, SearchFilter};
+use crate::errors::{AppError, AppResult};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
+use serde::{Deserialize, Serialize};
 
 // ── DTOs ──────────────────────────────────────────────────────────────────
 
@@ -82,8 +79,17 @@ pub async fn list_lookup_domains(
     // Count query
     let count_sql = format!(
         "SELECT COUNT(*) as cnt FROM lookup_domains WHERE deleted_at IS NULL{}{}",
-        filter.search.query.as_ref().map(|_| " AND (display_name LIKE ? OR domain_key LIKE ?)").unwrap_or(""),
-        filter.domain_type.as_ref().map(|_| " AND domain_type = ?").unwrap_or(""),
+        filter
+            .search
+            .query
+            .as_ref()
+            .map(|_| " AND (display_name LIKE ? OR domain_key LIKE ?)")
+            .unwrap_or(""),
+        filter
+            .domain_type
+            .as_ref()
+            .map(|_| " AND domain_type = ?")
+            .unwrap_or(""),
     );
     // List query with value count
     let list_sql = format!(
@@ -98,8 +104,17 @@ pub async fn list_lookup_domains(
         ORDER BY ld.domain_key ASC
         LIMIT {} OFFSET {}
         "#,
-        filter.search.query.as_ref().map(|_| " AND (ld.display_name LIKE ? OR ld.domain_key LIKE ?)").unwrap_or(""),
-        filter.domain_type.as_ref().map(|_| " AND ld.domain_type = ?").unwrap_or(""),
+        filter
+            .search
+            .query
+            .as_ref()
+            .map(|_| " AND (ld.display_name LIKE ? OR ld.domain_key LIKE ?)")
+            .unwrap_or(""),
+        filter
+            .domain_type
+            .as_ref()
+            .map(|_| " AND ld.domain_type = ?")
+            .unwrap_or(""),
         page.limit(),
         page.offset(),
     );
@@ -117,9 +132,7 @@ pub async fn list_lookup_domains(
 
     let count_stmt = Statement::from_sql_and_values(DbBackend::Sqlite, &count_sql, count_binds);
     let count_result = db.query_one(count_stmt).await?;
-    let total: u64 = count_result
-        .and_then(|r| r.try_get::<i64>("", "cnt").ok())
-        .unwrap_or(0) as u64;
+    let total: u64 = count_result.and_then(|r| r.try_get::<i64>("", "cnt").ok()).unwrap_or(0) as u64;
 
     // Build bind values for list
     let mut list_binds: Vec<sea_orm::Value> = Vec::new();
@@ -132,9 +145,7 @@ pub async fn list_lookup_domains(
     }
 
     let list_stmt = Statement::from_sql_and_values(DbBackend::Sqlite, &list_sql, list_binds);
-    let rows = LookupDomainSummary::find_by_statement(list_stmt)
-        .all(db)
-        .await?;
+    let rows = LookupDomainSummary::find_by_statement(list_stmt).all(db).await?;
 
     Ok(Page::new(rows, total, page))
 }
@@ -158,22 +169,13 @@ pub async fn get_domain_values(
         ORDER BY lv.sort_order ASC, lv.label ASC
         "#,
     );
-    let stmt = Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        &sql,
-        [domain_key.into()],
-    );
-    Ok(LookupValueOption::find_by_statement(stmt)
-        .all(db)
-        .await?)
+    let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, &sql, [domain_key.into()]);
+    Ok(LookupValueOption::find_by_statement(stmt).all(db).await?)
 }
 
 /// Resolves a single lookup value by its integer id.
 /// Used at render time to convert a stored FK to a displayable label.
-pub async fn get_value_by_id(
-    db: &DatabaseConnection,
-    value_id: i32,
-) -> AppResult<LookupValueRecord> {
+pub async fn get_value_by_id(db: &DatabaseConnection, value_id: i32) -> AppResult<LookupValueRecord> {
     let sql = r#"
         SELECT id, sync_id, domain_id, code, label, fr_label, en_label,
                description, sort_order, is_active, is_system, color, parent_value_id
@@ -192,11 +194,7 @@ pub async fn get_value_by_id(
 
 /// Looks up a value by its code within a named domain.
 /// Used for import mapping and controlled vocabulary enforcement.
-pub async fn get_value_by_code(
-    db: &DatabaseConnection,
-    domain_key: &str,
-    code: &str,
-) -> AppResult<LookupValueRecord> {
+pub async fn get_value_by_code(db: &DatabaseConnection, domain_key: &str, code: &str) -> AppResult<LookupValueRecord> {
     let sql = r#"
         SELECT lv.id, lv.sync_id, lv.domain_id, lv.code, lv.label, lv.fr_label,
                lv.en_label, lv.description, lv.sort_order, lv.is_active, lv.is_system,
@@ -205,10 +203,7 @@ pub async fn get_value_by_code(
         INNER JOIN lookup_domains ld ON ld.id = lv.domain_id
         WHERE ld.domain_key = ? AND lv.code = ? AND lv.deleted_at IS NULL
     "#;
-    let stmt = Statement::from_sql_and_values(
-        DbBackend::Sqlite, sql,
-        [domain_key.into(), code.into()],
-    );
+    let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, [domain_key.into(), code.into()]);
     LookupValueRecord::find_by_statement(stmt)
         .one(db)
         .await?
@@ -232,8 +227,8 @@ pub async fn insert_lookup_value(
     color: Option<&str>,
     _created_by_sync_id: &str,
 ) -> AppResult<i32> {
-    use uuid::Uuid;
     use chrono::Utc;
+    use uuid::Uuid;
 
     let sync_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -274,13 +269,12 @@ pub async fn insert_lookup_value(
     })?;
 
     // Return the new id
-    let row = db.query_one(Statement::from_string(
-        DbBackend::Sqlite,
-        "SELECT last_insert_rowid() as id;".to_string(),
-    ))
-    .await?;
-    let new_id: i32 = row
-        .and_then(|r| r.try_get::<i64>("", "id").ok())
-        .unwrap_or(0) as i32;
+    let row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT last_insert_rowid() as id;".to_string(),
+        ))
+        .await?;
+    let new_id: i32 = row.and_then(|r| r.try_get::<i64>("", "id").ok()).unwrap_or(0) as i32;
     Ok(new_id)
 }

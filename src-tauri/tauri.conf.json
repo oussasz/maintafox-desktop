@@ -41,6 +41,16 @@
     ]
   },
   "plugins": {
-    "shell": { "open": true }
+    "shell": { "open": true },
+    "updater": {
+      "pubkey": "PLACEHOLDER_UPDATER_PUBLIC_KEY_REPLACE_IN_PHASE2",
+      "endpoints": [
+        "https://updates.maintafox.local/stub/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "dialog": false,
+      "windows": {
+        "installMode": "basicUi"
+      }
+    }
   }
 }

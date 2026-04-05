@@ -35,3 +35,18 @@ export type ModuleKey =
   | "configuration";
 
 export type Theme = "dark" | "light";
+
+// ─── Updater hook ─────────────────────────────────────────────────────────────
+
+export interface UseUpdaterResult {
+  available: boolean;
+  version: string | null;
+  notes: string | null;
+  isChecking: boolean;
+  isInstalling: boolean;
+  installComplete: boolean;
+  error: string | null;
+  checkNow: () => void;
+  install: () => void;
+  dismiss: () => void;
+}

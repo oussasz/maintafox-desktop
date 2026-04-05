@@ -1,7 +1,7 @@
+use super::SearchFilter;
+use crate::errors::{AppError, AppResult};
 use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::Serialize;
-use crate::errors::{AppError, AppResult};
-use super::SearchFilter;
 
 // ── DTOs ──────────────────────────────────────────────────────────────────
 
@@ -64,17 +64,12 @@ pub async fn get_org_tree(db: &DatabaseConnection) -> AppResult<Vec<OrgNodeTreeR
         ORDER BY n.depth ASC, n.code ASC
     "#;
     let stmt = Statement::from_string(DbBackend::Sqlite, sql.to_string());
-    Ok(OrgNodeTreeRow::find_by_statement(stmt)
-        .all(db)
-        .await?)
+    Ok(OrgNodeTreeRow::find_by_statement(stmt).all(db).await?)
 }
 
 /// Returns all descendant nodes of a given ancestor path prefix.
 /// Uses the ancestor_path column for O(log n) subtree queries.
-pub async fn get_descendants(
-    db: &DatabaseConnection,
-    ancestor_path_prefix: &str,
-) -> AppResult<Vec<OrgNodeTreeRow>> {
+pub async fn get_descendants(db: &DatabaseConnection, ancestor_path_prefix: &str) -> AppResult<Vec<OrgNodeTreeRow>> {
     let sql = r#"
         SELECT
             n.id, n.sync_id, n.code, n.name, n.parent_id, n.ancestor_path,
@@ -88,16 +83,11 @@ pub async fn get_descendants(
     "#;
     let pattern = format!("{ancestor_path_prefix}%");
     let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, [pattern.into()]);
-    Ok(OrgNodeTreeRow::find_by_statement(stmt)
-        .all(db)
-        .await?)
+    Ok(OrgNodeTreeRow::find_by_statement(stmt).all(db).await?)
 }
 
 /// Returns a single org node by its id.
-pub async fn get_node_by_id(
-    db: &DatabaseConnection,
-    node_id: i32,
-) -> AppResult<OrgNodeTreeRow> {
+pub async fn get_node_by_id(db: &DatabaseConnection, node_id: i32) -> AppResult<OrgNodeTreeRow> {
     let sql = r#"
         SELECT
             n.id, n.sync_id, n.code, n.name, n.parent_id, n.ancestor_path,
@@ -128,9 +118,7 @@ pub async fn get_asset_host_nodes(db: &DatabaseConnection) -> AppResult<Vec<OrgN
         ORDER BY n.depth ASC, n.name ASC
     "#;
     let stmt = Statement::from_string(DbBackend::Sqlite, sql.to_string());
-    Ok(OrgNodeOption::find_by_statement(stmt)
-        .all(db)
-        .await?)
+    Ok(OrgNodeOption::find_by_statement(stmt).all(db).await?)
 }
 
 /// Returns nodes that can own work — used by work order scope dropdown.
@@ -143,7 +131,5 @@ pub async fn get_work_owner_nodes(db: &DatabaseConnection) -> AppResult<Vec<OrgN
         ORDER BY n.depth ASC, n.name ASC
     "#;
     let stmt = Statement::from_string(DbBackend::Sqlite, sql.to_string());
-    Ok(OrgNodeOption::find_by_statement(stmt)
-        .all(db)
-        .await?)
+    Ok(OrgNodeOption::find_by_statement(stmt).all(db).await?)
 }

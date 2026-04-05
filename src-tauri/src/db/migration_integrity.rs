@@ -6,11 +6,7 @@ mod tests {
     fn migration_names_follow_convention() {
         let names = migration_name_list();
         for name in &names {
-            assert!(
-                name.starts_with('m'),
-                "Migration name must start with 'm': {}",
-                name
-            );
+            assert!(name.starts_with('m'), "Migration name must start with 'm': {}", name);
             let parts: Vec<&str> = name.splitn(3, '_').collect();
             assert_eq!(
                 parts.len(),
@@ -19,24 +15,14 @@ mod tests {
                 name
             );
             let date_part = parts[0].trim_start_matches('m');
-            assert_eq!(
-                date_part.len(),
-                8,
-                "Date segment must be 8 digits (YYYYMMDD): {}",
-                name
-            );
+            assert_eq!(date_part.len(), 8, "Date segment must be 8 digits (YYYYMMDD): {}", name);
             assert!(
                 date_part.chars().all(|c| c.is_ascii_digit()),
                 "Date segment must be all digits: {}",
                 name
             );
             let seq_part = parts[1];
-            assert_eq!(
-                seq_part.len(),
-                6,
-                "Sequence segment must be 6 digits: {}",
-                name
-            );
+            assert_eq!(seq_part.len(), 6, "Sequence segment must be 6 digits: {}", name);
             assert!(
                 seq_part.chars().all(|c| c.is_ascii_digit()),
                 "Sequence segment must be all digits: {}",

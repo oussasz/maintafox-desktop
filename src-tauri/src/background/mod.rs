@@ -79,7 +79,13 @@ impl BackgroundTaskSupervisor {
             info!("background task finished: {id}");
         });
 
-        tasks.insert(id, TaskEntry { handle, token: child_token });
+        tasks.insert(
+            id,
+            TaskEntry {
+                handle,
+                token: child_token,
+            },
+        );
         drop(tasks);
         info!("background: spawned task '{id}'");
     }
@@ -121,8 +127,7 @@ impl BackgroundTaskSupervisor {
         info!("background: initiating graceful shutdown (timeout={timeout_secs}s)");
         self.shutdown_token.cancel();
 
-        let deadline =
-            tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs);
+        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs);
 
         let mut tasks = self.tasks.lock().await;
         for (id, entry) in tasks.drain() {

@@ -73,10 +73,7 @@ mod errors_tests {
     #[test]
     fn all_variants_map_to_correct_error_codes() {
         let cases: Vec<(AppError, &str)> = vec![
-            (
-                AppError::Database(sea_orm::DbErr::Custom("x".into())),
-                "DATABASE_ERROR",
-            ),
+            (AppError::Database(sea_orm::DbErr::Custom("x".into())), "DATABASE_ERROR"),
             (AppError::Auth("x".into()), "AUTH_ERROR"),
             (
                 AppError::NotFound {
@@ -88,16 +85,11 @@ mod errors_tests {
             (AppError::ValidationFailed(vec![]), "VALIDATION_FAILED"),
             (AppError::SyncError("x".into()), "SYNC_ERROR"),
             (
-                AppError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "x",
-                )),
+                AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")),
                 "IO_ERROR",
             ),
             (
-                AppError::Serialization(
-                    serde_json::from_str::<()>("bad").unwrap_err(),
-                ),
+                AppError::Serialization(serde_json::from_str::<()>("bad").unwrap_err()),
                 "SERIALIZATION_ERROR",
             ),
             (
@@ -107,24 +99,14 @@ mod errors_tests {
                 },
                 "PERMISSION_DENIED",
             ),
-            (
-                AppError::PermissionDenied("x".into()),
-                "PERMISSION_DENIED",
-            ),
+            (AppError::PermissionDenied("x".into()), "PERMISSION_DENIED"),
             (AppError::StepUpRequired, "STEP_UP_REQUIRED"),
-            (
-                AppError::Internal(anyhow::anyhow!("boom")),
-                "INTERNAL_ERROR",
-            ),
+            (AppError::Internal(anyhow::anyhow!("boom")), "INTERNAL_ERROR"),
         ];
 
         for (err, expected_code) in cases {
             let json = serde_json::to_value(&err).expect("serialize");
-            assert_eq!(
-                json["code"].as_str().unwrap(),
-                expected_code,
-                "wrong code for {err:?}"
-            );
+            assert_eq!(json["code"].as_str().unwrap(), expected_code, "wrong code for {err:?}");
         }
     }
 
@@ -144,12 +126,7 @@ mod errors_tests {
     fn non_internal_errors_do_expose_their_messages() {
         let err = AppError::Auth("token expired".into());
         let json = serde_json::to_value(&err).expect("serialize");
-        assert!(
-            json["message"]
-                .as_str()
-                .unwrap()
-                .contains("token expired")
-        );
+        assert!(json["message"].as_str().unwrap().contains("token expired"));
     }
 
     // ── AppResult alias ─────────────────────────────────────────────────

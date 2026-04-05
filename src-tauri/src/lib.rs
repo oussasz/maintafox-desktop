@@ -11,9 +11,12 @@
 pub mod audit;
 pub mod auth;
 pub mod background;
+pub mod backup;
 pub mod commands;
 pub mod db;
+pub mod diagnostics;
 pub mod errors;
+pub mod locale;
 pub mod migrations;
 pub mod models;
 pub mod repository;
@@ -24,7 +27,6 @@ pub mod startup;
 pub mod state;
 pub mod sync;
 pub mod tray;
-pub mod locale;
 pub mod window;
 
 #[cfg(test)]
@@ -39,28 +41,38 @@ mod state_tests;
 mod window_tests;
 
 use tauri::Manager;
-use tracing_subscriber::EnvFilter;
 
 #[allow(clippy::large_stack_frames)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("maintafox=info")))
-        .init();
+    // Record application start time before anything else so uptime is accurate.
+    diagnostics::record_start_time();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Single-instance: focus existing window on second launch
-        .plugin(
-            tauri_plugin_single_instance::init(|app, _args, _cwd| {
-                if let Some(w) = app.get_webview_window("main") {
-                    w.set_focus().ok();
-                    w.show().ok();
-                }
-            }),
-        )
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                w.set_focus().ok();
+                w.show().ok();
+            }
+        }))
         .setup(|app| {
+            // Initialize file-based logging as the very first setup action so that
+            // all subsequent startup messages are captured in the rolling log file.
+            // The WorkerGuard flushes and closes the file on drop; Box::leak keeps
+            // it alive for the entire process lifetime (acceptable in Phase 1).
+            let log_dir_path = app
+                .handle()
+                .path()
+                .app_log_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("logs"));
+            std::fs::create_dir_all(&log_dir_path)?;
+            let guard = diagnostics::init_file_logging(log_dir_path);
+            Box::leak(Box::new(guard));
+
             // Tray icon (non-fatal if tray is not supported on this platform)
             if let Err(e) = tray::setup_tray(app) {
                 tracing::warn!("System tray unavailable: {e}");
@@ -121,6 +133,14 @@ pub fn run() {
             commands::settings::get_policy_snapshot,
             commands::settings::get_session_policy,
             commands::settings::list_setting_change_events,
+            commands::updater::check_for_update,
+            commands::updater::install_pending_update,
+            commands::diagnostics::get_diagnostics_info,
+            commands::diagnostics::generate_support_bundle,
+            commands::backup::run_manual_backup,
+            commands::backup::list_backup_runs,
+            commands::backup::validate_backup_file,
+            commands::backup::factory_reset_stub,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

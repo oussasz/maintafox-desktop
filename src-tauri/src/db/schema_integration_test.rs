@@ -66,9 +66,7 @@ mod tests {
             let sql = format!("SELECT COUNT(*) FROM {};", table);
             db.execute(Statement::from_string(DbBackend::Sqlite, sql))
                 .await
-                .unwrap_or_else(|e| {
-                    panic!("Table '{}' is missing or inaccessible: {}", table, e)
-                });
+                .unwrap_or_else(|e| panic!("Table '{}' is missing or inaccessible: {}", table, e));
         }
     }
 
@@ -80,9 +78,7 @@ mod tests {
             .expect("In-memory DB");
 
         use sea_orm_migration::MigratorTrait;
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations");
+        crate::migrations::Migrator::up(&db, None).await.expect("Migrations");
 
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let rows = db
@@ -125,9 +121,7 @@ mod tests {
             .expect("In-memory DB");
 
         use sea_orm_migration::MigratorTrait;
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations");
+        crate::migrations::Migrator::up(&db, None).await.expect("Migrations");
 
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let rows = db
@@ -161,9 +155,7 @@ mod tests {
             .expect("In-memory DB");
 
         use sea_orm_migration::MigratorTrait;
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("Migrations");
+        crate::migrations::Migrator::up(&db, None).await.expect("Migrations");
 
         crate::db::seeder::seed_default_settings(&db)
             .await

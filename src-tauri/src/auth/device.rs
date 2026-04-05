@@ -51,12 +51,7 @@ fn read_machine_id() -> AppResult<String> {
     {
         use std::process::Command;
         let output = Command::new("reg")
-            .args([
-                "query",
-                r"HKLM\SOFTWARE\Microsoft\Cryptography",
-                "/v",
-                "MachineGuid",
-            ])
+            .args(["query", r"HKLM\SOFTWARE\Microsoft\Cryptography", "/v", "MachineGuid"])
             .output()?;
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines() {
@@ -66,11 +61,7 @@ fn read_machine_id() -> AppResult<String> {
                 }
             }
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "MachineGuid not found in registry",
-        )
-        .into())
+        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "MachineGuid not found in registry").into())
     }
 
     #[cfg(target_os = "linux")]
@@ -92,20 +83,12 @@ fn read_machine_id() -> AppResult<String> {
                 }
             }
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "IOPlatformUUID not found",
-        )
-        .into())
+        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "IOPlatformUUID not found").into())
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "unsupported platform for machine ID",
-        )
-        .into())
+        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "unsupported platform for machine ID").into())
     }
 }
 
@@ -205,18 +188,12 @@ pub async fn get_device_trust(
 
     Ok(row.map(|r| TrustedDevice {
         id: r.try_get::<String>("", "id").unwrap_or_default(),
-        device_label: r
-            .try_get::<Option<String>>("", "device_label")
-            .unwrap_or(None),
+        device_label: r.try_get::<Option<String>>("", "device_label").unwrap_or(None),
         user_id: r.try_get::<i32>("", "user_id").unwrap_or(0),
         trusted_at: r.try_get::<String>("", "trusted_at").unwrap_or_default(),
-        last_seen_at: r
-            .try_get::<Option<String>>("", "last_seen_at")
-            .unwrap_or(None),
+        last_seen_at: r.try_get::<Option<String>>("", "last_seen_at").unwrap_or(None),
         is_revoked: r.try_get::<i32>("", "is_revoked").unwrap_or(0) == 1,
-        revoked_at: r
-            .try_get::<Option<String>>("", "revoked_at")
-            .unwrap_or(None),
+        revoked_at: r.try_get::<Option<String>>("", "revoked_at").unwrap_or(None),
     }))
 }
 
@@ -333,21 +310,14 @@ pub async fn check_offline_access(
     // Read the configured grace window from system_config
     let grace_hours = read_offline_grace_hours(db).await?;
 
-    let last_seen = trust
-        .last_seen_at
-        .as_deref()
-        .or(Some(trust.trusted_at.as_str()));
+    let last_seen = trust.last_seen_at.as_deref().or(Some(trust.trusted_at.as_str()));
 
     let Some(last_seen_str) = last_seen else {
         return Ok((false, None));
     };
 
     let last_seen_dt = chrono::DateTime::parse_from_rfc3339(last_seen_str)
-        .map_err(|e| {
-            AppError::Internal(anyhow::anyhow!(
-                "invalid last_seen_at in trusted_devices: {e}"
-            ))
-        })?
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid last_seen_at in trusted_devices: {e}")))?
         .with_timezone(&Utc);
 
     let deadline = last_seen_dt + chrono::Duration::hours(grace_hours);
@@ -407,11 +377,7 @@ pub fn is_network_available() -> bool {
         use std::net::TcpStream;
         // Probe a fast-fail connection to a well-known public DNS on port 53.
         // Returns within 1s if offline.
-        TcpStream::connect_timeout(
-            &"8.8.8.8:53".parse().unwrap(),
-            std::time::Duration::from_secs(1),
-        )
-        .is_ok()
+        TcpStream::connect_timeout(&"8.8.8.8:53".parse().unwrap(), std::time::Duration::from_secs(1)).is_ok()
     }
 }
 

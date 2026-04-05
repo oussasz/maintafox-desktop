@@ -9,8 +9,7 @@ pub async fn verify_org_tables(db: &DatabaseConnection) -> AppResult<()> {
 
     for table in &["org_structure_models", "org_node_types", "org_nodes"] {
         let sql = format!("SELECT COUNT(*) FROM {table};");
-        db.execute(Statement::from_string(DbBackend::Sqlite, sql))
-            .await?;
+        db.execute(Statement::from_string(DbBackend::Sqlite, sql)).await?;
     }
 
     Ok(())

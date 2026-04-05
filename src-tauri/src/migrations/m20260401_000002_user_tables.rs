@@ -21,17 +21,33 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("roles"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("name")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("description")).text())
                     .col(ColumnDef::new(Alias::new("is_system")).integer().not_null().default(0))
-                    .col(ColumnDef::new(Alias::new("role_type")).text().not_null().default("custom"))
+                    .col(
+                        ColumnDef::new(Alias::new("role_type"))
+                            .text()
+                            .not_null()
+                            .default("custom"),
+                    )
                     .col(ColumnDef::new(Alias::new("status")).text().not_null().default("active"))
                     .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("deleted_at")).text())
-                    .col(ColumnDef::new(Alias::new("row_version")).integer().not_null().default(1))
+                    .col(
+                        ColumnDef::new(Alias::new("row_version"))
+                            .integer()
+                            .not_null()
+                            .default(1),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -47,12 +63,33 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("permissions"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("name")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("description")).text())
-                    .col(ColumnDef::new(Alias::new("category")).text().not_null().default("general"))
-                    .col(ColumnDef::new(Alias::new("is_dangerous")).integer().not_null().default(0))
-                    .col(ColumnDef::new(Alias::new("requires_step_up")).integer().not_null().default(0))
+                    .col(
+                        ColumnDef::new(Alias::new("category"))
+                            .text()
+                            .not_null()
+                            .default("general"),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("is_dangerous"))
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("requires_step_up"))
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
                     .col(ColumnDef::new(Alias::new("is_system")).integer().not_null().default(1))
                     .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .to_owned(),
@@ -69,7 +106,11 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("permission_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("granted_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("granted_by_id")).integer())
-                    .primary_key(Index::create().col(Alias::new("role_id")).col(Alias::new("permission_id")))
+                    .primary_key(
+                        Index::create()
+                            .col(Alias::new("role_id"))
+                            .col(Alias::new("permission_id")),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -88,19 +129,40 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("user_accounts"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("username")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("display_name")).text())
-                    .col(ColumnDef::new(Alias::new("identity_mode")).text().not_null().default("local"))
+                    .col(
+                        ColumnDef::new(Alias::new("identity_mode"))
+                            .text()
+                            .not_null()
+                            .default("local"),
+                    )
                     .col(ColumnDef::new(Alias::new("password_hash")).text())
                     .col(ColumnDef::new(Alias::new("pin_hash")).text())
                     .col(ColumnDef::new(Alias::new("oauth_subject")).text())
                     .col(ColumnDef::new(Alias::new("personnel_id")).integer())
                     .col(ColumnDef::new(Alias::new("is_active")).integer().not_null().default(1))
                     .col(ColumnDef::new(Alias::new("is_admin")).integer().not_null().default(0))
-                    .col(ColumnDef::new(Alias::new("force_password_change")).integer().not_null().default(1))
-                    .col(ColumnDef::new(Alias::new("failed_login_attempts")).integer().not_null().default(0))
+                    .col(
+                        ColumnDef::new(Alias::new("force_password_change"))
+                            .integer()
+                            .not_null()
+                            .default(1),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("failed_login_attempts"))
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
                     .col(ColumnDef::new(Alias::new("locked_until")).text())
                     .col(ColumnDef::new(Alias::new("last_login_at")).text())
                     .col(ColumnDef::new(Alias::new("last_seen_at")).text())
@@ -108,7 +170,12 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("deleted_at")).text())
-                    .col(ColumnDef::new(Alias::new("row_version")).integer().not_null().default(1))
+                    .col(
+                        ColumnDef::new(Alias::new("row_version"))
+                            .integer()
+                            .not_null()
+                            .default(1),
+                    )
                     .col(ColumnDef::new(Alias::new("origin_machine_id")).text())
                     .to_owned(),
             )
@@ -136,11 +203,22 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("user_scope_assignments"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("user_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("role_id")).integer().not_null())
-                    .col(ColumnDef::new(Alias::new("scope_type")).text().not_null().default("tenant"))
+                    .col(
+                        ColumnDef::new(Alias::new("scope_type"))
+                            .text()
+                            .not_null()
+                            .default("tenant"),
+                    )
                     .col(ColumnDef::new(Alias::new("scope_reference")).text())
                     .col(ColumnDef::new(Alias::new("valid_from")).text())
                     .col(ColumnDef::new(Alias::new("valid_to")).text())
@@ -149,7 +227,12 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("deleted_at")).text())
-                    .col(ColumnDef::new(Alias::new("row_version")).integer().not_null().default(1))
+                    .col(
+                        ColumnDef::new(Alias::new("row_version"))
+                            .integer()
+                            .not_null()
+                            .default(1),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -173,10 +256,21 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("permission_dependencies"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("permission_name")).text().not_null())
                     .col(ColumnDef::new(Alias::new("required_permission_name")).text().not_null())
-                    .col(ColumnDef::new(Alias::new("dependency_type")).text().not_null().default("warn"))
+                    .col(
+                        ColumnDef::new(Alias::new("dependency_type"))
+                            .text()
+                            .not_null()
+                            .default("warn"),
+                    )
                     .col(ColumnDef::new(Alias::new("description")).text())
                     .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .to_owned(),

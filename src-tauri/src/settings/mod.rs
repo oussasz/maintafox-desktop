@@ -78,11 +78,7 @@ pub fn sha256_hex(value: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub async fn get_setting(
-    db: &DatabaseConnection,
-    key: &str,
-    scope: &str,
-) -> AppResult<Option<AppSetting>> {
+pub async fn get_setting(db: &DatabaseConnection, key: &str, scope: &str) -> AppResult<Option<AppSetting>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -106,10 +102,7 @@ pub async fn get_setting(
     row.map(map_app_setting).transpose()
 }
 
-pub async fn list_settings_by_category(
-    db: &DatabaseConnection,
-    category: &str,
-) -> AppResult<Vec<AppSetting>> {
+pub async fn list_settings_by_category(db: &DatabaseConnection, category: &str) -> AppResult<Vec<AppSetting>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -134,10 +127,7 @@ pub async fn list_settings_by_category(
     rows.into_iter().map(map_app_setting).collect()
 }
 
-pub async fn get_active_policy(
-    db: &DatabaseConnection,
-    domain: &str,
-) -> AppResult<Option<PolicySnapshot>> {
+pub async fn get_active_policy(db: &DatabaseConnection, domain: &str) -> AppResult<Option<PolicySnapshot>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -167,14 +157,10 @@ pub async fn get_active_policy(
 /// Falls back to safe defaults whenever the DB policy is missing or malformed.
 pub async fn load_session_policy(db: &DatabaseConnection) -> SessionPolicy {
     match get_active_policy(db, "session").await {
-        Ok(Some(snap)) => serde_json::from_str::<SessionPolicy>(&snap.snapshot_json)
-            .unwrap_or_else(|e| {
-                tracing::warn!(
-                    "session policy snapshot is malformed, using defaults: {}",
-                    e
-                );
-                SessionPolicy::default()
-            }),
+        Ok(Some(snap)) => serde_json::from_str::<SessionPolicy>(&snap.snapshot_json).unwrap_or_else(|e| {
+            tracing::warn!("session policy snapshot is malformed, using defaults: {}", e);
+            SessionPolicy::default()
+        }),
         Ok(None) => {
             tracing::debug!("no active session policy snapshot found, using defaults");
             SessionPolicy::default()
@@ -202,12 +188,8 @@ pub async fn set_setting(
         )]));
     }
 
-    let _: serde_json::Value = serde_json::from_str(value_json).map_err(|_| {
-        AppError::ValidationFailed(vec![format!(
-            "setting_value_json for '{}' is not valid JSON",
-            key
-        )])
-    })?;
+    let _: serde_json::Value = serde_json::from_str(value_json)
+        .map_err(|_| AppError::ValidationFailed(vec![format!("setting_value_json for '{}' is not valid JSON", key)]))?;
 
     let old_hash = get_setting(db, key, scope)
         .await?
@@ -264,10 +246,7 @@ pub async fn set_setting(
     Ok(())
 }
 
-pub async fn list_change_events(
-    db: &DatabaseConnection,
-    limit: i64,
-) -> AppResult<Vec<SettingsChangeEvent>> {
+pub async fn list_change_events(db: &DatabaseConnection, limit: i64) -> AppResult<Vec<SettingsChangeEvent>> {
     let safe_limit = limit.clamp(1, 500);
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -409,9 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_session_policy_uses_defaults_when_missing() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("In-memory DB");
+        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
 
         crate::migrations::Migrator::up(&db, None)
             .await
@@ -423,9 +400,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_setting_writes_setting_and_audit_event() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("In-memory DB");
+        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
 
         crate::migrations::Migrator::up(&db, None)
             .await
@@ -470,24 +445,15 @@ mod tests {
 
     #[tokio::test]
     async fn set_setting_rejects_invalid_json() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("In-memory DB");
+        let db = Database::connect("sqlite::memory:").await.expect("In-memory DB");
 
         crate::migrations::Migrator::up(&db, None)
             .await
             .expect("Migrations should apply");
 
-        let err = set_setting(
-            &db,
-            "appearance.color_mode",
-            "tenant",
-            "not-json",
-            1,
-            "Invalid update",
-        )
-        .await
-        .expect_err("invalid JSON should be rejected");
+        let err = set_setting(&db, "appearance.color_mode", "tenant", "not-json", 1, "Invalid update")
+            .await
+            .expect_err("invalid JSON should be rejected");
 
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }

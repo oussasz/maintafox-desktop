@@ -27,8 +27,7 @@ async fn t1_login_success_creates_session() {
             .expect("T1 FAIL: admin user not seeded");
 
     let stored_hash = pw_hash.expect("T1 FAIL: admin has no password_hash");
-    let ok = password::verify_password("Admin#2026!", &stored_hash)
-        .expect("T1 FAIL: verify_password returned Err");
+    let ok = password::verify_password("Admin#2026!", &stored_hash).expect("T1 FAIL: verify_password returned Err");
     assert!(ok, "T1 FAIL: correct password did not verify");
 
     let mut mgr = SessionManager::new();
@@ -43,14 +42,9 @@ async fn t1_login_success_creates_session() {
     session_manager::record_successful_login(&db, user_id)
         .await
         .expect("T1 FAIL: record_successful_login failed");
-    session_manager::create_session_record(
-        &db,
-        &session.session_db_id,
-        user_id,
-        &session.expires_at.to_rfc3339(),
-    )
-    .await
-    .expect("T1 FAIL: create_session_record failed");
+    session_manager::create_session_record(&db, &session.session_db_id, user_id, &session.expires_at.to_rfc3339())
+        .await
+        .expect("T1 FAIL: create_session_record failed");
 
     let info = mgr.session_info();
     assert!(info.is_authenticated, "T1 FAIL: not authenticated after login");
@@ -71,8 +65,7 @@ async fn t2_wrong_password_opaque_error() {
             .expect("admin must exist");
 
     let stored_hash = pw_hash.expect("admin must have hash");
-    let ok = password::verify_password("wrong_password", &stored_hash)
-        .expect("verify should not error on valid hash");
+    let ok = password::verify_password("wrong_password", &stored_hash).expect("verify should not error on valid hash");
     assert!(!ok, "T2 FAIL: wrong password should not verify");
 
     let err = AppError::Auth("Identifiant ou mot de passe invalide.".into());
@@ -107,11 +100,10 @@ async fn t3_nonexistent_user_opaque_error() {
 async fn t4_logout_clears_session() {
     let db = common::create_test_db().await;
 
-    let (user_id, username, display_name, is_admin, force_pw, _) =
-        session_manager::find_active_user(&db, "admin")
-            .await
-            .expect("query")
-            .expect("admin exists");
+    let (user_id, username, display_name, is_admin, force_pw, _) = session_manager::find_active_user(&db, "admin")
+        .await
+        .expect("query")
+        .expect("admin exists");
 
     let mut mgr = SessionManager::new();
     mgr.create_session(AuthenticatedUser {
@@ -216,11 +208,10 @@ async fn t6_audit_login_failure_event() {
 async fn t7_session_expires_in_8_hours() {
     let db = common::create_test_db().await;
 
-    let (user_id, username, display_name, is_admin, force_pw, _) =
-        session_manager::find_active_user(&db, "admin")
-            .await
-            .expect("query")
-            .expect("admin exists");
+    let (user_id, username, display_name, is_admin, force_pw, _) = session_manager::find_active_user(&db, "admin")
+        .await
+        .expect("query")
+        .expect("admin exists");
 
     let before = chrono::Utc::now();
     let mut mgr = SessionManager::new();

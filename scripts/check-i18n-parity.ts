@@ -53,6 +53,7 @@ const MODULE_NAMESPACES = [
   "activity",
   "users",
   "settings",
+  "diagnostics",
   "configuration",
 ];
 

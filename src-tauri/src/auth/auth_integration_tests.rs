@@ -27,13 +27,9 @@ mod tests {
         .expect("enable FK");
 
         use sea_orm_migration::MigratorTrait;
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations");
+        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
 
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder");
+        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
 
         db
     }
@@ -45,15 +41,24 @@ mod tests {
         let mgr = SessionManager::new();
         let info = mgr.session_info();
 
-        assert!(!info.is_authenticated, "V3 FAIL: is_authenticated should be false before login");
+        assert!(
+            !info.is_authenticated,
+            "V3 FAIL: is_authenticated should be false before login"
+        );
         assert!(!info.is_locked, "V3 FAIL: is_locked should be false");
         assert!(info.user_id.is_none(), "V3 FAIL: user_id should be null");
         assert!(info.username.is_none(), "V3 FAIL: username should be null");
         assert!(info.display_name.is_none(), "V3 FAIL: display_name should be null");
         assert!(info.is_admin.is_none(), "V3 FAIL: is_admin should be null");
-        assert!(info.force_password_change.is_none(), "V3 FAIL: force_password_change should be null");
+        assert!(
+            info.force_password_change.is_none(),
+            "V3 FAIL: force_password_change should be null"
+        );
         assert!(info.expires_at.is_none(), "V3 FAIL: expires_at should be null");
-        assert!(info.last_activity_at.is_none(), "V3 FAIL: last_activity_at should be null");
+        assert!(
+            info.last_activity_at.is_none(),
+            "V3 FAIL: last_activity_at should be null"
+        );
     }
 
     // ── V1 — Login with correct credentials succeeds. ───────────────────
@@ -76,8 +81,8 @@ mod tests {
             "V1 FAIL: hash does not start with $argon2id$"
         );
 
-        let password_ok = password::verify_password("Admin#2026!", &stored_hash)
-            .expect("V1 FAIL: verify_password returned Err");
+        let password_ok =
+            password::verify_password("Admin#2026!", &stored_hash).expect("V1 FAIL: verify_password returned Err");
         assert!(password_ok, "V1 FAIL: correct password did not verify");
 
         // 3. Create session
@@ -96,20 +101,26 @@ mod tests {
         session_manager::record_successful_login(&db, user_id)
             .await
             .expect("V1 FAIL: record_successful_login failed");
-        session_manager::create_session_record(
-            &db,
-            &session.session_db_id,
-            user_id,
-            &session.expires_at.to_rfc3339(),
-        )
-        .await
-        .expect("V1 FAIL: create_session_record failed");
+        session_manager::create_session_record(&db, &session.session_db_id, user_id, &session.expires_at.to_rfc3339())
+            .await
+            .expect("V1 FAIL: create_session_record failed");
 
         // 5. Verify session info
         let info = mgr.session_info();
-        assert!(info.is_authenticated, "V1 FAIL: is_authenticated should be true after login");
-        assert_eq!(info.username.as_deref(), Some("admin"), "V1 FAIL: username should be 'admin'");
-        assert_eq!(info.force_password_change, Some(true), "V1 FAIL: force_password_change should be true");
+        assert!(
+            info.is_authenticated,
+            "V1 FAIL: is_authenticated should be true after login"
+        );
+        assert_eq!(
+            info.username.as_deref(),
+            Some("admin"),
+            "V1 FAIL: username should be 'admin'"
+        );
+        assert_eq!(
+            info.force_password_change,
+            Some(true),
+            "V1 FAIL: force_password_change should be true"
+        );
         assert_eq!(info.is_admin, Some(true), "V1 FAIL: is_admin should be true");
     }
 
@@ -123,14 +134,13 @@ mod tests {
         let user_record = session_manager::find_active_user(&db, "admin")
             .await
             .expect("DB query should not fail");
-        let (user_id, _username, _display_name, _is_admin, _force_pw, pw_hash) =
-            user_record.expect("admin must exist");
+        let (user_id, _username, _display_name, _is_admin, _force_pw, pw_hash) = user_record.expect("admin must exist");
 
         let stored_hash = pw_hash.expect("admin must have password_hash");
 
         // 2. Wrong password should not verify
-        let password_ok = password::verify_password("wrongpassword", &stored_hash)
-            .expect("verify should not error on valid hash");
+        let password_ok =
+            password::verify_password("wrongpassword", &stored_hash).expect("verify should not error on valid hash");
         assert!(!password_ok, "V2 FAIL: wrong password should not verify");
 
         // 3. Record failed login
@@ -145,18 +155,12 @@ mod tests {
             err_msg, "Authentication error: Identifiant ou mot de passe invalide.",
             "V2 FAIL: error message must be opaque"
         );
-        assert!(
-            !err_msg.contains("not found"),
-            "V2 FAIL: error reveals user not found"
-        );
+        assert!(!err_msg.contains("not found"), "V2 FAIL: error reveals user not found");
         assert!(
             !err_msg.contains("wrong password"),
             "V2 FAIL: error reveals wrong password"
         );
-        assert!(
-            !err_msg.contains("locked"),
-            "V2 FAIL: error reveals account locked"
-        );
+        assert!(!err_msg.contains("locked"), "V2 FAIL: error reveals account locked");
 
         // 5. Verify the error serializes with AUTH_ERROR code
         let serialized = serde_json::to_value(&err).expect("serialize error");
@@ -183,7 +187,8 @@ mod tests {
         let serialized = serde_json::to_value(&err).expect("serialize");
         assert_eq!(serialized["code"], "AUTH_ERROR");
         assert_eq!(
-            serialized["message"], "Authentication error: Identifiant ou mot de passe invalide."
+            serialized["message"],
+            "Authentication error: Identifiant ou mot de passe invalide."
         );
     }
 
@@ -216,7 +221,10 @@ mod tests {
 
         // Verify unauthenticated after logout
         let info = mgr.session_info();
-        assert!(!info.is_authenticated, "V4 FAIL: is_authenticated must be false after logout");
+        assert!(
+            !info.is_authenticated,
+            "V4 FAIL: is_authenticated must be false after logout"
+        );
         assert!(info.user_id.is_none(), "V4 FAIL: user_id must be null after logout");
         assert!(info.username.is_none(), "V4 FAIL: username must be null after logout");
     }

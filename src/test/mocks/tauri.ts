@@ -74,4 +74,17 @@ export const fixtures = {
     expires_at: null,
     last_activity_at: null,
   },
+  // ── Updater ──────────────────────────────────────────────────────────────
+  updateCheckNoUpdate: {
+    available: false,
+    version: null,
+    notes: null,
+    pub_date: null,
+  },
+  updateCheckAvailable: {
+    available: true,
+    version: "1.2.0",
+    notes: "Corrections de bugs et améliorations de stabilité.",
+    pub_date: "2026-04-15T00:00:00Z",
+  },
 } as const;

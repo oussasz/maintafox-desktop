@@ -1,6 +1,6 @@
+use crate::errors::AppResult;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
-use crate::errors::AppResult;
 
 // ── Report types ──────────────────────────────────────────────────────────
 
@@ -67,10 +67,7 @@ pub async fn run_integrity_check(db: &DatabaseConnection) -> AppResult<Integrity
     // Table names are compile-time constants — safe to interpolate.
     for table in &["lookup_domains", "lookup_values", "system_config"] {
         let sql = format!("SELECT COUNT(*) as cnt FROM {table}");
-        if let Err(e) = db
-            .execute(Statement::from_string(DbBackend::Sqlite, sql))
-            .await
-        {
+        if let Err(e) = db.execute(Statement::from_string(DbBackend::Sqlite, sql)).await {
             issues.push(IntegrityIssue {
                 code: "MISSING_TABLE".into(),
                 description: format!("Table '{table}' introuvable : {e}"),
@@ -107,7 +104,8 @@ pub async fn run_integrity_check(db: &DatabaseConnection) -> AppResult<Integrity
     if seed_version.is_none() {
         issues.push(IntegrityIssue {
             code: "SEED_NOT_APPLIED".into(),
-            description: "Les donn\u{00e9}es syst\u{00e8}me de base n'ont pas \u{00e9}t\u{00e9} initialis\u{00e9}es.".into(),
+            description: "Les donn\u{00e9}es syst\u{00e8}me de base n'ont pas \u{00e9}t\u{00e9} initialis\u{00e9}es."
+                .into(),
             is_auto_repairable: true,
             subject: "system_config::seed_schema_version".into(),
         });
@@ -120,11 +118,7 @@ pub async fn run_integrity_check(db: &DatabaseConnection) -> AppResult<Integrity
     )
     .await;
 
-    let value_count = query_count(
-        db,
-        "SELECT COUNT(*) as cnt FROM lookup_values WHERE deleted_at IS NULL",
-    )
-    .await;
+    let value_count = query_count(db, "SELECT COUNT(*) as cnt FROM lookup_values WHERE deleted_at IS NULL").await;
 
     // ── Check 4: required domains present ────────────────────────────────
     for &domain_key in REQUIRED_DOMAINS {
@@ -197,15 +191,12 @@ pub async fn run_integrity_check(db: &DatabaseConnection) -> AppResult<Integrity
 
 /// Execute a `SELECT COUNT(*) as cnt` query and return the result, or 0 on any error.
 async fn query_count(db: &DatabaseConnection, sql: &str) -> i32 {
-    db.query_one(Statement::from_string(
-        DbBackend::Sqlite,
-        sql.to_string(),
-    ))
-    .await
-    .ok()
-    .flatten()
-    .and_then(|r| r.try_get::<i32>("", "cnt").ok())
-    .unwrap_or(0)
+    db.query_one(Statement::from_string(DbBackend::Sqlite, sql.to_string()))
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.try_get::<i32>("", "cnt").ok())
+        .unwrap_or(0)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -225,9 +216,7 @@ mod tests {
     #[test]
     fn min_values_cover_all_required_domains() {
         for &domain in REQUIRED_DOMAINS {
-            let has_min = REQUIRED_DOMAIN_MIN_VALUES
-                .iter()
-                .any(|&(key, _)| key == domain);
+            let has_min = REQUIRED_DOMAIN_MIN_VALUES.iter().any(|&(key, _)| key == domain);
             assert!(
                 has_min,
                 "Required domain '{domain}' must have a minimum value count entry"

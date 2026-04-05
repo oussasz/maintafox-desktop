@@ -1,6 +1,6 @@
+pub mod equipment_repository;
 pub mod lookup_repository;
 pub mod org_repository;
-pub mod equipment_repository;
 pub mod team_repository;
 
 use serde::{Deserialize, Serialize};
@@ -52,7 +52,11 @@ pub struct Page<T: Serialize> {
 impl<T: Serialize> Page<T> {
     pub fn new(items: Vec<T>, total: u64, request: &PageRequest) -> Self {
         let per_page = request.per_page.min(PageRequest::MAX_PER_PAGE);
-        let total_pages = if per_page == 0 { 0 } else { (total + per_page - 1) / per_page };
+        let total_pages = if per_page == 0 {
+            0
+        } else {
+            (total + per_page - 1) / per_page
+        };
         Self {
             items,
             total,

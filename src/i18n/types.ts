@@ -18,6 +18,8 @@ import type frCommon from "./fr/common.json";
 import type frErrors from "./fr/errors.json";
 import type frShell from "./fr/shell.json";
 import type frValidation from "./fr/validation.json";
+// Module namespaces with compile-time type definitions:
+import type frDiagnostics from "./locale-data/fr/diagnostics.json";
 
 declare module "i18next" {
   interface CustomTypeOptions {
@@ -30,6 +32,8 @@ declare module "i18next" {
       errors: typeof frErrors;
       validation: typeof frValidation;
       shell: typeof frShell;
+      // Module namespaces (lazy-loaded at runtime, typed at compile time):
+      diagnostics: typeof frDiagnostics;
     };
   }
 }

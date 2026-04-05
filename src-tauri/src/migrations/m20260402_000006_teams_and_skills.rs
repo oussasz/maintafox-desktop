@@ -20,7 +20,13 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("skill_categories"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("name")).text().not_null())
@@ -41,21 +47,42 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("skill_definitions"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("name")).text().not_null())
                     .col(ColumnDef::new(Alias::new("category_id")).integer())
                     .col(ColumnDef::new(Alias::new("description")).text())
                     // does possessing this skill require a training qualification record?
-                    .col(ColumnDef::new(Alias::new("is_authorization_required")).integer().not_null().default(0))
+                    .col(
+                        ColumnDef::new(Alias::new("is_authorization_required"))
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
                     // typical revalidation period in months (0 = no expiry)
-                    .col(ColumnDef::new(Alias::new("revalidation_months")).integer().not_null().default(0))
+                    .col(
+                        ColumnDef::new(Alias::new("revalidation_months"))
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
                     .col(ColumnDef::new(Alias::new("is_active")).integer().not_null().default(1))
                     .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("deleted_at")).text())
-                    .col(ColumnDef::new(Alias::new("row_version")).integer().not_null().default(1))
+                    .col(
+                        ColumnDef::new(Alias::new("row_version"))
+                            .integer()
+                            .not_null()
+                            .default(1),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -68,12 +95,23 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("teams"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("name")).text().not_null())
                     // "maintenance" | "inspection" | "planning" | "contractor" | "hse"
-                    .col(ColumnDef::new(Alias::new("team_type")).text().not_null().default("maintenance"))
+                    .col(
+                        ColumnDef::new(Alias::new("team_type"))
+                            .text()
+                            .not_null()
+                            .default("maintenance"),
+                    )
                     .col(ColumnDef::new(Alias::new("primary_node_id")).integer())
                     .col(ColumnDef::new(Alias::new("description")).text())
                     // "active" | "inactive" | "disbanded"
@@ -81,7 +119,12 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("deleted_at")).text())
-                    .col(ColumnDef::new(Alias::new("row_version")).integer().not_null().default(1))
+                    .col(
+                        ColumnDef::new(Alias::new("row_version"))
+                            .integer()
+                            .not_null()
+                            .default(1),
+                    )
                     .col(ColumnDef::new(Alias::new("origin_machine_id")).text())
                     .to_owned(),
             )
@@ -95,11 +138,27 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("team_skill_requirements"))
                     .if_not_exists()
-                    .col(ColumnDef::new(Alias::new("id")).integer().not_null().auto_increment().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("id"))
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("team_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("skill_id")).integer().not_null())
-                    .col(ColumnDef::new(Alias::new("min_headcount")).integer().not_null().default(1))
-                    .col(ColumnDef::new(Alias::new("required_proficiency")).integer().not_null().default(3))
+                    .col(
+                        ColumnDef::new(Alias::new("min_headcount"))
+                            .integer()
+                            .not_null()
+                            .default(1),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("required_proficiency"))
+                            .integer()
+                            .not_null()
+                            .default(3),
+                    )
                     .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .to_owned(),
             )

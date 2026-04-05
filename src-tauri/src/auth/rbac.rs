@@ -8,9 +8,9 @@
 //! the requested resource, the check passes. The scope hierarchy is:
 //!   tenant > entity > site > team > org_node
 
+use crate::errors::AppResult;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
-use crate::errors::AppResult;
 
 /// The scope type passed to a permission check.
 /// `Global` means the caller doesn't require scope restriction.
@@ -55,11 +55,11 @@ pub async fn check_permission(
 
     // Determine scope filter components
     let (scope_type_filter, scope_ref_filter): (Option<&str>, Option<String>) = match scope {
-        PermissionScope::Global     => (None, None),
-        PermissionScope::Entity(id) => (Some("entity"),   Some(id.clone())),
-        PermissionScope::Site(id)   => (Some("site"),     Some(id.clone())),
-        PermissionScope::Team(id)   => (Some("team"),     Some(id.clone())),
-        PermissionScope::OrgNode(id)=> (Some("org_node"), Some(id.clone())),
+        PermissionScope::Global => (None, None),
+        PermissionScope::Entity(id) => (Some("entity"), Some(id.clone())),
+        PermissionScope::Site(id) => (Some("site"), Some(id.clone())),
+        PermissionScope::Team(id) => (Some("team"), Some(id.clone())),
+        PermissionScope::OrgNode(id) => (Some("org_node"), Some(id.clone())),
     };
 
     // Build the scope clause: always allow tenant-scoped roles; also allow
@@ -70,7 +70,8 @@ pub async fn check_permission(
         "usa.scope_type = 'tenant'"
     };
 
-    let sql = format!(r#"
+    let sql = format!(
+        r#"
         SELECT COUNT(*) as cnt
         FROM user_scope_assignments usa
         INNER JOIN role_permissions rp ON rp.role_id = usa.role_id
@@ -81,41 +82,34 @@ pub async fn check_permission(
           AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?)
           AND p.name = ?
           AND {scope_sql}
-    "#);
+    "#
+    );
 
-    let mut values: Vec<sea_orm::Value> = vec![
-        user_id.into(),
-        now.clone().into(),
-        now.into(),
-        permission_name.into(),
-    ];
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into(), now.clone().into(), now.into(), permission_name.into()];
 
     if let (Some(st), Some(sr)) = (&scope_type_filter, &scope_ref_filter) {
         values.push((*st).into());
         values.push(sr.clone().into());
     }
 
-    let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+    let row = db
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
-    let count = row
-        .and_then(|r| r.try_get::<i64>("", "cnt").ok())
-        .unwrap_or(0);
+    let count = row.and_then(|r| r.try_get::<i64>("", "cnt").ok()).unwrap_or(0);
 
     Ok(count > 0)
 }
 
 /// Load all effective permissions for a user (for frontend pre-loading).
 /// Returns only the permissions the user currently holds via active role assignments.
-pub async fn get_user_permissions(
-    db: &DatabaseConnection,
-    user_id: i32,
-) -> AppResult<Vec<PermissionRecord>> {
+pub async fn get_user_permissions(db: &DatabaseConnection, user_id: i32) -> AppResult<Vec<PermissionRecord>> {
     let now = chrono::Utc::now().to_rfc3339();
 
-    let rows = db.query_all(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        r#"SELECT DISTINCT p.name, p.description, p.category,
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r#"SELECT DISTINCT p.name, p.description, p.category,
                   p.is_dangerous, p.requires_step_up
            FROM permissions p
            INNER JOIN role_permissions rp ON rp.permission_id = p.id
@@ -125,17 +119,17 @@ pub async fn get_user_permissions(
              AND (usa.valid_from IS NULL OR usa.valid_from <= ?)
              AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?)
            ORDER BY p.name"#,
-        [user_id.into(), now.clone().into(), now.into()],
-    ))
-    .await?;
+            [user_id.into(), now.clone().into(), now.into()],
+        ))
+        .await?;
 
     let perms = rows
         .into_iter()
         .map(|r| PermissionRecord {
-            name:             r.try_get("", "name").unwrap_or_default(),
-            description:      r.try_get("", "description").unwrap_or_default(),
-            category:         r.try_get("", "category").unwrap_or_default(),
-            is_dangerous:     r.try_get::<i32>("", "is_dangerous").unwrap_or(0)     == 1,
+            name: r.try_get("", "name").unwrap_or_default(),
+            description: r.try_get("", "description").unwrap_or_default(),
+            category: r.try_get("", "category").unwrap_or_default(),
+            is_dangerous: r.try_get::<i32>("", "is_dangerous").unwrap_or(0) == 1,
             requires_step_up: r.try_get::<i32>("", "requires_step_up").unwrap_or(0) == 1,
         })
         .collect();
@@ -145,16 +139,14 @@ pub async fn get_user_permissions(
 
 /// Check whether a named permission requires step-up verification.
 /// Returns `false` if the permission doesn't exist or on any lookup failure.
-pub async fn permission_requires_step_up(
-    db: &DatabaseConnection,
-    permission_name: &str,
-) -> AppResult<bool> {
-    let row = db.query_one(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "SELECT requires_step_up FROM permissions WHERE name = ?",
-        [permission_name.into()],
-    ))
-    .await?;
+pub async fn permission_requires_step_up(db: &DatabaseConnection, permission_name: &str) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT requires_step_up FROM permissions WHERE name = ?",
+            [permission_name.into()],
+        ))
+        .await?;
 
     let requires = row
         .and_then(|r| r.try_get::<i32>("", "requires_step_up").ok())

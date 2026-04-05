@@ -8,11 +8,11 @@
 //!   - Constant-time comparison via argon2::verify_password.
 //!   - Compile-time constants — parameters cannot be weakened at runtime.
 
+use crate::errors::{AppError, AppResult};
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Algorithm, Argon2, Params, Version,
 };
-use crate::errors::{AppError, AppResult};
 
 /// Argon2id memory cost in KiB (64 MiB).
 const MEMORY_COST_KIB: u32 = 64 * 1024;
@@ -76,8 +76,7 @@ mod tests {
     #[test]
     fn wrong_password_does_not_verify() {
         let hash = hash_password("the_right_password").expect("hash should not fail");
-        let result = verify_password("the_wrong_password", &hash)
-            .expect("verify should not fail on valid hash");
+        let result = verify_password("the_wrong_password", &hash).expect("verify should not fail on valid hash");
         assert!(!result, "Wrong password must not verify");
     }
 

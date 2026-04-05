@@ -1,10 +1,12 @@
 pub mod app;
 pub mod auth;
+pub mod backup;
 pub mod diagnostics;
-pub mod lookup;
 pub mod locale;
+pub mod lookup;
 pub mod rbac;
 pub mod settings;
+pub mod updater;
 
 use tauri::State;
 

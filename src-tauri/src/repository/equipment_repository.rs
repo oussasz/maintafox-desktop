@@ -1,7 +1,7 @@
+use super::{Page, PageRequest};
+use crate::errors::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
-use crate::errors::{AppError, AppResult};
-use super::{Page, PageRequest};
 
 // ── DTOs ──────────────────────────────────────────────────────────────────
 
@@ -106,9 +106,7 @@ pub async fn list_equipment(
         binds.push(crit_id.into());
     }
     if let Some(ref q) = filter.query {
-        where_clauses.push(
-            "(e.asset_id_code LIKE ? OR e.name LIKE ? OR e.serial_number LIKE ?)".to_string(),
-        );
+        where_clauses.push("(e.asset_id_code LIKE ? OR e.name LIKE ? OR e.serial_number LIKE ?)".to_string());
         let p = format!("%{q}%");
         binds.push(p.clone().into());
         binds.push(p.clone().into());
@@ -148,26 +146,17 @@ pub async fn list_equipment(
             binds.clone(),
         ))
         .await?;
-    let total = count_result
-        .and_then(|r| r.try_get::<i64>("", "cnt").ok())
-        .unwrap_or(0) as u64;
+    let total = count_result.and_then(|r| r.try_get::<i64>("", "cnt").ok()).unwrap_or(0) as u64;
 
-    let rows = EquipmentListRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        &list_sql,
-        binds,
-    ))
-    .all(db)
-    .await?;
+    let rows = EquipmentListRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Sqlite, &list_sql, binds))
+        .all(db)
+        .await?;
 
     Ok(Page::new(rows, total, page))
 }
 
 /// Fetches full equipment detail by id.
-pub async fn get_equipment_by_id(
-    db: &DatabaseConnection,
-    equipment_id: i32,
-) -> AppResult<EquipmentDetail> {
+pub async fn get_equipment_by_id(db: &DatabaseConnection, equipment_id: i32) -> AppResult<EquipmentDetail> {
     let sql = r#"
         SELECT e.id, e.sync_id, e.asset_id_code, e.name, e.lifecycle_status,
                e.class_id, ec.name AS class_name,

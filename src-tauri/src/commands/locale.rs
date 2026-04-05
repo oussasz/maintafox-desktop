@@ -1,18 +1,16 @@
 // src-tauri/src/commands/locale.rs
 //! IPC commands for locale preference management.
 
-use tauri::State;
-use serde::Deserialize;
-use crate::state::AppState;
 use crate::errors::AppResult;
 use crate::locale::{self, LocalePreference};
+use crate::state::AppState;
+use serde::Deserialize;
+use tauri::State;
 
 /// Get the resolved locale preference.
 /// Does NOT require an active session — the login screen needs this.
 #[tauri::command]
-pub async fn get_locale_preference(
-    state: State<'_, AppState>,
-) -> AppResult<LocalePreference> {
+pub async fn get_locale_preference(state: State<'_, AppState>) -> AppResult<LocalePreference> {
     locale::resolve_locale_preference(&state.db).await
 }
 

@@ -1,7 +1,7 @@
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
-use chrono::Utc;
-use uuid::Uuid;
 use crate::errors::{AppError, AppResult};
+use chrono::Utc;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use uuid::Uuid;
 
 /// Current version of the system seed data set.
 /// Increment this when adding new system domains or values in a release.
@@ -33,228 +33,1172 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     tracing::info!("seeder::starting system seed (version {})", SEED_SCHEMA_VERSION);
 
     // ── 1. Insert all domain definitions ─────────────────────────────────
-    seed_domain(db, "equipment.criticality",
-        "Criticité équipement", "system", false, true).await?;
-    seed_domain(db, "equipment.lifecycle_status",
-        "Statut cycle de vie équipement", "system", false, false).await?;
-    seed_domain(db, "equipment.hierarchy_relationship",
-        "Type de relation hiérarchique équipement", "system", false, false).await?;
-    seed_domain(db, "intervention_request.type",
-        "Type de demande d'intervention", "tenant", false, true).await?;
-    seed_domain(db, "intervention_request.urgency",
-        "Urgence demande d'intervention", "system", true, true).await?;
-    seed_domain(db, "intervention_request.status",
-        "Statut demande d'intervention", "system", false, false).await?;
-    seed_domain(db, "work_order.type",
-        "Type d'ordre de travail", "tenant", false, true).await?;
-    seed_domain(db, "work_order.status",
-        "Statut ordre de travail", "system", false, false).await?;
-    seed_domain(db, "work_order.priority",
-        "Priorité ordre de travail", "system", true, true).await?;
-    seed_domain(db, "failure.mode",
-        "Mode de défaillance", "tenant", false, true).await?;
-    seed_domain(db, "failure.cause",
-        "Cause de défaillance", "tenant", false, true).await?;
-    seed_domain(db, "work_order.closure_reason",
-        "Motif de clôture OT", "tenant", false, true).await?;
-    seed_domain(db, "personnel.skill_proficiency",
-        "Niveau de compétence", "system", true, false).await?;
-    seed_domain(db, "personnel.contract_type",
-        "Type de contrat", "tenant", false, true).await?;
-    seed_domain(db, "inventory.unit_of_measure",
-        "Unité de mesure stock", "tenant", false, true).await?;
-    seed_domain(db, "inventory.movement_type",
-        "Type de mouvement stock", "system", false, false).await?;
-    seed_domain(db, "org.responsibility_type",
-        "Type de responsabilité organisationnelle", "system", false, true).await?;
-    seed_domain(db, "permit.type",
-        "Type de permis de travail", "tenant", false, true).await?;
+    seed_domain(
+        db,
+        "equipment.criticality",
+        "Criticité équipement",
+        "system",
+        false,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "equipment.lifecycle_status",
+        "Statut cycle de vie équipement",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "equipment.hierarchy_relationship",
+        "Type de relation hiérarchique équipement",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "intervention_request.type",
+        "Type de demande d'intervention",
+        "tenant",
+        false,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "intervention_request.urgency",
+        "Urgence demande d'intervention",
+        "system",
+        true,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "intervention_request.status",
+        "Statut demande d'intervention",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(db, "work_order.type", "Type d'ordre de travail", "tenant", false, true).await?;
+    seed_domain(
+        db,
+        "work_order.status",
+        "Statut ordre de travail",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "work_order.priority",
+        "Priorité ordre de travail",
+        "system",
+        true,
+        true,
+    )
+    .await?;
+    seed_domain(db, "failure.mode", "Mode de défaillance", "tenant", false, true).await?;
+    seed_domain(db, "failure.cause", "Cause de défaillance", "tenant", false, true).await?;
+    seed_domain(
+        db,
+        "work_order.closure_reason",
+        "Motif de clôture OT",
+        "tenant",
+        false,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "personnel.skill_proficiency",
+        "Niveau de compétence",
+        "system",
+        true,
+        false,
+    )
+    .await?;
+    seed_domain(db, "personnel.contract_type", "Type de contrat", "tenant", false, true).await?;
+    seed_domain(
+        db,
+        "inventory.unit_of_measure",
+        "Unité de mesure stock",
+        "tenant",
+        false,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.movement_type",
+        "Type de mouvement stock",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "org.responsibility_type",
+        "Type de responsabilité organisationnelle",
+        "system",
+        false,
+        true,
+    )
+    .await?;
+    seed_domain(db, "permit.type", "Type de permis de travail", "tenant", false, true).await?;
 
     // ── 2. Resolve domain ids and insert values per domain ────────────────
 
     // equipment.criticality
     {
         let d = get_domain_id(db, "equipment.criticality").await?;
-        seed_value(db, d, "CRITIQUE",       "Critique",      "Critique",    "Critical",     Some("#dc3545"),  1, true).await?;
-        seed_value(db, d, "IMPORTANT",      "Important",     "Important",   "Important",    Some("#ffc107"),  2, true).await?;
-        seed_value(db, d, "STANDARD",       "Standard",      "Standard",    "Standard",     Some("#0dcaf0"),  3, true).await?;
-        seed_value(db, d, "NON_CRITIQUE",   "Non-critique",  "Non-critique","Non-critical", Some("#198754"),  4, true).await?;
+        seed_value(
+            db,
+            d,
+            "CRITIQUE",
+            "Critique",
+            "Critique",
+            "Critical",
+            Some("#dc3545"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "IMPORTANT",
+            "Important",
+            "Important",
+            "Important",
+            Some("#ffc107"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "STANDARD",
+            "Standard",
+            "Standard",
+            "Standard",
+            Some("#0dcaf0"),
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "NON_CRITIQUE",
+            "Non-critique",
+            "Non-critique",
+            "Non-critical",
+            Some("#198754"),
+            4,
+            true,
+        )
+        .await?;
     }
 
     // equipment.lifecycle_status
     {
         let d = get_domain_id(db, "equipment.lifecycle_status").await?;
-        seed_value(db, d, "ACTIVE_IN_SERVICE",  "En service",         "En service",        "In Service",        Some("#198754"),  1, true).await?;
-        seed_value(db, d, "IN_STOCK",           "En stock",           "En stock",          "In Stock",          Some("#0dcaf0"),  2, true).await?;
-        seed_value(db, d, "UNDER_MAINTENANCE",  "En maintenance",     "En maintenance",    "Under Maintenance", Some("#ffc107"),  3, true).await?;
-        seed_value(db, d, "DECOMMISSIONED",     "Mis hors service",   "Mis hors service",  "Decommissioned",    Some("#6c757d"),  4, true).await?;
-        seed_value(db, d, "SCRAPPED",           "Mis au rebut",       "Mis au rebut",      "Scrapped",          Some("#dc3545"),  5, true).await?;
-        seed_value(db, d, "SPARE",              "Pièce de rechange",  "Pièce de rechange", "Spare",             Some("#6c757d"),  6, true).await?;
+        seed_value(
+            db,
+            d,
+            "ACTIVE_IN_SERVICE",
+            "En service",
+            "En service",
+            "In Service",
+            Some("#198754"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "IN_STOCK",
+            "En stock",
+            "En stock",
+            "In Stock",
+            Some("#0dcaf0"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "UNDER_MAINTENANCE",
+            "En maintenance",
+            "En maintenance",
+            "Under Maintenance",
+            Some("#ffc107"),
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "DECOMMISSIONED",
+            "Mis hors service",
+            "Mis hors service",
+            "Decommissioned",
+            Some("#6c757d"),
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "SCRAPPED",
+            "Mis au rebut",
+            "Mis au rebut",
+            "Scrapped",
+            Some("#dc3545"),
+            5,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "SPARE",
+            "Pièce de rechange",
+            "Pièce de rechange",
+            "Spare",
+            Some("#6c757d"),
+            6,
+            true,
+        )
+        .await?;
     }
 
     // equipment.hierarchy_relationship
     {
         let d = get_domain_id(db, "equipment.hierarchy_relationship").await?;
-        seed_value(db, d, "PARENT_CHILD", "Parent \u{2014} Enfant",    "Parent \u{2014} Enfant",    "Parent \u{2014} Child",   None, 1, true).await?;
-        seed_value(db, d, "INSTALLED_IN", "Install\u{00e9} dans",      "Install\u{00e9} dans",      "Installed In",            None, 2, true).await?;
-        seed_value(db, d, "DRIVES",       "Entra\u{00ee}ne",           "Entra\u{00ee}ne",           "Drives",                  None, 3, true).await?;
-        seed_value(db, d, "FEEDS",        "Alimente",                  "Alimente",                  "Feeds",                   None, 4, true).await?;
+        seed_value(
+            db,
+            d,
+            "PARENT_CHILD",
+            "Parent \u{2014} Enfant",
+            "Parent \u{2014} Enfant",
+            "Parent \u{2014} Child",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "INSTALLED_IN",
+            "Install\u{00e9} dans",
+            "Install\u{00e9} dans",
+            "Installed In",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "DRIVES",
+            "Entra\u{00ee}ne",
+            "Entra\u{00ee}ne",
+            "Drives",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "FEEDS", "Alimente", "Alimente", "Feeds", None, 4, true).await?;
     }
 
     // intervention_request.type (tenant-extensible examples)
     {
         let d = get_domain_id(db, "intervention_request.type").await?;
-        seed_value(db, d, "CORRECTIVE",   "Corrective",        "Corrective",    "Corrective",    None, 1, true).await?;
-        seed_value(db, d, "SIGNALEMENT",  "Signalement",       "Signalement",   "Observation",   None, 2, true).await?;
-        seed_value(db, d, "AMELIORATION", "Am\u{00e9}lioration","Am\u{00e9}lioration","Improvement", None, 3, false).await?;
+        seed_value(
+            db,
+            d,
+            "CORRECTIVE",
+            "Corrective",
+            "Corrective",
+            "Corrective",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "SIGNALEMENT",
+            "Signalement",
+            "Signalement",
+            "Observation",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "AMELIORATION",
+            "Am\u{00e9}lioration",
+            "Am\u{00e9}lioration",
+            "Improvement",
+            None,
+            3,
+            false,
+        )
+        .await?;
     }
 
     // intervention_request.urgency
     {
         let d = get_domain_id(db, "intervention_request.urgency").await?;
-        seed_value(db, d, "IMMEDIATE",  "Imm\u{00e9}diate",    "Imm\u{00e9}diate",    "Immediate",    Some("#dc3545"),  1, true).await?;
-        seed_value(db, d, "URGENT",     "Urgente",              "Urgente",              "Urgent",       Some("#ffc107"),  2, true).await?;
-        seed_value(db, d, "NORMALE",    "Normale",              "Normale",              "Normal",       Some("#198754"),  3, true).await?;
-        seed_value(db, d, "PLANIFIEE",  "Planifi\u{00e9}e",    "Planifi\u{00e9}e",    "Planned",      Some("#0dcaf0"),  4, true).await?;
+        seed_value(
+            db,
+            d,
+            "IMMEDIATE",
+            "Imm\u{00e9}diate",
+            "Imm\u{00e9}diate",
+            "Immediate",
+            Some("#dc3545"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "URGENT",
+            "Urgente",
+            "Urgente",
+            "Urgent",
+            Some("#ffc107"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "NORMALE",
+            "Normale",
+            "Normale",
+            "Normal",
+            Some("#198754"),
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PLANIFIEE",
+            "Planifi\u{00e9}e",
+            "Planifi\u{00e9}e",
+            "Planned",
+            Some("#0dcaf0"),
+            4,
+            true,
+        )
+        .await?;
     }
 
     // intervention_request.status
     {
         let d = get_domain_id(db, "intervention_request.status").await?;
-        seed_value(db, d, "DRAFT",          "Brouillon",      "Brouillon",      "Draft",          Some("#6c757d"),  1, true).await?;
-        seed_value(db, d, "SUBMITTED",      "Soumise",        "Soumise",        "Submitted",      Some("#0dcaf0"),  2, true).await?;
-        seed_value(db, d, "ACKNOWLEDGED",   "Accus\u{00e9}e", "Accus\u{00e9}e", "Acknowledged",   Some("#ffc107"),  3, true).await?;
-        seed_value(db, d, "IN_PROGRESS",    "En cours",       "En cours",       "In Progress",    Some("#003d8f"),  4, true).await?;
-        seed_value(db, d, "COMPLETED",      "Cl\u{00f4}tur\u{00e9}e","Cl\u{00f4}tur\u{00e9}e","Completed", Some("#198754"),  5, true).await?;
-        seed_value(db, d, "REJECTED",       "Rejet\u{00e9}e", "Rejet\u{00e9}e", "Rejected",       Some("#dc3545"),  6, true).await?;
-        seed_value(db, d, "CANCELLED",      "Annul\u{00e9}e", "Annul\u{00e9}e", "Cancelled",      Some("#6c757d"),  7, true).await?;
+        seed_value(
+            db,
+            d,
+            "DRAFT",
+            "Brouillon",
+            "Brouillon",
+            "Draft",
+            Some("#6c757d"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "SUBMITTED",
+            "Soumise",
+            "Soumise",
+            "Submitted",
+            Some("#0dcaf0"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "ACKNOWLEDGED",
+            "Accus\u{00e9}e",
+            "Accus\u{00e9}e",
+            "Acknowledged",
+            Some("#ffc107"),
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "IN_PROGRESS",
+            "En cours",
+            "En cours",
+            "In Progress",
+            Some("#003d8f"),
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "COMPLETED",
+            "Cl\u{00f4}tur\u{00e9}e",
+            "Cl\u{00f4}tur\u{00e9}e",
+            "Completed",
+            Some("#198754"),
+            5,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REJECTED",
+            "Rejet\u{00e9}e",
+            "Rejet\u{00e9}e",
+            "Rejected",
+            Some("#dc3545"),
+            6,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "CANCELLED",
+            "Annul\u{00e9}e",
+            "Annul\u{00e9}e",
+            "Cancelled",
+            Some("#6c757d"),
+            7,
+            true,
+        )
+        .await?;
     }
 
     // work_order.type
     {
         let d = get_domain_id(db, "work_order.type").await?;
-        seed_value(db, d, "CORRECTIVE",   "Corrective",       "Corrective",       "Corrective",      None, 1, true).await?;
-        seed_value(db, d, "PREVENTIVE",   "Pr\u{00e9}ventive","Pr\u{00e9}ventive","Preventive",      None, 2, true).await?;
-        seed_value(db, d, "PREDICTIVE",   "Pr\u{00e9}dictive","Pr\u{00e9}dictive","Predictive",      None, 3, true).await?;
-        seed_value(db, d, "AMELIORATIVE", "Am\u{00e9}liorative","Am\u{00e9}liorative","Improvement",  None, 4, true).await?;
-        seed_value(db, d, "INSPECTION",   "Inspection",       "Inspection",       "Inspection",      None, 5, true).await?;
+        seed_value(
+            db,
+            d,
+            "CORRECTIVE",
+            "Corrective",
+            "Corrective",
+            "Corrective",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PREVENTIVE",
+            "Pr\u{00e9}ventive",
+            "Pr\u{00e9}ventive",
+            "Preventive",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PREDICTIVE",
+            "Pr\u{00e9}dictive",
+            "Pr\u{00e9}dictive",
+            "Predictive",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "AMELIORATIVE",
+            "Am\u{00e9}liorative",
+            "Am\u{00e9}liorative",
+            "Improvement",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "INSPECTION",
+            "Inspection",
+            "Inspection",
+            "Inspection",
+            None,
+            5,
+            true,
+        )
+        .await?;
     }
 
     // work_order.status
     {
         let d = get_domain_id(db, "work_order.status").await?;
-        seed_value(db, d, "DRAFT",          "Brouillon",       "Brouillon",       "Draft",           Some("#6c757d"),  1, true).await?;
-        seed_value(db, d, "PLANNED",        "Planifi\u{00e9}", "Planifi\u{00e9}", "Planned",         Some("#0dcaf0"),  2, true).await?;
-        seed_value(db, d, "RELEASED",       "Lanc\u{00e9}",    "Lanc\u{00e9}",    "Released",        Some("#003d8f"),  3, true).await?;
-        seed_value(db, d, "IN_PROGRESS",    "En cours",        "En cours",        "In Progress",     Some("#ffc107"),  4, true).await?;
-        seed_value(db, d, "ON_HOLD",        "En attente",      "En attente",      "On Hold",         Some("#f0a500"),  5, true).await?;
-        seed_value(db, d, "COMPLETED",      "Termin\u{00e9}",  "Termin\u{00e9}",  "Completed",       Some("#198754"),  6, true).await?;
-        seed_value(db, d, "CLOSED",         "Cl\u{00f4}tur\u{00e9}","Cl\u{00f4}tur\u{00e9}","Closed",Some("#6c757d"),  7, true).await?;
-        seed_value(db, d, "CANCELLED",      "Annul\u{00e9}",   "Annul\u{00e9}",   "Cancelled",       Some("#dc3545"),  8, true).await?;
+        seed_value(
+            db,
+            d,
+            "DRAFT",
+            "Brouillon",
+            "Brouillon",
+            "Draft",
+            Some("#6c757d"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PLANNED",
+            "Planifi\u{00e9}",
+            "Planifi\u{00e9}",
+            "Planned",
+            Some("#0dcaf0"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RELEASED",
+            "Lanc\u{00e9}",
+            "Lanc\u{00e9}",
+            "Released",
+            Some("#003d8f"),
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "IN_PROGRESS",
+            "En cours",
+            "En cours",
+            "In Progress",
+            Some("#ffc107"),
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "ON_HOLD",
+            "En attente",
+            "En attente",
+            "On Hold",
+            Some("#f0a500"),
+            5,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "COMPLETED",
+            "Termin\u{00e9}",
+            "Termin\u{00e9}",
+            "Completed",
+            Some("#198754"),
+            6,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "CLOSED",
+            "Cl\u{00f4}tur\u{00e9}",
+            "Cl\u{00f4}tur\u{00e9}",
+            "Closed",
+            Some("#6c757d"),
+            7,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "CANCELLED",
+            "Annul\u{00e9}",
+            "Annul\u{00e9}",
+            "Cancelled",
+            Some("#dc3545"),
+            8,
+            true,
+        )
+        .await?;
     }
 
     // work_order.priority
     {
         let d = get_domain_id(db, "work_order.priority").await?;
-        seed_value(db, d, "P1_CRITICAL",  "P1 \u{2014} Critique",  "P1 \u{2014} Critique",  "P1 \u{2014} Critical",  Some("#dc3545"),  1, true).await?;
-        seed_value(db, d, "P2_HIGH",      "P2 \u{2014} Haute",     "P2 \u{2014} Haute",     "P2 \u{2014} High",      Some("#ffc107"),  2, true).await?;
-        seed_value(db, d, "P3_MEDIUM",    "P3 \u{2014} Moyenne",   "P3 \u{2014} Moyenne",   "P3 \u{2014} Medium",    Some("#0dcaf0"),  3, true).await?;
-        seed_value(db, d, "P4_LOW",       "P4 \u{2014} Basse",     "P4 \u{2014} Basse",     "P4 \u{2014} Low",       Some("#198754"),  4, true).await?;
+        seed_value(
+            db,
+            d,
+            "P1_CRITICAL",
+            "P1 \u{2014} Critique",
+            "P1 \u{2014} Critique",
+            "P1 \u{2014} Critical",
+            Some("#dc3545"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "P2_HIGH",
+            "P2 \u{2014} Haute",
+            "P2 \u{2014} Haute",
+            "P2 \u{2014} High",
+            Some("#ffc107"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "P3_MEDIUM",
+            "P3 \u{2014} Moyenne",
+            "P3 \u{2014} Moyenne",
+            "P3 \u{2014} Medium",
+            Some("#0dcaf0"),
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "P4_LOW",
+            "P4 \u{2014} Basse",
+            "P4 \u{2014} Basse",
+            "P4 \u{2014} Low",
+            Some("#198754"),
+            4,
+            true,
+        )
+        .await?;
     }
 
     // failure.mode (examples — tenant-extensible)
     {
         let d = get_domain_id(db, "failure.mode").await?;
-        seed_value(db, d, "VIBRATION",   "Vibration",              "Vibration",              "Vibration",       None, 1, true).await?;
-        seed_value(db, d, "CORROSION",   "Corrosion",              "Corrosion",              "Corrosion",       None, 2, true).await?;
-        seed_value(db, d, "BRUIT",       "Bruit anormal",          "Bruit anormal",          "Abnormal Noise",  None, 3, true).await?;
-        seed_value(db, d, "FUITE",       "Fuite",                  "Fuite",                  "Leak",            None, 4, true).await?;
-        seed_value(db, d, "SURCHAUFFE",  "Surchauffe",             "Surchauffe",             "Overheating",     None, 5, true).await?;
-        seed_value(db, d, "PANNE_ELEC",  "Panne \u{00e9}lectrique","Panne \u{00e9}lectrique","Electrical Fault", None, 6, true).await?;
-        seed_value(db, d, "AUTRE",       "Autre",                  "Autre",                  "Other",           None, 99, true).await?;
+        seed_value(db, d, "VIBRATION", "Vibration", "Vibration", "Vibration", None, 1, true).await?;
+        seed_value(db, d, "CORROSION", "Corrosion", "Corrosion", "Corrosion", None, 2, true).await?;
+        seed_value(
+            db,
+            d,
+            "BRUIT",
+            "Bruit anormal",
+            "Bruit anormal",
+            "Abnormal Noise",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "FUITE", "Fuite", "Fuite", "Leak", None, 4, true).await?;
+        seed_value(
+            db,
+            d,
+            "SURCHAUFFE",
+            "Surchauffe",
+            "Surchauffe",
+            "Overheating",
+            None,
+            5,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PANNE_ELEC",
+            "Panne \u{00e9}lectrique",
+            "Panne \u{00e9}lectrique",
+            "Electrical Fault",
+            None,
+            6,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "AUTRE", "Autre", "Autre", "Other", None, 99, true).await?;
     }
 
     // failure.cause
     {
         let d = get_domain_id(db, "failure.cause").await?;
-        seed_value(db, d, "USURE_NORMALE",   "Usure normale",             "Usure normale",             "Normal Wear",          None, 1, true).await?;
-        seed_value(db, d, "MAUVAIS_USAGE",   "Mauvais usage",             "Mauvais usage",             "Misuse",               None, 2, true).await?;
-        seed_value(db, d, "DEFAUT_ENTRETIEN","D\u{00e9}faut d'entretien","D\u{00e9}faut d'entretien","Maintenance Defect",    None, 3, true).await?;
-        seed_value(db, d, "DEFAUT_INSTALL",  "D\u{00e9}faut d'installation","D\u{00e9}faut d'installation","Installation Defect",None, 4, true).await?;
-        seed_value(db, d, "DEFAUT_MATERIEL", "D\u{00e9}faut mat\u{00e9}riel","D\u{00e9}faut mat\u{00e9}riel","Material Defect", None, 5, true).await?;
-        seed_value(db, d, "INCONNU",         "Inconnu",                   "Inconnu",                   "Unknown",              None, 99, true).await?;
+        seed_value(
+            db,
+            d,
+            "USURE_NORMALE",
+            "Usure normale",
+            "Usure normale",
+            "Normal Wear",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "MAUVAIS_USAGE",
+            "Mauvais usage",
+            "Mauvais usage",
+            "Misuse",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "DEFAUT_ENTRETIEN",
+            "D\u{00e9}faut d'entretien",
+            "D\u{00e9}faut d'entretien",
+            "Maintenance Defect",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "DEFAUT_INSTALL",
+            "D\u{00e9}faut d'installation",
+            "D\u{00e9}faut d'installation",
+            "Installation Defect",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "DEFAUT_MATERIEL",
+            "D\u{00e9}faut mat\u{00e9}riel",
+            "D\u{00e9}faut mat\u{00e9}riel",
+            "Material Defect",
+            None,
+            5,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "INCONNU", "Inconnu", "Inconnu", "Unknown", None, 99, true).await?;
     }
 
     // work_order.closure_reason
     {
         let d = get_domain_id(db, "work_order.closure_reason").await?;
-        seed_value(db, d, "REPARE",          "R\u{00e9}par\u{00e9}",       "R\u{00e9}par\u{00e9}",       "Repaired",     Some("#198754"),  1, true).await?;
-        seed_value(db, d, "REPORTE",         "Report\u{00e9}",             "Report\u{00e9}",             "Deferred",     Some("#ffc107"),  2, true).await?;
-        seed_value(db, d, "NON_NECESSAIRE",  "Non n\u{00e9}cessaire",      "Non n\u{00e9}cessaire",      "Not Required", Some("#6c757d"),  3, true).await?;
-        seed_value(db, d, "REMPLACE",        "Remplac\u{00e9}",            "Remplac\u{00e9}",            "Replaced",     Some("#0dcaf0"),  4, true).await?;
+        seed_value(
+            db,
+            d,
+            "REPARE",
+            "R\u{00e9}par\u{00e9}",
+            "R\u{00e9}par\u{00e9}",
+            "Repaired",
+            Some("#198754"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REPORTE",
+            "Report\u{00e9}",
+            "Report\u{00e9}",
+            "Deferred",
+            Some("#ffc107"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "NON_NECESSAIRE",
+            "Non n\u{00e9}cessaire",
+            "Non n\u{00e9}cessaire",
+            "Not Required",
+            Some("#6c757d"),
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REMPLACE",
+            "Remplac\u{00e9}",
+            "Remplac\u{00e9}",
+            "Replaced",
+            Some("#0dcaf0"),
+            4,
+            true,
+        )
+        .await?;
     }
 
     // personnel.skill_proficiency
     {
         let d = get_domain_id(db, "personnel.skill_proficiency").await?;
-        seed_value(db, d, "NIVEAU_1", "Niveau 1 \u{2014} Notions",              "Niveau 1 \u{2014} Notions",              "Level 1 \u{2014} Awareness",      None, 1, true).await?;
-        seed_value(db, d, "NIVEAU_2", "Niveau 2 \u{2014} Appliqu\u{00e9}",      "Niveau 2 \u{2014} Appliqu\u{00e9}",      "Level 2 \u{2014} Applied",        None, 2, true).await?;
-        seed_value(db, d, "NIVEAU_3", "Niveau 3 \u{2014} Ma\u{00ee}tris\u{00e9}","Niveau 3 \u{2014} Ma\u{00ee}tris\u{00e9}","Level 3 \u{2014} Proficient",   None, 3, true).await?;
-        seed_value(db, d, "NIVEAU_4", "Niveau 4 \u{2014} Expert",               "Niveau 4 \u{2014} Expert",               "Level 4 \u{2014} Expert",         None, 4, true).await?;
-        seed_value(db, d, "NIVEAU_5", "Niveau 5 \u{2014} Ma\u{00ee}tre formateur","Niveau 5 \u{2014} Ma\u{00ee}tre formateur","Level 5 \u{2014} Master Trainer",None, 5, true).await?;
+        seed_value(
+            db,
+            d,
+            "NIVEAU_1",
+            "Niveau 1 \u{2014} Notions",
+            "Niveau 1 \u{2014} Notions",
+            "Level 1 \u{2014} Awareness",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "NIVEAU_2",
+            "Niveau 2 \u{2014} Appliqu\u{00e9}",
+            "Niveau 2 \u{2014} Appliqu\u{00e9}",
+            "Level 2 \u{2014} Applied",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "NIVEAU_3",
+            "Niveau 3 \u{2014} Ma\u{00ee}tris\u{00e9}",
+            "Niveau 3 \u{2014} Ma\u{00ee}tris\u{00e9}",
+            "Level 3 \u{2014} Proficient",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "NIVEAU_4",
+            "Niveau 4 \u{2014} Expert",
+            "Niveau 4 \u{2014} Expert",
+            "Level 4 \u{2014} Expert",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "NIVEAU_5",
+            "Niveau 5 \u{2014} Ma\u{00ee}tre formateur",
+            "Niveau 5 \u{2014} Ma\u{00ee}tre formateur",
+            "Level 5 \u{2014} Master Trainer",
+            None,
+            5,
+            true,
+        )
+        .await?;
     }
 
     // personnel.contract_type
     {
         let d = get_domain_id(db, "personnel.contract_type").await?;
-        seed_value(db, d, "CDI",         "CDI",                    "CDI",                    "Permanent",        None, 1, true).await?;
-        seed_value(db, d, "CDD",         "CDD",                    "CDD",                    "Fixed-term",       None, 2, true).await?;
-        seed_value(db, d, "INTERIMAIRE", "Int\u{00e9}rimaire",     "Int\u{00e9}rimaire",     "Temporary Agency", None, 3, true).await?;
-        seed_value(db, d, "PRESTATAIRE", "Prestataire externe",    "Prestataire externe",    "Contractor",       None, 4, true).await?;
-        seed_value(db, d, "STAGIAIRE",   "Stagiaire",              "Stagiaire",              "Intern",           None, 5, false).await?;
+        seed_value(db, d, "CDI", "CDI", "CDI", "Permanent", None, 1, true).await?;
+        seed_value(db, d, "CDD", "CDD", "CDD", "Fixed-term", None, 2, true).await?;
+        seed_value(
+            db,
+            d,
+            "INTERIMAIRE",
+            "Int\u{00e9}rimaire",
+            "Int\u{00e9}rimaire",
+            "Temporary Agency",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PRESTATAIRE",
+            "Prestataire externe",
+            "Prestataire externe",
+            "Contractor",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "STAGIAIRE", "Stagiaire", "Stagiaire", "Intern", None, 5, false).await?;
     }
 
     // inventory.unit_of_measure
     {
         let d = get_domain_id(db, "inventory.unit_of_measure").await?;
-        seed_value(db, d, "U",    "Unit\u{00e9}",  "Unit\u{00e9}",  "Unit",  None,  1, true).await?;
-        seed_value(db, d, "KG",   "kg",             "kg",             "kg",    None,  2, true).await?;
-        seed_value(db, d, "L",    "L",              "L",              "L",     None,  3, true).await?;
-        seed_value(db, d, "M",    "m",              "m",              "m",     None,  4, true).await?;
-        seed_value(db, d, "M2",   "m\u{00b2}",     "m\u{00b2}",     "m\u{00b2}", None,  5, true).await?;
-        seed_value(db, d, "BOX",  "Bo\u{00ee}te",  "Bo\u{00ee}te",  "Box",   None,  6, true).await?;
-        seed_value(db, d, "ROUL", "Rouleau",        "Rouleau",        "Roll",  None,  7, true).await?;
-        seed_value(db, d, "PAIRE","Paire",          "Paire",          "Pair",  None,  8, true).await?;
+        seed_value(db, d, "U", "Unit\u{00e9}", "Unit\u{00e9}", "Unit", None, 1, true).await?;
+        seed_value(db, d, "KG", "kg", "kg", "kg", None, 2, true).await?;
+        seed_value(db, d, "L", "L", "L", "L", None, 3, true).await?;
+        seed_value(db, d, "M", "m", "m", "m", None, 4, true).await?;
+        seed_value(db, d, "M2", "m\u{00b2}", "m\u{00b2}", "m\u{00b2}", None, 5, true).await?;
+        seed_value(db, d, "BOX", "Bo\u{00ee}te", "Bo\u{00ee}te", "Box", None, 6, true).await?;
+        seed_value(db, d, "ROUL", "Rouleau", "Rouleau", "Roll", None, 7, true).await?;
+        seed_value(db, d, "PAIRE", "Paire", "Paire", "Pair", None, 8, true).await?;
     }
 
     // inventory.movement_type
     {
         let d = get_domain_id(db, "inventory.movement_type").await?;
-        seed_value(db, d, "SORTIE_OT",      "Sortie sur OT",          "Sortie sur OT",          "Issue to WO",          None, 1, true).await?;
-        seed_value(db, d, "ENTREE_ACHAT",   "Entr\u{00e9}e achat",    "Entr\u{00e9}e achat",    "Purchase Receipt",     None, 2, true).await?;
-        seed_value(db, d, "RETOUR_OT",      "Retour d'OT",            "Retour d'OT",            "Return from WO",       None, 3, true).await?;
-        seed_value(db, d, "AJUSTEMENT",     "Ajustement inventaire",  "Ajustement inventaire",  "Inventory Adjustment", None, 4, true).await?;
-        seed_value(db, d, "INVENTAIRE",     "Saisie inventaire",      "Saisie inventaire",      "Stock Count Entry",    None, 5, true).await?;
+        seed_value(
+            db,
+            d,
+            "SORTIE_OT",
+            "Sortie sur OT",
+            "Sortie sur OT",
+            "Issue to WO",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "ENTREE_ACHAT",
+            "Entr\u{00e9}e achat",
+            "Entr\u{00e9}e achat",
+            "Purchase Receipt",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RETOUR_OT",
+            "Retour d'OT",
+            "Retour d'OT",
+            "Return from WO",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "AJUSTEMENT",
+            "Ajustement inventaire",
+            "Ajustement inventaire",
+            "Inventory Adjustment",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "INVENTAIRE",
+            "Saisie inventaire",
+            "Saisie inventaire",
+            "Stock Count Entry",
+            None,
+            5,
+            true,
+        )
+        .await?;
     }
 
     // org.responsibility_type
     {
         let d = get_domain_id(db, "org.responsibility_type").await?;
-        seed_value(db, d, "MAINTENANCE_OWNER",  "Responsable maintenance", "Responsable maintenance", "Maintenance Owner", None, 1, true).await?;
-        seed_value(db, d, "PRODUCTION_OWNER",   "Responsable production",  "Responsable production",  "Production Owner",  None, 2, true).await?;
-        seed_value(db, d, "HSE_OWNER",          "Responsable HSE",         "Responsable HSE",         "HSE Owner",         None, 3, true).await?;
-        seed_value(db, d, "PLANNER",            "Planificateur",           "Planificateur",           "Planner",           None, 4, true).await?;
-        seed_value(db, d, "APPROVER",           "Approbateur",             "Approbateur",             "Approver",          None, 5, true).await?;
+        seed_value(
+            db,
+            d,
+            "MAINTENANCE_OWNER",
+            "Responsable maintenance",
+            "Responsable maintenance",
+            "Maintenance Owner",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PRODUCTION_OWNER",
+            "Responsable production",
+            "Responsable production",
+            "Production Owner",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "HSE_OWNER",
+            "Responsable HSE",
+            "Responsable HSE",
+            "HSE Owner",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PLANNER",
+            "Planificateur",
+            "Planificateur",
+            "Planner",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "APPROVER",
+            "Approbateur",
+            "Approbateur",
+            "Approver",
+            None,
+            5,
+            true,
+        )
+        .await?;
     }
 
     // permit.type
     {
         let d = get_domain_id(db, "permit.type").await?;
-        seed_value(db, d, "PERMIS_FEU",       "Permis de feu",           "Permis de feu",           "Hot Work Permit",    None, 1, true).await?;
-        seed_value(db, d, "PERMIS_ELECTRIQUE","Permis \u{00e9}lectrique","Permis \u{00e9}lectrique","Electrical Permit",  None, 2, true).await?;
-        seed_value(db, d, "PERMIS_HAUTEUR",   "Travail en hauteur",      "Travail en hauteur",      "Work at Height",     None, 3, true).await?;
-        seed_value(db, d, "PERMIS_ESPACE",    "Espace confin\u{00e9}",   "Espace confin\u{00e9}",   "Confined Space",     None, 4, true).await?;
-        seed_value(db, d, "PERMIS_GENERAL",   "Permis g\u{00e9}n\u{00e9}ral","Permis g\u{00e9}n\u{00e9}ral","General Permit", None, 5, true).await?;
+        seed_value(
+            db,
+            d,
+            "PERMIS_FEU",
+            "Permis de feu",
+            "Permis de feu",
+            "Hot Work Permit",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PERMIS_ELECTRIQUE",
+            "Permis \u{00e9}lectrique",
+            "Permis \u{00e9}lectrique",
+            "Electrical Permit",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PERMIS_HAUTEUR",
+            "Travail en hauteur",
+            "Travail en hauteur",
+            "Work at Height",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PERMIS_ESPACE",
+            "Espace confin\u{00e9}",
+            "Espace confin\u{00e9}",
+            "Confined Space",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PERMIS_GENERAL",
+            "Permis g\u{00e9}n\u{00e9}ral",
+            "Permis g\u{00e9}n\u{00e9}ral",
+            "General Permit",
+            None,
+            5,
+            true,
+        )
+        .await?;
     }
 
     // ── 3. Seed RBAC: permissions and system roles ───────────────────────
@@ -289,9 +1233,7 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
         ))
         .await?;
 
-    let count = count_row
-        .and_then(|r| r.try_get::<i64>("", "cnt").ok())
-        .unwrap_or(0);
+    let count = count_row.and_then(|r| r.try_get::<i64>("", "cnt").ok()).unwrap_or(0);
 
     if count > 0 {
         tracing::debug!(
@@ -363,16 +1305,14 @@ async fn seed_domain(
 }
 
 // ── Helper: resolve domain id by key ─────────────────────────────────────
-async fn get_domain_id(
-    db: &DatabaseConnection,
-    domain_key: &str,
-) -> AppResult<i32> {
-    let row = db.query_one(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "SELECT id FROM lookup_domains WHERE domain_key = ? AND deleted_at IS NULL",
-        [domain_key.into()],
-    ))
-    .await?;
+async fn get_domain_id(db: &DatabaseConnection, domain_key: &str) -> AppResult<i32> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM lookup_domains WHERE domain_key = ? AND deleted_at IS NULL",
+            [domain_key.into()],
+        ))
+        .await?;
 
     row.and_then(|r| r.try_get::<i32>("", "id").ok())
         .ok_or_else(|| AppError::NotFound {
@@ -433,96 +1373,258 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
     // Format: dot-notation `domain.action`
     let permissions: &[(&str, &str, &str, bool, bool)] = &[
         // ── Equipment (eq) ──────────────────────────────────────────────────
-        ("eq.view",          "View equipment registry",              "equipment",       false, false),
-        ("eq.manage",        "Create/edit equipment records",        "equipment",       false, false),
-        ("eq.import",        "Import equipment from CSV / ERP",      "equipment",       false, false),
-        ("eq.delete",        "Soft-delete equipment records",        "equipment",       true,  true),
+        ("eq.view", "View equipment registry", "equipment", false, false),
+        ("eq.manage", "Create/edit equipment records", "equipment", false, false),
+        (
+            "eq.import",
+            "Import equipment from CSV / ERP",
+            "equipment",
+            false,
+            false,
+        ),
+        ("eq.delete", "Soft-delete equipment records", "equipment", true, true),
         // ── Intervention Requests (di) ────────────────────────────────────
-        ("di.view",          "View intervention requests",           "intervention",    false, false),
-        ("di.create",        "Create intervention requests",         "intervention",    false, false),
-        ("di.edit",          "Edit intervention requests",           "intervention",    false, false),
-        ("di.delete",        "Delete intervention requests",         "intervention",    true,  true),
-        ("di.close",         "Close/resolve intervention requests",  "intervention",    false, false),
+        ("di.view", "View intervention requests", "intervention", false, false),
+        (
+            "di.create",
+            "Create intervention requests",
+            "intervention",
+            false,
+            false,
+        ),
+        ("di.edit", "Edit intervention requests", "intervention", false, false),
+        ("di.delete", "Delete intervention requests", "intervention", true, true),
+        (
+            "di.close",
+            "Close/resolve intervention requests",
+            "intervention",
+            false,
+            false,
+        ),
         // ── Work Orders (ot) ──────────────────────────────────────────────
-        ("ot.view",          "View work orders",                     "work_order",      false, false),
-        ("ot.create",        "Create work orders",                   "work_order",      false, false),
-        ("ot.edit",          "Edit work orders",                     "work_order",      false, false),
-        ("ot.delete",        "Delete work orders",                   "work_order",      true,  true),
-        ("ot.close",         "Close work orders",                    "work_order",      false, false),
-        ("ot.approve",       "Approve work order execution",         "work_order",      false, false),
+        ("ot.view", "View work orders", "work_order", false, false),
+        ("ot.create", "Create work orders", "work_order", false, false),
+        ("ot.edit", "Edit work orders", "work_order", false, false),
+        ("ot.delete", "Delete work orders", "work_order", true, true),
+        ("ot.close", "Close work orders", "work_order", false, false),
+        ("ot.approve", "Approve work order execution", "work_order", false, false),
         // ── Organization (org) ───────────────────────────────────────────
-        ("org.view",         "View organizational structure",        "organization",    false, false),
-        ("org.manage",       "Create/edit org nodes and entities",   "organization",    false, false),
+        (
+            "org.view",
+            "View organizational structure",
+            "organization",
+            false,
+            false,
+        ),
+        (
+            "org.manage",
+            "Create/edit org nodes and entities",
+            "organization",
+            false,
+            false,
+        ),
         // ── Personnel (per) ──────────────────────────────────────────────
-        ("per.view",         "View personnel records",               "personnel",       false, false),
-        ("per.manage",       "Create/edit personnel records",        "personnel",       false, false),
-        ("per.sensitiveview","View sensitive personnel fields",      "personnel",       false, false),
+        ("per.view", "View personnel records", "personnel", false, false),
+        ("per.manage", "Create/edit personnel records", "personnel", false, false),
+        (
+            "per.sensitiveview",
+            "View sensitive personnel fields",
+            "personnel",
+            false,
+            false,
+        ),
         // ── Reference Data (ref) ─────────────────────────────────────────
-        ("ref.view",         "View reference/lookup values",         "reference",       false, false),
-        ("ref.manage",       "Create/edit governed reference values", "reference",      false, false),
-        ("ref.publish",      "Publish reference changes",            "reference",       true,  true),
+        ("ref.view", "View reference/lookup values", "reference", false, false),
+        (
+            "ref.manage",
+            "Create/edit governed reference values",
+            "reference",
+            false,
+            false,
+        ),
+        ("ref.publish", "Publish reference changes", "reference", true, true),
         // ── Inventory (inv) ──────────────────────────────────────────────
-        ("inv.view",         "View inventory and stock levels",      "inventory",       false, false),
-        ("inv.manage",       "Create/edit inventory records",        "inventory",       false, false),
-        ("inv.adjust",       "Post inventory adjustments",           "inventory",       true,  true),
-        ("inv.order",        "Create purchase / replenishment orders","inventory",      false, false),
+        ("inv.view", "View inventory and stock levels", "inventory", false, false),
+        ("inv.manage", "Create/edit inventory records", "inventory", false, false),
+        ("inv.adjust", "Post inventory adjustments", "inventory", true, true),
+        (
+            "inv.order",
+            "Create purchase / replenishment orders",
+            "inventory",
+            false,
+            false,
+        ),
         // ── Preventive Maintenance (pm) ──────────────────────────────────
-        ("pm.view",          "View PM plans and schedules",          "maintenance",     false, false),
-        ("pm.manage",        "Create/edit PM plans",                 "maintenance",     false, false),
-        ("pm.approve",       "Approve PM plan changes",              "maintenance",     false, false),
+        ("pm.view", "View PM plans and schedules", "maintenance", false, false),
+        ("pm.manage", "Create/edit PM plans", "maintenance", false, false),
+        ("pm.approve", "Approve PM plan changes", "maintenance", false, false),
         // ── RAMS / Reliability (ram) ─────────────────────────────────────
-        ("ram.view",         "View RAMS / reliability data",         "reliability",     false, false),
-        ("ram.manage",       "Edit RAMS records and failure modes",  "reliability",     false, false),
+        ("ram.view", "View RAMS / reliability data", "reliability", false, false),
+        (
+            "ram.manage",
+            "Edit RAMS records and failure modes",
+            "reliability",
+            false,
+            false,
+        ),
         // ── Reports & Analytics (rep) ─────────────────────────────────────
-        ("rep.view",         "View standard reports",                "reporting",       false, false),
-        ("rep.export",       "Export report data",                   "reporting",       false, false),
-        ("rep.manage",       "Create/edit custom reports",           "reporting",       false, false),
+        ("rep.view", "View standard reports", "reporting", false, false),
+        ("rep.export", "Export report data", "reporting", false, false),
+        ("rep.manage", "Create/edit custom reports", "reporting", false, false),
         // ── Archive Explorer (arc) ────────────────────────────────────────
-        ("arc.view",         "Browse archive entries",               "archive",         false, false),
-        ("arc.export",       "Export archived data",                 "archive",         false, false),
+        ("arc.view", "Browse archive entries", "archive", false, false),
+        ("arc.export", "Export archived data", "archive", false, false),
         // ── Documentation (doc) ──────────────────────────────────────────
-        ("doc.view",         "View documentation and help content",  "documentation",   false, false),
-        ("doc.manage",       "Create/edit documentation articles",   "documentation",   false, false),
+        (
+            "doc.view",
+            "View documentation and help content",
+            "documentation",
+            false,
+            false,
+        ),
+        (
+            "doc.manage",
+            "Create/edit documentation articles",
+            "documentation",
+            false,
+            false,
+        ),
         // ── Administration (adm) ─────────────────────────────────────────
-        ("adm.users",        "Manage user accounts",                 "administration",  true,  true),
-        ("adm.roles",        "Manage roles and permissions",         "administration",  true,  true),
-        ("adm.permissions",  "Assign permissions to roles",          "administration",  true,  true),
-        ("adm.settings",     "Manage application settings",          "administration",  false, false),
-        ("adm.audit",        "View the full audit log",              "administration",  false, false),
+        ("adm.users", "Manage user accounts", "administration", true, true),
+        (
+            "adm.roles",
+            "Manage roles and permissions",
+            "administration",
+            true,
+            true,
+        ),
+        (
+            "adm.permissions",
+            "Assign permissions to roles",
+            "administration",
+            true,
+            true,
+        ),
+        (
+            "adm.settings",
+            "Manage application settings",
+            "administration",
+            false,
+            false,
+        ),
+        ("adm.audit", "View the full audit log", "administration", false, false),
         // ── Planning (plan) ──────────────────────────────────────────────
-        ("plan.view",        "View planning and scheduling data",    "planning",        false, false),
-        ("plan.manage",      "Manage planning schedules",            "planning",        false, false),
+        (
+            "plan.view",
+            "View planning and scheduling data",
+            "planning",
+            false,
+            false,
+        ),
+        ("plan.manage", "Manage planning schedules", "planning", false, false),
         // ── Audit Log (log) ──────────────────────────────────────────────
-        ("log.view",         "View activity feed",                   "audit",           false, false),
-        ("log.export",       "Export audit log data",                "audit",           true,  true),
+        ("log.view", "View activity feed", "audit", false, false),
+        ("log.export", "Export audit log data", "audit", true, true),
         // ── Training (trn) ───────────────────────────────────────────────
-        ("trn.view",         "View training and certification records","training",      false, false),
-        ("trn.manage",       "Manage training records and plans",    "training",        false, false),
-        ("trn.certify",      "Issue or revoke certifications",       "training",        true,  true),
+        (
+            "trn.view",
+            "View training and certification records",
+            "training",
+            false,
+            false,
+        ),
+        (
+            "trn.manage",
+            "Manage training records and plans",
+            "training",
+            false,
+            false,
+        ),
+        ("trn.certify", "Issue or revoke certifications", "training", true, true),
         // ── IoT Integration (iot) ────────────────────────────────────────
-        ("iot.view",         "View IoT device data and readings",    "integration",     false, false),
-        ("iot.manage",       "Configure IoT gateways and devices",   "integration",     false, false),
+        (
+            "iot.view",
+            "View IoT device data and readings",
+            "integration",
+            false,
+            false,
+        ),
+        (
+            "iot.manage",
+            "Configure IoT gateways and devices",
+            "integration",
+            false,
+            false,
+        ),
         // ── ERP Connector (erp) ──────────────────────────────────────────
-        ("erp.view",         "View ERP sync status and mappings",    "integration",     false, false),
-        ("erp.manage",       "Configure ERP integration settings",   "integration",     true,  true),
-        ("erp.sync",         "Trigger manual ERP synchronization",   "integration",     true,  true),
+        (
+            "erp.view",
+            "View ERP sync status and mappings",
+            "integration",
+            false,
+            false,
+        ),
+        (
+            "erp.manage",
+            "Configure ERP integration settings",
+            "integration",
+            true,
+            true,
+        ),
+        (
+            "erp.sync",
+            "Trigger manual ERP synchronization",
+            "integration",
+            true,
+            true,
+        ),
         // ── Work Permits (ptw) ───────────────────────────────────────────
-        ("ptw.view",         "View work permits",                    "safety",          false, false),
-        ("ptw.create",       "Create work permits",                  "safety",          false, false),
-        ("ptw.approve",      "Approve or reject work permits",       "safety",          true,  true),
-        ("ptw.cancel",       "Cancel active work permits",           "safety",          true,  true),
+        ("ptw.view", "View work permits", "safety", false, false),
+        ("ptw.create", "Create work permits", "safety", false, false),
+        ("ptw.approve", "Approve or reject work permits", "safety", true, true),
+        ("ptw.cancel", "Cancel active work permits", "safety", true, true),
         // ── Budget / Finance (fin) ───────────────────────────────────────
-        ("fin.view",         "View budgets and cost data",           "finance",         false, false),
-        ("fin.manage",       "Manage budgets and cost centers",      "finance",         false, false),
-        ("fin.approve",      "Approve budget changes",               "finance",         true,  true),
+        ("fin.view", "View budgets and cost data", "finance", false, false),
+        ("fin.manage", "Manage budgets and cost centers", "finance", false, false),
+        ("fin.approve", "Approve budget changes", "finance", true, true),
         // ── Inspection (ins) ─────────────────────────────────────────────
-        ("ins.view",         "View inspection rounds and checklists","inspection",      false, false),
-        ("ins.manage",       "Create/edit inspection rounds",        "inspection",      false, false),
-        ("ins.complete",     "Complete inspection round executions",  "inspection",     false, false),
+        (
+            "ins.view",
+            "View inspection rounds and checklists",
+            "inspection",
+            false,
+            false,
+        ),
+        (
+            "ins.manage",
+            "Create/edit inspection rounds",
+            "inspection",
+            false,
+            false,
+        ),
+        (
+            "ins.complete",
+            "Complete inspection round executions",
+            "inspection",
+            false,
+            false,
+        ),
         // ── Configuration Engine (cfg) ───────────────────────────────────
-        ("cfg.view",         "View tenant configuration",            "configuration",   false, false),
-        ("cfg.manage",       "Manage tenant configuration rules",    "configuration",   true,  true),
-        ("cfg.publish",      "Publish configuration changes",        "configuration",   true,  true),
+        ("cfg.view", "View tenant configuration", "configuration", false, false),
+        (
+            "cfg.manage",
+            "Manage tenant configuration rules",
+            "configuration",
+            true,
+            true,
+        ),
+        (
+            "cfg.publish",
+            "Publish configuration changes",
+            "configuration",
+            true,
+            true,
+        ),
     ];
 
     let now = Utc::now().to_rfc3339();
@@ -556,9 +1658,17 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
 
     let system_roles: &[(&str, &str, &str)] = &[
         ("Administrator", "Full system access. Cannot be deleted.", "system"),
-        ("Supervisor",    "Full operational access. Can manage work, personnel, inventory.", "system"),
-        ("Operator",      "Day-to-day CMMS use: view all, create and edit operational records.", "system"),
-        ("Readonly",      "Read-only access to all operational modules.", "system"),
+        (
+            "Supervisor",
+            "Full operational access. Can manage work, personnel, inventory.",
+            "system",
+        ),
+        (
+            "Operator",
+            "Day-to-day CMMS use: view all, create and edit operational records.",
+            "system",
+        ),
+        ("Readonly", "Read-only access to all operational modules.", "system"),
     ];
 
     for (name, desc, role_type) in system_roles {
@@ -589,9 +1699,13 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
 
     // Supervisor -> all operational permissions (excludes admin-only and config-only)
     let excluded_for_supervisor = [
-        "adm.users", "adm.roles", "adm.permissions",
-        "cfg.manage", "cfg.publish",
-        "erp.manage", "erp.sync",
+        "adm.users",
+        "adm.roles",
+        "adm.permissions",
+        "cfg.manage",
+        "cfg.publish",
+        "erp.manage",
+        "erp.sync",
         "log.export",
     ];
     if let Some(rid) = get_role_id_by_name(db, "Supervisor").await? {
@@ -600,13 +1714,20 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
 
     // Operator -> view + create/edit operational modules, no delete/approve/dangerous
     let operator_permissions = [
-        "eq.view", "eq.manage",
-        "di.view", "di.create", "di.edit", "di.close",
-        "ot.view", "ot.create", "ot.edit",
+        "eq.view",
+        "eq.manage",
+        "di.view",
+        "di.create",
+        "di.edit",
+        "di.close",
+        "ot.view",
+        "ot.create",
+        "ot.edit",
         "org.view",
         "per.view",
         "ref.view",
-        "inv.view", "inv.manage",
+        "inv.view",
+        "inv.manage",
         "pm.view",
         "ram.view",
         "rep.view",
@@ -617,9 +1738,11 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         "trn.view",
         "iot.view",
         "erp.view",
-        "ptw.view", "ptw.create",
+        "ptw.view",
+        "ptw.create",
         "fin.view",
-        "ins.view", "ins.complete",
+        "ins.view",
+        "ins.complete",
         "cfg.view",
         "adm.settings",
     ];
@@ -631,7 +1754,8 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
 
     // Readonly -> only *.view permissions (subset of operator's list)
     if let Some(rid) = get_role_id_by_name(db, "Readonly").await? {
-        let view_perms: Vec<&str> = operator_permissions.iter()
+        let view_perms: Vec<&str> = operator_permissions
+            .iter()
             .copied()
             .filter(|p| p.ends_with(".view"))
             .collect();
@@ -647,20 +1771,17 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
 // ── RBAC seeder helpers ───────────────────────────────────────────────────
 
 async fn get_role_id_by_name(db: &DatabaseConnection, name: &str) -> AppResult<Option<i32>> {
-    let row = db.query_one(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "SELECT id FROM roles WHERE name = ? AND deleted_at IS NULL",
-        [name.into()],
-    ))
-    .await?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM roles WHERE name = ? AND deleted_at IS NULL",
+            [name.into()],
+        ))
+        .await?;
     Ok(row.and_then(|r| r.try_get::<i32>("", "id").ok()))
 }
 
-async fn assign_all_permissions_to_role(
-    db: &DatabaseConnection,
-    role_id: i32,
-    now: &str,
-) -> AppResult<()> {
+async fn assign_all_permissions_to_role(db: &DatabaseConnection, role_id: i32, now: &str) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r#"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
@@ -722,12 +1843,13 @@ async fn assign_permission_by_name(
 async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
     use crate::auth::password::hash_password;
 
-    let existing = db.query_one(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "SELECT id FROM user_accounts WHERE username = ?",
-        ["admin".into()],
-    ))
-    .await?;
+    let existing = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE username = ?",
+            ["admin".into()],
+        ))
+        .await?;
 
     if existing.is_some() {
         tracing::debug!("seeder::admin_account already exists, skipping");
@@ -768,7 +1890,10 @@ mod tests {
 
     #[test]
     fn seed_schema_version_is_positive() {
-        assert!(SEED_SCHEMA_VERSION > 0, "Seed schema version must be a positive integer");
+        assert!(
+            SEED_SCHEMA_VERSION > 0,
+            "Seed schema version must be a positive integer"
+        );
     }
 
     #[test]

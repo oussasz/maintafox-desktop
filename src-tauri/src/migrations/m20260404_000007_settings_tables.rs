@@ -82,12 +82,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("secret_scope")).text().not_null())
                     .col(ColumnDef::new(Alias::new("backend_type")).text().not_null())
                     .col(ColumnDef::new(Alias::new("secret_handle")).text().not_null())
-                    .col(
-                        ColumnDef::new(Alias::new("label"))
-                            .text()
-                            .not_null()
-                            .default(""),
-                    )
+                    .col(ColumnDef::new(Alias::new("label")).text().not_null().default(""))
                     .col(ColumnDef::new(Alias::new("last_rotated_at")).text())
                     .col(ColumnDef::new(Alias::new("last_validated_at")).text())
                     .col(
@@ -122,12 +117,7 @@ impl MigrationTrait for Migration {
                             .default("{}"),
                     )
                     .col(ColumnDef::new(Alias::new("secret_ref_id")).integer())
-                    .col(
-                        ColumnDef::new(Alias::new("status"))
-                            .text()
-                            .not_null()
-                            .default("draft"),
-                    )
+                    .col(ColumnDef::new(Alias::new("status")).text().not_null().default("draft"))
                     .col(ColumnDef::new(Alias::new("last_tested_at")).text())
                     .col(ColumnDef::new(Alias::new("last_test_result")).text())
                     .col(
@@ -154,19 +144,9 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(Alias::new("policy_domain")).text().not_null())
-                    .col(
-                        ColumnDef::new(Alias::new("version_no"))
-                            .integer()
-                            .not_null()
-                            .default(1),
-                    )
+                    .col(ColumnDef::new(Alias::new("version_no")).integer().not_null().default(1))
                     .col(ColumnDef::new(Alias::new("snapshot_json")).text().not_null())
-                    .col(
-                        ColumnDef::new(Alias::new("is_active"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("is_active")).integer().not_null().default(0))
                     .col(ColumnDef::new(Alias::new("activated_at")).text())
                     .col(ColumnDef::new(Alias::new("activated_by_id")).integer())
                     .to_owned(),

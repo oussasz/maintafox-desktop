@@ -35,10 +35,7 @@ pub struct SetSettingPayload {
 /// Write a setting value. Requires `adm.settings`.
 /// Existing settings with `setting_risk = high` also require step-up.
 #[tauri::command]
-pub async fn set_setting(
-    payload: SetSettingPayload,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
     require_permission!(state, &user, "adm.settings", PermissionScope::Global);
 
@@ -68,10 +65,7 @@ pub async fn set_setting(
 
 /// Return the active policy snapshot for a domain.
 #[tauri::command]
-pub async fn get_policy_snapshot(
-    domain: String,
-    state: State<'_, AppState>,
-) -> AppResult<Option<PolicySnapshot>> {
+pub async fn get_policy_snapshot(domain: String, state: State<'_, AppState>) -> AppResult<Option<PolicySnapshot>> {
     let _user = require_session!(state);
     settings::get_active_policy(&state.db, &domain).await
 }
@@ -79,9 +73,7 @@ pub async fn get_policy_snapshot(
 /// Return the resolved session policy (active snapshot or safe defaults).
 /// This command is intentionally unauthenticated for login-screen initialization.
 #[tauri::command]
-pub async fn get_session_policy(
-    state: State<'_, AppState>,
-) -> AppResult<SessionPolicy> {
+pub async fn get_session_policy(state: State<'_, AppState>) -> AppResult<SessionPolicy> {
     Ok(settings::load_session_policy(&state.db).await)
 }
 

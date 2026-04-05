@@ -1,0 +1,17 @@
+{
+  "dialogTitle": "Support & Diagnostics",
+  "description": "Generate a diagnostic report to share with the support team.",
+  "version": "Version",
+  "os": "Operating System",
+  "dbSchema": "Database Schema",
+  "migrationCount": "{{count}} migrations applied",
+  "locale": "Active Locale",
+  "uptime": "Uptime",
+  "minutes": "minutes",
+  "generateBundle": "Generate Support Bundle",
+  "generating": "Generating…",
+  "copyToClipboard": "Copy to Clipboard",
+  "copied": "Copied!",
+  "copyFailed": "Failed to copy to clipboard.",
+  "close": "Close"
+}

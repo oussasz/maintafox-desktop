@@ -24,18 +24,9 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("key"))
-                            .string()
-                            .not_null()
-                            .unique_key(),
-                    )
+                    .col(ColumnDef::new(Alias::new("key")).string().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("value")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("updated_at"))
-                            .timestamp()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("updated_at")).timestamp().not_null())
                     .to_owned(),
             )
             .await?;
@@ -46,12 +37,7 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("trusted_devices"))
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(Alias::new("id"))
-                            .text()
-                            .not_null()
-                            .primary_key(),
-                    )
+                    .col(ColumnDef::new(Alias::new("id")).text().not_null().primary_key())
                     .col(
                         ColumnDef::new(Alias::new("device_fingerprint"))
                             .string()
@@ -59,16 +45,8 @@ impl MigrationTrait for Migration {
                             .unique_key(),
                     )
                     .col(ColumnDef::new(Alias::new("device_label")).string())
-                    .col(
-                        ColumnDef::new(Alias::new("user_id"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("trusted_at"))
-                            .timestamp()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("user_id")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("trusted_at")).timestamp().not_null())
                     .col(ColumnDef::new(Alias::new("last_seen_at")).timestamp())
                     .col(
                         ColumnDef::new(Alias::new("is_revoked"))
@@ -88,17 +66,8 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("audit_events"))
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(Alias::new("id"))
-                            .text()
-                            .not_null()
-                            .primary_key(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("event_type"))
-                            .string()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("id")).text().not_null().primary_key())
+                    .col(ColumnDef::new(Alias::new("event_type")).string().not_null())
                     .col(ColumnDef::new(Alias::new("actor_id")).text())
                     .col(ColumnDef::new(Alias::new("actor_name")).string())
                     .col(ColumnDef::new(Alias::new("entity_type")).string())
@@ -106,11 +75,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("summary")).text())
                     .col(ColumnDef::new(Alias::new("detail_json")).text())
                     .col(ColumnDef::new(Alias::new("device_id")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("occurred_at"))
-                            .timestamp()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("occurred_at")).timestamp().not_null())
                     .to_owned(),
             )
             .await?;
@@ -121,28 +86,11 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Alias::new("app_sessions"))
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(Alias::new("id"))
-                            .text()
-                            .not_null()
-                            .primary_key(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("user_id"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("id")).text().not_null().primary_key())
+                    .col(ColumnDef::new(Alias::new("user_id")).text().not_null())
                     .col(ColumnDef::new(Alias::new("device_id")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .timestamp()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("expires_at"))
-                            .timestamp()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).timestamp().not_null())
+                    .col(ColumnDef::new(Alias::new("expires_at")).timestamp().not_null())
                     .col(ColumnDef::new(Alias::new("last_activity_at")).timestamp())
                     .col(
                         ColumnDef::new(Alias::new("is_revoked"))
@@ -165,18 +113,10 @@ impl MigrationTrait for Migration {
             .drop_table(Table::drop().table(Alias::new("audit_events")).to_owned())
             .await?;
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("trusted_devices"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("trusted_devices")).to_owned())
             .await?;
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("system_config"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("system_config")).to_owned())
             .await?;
         Ok(())
     }

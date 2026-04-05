@@ -1,6 +1,6 @@
+use crate::errors::{AppError, AppResult};
 use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::Serialize;
-use crate::errors::{AppError, AppResult};
 
 // ── DTOs ──────────────────────────────────────────────────────────────────
 
@@ -42,9 +42,7 @@ pub async fn list_active_teams(db: &DatabaseConnection) -> AppResult<Vec<TeamSum
         ORDER BY t.name ASC
     "#;
     let stmt = Statement::from_string(DbBackend::Sqlite, sql.to_string());
-    Ok(TeamSummary::find_by_statement(stmt)
-        .all(db)
-        .await?)
+    Ok(TeamSummary::find_by_statement(stmt).all(db).await?)
 }
 
 /// Lists all active skill definitions, with category name.
@@ -59,16 +57,11 @@ pub async fn list_all_skills(db: &DatabaseConnection) -> AppResult<Vec<SkillDefi
         ORDER BY c.name ASC, s.name ASC
     "#;
     let stmt = Statement::from_string(DbBackend::Sqlite, sql.to_string());
-    Ok(SkillDefinitionRow::find_by_statement(stmt)
-        .all(db)
-        .await?)
+    Ok(SkillDefinitionRow::find_by_statement(stmt).all(db).await?)
 }
 
 /// Gets a single team by id.
-pub async fn get_team_by_id(
-    db: &DatabaseConnection,
-    team_id: i32,
-) -> AppResult<TeamSummary> {
+pub async fn get_team_by_id(db: &DatabaseConnection, team_id: i32) -> AppResult<TeamSummary> {
     let sql = r#"
         SELECT t.id, t.sync_id, t.code, t.name, t.team_type, t.status,
                t.primary_node_id, n.name AS node_name

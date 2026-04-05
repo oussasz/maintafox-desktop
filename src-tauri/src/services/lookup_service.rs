@@ -4,13 +4,12 @@
 //! - Validates code format (alphanumeric + underscore, uppercase, max 64 chars)
 //! - Flushes relevant caches on mutation (Phase 2 will add caching here)
 
-use sea_orm::DatabaseConnection;
 use crate::errors::{AppError, AppResult};
 use crate::repository::lookup_repository::{
-    self, LookupDomainSummary, LookupValueOption, LookupValueRecord,
-    LookupDomainFilter,
+    self, LookupDomainFilter, LookupDomainSummary, LookupValueOption, LookupValueRecord,
 };
 use crate::repository::{Page, PageRequest};
+use sea_orm::DatabaseConnection;
 
 pub async fn list_domains(
     db: &DatabaseConnection,
@@ -20,17 +19,11 @@ pub async fn list_domains(
     lookup_repository::list_lookup_domains(db, &filter, &page).await
 }
 
-pub async fn get_domain_values(
-    db: &DatabaseConnection,
-    domain_key: &str,
-) -> AppResult<Vec<LookupValueOption>> {
+pub async fn get_domain_values(db: &DatabaseConnection, domain_key: &str) -> AppResult<Vec<LookupValueOption>> {
     lookup_repository::get_domain_values(db, domain_key, true).await
 }
 
-pub async fn get_value_by_id(
-    db: &DatabaseConnection,
-    value_id: i32,
-) -> AppResult<LookupValueRecord> {
+pub async fn get_value_by_id(db: &DatabaseConnection, value_id: i32) -> AppResult<LookupValueRecord> {
     lookup_repository::get_value_by_id(db, value_id).await
 }
 
@@ -42,7 +35,10 @@ pub fn validate_code(code: &str) -> AppResult<()> {
             "Le code doit comporter entre 1 et 64 caractères.".into(),
         ]));
     }
-    if !code.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+    if !code
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
         return Err(AppError::ValidationFailed(vec![
             "Le code ne peut contenir que des majuscules, chiffres et tirets bas (ex : CORRECTIVE, TYPE_A).".into(),
         ]));
@@ -51,10 +47,7 @@ pub fn validate_code(code: &str) -> AppResult<()> {
 }
 
 /// Checks that a domain is extensible before allowing value insertion.
-pub async fn assert_domain_extensible(
-    db: &DatabaseConnection,
-    domain_key: &str,
-) -> AppResult<()> {
+pub async fn assert_domain_extensible(db: &DatabaseConnection, domain_key: &str) -> AppResult<()> {
     let sql = "SELECT is_extensible, is_locked FROM lookup_domains WHERE domain_key = ? AND deleted_at IS NULL";
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
     let row = db

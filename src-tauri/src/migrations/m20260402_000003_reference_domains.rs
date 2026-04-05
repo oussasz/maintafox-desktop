@@ -28,24 +28,10 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("sync_id"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("domain_key"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
+                    .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
+                    .col(ColumnDef::new(Alias::new("domain_key")).text().not_null().unique_key())
                     // human name shown in the UI
-                    .col(
-                        ColumnDef::new(Alias::new("display_name"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("display_name")).text().not_null())
                     // "system" | "tenant" | "module"
                     .col(
                         ColumnDef::new(Alias::new("domain_type"))
@@ -56,12 +42,7 @@ impl MigrationTrait for Migration {
                     // which modules use this domain — informational, JSON array of module keys
                     .col(ColumnDef::new(Alias::new("consumer_modules_json")).text())
                     // whether values in this domain are orderable (have a sort_order)
-                    .col(
-                        ColumnDef::new(Alias::new("is_ordered"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("is_ordered")).integer().not_null().default(0))
                     // whether tenant can add values (0 = strictly system-managed)
                     .col(
                         ColumnDef::new(Alias::new("is_extensible"))
@@ -70,12 +51,7 @@ impl MigrationTrait for Migration {
                             .default(1),
                     )
                     // locked domains cannot be published after first install
-                    .col(
-                        ColumnDef::new(Alias::new("is_locked"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("is_locked")).integer().not_null().default(0))
                     // minor version incremented on each publish cycle
                     .col(
                         ColumnDef::new(Alias::new("schema_version"))
@@ -86,16 +62,8 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("published_by_id")).integer())
                     .col(ColumnDef::new(Alias::new("published_at")).text())
                     .col(ColumnDef::new(Alias::new("notes")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("updated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("deleted_at")).text())
                     .to_owned(),
             )
@@ -121,56 +89,24 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("sync_id"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("domain_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("sync_id")).text().not_null().unique_key())
+                    .col(ColumnDef::new(Alias::new("domain_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("code")).text().not_null())
                     .col(ColumnDef::new(Alias::new("label")).text().not_null())
                     .col(ColumnDef::new(Alias::new("fr_label")).text())
                     .col(ColumnDef::new(Alias::new("en_label")).text())
                     .col(ColumnDef::new(Alias::new("description")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("sort_order"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("is_active"))
-                            .integer()
-                            .not_null()
-                            .default(1),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("is_system"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("sort_order")).integer().not_null().default(0))
+                    .col(ColumnDef::new(Alias::new("is_active")).integer().not_null().default(1))
+                    .col(ColumnDef::new(Alias::new("is_system")).integer().not_null().default(0))
                     // optional hex color for badge/status rendering
                     .col(ColumnDef::new(Alias::new("color")).text())
                     // optional parent value id — for hierarchical domains (e.g. failure categories)
                     .col(ColumnDef::new(Alias::new("parent_value_id")).integer())
                     // free JSON extension bag for domain-specific extra attributes
                     .col(ColumnDef::new(Alias::new("metadata_json")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("updated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("deleted_at")).text())
                     .col(
                         ColumnDef::new(Alias::new("row_version"))
@@ -211,16 +147,8 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("value_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("alias_code"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("value_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("alias_code")).text().not_null())
                     .col(
                         ColumnDef::new(Alias::new("alias_type"))
                             .text()
@@ -229,17 +157,8 @@ impl MigrationTrait for Migration {
                     )
                     // "import" | "erp" | "legacy" | "translation"
                     .col(ColumnDef::new(Alias::new("source_system")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("is_active"))
-                            .integer()
-                            .not_null()
-                            .default(1),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("is_active")).integer().not_null().default(1))
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -249,25 +168,13 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("lookup_value_aliases"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("lookup_value_aliases")).to_owned())
             .await?;
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("lookup_values"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("lookup_values")).to_owned())
             .await?;
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("lookup_domains"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("lookup_domains")).to_owned())
             .await?;
         Ok(())
     }

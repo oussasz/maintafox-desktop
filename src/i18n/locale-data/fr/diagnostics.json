@@ -1,0 +1,17 @@
+{
+  "dialogTitle": "Support et diagnostics",
+  "description": "Générer un rapport de diagnostic à partager avec l'équipe de support.",
+  "version": "Version",
+  "os": "Système d'exploitation",
+  "dbSchema": "Schéma de base de données",
+  "migrationCount": "{{count}} migrations appliquées",
+  "locale": "Langue active",
+  "uptime": "Temps de fonctionnement",
+  "minutes": "minutes",
+  "generateBundle": "Générer le rapport de diagnostic",
+  "generating": "Génération en cours…",
+  "copyToClipboard": "Copier dans le presse-papier",
+  "copied": "Copié !",
+  "copyFailed": "Échec de la copie dans le presse-papier.",
+  "close": "Fermer"
+}
