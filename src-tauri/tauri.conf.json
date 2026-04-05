@@ -9,20 +9,25 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420; img-src 'self' data: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
+    },
     "windows": [
       {
+        "label": "main",
         "title": "Maintafox",
         "width": 1280,
         "height": 800,
         "minWidth": 1024,
         "minHeight": 600,
+        "center": true,
         "resizable": true,
-        "center": true
+        "fullscreen": false,
+        "decorations": true,
+        "visible": false,
+        "focus": true
       }
-    ],
-    "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https:; connect-src ipc: http://ipc.localhost"
-    }
+    ]
   },
   "bundle": {
     "active": true,
@@ -34,5 +39,18 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "shell": { "open": true },
+    "updater": {
+      "pubkey": "PLACEHOLDER_UPDATER_PUBLIC_KEY_REPLACE_IN_PHASE2",
+      "endpoints": [
+        "https://updates.maintafox.local/stub/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "dialog": false,
+      "windows": {
+        "installMode": "basicUi"
+      }
+    }
   }
 }

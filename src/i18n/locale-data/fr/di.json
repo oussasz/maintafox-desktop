@@ -1,0 +1,95 @@
+{
+  "page": {
+    "title": "Demandes d'intervention",
+    "titleDetail": "Détail de la demande",
+    "titleNew": "Nouvelle demande",
+    "titleEdit": "Modifier la demande"
+  },
+  "list": {
+    "columns": {
+      "number": "N°",
+      "subject": "Objet",
+      "equipment": "Équipement",
+      "status": "Statut",
+      "priority": "Priorité",
+      "reportedBy": "Déclarant",
+      "reportedAt": "Date déclaration",
+      "assignedTo": "Assigné à",
+      "sla": "SLA"
+    },
+    "filters": {
+      "status": "Statut",
+      "priority": "Priorité",
+      "assignedTo": "Assigné à",
+      "dateRange": "Période"
+    }
+  },
+  "detail": {
+    "sections": {
+      "request": "Demande",
+      "analysis": "Analyse",
+      "resolution": "Résolution",
+      "history": "Historique"
+    },
+    "fields": {
+      "number": "Numéro",
+      "subject": "Objet",
+      "description": "Description",
+      "equipment": "Équipement concerné",
+      "priority": "Priorité",
+      "status": "Statut",
+      "reportedBy": "Déclaré par",
+      "reportedAt": "Date de déclaration",
+      "assignedTo": "Assigné à",
+      "dueDate": "Échéance",
+      "closedAt": "Date de clôture",
+      "conclusion": "Conclusion"
+    }
+  },
+  "form": {
+    "subject": {
+      "label": "Objet",
+      "placeholder": "Décrivez brièvement le problème"
+    },
+    "description": {
+      "label": "Description détaillée",
+      "placeholder": "Décrivez le symptôme, les conditions d'apparition..."
+    },
+    "equipment": {
+      "label": "Équipement concerné",
+      "placeholder": "Sélectionnez un équipement"
+    },
+    "priority": {
+      "label": "Priorité"
+    }
+  },
+  "status": {
+    "new": "Nouvelle",
+    "inReview": "En examen",
+    "approved": "Approuvée",
+    "rejected": "Rejetée",
+    "inProgress": "En cours",
+    "resolved": "Résolue",
+    "closed": "Clôturée",
+    "cancelled": "Annulée"
+  },
+  "priority": {
+    "low": "Basse",
+    "medium": "Normale",
+    "high": "Haute",
+    "critical": "Critique"
+  },
+  "action": {
+    "approve": "Approuver",
+    "reject": "Rejeter",
+    "assignTo": "Assigner à",
+    "convertToWO": "Convertir en OT",
+    "close": "Clôturer",
+    "addComment": "Ajouter un commentaire"
+  },
+  "empty": {
+    "list": "Aucune demande d'intervention.",
+    "listHint": "Créez une nouvelle demande ou ajustez les filtres.",
+    "noComments": "Aucun commentaire pour cette demande."
+  }
+}

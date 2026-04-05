@@ -1,0 +1,104 @@
+{
+  "page": {
+    "title": "Ordres de travail",
+    "titleDetail": "Détail de l'ordre de travail",
+    "titleNew": "Nouvel ordre de travail",
+    "titleEdit": "Modifier l'ordre de travail"
+  },
+  "list": {
+    "columns": {
+      "number": "N° OT",
+      "title": "Titre",
+      "equipment": "Équipement",
+      "type": "Type",
+      "status": "Statut",
+      "priority": "Priorité",
+      "assignedTo": "Assigné à",
+      "plannedStart": "Début prévu",
+      "plannedEnd": "Fin prévue",
+      "closedAt": "Date clôture"
+    },
+    "filters": {
+      "status": "Statut",
+      "type": "Type",
+      "priority": "Priorité",
+      "assignedTo": "Assigné à"
+    }
+  },
+  "detail": {
+    "sections": {
+      "general": "Général",
+      "planning": "Planification",
+      "labor": "Main-d'œuvre",
+      "parts": "Pièces et matériaux",
+      "delays": "Délais",
+      "closeout": "Clôture",
+      "history": "Historique"
+    },
+    "fields": {
+      "number": "Numéro",
+      "title": "Titre",
+      "description": "Description",
+      "equipment": "Équipement",
+      "type": "Type d'intervention",
+      "priority": "Priorité",
+      "status": "Statut",
+      "assignedTo": "Assigné à",
+      "team": "Équipe",
+      "plannedStart": "Début planifié",
+      "plannedEnd": "Fin planifiée",
+      "actualStart": "Début réel",
+      "actualEnd": "Fin réelle",
+      "estimatedHours": "Heures estimées",
+      "actualHours": "Heures réelles",
+      "conclusion": "Rapport de clôture"
+    }
+  },
+  "form": {
+    "title": {
+      "label": "Titre",
+      "placeholder": "Description courte de l'intervention"
+    },
+    "description": {
+      "label": "Description",
+      "placeholder": "Instructions détaillées pour l'exécutant"
+    }
+  },
+  "status": {
+    "draft": "Brouillon",
+    "planned": "Planifié",
+    "released": "Lancé",
+    "inProgress": "En cours",
+    "onHold": "En attente",
+    "completed": "Terminé",
+    "verified": "Vérifié",
+    "closed": "Clôturé",
+    "cancelled": "Annulé"
+  },
+  "type": {
+    "corrective": "Correctif",
+    "preventive": "Préventif",
+    "predictive": "Prédictif",
+    "improvement": "Amélioration",
+    "inspection": "Inspection",
+    "permit": "Permis de travail"
+  },
+  "action": {
+    "release": "Lancer l'OT",
+    "start": "Démarrer",
+    "pause": "Mettre en pause",
+    "complete": "Marquer terminé",
+    "verify": "Vérifier et approuver",
+    "close": "Clôturer",
+    "addLabor": "Ajouter main-d'œuvre",
+    "addPart": "Ajouter une pièce",
+    "addDelay": "Enregistrer un délai"
+  },
+  "empty": {
+    "list": "Aucun ordre de travail.",
+    "listHint": "Créez un nouvel OT ou ajustez les filtres.",
+    "noParts": "Aucune pièce consommée.",
+    "noLabor": "Aucune main-d'œuvre enregistrée.",
+    "noDelays": "Aucun délai enregistré."
+  }
+}

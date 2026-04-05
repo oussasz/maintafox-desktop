@@ -1,0 +1,30 @@
+{
+  "date": {
+    "short": "dd/MM/yyyy",
+    "medium": "d MMM yyyy",
+    "long": "d MMMM yyyy",
+    "full": "EEEE d MMMM yyyy",
+    "monthYear": "MMMM yyyy",
+    "dayMonth": "d MMMM",
+    "timeShort": "HH:mm",
+    "timeMedium": "HH:mm:ss",
+    "dateTime": "dd/MM/yyyy HH:mm",
+    "dateTimeFull": "d MMMM yyyy \u00e0 HH:mm",
+    "relative": "il y a {{value}}"
+  },
+  "number": {
+    "decimal": ",",
+    "thousands": "\u00a0",
+    "precision": 2,
+    "currencySymbol": "\u20ac",
+    "currencyPosition": "after",
+    "percentSymbol": "%",
+    "locale": "fr-FR"
+  },
+  "currency": {
+    "default": "EUR",
+    "pattern": "{{amount}}\u00a0{{symbol}}"
+  },
+  "weekStartsOn": 1,
+  "firstDayOfYear": 4
+}

@@ -1,0 +1,47 @@
+{
+  "generic": {
+    "unexpected": "An unexpected error occurred.",
+    "retry": "Please try again.",
+    "contactSupport": "If the problem persists, contact support.",
+    "notFound": "The requested item was not found.",
+    "forbidden": "You are not authorized to perform this action.",
+    "serverError": "Internal server error.",
+    "timeout": "The request timed out. Check your connection.",
+    "offline": "Unable to reach the server. Check your network connection.",
+    "network": "Network error. Check your connection.",
+    "conflict": "Data conflict. Reload and try again.",
+    "rateLimit": "Too many requests. Please wait.",
+    "maintenance": "Service under maintenance. Try again later."
+  },
+  "auth": {
+    "notAuthenticated": "You must be signed in to perform this action.",
+    "sessionExpired": "Your session has expired. Please sign in again.",
+    "permissionDenied": "Permission denied.",
+    "stepUpRequired": "This action requires identity re-confirmation.",
+    "badCredentials": "Invalid username or password.",
+    "accountLocked": "Account locked. Try again in {{minutes}} minutes.",
+    "tokenInvalid": "Invalid authentication token.",
+    "accountDisabled": "This account is disabled."
+  },
+  "database": {
+    "generic": "Database error.",
+    "constraint": "Constraint violation: this value already exists.",
+    "notFound": "Record not found: {{entity}} #{{id}}.",
+    "connectionFailed": "Database connection failed.",
+    "queryFailed": "Query execution failed."
+  },
+  "validation": {
+    "generic": "Invalid data. Check the form fields.",
+    "unsupportedLocale": "Unsupported language: {{locale}}.",
+    "serializationError": "Data serialization error."
+  },
+  "device": {
+    "keyringUnavailable": "The system keyring is not accessible.",
+    "fingerprintFailed": "Unable to compute this device's fingerprint.",
+    "syncError": "Synchronization error."
+  },
+  "io": {
+    "generic": "I/O error: {{message}}",
+    "internalError": "An internal error occurred."
+  }
+}
