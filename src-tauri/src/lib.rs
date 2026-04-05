@@ -32,6 +32,7 @@ pub mod errors;
 pub mod locale;
 pub mod migrations;
 pub mod models;
+pub mod org;
 pub mod repository;
 pub mod security;
 pub mod services;
@@ -154,6 +155,18 @@ pub fn run() {
             commands::backup::list_backup_runs,
             commands::backup::validate_backup_file,
             commands::backup::factory_reset_stub,
+            // ── Organization (SP01-F01) ──────────────────────────────────
+            commands::org::list_org_structure_models,
+            commands::org::get_active_org_structure_model,
+            commands::org::create_org_structure_model,
+            commands::org::publish_org_structure_model,
+            commands::org::archive_org_structure_model,
+            commands::org::list_org_node_types,
+            commands::org::create_org_node_type,
+            commands::org::deactivate_org_node_type,
+            commands::org::list_org_relationship_rules,
+            commands::org::create_org_relationship_rule,
+            commands::org::delete_org_relationship_rule,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or
