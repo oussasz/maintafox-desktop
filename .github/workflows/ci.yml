@@ -57,9 +57,22 @@ jobs:
 
       - name: Check CHANGELOG has Unreleased entry (PRs to main only)
         if: github.base_ref == 'main'
+        shell: bash
         run: |
-          if ! grep -qA 5 "## \[Unreleased\]" CHANGELOG.md | grep -q "^- \|^### "; then
-            echo "ERROR: CHANGELOG.md must have at least one entry under [Unreleased] before merging to main."
+          set -euo pipefail
+
+          # Extract lines after "## [Unreleased]" up to (but not including) the next "## ["
+          unreleased_section="$(
+            awk '
+              $0 ~ /^## \[Unreleased\]/ {in_unreleased=1; next}
+              in_unreleased && $0 ~ /^## \[/ {exit}
+              in_unreleased {print}
+            ' CHANGELOG.md
+          )"
+
+          # Require at least one bullet entry under Unreleased
+          if ! printf '%s\n' "$unreleased_section" | grep -Eq '^[[:space:]]*-[[:space:]]+'; then
+            echo "ERROR: CHANGELOG.md must have at least one bullet entry under [Unreleased] before merging to main."
             exit 1
           fi
 
