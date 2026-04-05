@@ -6,15 +6,44 @@ export default {
   theme: {
     extend: {
       colors: {
+        /* ── Shadcn/ui semantic tokens (resolve via CSS custom properties) ── */
+        background: "var(--background)",
+        foreground: "var(--foreground)",
+        card: {
+          DEFAULT: "var(--card)",
+          foreground: "var(--card-foreground)",
+        },
+        popover: {
+          DEFAULT: "var(--popover)",
+          foreground: "var(--popover-foreground)",
+        },
+        secondary: {
+          DEFAULT: "var(--secondary)",
+          foreground: "var(--secondary-foreground)",
+        },
+        muted: {
+          DEFAULT: "var(--muted)",
+          foreground: "var(--muted-foreground)",
+        },
+        destructive: {
+          DEFAULT: "var(--destructive)",
+          foreground: "var(--destructive-foreground)",
+        },
+        border: "var(--border)",
+        input: "var(--input)",
+        ring: "var(--ring)",
+        /* ── Maintafox brand tokens ─────────────────────────────────────── */
         primary: {
           DEFAULT: "#003d8f",
           dark: "#002b6a",
           light: "#4d7bc5",
           bg: "#e8eef8",
+          foreground: "var(--primary-foreground)",
         },
         accent: {
           DEFAULT: "#f0a500",
           dark: "#c47f00",
+          foreground: "var(--accent-foreground)",
         },
         status: {
           success: "#198754",
@@ -84,6 +113,9 @@ export default {
         md: "6px",
         lg: "8px",
         xl: "12px",
+      },
+      borderColor: {
+        DEFAULT: "var(--border)",
       },
       boxShadow: {
         card: "var(--shadow-card)",
