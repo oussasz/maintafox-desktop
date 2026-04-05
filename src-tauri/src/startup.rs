@@ -42,7 +42,7 @@ pub fn format_startup_message(elapsed_ms: u64, within_budget: bool, budget_ms: u
     }
 }
 
-/// Forces a WAL checkpoint on the local SQLite database.
+/// Forces a WAL checkpoint on the local `SQLite` database.
 /// Must be called before any destructive migration is applied.
 /// Returns Ok(()) on success or an error if the checkpoint fails.
 pub async fn force_wal_checkpoint(db: &sea_orm::DatabaseConnection) -> crate::errors::AppResult<()> {
@@ -53,7 +53,7 @@ pub async fn force_wal_checkpoint(db: &sea_orm::DatabaseConnection) -> crate::er
     ))
     .await
     .map(|_| ())
-    .map_err(|e| crate::errors::AppError::Database(sea_orm::DbErr::Custom(format!("WAL checkpoint failed: {}", e))))
+    .map_err(|e| crate::errors::AppError::Database(sea_orm::DbErr::Custom(format!("WAL checkpoint failed: {e}"))))
 }
 
 /// Creates a pre-migration backup of the database file.
@@ -66,17 +66,13 @@ pub fn backup_database(db_path: &PathBuf, backup_dir: &PathBuf) -> crate::errors
         .format("%Y%m%d_%H%M%S")
         .to_string();
 
-    let backup_filename = format!("pre_migration_{}.db", timestamp);
+    let backup_filename = format!("pre_migration_{timestamp}.db");
     let backup_path = backup_dir.join(&backup_filename);
 
     std::fs::create_dir_all(backup_dir).map_err(crate::errors::AppError::Io)?;
 
-    std::fs::copy(db_path, &backup_path).map_err(|e| {
-        crate::errors::AppError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Pre-migration backup failed: {}", e),
-        ))
-    })?;
+    std::fs::copy(db_path, &backup_path)
+        .map_err(|e| crate::errors::AppError::Io(std::io::Error::other(format!("Pre-migration backup failed: {e}"))))?;
 
     tracing::info!(
         backup_path = %backup_path.display(),

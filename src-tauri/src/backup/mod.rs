@@ -1,7 +1,7 @@
 //! Backup and restore preflight module.
 //!
 //! Responsibilities:
-//! 1. Manual backup: copy the live SQLite DB to a target path via VACUUM INTO (WAL-safe)
+//! 1. Manual backup: copy the live `SQLite` DB to a target path via VACUUM INTO (WAL-safe)
 //! 2. Backup run logging: insert a row in `backup_runs` for every execution
 //! 3. Restore test mode: integrity check on a backup file without touching live DB
 //! 4. Backup run listing: return run history for the Settings UI
@@ -9,7 +9,7 @@
 //! Architecture notes:
 //! - All database access goes through `sea_orm::DatabaseConnection`, consistent with
 //!   the rest of the codebase. No direct `sqlx::SqlitePool` usage.
-//! - `VACUUM INTO` is the WAL-safe approach for hot-copying a SQLite database.
+//! - `VACUUM INTO` is the WAL-safe approach for hot-copying a `SQLite` database.
 //!   It produces a point-in-time consistent copy without locking other readers.
 //! - Phase 1: `encryption_mode` is always `"plaintext"`. AES-256 requires the
 //!   key management infrastructure delivered in Phase 2 (VPS).
@@ -83,9 +83,7 @@ fn compute_file_sha256(path: &Path) -> AppResult<String> {
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
     AppError::Internal(anyhow::anyhow!(
-        "backup_runs row decode failed for column '{}': {}",
-        column,
-        e
+        "backup_runs row decode failed for column '{column}': {e}"
     ))
 }
 
@@ -130,7 +128,7 @@ fn map_backup_run(row: sea_orm::QueryResult) -> AppResult<BackupRunRecord> {
 
 // ─── Manual Backup ────────────────────────────────────────────────────────────
 
-/// Execute a manual backup of the SQLite database.
+/// Execute a manual backup of the `SQLite` database.
 ///
 /// Algorithm:
 /// 1. Execute `VACUUM INTO '<target_path>'` on the live connection (WAL-safe)
@@ -180,8 +178,7 @@ pub async fn run_manual_backup(
             "SELECT COUNT(*) AS cnt FROM seaql_migrations".to_string(),
         ))
         .await?
-        .map(|r| r.try_get::<i64>("", "cnt").unwrap_or(0))
-        .unwrap_or(0);
+        .map_or(0, |r| r.try_get::<i64>("", "cnt").unwrap_or(0));
 
     let completed_at = chrono::Utc::now().to_rfc3339();
     let file_size_i64 = file_size as i64;
@@ -190,11 +187,11 @@ pub async fn run_manual_backup(
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"INSERT INTO backup_runs
+            r"INSERT INTO backup_runs
                (trigger, status, output_path, file_size_bytes, sha256_checksum,
                 encryption_mode, db_schema_version, started_at, completed_at,
                 initiated_by_id)
-               VALUES ('manual', 'success', ?, ?, ?, 'plaintext', ?, ?, ?, ?)"#,
+               VALUES ('manual', 'success', ?, ?, ?, 'plaintext', ?, ?, ?, ?)",
             [
                 target_path.into(),
                 file_size_i64.into(),
@@ -260,10 +257,7 @@ pub async fn validate_backup_file(db: &DatabaseConnection, backup_path: &str) ->
         .and_then(|r| r.try_get::<Option<String>>("", "sha256_checksum").ok())
         .flatten();
 
-    let checksum_match = stored_checksum
-        .as_deref()
-        .map(|s| s == computed_checksum)
-        .unwrap_or(false);
+    let checksum_match = stored_checksum.as_deref().is_some_and(|s| s == computed_checksum);
 
     // Copy to a temp path for isolated read-only integrity check.
     // This ensures the live database is never touched.
@@ -332,7 +326,7 @@ pub async fn list_backup_runs(db: &DatabaseConnection, limit: i64) -> AppResult<
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"SELECT id, trigger, status, output_path, file_size_bytes, sha256_checksum,
+            r"SELECT id, trigger, status, output_path, file_size_bytes, sha256_checksum,
                       encryption_mode, db_schema_version,
                       COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', started_at), started_at) AS started_at,
                       CASE
@@ -342,7 +336,7 @@ pub async fn list_backup_runs(db: &DatabaseConnection, limit: i64) -> AppResult<
                       error_message, initiated_by_id
                FROM backup_runs
                ORDER BY started_at DESC
-               LIMIT ?"#,
+               LIMIT ?",
             [safe_limit.into()],
         ))
         .await?;

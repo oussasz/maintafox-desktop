@@ -5,7 +5,7 @@
 //!     both side-channel and GPU attacks.
 //!   - OWASP-recommended 2026 parameters: m=65536 (64 MiB), t=3, p=1.
 //!   - Salt is 16 random bytes per hash, embedded in the PHC string output.
-//!   - Constant-time comparison via argon2::verify_password.
+//!   - Constant-time comparison via `argon2::verify_password`.
 //!   - Compile-time constants — parameters cannot be weakened at runtime.
 
 use crate::errors::{AppError, AppResult};

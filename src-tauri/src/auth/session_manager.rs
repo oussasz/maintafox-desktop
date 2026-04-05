@@ -1,10 +1,10 @@
-//! SessionManager: owns the in-memory session, expiry enforcement, and
+//! `SessionManager`: owns the in-memory session, expiry enforcement, and
 //! the OS-keyring session token.
 //!
 //! Rules:
 //!   - Exactly one active session at a time per desktop instance.
 //!   - The session token is a 32-byte random value stored in OS keyring only.
-//!   - The app_sessions row is the lifecycle record; expiry is enforced here in memory.
+//!   - The `app_sessions` row is the lifecycle record; expiry is enforced here in memory.
 //!   - Every write (login, logout, expire) emits an audit event via the db.
 
 use std::time::Instant;
@@ -36,7 +36,7 @@ pub struct AuthenticatedUser {
 /// The full context of an active local session.
 #[derive(Debug, Clone, Serialize)]
 pub struct LocalSession {
-    /// Row id in app_sessions
+    /// Row id in `app_sessions`
     pub session_db_id: String,
     pub user: AuthenticatedUser,
     pub created_at: DateTime<Utc>,
@@ -64,8 +64,7 @@ impl LocalSession {
     /// True if a step-up verification was completed within `STEP_UP_DURATION_SECS`.
     pub fn is_step_up_valid(&self) -> bool {
         self.step_up_verified_at
-            .map(|t| t.elapsed().as_secs() < STEP_UP_DURATION_SECS)
-            .unwrap_or(false)
+            .is_some_and(|t| t.elapsed().as_secs() < STEP_UP_DURATION_SECS)
     }
 }
 
@@ -93,7 +92,7 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { current: None }
     }
 
@@ -101,8 +100,7 @@ impl SessionManager {
     pub fn is_authenticated(&self) -> bool {
         self.current
             .as_ref()
-            .map(|s| !s.is_expired() && !s.is_idle_locked())
-            .unwrap_or(false)
+            .is_some_and(|s| !s.is_expired() && !s.is_idle_locked())
     }
 
     /// Returns a reference to the current authenticated user, if any.
@@ -165,7 +163,7 @@ impl SessionManager {
 
     /// True if the current session has a valid (non-expired) step-up verification.
     pub fn is_step_up_valid(&self) -> bool {
-        self.current.as_ref().map(|s| s.is_step_up_valid()).unwrap_or(false)
+        self.current.as_ref().is_some_and(LocalSession::is_step_up_valid)
     }
 
     /// Clear the current session (logout or forced expiry).
@@ -216,9 +214,9 @@ pub async fn find_active_user(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"SELECT id, username, display_name, is_admin, force_password_change, password_hash
+            r"SELECT id, username, display_name, is_admin, force_password_change, password_hash
                FROM user_accounts
-               WHERE LOWER(username) = LOWER(?) AND is_active = 1 AND deleted_at IS NULL"#,
+               WHERE LOWER(username) = LOWER(?) AND is_active = 1 AND deleted_at IS NULL",
             [username.into()],
         ))
         .await?;
@@ -240,7 +238,7 @@ pub async fn record_failed_login(db: &DatabaseConnection, user_id: i32) -> AppRe
     let now = Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"UPDATE user_accounts
+        r"UPDATE user_accounts
            SET failed_login_attempts = failed_login_attempts + 1,
                locked_until = CASE
                    WHEN failed_login_attempts + 1 >= 10
@@ -248,7 +246,7 @@ pub async fn record_failed_login(db: &DatabaseConnection, user_id: i32) -> AppRe
                    ELSE locked_until
                END,
                updated_at = ?
-           WHERE id = ?"#,
+           WHERE id = ?",
         [now.into(), user_id.into()],
     ))
     .await?;
@@ -260,13 +258,13 @@ pub async fn record_successful_login(db: &DatabaseConnection, user_id: i32) -> A
     let now = Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"UPDATE user_accounts
+        r"UPDATE user_accounts
            SET failed_login_attempts = 0,
                locked_until = NULL,
                last_login_at = ?,
                last_seen_at = ?,
                updated_at = ?
-           WHERE id = ?"#,
+           WHERE id = ?",
         [now.clone().into(), now.clone().into(), now.into(), user_id.into()],
     ))
     .await?;
@@ -283,8 +281,8 @@ pub async fn create_session_record(
     let now = Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"INSERT INTO app_sessions (id, user_id, created_at, expires_at, is_revoked)
-           VALUES (?, ?, ?, ?, 0)"#,
+        r"INSERT INTO app_sessions (id, user_id, created_at, expires_at, is_revoked)
+           VALUES (?, ?, ?, ?, 0)",
         [session_db_id.into(), user_id.into(), now.into(), expires_at.into()],
     ))
     .await?;

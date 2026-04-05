@@ -32,7 +32,7 @@ pub fn record_start_time() {
 /// Return seconds elapsed since `record_start_time()` was called.
 /// Returns 0 if `record_start_time()` was never called (test or early-crash path).
 pub fn uptime_seconds() -> u64 {
-    APP_START.get().map(|start| start.elapsed().as_secs()).unwrap_or(0)
+    APP_START.get().map_or(0, |start| start.elapsed().as_secs())
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -50,13 +50,13 @@ pub struct DiagnosticsAppInfo {
     pub os_name: String,
     /// OS version string, e.g. "Windows 11 23H2"
     pub os_version: String,
-    /// CPU architecture, e.g. "x86_64" | "aarch64"
+    /// CPU architecture, e.g. "`x86_64`" | "aarch64"
     pub arch: String,
-    /// Number of applied SeaORM migrations (from `seaql_migrations`)
+    /// Number of applied `SeaORM` migrations (from `seaql_migrations`)
     pub db_schema_version: i64,
     /// Active locale code, e.g. "fr-CA"
     pub active_locale: String,
-    /// Sync status label — "not_configured" in Phase 1; Phase 2 VPS sync will update this
+    /// Sync status label — "`not_configured`" in Phase 1; Phase 2 VPS sync will update this
     pub sync_status: String,
     /// Seconds since the application process started
     pub uptime_seconds: u64,
@@ -169,8 +169,7 @@ pub async fn collect_diagnostics_app_info(
         .ok()
         .flatten()
         .and_then(|row| row.try_get::<String>("", "setting_value_json").ok())
-        .map(|v| v.trim_matches('"').to_string())
-        .unwrap_or_else(|| "fr-CA".to_string());
+        .map_or_else(|| "fr-CA".to_string(), |v| v.trim_matches('"').to_string());
 
     DiagnosticsAppInfo {
         app_version: app_handle.package_info().version.to_string(),
@@ -203,7 +202,7 @@ fn read_sanitized_log_lines(log_dir: &Path, max_lines: usize) -> (Vec<String>, V
     match fs::File::open(&log_path) {
         Ok(file) => {
             let reader = BufReader::new(file);
-            let raw_lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+            let raw_lines: Vec<String> = reader.lines().map_while(std::result::Result::ok).collect();
             // Keep the tail — oldest-first slice of the last `max_lines` lines
             let start = raw_lines.len().saturating_sub(max_lines);
             for line in &raw_lines[start..] {
@@ -243,7 +242,7 @@ pub async fn generate_support_bundle(app_handle: &tauri::AppHandle, db: &Databas
 /// Configure the tracing subscriber for dual console + rolling-file output.
 ///
 /// Replaces the simple console-only subscriber initialized in earlier sub-phases.
-/// Must be called **once** from `lib.rs` setup(), after the AppHandle is available
+/// Must be called **once** from `lib.rs` `setup()`, after the `AppHandle` is available
 /// so the platform log directory can be resolved.
 ///
 /// Returns a `WorkerGuard` that MUST be kept alive for the process lifetime —

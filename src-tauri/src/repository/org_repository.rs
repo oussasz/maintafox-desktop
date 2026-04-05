@@ -52,7 +52,7 @@ pub struct OrgNodeFilter {
 /// Returns the full org tree (all active nodes) ordered by depth and code.
 /// Used for the hierarchy tree panel in the Org module.
 pub async fn get_org_tree(db: &DatabaseConnection) -> AppResult<Vec<OrgNodeTreeRow>> {
-    let sql = r#"
+    let sql = r"
         SELECT
             n.id, n.sync_id, n.code, n.name, n.parent_id, n.ancestor_path,
             n.depth, n.status, n.node_type_id,
@@ -62,15 +62,15 @@ pub async fn get_org_tree(db: &DatabaseConnection) -> AppResult<Vec<OrgNodeTreeR
         LEFT JOIN org_node_types t ON t.id = n.node_type_id
         WHERE n.deleted_at IS NULL AND n.status != 'decommissioned'
         ORDER BY n.depth ASC, n.code ASC
-    "#;
+    ";
     let stmt = Statement::from_string(DbBackend::Sqlite, sql.to_string());
     Ok(OrgNodeTreeRow::find_by_statement(stmt).all(db).await?)
 }
 
 /// Returns all descendant nodes of a given ancestor path prefix.
-/// Uses the ancestor_path column for O(log n) subtree queries.
+/// Uses the `ancestor_path` column for O(log n) subtree queries.
 pub async fn get_descendants(db: &DatabaseConnection, ancestor_path_prefix: &str) -> AppResult<Vec<OrgNodeTreeRow>> {
-    let sql = r#"
+    let sql = r"
         SELECT
             n.id, n.sync_id, n.code, n.name, n.parent_id, n.ancestor_path,
             n.depth, n.status, n.node_type_id,
@@ -80,7 +80,7 @@ pub async fn get_descendants(db: &DatabaseConnection, ancestor_path_prefix: &str
         LEFT JOIN org_node_types t ON t.id = n.node_type_id
         WHERE n.ancestor_path LIKE ? AND n.deleted_at IS NULL
         ORDER BY n.depth ASC, n.code ASC
-    "#;
+    ";
     let pattern = format!("{ancestor_path_prefix}%");
     let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, [pattern.into()]);
     Ok(OrgNodeTreeRow::find_by_statement(stmt).all(db).await?)
@@ -88,7 +88,7 @@ pub async fn get_descendants(db: &DatabaseConnection, ancestor_path_prefix: &str
 
 /// Returns a single org node by its id.
 pub async fn get_node_by_id(db: &DatabaseConnection, node_id: i32) -> AppResult<OrgNodeTreeRow> {
-    let sql = r#"
+    let sql = r"
         SELECT
             n.id, n.sync_id, n.code, n.name, n.parent_id, n.ancestor_path,
             n.depth, n.status, n.node_type_id,
@@ -97,7 +97,7 @@ pub async fn get_node_by_id(db: &DatabaseConnection, node_id: i32) -> AppResult<
         FROM org_nodes n
         LEFT JOIN org_node_types t ON t.id = n.node_type_id
         WHERE n.id = ? AND n.deleted_at IS NULL
-    "#;
+    ";
     let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, [node_id.into()]);
     OrgNodeTreeRow::find_by_statement(stmt)
         .one(db)
@@ -110,26 +110,26 @@ pub async fn get_node_by_id(db: &DatabaseConnection, node_id: i32) -> AppResult<
 
 /// Returns nodes that can host assets — used by the equipment form dropdown.
 pub async fn get_asset_host_nodes(db: &DatabaseConnection) -> AppResult<Vec<OrgNodeOption>> {
-    let sql = r#"
+    let sql = r"
         SELECT n.id, n.code, n.name, n.depth, n.ancestor_path
         FROM org_nodes n
         INNER JOIN org_node_types t ON t.id = n.node_type_id
         WHERE t.can_host_assets = 1 AND n.deleted_at IS NULL AND n.status = 'active'
         ORDER BY n.depth ASC, n.name ASC
-    "#;
+    ";
     let stmt = Statement::from_string(DbBackend::Sqlite, sql.to_string());
     Ok(OrgNodeOption::find_by_statement(stmt).all(db).await?)
 }
 
 /// Returns nodes that can own work — used by work order scope dropdown.
 pub async fn get_work_owner_nodes(db: &DatabaseConnection) -> AppResult<Vec<OrgNodeOption>> {
-    let sql = r#"
+    let sql = r"
         SELECT n.id, n.code, n.name, n.depth, n.ancestor_path
         FROM org_nodes n
         INNER JOIN org_node_types t ON t.id = n.node_type_id
         WHERE t.can_own_work = 1 AND n.deleted_at IS NULL AND n.status = 'active'
         ORDER BY n.depth ASC, n.name ASC
-    "#;
+    ";
     let stmt = Statement::from_string(DbBackend::Sqlite, sql.to_string());
     Ok(OrgNodeOption::find_by_statement(stmt).all(db).await?)
 }

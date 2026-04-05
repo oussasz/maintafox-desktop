@@ -1,0 +1,10 @@
+# Cargo audit configuration for Maintafox Desktop
+# See: https://github.com/rustsec/rustsec/tree/main/cargo-audit
+
+[advisories]
+# RUSTSEC-2024-0429: Unsoundness in glib::VariantStrIter
+# - glib 0.18.5 is a transitive dependency of Tauri's GTK/WebKit Linux stack
+# - We do not use VariantStrIter directly; the affected API is not reachable from Maintafox code
+# - Fix depends on Tauri upstream upgrading gtk-rs bindings
+# - Reviewed: 2026-04-05
+ignore = ["RUSTSEC-2024-0429"]

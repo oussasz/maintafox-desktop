@@ -82,7 +82,7 @@ pub async fn get_setting(db: &DatabaseConnection, key: &str, scope: &str) -> App
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"SELECT
+            r"SELECT
                    id,
                    setting_key,
                    setting_scope,
@@ -94,7 +94,7 @@ pub async fn get_setting(db: &DatabaseConnection, key: &str, scope: &str) -> App
                    last_modified_by_id,
                    COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', last_modified_at), last_modified_at) AS last_modified_at
                FROM app_settings
-               WHERE setting_key = ? AND setting_scope = ?"#,
+               WHERE setting_key = ? AND setting_scope = ?",
             [key.into(), scope.into()],
         ))
         .await?;
@@ -106,7 +106,7 @@ pub async fn list_settings_by_category(db: &DatabaseConnection, category: &str) 
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"SELECT
+            r"SELECT
                    id,
                    setting_key,
                    setting_scope,
@@ -119,7 +119,7 @@ pub async fn list_settings_by_category(db: &DatabaseConnection, category: &str) 
                    COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', last_modified_at), last_modified_at) AS last_modified_at
                FROM app_settings
                WHERE category = ?
-               ORDER BY setting_key"#,
+               ORDER BY setting_key",
             [category.into()],
         ))
         .await?;
@@ -131,7 +131,7 @@ pub async fn get_active_policy(db: &DatabaseConnection, domain: &str) -> AppResu
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"SELECT
+            r"SELECT
                    id,
                    policy_domain,
                    version_no,
@@ -145,7 +145,7 @@ pub async fn get_active_policy(db: &DatabaseConnection, domain: &str) -> AppResu
                FROM policy_snapshots
                WHERE policy_domain = ? AND is_active = 1
                ORDER BY version_no DESC
-               LIMIT 1"#,
+               LIMIT 1",
             [domain.into()],
         ))
         .await?;
@@ -200,7 +200,7 @@ pub async fn set_setting(
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"INSERT INTO app_settings
+        r"INSERT INTO app_settings
                (setting_key, setting_scope, setting_value_json, category,
                 setting_risk, validation_status, last_modified_by_id, last_modified_at)
            VALUES (?, ?, ?, 'general', 'low', 'valid', ?, ?)
@@ -208,7 +208,7 @@ pub async fn set_setting(
            DO UPDATE SET
                setting_value_json = excluded.setting_value_json,
                last_modified_by_id = excluded.last_modified_by_id,
-               last_modified_at = excluded.last_modified_at"#,
+               last_modified_at = excluded.last_modified_at",
         [
             key.into(),
             scope.into(),
@@ -221,10 +221,10 @@ pub async fn set_setting(
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"INSERT INTO settings_change_events
+        r"INSERT INTO settings_change_events
                (setting_key_or_domain, change_summary, old_value_hash, new_value_hash,
                 changed_by_id, changed_at, required_step_up, apply_result)
-           VALUES (?, ?, ?, ?, ?, ?, 0, 'applied')"#,
+           VALUES (?, ?, ?, ?, ?, ?, 0, 'applied')",
         [
             key.into(),
             change_summary.into(),
@@ -251,7 +251,7 @@ pub async fn list_change_events(db: &DatabaseConnection, limit: i64) -> AppResul
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"SELECT
+            r"SELECT
                    id,
                    setting_key_or_domain,
                    change_summary,
@@ -263,7 +263,7 @@ pub async fn list_change_events(db: &DatabaseConnection, limit: i64) -> AppResul
                    apply_result
                FROM settings_change_events
                ORDER BY changed_at DESC
-               LIMIT ?"#,
+               LIMIT ?",
             [safe_limit.into()],
         ))
         .await?;
@@ -272,11 +272,7 @@ pub async fn list_change_events(db: &DatabaseConnection, limit: i64) -> AppResul
 }
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "settings row decode failed for column '{}': {}",
-        column,
-        e
-    ))
+    AppError::Internal(anyhow::anyhow!("settings row decode failed for column '{column}': {e}"))
 }
 
 fn map_app_setting(row: QueryResult) -> AppResult<AppSetting> {

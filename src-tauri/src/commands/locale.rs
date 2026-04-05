@@ -26,8 +26,8 @@ pub struct SetLocalePayload {
 }
 
 /// Set the locale preference.
-/// User preference → sets locale.user_language in system_config.
-/// Tenant default  → sets locale.default_language (requires adm.settings).
+/// User preference → sets `locale.user_language` in `system_config`.
+/// Tenant default  → sets `locale.default_language` (requires adm.settings).
 #[tauri::command]
 pub async fn set_locale_preference(
     payload: SetLocalePayload,

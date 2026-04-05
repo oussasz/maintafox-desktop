@@ -2,9 +2,9 @@
 //! Locale preference detection and persistence.
 //!
 //! Locale precedence (highest to lowest):
-//!   1. User preference in system_config (key: locale.user_language)
-//!   2. Tenant default in system_config (key: locale.default_language)
-//!   3. OS locale (detected at startup via sys_locale)
+//!   1. User preference in `system_config` (key: `locale.user_language`)
+//!   2. Tenant default in `system_config` (key: `locale.default_language`)
+//!   3. OS locale (detected at startup via `sys_locale`)
 //!   4. Hard fallback: "fr"
 
 use crate::errors::{AppError, AppResult};
@@ -44,7 +44,7 @@ pub fn detect_os_locale() -> Option<String> {
     })
 }
 
-/// Read a locale value from system_config by key.
+/// Read a locale value from `system_config` by key.
 pub async fn read_locale_config(db: &DatabaseConnection, key: &str) -> AppResult<Option<String>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -57,7 +57,7 @@ pub async fn read_locale_config(db: &DatabaseConnection, key: &str) -> AppResult
     Ok(row.and_then(|r| r.try_get::<String>("", "value").ok()))
 }
 
-/// Write a locale value to system_config (upsert).
+/// Write a locale value to `system_config` (upsert).
 pub async fn write_locale_config(db: &DatabaseConnection, key: &str, value: &str) -> AppResult<()> {
     if !SUPPORTED_LOCALES.contains(&value) {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -68,9 +68,9 @@ pub async fn write_locale_config(db: &DatabaseConnection, key: &str, value: &str
     let now = chrono::Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"INSERT INTO system_config (key, value, updated_at)
+        r"INSERT INTO system_config (key, value, updated_at)
            VALUES (?, ?, ?)
-           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"#,
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         [key.into(), value.into(), now.into()],
     ))
     .await?;
@@ -94,7 +94,7 @@ pub async fn resolve_locale_preference(db: &DatabaseConnection) -> AppResult<Loc
         user_locale,
         tenant_locale,
         os_locale,
-        supported_locales: SUPPORTED_LOCALES.iter().map(|s| s.to_string()).collect(),
+        supported_locales: SUPPORTED_LOCALES.iter().map(|s| (*s).to_string()).collect(),
     })
 }
 
