@@ -54,8 +54,17 @@
     "hide": "Hide",
     "quit": "Quit"
   },
+  "commandPalette": {
+    "title": "Command Palette"
+  },
   "session": {
-    "timeRemaining": "Session expires in {{minutes}} min"
+    "timeRemaining": "Session expires in {{minutes}} min",
+    "expired": "Session expired",
+    "active": "Session active"
+  },
+  "device": {
+    "trusted": "Trusted device",
+    "untrusted": "Unverified device"
   },
   "startup": {
     "loading": "Starting up\u2026",
