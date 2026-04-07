@@ -7,25 +7,14 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::unnecessary_literal_bound)]
-// Pedantic lints — standard allows for DB-centric code patterns (Rust 1.94+)
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_possible_wrap)]
-#![allow(clippy::cast_sign_loss)]
-#![allow(clippy::items_after_statements)]
-#![allow(clippy::large_stack_arrays)]
-#![allow(clippy::manual_let_else)]
-#![allow(clippy::match_same_arms)]
-#![allow(clippy::needless_pass_by_value)]
-#![allow(clippy::unnecessary_debug_formatting)]
-// Nursery lints — unstable, often false positives
-#![allow(clippy::option_if_let_else)]
-#![allow(clippy::significant_drop_tightening)]
 
+pub mod assets;
 pub mod audit;
 pub mod auth;
 pub mod background;
 pub mod backup;
 pub mod commands;
+pub mod di;
 pub mod db;
 pub mod diagnostics;
 pub mod errors;
@@ -33,6 +22,7 @@ pub mod locale;
 pub mod migrations;
 pub mod models;
 pub mod org;
+pub mod reference;
 pub mod repository;
 pub mod security;
 pub mod services;
@@ -55,38 +45,28 @@ mod state_tests;
 mod window_tests;
 
 use tauri::Manager;
+use tracing_subscriber::EnvFilter;
 
 #[allow(clippy::large_stack_frames)]
 pub fn run() {
-    // Record application start time before anything else so uptime is accurate.
-    diagnostics::record_start_time();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("maintafox=info")))
+        .init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         // Single-instance: focus existing window on second launch
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                w.set_focus().ok();
-                w.show().ok();
-            }
-        }))
+        .plugin(
+            tauri_plugin_single_instance::init(|app, _args, _cwd| {
+                if let Some(w) = app.get_webview_window("main") {
+                    w.set_focus().ok();
+                    w.show().ok();
+                }
+            }),
+        )
         .setup(|app| {
-            // Initialize file-based logging as the very first setup action so that
-            // all subsequent startup messages are captured in the rolling log file.
-            // The WorkerGuard flushes and closes the file on drop; Box::leak keeps
-            // it alive for the entire process lifetime (acceptable in Phase 1).
-            let log_dir_path = app
-                .handle()
-                .path()
-                .app_log_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("logs"));
-            std::fs::create_dir_all(&log_dir_path)?;
-            let guard = diagnostics::init_file_logging(log_dir_path);
-            Box::leak(Box::new(guard));
-
             // Tray icon (non-fatal if tray is not supported on this platform)
             if let Err(e) = tray::setup_tray(app) {
                 tracing::warn!("System tray unavailable: {e}");
@@ -121,41 +101,49 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // ── Core ──────────────────────────────────────────────────────
             commands::health_check,
             commands::app::get_app_info,
             commands::app::get_task_status,
             commands::app::shutdown_app,
+            // ── Auth ──────────────────────────────────────────────────────
             commands::auth::login,
             commands::auth::logout,
             commands::auth::get_session_info,
             commands::auth::get_device_trust_status,
             commands::auth::revoke_device_trust,
-            // SP04-F05 — auth UI support
             commands::auth::unlock_session,
             commands::auth::force_change_password,
-            commands::lookup::list_lookup_domains,
-            commands::lookup::get_lookup_values,
-            commands::lookup::get_lookup_value_by_id,
-            commands::diagnostics::run_integrity_check,
-            commands::diagnostics::repair_seed_data,
+            // ── RBAC ──────────────────────────────────────────────────────
             commands::rbac::get_my_permissions,
             commands::rbac::verify_step_up,
+            // ── Locale ────────────────────────────────────────────────────
             commands::locale::get_locale_preference,
             commands::locale::set_locale_preference,
+            // ── Settings ──────────────────────────────────────────────────
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::get_policy_snapshot,
             commands::settings::get_session_policy,
             commands::settings::list_setting_change_events,
-            commands::updater::check_for_update,
-            commands::updater::install_pending_update,
-            commands::diagnostics::get_diagnostics_info,
-            commands::diagnostics::generate_support_bundle,
+            // ── Lookup ────────────────────────────────────────────────────
+            commands::lookup::list_lookup_domains,
+            commands::lookup::get_lookup_values,
+            commands::lookup::get_lookup_value_by_id,
+            // ── Backup ────────────────────────────────────────────────────
             commands::backup::run_manual_backup,
             commands::backup::list_backup_runs,
             commands::backup::validate_backup_file,
             commands::backup::factory_reset_stub,
-            // ── Organization (SP01-F01) ──────────────────────────────────
+            // ── Diagnostics ───────────────────────────────────────────────
+            commands::diagnostics::run_integrity_check,
+            commands::diagnostics::repair_seed_data,
+            commands::diagnostics::get_diagnostics_info,
+            commands::diagnostics::generate_support_bundle,
+            // ── Updater ───────────────────────────────────────────────────
+            commands::updater::check_for_update,
+            commands::updater::install_pending_update,
+            // ── Org ───────────────────────────────────────────────────────
             commands::org::list_org_structure_models,
             commands::org::get_active_org_structure_model,
             commands::org::create_org_structure_model,
@@ -167,6 +155,111 @@ pub fn run() {
             commands::org::list_org_relationship_rules,
             commands::org::create_org_relationship_rule,
             commands::org::delete_org_relationship_rule,
+            commands::org::list_org_tree,
+            commands::org::get_org_node,
+            commands::org::list_org_node_responsibilities,
+            commands::org::list_org_entity_bindings,
+            commands::org::create_org_node,
+            commands::org::update_org_node_metadata,
+            commands::org::assign_org_node_responsibility,
+            commands::org::end_org_node_responsibility,
+            commands::org::upsert_org_entity_binding,
+            commands::org::expire_org_entity_binding,
+            commands::org::move_org_node,
+            commands::org::deactivate_org_node,
+            commands::org::get_org_designer_snapshot,
+            commands::org::search_org_designer_nodes,
+            commands::org::preview_org_change,
+            commands::org::validate_org_model_for_publish,
+            commands::org::publish_org_model,
+            commands::org::list_org_change_events,
+            // ── Reference ─────────────────────────────────────────────────
+            commands::reference::list_reference_domains,
+            commands::reference::get_reference_domain,
+            commands::reference::create_reference_domain,
+            commands::reference::update_reference_domain,
+            commands::reference::list_reference_sets,
+            commands::reference::get_reference_set,
+            commands::reference::create_draft_reference_set,
+            commands::reference::validate_reference_set,
+            commands::reference::publish_reference_set,
+            commands::reference::list_reference_values,
+            commands::reference::get_reference_value,
+            commands::reference::create_reference_value,
+            commands::reference::update_reference_value,
+            commands::reference::deactivate_reference_value,
+            commands::reference::move_reference_value_parent,
+            commands::reference::merge_reference_values,
+            commands::reference::migrate_reference_usage,
+            commands::reference::list_reference_migrations,
+            commands::reference::list_reference_aliases,
+            commands::reference::get_reference_alias,
+            commands::reference::create_reference_alias,
+            commands::reference::update_reference_alias,
+            commands::reference::delete_reference_alias,
+            commands::reference::create_ref_import_batch,
+            commands::reference::stage_ref_import_rows,
+            commands::reference::validate_ref_import_batch,
+            commands::reference::apply_ref_import_batch,
+            commands::reference::get_ref_import_preview,
+            commands::reference::export_ref_domain_set,
+            commands::reference::list_ref_import_batches,
+            commands::reference::search_reference_values,
+            commands::reference::compute_ref_publish_readiness,
+            commands::reference::preview_ref_publish_impact,
+            commands::reference::governed_publish_reference_set,
+            // ── Assets ────────────────────────────────────────────────────
+            commands::assets::list_assets,
+            commands::assets::get_asset_by_id,
+            commands::assets::list_asset_children,
+            commands::assets::list_asset_parents,
+            commands::assets::search_assets,
+            commands::assets::suggest_asset_codes,
+            commands::assets::suggest_asset_names,
+            commands::assets::get_asset_binding_summary,
+            commands::assets::create_asset,
+            commands::assets::update_asset_identity,
+            commands::assets::link_asset_hierarchy,
+            commands::assets::unlink_asset_hierarchy,
+            commands::assets::move_asset_org_node,
+            commands::assets::list_asset_lifecycle_events,
+            commands::assets::record_lifecycle_event,
+            commands::assets::list_asset_meters,
+            commands::assets::create_asset_meter,
+            commands::assets::record_meter_reading,
+            commands::assets::get_latest_meter_value,
+            commands::assets::list_meter_readings,
+            commands::assets::list_asset_document_links,
+            commands::assets::upsert_asset_document_link,
+            commands::assets::expire_asset_document_link,
+            commands::assets::create_asset_import_batch,
+            commands::assets::validate_asset_import_batch,
+            commands::assets::get_asset_import_preview,
+            commands::assets::apply_asset_import_batch,
+            commands::assets::list_asset_import_batches,
+            // ── DI (Intervention Requests) ────────────────────────────────
+            commands::di::list_di,
+            commands::di::get_di,
+            commands::di::create_di,
+            commands::di::update_di_draft,
+            commands::di::screen_di,
+            commands::di::return_di,
+            commands::di::reject_di,
+            commands::di::approve_di,
+            commands::di::defer_di,
+            commands::di::reactivate_di,
+            commands::di::get_di_review_events,
+            // ── DI File 03 — SLA, Attachments, Conversion ─────────────────
+            commands::di::upload_di_attachment,
+            commands::di::list_di_attachments,
+            commands::di::delete_di_attachment,
+            commands::di::convert_di_to_wo,
+            commands::di::get_sla_status,
+            commands::di::list_sla_rules,
+            commands::di::update_sla_rule,
+            // ── DI File 04 — Audit Trail ──────────────────────────────────
+            commands::di::list_di_change_events,
+            commands::di::list_all_di_change_events,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

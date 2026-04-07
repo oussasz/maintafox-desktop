@@ -66,6 +66,14 @@ mod tests {
             "m20260402_000005_equipment_schema".into(),
             "m20260402_000006_teams_and_skills".into(),
             "m20260404_000007_settings_tables".into(),
+            "m20260401_000008_backup_tables".into(),
+            "m20260406_000009_org_audit_trail".into(),
+            "m20260401_000010_asset_registry_core".into(),
+            "m20260401_000011_asset_lifecycle_meter_docs".into(),
+            "m20260401_000012_asset_import_and_audit".into(),
+            "m20260401_000013_reference_domains_core".into(),
+            "m20260401_000014_reference_governance_maps".into(),
+            "m20260401_000015_reference_aliases_and_imports".into(),
         ]
     }
 }

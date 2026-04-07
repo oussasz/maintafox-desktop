@@ -1,11 +1,14 @@
 pub mod app;
+pub mod assets;
 pub mod auth;
 pub mod backup;
+pub mod di;
 pub mod diagnostics;
 pub mod locale;
 pub mod lookup;
 pub mod org;
 pub mod rbac;
+pub mod reference;
 pub mod settings;
 pub mod updater;
 

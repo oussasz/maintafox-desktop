@@ -58,7 +58,7 @@ mod tests {
             .try_get::<i64>("", "cnt")
             .expect("cnt should be readable");
 
-        assert_eq!(migration_count, 8, "8 migrations should be applied (001-008)");
+        assert_eq!(migration_count, 11, "11 migrations should be applied (001-011)");
     }
 
     /// V2 — backup_runs table has all expected columns.

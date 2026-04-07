@@ -87,5 +87,99 @@
     "listHint": "Create your first equipment record or adjust the filters.",
     "noMeters": "No meters recorded.",
     "noDocuments": "No documents attached."
+  },
+  "registry": {
+    "title": "Asset Registry",
+    "refresh": "Refresh",
+    "resultCount": "{{count}} result(s)",
+    "search": {
+      "placeholder": "Search by code, name, serial number…",
+      "apply": "Search",
+      "clear": "Clear"
+    },
+    "filters": {
+      "all": "All"
+    },
+    "detail": {
+      "noSelection": "Select an asset to view its details.",
+      "loadError": "Failed to load asset details.",
+      "hierarchy": "Hierarchy",
+      "noChildren": "No child assets linked.",
+      "noEvents": "No lifecycle events recorded.",
+      "primary": "Primary",
+      "documentCount": "{{count}} document(s) linked"
+    }
+  },
+  "binding": {
+    "title": "Cross-Module Bindings",
+    "notImplemented": "Not yet available",
+    "domains": {
+      "di": "Intervention Requests",
+      "wo": "Work Orders",
+      "pm": "PM Plans",
+      "failure": "Failure Events",
+      "document": "Documents",
+      "iot": "IoT Signals",
+      "erp": "ERP Mappings"
+    }
+  },
+  "import": {
+    "page": {
+      "title": "Equipment Import"
+    },
+    "steps": {
+      "upload": "Upload",
+      "validate": "Validate",
+      "preview": "Preview",
+      "apply": "Apply",
+      "done": "Done"
+    },
+    "status": {
+      "valid": "Valid",
+      "warning": "Warning",
+      "error": "Error"
+    },
+    "upload": {
+      "title": "Upload a CSV File",
+      "description": "Select a CSV file containing the equipment records to import.",
+      "hint": "Drag a CSV file here or click to browse.",
+      "selectFile": "Choose File"
+    },
+    "validate": {
+      "title": "Data Validation",
+      "description": "File: {{filename}} — {{rows}} row(s) loaded.",
+      "file": "File",
+      "rows": "Rows",
+      "run": "Run Validation"
+    },
+    "preview": {
+      "title": "Preview and Inspect",
+      "description": "Review each row before proceeding with the import. Conflicts are clearly identified.",
+      "total": "Total",
+      "columns": {
+        "code": "Code",
+        "externalKey": "External Key",
+        "status": "Status",
+        "action": "Action",
+        "messages": "Messages"
+      },
+      "includeWarnings": "Include rows with warnings"
+    },
+    "apply": {
+      "run": "Apply Import"
+    },
+    "done": {
+      "title": "Import Complete",
+      "description": "The import has been successfully applied to the asset registry.",
+      "created": "Created",
+      "updated": "Updated",
+      "skipped": "Skipped",
+      "errored": "Errored",
+      "newImport": "New Import"
+    },
+    "warnings": {
+      "reclassification": "Reclassification of an existing asset requires manual review.",
+      "decommission": "Decommissioning via import is forbidden. Use the lifecycle workflow."
+    }
   }
 }

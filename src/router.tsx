@@ -9,6 +9,11 @@ import { DashboardPage } from "@/pages/DashboardPage";
 const EquipmentPage = lazy(() =>
   import("@/pages/EquipmentPage").then((m) => ({ default: m.EquipmentPage })),
 );
+const AssetImportPage = lazy(() =>
+  import("@/pages/assets/AssetImportPage").then((m) => ({
+    default: m.AssetImportPage,
+  })),
+);
 const RequestsPage = lazy(() =>
   import("@/pages/RequestsPage").then((m) => ({ default: m.RequestsPage })),
 );
@@ -140,6 +145,7 @@ const routes: RouteObject[] = [
             element: <PageSuspense />,
             children: [
               { path: "equipment", element: <EquipmentPage /> },
+              { path: "equipment/import", element: <AssetImportPage /> },
               { path: "requests", element: <RequestsPage /> },
               { path: "work-orders", element: <WorkOrdersPage /> },
               { path: "planning", element: <PlanningPage /> },

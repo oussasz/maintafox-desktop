@@ -24,6 +24,14 @@ import frShell from "./fr/shell.json";
 import frValidation from "./fr/validation.json";
 import { EAGER_NAMESPACES, type SupportedLocale } from "./namespaces";
 
+// Vite-optimised glob import for lazy module namespaces.
+// Using import.meta.glob guarantees Vite pre-discovers every locale JSON so
+// the dynamic paths resolve reliably at runtime (standard template-literal
+// imports can break when two variable segments appear in the path).
+const localeModules = import.meta.glob<{ default: Record<string, unknown> }>(
+  "./locale-data/**/*.json",
+);
+
 const eagerResources = {
   fr: {
     common: frCommon,
@@ -58,10 +66,17 @@ export function initI18n(): void {
 
   void i18n
     .use(initReactI18next)
-    // Lazy-loads module namespaces on demand via dynamic import.
-    // The `ns` and `lng` arguments match the file path pattern:
-    //   src/i18n/locale-data/{lng}/{ns}.json
-    .use(resourcesToBackend((lng: string, ns: string) => import(`./locale-data/${lng}/${ns}.json`)))
+    // Lazy-loads module namespaces on demand via the Vite glob map.
+    .use(
+      resourcesToBackend((lng: string, ns: string) => {
+        const key = `./locale-data/${lng}/${ns}.json`;
+        const loader = localeModules[key];
+        if (!loader) {
+          return Promise.reject(new Error(`Missing locale file: ${key}`));
+        }
+        return loader();
+      }),
+    )
     .init({
       // Eager resources are pre-loaded; lazy content goes through the backend.
       resources: eagerResources,
@@ -70,6 +85,10 @@ export function initI18n(): void {
       fallbackLng: FALLBACK_LOCALE,
       // Namespaces loaded eagerly — others are loaded on demand.
       ns: [...EAGER_NAMESPACES],
+      // Required when mixing pre-bundled resources and backend-loaded namespaces.
+      // Without this, i18next may treat bundled resources as complete and skip
+      // loading module namespaces like `org` from the backend.
+      partialBundledLanguages: true,
       defaultNS: "common",
       // No HTML escaping — React handles this.
       interpolation: { escapeValue: false },

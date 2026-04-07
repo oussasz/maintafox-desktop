@@ -87,5 +87,99 @@
     "listHint": "Créez votre premier équipement ou ajustez les filtres.",
     "noMeters": "Aucun compteur enregistré.",
     "noDocuments": "Aucun document joint."
+  },
+  "registry": {
+    "title": "Registre des actifs",
+    "refresh": "Actualiser",
+    "resultCount": "{{count}} résultat(s)",
+    "search": {
+      "placeholder": "Rechercher par code, nom, n° de série…",
+      "apply": "Rechercher",
+      "clear": "Effacer"
+    },
+    "filters": {
+      "all": "Tous"
+    },
+    "detail": {
+      "noSelection": "Sélectionnez un actif pour afficher ses détails.",
+      "loadError": "Échec du chargement des détails.",
+      "hierarchy": "Hiérarchie",
+      "noChildren": "Aucun actif enfant lié.",
+      "noEvents": "Aucun événement de cycle de vie enregistré.",
+      "primary": "Principal",
+      "documentCount": "{{count}} document(s) lié(s)"
+    }
+  },
+  "binding": {
+    "title": "Liaisons inter-modules",
+    "notImplemented": "Pas encore disponible",
+    "domains": {
+      "di": "Demandes d'intervention",
+      "wo": "Ordres de travail",
+      "pm": "Plans de maintenance",
+      "failure": "Événements de panne",
+      "document": "Documents",
+      "iot": "Signaux IoT",
+      "erp": "Mapping ERP"
+    }
+  },
+  "import": {
+    "page": {
+      "title": "Import d'équipements"
+    },
+    "steps": {
+      "upload": "Téléverser",
+      "validate": "Valider",
+      "preview": "Aperçu",
+      "apply": "Appliquer",
+      "done": "Terminé"
+    },
+    "status": {
+      "valid": "Valide",
+      "warning": "Avertissement",
+      "error": "Erreur"
+    },
+    "upload": {
+      "title": "Téléverser un fichier CSV",
+      "description": "Sélectionnez un fichier CSV contenant les équipements à importer.",
+      "hint": "Glissez un fichier CSV ici ou cliquez pour parcourir.",
+      "selectFile": "Choisir un fichier"
+    },
+    "validate": {
+      "title": "Validation des données",
+      "description": "Fichier : {{filename}} — {{rows}} ligne(s) chargée(s).",
+      "file": "Fichier",
+      "rows": "Lignes",
+      "run": "Lancer la validation"
+    },
+    "preview": {
+      "title": "Aperçu et inspection",
+      "description": "Vérifiez chaque ligne avant de procéder à l'import. Les conflits sont clairement identifiés.",
+      "total": "Total",
+      "columns": {
+        "code": "Code",
+        "externalKey": "Clé externe",
+        "status": "Statut",
+        "action": "Action",
+        "messages": "Messages"
+      },
+      "includeWarnings": "Inclure les lignes avec avertissements"
+    },
+    "apply": {
+      "run": "Appliquer l'import"
+    },
+    "done": {
+      "title": "Import terminé",
+      "description": "L'import a été appliqué avec succès au registre des actifs.",
+      "created": "Créés",
+      "updated": "Mis à jour",
+      "skipped": "Ignorés",
+      "errored": "En erreur",
+      "newImport": "Nouvel import"
+    },
+    "warnings": {
+      "reclassification": "La reclassification d'un actif existant nécessite une vérification manuelle.",
+      "decommission": "Le passage au statut déclassé via l'import est interdit. Utilisez le cycle de vie."
+    }
   }
 }

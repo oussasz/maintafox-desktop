@@ -48,8 +48,6 @@ export function archiveOrgStructureModel(modelId: number): Promise<OrgStructureM
   });
 }
 
-// ─── Node types ───────────────────────────────────────────────────────────────
-
 export function listOrgNodeTypes(structureModelId: number): Promise<OrgNodeType[]> {
   return invoke<OrgNodeType[]>("list_org_node_types", {
     structureModelId,

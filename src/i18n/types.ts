@@ -20,6 +20,8 @@ import type frShell from "./fr/shell.json";
 import type frValidation from "./fr/validation.json";
 // Module namespaces with compile-time type definitions:
 import type frDiagnostics from "./locale-data/fr/diagnostics.json";
+import type frEquipment from "./locale-data/fr/equipment.json";
+import type frOrg from "./locale-data/fr/org.json";
 
 declare module "i18next" {
   interface CustomTypeOptions {
@@ -34,6 +36,8 @@ declare module "i18next" {
       shell: typeof frShell;
       // Module namespaces (lazy-loaded at runtime, typed at compile time):
       diagnostics: typeof frDiagnostics;
+      equipment: typeof frEquipment;
+      org: typeof frOrg;
     };
   }
 }

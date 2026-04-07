@@ -8,6 +8,17 @@ mod m20260402_000004_org_schema;
 mod m20260402_000005_equipment_schema;
 mod m20260402_000006_teams_and_skills;
 mod m20260404_000007_settings_tables;
+mod m20260406_000009_org_audit_trail;
+mod m20260401_000010_asset_registry_core;
+mod m20260401_000011_asset_lifecycle_meter_docs;
+mod m20260401_000012_asset_import_and_audit;
+mod m20260401_000013_reference_domains_core;
+mod m20260401_000014_reference_governance_maps;
+mod m20260401_000015_reference_aliases_and_imports;
+mod m20260401_000017_di_domain_core;
+mod m20260401_000018_di_review_events;
+mod m20260401_000019_di_attachments_sla;
+mod m20260401_000020_di_change_events;
 
 pub struct Migrator;
 
@@ -23,6 +34,17 @@ impl MigratorTrait for Migrator {
             Box::new(m20260402_000006_teams_and_skills::Migration),
             Box::new(m20260404_000007_settings_tables::Migration),
             Box::new(m20260401_000008_backup_tables::Migration),
+            Box::new(m20260406_000009_org_audit_trail::Migration),
+            Box::new(m20260401_000010_asset_registry_core::Migration),
+            Box::new(m20260401_000011_asset_lifecycle_meter_docs::Migration),
+            Box::new(m20260401_000012_asset_import_and_audit::Migration),
+            Box::new(m20260401_000013_reference_domains_core::Migration),
+            Box::new(m20260401_000014_reference_governance_maps::Migration),
+            Box::new(m20260401_000015_reference_aliases_and_imports::Migration),
+            Box::new(m20260401_000017_di_domain_core::Migration),
+            Box::new(m20260401_000018_di_review_events::Migration),
+            Box::new(m20260401_000019_di_attachments_sla::Migration),
+            Box::new(m20260401_000020_di_change_events::Migration),
         ]
     }
 }

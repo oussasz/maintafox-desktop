@@ -63,6 +63,42 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     .await?;
     seed_domain(
         db,
+        "equipment.lifecycle_event_type",
+        "Type d'evenement cycle de vie equipement",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "equipment.meter_type",
+        "Type de compteur equipement",
+        "system",
+        false,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "equipment.reading_source_type",
+        "Source de releve compteur",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "equipment.document_link_purpose",
+        "Objet du lien documentaire equipement",
+        "system",
+        false,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
         "intervention_request.type",
         "Type de demande d'intervention",
         "tenant",
@@ -329,6 +365,46 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         )
         .await?;
         seed_value(db, d, "FEEDS", "Alimente", "Alimente", "Feeds", None, 4, true).await?;
+    }
+
+    // equipment.lifecycle_event_type
+    {
+        let d = get_domain_id(db, "equipment.lifecycle_event_type").await?;
+        seed_value(db, d, "INSTALLED", "Install\u{00e9}", "Install\u{00e9}", "Installed", None, 1, true).await?;
+        seed_value(db, d, "MOVED", "D\u{00e9}plac\u{00e9}", "D\u{00e9}plac\u{00e9}", "Moved", None, 2, true).await?;
+        seed_value(db, d, "REPLACED", "Remplac\u{00e9}", "Remplac\u{00e9}", "Replaced", None, 3, true).await?;
+        seed_value(db, d, "RECLASSIFIED", "Reclass\u{00e9}", "Reclass\u{00e9}", "Reclassified", None, 4, true).await?;
+        seed_value(db, d, "PRESERVED", "Pr\u{00e9}serv\u{00e9}", "Pr\u{00e9}serv\u{00e9}", "Preserved", None, 5, true).await?;
+        seed_value(db, d, "DECOMMISSIONED", "Mis hors service", "Mis hors service", "Decommissioned", None, 6, true).await?;
+        seed_value(db, d, "RECOMMISSIONED", "Remis en service", "Remis en service", "Recommissioned", None, 7, true).await?;
+    }
+
+    // equipment.meter_type
+    {
+        let d = get_domain_id(db, "equipment.meter_type").await?;
+        seed_value(db, d, "HOURS", "Heures", "Heures", "Hours", None, 1, true).await?;
+        seed_value(db, d, "CYCLES", "Cycles", "Cycles", "Cycles", None, 2, true).await?;
+        seed_value(db, d, "DISTANCE", "Distance", "Distance", "Distance", None, 3, true).await?;
+        seed_value(db, d, "VOLUME", "Volume", "Volume", "Volume", None, 4, true).await?;
+        seed_value(db, d, "CUSTOM", "Personnalis\u{00e9}", "Personnalis\u{00e9}", "Custom", None, 5, true).await?;
+    }
+
+    // equipment.reading_source_type
+    {
+        let d = get_domain_id(db, "equipment.reading_source_type").await?;
+        seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 1, true).await?;
+        seed_value(db, d, "IOT", "IoT / Capteur", "IoT / Capteur", "IoT / Sensor", None, 2, true).await?;
+        seed_value(db, d, "IMPORT", "Import", "Import", "Import", None, 3, true).await?;
+    }
+
+    // equipment.document_link_purpose
+    {
+        let d = get_domain_id(db, "equipment.document_link_purpose").await?;
+        seed_value(db, d, "TECHNICAL_DOSSIER", "Dossier technique", "Dossier technique", "Technical Dossier", None, 1, true).await?;
+        seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 2, true).await?;
+        seed_value(db, d, "WARRANTY", "Garantie", "Garantie", "Warranty", None, 3, true).await?;
+        seed_value(db, d, "CERTIFICATE", "Certificat", "Certificat", "Certificate", None, 4, true).await?;
+        seed_value(db, d, "INSPECTION_PACK", "Dossier d'inspection", "Dossier d'inspection", "Inspection Pack", None, 5, true).await?;
     }
 
     // intervention_request.type (tenant-extensible examples)
@@ -1386,21 +1462,47 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
         ),
         ("eq.delete", "Soft-delete equipment records", "equipment", true, true),
         // ── Intervention Requests (di) ────────────────────────────────────
-        ("di.view", "View intervention requests", "intervention", false, false),
+        ("di.view", "View intervention request list and details", "intervention", false, false),
         (
             "di.create",
-            "Create intervention requests",
+            "Submit new intervention requests (all assets)",
             "intervention",
             false,
             false,
         ),
-        ("di.edit", "Edit intervention requests", "intervention", false, false),
-        ("di.delete", "Delete intervention requests", "intervention", true, true),
         (
-            "di.close",
-            "Close/resolve intervention requests",
+            "di.create.own",
+            "Submit intervention requests (own entity only)",
             "intervention",
             false,
+            false,
+        ),
+        (
+            "di.review",
+            "Screen, return, and reject intervention requests",
+            "intervention",
+            false,
+            false,
+        ),
+        (
+            "di.approve",
+            "Approve, defer, or reactivate intervention requests",
+            "intervention",
+            true,
+            true,
+        ),
+        (
+            "di.convert",
+            "Convert approved DI to work order",
+            "intervention",
+            true,
+            true,
+        ),
+        (
+            "di.admin",
+            "Override, archive, reopen, manage SLA rules",
+            "intervention",
+            true,
             false,
         ),
         // ── Work Orders (ot) ──────────────────────────────────────────────
@@ -1727,8 +1829,7 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         "eq.manage",
         "di.view",
         "di.create",
-        "di.edit",
-        "di.close",
+        "di.create.own",
         "ot.view",
         "ot.create",
         "ot.edit",

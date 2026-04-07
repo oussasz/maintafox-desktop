@@ -8,6 +8,7 @@
 import { create } from "zustand";
 
 import { checkForUpdate, installPendingUpdate } from "@/services/updater-service";
+import { toErrorMessage } from "@/utils/errors";
 import type { UpdateCheckResult } from "@shared/ipc-types";
 
 // ── State shape ───────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ export const useUpdaterStore = create<UpdaterState>()((set) => ({
       console.warn("updater-store: check failed (non-fatal)", err);
       set({
         isChecking: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: toErrorMessage(err),
       });
     }
   },
@@ -66,7 +67,7 @@ export const useUpdaterStore = create<UpdaterState>()((set) => ({
     } catch (err) {
       set({
         isInstalling: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: toErrorMessage(err),
       });
     }
   },

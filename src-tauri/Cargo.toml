@@ -40,6 +40,7 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 keyring = { version = "2.3", features = ["platform-windows", "platform-macos", "platform-linux"] }
 sha2 = "0.10"
 hex = "0.4"
+csv = "1"
 hostname = "0.3"
 sys-locale = "0.3"
 

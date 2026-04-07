@@ -11,6 +11,7 @@
 import { create } from "zustand";
 
 import { getSessionPolicy } from "@/services/settings-service";
+import { toErrorMessage } from "@/utils/errors";
 import type { SessionPolicy } from "@shared/ipc-types";
 
 interface SettingsState {
@@ -43,7 +44,7 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
       console.warn("settings-store: failed to load session policy", err);
       set({
         policyLoading: false,
-        policyError: err instanceof Error ? err.message : String(err),
+        policyError: toErrorMessage(err),
       });
     }
   },

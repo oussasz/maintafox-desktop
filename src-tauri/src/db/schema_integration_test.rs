@@ -60,6 +60,10 @@ mod tests {
             "connection_profiles",
             "policy_snapshots",
             "settings_change_events",
+            // Migration 009 — org audit
+            "org_change_events",
+            // Migration 010 — asset identity
+            "asset_external_ids",
         ];
 
         for table in &expected_tables {
