@@ -1,4 +1,4 @@
-use crate::db::{integrity, seeder};
+use crate::db::{demo_seeder, integrity, seeder};
 use crate::errors::AppResult;
 use crate::state::AppState;
 use tauri::State;
@@ -18,6 +18,14 @@ pub async fn repair_seed_data(state: State<'_, AppState>) -> AppResult<integrity
     tracing::info!("diagnostics::repair_seed_data called");
     seeder::seed_system_data(&state.db).await?;
     integrity::run_integrity_check(&state.db).await
+}
+
+/// Inserts demo organisation, equipment, and DI data for development.
+/// Idempotent — skips if demo data already exists.
+#[tauri::command]
+pub async fn seed_demo_data(state: State<'_, AppState>) -> AppResult<String> {
+    demo_seeder::seed_demo_data(&state.db).await?;
+    Ok("Demo data seeded successfully.".into())
 }
 
 // ─── SP06-F03 commands ────────────────────────────────────────────────────────

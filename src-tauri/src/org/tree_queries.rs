@@ -38,6 +38,7 @@ pub struct OrgDesignerNodeRow {
 pub struct OrgDesignerSnapshot {
     pub active_model_id: Option<i64>,
     pub active_model_version: Option<i64>,
+    pub draft_model_id: Option<i64>,
     pub nodes: Vec<OrgDesignerNodeRow>,
 }
 
@@ -193,10 +194,21 @@ pub async fn get_org_designer_snapshot(
             return Ok(OrgDesignerSnapshot {
                 active_model_id: None,
                 active_model_version: None,
+                draft_model_id: None,
                 nodes: Vec::new(),
             });
         }
     };
+
+    // Step 1b — check for a draft model (separate from the active one).
+    let draft_model_id: Option<i64> = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM org_structure_models WHERE status = 'draft' LIMIT 1"
+                .to_string(),
+        ))
+        .await?
+        .and_then(|row| row.try_get::<i64>("", "id").ok());
 
     // Step 2 — fetch flattened tree.
     let rows = db
@@ -212,6 +224,7 @@ pub async fn get_org_designer_snapshot(
     Ok(OrgDesignerSnapshot {
         active_model_id,
         active_model_version,
+        draft_model_id,
         nodes,
     })
 }

@@ -9,15 +9,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 import type {
-  AssetLifecycleEvent,
-  RecordLifecycleEventPayload,
-  AssetMeter,
-  CreateAssetMeterPayload,
-  MeterReading,
-  RecordMeterReadingPayload,
-  AssetDocumentLink,
-  UpsertDocumentLinkPayload,
+  Asset,
   AssetBindingSummary,
+  AssetDocumentLink,
+  AssetLifecycleEvent,
+  AssetMeter,
+  AssetPhoto,
+  CreateAssetMeterPayload,
+  DecommissionAssetPayload,
+  MeterReading,
+  RecordLifecycleEventPayload,
+  RecordMeterReadingPayload,
+  UploadAssetPhotoPayload,
+  UpsertDocumentLinkPayload,
 } from "@shared/ipc-types";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
@@ -192,4 +196,51 @@ export const AssetBindingSummarySchema = z.object({
 export async function getAssetBindingSummary(assetId: number): Promise<AssetBindingSummary> {
   const raw = await invoke<unknown>("get_asset_binding_summary", { assetId });
   return AssetBindingSummarySchema.parse(raw) as AssetBindingSummary;
+}
+
+// ── Decommission commands ─────────────────────────────────────────────────────
+
+const DecommissionResultSchema = z
+  .object({
+    id: z.number(),
+    sync_id: z.string(),
+    asset_code: z.string(),
+    asset_name: z.string(),
+    status_code: z.string(),
+    decommissioned_at: z.string().nullable(),
+    row_version: z.number(),
+  })
+  .passthrough();
+
+export async function decommissionAsset(payload: DecommissionAssetPayload): Promise<Asset> {
+  const raw = await invoke<unknown>("decommission_asset", { payload });
+  return DecommissionResultSchema.parse(raw) as unknown as Asset;
+}
+
+// ── Photo commands ────────────────────────────────────────────────────────────
+
+export const AssetPhotoSchema = z.object({
+  id: z.number(),
+  asset_id: z.number(),
+  file_name: z.string(),
+  file_path: z.string(),
+  mime_type: z.string(),
+  file_size_bytes: z.number(),
+  caption: z.string().nullable(),
+  created_by_id: z.number().nullable(),
+  created_at: z.string(),
+});
+
+export async function listAssetPhotos(assetId: number): Promise<AssetPhoto[]> {
+  const raw = await invoke<unknown>("list_asset_photos", { assetId });
+  return z.array(AssetPhotoSchema).parse(raw) as AssetPhoto[];
+}
+
+export async function uploadAssetPhoto(payload: UploadAssetPhotoPayload): Promise<AssetPhoto> {
+  const raw = await invoke<unknown>("upload_asset_photo", { payload });
+  return AssetPhotoSchema.parse(raw) as AssetPhoto;
+}
+
+export async function deleteAssetPhoto(photoId: number): Promise<void> {
+  await invoke<unknown>("delete_asset_photo", { photoId });
 }

@@ -8,26 +8,26 @@
 import { create } from "zustand";
 
 import {
-  screenDi,
-  returnDi,
-  rejectDi,
   approveDi,
   deferDi,
-  reactivateDi,
   getDiReviewEvents,
+  reactivateDi,
+  rejectDi,
+  returnDi,
+  screenDi,
 } from "@/services/di-review-service";
-import { listDis, getDi } from "@/services/di-service";
+import { getDi, listDis } from "@/services/di-service";
 import { toErrorMessage } from "@/utils/errors";
 import type {
-  InterventionRequest,
-  DiScreenInput,
-  DiReturnInput,
-  DiRejectInput,
   DiApproveInput,
   DiDeferInput,
   DiReactivateInput,
+  DiRejectInput,
+  DiReturnInput,
   DiReviewEvent,
+  DiScreenInput,
   DiSummaryRow,
+  InterventionRequest,
 } from "@shared/ipc-types";
 
 interface DiReviewStoreState {
@@ -37,12 +37,22 @@ interface DiReviewStoreState {
   activeReviewDi: InterventionRequest | null;
   reviewEvents: DiReviewEvent[];
   similarDis: DiSummaryRow[];
+  // Dialog state
+  approvalDi: InterventionRequest | null;
+  rejectionDi: InterventionRequest | null;
+  returnDi_: InterventionRequest | null;
   // Flags
   saving: boolean;
   error: string | null;
 
   loadReviewQueue: () => Promise<void>;
   openForReview: (id: number) => Promise<void>;
+  openApproval: (di: InterventionRequest) => void;
+  closeApproval: () => void;
+  openRejection: (di: InterventionRequest) => void;
+  closeRejection: () => void;
+  openReturn: (di: InterventionRequest) => void;
+  closeReturn: () => void;
   screen: (input: DiScreenInput) => Promise<void>;
   returnForClarification: (input: DiReturnInput) => Promise<void>;
   reject: (input: DiRejectInput) => Promise<void>;
@@ -56,6 +66,9 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
   activeReviewDi: null,
   reviewEvents: [],
   similarDis: [],
+  approvalDi: null,
+  rejectionDi: null,
+  returnDi_: null,
   saving: false,
   error: null,
 
@@ -86,6 +99,13 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       set({ error: toErrorMessage(err) });
     }
   },
+
+  openApproval: (di) => set({ approvalDi: di }),
+  closeApproval: () => set({ approvalDi: null }),
+  openRejection: (di) => set({ rejectionDi: di }),
+  closeRejection: () => set({ rejectionDi: null }),
+  openReturn: (di) => set({ returnDi_: di }),
+  closeReturn: () => set({ returnDi_: null }),
 
   screen: async (input) => {
     set({ saving: true, error: null });

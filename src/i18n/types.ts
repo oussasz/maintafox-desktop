@@ -19,9 +19,13 @@ import type frErrors from "./fr/errors.json";
 import type frShell from "./fr/shell.json";
 import type frValidation from "./fr/validation.json";
 // Module namespaces with compile-time type definitions:
+import type frDashboard from "./locale-data/fr/dashboard.json";
+import type frDi from "./locale-data/fr/di.json";
 import type frDiagnostics from "./locale-data/fr/diagnostics.json";
 import type frEquipment from "./locale-data/fr/equipment.json";
 import type frOrg from "./locale-data/fr/org.json";
+import type frReference from "./locale-data/fr/reference.json";
+import type frSettings from "./locale-data/fr/settings.json";
 
 declare module "i18next" {
   interface CustomTypeOptions {
@@ -35,9 +39,16 @@ declare module "i18next" {
       validation: typeof frValidation;
       shell: typeof frShell;
       // Module namespaces (lazy-loaded at runtime, typed at compile time):
+      dashboard: typeof frDashboard;
+      di: typeof frDi;
       diagnostics: typeof frDiagnostics;
       equipment: typeof frEquipment;
       org: typeof frOrg;
+      reference: typeof frReference;
+      settings: typeof frSettings;
+      // Allow any additional lazy namespace to compile without hard-failing
+      // on key narrowing when module JSON evolves independently.
+      [namespace: string]: Record<string, unknown>;
     };
   }
 }

@@ -1,10 +1,11 @@
 import { useCallback } from "react";
 import { Navigate, Outlet } from "react-router-dom";
 
+import { PermissionProvider } from "@/contexts/PermissionContext";
 import { useSession } from "@/hooks/use-session";
 import { ForcePasswordChangePage } from "@/pages/auth/ForcePasswordChangePage";
 import { LockScreen } from "@/pages/auth/LockScreen";
-import { logout as authLogout } from "@/services/auth-service";
+import { logout as authLogout, unlockSessionWithPin } from "@/services/auth-service";
 
 /**
  * AuthGuard: session-state router.
@@ -25,6 +26,16 @@ export function AuthGuard() {
   const handleUnlock = useCallback(
     async (password: string) => {
       await session.unlock(password);
+    },
+    [session],
+  );
+
+  const handleUnlockWithPin = useCallback(
+    async (pin: string) => {
+      const info = await unlockSessionWithPin({ pin });
+      // Force session refresh to pick up the new state
+      void session.refresh();
+      return info;
     },
     [session],
   );
@@ -63,7 +74,9 @@ export function AuthGuard() {
       <LockScreen
         displayName={info.display_name ?? info.username}
         onUnlock={handleUnlock}
+        onUnlockWithPin={handleUnlockWithPin}
         onLogout={handleLogout}
+        pinConfigured={info.pin_configured ?? false}
       />
     );
   }
@@ -78,6 +91,10 @@ export function AuthGuard() {
     return <ForcePasswordChangePage onComplete={handleForceChange} />;
   }
 
-  // 5. Normal authenticated state
-  return <Outlet />;
+  // 5. Normal authenticated state — wrap with PermissionProvider
+  return (
+    <PermissionProvider>
+      <Outlet />
+    </PermissionProvider>
+  );
 }

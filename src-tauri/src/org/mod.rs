@@ -19,6 +19,7 @@
 
 pub mod audit;
 pub mod entity_bindings;
+pub mod equipment_assignment;
 pub mod impact_preview;
 pub mod node_types;
 pub mod nodes;
@@ -56,3 +57,4 @@ pub use tree_queries::{OrgDesignerNodeRow, OrgDesignerSnapshot};
 pub use impact_preview::{OrgImpactPreview, OrgPreviewAction, PreviewOrgChangePayload};
 pub use validation::{NodeTypeRemap, OrgPublishValidationResult, OrgValidationIssue};
 pub use audit::{OrgAuditEventInput, OrgChangeEvent};
+pub use equipment_assignment::{AssignEquipmentPayload, OrgNodeEquipmentRow};

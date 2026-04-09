@@ -49,6 +49,7 @@ function makeDi(overrides: Partial<InterventionRequest> = {}): InterventionReque
     classification_code_id: null,
     is_recurrence_flag: false,
     recurrence_di_id: null,
+    is_modified: false,
     row_version: 1,
     submitter_id: 42,
     created_at: "2026-04-01T10:00:00Z",

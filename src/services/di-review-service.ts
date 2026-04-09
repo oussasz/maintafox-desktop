@@ -9,14 +9,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 import type {
-  InterventionRequest,
-  DiScreenInput,
-  DiReturnInput,
-  DiRejectInput,
   DiApproveInput,
   DiDeferInput,
   DiReactivateInput,
+  DiRejectInput,
+  DiReturnInput,
   DiReviewEvent,
+  DiScreenInput,
+  InterventionRequest,
 } from "@shared/ipc-types";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
@@ -55,6 +55,7 @@ const InterventionRequestSchema = z.object({
   classification_code_id: z.number().nullable(),
   is_recurrence_flag: z.boolean(),
   recurrence_di_id: z.number().nullable(),
+  is_modified: z.boolean().default(false),
   row_version: z.number(),
   submitter_id: z.number(),
   created_at: z.string(),

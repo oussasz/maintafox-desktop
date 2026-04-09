@@ -25,7 +25,141 @@
       "assignedTo": "Assigned to"
     }
   },
+  "form": {
+    "title": {
+      "label": "Title",
+      "placeholder": "Short description of the work"
+    },
+    "description": {
+      "label": "Description",
+      "placeholder": "Detailed instructions for the technician"
+    },
+    "type": {
+      "label": "Type"
+    },
+    "urgency": {
+      "label": "Urgency",
+      "veryLow": "Very low",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "critical": "Critical"
+    },
+    "equipment": {
+      "label": "Equipment",
+      "placeholder": "Search…"
+    },
+    "location": {
+      "label": "Location"
+    },
+    "entity": {
+      "label": "Entity"
+    },
+    "plannedStart": {
+      "label": "Planned start"
+    },
+    "plannedEnd": {
+      "label": "Planned end"
+    },
+    "duration": {
+      "label": "Estimated duration (h)"
+    },
+    "notes": {
+      "label": "Notes"
+    },
+    "cancel": "Cancel",
+    "submit": "Create work order",
+    "update": "Save changes",
+    "validation": {
+      "titleRequired": "Title is required"
+    }
+  },
+  "status": {
+    "draft": "Draft",
+    "planned": "Planned",
+    "released": "Released",
+    "inProgress": "In progress",
+    "onHold": "On hold",
+    "completed": "Completed",
+    "verified": "Verified",
+    "closed": "Closed",
+    "cancelled": "Cancelled"
+  },
+  "type": {
+    "corrective": "Corrective",
+    "preventive": "Preventive",
+    "predictive": "Predictive",
+    "improvement": "Improvement",
+    "inspection": "Inspection",
+    "overhaul": "Overhaul",
+    "conditionBased": "Condition-based",
+    "permit": "Work permit"
+  },
+  "action": {
+    "create": "New WO",
+    "release": "Release WO",
+    "start": "Start",
+    "pause": "Put on hold",
+    "complete": "Mark complete",
+    "verify": "Verify and approve",
+    "close": "Close",
+    "addLabor": "Add labor",
+    "addPart": "Add part",
+    "addDelay": "Record delay"
+  },
+  "empty": {
+    "list": "No work orders found.",
+    "listHint": "Create a new work order or adjust the filters.",
+    "noParts": "No parts consumed.",
+    "noLabor": "No labor recorded.",
+    "noDelays": "No delays recorded."
+  },
+  "diPanel": {
+    "title": "Unscheduled DI work orders",
+    "schedule": "Schedule"
+  },
+  "shift": {
+    "morning": "Morning",
+    "afternoon": "Afternoon",
+    "night": "Night",
+    "fullDay": "Full day"
+  },
+  "planning": {
+    "timing": "Timing",
+    "shift": "Shift",
+    "save": "Save planning",
+    "endBeforeStart": "End date must be after start date"
+  },
+  "completion": {
+    "title": "Mark work order complete",
+    "endDate": "End date / time",
+    "hoursWorked": "Hours worked",
+    "hoursPlaceholder": "Optional manual override",
+    "report": "Report / Observations",
+    "reportPlaceholder": "Technician completion report…",
+    "submit": "Mark complete",
+    "blockers": "Blocking issues"
+  },
+  "execution": {
+    "title": "Execution",
+    "startedAt": "Started at",
+    "stop": "Stop",
+    "tasks": "Tasks",
+    "noTasks": "No tasks defined.",
+    "mandatory": "Required",
+    "attachments": "Attachments",
+    "noAttachments": "No attachments."
+  },
+  "closeout": {
+    "noReport": "No closeout report yet."
+  },
+  "audit": {
+    "created": "Created",
+    "updated": "Last updated",
+    "closed": "Closed"
+  },
   "detail": {
+    "close": "Close",
     "sections": {
       "general": "General",
       "planning": "Planning",
@@ -54,51 +188,52 @@
       "conclusion": "Closeout report"
     }
   },
-  "form": {
-    "title": {
-      "label": "Title",
-      "placeholder": "Short description of the work"
-    },
-    "description": {
-      "label": "Description",
-      "placeholder": "Detailed instructions for the technician"
+  "footer": {
+    "schedule": "Schedule",
+    "assign": "Assign",
+    "resume": "Resume"
+  },
+  "print": {
+    "button": "Print",
+    "title": "WO Print Sheet"
+  },
+  "cost": {
+    "title": "Cost Summary",
+    "loading": "Loading costs…",
+    "labor": "Labor",
+    "parts": "Parts",
+    "services": "Services",
+    "total": "Total",
+    "variance": "Variance"
+  },
+  "calendar": {
+    "today": "Today",
+    "mode": {
+      "month": "Month",
+      "week": "Week"
     }
   },
-  "status": {
-    "draft": "Draft",
-    "planned": "Planned",
-    "released": "Released",
-    "inProgress": "In progress",
-    "onHold": "On hold",
+  "dashboard": {
+    "loading": "Loading statistics…",
+    "total": "Total WOs",
+    "inProgress": "In Progress",
     "completed": "Completed",
-    "verified": "Verified",
-    "closed": "Closed",
-    "cancelled": "Cancelled"
+    "overdue": "Overdue",
+    "statusDistribution": "Status Distribution",
+    "urgencyDistribution": "Urgency Breakdown",
+    "completionTrend": "Completion Trend",
+    "backlogByEntity": "Backlog by Entity"
   },
-  "type": {
-    "corrective": "Corrective",
-    "preventive": "Preventive",
-    "predictive": "Predictive",
-    "improvement": "Improvement",
-    "inspection": "Inspection",
-    "permit": "Work permit"
-  },
-  "action": {
-    "release": "Release WO",
+  "contextMenu": {
+    "viewDetail": "View detail",
+    "edit": "Edit",
     "start": "Start",
-    "pause": "Put on hold",
-    "complete": "Mark complete",
-    "verify": "Verify and approve",
-    "close": "Close",
-    "addLabor": "Add labor",
-    "addPart": "Add part",
-    "addDelay": "Record delay"
+    "complete": "Complete",
+    "print": "Print",
+    "duplicate": "Duplicate",
+    "cancel": "Cancel"
   },
-  "empty": {
-    "list": "No work orders found.",
-    "listHint": "Create a new work order or adjust the filters.",
-    "noParts": "No parts consumed.",
-    "noLabor": "No labor recorded.",
-    "noDelays": "No delays recorded."
+  "archive": {
+    "title": "Archive (Closed / Cancelled)"
   }
 }

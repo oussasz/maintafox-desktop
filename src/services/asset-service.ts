@@ -10,10 +10,11 @@ import { z } from "zod";
 
 import type {
   Asset,
+  AssetHealthScore,
   AssetHierarchyRow,
   CreateAssetPayload,
-  UpdateAssetIdentityPayload,
   LinkAssetPayload,
+  UpdateAssetIdentityPayload,
 } from "@shared/ipc-types";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
@@ -166,4 +167,17 @@ export async function moveAssetOrgNode(
   } catch (err) {
     rethrowIfVersionConflict(err);
   }
+}
+
+// ── Health score commands ─────────────────────────────────────────────────────
+
+const AssetHealthScoreSchema = z.object({
+  asset_id: z.number(),
+  score: z.number().nullable(),
+  label: z.enum(["good", "fair", "poor", "no_data"]),
+});
+
+export async function getAssetHealthScore(assetId: number): Promise<AssetHealthScore> {
+  const raw = await invoke<unknown>("get_asset_health_score", { assetId });
+  return AssetHealthScoreSchema.parse(raw) as AssetHealthScore;
 }

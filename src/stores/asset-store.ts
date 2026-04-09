@@ -35,6 +35,20 @@ interface AssetStoreState {
   saving: boolean;
   error: string | null;
 
+  // Form dialog state
+  showCreateForm: boolean;
+  showEditForm: boolean;
+  editingAsset: Asset | null;
+  parentPreFill: Asset | null;
+
+  // Tree state
+  treeMode: boolean;
+  treeExpandedIds: Set<number>;
+  treeSelectedId: number | null;
+  treeChildren: Map<number, Asset[]>;
+  treeRoots: Asset[];
+  treeLoading: boolean;
+
   loadAssets: (
     statusFilter?: string | null,
     orgNodeFilter?: number | null,
@@ -54,6 +68,19 @@ interface AssetStoreState {
     newOrgNodeId: number,
     expectedRowVersion: number,
   ) => Promise<Asset>;
+
+  // Form actions
+  openCreateForm: (parent?: Asset | null) => void;
+  closeCreateForm: () => void;
+  openEditForm: (asset: Asset) => void;
+  closeEditForm: () => void;
+
+  // Tree actions
+  setTreeMode: (enabled: boolean) => void;
+  loadTreeRoots: () => Promise<void>;
+  loadTreeChildren: (parentId: number) => Promise<void>;
+  toggleTreeExpand: (nodeId: number) => void;
+  selectTreeNode: (assetId: number | null) => void;
 }
 
 export const useAssetStore = create<AssetStoreState>()((set, get) => ({
@@ -63,6 +90,20 @@ export const useAssetStore = create<AssetStoreState>()((set, get) => ({
   loading: false,
   saving: false,
   error: null,
+
+  // Form dialog state
+  showCreateForm: false,
+  showEditForm: false,
+  editingAsset: null,
+  parentPreFill: null,
+
+  // Tree state
+  treeMode: false,
+  treeExpandedIds: new Set<number>(),
+  treeSelectedId: null,
+  treeChildren: new Map<number, Asset[]>(),
+  treeRoots: [],
+  treeLoading: false,
 
   loadAssets: async (statusFilter, orgNodeFilter, query) => {
     set({ loading: true, error: null });
@@ -177,5 +218,86 @@ export const useAssetStore = create<AssetStoreState>()((set, get) => ({
     } finally {
       set({ saving: false });
     }
+  },
+
+  // ── Form actions ──────────────────────────────────────────────────────────
+
+  openCreateForm: (parent) => {
+    set({
+      showCreateForm: true,
+      showEditForm: false,
+      editingAsset: null,
+      parentPreFill: parent ?? null,
+    });
+  },
+
+  closeCreateForm: () => {
+    set({ showCreateForm: false, parentPreFill: null });
+  },
+
+  openEditForm: (asset) => {
+    set({
+      showEditForm: true,
+      showCreateForm: false,
+      editingAsset: asset,
+    });
+  },
+
+  closeEditForm: () => {
+    set({ showEditForm: false, editingAsset: null });
+  },
+
+  // ── Tree actions ──────────────────────────────────────────────────────────
+
+  setTreeMode: (enabled) => {
+    set({ treeMode: enabled });
+    if (enabled && get().treeRoots.length === 0) {
+      void get().loadTreeRoots();
+    }
+  },
+
+  loadTreeRoots: async () => {
+    set({ treeLoading: true, error: null });
+    try {
+      // Root assets have no parent — list all then filter client-side
+      // (or use a null-parent filter if backend supports it)
+      const all = await listAssets(null, null, null);
+      // For now, use the full list as tree roots.
+      // The tree navigator will lazy-load children via hierarchy.
+      set({ treeRoots: all, treeLoading: false });
+    } catch (err) {
+      set({ error: toErrorMessage(err), treeLoading: false });
+    }
+  },
+
+  loadTreeChildren: async (parentId) => {
+    try {
+      const rows = await listAssetChildren(parentId);
+      // Resolve each child to a full Asset object
+      const children = await Promise.all(rows.map((r) => getAssetById(r.child_asset_id)));
+      const map = new Map(get().treeChildren);
+      map.set(parentId, children);
+      set({ treeChildren: map });
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+    }
+  },
+
+  toggleTreeExpand: (nodeId) => {
+    const expanded = new Set(get().treeExpandedIds);
+    if (expanded.has(nodeId)) {
+      expanded.delete(nodeId);
+    } else {
+      expanded.add(nodeId);
+      // Trigger child load if not yet loaded
+      if (!get().treeChildren.has(nodeId)) {
+        void get().loadTreeChildren(nodeId);
+      }
+    }
+    set({ treeExpandedIds: expanded });
+  },
+
+  selectTreeNode: (assetId) => {
+    set({ treeSelectedId: assetId });
   },
 }));

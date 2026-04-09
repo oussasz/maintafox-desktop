@@ -25,7 +25,141 @@
       "assignedTo": "Assigné à"
     }
   },
+  "form": {
+    "title": {
+      "label": "Titre",
+      "placeholder": "Description courte de l'intervention"
+    },
+    "description": {
+      "label": "Description",
+      "placeholder": "Instructions détaillées pour l'exécutant"
+    },
+    "type": {
+      "label": "Type"
+    },
+    "urgency": {
+      "label": "Urgence",
+      "veryLow": "Très basse",
+      "low": "Basse",
+      "medium": "Normale",
+      "high": "Haute",
+      "critical": "Critique"
+    },
+    "equipment": {
+      "label": "Équipement",
+      "placeholder": "Rechercher…"
+    },
+    "location": {
+      "label": "Emplacement"
+    },
+    "entity": {
+      "label": "Entité"
+    },
+    "plannedStart": {
+      "label": "Début prévu"
+    },
+    "plannedEnd": {
+      "label": "Fin prévue"
+    },
+    "duration": {
+      "label": "Durée estimée (h)"
+    },
+    "notes": {
+      "label": "Remarques"
+    },
+    "cancel": "Annuler",
+    "submit": "Créer l'ordre de travail",
+    "update": "Enregistrer les modifications",
+    "validation": {
+      "titleRequired": "Le titre est requis"
+    }
+  },
+  "status": {
+    "draft": "Brouillon",
+    "planned": "Planifié",
+    "released": "Lancé",
+    "inProgress": "En cours",
+    "onHold": "En attente",
+    "completed": "Terminé",
+    "verified": "Vérifié",
+    "closed": "Clôturé",
+    "cancelled": "Annulé"
+  },
+  "type": {
+    "corrective": "Correctif",
+    "preventive": "Préventif",
+    "predictive": "Prédictif",
+    "improvement": "Amélioration",
+    "inspection": "Inspection",
+    "overhaul": "Révision générale",
+    "conditionBased": "Conditionnel",
+    "permit": "Permis de travail"
+  },
+  "action": {
+    "create": "Nouvel OT",
+    "release": "Lancer l'OT",
+    "start": "Démarrer",
+    "pause": "Mettre en pause",
+    "complete": "Marquer terminé",
+    "verify": "Vérifier et approuver",
+    "close": "Clôturer",
+    "addLabor": "Ajouter main-d'œuvre",
+    "addPart": "Ajouter une pièce",
+    "addDelay": "Enregistrer un délai"
+  },
+  "empty": {
+    "list": "Aucun ordre de travail.",
+    "listHint": "Créez un nouvel OT ou ajustez les filtres.",
+    "noParts": "Aucune pièce consommée.",
+    "noLabor": "Aucune main-d'œuvre enregistrée.",
+    "noDelays": "Aucun délai enregistré."
+  },
+  "diPanel": {
+    "title": "OT issus de DI non programmés",
+    "schedule": "Programmer"
+  },
+  "shift": {
+    "morning": "Matin",
+    "afternoon": "Après-midi",
+    "night": "Nuit",
+    "fullDay": "Journée"
+  },
+  "planning": {
+    "timing": "Planification horaire",
+    "shift": "Poste",
+    "save": "Enregistrer la planification",
+    "endBeforeStart": "La date de fin doit être après la date de début"
+  },
+  "completion": {
+    "title": "Marquer l'OT terminé",
+    "endDate": "Date / heure de fin",
+    "hoursWorked": "Heures travaillées",
+    "hoursPlaceholder": "Saisie manuelle optionnelle",
+    "report": "Rapport / Observations",
+    "reportPlaceholder": "Rapport de fin d'intervention…",
+    "submit": "Marquer terminé",
+    "blockers": "Problèmes bloquants"
+  },
+  "execution": {
+    "title": "Exécution",
+    "startedAt": "Démarré à",
+    "stop": "Arrêter",
+    "tasks": "Tâches",
+    "noTasks": "Aucune tâche définie.",
+    "mandatory": "Obligatoire",
+    "attachments": "Pièces jointes",
+    "noAttachments": "Aucune pièce jointe."
+  },
+  "closeout": {
+    "noReport": "Aucun rapport de clôture."
+  },
+  "audit": {
+    "created": "Créé le",
+    "updated": "Dernière mise à jour",
+    "closed": "Clôturé le"
+  },
   "detail": {
+    "close": "Fermer",
     "sections": {
       "general": "Général",
       "planning": "Planification",
@@ -54,51 +188,52 @@
       "conclusion": "Rapport de clôture"
     }
   },
-  "form": {
-    "title": {
-      "label": "Titre",
-      "placeholder": "Description courte de l'intervention"
-    },
-    "description": {
-      "label": "Description",
-      "placeholder": "Instructions détaillées pour l'exécutant"
+  "footer": {
+    "schedule": "Programmer",
+    "assign": "Assigner",
+    "resume": "Reprendre"
+  },
+  "print": {
+    "button": "Imprimer",
+    "title": "Fiche d'impression OT"
+  },
+  "cost": {
+    "title": "Résumé des coûts",
+    "loading": "Chargement des coûts…",
+    "labor": "Main-d'œuvre",
+    "parts": "Pièces",
+    "services": "Services",
+    "total": "Total",
+    "variance": "Écart"
+  },
+  "calendar": {
+    "today": "Aujourd'hui",
+    "mode": {
+      "month": "Mois",
+      "week": "Semaine"
     }
   },
-  "status": {
-    "draft": "Brouillon",
-    "planned": "Planifié",
-    "released": "Lancé",
+  "dashboard": {
+    "loading": "Chargement des statistiques…",
+    "total": "Total OT",
     "inProgress": "En cours",
-    "onHold": "En attente",
-    "completed": "Terminé",
-    "verified": "Vérifié",
-    "closed": "Clôturé",
-    "cancelled": "Annulé"
+    "completed": "Terminés",
+    "overdue": "En retard",
+    "statusDistribution": "Répartition par statut",
+    "urgencyDistribution": "Répartition par urgence",
+    "completionTrend": "Tendance de clôture",
+    "backlogByEntity": "Arriéré par entité"
   },
-  "type": {
-    "corrective": "Correctif",
-    "preventive": "Préventif",
-    "predictive": "Prédictif",
-    "improvement": "Amélioration",
-    "inspection": "Inspection",
-    "permit": "Permis de travail"
-  },
-  "action": {
-    "release": "Lancer l'OT",
+  "contextMenu": {
+    "viewDetail": "Voir détail",
+    "edit": "Modifier",
     "start": "Démarrer",
-    "pause": "Mettre en pause",
-    "complete": "Marquer terminé",
-    "verify": "Vérifier et approuver",
-    "close": "Clôturer",
-    "addLabor": "Ajouter main-d'œuvre",
-    "addPart": "Ajouter une pièce",
-    "addDelay": "Enregistrer un délai"
+    "complete": "Compléter",
+    "print": "Imprimer",
+    "duplicate": "Dupliquer",
+    "cancel": "Annuler"
   },
-  "empty": {
-    "list": "Aucun ordre de travail.",
-    "listHint": "Créez un nouvel OT ou ajustez les filtres.",
-    "noParts": "Aucune pièce consommée.",
-    "noLabor": "Aucune main-d'œuvre enregistrée.",
-    "noDelays": "Aucun délai enregistré."
+  "archive": {
+    "title": "Archive (Clôturés / Annulés)"
   }
 }

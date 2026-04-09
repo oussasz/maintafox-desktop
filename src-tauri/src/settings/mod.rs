@@ -102,6 +102,30 @@ pub async fn get_setting(db: &DatabaseConnection, key: &str, scope: &str) -> App
     row.map(map_app_setting).transpose()
 }
 
+pub async fn list_all_settings(db: &DatabaseConnection) -> AppResult<Vec<AppSetting>> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            r"SELECT
+                   id,
+                   setting_key,
+                   setting_scope,
+                   setting_value_json,
+                   category,
+                   setting_risk,
+                   validation_status,
+                   secret_ref_id,
+                   last_modified_by_id,
+                   COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', last_modified_at), last_modified_at) AS last_modified_at
+               FROM app_settings
+               ORDER BY category, setting_key"
+                .to_string(),
+        ))
+        .await?;
+
+    rows.into_iter().map(map_app_setting).collect()
+}
+
 pub async fn list_settings_by_category(db: &DatabaseConnection, category: &str) -> AppResult<Vec<AppSetting>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -125,6 +149,22 @@ pub async fn list_settings_by_category(db: &DatabaseConnection, category: &str) 
         .await?;
 
     rows.into_iter().map(map_app_setting).collect()
+}
+
+pub async fn list_settings_categories(db: &DatabaseConnection) -> AppResult<Vec<String>> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT DISTINCT category FROM app_settings ORDER BY category".to_string(),
+        ))
+        .await?;
+
+    rows.into_iter()
+        .map(|r| {
+            r.try_get::<String>("", "category")
+                .map_err(|e| decode_err("category", e))
+        })
+        .collect()
 }
 
 pub async fn get_active_policy(db: &DatabaseConnection, domain: &str) -> AppResult<Option<PolicySnapshot>> {

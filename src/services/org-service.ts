@@ -12,12 +12,13 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type {
-  OrgStructureModel,
-  OrgNodeType,
-  OrgRelationshipRule,
-  CreateStructureModelPayload,
   CreateOrgNodeTypePayload,
   CreateRelationshipRulePayload,
+  CreateStructureModelPayload,
+  OrgNodeType,
+  OrgRelationshipRule,
+  OrgStructureModel,
+  UpdateOrgNodeTypePayload,
 } from "@shared/ipc-types";
 
 // ─── Structure models ─────────────────────────────────────────────────────────
@@ -60,6 +61,14 @@ export function createOrgNodeType(payload: CreateOrgNodeTypePayload): Promise<Or
 
 export function deactivateOrgNodeType(nodeTypeId: number): Promise<OrgNodeType> {
   return invoke<OrgNodeType>("deactivate_org_node_type", { nodeTypeId });
+}
+
+export function updateOrgNodeType(payload: UpdateOrgNodeTypePayload): Promise<OrgNodeType> {
+  return invoke<OrgNodeType>("update_org_node_type", { payload });
+}
+
+export function getOrgNodeTypeUsageCount(nodeTypeId: number): Promise<number> {
+  return invoke<number>("get_org_node_type_usage_count", { nodeTypeId });
 }
 
 // ─── Relationship rules ───────────────────────────────────────────────────────

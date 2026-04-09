@@ -12,14 +12,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 import type {
-  OrgNode,
-  OrgTreeRow,
-  OrgNodeResponsibility,
-  OrgEntityBinding,
-  CreateOrgNodePayload,
-  UpdateOrgNodeMetadataPayload,
-  MoveOrgNodePayload,
+  AssignEquipmentPayload,
   AssignResponsibilityPayload,
+  CreateOrgNodePayload,
+  MoveOrgNodePayload,
+  OrgEntityBinding,
+  OrgNode,
+  OrgNodeEquipmentRow,
+  OrgNodeResponsibility,
+  OrgTreeRow,
+  UpdateOrgNodeMetadataPayload,
   UpsertOrgEntityBindingPayload,
 } from "@shared/ipc-types";
 
@@ -223,4 +225,28 @@ export async function expireOrgEntityBinding(
     validTo: validTo ?? null,
   });
   return OrgEntityBindingSchema.parse(raw) as OrgEntityBinding;
+}
+
+// ── Equipment assignment commands (GAP ORG-02) ────────────────────────────────
+
+export function listOrgNodeEquipment(nodeId: number): Promise<OrgNodeEquipmentRow[]> {
+  return invoke<OrgNodeEquipmentRow[]>("list_org_node_equipment", { nodeId });
+}
+
+export function searchUnassignedEquipment(
+  query: string,
+  limit?: number,
+): Promise<OrgNodeEquipmentRow[]> {
+  return invoke<OrgNodeEquipmentRow[]>("search_unassigned_equipment", {
+    query,
+    limit: limit ?? 20,
+  });
+}
+
+export function assignEquipmentToNode(payload: AssignEquipmentPayload): Promise<void> {
+  return invoke<void>("assign_equipment_to_node", { payload });
+}
+
+export function unassignEquipmentFromNode(equipmentId: number): Promise<void> {
+  return invoke<void>("unassign_equipment_from_node", { equipmentId });
 }

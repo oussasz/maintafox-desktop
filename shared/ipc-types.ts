@@ -61,6 +61,8 @@ export interface SessionInfo {
   force_password_change: boolean | null;
   expires_at: string | null;
   last_activity_at: string | null;
+  password_expires_in_days: number | null;
+  pin_configured: boolean | null;
 }
 
 export interface LoginRequest {
@@ -137,6 +139,22 @@ export interface PolicySnapshot {
   is_active: boolean;
   activated_at: string | null;
   activated_by_id: number | null;
+}
+
+export interface PolicyTestResult {
+  rule_name: string;
+  severity: "pass" | "warn" | "fail";
+  message: string;
+}
+
+export interface SavePolicyDraftPayload {
+  domain: string;
+  snapshot_json: string;
+}
+
+export interface ActivatePolicyPayload {
+  domain: string;
+  snapshot_id: number;
 }
 
 export interface SessionPolicy {
@@ -262,6 +280,7 @@ export interface OrgNodeType {
   code: string;
   label: string;
   icon_key: string | null;
+  color: string | null;
   depth_hint: number | null;
   can_host_assets: boolean;
   can_own_work: boolean;
@@ -295,6 +314,7 @@ export interface CreateOrgNodeTypePayload {
   code: string;
   label: string;
   icon_key?: string;
+  color?: string;
   depth_hint?: number;
   can_host_assets: boolean;
   can_own_work: boolean;
@@ -304,12 +324,41 @@ export interface CreateOrgNodeTypePayload {
   is_root_type: boolean;
 }
 
+export interface UpdateOrgNodeTypePayload {
+  id: number;
+  label?: string;
+  icon_key?: string | null;
+  color?: string | null;
+  depth_hint?: number | null;
+  can_host_assets?: boolean;
+  can_own_work?: boolean;
+  can_carry_cost_center?: boolean;
+  can_aggregate_kpis?: boolean;
+  can_receive_permits?: boolean;
+}
+
 export interface CreateRelationshipRulePayload {
   structure_model_id: number;
   parent_type_id: number;
   child_type_id: number;
   min_children?: number | null;
   max_children?: number | null;
+}
+
+// ─── Organization — Equipment Assignment ───────────────────────────────────
+
+export interface OrgNodeEquipmentRow {
+  id: number;
+  asset_id_code: string;
+  name: string;
+  lifecycle_status: string;
+  installed_at_node_id: number | null;
+  current_node_name: string | null;
+}
+
+export interface AssignEquipmentPayload {
+  equipment_id: number;
+  node_id: number;
 }
 
 // ─── Organization — Nodes ──────────────────────────────────────────────────
@@ -453,6 +502,7 @@ export interface OrgDesignerNodeRow {
 export interface OrgDesignerSnapshot {
   active_model_id: number | null;
   active_model_version: number | null;
+  draft_model_id: number | null;
   nodes: OrgDesignerNodeRow[];
 }
 
@@ -1129,6 +1179,7 @@ export interface InterventionRequest {
   classification_code_id: number | null;
   is_recurrence_flag: boolean;
   recurrence_di_id: number | null;
+  is_modified: boolean;
   row_version: number;
   submitter_id: number;
   created_at: string;
@@ -1398,3 +1449,464 @@ export interface WoConversionResult {
 }
 
 // Frontend invokes via: invoke("shutdown_app")
+
+// ─── Asset — Health Score ───────────────────────────────────────────────────
+
+export interface AssetHealthScore {
+  asset_id: number;
+  score: number | null;
+  label: "good" | "fair" | "poor" | "no_data";
+}
+
+// ─── Asset — Photos ────────────────────────────────────────────────────────
+
+export interface AssetPhoto {
+  id: number;
+  asset_id: number;
+  file_name: string;
+  file_path: string;
+  mime_type: string;
+  file_size_bytes: number;
+  caption: string | null;
+  created_by_id: number | null;
+  created_at: string;
+}
+
+export interface UploadAssetPhotoPayload {
+  asset_id: number;
+  source_path: string;
+  caption: string | null;
+}
+
+// ─── Asset — Decommission ──────────────────────────────────────────────────
+
+export interface DecommissionAssetPayload {
+  asset_id: number;
+  target_status: "RETIRED" | "SCRAPPED" | "TRANSFERRED";
+  reason: string;
+  notes: string | null;
+}
+
+// ─── Dashboard ─────────────────────────────────────────────────────────────
+
+export interface KpiValue {
+  key: string;
+  value: number;
+  previous_value: number;
+  available: boolean;
+}
+
+export interface DashboardKpis {
+  open_dis: KpiValue;
+  open_wos: KpiValue;
+  total_assets: KpiValue;
+  overdue_items: KpiValue;
+}
+
+export interface WorkloadDay {
+  date: string;
+  di_created: number;
+  wo_completed: number;
+  pm_due: number;
+}
+
+export interface DashboardWorkloadChart {
+  days: WorkloadDay[];
+  period_days: number;
+}
+
+// ─── DI Statistics (File 04) ───────────────────────────────────────────────
+
+export interface DiStatsFilter {
+  date_from?: string | null;
+  date_to?: string | null;
+  entity_id?: number | null;
+}
+
+export interface DiStatusCount {
+  status: string;
+  count: number;
+}
+
+export interface DiPriorityCount {
+  priority: string;
+  count: number;
+}
+
+export interface DiTypeCount {
+  origin_type: string;
+  count: number;
+}
+
+export interface DiTrendPoint {
+  period: string;
+  created: number;
+  closed: number;
+}
+
+export interface DiEquipmentCount {
+  asset_id: number;
+  asset_label: string;
+  count: number;
+  percentage: number;
+}
+
+export interface DiOverdueDi {
+  id: number;
+  code: string;
+  title: string;
+  priority: string;
+  days_overdue: number;
+}
+
+export interface DiStatsPayload {
+  total: number;
+  pending: number;
+  in_progress: number;
+  closed: number;
+  closed_this_month: number;
+  overdue: number;
+  sla_met_count: number;
+  sla_total: number;
+  safety_issues: number;
+  status_distribution: DiStatusCount[];
+  priority_distribution: DiPriorityCount[];
+  type_distribution: DiTypeCount[];
+  monthly_trend: DiTrendPoint[];
+  available_years: number[];
+  avg_age_days: number;
+  max_age_days: number;
+  top_equipment: DiEquipmentCount[];
+  overdue_dis: DiOverdueDi[];
+}
+
+// ─── Work Orders (OT) ─────────────────────────────────────────────────────
+
+export type WoStatus =
+  | "draft"
+  | "planned"
+  | "released"
+  | "in_progress"
+  | "on_hold"
+  | "completed"
+  | "verified"
+  | "closed"
+  | "cancelled";
+
+export interface WorkOrder {
+  id: number;
+  code: string;
+  title: string;
+  description: string | null;
+  type_id: number | null;
+  type_label: string | null;
+  equipment_id: number | null;
+  equipment_code: string | null;
+  equipment_name: string | null;
+  location_id: number | null;
+  entity_id: number | null;
+  urgency_id: number | null;
+  urgency_label: string | null;
+  status: WoStatus;
+  assigned_to_id: number | null;
+  assigned_to_name: string | null;
+  team_id: number | null;
+  source_di_id: number | null;
+  source_di_code: string | null;
+  planned_start: string | null;
+  planned_end: string | null;
+  actual_start: string | null;
+  actual_end: string | null;
+  expected_duration_hours: number | null;
+  actual_duration_hours: number | null;
+  notes: string | null;
+  conclusion: string | null;
+  shift: WoShift | null;
+  row_version: number;
+  created_by_id: number | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
+export interface WoCreateInput {
+  title: string;
+  description?: string | null;
+  type_id?: number | null;
+  equipment_id?: number | null;
+  location_id?: number | null;
+  entity_id?: number | null;
+  urgency_id?: number | null;
+  planned_start?: string | null;
+  planned_end?: string | null;
+  expected_duration_hours?: number | null;
+  shift?: WoShift | null;
+  notes?: string | null;
+  created_by_id: number;
+}
+
+export interface WoDraftUpdateInput {
+  id: number;
+  expected_row_version: number;
+  title?: string | null;
+  description?: string | null;
+  type_id?: number | null;
+  equipment_id?: number | null;
+  location_id?: number | null;
+  entity_id?: number | null;
+  urgency_id?: number | null;
+  planned_start?: string | null;
+  planned_end?: string | null;
+  expected_duration_hours?: number | null;
+  shift?: WoShift | null;
+  notes?: string | null;
+}
+
+export interface WoListFilter {
+  status?: string[] | null;
+  type_id?: number | null;
+  urgency_id?: number | null;
+  equipment_id?: number | null;
+  entity_id?: number | null;
+  assigned_to_id?: number | null;
+  search?: string | null;
+  limit: number;
+  offset: number;
+}
+
+export interface WoListPage {
+  items: WorkOrder[];
+  total: number;
+}
+
+export interface WoGetResponse {
+  wo: WorkOrder;
+}
+
+// ── WO File 02 — Planning, Labor, Completion types ──────────────────────────
+
+export type WoShift = "morning" | "afternoon" | "night" | "full_day";
+
+export interface WoPlanInput {
+  id: number;
+  expected_row_version: number;
+  planned_start?: string | null;
+  planned_end?: string | null;
+  expected_duration_hours?: number | null;
+  shift?: WoShift | null;
+  assigned_to_id?: number | null;
+  team_id?: number | null;
+}
+
+export interface WoAssignInput {
+  id: number;
+  expected_row_version: number;
+  assigned_to_id: number;
+  team_id?: number | null;
+}
+
+export interface WoStartInput {
+  id: number;
+  expected_row_version: number;
+}
+
+export interface WoPauseInput {
+  id: number;
+  expected_row_version: number;
+}
+
+export interface WoResumeInput {
+  id: number;
+  expected_row_version: number;
+}
+
+export interface WoMechCompleteInput {
+  id: number;
+  expected_row_version: number;
+  actual_end?: string | null;
+  actual_duration_hours?: number | null;
+  conclusion?: string | null;
+}
+
+export interface WoMechCompleteResponse {
+  wo: WorkOrder;
+  errors: WoPreflightError[];
+}
+
+export interface WoPreflightError {
+  code: string;
+  message: string;
+}
+
+export interface WoCloseInput {
+  id: number;
+  expected_row_version: number;
+}
+
+export interface WoCancelInput {
+  id: number;
+  expected_row_version: number;
+  reason?: string | null;
+}
+
+export interface WoLaborEntry {
+  id: number;
+  work_order_id: number;
+  intervener_id: number;
+  intervener_name: string | null;
+  skill: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  hours_worked: number | null;
+  hourly_rate: number | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface WoAddLaborInput {
+  work_order_id: number;
+  intervener_id: number;
+  started_at?: string | null;
+  skill?: string | null;
+  hourly_rate?: number | null;
+  notes?: string | null;
+}
+
+export interface WoCloseLaborInput {
+  id: number;
+  ended_at: string;
+  hours_worked?: number | null;
+}
+
+export interface WoTask {
+  id: number;
+  work_order_id: number;
+  sequence: number;
+  description: string;
+  is_mandatory: boolean;
+  is_completed: boolean;
+  completed_at: string | null;
+  completed_by_id: number | null;
+}
+
+export interface WoPartUsage {
+  id: number;
+  work_order_id: number;
+  part_id: number | null;
+  part_label: string | null;
+  quantity_planned: number | null;
+  quantity_actual: number | null;
+  unit_cost: number | null;
+  notes: string | null;
+}
+
+export interface WoCostSummary {
+  labor_cost: number;
+  parts_cost: number;
+  service_cost: number;
+  total_cost: number;
+  expected_duration_hours: number | null;
+  actual_duration_hours: number | null;
+}
+
+export interface WoStatsPayload {
+  total: number;
+  in_progress: number;
+  completed: number;
+  overdue: number;
+  by_status: { status: string; count: number }[];
+  by_urgency: { urgency: string; count: number }[];
+  daily_completed: { date: string; count: number }[];
+  by_entity: { entity: string; count: number }[];
+}
+
+// ─── Admin & Governance ────────────────────────────────────────────────────
+
+export interface AdminStatsPayload {
+  active_users: number;
+  inactive_users: number;
+  total_roles: number;
+  system_roles: number;
+  custom_roles: number;
+  active_sessions: number;
+  unassigned_users: number;
+  emergency_grants_active: number;
+}
+
+export interface UserProfile {
+  id: number;
+  username: string;
+  display_name: string | null;
+  email: string | null;
+  phone: string | null;
+  language: string | null;
+  identity_mode: string;
+  created_at: string;
+  password_changed_at: string | null;
+  pin_configured: boolean;
+  role_name: string | null;
+}
+
+export interface UpdateProfileInput {
+  display_name?: string;
+  email?: string | null;
+  phone?: string | null;
+  language?: string | null;
+}
+
+export interface ChangePasswordInput {
+  current_password: string;
+  new_password: string;
+}
+
+export interface SessionHistoryEntry {
+  id: number | string;
+  device_label: string | null;
+  started_at: string;
+  ended_at: string | null;
+  duration_seconds: number | null;
+  status: string;
+}
+
+export interface UserPresence {
+  user_id: number;
+  status: "active" | "idle" | "offline";
+  last_activity_at: string | null;
+}
+
+export interface CreateUserInput {
+  username: string;
+  identity_mode: string;
+  personnel_id?: number | null;
+  initial_password?: string | null;
+  force_password_change?: boolean;
+}
+
+export interface SetPinInput {
+  current_password: string;
+  new_pin: string;
+}
+
+export interface ClearPinInput {
+  current_password: string;
+}
+
+export interface PinUnlockInput {
+  pin: string;
+}
+
+export interface PasswordPolicySettings {
+  max_age_days: number;
+  warn_days_before_expiry: number;
+  min_length: number;
+  require_uppercase: boolean;
+  require_lowercase: boolean;
+  require_digit: boolean;
+  require_special: boolean;
+}
+
+export interface RbacSettingEntry {
+  key: string;
+  value: string;
+  description: string | null;
+}

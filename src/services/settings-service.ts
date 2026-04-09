@@ -6,8 +6,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 import type {
+  ActivatePolicyPayload,
   AppSetting,
   PolicySnapshot,
+  PolicyTestResult,
+  SavePolicyDraftPayload,
   SessionPolicy,
   SettingsChangeEvent,
 } from "@shared/ipc-types";
@@ -49,6 +52,33 @@ const SettingsChangeEventSchema = z.object({
 });
 
 // ── Service functions ─────────────────────────────────────────────────────────
+
+/**
+ * List all settings across all categories.
+ * Requires `adm.settings` permission.
+ */
+export async function listAllSettings(): Promise<AppSetting[]> {
+  const raw = await invoke<AppSetting[]>("list_all_settings");
+  return z.array(AppSettingSchema).parse(raw);
+}
+
+/**
+ * List settings for a specific category.
+ * Requires `adm.settings` permission.
+ */
+export async function listSettingsByCategory(category: string): Promise<AppSetting[]> {
+  const raw = await invoke<AppSetting[]>("list_settings_by_category", { category });
+  return z.array(AppSettingSchema).parse(raw);
+}
+
+/**
+ * List distinct setting categories.
+ * Requires `adm.settings` permission.
+ */
+export async function listSettingsCategories(): Promise<string[]> {
+  const raw = await invoke<string[]>("list_settings_categories");
+  return z.array(z.string()).parse(raw);
+}
 
 /**
  * Read a single setting by key and optional scope.
@@ -101,4 +131,68 @@ export async function listSettingChangeEvents(limit?: number): Promise<SettingsC
     limit,
   });
   return z.array(SettingsChangeEventSchema).parse(raw);
+}
+
+// ── Policy Draft / Test / Activate ────────────────────────────────────────────
+
+const PolicySnapshotSchema = z.object({
+  id: z.number(),
+  policy_domain: z.string(),
+  version_no: z.number(),
+  snapshot_json: z.string(),
+  is_active: z.boolean(),
+  activated_at: z.string().nullable(),
+  activated_by_id: z.number().nullable(),
+});
+
+const PolicyTestResultSchema = z.object({
+  rule_name: z.string(),
+  severity: z.enum(["pass", "warn", "fail"]),
+  message: z.string(),
+});
+
+/**
+ * Save a policy draft snapshot. Creates or updates the draft for the given domain.
+ * Requires `adm.settings` permission.
+ */
+export async function savePolicyDraft(payload: SavePolicyDraftPayload): Promise<PolicySnapshot> {
+  const raw = await invoke<PolicySnapshot>("save_policy_draft", { payload });
+  return PolicySnapshotSchema.parse(raw);
+}
+
+/**
+ * Run backend validation rules against the current draft.
+ * Returns an array of test results with pass/warn/fail severity.
+ * Requires `adm.settings` permission.
+ */
+export async function testPolicyDraft(domain: string): Promise<PolicyTestResult[]> {
+  const raw = await invoke<PolicyTestResult[]>("test_policy_draft", { domain });
+  return z.array(PolicyTestResultSchema).parse(raw);
+}
+
+/**
+ * Promote the draft to active. Old active becomes superseded.
+ * Security policy domains require an active step-up session.
+ * Requires `adm.settings` permission.
+ */
+export async function activatePolicy(payload: ActivatePolicyPayload): Promise<PolicySnapshot> {
+  const raw = await invoke<PolicySnapshot>("activate_policy", { payload });
+  return PolicySnapshotSchema.parse(raw);
+}
+
+/**
+ * Discard (delete) the current draft snapshot for a domain.
+ * Requires `adm.settings` permission.
+ */
+export async function discardPolicyDraft(domain: string): Promise<void> {
+  await invoke<void>("discard_policy_draft", { domain });
+}
+
+/**
+ * List all policy snapshots for a domain (active + historical).
+ * Used for change history display. Ordered by version_no desc.
+ */
+export async function listPolicySnapshots(domain: string): Promise<PolicySnapshot[]> {
+  const raw = await invoke<PolicySnapshot[]>("list_policy_snapshots", { domain });
+  return z.array(PolicySnapshotSchema).parse(raw);
 }

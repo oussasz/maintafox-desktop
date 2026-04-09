@@ -58,12 +58,14 @@ import type { OrgDesignerSnapshot } from "@shared/ipc-types";
 const emptySnapshot: OrgDesignerSnapshot = {
   active_model_id: null,
   active_model_version: null,
+  draft_model_id: null,
   nodes: [],
 };
 
 const threeNodeSnapshot: OrgDesignerSnapshot = {
   active_model_id: 1,
   active_model_version: 3,
+  draft_model_id: null,
   nodes: [
     {
       node_id: 1,

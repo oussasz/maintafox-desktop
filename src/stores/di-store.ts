@@ -8,15 +8,15 @@
 
 import { create } from "zustand";
 
-import { listDis, getDi, createDi, updateDiDraft } from "@/services/di-service";
+import { createDi, getDi, listDis, updateDiDraft } from "@/services/di-service";
 import { toErrorMessage } from "@/utils/errors";
 import type {
-  InterventionRequest,
-  DiListFilter,
-  DiTransitionRow,
-  DiSummaryRow,
   DiCreateInput,
   DiDraftUpdateInput,
+  DiListFilter,
+  DiSummaryRow,
+  DiTransitionRow,
+  InterventionRequest,
 } from "@shared/ipc-types";
 
 export interface DiDetailPayload {
@@ -33,6 +33,9 @@ interface DiStoreState {
   total: number;
   // Detail
   activeDi: DiDetailPayload | null;
+  // Create / edit form
+  showCreateForm: boolean;
+  editingDi: InterventionRequest | null;
   // Filter
   filter: DiListFilter;
   // Flags
@@ -43,6 +46,9 @@ interface DiStoreState {
   setFilter: (patch: Partial<DiListFilter>) => void;
   loadDis: () => Promise<void>;
   openDi: (id: number) => Promise<void>;
+  closeDi: () => void;
+  openCreateForm: (di?: InterventionRequest) => void;
+  closeCreateForm: () => void;
   submitNewDi: (input: DiCreateInput) => Promise<InterventionRequest>;
   updateDraft: (input: DiDraftUpdateInput) => Promise<void>;
 }
@@ -51,6 +57,8 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
   items: [],
   total: 0,
   activeDi: null,
+  showCreateForm: false,
+  editingDi: null,
   filter: { ...DEFAULT_FILTER },
   loading: false,
   saving: false,
@@ -58,6 +66,18 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
 
   setFilter: (patch) => {
     set((s) => ({ filter: { ...s.filter, ...patch } }));
+  },
+
+  closeDi: () => {
+    set({ activeDi: null });
+  },
+
+  openCreateForm: (di) => {
+    set({ showCreateForm: true, editingDi: di ?? null });
+  },
+
+  closeCreateForm: () => {
+    set({ showCreateForm: false, editingDi: null });
   },
 
   loadDis: async () => {

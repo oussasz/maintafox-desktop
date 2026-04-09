@@ -57,6 +57,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Single-instance: focus existing window on second launch
         .plugin(
             tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -114,6 +115,11 @@ pub fn run() {
             commands::auth::revoke_device_trust,
             commands::auth::unlock_session,
             commands::auth::force_change_password,
+            // ── Profile ───────────────────────────────────────────────────
+            commands::profile::get_my_profile,
+            commands::profile::update_my_profile,
+            commands::profile::change_password,
+            commands::profile::get_session_history,
             // ── RBAC ──────────────────────────────────────────────────────
             commands::rbac::get_my_permissions,
             commands::rbac::verify_step_up,
@@ -121,6 +127,9 @@ pub fn run() {
             commands::locale::get_locale_preference,
             commands::locale::set_locale_preference,
             // ── Settings ──────────────────────────────────────────────────
+            commands::settings::list_all_settings,
+            commands::settings::list_settings_by_category,
+            commands::settings::list_settings_categories,
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::get_policy_snapshot,
@@ -152,6 +161,8 @@ pub fn run() {
             commands::org::list_org_node_types,
             commands::org::create_org_node_type,
             commands::org::deactivate_org_node_type,
+            commands::org::update_org_node_type,
+            commands::org::get_org_node_type_usage_count,
             commands::org::list_org_relationship_rules,
             commands::org::create_org_relationship_rule,
             commands::org::delete_org_relationship_rule,
@@ -173,6 +184,10 @@ pub fn run() {
             commands::org::validate_org_model_for_publish,
             commands::org::publish_org_model,
             commands::org::list_org_change_events,
+            commands::org::list_org_node_equipment,
+            commands::org::search_unassigned_equipment,
+            commands::org::assign_equipment_to_node,
+            commands::org::unassign_equipment_from_node,
             // ── Reference ─────────────────────────────────────────────────
             commands::reference::list_reference_domains,
             commands::reference::get_reference_domain,
@@ -260,6 +275,9 @@ pub fn run() {
             // ── DI File 04 — Audit Trail ──────────────────────────────────
             commands::di::list_di_change_events,
             commands::di::list_all_di_change_events,
+            // ── Dashboard ─────────────────────────────────────────────────
+            commands::dashboard::get_dashboard_kpis,
+            commands::dashboard::get_dashboard_workload_chart,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

@@ -5,7 +5,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
-import type { LoginRequest, LoginResponse, SessionInfo } from "@shared/ipc-types";
+import type {
+  ClearPinInput,
+  LoginRequest,
+  LoginResponse,
+  PinUnlockInput,
+  SessionInfo,
+  SetPinInput,
+} from "@shared/ipc-types";
 
 // ── Zod schemas for runtime validation ────────────────────────────────────────
 const sessionInfoSchema = z.object({
@@ -18,6 +25,8 @@ const sessionInfoSchema = z.object({
   force_password_change: z.boolean().nullable(),
   expires_at: z.string().nullable(),
   last_activity_at: z.string().nullable(),
+  password_expires_in_days: z.number().nullable().optional(),
+  pin_configured: z.boolean().nullable().optional(),
 });
 
 const loginResponseSchema = z.object({
@@ -73,4 +82,29 @@ export async function forceChangePassword(newPassword: string): Promise<SessionI
   // The response wraps session_info
   const parsed = z.object({ session_info: sessionInfoSchema }).parse(raw);
   return parsed.session_info;
+}
+
+/**
+ * Set or change the user's quick-unlock PIN.
+ * Requires the current password for verification.
+ */
+export async function setPin(input: SetPinInput): Promise<void> {
+  await invoke<void>("set_pin", { payload: input });
+}
+
+/**
+ * Clear the user's PIN (disable PIN unlock).
+ * Requires the current password for verification.
+ */
+export async function clearPin(input: ClearPinInput): Promise<void> {
+  await invoke<void>("clear_pin", { payload: input });
+}
+
+/**
+ * Unlock an idle-locked session using a PIN instead of the full password.
+ * Only valid when the session is locked and the user has a PIN configured.
+ */
+export async function unlockSessionWithPin(input: PinUnlockInput): Promise<SessionInfo> {
+  const raw = await invoke<unknown>("unlock_session_with_pin", { payload: input });
+  return sessionInfoSchema.parse(raw);
 }

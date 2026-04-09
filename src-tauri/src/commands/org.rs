@@ -18,8 +18,9 @@ use crate::errors::AppResult;
 use crate::org::{
     audit::{self, OrgAuditEventInput, OrgChangeEvent},
     entity_bindings::{self, UpsertOrgEntityBindingPayload},
+    equipment_assignment::{self, AssignEquipmentPayload, OrgNodeEquipmentRow},
     impact_preview::{self, OrgImpactPreview, PreviewOrgChangePayload},
-    node_types::{self, CreateNodeTypePayload},
+    node_types::{self, CreateNodeTypePayload, UpdateNodeTypePayload},
     nodes::{self, CreateOrgNodePayload, MoveOrgNodePayload, UpdateOrgNodeMetadataPayload},
     relationship_rules::{self, CreateRelationshipRulePayload},
     responsibilities::{self, AssignResponsibilityPayload},
@@ -116,6 +117,69 @@ pub async fn deactivate_org_node_type(node_type_id: i32, state: State<'_, AppSta
     let user = require_session!(state);
     require_permission!(state, &user, "org.admin", PermissionScope::Global);
     node_types::deactivate_node_type(&state.db, node_type_id).await
+}
+
+#[tauri::command]
+pub async fn update_org_node_type(
+    payload: UpdateNodeTypePayload,
+    state: State<'_, AppState>,
+) -> AppResult<OrgNodeType> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    node_types::update_node_type(&state.db, payload).await
+}
+
+#[tauri::command]
+pub async fn get_org_node_type_usage_count(
+    node_type_id: i32,
+    state: State<'_, AppState>,
+) -> AppResult<i32> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    node_types::count_nodes_using_type(&state.db, node_type_id).await
+}
+
+// ─── Equipment assignment commands (GAP ORG-02) ──────────────────────────────
+
+#[tauri::command]
+pub async fn list_org_node_equipment(
+    node_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<OrgNodeEquipmentRow>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    equipment_assignment::list_equipment_by_node(&state.db, node_id).await
+}
+
+#[tauri::command]
+pub async fn search_unassigned_equipment(
+    query: String,
+    limit: Option<i32>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<OrgNodeEquipmentRow>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    equipment_assignment::search_unassigned_equipment(&state.db, &query, limit.unwrap_or(20)).await
+}
+
+#[tauri::command]
+pub async fn assign_equipment_to_node(
+    payload: AssignEquipmentPayload,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "org.manage", PermissionScope::Global);
+    equipment_assignment::assign_equipment_to_node(&state.db, payload).await
+}
+
+#[tauri::command]
+pub async fn unassign_equipment_from_node(
+    equipment_id: i32,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "org.manage", PermissionScope::Global);
+    equipment_assignment::unassign_equipment_from_node(&state.db, equipment_id).await
 }
 
 // ─── Relationship rule commands ───────────────────────────────────────────────

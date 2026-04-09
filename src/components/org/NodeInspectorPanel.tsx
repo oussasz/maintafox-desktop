@@ -6,18 +6,25 @@
  * organized in tabs.
  */
 
-import { ArrowRightLeft, Info, Link2, ShieldAlert, Users } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { ArrowRightLeft, Info, Link2, Package, ShieldAlert, Users, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import {
+  assignEquipmentToNode,
+  listOrgNodeEquipment,
+  searchUnassignedEquipment,
+  unassignEquipmentFromNode,
+} from "@/services/org-node-service";
 import { useOrgDesignerStore } from "@/stores/org-designer-store";
 import { useOrgNodeStore } from "@/stores/org-node-store";
-import type { OrgDesignerNodeRow } from "@shared/ipc-types";
+import type { OrgDesignerNodeRow, OrgNodeEquipmentRow } from "@shared/ipc-types";
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -46,6 +53,62 @@ export function NodeInspectorPanel() {
   useEffect(() => {
     void selectNode(selectedNodeId);
   }, [selectedNodeId, selectNode]);
+
+  // Equipment state (GAP ORG-02)
+  const [equipment, setEquipment] = useState<OrgNodeEquipmentRow[]>([]);
+  const [equipSearch, setEquipSearch] = useState("");
+  const [equipResults, setEquipResults] = useState<OrgNodeEquipmentRow[]>([]);
+  const [equipSearching, setEquipSearching] = useState(false);
+
+  const hasAssetCapability = selectedRow?.can_host_assets ?? false;
+
+  const loadEquipment = useCallback(async () => {
+    if (!selectedNodeId || !hasAssetCapability) return;
+    try {
+      const items = await listOrgNodeEquipment(selectedNodeId);
+      setEquipment(items);
+    } catch {
+      /* ignore */
+    }
+  }, [selectedNodeId, hasAssetCapability]);
+
+  useEffect(() => {
+    void loadEquipment();
+  }, [loadEquipment]);
+
+  const handleEquipSearch = useCallback(async (query: string) => {
+    setEquipSearch(query);
+    if (query.length < 2) {
+      setEquipResults([]);
+      return;
+    }
+    setEquipSearching(true);
+    try {
+      const results = await searchUnassignedEquipment(query, 10);
+      setEquipResults(results);
+    } finally {
+      setEquipSearching(false);
+    }
+  }, []);
+
+  const handleAssign = useCallback(
+    async (equipmentId: number) => {
+      if (!selectedNodeId) return;
+      await assignEquipmentToNode({ equipment_id: equipmentId, node_id: selectedNodeId });
+      setEquipSearch("");
+      setEquipResults([]);
+      await loadEquipment();
+    },
+    [selectedNodeId, loadEquipment],
+  );
+
+  const handleUnassign = useCallback(
+    async (equipmentId: number) => {
+      await unassignEquipmentFromNode(equipmentId);
+      await loadEquipment();
+    },
+    [loadEquipment],
+  );
 
   if (!selectedRow) {
     return (
@@ -86,6 +149,16 @@ export function NodeInspectorPanel() {
       <Tabs defaultValue="details" className="flex-1 flex flex-col">
         <TabsList className="mx-4 mt-2">
           <TabsTrigger value="details">{t("designer.inspector.details")}</TabsTrigger>
+          {hasAssetCapability && (
+            <TabsTrigger value="equipment">
+              {t("designer.inspector.equipment")}
+              {equipment.length > 0 && (
+                <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1">
+                  {equipment.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+          )}
           <TabsTrigger value="responsibilities">
             {t("designer.inspector.responsibilities")}
           </TabsTrigger>
@@ -123,6 +196,86 @@ export function NodeInspectorPanel() {
             </div>
           </div>
         </TabsContent>
+
+        {/* Equipment tab (GAP ORG-02) */}
+        {hasAssetCapability && (
+          <TabsContent value="equipment" className="flex-1 overflow-y-auto p-4">
+            {equipment.length === 0 && !equipSearch ? (
+              <div className="flex flex-col items-center justify-center py-8 text-text-muted text-sm">
+                <Package className="h-6 w-6 mb-2 opacity-40" />
+                <p>{t("designer.inspector.noEquipment")}</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {equipment.map((eq) => (
+                  <div
+                    key={eq.id}
+                    className="rounded-lg border border-surface-border p-3 text-sm flex items-center justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs text-text-muted">
+                          {eq.asset_id_code}
+                        </span>
+                        <span className="font-medium text-text-primary">{eq.name}</span>
+                      </div>
+                      <Badge variant="outline" className="text-[10px] mt-1">
+                        {eq.lifecycle_status}
+                      </Badge>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0"
+                      onClick={() => void handleUnassign(eq.id)}
+                    >
+                      <X className="h-3.5 w-3.5 text-status-danger" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Assign search */}
+            <div className="mt-4 space-y-2">
+              <Input
+                value={equipSearch}
+                onChange={(e) => void handleEquipSearch(e.target.value)}
+                placeholder={t("designer.inspector.equipSearchPlaceholder")}
+                className="h-8 text-xs"
+              />
+              {equipSearching && (
+                <p className="text-xs text-text-muted">{t("designer.inspector.searching")}</p>
+              )}
+              {equipResults.length > 0 && (
+                <div className="space-y-1 max-h-48 overflow-y-auto border border-surface-border rounded-md p-2">
+                  {equipResults.map((eq) => (
+                    <button
+                      key={eq.id}
+                      type="button"
+                      className="w-full text-left rounded-md p-2 text-sm hover:bg-surface-2 cursor-pointer"
+                      onClick={() => void handleAssign(eq.id)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs text-text-muted">
+                          {eq.asset_id_code}
+                        </span>
+                        <span>{eq.name}</span>
+                      </div>
+                      {eq.current_node_name && (
+                        <p className="text-[11px] text-status-warning mt-0.5">
+                          {t("designer.inspector.equipCurrentlyAssigned", {
+                            node: eq.current_node_name,
+                          })}
+                        </p>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </TabsContent>
+        )}
 
         {/* Responsibilities tab */}
         <TabsContent value="responsibilities" className="flex-1 overflow-y-auto p-4">

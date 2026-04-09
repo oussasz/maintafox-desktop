@@ -1,7 +1,8 @@
-import { lazy, Suspense } from "react";
-import { createBrowserRouter, Outlet, type RouteObject } from "react-router-dom";
+import { Suspense, lazy } from "react";
+import { Outlet, type RouteObject, createBrowserRouter } from "react-router-dom";
 
 import { AuthGuard } from "@/components/auth/AuthGuard";
+import { PermissionRoute } from "@/components/auth/PermissionRoute";
 import { AppShell } from "@/components/layout/AppShell";
 import { DashboardPage } from "@/pages/DashboardPage";
 
@@ -55,6 +56,10 @@ const PersonnelPage = lazy(() =>
   import("@/pages/PersonnelPage").then((m) => ({ default: m.PersonnelPage })),
 );
 const UsersPage = lazy(() => import("@/pages/UsersPage").then((m) => ({ default: m.UsersPage })));
+const AdminPage = lazy(() => import("@/pages/AdminPage").then((m) => ({ default: m.AdminPage })));
+const UnauthorizedPage = lazy(() =>
+  import("@/pages/UnauthorizedPage").then((m) => ({ default: m.UnauthorizedPage })),
+);
 const OrgPage = lazy(() => import("@/pages/OrgPage").then((m) => ({ default: m.OrgPage })));
 const LookupsPage = lazy(() =>
   import("@/pages/LookupsPage").then((m) => ({ default: m.LookupsPage })),
@@ -159,6 +164,10 @@ const routes: RouteObject[] = [
               { path: "budget", element: <BudgetPage /> },
               { path: "personnel", element: <PersonnelPage /> },
               { path: "users", element: <UsersPage /> },
+              {
+                element: <PermissionRoute anyOf={["adm.users", "adm.roles"]} />,
+                children: [{ path: "admin", element: <AdminPage /> }],
+              },
               { path: "org", element: <OrgPage /> },
               { path: "lookups", element: <LookupsPage /> },
               { path: "notifications", element: <NotificationsPage /> },
@@ -171,6 +180,7 @@ const routes: RouteObject[] = [
               { path: "configuration", element: <ConfigurationPage /> },
               { path: "diagnostics", element: <DiagnosticsPage /> },
               { path: "profile", element: <ProfilePage /> },
+              { path: "unauthorized", element: <UnauthorizedPage /> },
             ],
           },
         ],

@@ -9,10 +9,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 import type {
-  WoConversionResult,
-  DiSlaStatus,
   DiSlaRule,
+  DiSlaStatus,
   SlaRuleUpdateInput,
+  WoConversionResult,
 } from "@shared/ipc-types";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
@@ -51,6 +51,7 @@ const InterventionRequestSchema = z.object({
   classification_code_id: z.number().nullable(),
   is_recurrence_flag: z.boolean(),
   recurrence_di_id: z.number().nullable(),
+  is_modified: z.boolean().default(false),
   row_version: z.number(),
   submitter_id: z.number(),
   created_at: z.string(),

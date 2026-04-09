@@ -8,6 +8,7 @@
 
 import { useTranslation } from "react-i18next";
 
+import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -101,8 +102,8 @@ export function AssetResultTable() {
               <TableCell className="text-xs text-text-muted">
                 {asset.org_node_name ?? "—"}
               </TableCell>
-              <TableCell className="text-xs text-text-muted">
-                {asset.criticality_code ?? "—"}
+              <TableCell>
+                <CriticalityBadge criticality={asset.criticality_code} compact />
               </TableCell>
             </TableRow>
           ))}

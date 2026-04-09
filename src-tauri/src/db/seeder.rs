@@ -1296,6 +1296,9 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     // ── 5. Seed bootstrap admin account ───────────────────────────────────
     seed_admin_account(db).await?;
 
+    // ── 6. Seed default application settings ──────────────────────────────
+    seed_default_settings(db).await?;
+
     tracing::info!("seeder::complete — system seed version {} applied", SEED_SCHEMA_VERSION);
     Ok(())
 }
@@ -1963,7 +1966,9 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
         .await?;
 
     if existing.is_some() {
-        tracing::debug!("seeder::admin_account already exists, skipping");
+        tracing::debug!("seeder::admin_account already exists, ensuring role assignment");
+        // Even if the admin exists, ensure the Administrator role is assigned
+        ensure_admin_role_assignment(db).await?;
         return Ok(());
     }
 
@@ -1992,6 +1997,55 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
     .await?;
 
     tracing::info!("seeder::admin_account created (force_password_change=1)");
+
+    // Assign the Administrator role to the newly created admin account
+    ensure_admin_role_assignment(db).await?;
+
+    Ok(())
+}
+
+/// Ensures the admin user has the Administrator role assigned via user_scope_assignments.
+/// Idempotent — uses INSERT OR IGNORE.
+async fn ensure_admin_role_assignment(db: &DatabaseConnection) -> AppResult<()> {
+    let now = Utc::now().to_rfc3339();
+    let sync_id = Uuid::new_v4().to_string();
+
+    // Resolve user_id for 'admin' and role_id for 'Administrator'
+    let result = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"SELECT u.id AS user_id, r.id AS role_id
+               FROM user_accounts u, roles r
+               WHERE u.username = 'admin'
+                 AND r.name = 'Administrator'
+                 AND r.deleted_at IS NULL",
+            [],
+        ))
+        .await?;
+
+    if let Some(row) = result {
+        let user_id: i32 = row.try_get("", "user_id").unwrap_or(0);
+        let role_id: i32 = row.try_get("", "role_id").unwrap_or(0);
+        if user_id > 0 && role_id > 0 {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                r"INSERT OR IGNORE INTO user_scope_assignments
+                       (sync_id, user_id, role_id, scope_type, scope_reference,
+                        valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version)
+                   VALUES (?, ?, ?, 'tenant', NULL, NULL, NULL, NULL, 'System seeder', ?, ?, 1)",
+                [
+                    sync_id.into(),
+                    user_id.into(),
+                    role_id.into(),
+                    now.clone().into(),
+                    now.into(),
+                ],
+            ))
+            .await?;
+            tracing::info!("seeder::admin_role_assignment ensured (user_id={}, role_id={})", user_id, role_id);
+        }
+    }
+
     Ok(())
 }
 

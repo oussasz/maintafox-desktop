@@ -19,6 +19,7 @@ mod m20260401_000017_di_domain_core;
 mod m20260401_000018_di_review_events;
 mod m20260401_000019_di_attachments_sla;
 mod m20260401_000020_di_change_events;
+mod m20260408_000021_org_node_type_color;
 
 pub struct Migrator;
 
@@ -45,6 +46,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260401_000018_di_review_events::Migration),
             Box::new(m20260401_000019_di_attachments_sla::Migration),
             Box::new(m20260401_000020_di_change_events::Migration),
+            Box::new(m20260408_000021_org_node_type_color::Migration),
         ]
     }
 }

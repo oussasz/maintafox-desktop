@@ -30,8 +30,7 @@
     "db:reset": "pnpm tsx scripts/dev-db-reset.ts",
     "db:reset:ci": "pnpm tsx scripts/dev-db-reset.ts --yes",
     "migrate:check": "tsx scripts/check-migrations.ts",
-    "audit:tauri-conf": "pnpm tsx scripts/audit-tauri-conf.ts",
-    "i18n:check": "tsx scripts/check-i18n-parity.ts"
+    "audit:tauri-conf": "pnpm tsx scripts/audit-tauri-conf.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
@@ -42,6 +41,7 @@
     "@testing-library/react": "^16.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
@@ -88,9 +88,11 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.0",
     "d3": "^7.9.0",
+    "html-to-image": "^1.11.13",
     "i18next": "^24.0.0",
     "i18next-resources-to-backend": "^1.2.1",
     "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-hook-form": "^7.54.0",

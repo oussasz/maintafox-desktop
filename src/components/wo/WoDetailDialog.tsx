@@ -1,0 +1,617 @@
+/**
+ * WoDetailDialog.tsx
+ *
+ * Full detail dialog for a work order. UX-DW-001 pattern:
+ *   • Centered modal overlay (max-w-4xl, max-h-[90vh])
+ *   • Header: WO code + title + status/urgency badges + close
+ *   • Body: scrollable info grid + 5-tab sub-panels
+ *   • Footer: context-appropriate lifecycle action buttons
+ *
+ * Tab visibility:
+ *   Plan        — always visible; editable only in draft/planned/ready_to_schedule
+ *   Execution   — visible once assigned or later
+ *   Close-out   — visible once mechanically_complete or later
+ *   Audit       — always visible (read-only)
+ *   Attachments — always visible
+ *
+ * Phase 2 – Sub-phase 05 – File 02 – Sprint S4.
+ */
+
+import {
+  Calendar,
+  CheckCircle2,
+  ClipboardCheck,
+  FileText,
+  History,
+  Paperclip,
+  Pause,
+  Play,
+  Printer,
+  Settings,
+  X,
+} from "lucide-react";
+import { useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { WoCompletionDialog } from "@/components/wo/WoCompletionDialog";
+import { WoCostSummaryCard } from "@/components/wo/WoCostSummaryCard";
+import { WoExecutionControls } from "@/components/wo/WoExecutionControls";
+import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
+import { printWoFiche } from "@/components/wo/WoPrintFiche";
+import { usePermissions } from "@/hooks/use-permissions";
+import { useWoStore } from "@/stores/wo-store";
+import type { WoStatus, WorkOrder } from "@shared/ipc-types";
+
+// ── Status → badge style mapping ────────────────────────────────────────────
+
+const STATUS_STYLE: Record<string, string> = {
+  draft: "bg-gray-100 text-gray-600",
+  planned: "bg-blue-100 text-blue-800",
+  released: "bg-sky-100 text-sky-800",
+  ready_to_schedule: "bg-indigo-100 text-indigo-800",
+  assigned: "bg-violet-100 text-violet-800",
+  in_progress: "bg-amber-100 text-amber-800",
+  on_hold: "bg-orange-100 text-orange-800",
+  paused: "bg-orange-100 text-orange-800",
+  mechanically_complete: "bg-teal-100 text-teal-800",
+  technically_verified: "bg-emerald-100 text-emerald-800",
+  completed: "bg-green-100 text-green-800",
+  verified: "bg-teal-100 text-teal-800",
+  closed: "bg-neutral-100 text-neutral-500",
+  cancelled: "bg-red-100 text-red-700",
+};
+
+const URGENCY_STYLE: Record<string, string> = {
+  "1": "bg-green-100 text-green-800",
+  "2": "bg-blue-100 text-blue-800",
+  "3": "bg-yellow-100 text-yellow-800",
+  "4": "bg-orange-100 text-orange-800",
+  "5": "bg-red-100 text-red-700",
+};
+
+// ── Status groupings for tab visibility ─────────────────────────────────────
+
+const EXECUTION_VISIBLE: Set<string> = new Set([
+  "assigned",
+  "in_progress",
+  "paused",
+  "on_hold",
+  "mechanically_complete",
+  "technically_verified",
+  "completed",
+  "verified",
+  "closed",
+  "cancelled",
+]);
+
+const CLOSEOUT_VISIBLE: Set<string> = new Set([
+  "mechanically_complete",
+  "technically_verified",
+  "completed",
+  "verified",
+  "closed",
+]);
+
+type WoStatusKey =
+  | "draft"
+  | "planned"
+  | "released"
+  | "inProgress"
+  | "onHold"
+  | "completed"
+  | "verified"
+  | "closed"
+  | "cancelled";
+
+function statusToI18nKey(s: string): WoStatusKey {
+  const map: Record<string, WoStatusKey> = {
+    draft: "draft",
+    planned: "planned",
+    released: "released",
+    ready_to_schedule: "released",
+    assigned: "planned",
+    in_progress: "inProgress",
+    on_hold: "onHold",
+    paused: "onHold",
+    mechanically_complete: "completed",
+    technically_verified: "verified",
+    completed: "completed",
+    verified: "verified",
+    closed: "closed",
+    cancelled: "cancelled",
+  };
+  return map[s] ?? "draft";
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+// ── Props ───────────────────────────────────────────────────────────────────
+
+interface WoDetailDialogProps {
+  wo: WorkOrder | null;
+  open: boolean;
+  onClose: () => void;
+}
+
+// ── Component ───────────────────────────────────────────────────────────────
+
+export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
+  const { t } = useTranslation("ot");
+  const { can } = usePermissions();
+
+  const saving = useWoStore((s) => s.saving);
+  const planWorkOrder = useWoStore((s) => s.planWorkOrder);
+  const assignWorkOrder = useWoStore((s) => s.assignWorkOrder);
+  const startWorkOrder = useWoStore((s) => s.startWorkOrder);
+  const pauseWorkOrder = useWoStore((s) => s.pauseWorkOrder);
+  const resumeWorkOrder = useWoStore((s) => s.resumeWorkOrder);
+  const openCompletionDialog = useWoStore((s) => s.openCompletionDialog);
+  const closeWorkOrder = useWoStore((s) => s.closeWorkOrder);
+
+  const handlePrint = useCallback(() => {
+    if (wo) void printWoFiche(wo);
+  }, [wo]);
+
+  // Determine visible tabs
+  const showExecution = wo ? EXECUTION_VISIBLE.has(wo.status) : false;
+  const showCloseout = wo ? CLOSEOUT_VISIBLE.has(wo.status) : false;
+
+  // Determine default tab
+  const defaultTab = useMemo(() => {
+    if (!wo) return "plan";
+    if (wo.status === "in_progress" || wo.status === "on_hold") return "execution";
+    if (CLOSEOUT_VISIBLE.has(wo.status)) return "closeout";
+    return "plan";
+  }, [wo]);
+
+  if (!wo) return null;
+
+  const statusKey = statusToI18nKey(wo.status);
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+        <DialogContent
+          className="max-w-4xl max-h-[90vh] flex flex-col p-0 gap-0"
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          {/* ── Header ──────────────────────────────────────────────── */}
+          <DialogHeader className="px-6 pt-5 pb-3">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1 min-w-0">
+                <DialogTitle className="text-lg font-bold flex items-center gap-2">
+                  <span className="text-muted-foreground font-mono text-base">{wo.code}</span>
+                  <span className="truncate">{wo.title}</span>
+                </DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground line-clamp-2">
+                  {wo.description}
+                </DialogDescription>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+                <Badge
+                  variant="outline"
+                  className={`text-xs border-0 ${STATUS_STYLE[wo.status] ?? "bg-gray-100"}`}
+                >
+                  {t(`status.${statusKey}` as const)}
+                </Badge>
+                {wo.urgency_id != null && (
+                  <Badge
+                    variant="outline"
+                    className={`text-xs border-0 ${URGENCY_STYLE[String(wo.urgency_id)] ?? ""}`}
+                  >
+                    {wo.urgency_label ?? t("form.urgency.label")}
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </DialogHeader>
+
+          <Separator />
+
+          {/* ── Scrollable body ─────────────────────────────────────── */}
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            {/* Info grid */}
+            <Card>
+              <CardContent className="p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
+                <InfoRow label={t("detail.fields.type")} value={wo.type_label ?? "—"} />
+                <InfoRow label={t("detail.fields.equipment")} value={wo.equipment_name ?? "—"} />
+                <InfoRow label={t("detail.fields.assignedTo")} value={wo.assigned_to_name ?? "—"} />
+                <InfoRow
+                  label={t("detail.fields.plannedStart")}
+                  value={wo.planned_start ? formatDate(wo.planned_start) : "—"}
+                />
+                <InfoRow
+                  label={t("detail.fields.plannedEnd")}
+                  value={wo.planned_end ? formatDate(wo.planned_end) : "—"}
+                />
+                <InfoRow
+                  label={t("detail.fields.estimatedHours")}
+                  value={
+                    wo.expected_duration_hours != null ? `${wo.expected_duration_hours}h` : "—"
+                  }
+                />
+                {wo.shift && (
+                  <InfoRow
+                    label={t("planning.shift")}
+                    value={t(`shift.${wo.shift === "full_day" ? "fullDay" : wo.shift}`)}
+                  />
+                )}
+                {wo.source_di_code && (
+                  <InfoRow
+                    label="DI"
+                    value={<span className="font-mono">{wo.source_di_code}</span>}
+                  />
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Tabs */}
+            <Tabs defaultValue={defaultTab}>
+              <TabsList className="w-full justify-start">
+                <TabsTrigger value="plan" className="gap-1.5 text-xs">
+                  <Settings className="h-3.5 w-3.5" />
+                  {t("detail.sections.planning")}
+                </TabsTrigger>
+                {showExecution && (
+                  <TabsTrigger value="execution" className="gap-1.5 text-xs">
+                    <Play className="h-3.5 w-3.5" />
+                    {t("execution.title")}
+                  </TabsTrigger>
+                )}
+                {showCloseout && (
+                  <TabsTrigger value="closeout" className="gap-1.5 text-xs">
+                    <ClipboardCheck className="h-3.5 w-3.5" />
+                    {t("detail.sections.closeout")}
+                  </TabsTrigger>
+                )}
+                <TabsTrigger value="audit" className="gap-1.5 text-xs">
+                  <History className="h-3.5 w-3.5" />
+                  {t("detail.sections.history")}
+                </TabsTrigger>
+                <TabsTrigger value="attachments" className="gap-1.5 text-xs">
+                  <Paperclip className="h-3.5 w-3.5" />
+                  {t("execution.attachments")}
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="plan" className="pt-3">
+                <WoPlanningPanel wo={wo} />
+              </TabsContent>
+
+              {showExecution && (
+                <TabsContent value="execution" className="pt-3">
+                  <WoExecutionControls wo={wo} />
+                </TabsContent>
+              )}
+
+              {showCloseout && (
+                <TabsContent value="closeout" className="pt-3">
+                  <div className="space-y-3">
+                    <h4 className="text-sm font-semibold">{t("detail.sections.closeout")}</h4>
+                    {wo.conclusion ? (
+                      <p className="text-sm whitespace-pre-wrap">{wo.conclusion}</p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">{t("closeout.noReport")}</p>
+                    )}
+
+                    {/* Cost summary */}
+                    <WoCostSummaryCard woId={wo.id} status={wo.status} />
+
+                    {/* Actual times summary */}
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <span className="text-muted-foreground">
+                          {t("detail.fields.actualStart")}:
+                        </span>{" "}
+                        <span className="font-medium">
+                          {wo.actual_start ? formatDate(wo.actual_start) : "—"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">
+                          {t("detail.fields.actualEnd")}:
+                        </span>{" "}
+                        <span className="font-medium">
+                          {wo.actual_end ? formatDate(wo.actual_end) : "—"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">
+                          {t("detail.fields.actualHours")}:
+                        </span>{" "}
+                        <span className="font-medium">
+                          {wo.actual_duration_hours != null ? `${wo.actual_duration_hours}h` : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </TabsContent>
+              )}
+
+              <TabsContent value="audit" className="pt-3">
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">{t("detail.sections.history")}</h4>
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    <p>
+                      <Calendar className="inline h-3 w-3 mr-1" />
+                      {t("audit.created")}: {formatDate(wo.created_at)}
+                    </p>
+                    <p>
+                      <Calendar className="inline h-3 w-3 mr-1" />
+                      {t("audit.updated")}: {formatDate(wo.updated_at)}
+                    </p>
+                    {wo.closed_at && (
+                      <p>
+                        <Calendar className="inline h-3 w-3 mr-1" />
+                        {t("audit.closed")}: {formatDate(wo.closed_at)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="attachments" className="pt-3">
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">{t("execution.attachments")}</h4>
+                  <p className="text-xs text-muted-foreground">{t("execution.noAttachments")}</p>
+                </div>
+              </TabsContent>
+            </Tabs>
+          </div>
+
+          {/* ── Footer ──────────────────────────────────────────────── */}
+          <Separator />
+          <div className="flex items-center justify-between gap-2 px-6 py-3">
+            <div className="flex items-center gap-2">
+              <FooterActions
+                wo={wo}
+                saving={saving}
+                can={can}
+                t={t}
+                onPlan={() =>
+                  void planWorkOrder({
+                    id: wo.id,
+                    expected_row_version: wo.row_version,
+                  })
+                }
+                onAssign={() =>
+                  void assignWorkOrder({
+                    id: wo.id,
+                    expected_row_version: wo.row_version,
+                    assigned_to_id: wo.assigned_to_id ?? 0,
+                  })
+                }
+                onStart={() =>
+                  void startWorkOrder({
+                    id: wo.id,
+                    expected_row_version: wo.row_version,
+                  })
+                }
+                onPause={() =>
+                  void pauseWorkOrder({
+                    id: wo.id,
+                    expected_row_version: wo.row_version,
+                  })
+                }
+                onResume={() =>
+                  void resumeWorkOrder({
+                    id: wo.id,
+                    expected_row_version: wo.row_version,
+                  })
+                }
+                onComplete={openCompletionDialog}
+                onClose={() =>
+                  void closeWorkOrder({
+                    id: wo.id,
+                    expected_row_version: wo.row_version,
+                  })
+                }
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={handlePrint} className="gap-1.5">
+                <Printer className="h-3.5 w-3.5" />
+                {t("print.button")}
+              </Button>
+              <Button variant="outline" size="sm" onClick={onClose} className="gap-1.5">
+                <X className="h-3.5 w-3.5" />
+                {t("detail.close")}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Completion dialog (overlay on top of detail) */}
+      <WoCompletionDialog wo={wo} />
+    </>
+  );
+}
+
+// ── Footer action buttons ───────────────────────────────────────────────────
+
+interface FooterActionsProps {
+  wo: WorkOrder;
+  saving: boolean;
+  can: (p: string) => boolean;
+  t: (key: string) => string;
+  onPlan: () => void;
+  onAssign: () => void;
+  onStart: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onComplete: () => void;
+  onClose: () => void;
+}
+
+function FooterActions({
+  wo,
+  saving,
+  can,
+  t,
+  onPlan,
+  onAssign,
+  onStart,
+  onPause,
+  onResume,
+  onComplete,
+  onClose,
+}: FooterActionsProps) {
+  const s = wo.status as WoStatus;
+
+  return (
+    <>
+      {/* draft / planned → Schedule */}
+      {(s === "draft" || s === "planned") && can("ot.plan") && (
+        <Button size="sm" variant="outline" onClick={onPlan} disabled={saving} className="gap-1.5">
+          <Settings className="h-3.5 w-3.5" />
+          {t("footer.schedule")}
+        </Button>
+      )}
+
+      {/* ready_to_schedule → Assign */}
+      {s === "released" && can("ot.assign") && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onAssign}
+          disabled={saving}
+          className="gap-1.5"
+        >
+          <FileText className="h-3.5 w-3.5" />
+          {t("footer.assign")}
+        </Button>
+      )}
+
+      {/* assigned → Start + re-Assign */}
+      {(s as string) === "assigned" && (
+        <>
+          {can("ot.execute") && (
+            <Button
+              size="sm"
+              onClick={onStart}
+              disabled={saving}
+              className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+            >
+              <Play className="h-3.5 w-3.5" />
+              {t("action.start")}
+            </Button>
+          )}
+          {can("ot.assign") && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onAssign}
+              disabled={saving}
+              className="gap-1.5"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              {t("footer.assign")}
+            </Button>
+          )}
+        </>
+      )}
+
+      {/* in_progress → Pause + Complete */}
+      {s === "in_progress" && can("ot.execute") && (
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onPause}
+            disabled={saving}
+            className="gap-1.5"
+          >
+            <Pause className="h-3.5 w-3.5" />
+            {t("action.pause")}
+          </Button>
+          <Button
+            size="sm"
+            onClick={onComplete}
+            disabled={saving}
+            className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {t("action.complete")}
+          </Button>
+        </>
+      )}
+
+      {/* paused / on_hold → Resume */}
+      {(s === "on_hold" || (s as string) === "paused") && can("ot.execute") && (
+        <Button
+          size="sm"
+          onClick={onResume}
+          disabled={saving}
+          className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+        >
+          <Play className="h-3.5 w-3.5" />
+          {t("footer.resume")}
+        </Button>
+      )}
+
+      {/* mechanically_complete → Verify + Close */}
+      {(s as string) === "mechanically_complete" && (
+        <>
+          {can("ot.verify") && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onClose}
+              disabled={saving}
+              className="gap-1.5"
+            >
+              <ClipboardCheck className="h-3.5 w-3.5" />
+              {t("action.verify")}
+            </Button>
+          )}
+          {can("ot.close") && (
+            <Button size="sm" onClick={onClose} disabled={saving} className="gap-1.5">
+              {t("action.close")}
+            </Button>
+          )}
+        </>
+      )}
+
+      {/* technically_verified → Close */}
+      {(s as string) === "technically_verified" && can("ot.close") && (
+        <Button size="sm" onClick={onClose} disabled={saving} className="gap-1.5">
+          {t("action.close")}
+        </Button>
+      )}
+    </>
+  );
+}
+
+// ── Sub-components ──────────────────────────────────────────────────────────
+
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-muted-foreground">{label}:</span>
+      <span className="font-medium">{value}</span>
+    </div>
+  );
+}

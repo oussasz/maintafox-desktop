@@ -5,13 +5,15 @@
  * Three-pane layout: filters/model info | tree panel | node inspector.
  */
 
-import { AlertTriangle, Building2, RefreshCw } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { AlertTriangle, Building2, RefreshCw, Settings2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AuditTimeline } from "@/components/org/AuditTimeline";
 import { ImpactPreviewDrawer } from "@/components/org/ImpactPreviewDrawer";
 import { NodeInspectorPanel } from "@/components/org/NodeInspectorPanel";
+import { NodeTypeManagerPanel } from "@/components/org/NodeTypeManagerPanel";
+import { OrgExportMenu } from "@/components/org/OrgExportMenu";
 import { OrganizationTreePanel } from "@/components/org/OrganizationTreePanel";
 import { PublishReadinessBanner } from "@/components/org/PublishReadinessBanner";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +31,7 @@ import { useOrgDesignerStore } from "@/stores/org-designer-store";
 
 export function OrganizationDesignerPage() {
   const { t } = useTranslation("org");
+  const [typesPanelOpen, setTypesPanelOpen] = useState(false);
   const snapshot = useOrgDesignerStore((s) => s.snapshot);
   const loading = useOrgDesignerStore((s) => s.loading);
   const error = useOrgDesignerStore((s) => s.error);
@@ -94,16 +97,28 @@ export function OrganizationDesignerPage() {
             </Badge>
           )}
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void loadSnapshot()}
-          disabled={loading}
-          className="gap-1.5"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-          {t("designer.refresh")}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setTypesPanelOpen(true)}
+            className="gap-1.5"
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+            {t("designer.manageTypes")}
+          </Button>
+          <OrgExportMenu treeContainerId="org-tree-container" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void loadSnapshot()}
+            disabled={loading}
+            className="gap-1.5"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            {t("designer.refresh")}
+          </Button>
+        </div>
       </div>
 
       {/* No active model banner */}
@@ -118,7 +133,7 @@ export function OrganizationDesignerPage() {
       )}
 
       {/* Publish-readiness banner — shown when a draft model exists */}
-      <PublishReadinessBanner draftModelId={snapshot?.active_model_id ?? null} />
+      <PublishReadinessBanner draftModelId={snapshot?.draft_model_id ?? null} />
 
       {/* Three-pane workspace */}
       {hasActiveModel && (
@@ -194,7 +209,7 @@ export function OrganizationDesignerPage() {
           </aside>
 
           {/* Center: tree */}
-          <main className="flex-1 min-w-0 border-r border-surface-border">
+          <main id="org-tree-container" className="flex-1 min-w-0 border-r border-surface-border">
             <OrganizationTreePanel />
           </main>
 
@@ -215,6 +230,14 @@ export function OrganizationDesignerPage() {
           </aside>
         </div>
       )}
+
+      {/* Node type manager sheet */}
+      <NodeTypeManagerPanel
+        open={typesPanelOpen}
+        onOpenChange={setTypesPanelOpen}
+        structureModelId={snapshot?.active_model_id ?? null}
+        onTypesChanged={() => void loadSnapshot()}
+      />
 
       {/* Impact preview drawer — always mounted, visibility controlled by store */}
       <ImpactPreviewDrawer />

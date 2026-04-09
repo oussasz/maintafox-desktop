@@ -6,27 +6,46 @@
  * latest meter values, and document link count.
  */
 
-import { Activity, ArrowUpRight, FileText, Gauge, GitFork, Loader2, Tag } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowUpRight,
+  FileText,
+  Gauge,
+  GitFork,
+  Loader2,
+  Pencil,
+  Tag,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PermissionGate } from "@/components/PermissionGate";
 import { AssetBindingSummary } from "@/components/assets/AssetBindingSummary";
+import { AssetDecommissionModal } from "@/components/assets/AssetDecommissionModal";
+import { AssetHealthBadge } from "@/components/assets/AssetHealthBadge";
+import { AssetPhotoGallery } from "@/components/assets/AssetPhotoGallery";
+import { AssetQrCode } from "@/components/assets/AssetQrCode";
+import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  listAssetDocumentLinks,
   listAssetLifecycleEvents,
   listAssetMeters,
-  listAssetDocumentLinks,
 } from "@/services/asset-lifecycle-service";
 import { getAssetById, listAssetChildren } from "@/services/asset-service";
+import { useAssetStore } from "@/stores/asset-store";
 import { toErrorMessage } from "@/utils/errors";
 import type { Asset, AssetHierarchyRow, AssetLifecycleEvent, AssetMeter } from "@shared/ipc-types";
 
 interface AssetDetailPanelProps {
   assetId: number;
+  onToast?: (msg: string, variant?: "default" | "destructive") => void;
 }
 
-export function AssetDetailPanel({ assetId }: AssetDetailPanelProps) {
+export function AssetDetailPanel({ assetId, onToast }: AssetDetailPanelProps) {
   const { t } = useTranslation("equipment");
 
   const [asset, setAsset] = useState<Asset | null>(null);
@@ -36,6 +55,8 @@ export function AssetDetailPanel({ assetId }: AssetDetailPanelProps) {
   const [documentCount, setDocumentCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showDecommission, setShowDecommission] = useState(false);
+  const openEditForm = useAssetStore((s) => s.openEditForm);
 
   const loadDetail = useCallback(async (id: number) => {
     setLoading(true);
@@ -95,17 +116,49 @@ export function AssetDetailPanel({ assetId }: AssetDetailPanelProps) {
           <Row label={t("detail.fields.name")} value={asset.asset_name} />
           <Row label={t("detail.fields.class")} value={asset.class_name} />
           <Row label={t("detail.fields.family")} value={asset.family_name} />
-          <Row label={t("detail.fields.criticality")} value={asset.criticality_code} />
+          <Row label={t("detail.fields.criticality")}>
+            <CriticalityBadge criticality={asset.criticality_code} />
+          </Row>
           <Row label={t("detail.fields.status")}>
-            <Badge variant="outline" className="text-xs">
-              {asset.status_code}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-xs">
+                {asset.status_code}
+              </Badge>
+              <AssetHealthBadge assetId={assetId} compact />
+            </div>
           </Row>
           <Row label={t("detail.fields.site")} value={asset.org_node_name} />
           <Row label={t("detail.fields.manufacturer")} value={asset.manufacturer} />
           <Row label={t("detail.fields.model")} value={asset.model} />
           <Row label={t("detail.fields.serialNumber")} value={asset.serial_number} />
         </CardContent>
+
+        {/* Actions: Edit, QR, Decommission */}
+        <div className="px-6 pb-4 flex items-center gap-2 flex-wrap">
+          <PermissionGate permission="eq.manage">
+            <Button variant="outline" size="sm" onClick={() => openEditForm(asset)}>
+              <Pencil className="mr-1.5 h-3.5 w-3.5" />
+              {t("editForm.button")}
+            </Button>
+          </PermissionGate>
+          <AssetQrCode asset={asset} />
+        </div>
+
+        {asset.status_code !== "DECOMMISSIONED" && asset.status_code !== "SCRAPPED" && (
+          <PermissionGate permission="eq.manage">
+            <div className="px-6 pb-4">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-status-danger border-status-danger/30 hover:bg-status-danger/5"
+                onClick={() => setShowDecommission(true)}
+              >
+                <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
+                {t("decommission.action")}
+              </Button>
+            </div>
+          </PermissionGate>
+        )}
       </Card>
 
       {/* ── Hierarchy block ────────────────────────────────────────── */}
@@ -212,8 +265,25 @@ export function AssetDetailPanel({ assetId }: AssetDetailPanelProps) {
         </CardContent>
       </Card>
 
+      {/* ── Photo gallery ──────────────────────────────────────────── */}
+      <AssetPhotoGallery assetId={assetId} {...(onToast ? { onToast } : {})} />
+
       {/* ── Cross-module binding summary ───────────────────────────── */}
       <AssetBindingSummary assetId={assetId} />
+
+      {/* ── Decommission modal ─────────────────────────────────────── */}
+      {asset && (
+        <AssetDecommissionModal
+          open={showDecommission}
+          asset={asset}
+          onClose={() => setShowDecommission(false)}
+          onDecommissioned={(updated) => {
+            setShowDecommission(false);
+            setAsset(updated);
+            onToast?.(t("decommission.success"));
+          }}
+        />
+      )}
     </div>
   );
 }

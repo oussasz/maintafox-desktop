@@ -14,6 +14,24 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Rust: `commands/profile.rs` — 4 IPC commands for user profile management:
+  `get_my_profile`, `update_my_profile`, `change_password`, `get_session_history`
+- Rust: Argon2id password verification and rehashing in `change_password` with audit event
+- Frontend: error banners on DI, WO, and Asset create forms for visible submit feedback
+- i18n: `assetMissingOrgNode` validation key in EN and FR (`di.json`)
+
+### Fixed
+- DI create form: clicking "Create" did nothing when asset had no org_node_id —
+  now shows validation error instead of silently sending `org_node_id=0`
+- DI create form: catch block swallowed IPC errors — now surfaces error message in banner
+- WO create form: same silent-error pattern — added error state and banner
+- Asset create form: `closeForm()` ran even on submit failure — now only closes on success
+- DI list/detail Zod validation error (`is_modified: Expected boolean, received undefined`) —
+  changed to `z.boolean().default(false)` in di-service, di-conversion-service, di-review-service
+- Profile page infinite loading — 4 missing Rust IPC commands now implemented
+- `SessionHistoryEntry.id` type mismatch — `app_sessions.id` is TEXT (UUID), changed
+  Zod schema to `z.union([z.number(), z.string()])` and TS type to `number | string`
+
 - Monorepo scaffold: Tauri 2.x + React 18 + TypeScript 5 workspace structure
 - Rust application core with `AppError` typed error system and `AppResult<T>` alias
 - `health_check` IPC command with typed `HealthCheckResponse` contract in `shared/ipc-types.ts`

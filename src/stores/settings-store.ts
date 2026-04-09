@@ -12,7 +12,7 @@ import { create } from "zustand";
 
 import { getSessionPolicy } from "@/services/settings-service";
 import { toErrorMessage } from "@/utils/errors";
-import type { SessionPolicy } from "@shared/ipc-types";
+import type { PolicySnapshot, PolicyTestResult, SessionPolicy } from "@shared/ipc-types";
 
 interface SettingsState {
   /** Session policy — loaded at startup, defines idle/offline behavior. */
@@ -22,16 +22,45 @@ interface SettingsState {
   /** Error encountered during policy load, or null. Never thrown — Rust falls back to defaults. */
   policyError: string | null;
 
+  /** Currently selected category in the sidebar. */
+  activeCategory: string | null;
+  /** Policy domain currently being edited (e.g. "session", "backup"), or null. */
+  editingPolicy: string | null;
+
+  /** Draft policy snapshot being edited, or null. */
+  draftPolicy: PolicySnapshot | null;
+  /** Latest test results for the current draft. */
+  testResults: PolicyTestResult[] | null;
+  /** True while a draft/test/activate operation is in progress. */
+  policyOperationLoading: boolean;
+
   /** Load the active session policy from the backend. Never throws. */
   loadSessionPolicy: () => Promise<void>;
   /** Replace the cached policy after an admin activates a new policy snapshot. */
   applySessionPolicy: (policy: SessionPolicy) => void;
+  /** Set the active category in the sidebar. */
+  setActiveCategory: (category: string | null) => void;
+  /** Open the policy editor for a governed setting domain. */
+  openPolicyEditor: (domain: string) => void;
+  /** Close the policy editor. */
+  closePolicyEditor: () => void;
+  /** Store a draft snapshot in the local state. */
+  setDraftPolicy: (draft: PolicySnapshot | null) => void;
+  /** Store test results from backend validation. */
+  setTestResults: (results: PolicyTestResult[] | null) => void;
+  /** Set the loading flag for policy operations. */
+  setPolicyOperationLoading: (loading: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()((set) => ({
   sessionPolicy: null,
   policyLoading: false,
   policyError: null,
+  activeCategory: null,
+  editingPolicy: null,
+  draftPolicy: null,
+  testResults: null,
+  policyOperationLoading: false,
 
   loadSessionPolicy: async () => {
     set({ policyLoading: true, policyError: null });
@@ -50,4 +79,16 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
   },
 
   applySessionPolicy: (policy) => set({ sessionPolicy: policy }),
+
+  setActiveCategory: (category) => set({ activeCategory: category }),
+
+  openPolicyEditor: (domain) => set({ editingPolicy: domain }),
+
+  closePolicyEditor: () => set({ editingPolicy: null, draftPolicy: null, testResults: null }),
+
+  setDraftPolicy: (draft) => set({ draftPolicy: draft }),
+
+  setTestResults: (results) => set({ testResults: results }),
+
+  setPolicyOperationLoading: (loading) => set({ policyOperationLoading: loading }),
 }));
