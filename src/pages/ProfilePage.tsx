@@ -283,7 +283,7 @@ export function ProfilePage() {
                     );
                     if (!pw) return;
                     try {
-                      await clearPin({ password: pw });
+                      await clearPin({ current_password: pw });
                       await loadData();
                     } catch {
                       /* ignore */
@@ -527,7 +527,7 @@ function PinSetupDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess
     }
     setSubmitting(true);
     try {
-      await setPin({ pin, password });
+      await setPin({ new_pin: pin, current_password: password });
       onSuccess();
     } catch {
       setError(t("profile.pinError", "PIN setup failed."));

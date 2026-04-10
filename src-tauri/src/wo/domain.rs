@@ -224,6 +224,7 @@ pub struct WorkOrder {
     // Timing
     pub planned_start: Option<String>,
     pub planned_end: Option<String>,
+    pub shift: Option<String>,
     pub scheduled_at: Option<String>,
     pub actual_start: Option<String>,
     pub actual_end: Option<String>,
@@ -251,6 +252,7 @@ pub struct WorkOrder {
     // Metadata
     pub notes: Option<String>,
     pub cancel_reason: Option<String>,
+    pub parts_actuals_confirmed: bool,
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -317,6 +319,7 @@ pub struct WoCreateInput {
     pub notes: Option<String>,
     pub planned_start: Option<String>,
     pub planned_end: Option<String>,
+    pub shift: Option<String>,
     pub expected_duration_hours: Option<f64>,
     pub creator_id: i64,
 }
@@ -333,6 +336,7 @@ pub struct WoDraftUpdateInput {
     pub description: Option<String>,
     pub planned_start: Option<String>,
     pub planned_end: Option<String>,
+    pub shift: Option<String>,
     pub expected_duration_hours: Option<f64>,
     pub notes: Option<String>,
     pub urgency_id: Option<i64>,
@@ -419,6 +423,9 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         planned_end: row
             .try_get::<Option<String>>("", "planned_end")
             .map_err(|e| decode_err("planned_end", e))?,
+        shift: row
+            .try_get::<Option<String>>("", "shift")
+            .map_err(|e| decode_err("shift", e))?,
         scheduled_at: row
             .try_get::<Option<String>>("", "scheduled_at")
             .map_err(|e| decode_err("scheduled_at", e))?,
@@ -488,6 +495,10 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         cancel_reason: row
             .try_get::<Option<String>>("", "cancel_reason")
             .map_err(|e| decode_err("cancel_reason", e))?,
+        parts_actuals_confirmed: row
+            .try_get::<i64>("", "parts_actuals_confirmed")
+            .map_err(|e| decode_err("parts_actuals_confirmed", e))?
+            != 0,
         row_version: row
             .try_get::<i64>("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,

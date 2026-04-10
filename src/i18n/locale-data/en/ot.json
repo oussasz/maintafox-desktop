@@ -182,6 +182,7 @@
       "team": "Team",
       "plannedStart": "Planned start",
       "plannedEnd": "Planned end",
+      "shift": "Shift",
       "actualStart": "Actual start",
       "actualEnd": "Actual end",
       "estimatedHours": "Estimated hours",

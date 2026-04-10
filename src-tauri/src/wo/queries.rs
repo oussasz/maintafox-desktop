@@ -62,7 +62,7 @@ const WO_COLS: &str = "\
     wo.requester_id, wo.source_di_id, wo.entity_id, \
     wo.planner_id, wo.approver_id, wo.assigned_group_id, wo.primary_responsible_id, \
     wo.urgency_id, wo.title, wo.description, \
-    wo.planned_start, wo.planned_end, wo.scheduled_at, \
+    wo.planned_start, wo.planned_end, wo.shift, wo.scheduled_at, \
     wo.actual_start, wo.actual_end, \
     wo.mechanically_completed_at, wo.technically_verified_at, \
     wo.closed_at, wo.cancelled_at, \
@@ -71,7 +71,7 @@ const WO_COLS: &str = "\
     wo.labor_cost, wo.parts_cost, wo.service_cost, wo.total_cost, \
     wo.recurrence_risk_level, wo.production_impact_id, \
     wo.root_cause_summary, wo.corrective_action_summary, wo.verification_method, \
-    wo.notes, wo.cancel_reason, wo.row_version, wo.created_at, wo.updated_at";
+    wo.notes, wo.cancel_reason, wo.parts_actuals_confirmed, wo.row_version, wo.created_at, wo.updated_at";
 
 /// Join columns appended when full joins are present.
 const WO_JOIN_COLS: &str = "\
@@ -329,9 +329,9 @@ pub async fn create_work_order(
             code, type_id, status_id, equipment_id, location_id, \
             source_di_id, entity_id, planner_id, requester_id, urgency_id, \
             title, description, notes, \
-            planned_start, planned_end, expected_duration_hours, \
+            planned_start, planned_end, shift, expected_duration_hours, \
             row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             input.type_id.into(),
@@ -348,6 +348,7 @@ pub async fn create_work_order(
             input.notes.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
             input.planned_start.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
             input.planned_end.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
+            input.shift.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
             input.expected_duration_hours.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<f64>)),
             now.clone().into(),
             now.clone().into(),
@@ -461,6 +462,10 @@ pub async fn update_wo_draft_fields(
     if let Some(ref planned_end) = input.planned_end {
         sets.push("planned_end = ?".into());
         values.push(planned_end.clone().into());
+    }
+    if let Some(ref shift) = input.shift {
+        sets.push("shift = ?".into());
+        values.push(shift.clone().into());
     }
     if let Some(expected_duration_hours) = input.expected_duration_hours {
         sets.push("expected_duration_hours = ?".into());

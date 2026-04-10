@@ -182,6 +182,7 @@
       "team": "Équipe",
       "plannedStart": "Début planifié",
       "plannedEnd": "Fin planifiée",
+      "shift": "Poste",
       "actualStart": "Début réel",
       "actualEnd": "Fin réelle",
       "estimatedHours": "Heures estimées",

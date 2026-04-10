@@ -26,6 +26,7 @@ import type {
   WoPartUsage,
   WoPauseInput,
   WoPlanInput,
+  WoPreflightError,
   WoResumeInput,
   WoStartInput,
   WoStatsPayload,
@@ -72,6 +73,7 @@ export const WorkOrderSchema = z.object({
   description: z.string().nullable(),
   planned_start: z.string().nullable(),
   planned_end: z.string().nullable(),
+  shift: z.enum(["morning", "afternoon", "night", "full_day"]).nullable(),
   scheduled_at: z.string().nullable(),
   actual_start: z.string().nullable(),
   actual_end: z.string().nullable(),
@@ -135,21 +137,15 @@ const WoGetResponseSchema = z.object({
   transitions: z.array(WoTransitionRowSchema),
 });
 
-const WoPreflightErrorSchema = z.object({
-  code: z.string(),
-  message: z.string(),
-});
-
-const WoMechCompleteResponseSchema = z.object({
-  wo: WorkOrderSchema,
-  errors: z.array(WoPreflightErrorSchema),
-});
-
 // ── Error helpers ─────────────────────────────────────────────────────────────
 
 interface IpcError {
   code: string;
   message: string;
+}
+
+interface IpcErrorLike extends IpcError {
+  errors?: unknown;
 }
 
 function isIpcError(err: unknown): err is IpcError {
@@ -161,6 +157,51 @@ export class VersionConflictError extends Error {
     super(message);
     this.name = "VersionConflictError";
   }
+}
+
+export class CompletionBlockedError extends Error {
+  errors: WoPreflightError[];
+
+  constructor(errors: WoPreflightError[]) {
+    super("Mechanical completion blocked.");
+    this.name = "CompletionBlockedError";
+    this.errors = errors;
+  }
+}
+
+export function normalizePreflightCode(message: string): string {
+  const lower = message.toLowerCase();
+
+  if (lower.includes("open labor") || lower.includes("main-d'œuvre ouvertes")) {
+    return "OPEN_LABOR";
+  }
+  if (lower.includes("mandatory tasks incomplete") || lower.includes("tâches obligatoires")) {
+    return "INCOMPLETE_TASKS";
+  }
+  if (lower.includes("parts actuals") || lower.includes("pièces")) {
+    return "MISSING_PARTS";
+  }
+  if (lower.includes("open downtime") || lower.includes("temps d'arrêt ouverts")) {
+    return "OPEN_DOWNTIME";
+  }
+
+  return "BLOCKING_ERROR";
+}
+
+function extractPreflightErrors(err: unknown): WoPreflightError[] {
+  const ipc = err as IpcErrorLike;
+
+  if (Array.isArray(ipc?.errors)) {
+    return ipc.errors
+      .filter((value): value is string => typeof value === "string")
+      .map((message) => ({ code: normalizePreflightCode(message), message }));
+  }
+
+  if (isIpcError(err) && err.message) {
+    return [{ code: normalizePreflightCode(err.message), message: err.message }];
+  }
+
+  return [{ code: "BLOCKING_ERROR", message: "Mechanical completion blocked." }];
 }
 
 function rethrowIfVersionConflict(err: unknown): never {
@@ -250,8 +291,14 @@ export async function completeWoMechanically(
 ): Promise<WoMechCompleteResponse> {
   try {
     const raw = await invoke<unknown>("complete_wo_mechanically", { input });
-    return WoMechCompleteResponseSchema.parse(raw) as WoMechCompleteResponse;
+    return {
+      wo: WorkOrderSchema.parse(raw) as WorkOrder,
+      errors: [],
+    };
   } catch (err) {
+    if (isIpcError(err) && err.code === "VALIDATION_FAILED") {
+      throw new CompletionBlockedError(extractPreflightErrors(err));
+    }
     rethrowIfVersionConflict(err);
   }
 }

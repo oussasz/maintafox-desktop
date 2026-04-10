@@ -32,10 +32,9 @@ export function AuthGuard() {
 
   const handleUnlockWithPin = useCallback(
     async (pin: string) => {
-      const info = await unlockSessionWithPin({ pin });
+      await unlockSessionWithPin({ pin });
       // Force session refresh to pick up the new state
       void session.refresh();
-      return info;
     },
     [session],
   );

@@ -1,355 +1,656 @@
-/**
- * WoExecutionControls.tsx
- *
- * Execution sub-panel for WoDetailDialog "Execution" tab.
- * Shows: labor entries with start/stop timers, task checklist,
- * and parts usage tracking.
- *
- * Phase 2 – Sub-phase 05 – File 02 – Sprint S4.
- */
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { CheckSquare, Clock, Package, Pause, Play, Plus, Square, UserCog } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
-import { addLabor, closeLabor, completeTask, listLabor, listTasks } from "@/services/wo-service";
-import type { WoLaborEntry, WoTask, WorkOrder } from "@shared/ipc-types";
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatHours(hours: number | null): string {
-  if (hours == null) return "—";
-  return `${hours.toFixed(1)}h`;
-}
-
-function formatDatetime(iso: string | null): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
-
-// ── Component ───────────────────────────────────────────────────────────────
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { useSession } from "@/hooks/use-session";
+import { getLookupValues } from "@/services/lookup-service";
+import {
+  addLabor,
+  completeTask,
+  confirmNoParts,
+  holdWo,
+  listDelaySegments,
+  listDowntimeSegments,
+  listLabor,
+  listParts,
+  listTasks,
+  pauseWo,
+  recordPartUsage,
+  resumeWo,
+  startWo,
+  closeLabor,
+  type TaskResultCode,
+  type WoDelaySegment,
+  type WoIntervener,
+  type WoPart,
+  type WoTask,
+} from "@/services/wo-execution-service";
+import { useWoStore } from "@/stores/wo-store";
+import type { WorkOrder } from "@shared/ipc-types";
 
 interface WoExecutionControlsProps {
   wo: WorkOrder;
+  canEdit: boolean;
 }
 
-export function WoExecutionControls({ wo }: WoExecutionControlsProps) {
-  const { t } = useTranslation("ot");
+type DelayIntent = "pause" | "hold";
 
-  const [laborEntries, setLaborEntries] = useState<WoLaborEntry[]>([]);
+interface DelayReasonOption {
+  id: number;
+  label: string;
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return "-";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
+}
+
+function toErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return fallback;
+}
+
+const EXECUTION_EDITABLE_STATUSES = new Set([
+  "assigned",
+  "waiting_for_prerequisite",
+  "in_progress",
+  "paused",
+]);
+
+const TASK_RESULT_OPTIONS: TaskResultCode[] = ["ok", "nok", "na", "deferred"];
+
+export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
+  const { info } = useSession();
+  const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
+  const openCompletionDialog = useWoStore((s) => s.openCompletionDialog);
+
+  const [statusCode, setStatusCode] = useState(wo.status_code ?? "draft");
+  const [rowVersion, setRowVersion] = useState(wo.row_version);
+
+  const [laborEntries, setLaborEntries] = useState<WoIntervener[]>([]);
+  const [parts, setParts] = useState<WoPart[]>([]);
   const [tasks, setTasks] = useState<WoTask[]>([]);
-  const [laborLoading, setLaborLoading] = useState(false);
-  const [tasksLoading, setTasksLoading] = useState(false);
+  const [, setDelaySegments] = useState<WoDelaySegment[]>([]);
 
-  // Manual labor fields
+  const [reasonOptions, setReasonOptions] = useState<DelayReasonOption[]>([]);
+
+  const [partUsage, setPartUsage] = useState<Record<number, string>>({});
+  const [taskResultCodes, setTaskResultCodes] = useState<Record<number, TaskResultCode>>({});
+
+  const [delayIntent, setDelayIntent] = useState<DelayIntent | null>(null);
+  const [delayReasonId, setDelayReasonId] = useState("");
+  const [delayComment, setDelayComment] = useState("");
+  const [delayError, setDelayError] = useState<string | null>(null);
+
+  const [intervenerIdInput, setIntervenerIdInput] = useState("");
   const [manualHours, setManualHours] = useState("");
 
-  // ── Load labor + tasks ──────────────────────────────────────────────
+  const [busy, setBusy] = useState(false);
+  const [, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const loadLabor = useCallback(async () => {
-    setLaborLoading(true);
-    try {
-      const entries = await listLabor(wo.id);
-      setLaborEntries(entries);
-    } catch {
-      // Silently handle — IPC may not yet be wired
-    } finally {
-      setLaborLoading(false);
+  useEffect(() => {
+    setStatusCode(wo.status_code ?? "draft");
+    setRowVersion(wo.row_version);
+  }, [wo]);
+
+  useEffect(() => {
+    if (!intervenerIdInput && (wo.primary_responsible_id || info?.user_id)) {
+      setIntervenerIdInput(String(wo.primary_responsible_id ?? info?.user_id ?? ""));
     }
-  }, [wo.id]);
+  }, [intervenerIdInput, wo.primary_responsible_id, info?.user_id]);
 
-  const loadTasks = useCallback(async () => {
-    setTasksLoading(true);
+  const loadData = useCallback(async () => {
+    setLoading(true);
     try {
-      const items = await listTasks(wo.id);
-      setTasks(items);
-    } catch {
-      // Silently handle
+      const [laborRows, partRows, taskRows, delayRows, downtimeRows, lookupReasons] =
+        await Promise.all([
+          listLabor(wo.id),
+          listParts(wo.id).catch(() => []),
+          listTasks(wo.id).catch(() => []),
+          listDelaySegments(wo.id).catch(() => []),
+          listDowntimeSegments(wo.id).catch(() => []),
+          getLookupValues("delay_reason_codes").catch(() => []),
+        ]);
+
+      setLaborEntries(laborRows);
+      setParts(partRows);
+      setTasks(taskRows);
+      setDelaySegments(delayRows);
+
+      const usageSeed: Record<number, string> = {};
+      partRows.forEach((part) => {
+        usageSeed[part.id] = part.quantity_used != null ? String(part.quantity_used) : "";
+      });
+      setPartUsage(usageSeed);
+
+      const fromLookup: DelayReasonOption[] = lookupReasons.map((r) => ({
+        id: r.id,
+        label: r.label,
+      }));
+
+      const knownIds = new Set(fromLookup.map((r) => r.id));
+      const fromHistory: DelayReasonOption[] = delayRows
+        .filter((row) => row.delay_reason_id != null)
+        .map((row) => row.delay_reason_id as number)
+        .filter((id, idx, arr) => arr.indexOf(id) === idx)
+        .filter((id) => !knownIds.has(id))
+        .map((id) => ({ id, label: `Reason #${id}` }));
+
+      const mergedReasons = [...fromLookup, ...fromHistory];
+      const fallbackReasons = Array.from({ length: 10 }, (_, idx) => ({
+        id: idx + 1,
+        label: `Reason #${idx + 1}`,
+      }));
+
+      setReasonOptions(mergedReasons.length > 0 ? mergedReasons : fallbackReasons);
+
+      if (downtimeRows.length > 0) {
+        void downtimeRows;
+      }
+    } catch (e) {
+      setError(toErrorMessage(e, "Unable to load execution data."));
     } finally {
-      setTasksLoading(false);
+      setLoading(false);
     }
   }, [wo.id]);
 
   useEffect(() => {
-    void loadLabor();
-    void loadTasks();
-  }, [loadLabor, loadTasks]);
+    void loadData();
+  }, [loadData]);
 
-  // ── Labor start/stop handlers ───────────────────────────────────────
+  const actorId = info?.user_id ?? null;
+  const controlsDisabled = !canEdit || !EXECUTION_EDITABLE_STATUSES.has(statusCode) || busy;
 
-  const handleStartLabor = useCallback(
-    async (intervenerId: number) => {
-      await addLabor({
-        work_order_id: wo.id,
-        intervener_id: intervenerId,
-        started_at: new Date().toISOString(),
-      });
-      void loadLabor();
+  const handleRefreshState = useCallback(
+    async (next: WorkOrder) => {
+      setRowVersion(next.row_version);
+      setStatusCode(next.status_code ?? statusCode);
+      await refreshActiveWo();
+      await loadData();
     },
-    [wo.id, loadLabor],
+    [refreshActiveWo, loadData, statusCode],
   );
+
+  const handleStart = useCallback(async () => {
+    if (!actorId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await startWo({
+        wo_id: wo.id,
+        actor_id: actorId,
+        expected_row_version: rowVersion,
+      });
+      await handleRefreshState(next);
+    } catch (e) {
+      setError(toErrorMessage(e, "Unable to start work order."));
+    } finally {
+      setBusy(false);
+    }
+  }, [actorId, wo.id, rowVersion, handleRefreshState]);
+
+  const handleResume = useCallback(async () => {
+    if (!actorId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await resumeWo({
+        wo_id: wo.id,
+        actor_id: actorId,
+        expected_row_version: rowVersion,
+      });
+      await handleRefreshState(next);
+    } catch (e) {
+      setError(toErrorMessage(e, "Unable to resume work order."));
+    } finally {
+      setBusy(false);
+    }
+  }, [actorId, wo.id, rowVersion, handleRefreshState]);
+
+  const openDelayForm = useCallback((intent: DelayIntent) => {
+    setDelayIntent(intent);
+    setDelayReasonId("");
+    setDelayComment("");
+    setDelayError(null);
+  }, []);
+
+  const submitDelayAction = useCallback(async () => {
+    if (!actorId || !delayIntent) return;
+
+    if (!delayReasonId) {
+      setDelayError("Delay reason is required.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setDelayError(null);
+    try {
+      const input = {
+        wo_id: wo.id,
+        actor_id: actorId,
+        expected_row_version: rowVersion,
+        delay_reason_id: Number(delayReasonId),
+        comment: delayComment.trim() ? delayComment.trim() : null,
+      };
+
+      const next = delayIntent === "pause" ? await pauseWo(input) : await holdWo(input);
+      setDelayIntent(null);
+      await handleRefreshState(next);
+    } catch (e) {
+      setError(toErrorMessage(e, "Unable to submit delay action."));
+    } finally {
+      setBusy(false);
+    }
+  }, [actorId, delayIntent, delayReasonId, delayComment, wo.id, rowVersion, handleRefreshState]);
+
+  const handleStartLabor = useCallback(async () => {
+    if (!actorId) return;
+    const intervenerId = Number(intervenerIdInput);
+    if (!Number.isFinite(intervenerId) || intervenerId <= 0) {
+      setError("Intervener ID is required.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await addLabor({
+        wo_id: wo.id,
+        intervener_id: intervenerId,
+        started_at: nowIso(),
+      });
+      await loadData();
+    } catch (e) {
+      setError(toErrorMessage(e, "Unable to start labor entry."));
+    } finally {
+      setBusy(false);
+    }
+  }, [actorId, intervenerIdInput, wo.id, loadData]);
 
   const handleStopLabor = useCallback(
-    async (entry: WoLaborEntry) => {
-      await closeLabor({
-        id: entry.id,
-        ended_at: new Date().toISOString(),
-        hours_worked: manualHours ? Number(manualHours) : null,
+    async (entryId: number) => {
+      if (!actorId) return;
+      setBusy(true);
+      setError(null);
+      try {
+        await closeLabor(entryId, nowIso(), actorId);
+        await loadData();
+      } catch (e) {
+        setError(toErrorMessage(e, "Unable to close labor entry."));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [actorId, loadData],
+  );
+
+  const handleManualLabor = useCallback(async () => {
+    if (!actorId) return;
+    const intervenerId = Number(intervenerIdInput);
+    const hours = Number(manualHours);
+
+    if (
+      !Number.isFinite(intervenerId) ||
+      intervenerId <= 0 ||
+      !Number.isFinite(hours) ||
+      hours <= 0
+    ) {
+      setError("Intervener ID and manual hours must be valid.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await addLabor({
+        wo_id: wo.id,
+        intervener_id: intervenerId,
+        hours_worked: hours,
       });
       setManualHours("");
-      void loadLabor();
+      await loadData();
+    } catch (e) {
+      setError(toErrorMessage(e, "Unable to add manual labor entry."));
+    } finally {
+      setBusy(false);
+    }
+  }, [actorId, intervenerIdInput, manualHours, wo.id, loadData]);
+
+  const handleRecordPartUsage = useCallback(
+    async (partId: number) => {
+      const value = Number(partUsage[partId] ?? "");
+      if (!Number.isFinite(value) || value < 0) {
+        setError("Quantity used must be a valid non-negative number.");
+        return;
+      }
+
+      setBusy(true);
+      setError(null);
+      try {
+        await recordPartUsage(partId, value);
+        await loadData();
+      } catch (e) {
+        setError(toErrorMessage(e, "Unable to record part usage."));
+      } finally {
+        setBusy(false);
+      }
     },
-    [loadLabor, manualHours],
+    [partUsage, loadData],
   );
 
-  // ── Task completion handler ─────────────────────────────────────────
+  const handleNoParts = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await confirmNoParts(wo.id);
+      await loadData();
+    } catch (e) {
+      setError(toErrorMessage(e, "Unable to confirm no parts used."));
+    } finally {
+      setBusy(false);
+    }
+  }, [wo.id, loadData]);
 
   const handleCompleteTask = useCallback(
-    async (taskId: number) => {
-      await completeTask(taskId);
-      void loadTasks();
+    async (task: WoTask) => {
+      if (!actorId) return;
+      const resultCode = taskResultCodes[task.id] ?? "ok";
+      setBusy(true);
+      setError(null);
+      try {
+        await completeTask(task.id, actorId, resultCode);
+        await loadData();
+      } catch (e) {
+        setError(toErrorMessage(e, "Unable to complete task."));
+      } finally {
+        setBusy(false);
+      }
     },
-    [loadTasks],
+    [actorId, taskResultCodes, loadData],
   );
 
-  // ── Derived ─────────────────────────────────────────────────────────
-
-  const openLaborEntries = laborEntries.filter((e) => e.started_at && !e.ended_at);
-  const closedLaborEntries = laborEntries.filter((e) => e.ended_at);
-  const completedTasks = tasks.filter((t) => t.is_completed);
-  const totalTasks = tasks.length;
+  const openLaborEntries = useMemo(
+    () => laborEntries.filter((row) => !row.ended_at),
+    [laborEntries],
+  );
 
   return (
     <div className="space-y-4">
-      {/* ── Labor section ─────────────────────────────────────────── */}
-      <Card>
-        <CardHeader className="px-4 py-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <UserCog className="h-4 w-4" />
-            {t("detail.sections.labor")}
-            <Badge variant="secondary" className="text-[10px]">
-              {laborEntries.length}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-3">
-          {laborLoading ? (
-            <p className="text-xs text-muted-foreground">{t("empty.noLabor")}</p>
-          ) : laborEntries.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{t("empty.noLabor")}</p>
-          ) : (
-            <div className="space-y-2">
-              {/* Active labor (in progress) */}
-              {openLaborEntries.map((entry) => (
-                <div
-                  key={entry.id}
-                  className="flex items-center gap-3 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-sm"
-                >
-                  <Play className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <span className="font-medium">
-                      {entry.intervener_name ?? `#${entry.intervener_id}`}
-                    </span>
-                    {entry.skill && (
-                      <span className="text-muted-foreground text-xs ml-1.5">({entry.skill})</span>
-                    )}
-                    <span className="text-xs text-muted-foreground ml-2">
-                      {t("execution.startedAt")}: {formatDatetime(entry.started_at)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Input
-                      type="number"
-                      min={0}
-                      step={0.5}
-                      value={manualHours}
-                      onChange={(e) => setManualHours(e.target.value)}
-                      placeholder="h"
-                      className="h-7 w-16 text-xs"
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 gap-1 text-xs border-red-300 text-red-700 hover:bg-red-50"
-                      onClick={() => void handleStopLabor(entry)}
-                    >
-                      <Pause className="h-3 w-3" />
-                      {t("execution.stop")}
-                    </Button>
-                  </div>
-                </div>
-              ))}
+      {error && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
-              {/* Closed labor entries */}
-              {closedLaborEntries.map((entry) => (
-                <div
-                  key={entry.id}
-                  className="flex items-center gap-3 rounded-md border p-2.5 text-sm"
-                >
-                  <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <span className="font-medium">
-                      {entry.intervener_name ?? `#${entry.intervener_id}`}
-                    </span>
-                    {entry.skill && (
-                      <span className="text-muted-foreground text-xs ml-1.5">({entry.skill})</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
-                    <span>
-                      {formatDatetime(entry.started_at)} → {formatDatetime(entry.ended_at)}
-                    </span>
-                    <Badge variant="secondary" className="text-[10px]">
-                      {formatHours(entry.hours_worked)}
-                    </Badge>
-                    {entry.hourly_rate != null && (
-                      <span className="tabular-nums">{entry.hourly_rate}€/h</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Quick add labor button */}
-          {wo.status_code === "in_progress" && (
-            <div className="pt-2">
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold">Execution Controls</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          {(statusCode === "assigned" || statusCode === "waiting_for_prerequisite") && (
+            <>
+              <Button onClick={() => void handleStart()} disabled={controlsDisabled || !actorId}>
+                Start
+              </Button>
               <Button
                 variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => void handleStartLabor(wo.primary_responsible_id ?? 0)}
+                onClick={() => openDelayForm("hold")}
+                disabled={controlsDisabled || !actorId}
               >
-                <Plus className="h-3 w-3" />
-                {t("action.addLabor")}
+                Hold
+              </Button>
+            </>
+          )}
+
+          {statusCode === "in_progress" && (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => openDelayForm("pause")}
+                disabled={controlsDisabled || !actorId}
+              >
+                Pause
+              </Button>
+              <Button onClick={openCompletionDialog} disabled={controlsDisabled || !actorId}>
+                Complete (Mech)
+              </Button>
+            </>
+          )}
+
+          {statusCode === "paused" && (
+            <Button onClick={() => void handleResume()} disabled={controlsDisabled || !actorId}>
+              Resume
+            </Button>
+          )}
+
+          {statusCode === "mechanically_complete" && (
+            <span className="text-sm text-muted-foreground">
+              No execution actions at this status.
+            </span>
+          )}
+        </div>
+
+        {delayIntent && (
+          <div className="rounded-md border p-3">
+            <div className="mb-2 text-sm font-medium">
+              {delayIntent === "pause" ? "Pause Work Order" : "Hold for Prerequisite"}
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label>Delay Reason</Label>
+                <Select value={delayReasonId} onValueChange={setDelayReasonId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select reason" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {reasonOptions.map((reason) => (
+                      <SelectItem key={reason.id} value={String(reason.id)}>
+                        {reason.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>Comment (optional)</Label>
+                <Textarea
+                  rows={2}
+                  value={delayComment}
+                  onChange={(e) => setDelayComment(e.target.value)}
+                  placeholder="Add context"
+                />
+              </div>
+            </div>
+            {delayError && <div className="mt-2 text-sm text-red-700">{delayError}</div>}
+            <div className="mt-3 flex items-center gap-2">
+              <Button onClick={() => void submitDelayAction()} disabled={busy || !actorId}>
+                Submit
+              </Button>
+              <Button variant="outline" onClick={() => setDelayIntent(null)}>
+                Cancel
               </Button>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        )}
+      </section>
 
-      {/* ── Tasks section ─────────────────────────────────────────── */}
-      <Card>
-        <CardHeader className="px-4 py-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <CheckSquare className="h-4 w-4" />
-            {t("execution.tasks")}
-            {totalTasks > 0 && (
-              <Badge variant="secondary" className="text-[10px]">
-                {completedTasks.length}/{totalTasks}
-              </Badge>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-3">
-          {tasksLoading ? (
-            <p className="text-xs text-muted-foreground">…</p>
-          ) : tasks.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{t("execution.noTasks")}</p>
-          ) : (
-            <div className="space-y-1.5">
-              {tasks.map((task) => (
-                <div key={task.id} className="flex items-center gap-2 text-sm">
-                  <button
-                    type="button"
-                    className="shrink-0"
-                    disabled={task.is_completed || wo.status_code !== "in_progress"}
-                    onClick={() => void handleCompleteTask(task.id)}
-                  >
-                    {task.is_completed ? (
-                      <CheckSquare className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <Square className="h-4 w-4 text-muted-foreground hover:text-foreground" />
-                    )}
-                  </button>
-                  <span
-                    className={`flex-1 ${task.is_completed ? "line-through text-muted-foreground" : ""}`}
-                  >
-                    <span className="text-xs text-muted-foreground mr-1.5">{task.sequence}.</span>
-                    {task.description}
-                    {task.is_mandatory && (
-                      <Badge
-                        variant="outline"
-                        className="text-[9px] ml-1.5 border-red-200 text-red-600"
-                      >
-                        {t("execution.mandatory")}
-                      </Badge>
-                    )}
-                  </span>
-                  {task.completed_at && (
-                    <span className="text-[10px] text-muted-foreground shrink-0">
-                      {formatDatetime(task.completed_at)}
-                    </span>
+      <details open>
+        <summary className="cursor-pointer text-sm font-semibold">Labor Entries</summary>
+        <div className="mt-3 space-y-3 rounded-md border p-3">
+          <div className="grid gap-2 md:grid-cols-[180px_140px_auto_auto]">
+            <Input
+              type="number"
+              placeholder="Intervener ID"
+              value={intervenerIdInput}
+              onChange={(e) => setIntervenerIdInput(e.target.value)}
+              disabled={controlsDisabled}
+            />
+            <Input
+              type="number"
+              placeholder="Manual hours"
+              value={manualHours}
+              onChange={(e) => setManualHours(e.target.value)}
+              disabled={controlsDisabled}
+            />
+            <Button
+              variant="outline"
+              onClick={() => void handleStartLabor()}
+              disabled={controlsDisabled || !actorId}
+            >
+              Start Labor
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void handleManualLabor()}
+              disabled={controlsDisabled || !actorId}
+            >
+              Add Manual Hours
+            </Button>
+          </div>
+
+          {openLaborEntries.length === 0 && (
+            <div className="text-sm text-muted-foreground">No open labor entries.</div>
+          )}
+
+          {laborEntries.map((entry) => (
+            <div
+              key={entry.id}
+              className="grid gap-2 rounded-md border p-2 md:grid-cols-[120px_1fr_1fr_120px_auto]"
+            >
+              <div className="text-sm font-medium">#{entry.intervener_id}</div>
+              <div className="text-sm">Start: {formatDateTime(entry.started_at)}</div>
+              <div className="text-sm">End: {formatDateTime(entry.ended_at)}</div>
+              <div className="text-sm">Hours: {entry.hours_worked ?? "-"}</div>
+              {!entry.ended_at && (
+                <Button
+                  size="sm"
+                  onClick={() => void handleStopLabor(entry.id)}
+                  disabled={controlsDisabled || !actorId}
+                >
+                  Stop
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      </details>
+
+      <details open>
+        <summary className="cursor-pointer text-sm font-semibold">Parts Used</summary>
+        <div className="mt-3 space-y-2 rounded-md border p-3">
+          {parts.length === 0 && (
+            <div className="text-sm text-muted-foreground">No planned parts available.</div>
+          )}
+          {parts.map((part) => (
+            <div
+              key={part.id}
+              className="grid gap-2 rounded-md border p-2 md:grid-cols-[2fr_130px_130px_auto]"
+            >
+              <div className="text-sm">{part.article_ref || `Part #${part.id}`}</div>
+              <div className="text-sm">Planned: {part.quantity_planned}</div>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={partUsage[part.id] ?? ""}
+                onChange={(e) => setPartUsage((prev) => ({ ...prev, [part.id]: e.target.value }))}
+                disabled={controlsDisabled}
+              />
+              <Button
+                size="sm"
+                onClick={() => void handleRecordPartUsage(part.id)}
+                disabled={controlsDisabled}
+              >
+                Save Usage
+              </Button>
+            </div>
+          ))}
+          <Button
+            variant="outline"
+            onClick={() => void handleNoParts()}
+            disabled={controlsDisabled}
+          >
+            No Parts Used
+          </Button>
+        </div>
+      </details>
+
+      <details open>
+        <summary className="cursor-pointer text-sm font-semibold">Task Execution</summary>
+        <div className="mt-3 space-y-2 rounded-md border p-3">
+          {tasks.length === 0 && (
+            <div className="text-sm text-muted-foreground">No tasks defined.</div>
+          )}
+          {tasks.map((task) => {
+            const incompleteMandatory = task.is_mandatory && !task.is_completed;
+            return (
+              <div
+                key={task.id}
+                className={`grid gap-2 rounded-md border p-2 md:grid-cols-[30px_1fr_130px_150px_auto] ${
+                  incompleteMandatory ? "border-red-300 bg-red-50" : ""
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={task.is_completed}
+                  readOnly
+                  className="mt-1 h-4 w-4"
+                />
+                <div className="text-sm">
+                  {task.task_description}
+                  {task.is_mandatory && (
+                    <span className="ml-2 text-xs font-semibold text-red-700">Mandatory</span>
                   )}
                 </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ── Parts usage section (summary) ─────────────────────────── */}
-      <Card>
-        <CardHeader className="px-4 py-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Package className="h-4 w-4" />
-            {t("detail.sections.parts")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-3">
-          <p className="text-xs text-muted-foreground">{t("empty.noParts")}</p>
-          {wo.status_code === "in_progress" && (
-            <div className="pt-2">
-              <Button variant="outline" size="sm" className="gap-1.5 text-xs">
-                <Plus className="h-3 w-3" />
-                {t("action.addPart")}
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Separator />
-
-      {/* ── Actual times (read-only summary) ──────────────────────── */}
-      <div className="grid grid-cols-2 gap-4 text-sm">
-        <div>
-          <span className="text-muted-foreground text-xs">{t("detail.fields.actualStart")}:</span>{" "}
-          <span className="font-medium text-xs">
-            {wo.actual_start ? formatDatetime(wo.actual_start) : "—"}
-          </span>
+                <div className="text-xs text-muted-foreground">
+                  Result: {task.result_code ?? "-"}
+                </div>
+                <Select
+                  value={taskResultCodes[task.id] ?? "ok"}
+                  onValueChange={(value) =>
+                    setTaskResultCodes((prev) => ({ ...prev, [task.id]: value as TaskResultCode }))
+                  }
+                  disabled={controlsDisabled || task.is_completed}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TASK_RESULT_OPTIONS.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void handleCompleteTask(task)}
+                  disabled={controlsDisabled || task.is_completed || !actorId}
+                >
+                  Complete
+                </Button>
+              </div>
+            );
+          })}
         </div>
-        <div>
-          <span className="text-muted-foreground text-xs">{t("detail.fields.actualEnd")}:</span>{" "}
-          <span className="font-medium text-xs">
-            {wo.actual_end ? formatDatetime(wo.actual_end) : "—"}
-          </span>
-        </div>
-        <div>
-          <span className="text-muted-foreground text-xs">
-            {t("detail.fields.estimatedHours")}:
-          </span>{" "}
-          <span className="font-medium text-xs">{formatHours(wo.expected_duration_hours)}</span>
-        </div>
-        <div>
-          <span className="text-muted-foreground text-xs">{t("detail.fields.actualHours")}:</span>{" "}
-          <span className="font-medium text-xs">{formatHours(wo.actual_duration_hours)}</span>
-        </div>
-      </div>
+      </details>
     </div>
   );
 }

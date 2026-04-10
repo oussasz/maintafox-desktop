@@ -117,7 +117,7 @@ mod tests {
             "requester_id", "source_di_id", "entity_id",
             "planner_id", "approver_id", "assigned_group_id", "primary_responsible_id",
             "urgency_id", "title", "description",
-            "planned_start", "planned_end", "scheduled_at",
+            "planned_start", "planned_end", "shift", "scheduled_at",
             "actual_start", "actual_end",
             "mechanically_completed_at", "technically_verified_at",
             "closed_at", "cancelled_at",

@@ -1624,6 +1624,7 @@ export interface WorkOrder {
   // Timing
   planned_start: string | null;
   planned_end: string | null;
+  shift: WoShift | null;
   scheduled_at: string | null;
   actual_start: string | null;
   actual_end: string | null;
@@ -1694,6 +1695,7 @@ export interface WoCreateInput {
   notes?: string | null;
   planned_start?: string | null;
   planned_end?: string | null;
+  shift?: WoShift | null;
   expected_duration_hours?: number | null;
   creator_id: number;
 }
@@ -1708,6 +1710,7 @@ export interface WoDraftUpdateInput {
   description?: string | null;
   planned_start?: string | null;
   planned_end?: string | null;
+  shift?: WoShift | null;
   expected_duration_hours?: number | null;
   notes?: string | null;
   urgency_id?: number | null;
@@ -1905,7 +1908,7 @@ export interface UserProfile {
 }
 
 export interface UpdateProfileInput {
-  display_name?: string;
+  display_name?: string | null;
   email?: string | null;
   phone?: string | null;
   language?: string | null;

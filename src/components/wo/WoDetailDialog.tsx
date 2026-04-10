@@ -31,7 +31,7 @@ import {
   Settings,
   X,
 } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -86,6 +86,7 @@ const URGENCY_STYLE: Record<string, string> = {
 
 const EXECUTION_VISIBLE: Set<string> = new Set([
   "assigned",
+  "waiting_for_prerequisite",
   "in_progress",
   "paused",
   "on_hold",
@@ -148,6 +149,21 @@ function formatDate(iso: string): string {
   }
 }
 
+function formatShiftLabel(shift: string | null | undefined): string {
+  switch (shift) {
+    case "morning":
+      return "Matin";
+    case "afternoon":
+      return "Apres-midi";
+    case "night":
+      return "Nuit";
+    case "full_day":
+      return "Journee";
+    default:
+      return "—";
+  }
+}
+
 // ── Props ───────────────────────────────────────────────────────────────────
 
 interface WoDetailDialogProps {
@@ -164,11 +180,6 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
 
   const saving = useWoStore((s) => s.saving);
   const openCreateForm = useWoStore((s) => s.openCreateForm);
-  const planWorkOrder = useWoStore((s) => s.planWorkOrder);
-  const assignWorkOrder = useWoStore((s) => s.assignWorkOrder);
-  const startWorkOrder = useWoStore((s) => s.startWorkOrder);
-  const pauseWorkOrder = useWoStore((s) => s.pauseWorkOrder);
-  const resumeWorkOrder = useWoStore((s) => s.resumeWorkOrder);
   const openCompletionDialog = useWoStore((s) => s.openCompletionDialog);
   const closeWorkOrder = useWoStore((s) => s.closeWorkOrder);
 
@@ -179,15 +190,29 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
   // Determine visible tabs
   const showExecution = wo ? EXECUTION_VISIBLE.has(wo.status_code ?? "") : false;
   const showCloseout = wo ? CLOSEOUT_VISIBLE.has(wo.status_code ?? "") : false;
+  const canEditWo = can("ot.edit");
 
   // Determine default tab
-  const defaultTab = useMemo(() => {
+  const computedDefaultTab = useMemo(() => {
     if (!wo) return "plan";
     const sc = wo.status_code ?? "";
-    if (sc === "in_progress" || sc === "on_hold") return "execution";
+    if (
+      sc === "in_progress" ||
+      sc === "on_hold" ||
+      sc === "paused" ||
+      sc === "waiting_for_prerequisite"
+    )
+      return "execution";
     if (CLOSEOUT_VISIBLE.has(sc)) return "closeout";
     return "plan";
   }, [wo]);
+
+  const [activeTab, setActiveTab] = useState(computedDefaultTab);
+
+  // Sync active tab when WO status changes (e.g. after start/pause from within panel)
+  useEffect(() => {
+    setActiveTab(computedDefaultTab);
+  }, [computedDefaultTab]);
 
   if (!wo) return null;
 
@@ -252,6 +277,7 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                   label={t("detail.fields.plannedEnd")}
                   value={wo.planned_end ? formatDate(wo.planned_end) : "—"}
                 />
+                <InfoRow label={t("detail.fields.shift")} value={formatShiftLabel(wo.shift)} />
                 <InfoRow
                   label={t("detail.fields.estimatedHours")}
                   value={
@@ -268,7 +294,7 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
             </Card>
 
             {/* Tabs */}
-            <Tabs defaultValue={defaultTab}>
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="w-full justify-start">
                 <TabsTrigger value="plan" className="gap-1.5 text-xs">
                   <Settings className="h-3.5 w-3.5" />
@@ -297,12 +323,12 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
               </TabsList>
 
               <TabsContent value="plan" className="pt-3">
-                <WoPlanningPanel wo={wo} />
+                <WoPlanningPanel wo={wo} canEdit={canEditWo} />
               </TabsContent>
 
               {showExecution && (
                 <TabsContent value="execution" className="pt-3">
-                  <WoExecutionControls wo={wo} />
+                  <WoExecutionControls wo={wo} canEdit={canEditWo} />
                 </TabsContent>
               )}
 
@@ -394,37 +420,8 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                   openCreateForm(wo);
                   onClose();
                 }}
-                onPlan={() =>
-                  void planWorkOrder({
-                    id: wo.id,
-                    expected_row_version: wo.row_version,
-                  })
-                }
-                onAssign={() =>
-                  void assignWorkOrder({
-                    id: wo.id,
-                    expected_row_version: wo.row_version,
-                    assigned_to_id: wo.primary_responsible_id ?? 0,
-                  })
-                }
-                onStart={() =>
-                  void startWorkOrder({
-                    id: wo.id,
-                    expected_row_version: wo.row_version,
-                  })
-                }
-                onPause={() =>
-                  void pauseWorkOrder({
-                    id: wo.id,
-                    expected_row_version: wo.row_version,
-                  })
-                }
-                onResume={() =>
-                  void resumeWorkOrder({
-                    id: wo.id,
-                    expected_row_version: wo.row_version,
-                  })
-                }
+                onSwitchToPlanning={() => setActiveTab("plan")}
+                onSwitchToExecution={() => setActiveTab("execution")}
                 onComplete={openCompletionDialog}
                 onClose={() =>
                   void closeWorkOrder({
@@ -462,11 +459,8 @@ interface FooterActionsProps {
   can: (p: string) => boolean;
   t: (key: string) => string;
   onEdit: () => void;
-  onPlan: () => void;
-  onAssign: () => void;
-  onStart: () => void;
-  onPause: () => void;
-  onResume: () => void;
+  onSwitchToPlanning: () => void;
+  onSwitchToExecution: () => void;
   onComplete: () => void;
   onClose: () => void;
 }
@@ -477,11 +471,8 @@ function FooterActions({
   can,
   t,
   onEdit,
-  onPlan,
-  onAssign,
-  onStart,
-  onPause,
-  onResume,
+  onSwitchToPlanning,
+  onSwitchToExecution,
   onComplete,
   onClose,
 }: FooterActionsProps) {
@@ -497,20 +488,26 @@ function FooterActions({
         </Button>
       )}
 
-      {/* draft / planned → Schedule */}
+      {/* draft / planned → Schedule (opens Plan tab) */}
       {(s === "draft" || s === "planned") && can("ot.plan") && (
-        <Button size="sm" variant="outline" onClick={onPlan} disabled={saving} className="gap-1.5">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onSwitchToPlanning}
+          disabled={saving}
+          className="gap-1.5"
+        >
           <Settings className="h-3.5 w-3.5" />
           {t("footer.schedule")}
         </Button>
       )}
 
-      {/* ready_to_schedule → Assign */}
+      {/* ready_to_schedule → Assign (opens Plan tab — assignment section is there) */}
       {s === "ready_to_schedule" && can("ot.assign") && (
         <Button
           size="sm"
           variant="outline"
-          onClick={onAssign}
+          onClick={onSwitchToPlanning}
           disabled={saving}
           className="gap-1.5"
         >
@@ -519,13 +516,13 @@ function FooterActions({
         </Button>
       )}
 
-      {/* assigned → Start + re-Assign */}
+      {/* assigned → Start + re-Assign (opens Execution tab) */}
       {(s as string) === "assigned" && (
         <>
           {can("ot.execute") && (
             <Button
               size="sm"
-              onClick={onStart}
+              onClick={onSwitchToExecution}
               disabled={saving}
               className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
             >
@@ -537,7 +534,7 @@ function FooterActions({
             <Button
               size="sm"
               variant="outline"
-              onClick={onAssign}
+              onClick={onSwitchToPlanning}
               disabled={saving}
               className="gap-1.5"
             >
@@ -548,13 +545,13 @@ function FooterActions({
         </>
       )}
 
-      {/* in_progress → Pause + Complete */}
+      {/* in_progress → Pause (opens Execution tab) + Complete */}
       {s === "in_progress" && can("ot.execute") && (
         <>
           <Button
             size="sm"
             variant="outline"
-            onClick={onPause}
+            onClick={onSwitchToExecution}
             disabled={saving}
             className="gap-1.5"
           >
@@ -573,11 +570,11 @@ function FooterActions({
         </>
       )}
 
-      {/* paused / on_hold → Resume */}
+      {/* paused / waiting_for_prerequisite → Resume (opens Execution tab) */}
       {(s === "paused" || (s as string) === "waiting_for_prerequisite") && can("ot.execute") && (
         <Button
           size="sm"
-          onClick={onResume}
+          onClick={onSwitchToExecution}
           disabled={saving}
           className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
         >

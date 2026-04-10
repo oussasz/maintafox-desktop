@@ -194,7 +194,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "high".to_string(),
                 review_team_id: Some(1),
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: Some("Screened OK".to_string()),
             },
         )
@@ -363,7 +363,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "high".to_string(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: None,
             },
         )

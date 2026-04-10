@@ -881,7 +881,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "high".into(),
                 review_team_id: Some(1),
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: Some("Validated".into()),
             },
         )
@@ -995,7 +995,7 @@ mod tests {
                 expected_row_version: 2, // row_version after manual advance
                 validated_urgency: "high".into(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: Some("Test screen".into()),
             },
         )

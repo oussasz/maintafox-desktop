@@ -33,6 +33,8 @@ const UNAUTHENTICATED: SessionInfo = {
   force_password_change: null,
   expires_at: null,
   last_activity_at: null,
+  password_expires_in_days: null,
+  pin_configured: null,
 };
 
 /**

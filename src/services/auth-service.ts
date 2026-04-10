@@ -25,8 +25,8 @@ const sessionInfoSchema = z.object({
   force_password_change: z.boolean().nullable(),
   expires_at: z.string().nullable(),
   last_activity_at: z.string().nullable(),
-  password_expires_in_days: z.number().nullable().optional(),
-  pin_configured: z.boolean().nullable().optional(),
+  password_expires_in_days: z.number().nullable().default(null),
+  pin_configured: z.boolean().nullable().default(null),
 });
 
 const loginResponseSchema = z.object({

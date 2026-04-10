@@ -12,6 +12,7 @@ import {
   assignWo,
   cancelWo,
   closeWo,
+  CompletionBlockedError,
   completeWoMechanically,
   createWo,
   getWo,
@@ -290,6 +291,13 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       void get().loadWos();
       return resp;
     } catch (err) {
+      if (err instanceof CompletionBlockedError) {
+        set({ completionErrors: err.errors, showCompletionDialog: true });
+        return {
+          wo: get().activeWo?.wo,
+          errors: err.errors,
+        } as WoMechCompleteResponse;
+      }
       set({ error: toErrorMessage(err) });
       throw err;
     } finally {

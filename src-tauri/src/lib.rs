@@ -282,6 +282,31 @@ pub fn run() {
             commands::wo::create_wo,
             commands::wo::update_wo_draft,
             commands::wo::cancel_wo,
+            // ── WO Execution (File 02) ────────────────────────────────────
+            commands::wo::plan_wo,
+            commands::wo::assign_wo,
+            commands::wo::start_wo,
+            commands::wo::pause_wo,
+            commands::wo::resume_wo,
+            commands::wo::hold_wo,
+            commands::wo::complete_wo_mechanically,
+            // ── WO Labor ──────────────────────────────────────────────────
+            commands::wo::add_labor,
+            commands::wo::close_labor,
+            commands::wo::list_labor,
+            // ── WO Parts ──────────────────────────────────────────────────
+            commands::wo::add_part,
+            commands::wo::record_part_usage,
+            commands::wo::confirm_no_parts,
+            // ── WO Tasks ──────────────────────────────────────────────────
+            commands::wo::add_task,
+            commands::wo::complete_task,
+            commands::wo::list_tasks,
+            // ── WO Downtime / Delay ───────────────────────────────────────
+            commands::wo::open_downtime,
+            commands::wo::close_downtime,
+            commands::wo::list_delay_segments,
+            commands::wo::list_downtime_segments,
             // ── Dashboard ─────────────────────────────────────────────────
             commands::dashboard::get_dashboard_kpis,
             commands::dashboard::get_dashboard_workload_chart,

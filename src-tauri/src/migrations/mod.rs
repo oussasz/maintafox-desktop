@@ -21,6 +21,8 @@ mod m20260401_000019_di_attachments_sla;
 mod m20260401_000020_di_change_events;
 mod m20260408_000021_org_node_type_color;
 mod m20260409_000022_wo_domain_core;
+mod m20260410_000023_wo_execution_sub_entities;
+mod m20260410_000024_wo_shift_column;
 
 pub struct Migrator;
 
@@ -49,6 +51,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260401_000020_di_change_events::Migration),
             Box::new(m20260408_000021_org_node_type_color::Migration),
             Box::new(m20260409_000022_wo_domain_core::Migration),
+            Box::new(m20260410_000023_wo_execution_sub_entities::Migration),
+            Box::new(m20260410_000024_wo_shift_column::Migration),
         ]
     }
 }
