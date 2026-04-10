@@ -8,7 +8,7 @@
  * Phase 2 – Sub-phase 04 – File 02 – Sprint S4.
  */
 
-import { Check, ChevronDown, ChevronRight, Eye, RotateCcw, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ClipboardCheck, Eye, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
+import { toErrorMessage } from "@/utils/errors";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 // ── Priority ordering ───────────────────────────────────────────────────────
@@ -70,12 +71,15 @@ export function DiReviewPanel() {
   const { t } = useTranslation("di");
   const reviewQueue = useDiReviewStore((s) => s.reviewQueue);
   const loadReviewQueue = useDiReviewStore((s) => s.loadReviewQueue);
+  const reviewError = useDiReviewStore((s) => s.error);
+  const screen = useDiReviewStore((s) => s.screen);
   const openApproval = useDiReviewStore((s) => s.openApproval);
   const openRejection = useDiReviewStore((s) => s.openRejection);
   const openReturn = useDiReviewStore((s) => s.openReturn);
   const openDi = useDiStore((s) => s.openDi);
 
   const [collapsed, setCollapsed] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
   useEffect(() => {
     void loadReviewQueue();
@@ -88,6 +92,30 @@ export function DiReviewPanel() {
       void openDi(di.id);
     },
     [openDi],
+  );
+
+  const handleQuickScreen = useCallback(
+    async (di: InterventionRequest) => {
+      setLocalError(null);
+      try {
+        const updated = await screen({
+          di_id: di.id,
+          actor_id: 0, // overridden by backend
+          expected_row_version: di.row_version,
+          validated_urgency: di.reported_urgency,
+          classification_code_id: di.classification_code_id ?? di.symptom_code_id ?? null,
+          reviewer_note: null,
+        });
+        // Once triage succeeds and DI is awaiting_approval, open approval dialog directly.
+        if (updated.status === "awaiting_approval") {
+          openApproval(updated);
+        }
+      } catch (err) {
+        console.error("[DiReviewPanel] quick screen failed:", err);
+        setLocalError(toErrorMessage(err));
+      }
+    },
+    [screen, openApproval],
   );
 
   if (sorted.length === 0) return null;
@@ -114,11 +142,20 @@ export function DiReviewPanel() {
       {/* Queue rows */}
       {!collapsed && (
         <CardContent className="p-0">
+          {(localError ?? reviewError) && (
+            <div
+              role="alert"
+              className="mx-4 mt-3 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
+              {localError ?? reviewError}
+            </div>
+          )}
           <div className="divide-y">
             {sorted.map((di) => (
               <ReviewRow
                 key={di.id}
                 di={di}
+                onScreen={() => handleQuickScreen(di)}
                 onApprove={() => openApproval(di)}
                 onReject={() => openRejection(di)}
                 onReturn={() => openReturn(di)}
@@ -136,12 +173,14 @@ export function DiReviewPanel() {
 
 function ReviewRow({
   di,
+  onScreen,
   onApprove,
   onReject,
   onReturn,
   onView,
 }: {
   di: InterventionRequest;
+  onScreen: () => void;
   onApprove: () => void;
   onReject: () => void;
   onReturn: () => void;
@@ -185,15 +224,28 @@ function ReviewRow({
 
       {/* Actions */}
       <div className="flex items-center gap-1 shrink-0">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
-          onClick={onApprove}
-          title={t("action.approve")}
-        >
-          <Check className="h-3.5 w-3.5" />
-        </Button>
+        {di.status === "awaiting_approval" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+            onClick={onApprove}
+            title={t("action.approve")}
+          >
+            <Check className="h-3.5 w-3.5" />
+          </Button>
+        )}
+        {(di.status === "pending_review" || di.status === "returned_for_clarification") && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+            onClick={onScreen}
+            title={t("review.screenAction", "Valider le tri")}
+          >
+            <ClipboardCheck className="h-3.5 w-3.5" />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"

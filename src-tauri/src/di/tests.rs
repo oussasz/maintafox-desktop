@@ -1,9 +1,9 @@
-//! Sprint S2 — Full DI test suite.
+﻿//! Sprint S2 â€” Full DI test suite.
 //!
-//! Phase 2 – Sub-phase 04 – File 04.
+//! Phase 2 â€“ Sub-phase 04 â€“ File 04.
 //!
-//! Covers: state machine (tests 01–03), DI code generation (test 04),
-//! SLA engine (tests 05–07), optimistic locking (tests 08–09),
+//! Covers: state machine (tests 01â€“03), DI code generation (test 04),
+//! SLA engine (tests 05â€“07), optimistic locking (tests 08â€“09),
 //! full lifecycle integration (test 10), return/resubmit (test 11),
 //! and rejection path (test 12).
 
@@ -25,9 +25,9 @@ mod tests {
     };
     use crate::di::sla::{compute_sla_status, resolve_sla_rule};
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Setup helpers
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     /// Create an in-memory SQLite database with all migrations and seed data applied.
     async fn setup() -> sea_orm::DatabaseConnection {
@@ -60,7 +60,7 @@ mod tests {
     }
 
     /// Seed the minimum FK data required by DI creation: equipment, org_nodes,
-    /// reference chain (domain → set → value) for classification.
+    /// reference chain (domain â†’ set â†’ value) for classification.
     async fn seed_fk_data(db: &sea_orm::DatabaseConnection) {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
@@ -117,7 +117,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (1, 1, 'MECH', 'Mécanique', 1);".to_string(),
+             VALUES (1, 1, 'MECH', 'MÃ©canique', 1);".to_string(),
         ))
         .await
         .expect("insert test reference_value");
@@ -158,7 +158,7 @@ mod tests {
     }
 
     /// Advance a DI from `submitted` to `pending_review` via direct SQL
-    /// (simulates the Submitted → PendingReview intake UI trigger).
+    /// (simulates the Submitted â†’ PendingReview intake UI trigger).
     async fn advance_to_pending_review(db: &sea_orm::DatabaseConnection, di_id: i64) {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -215,13 +215,13 @@ mod tests {
         .expect("create asset_registry table");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 01 — All valid transitions
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 01 â€” All valid transitions
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_01_all_valid_transitions() {
-        // PRD §6.4 complete transition table
+        // PRD Â§6.4 complete transition table
         let valid_pairs: Vec<(DiStatus, DiStatus)> = vec![
             (DiStatus::Submitted, DiStatus::PendingReview),
             (DiStatus::PendingReview, DiStatus::Screened),
@@ -246,7 +246,7 @@ mod tests {
             let result = guard_transition(from, to);
             assert!(
                 result.is_ok(),
-                "Transition {} → {} should be valid, got: {:?}",
+                "Transition {} â†’ {} should be valid, got: {:?}",
                 from.as_str(),
                 to.as_str(),
                 result.err()
@@ -257,13 +257,13 @@ mod tests {
         assert_eq!(
             valid_pairs.len(),
             17,
-            "PRD §6.4 defines exactly 17 valid transitions"
+            "PRD Â§6.4 defines exactly 17 valid transitions"
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 02 — Invalid transitions
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 02 â€” Invalid transitions
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_02_invalid_transitions() {
@@ -283,16 +283,16 @@ mod tests {
             let result = guard_transition(from, to);
             assert!(
                 result.is_err(),
-                "Transition {} → {} should be INVALID, but guard_transition returned Ok(())",
+                "Transition {} â†’ {} should be INVALID, but guard_transition returned Ok(())",
                 from.as_str(),
                 to.as_str()
             );
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 03 — Immutable states
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 03 â€” Immutable states
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_03_immutable_states() {
@@ -330,9 +330,9 @@ mod tests {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 04 — DI code generation
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 04 â€” DI code generation
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_04_di_code_generation() {
@@ -362,9 +362,9 @@ mod tests {
         assert_eq!(codes.len(), 3, "All DI codes must be unique");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 05 — SLA rule priority
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 05 â€” SLA rule priority
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_05_sla_rule_priority() {
@@ -379,7 +379,7 @@ mod tests {
         // SAFETY: clearing seed data for isolated SLA rule testing
         .expect("clear seeded SLA rules");
 
-        // Insert specific rule: high + iot → response 2h
+        // Insert specific rule: high + iot â†’ response 2h
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
@@ -391,7 +391,7 @@ mod tests {
         // SAFETY: test fixture insert
         .expect("insert high+iot SLA rule");
 
-        // Insert broad rule: high + NULL → response 8h
+        // Insert broad rule: high + NULL â†’ response 8h
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
@@ -414,7 +414,7 @@ mod tests {
             "high+iot should resolve to 2h response rule"
         );
 
-        // Priority 3 match: high + operator → no specific rule, falls back to broad 8h
+        // Priority 3 match: high + operator â†’ no specific rule, falls back to broad 8h
         let rule_operator = resolve_sla_rule(&db, "high", "operator", None)
             .await
             .expect("resolve SLA for high+operator")
@@ -425,9 +425,9 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 06 — SLA breach detection
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 06 â€” SLA breach detection
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_06_sla_breach_detection() {
@@ -456,7 +456,7 @@ mod tests {
             .expect("create critical DI");
 
         // Backdate submitted_at to 10 hours ago so it breaches the 1h response target.
-        // Use strftime with ISO 8601 'T' separator — the SLA parser expects this format.
+        // Use strftime with ISO 8601 'T' separator â€” the SLA parser expects this format.
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET submitted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 hours') WHERE id = ?",
@@ -481,9 +481,9 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 07 — SLA no breach when screened
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 07 â€” SLA no breach when screened
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_07_sla_no_breach_when_screened() {
@@ -512,7 +512,7 @@ mod tests {
             .expect("create critical DI");
 
         // Set submitted_at to 10h ago but screened_at to 30 minutes ago.
-        // Use strftime with ISO 8601 'T' separator — the SLA parser expects this format.
+        // Use strftime with ISO 8601 'T' separator â€” the SLA parser expects this format.
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
@@ -539,9 +539,9 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 08 — Optimistic lock on draft update
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 08 â€” Optimistic lock on draft update
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_08_optimistic_lock_on_draft_update() {
@@ -592,9 +592,9 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 09 — Optimistic lock on screen
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 09 â€” Optimistic lock on screen
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_09_optimistic_lock_on_screen() {
@@ -617,7 +617,7 @@ mod tests {
                 expected_row_version: 999, // wildly stale
                 validated_urgency: "high".into(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: Some("Test".into()),
             },
         )
@@ -636,16 +636,16 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 10 — Full DI lifecycle (integration)
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 10 â€” Full DI lifecycle (integration)
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_10_full_di_lifecycle() {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        // ── Phase A: Submission ───────────────────────────────────────────
+        // â”€â”€ Phase A: Submission â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let di = create_intervention_request(&db, make_create_input(user_id))
             .await
             .expect("create DI");
@@ -679,7 +679,7 @@ mod tests {
         )
         .await;
 
-        // ── Phase B: Review (screen) ─────────────────────────────────────
+        // â”€â”€ Phase B: Review (screen) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         advance_to_pending_review(&db, di.id).await;
         let rv = get_row_version(&db, di.id).await;
 
@@ -691,7 +691,7 @@ mod tests {
                 expected_row_version: rv,
                 validated_urgency: "high".into(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: Some("Validated by reviewer".into()),
             },
         )
@@ -728,7 +728,7 @@ mod tests {
         )
         .await;
 
-        // ── Phase C: Approval ─────────────────────────────────────────────
+        // â”€â”€ Phase C: Approval â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let approved = approve_di_for_planning(
             &db,
             DiApproveInput {
@@ -765,7 +765,7 @@ mod tests {
         )
         .await;
 
-        // ── Phase D: Conversion ───────────────────────────────────────────
+        // â”€â”€ Phase D: Conversion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let conversion = convert_di_to_work_order(
             &db,
             WoConversionInput {
@@ -829,7 +829,7 @@ mod tests {
         )
         .await;
 
-        // ── Phase E: Immutability ─────────────────────────────────────────
+        // â”€â”€ Phase E: Immutability â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let update_result = update_di_draft_fields(
             &db,
             DiDraftUpdateInput {
@@ -864,7 +864,7 @@ mod tests {
             "Title must remain unchanged after failed update on converted DI"
         );
 
-        // ── Phase F: Audit completeness ───────────────────────────────────
+        // â”€â”€ Phase F: Audit completeness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         let events = audit::list_di_change_events(&db, di.id, 100)
             .await
             .expect("list change events");
@@ -893,9 +893,9 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 11 — Return and resubmit
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 11 â€” Return and resubmit
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_11_return_and_resubmit() {
@@ -953,7 +953,7 @@ mod tests {
             "Description must be updated"
         );
 
-        // Resubmit: returned_for_clarification → pending_review
+        // Resubmit: returned_for_clarification â†’ pending_review
         advance_to_pending_review(&db, di.id).await;
         let rv2 = get_row_version(&db, di.id).await;
 
@@ -966,7 +966,7 @@ mod tests {
                 expected_row_version: rv2,
                 validated_urgency: "high".into(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: Some("Re-screened after clarification".into()),
             },
         )
@@ -983,9 +983,9 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // TEST 12 — Rejection path
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // TEST 12 â€” Rejection path
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn test_12_rejection_path() {
@@ -999,7 +999,7 @@ mod tests {
         advance_to_pending_review(&db, di.id).await;
         let rv = get_row_version(&db, di.id).await;
 
-        // Screen: pending_review → awaiting_approval
+        // Screen: pending_review â†’ awaiting_approval
         let screened = screen_di(
             &db,
             DiScreenInput {
@@ -1008,7 +1008,7 @@ mod tests {
                 expected_row_version: rv,
                 validated_urgency: "medium".into(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: None,
             },
         )
@@ -1038,18 +1038,18 @@ mod tests {
             "declined_at must be set after rejection"
         );
 
-        // Guard: rejected → pending_review must fail
+        // Guard: rejected â†’ pending_review must fail
         let invalid = guard_transition(&DiStatus::Rejected, &DiStatus::PendingReview);
         assert!(
             invalid.is_err(),
-            "Transition rejected → pending_review must be illegal"
+            "Transition rejected â†’ pending_review must be illegal"
         );
 
-        // Guard: rejected → archived must succeed
+        // Guard: rejected â†’ archived must succeed
         let valid = guard_transition(&DiStatus::Rejected, &DiStatus::Archived);
         assert!(
             valid.is_ok(),
-            "Transition rejected → archived must be legal"
+            "Transition rejected â†’ archived must be legal"
         );
     }
 }

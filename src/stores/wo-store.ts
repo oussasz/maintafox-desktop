@@ -3,7 +3,7 @@
  *
  * Zustand store for work orders (OT).
  * Manages the paginated list, selected WO detail, filters, and CRUD operations.
- * Phase 2 – Sub-phase 05 – File 01 – Sprint S4.
+ * Phase 2 – Sub-phase 05 – File 01 – Sprint S3 (updated from S4 scaffold).
  */
 
 import { create } from "zustand";
@@ -37,8 +37,14 @@ import type {
   WoPreflightError,
   WoResumeInput,
   WoStartInput,
+  WoTransitionRow,
   WorkOrder,
 } from "@shared/ipc-types";
+
+export interface WoDetailPayload {
+  wo: WorkOrder;
+  transitions: WoTransitionRow[];
+}
 
 const DEFAULT_FILTER: WoListFilter = { limit: 50, offset: 0 };
 
@@ -47,7 +53,7 @@ interface WoStoreState {
   items: WorkOrder[];
   total: number;
   // Detail
-  activeWo: WorkOrder | null;
+  activeWo: WoDetailPayload | null;
   // Create / edit form
   showCreateForm: boolean;
   editingWo: WorkOrder | null;
@@ -64,11 +70,12 @@ interface WoStoreState {
   setFilter: (patch: Partial<WoListFilter>) => void;
   loadWos: () => Promise<void>;
   openWo: (id: number) => Promise<void>;
-  closeWo: () => void;
+  closeActiveWo: () => void;
   openCreateForm: (wo?: WorkOrder) => void;
   closeCreateForm: () => void;
   submitNewWo: (input: WoCreateInput) => Promise<WorkOrder>;
   updateDraft: (input: WoDraftUpdateInput) => Promise<void>;
+  cancel: (input: WoCancelInput) => Promise<void>;
   // Planning & scheduling
   planWorkOrder: (input: WoPlanInput) => Promise<void>;
   assignWorkOrder: (input: WoAssignInput) => Promise<void>;
@@ -102,7 +109,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     set((s) => ({ filter: { ...s.filter, ...patch } }));
   },
 
-  closeWo: () => {
+  closeActiveWo: () => {
     set({ activeWo: null });
   },
 
@@ -130,7 +137,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     set({ loading: true, error: null });
     try {
       const resp = await getWo(id);
-      set({ activeWo: resp.wo });
+      set({ activeWo: { wo: resp.wo, transitions: resp.transitions } });
     } catch (err) {
       set({ error: toErrorMessage(err) });
     } finally {
@@ -158,7 +165,26 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const updated = await updateWoDraft(input);
-      set({ activeWo: updated, showCreateForm: false, editingWo: null });
+      set({
+        activeWo: { wo: updated, transitions: get().activeWo?.transitions ?? [] },
+        showCreateForm: false,
+        editingWo: null,
+      });
+      void get().loadWos();
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  cancel: async (input) => {
+    set({ saving: true, error: null });
+    try {
+      await cancelWo(input);
+      // Re-fetch to get updated transitions log
+      void get().refreshActiveWo();
       void get().loadWos();
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -174,7 +200,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const wo = await planWo(input);
-      set({ activeWo: wo });
+      set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -188,7 +214,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const wo = await assignWo(input);
-      set({ activeWo: wo });
+      set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -204,7 +230,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const wo = await startWo(input);
-      set({ activeWo: wo });
+      set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -218,7 +244,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const wo = await pauseWo(input);
-      set({ activeWo: wo });
+      set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -232,7 +258,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const wo = await resumeWo(input);
-      set({ activeWo: wo });
+      set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -254,7 +280,10 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const resp = await completeWoMechanically(input);
-      set({ activeWo: resp.wo, completionErrors: resp.errors });
+      set({
+        activeWo: { wo: resp.wo, transitions: get().activeWo?.transitions ?? [] },
+        completionErrors: resp.errors,
+      });
       if (resp.errors.length === 0) {
         set({ showCompletionDialog: false });
       }
@@ -272,7 +301,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const wo = await closeWo(input);
-      set({ activeWo: wo });
+      set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -286,7 +315,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const wo = await cancelWo(input);
-      set({ activeWo: wo });
+      set({ activeWo: { wo, transitions: get().activeWo?.transitions ?? [] } });
       void get().loadWos();
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -302,8 +331,8 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
     const active = get().activeWo;
     if (!active) return;
     try {
-      const resp = await getWo(active.id);
-      set({ activeWo: resp.wo });
+      const resp = await getWo(active.wo.id);
+      set({ activeWo: { wo: resp.wo, transitions: resp.transitions } });
     } catch {
       // Silently ignore — the WO may have been deleted
     }

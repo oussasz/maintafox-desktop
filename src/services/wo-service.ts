@@ -2,7 +2,7 @@
  * wo-service.ts
  *
  * IPC wrappers for work order (WO/OT) commands.
- * Phase 2 – Sub-phase 05 – File 01 – Sprint S4.
+ * Phase 2 – Sub-phase 05 – File 01 – Sprint S3 (updated from S4 scaffold).
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -35,40 +35,94 @@ import type {
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
-const WorkOrderSchema = z.object({
+export const WoStatusSchema = z.enum([
+  "draft",
+  "awaiting_approval",
+  "planned",
+  "ready_to_schedule",
+  "assigned",
+  "waiting_for_prerequisite",
+  "in_progress",
+  "paused",
+  "mechanically_complete",
+  "technically_verified",
+  "closed",
+  "cancelled",
+]);
+
+export const WoMacroStateSchema = z.enum(["open", "executing", "completed", "closed", "cancelled"]);
+
+export const WorkOrderSchema = z.object({
   id: z.number(),
   code: z.string(),
+  type_id: z.number(),
+  status_id: z.number(),
+  equipment_id: z.number().nullable(),
+  component_id: z.number().nullable(),
+  location_id: z.number().nullable(),
+  requester_id: z.number().nullable(),
+  source_di_id: z.number().nullable(),
+  entity_id: z.number().nullable(),
+  planner_id: z.number().nullable(),
+  approver_id: z.number().nullable(),
+  assigned_group_id: z.number().nullable(),
+  primary_responsible_id: z.number().nullable(),
+  urgency_id: z.number().nullable(),
   title: z.string(),
   description: z.string().nullable(),
-  type_id: z.number().nullable(),
-  type_label: z.string().nullable(),
-  equipment_id: z.number().nullable(),
-  equipment_code: z.string().nullable(),
-  equipment_name: z.string().nullable(),
-  location_id: z.number().nullable(),
-  entity_id: z.number().nullable(),
-  urgency_id: z.number().nullable(),
-  urgency_label: z.string().nullable(),
-  status: z.string(),
-  assigned_to_id: z.number().nullable(),
-  assigned_to_name: z.string().nullable(),
-  team_id: z.number().nullable(),
-  source_di_id: z.number().nullable(),
-  source_di_code: z.string().nullable(),
   planned_start: z.string().nullable(),
   planned_end: z.string().nullable(),
+  scheduled_at: z.string().nullable(),
   actual_start: z.string().nullable(),
   actual_end: z.string().nullable(),
+  mechanically_completed_at: z.string().nullable(),
+  technically_verified_at: z.string().nullable(),
+  closed_at: z.string().nullable(),
+  cancelled_at: z.string().nullable(),
   expected_duration_hours: z.number().nullable(),
   actual_duration_hours: z.number().nullable(),
+  active_labor_hours: z.number().nullable(),
+  total_waiting_hours: z.number().nullable(),
+  downtime_hours: z.number().nullable(),
+  labor_cost: z.number().nullable(),
+  parts_cost: z.number().nullable(),
+  service_cost: z.number().nullable(),
+  total_cost: z.number().nullable(),
+  recurrence_risk_level: z.string().nullable(),
+  production_impact_id: z.number().nullable(),
+  root_cause_summary: z.string().nullable(),
+  corrective_action_summary: z.string().nullable(),
+  verification_method: z.string().nullable(),
   notes: z.string().nullable(),
-  conclusion: z.string().nullable(),
-  shift: z.string().nullable().optional(),
+  cancel_reason: z.string().nullable(),
   row_version: z.number(),
-  created_by_id: z.number().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
-  closed_at: z.string().nullable(),
+  // Join fields (optional)
+  status_code: z.string().nullable().optional(),
+  status_label: z.string().nullable().optional(),
+  status_color: z.string().nullable().optional(),
+  type_code: z.string().nullable().optional(),
+  type_label: z.string().nullable().optional(),
+  urgency_level: z.number().nullable().optional(),
+  urgency_label: z.string().nullable().optional(),
+  urgency_color: z.string().nullable().optional(),
+  asset_code: z.string().nullable().optional(),
+  asset_label: z.string().nullable().optional(),
+  planner_username: z.string().nullable().optional(),
+  responsible_username: z.string().nullable().optional(),
+});
+
+export const WoTransitionRowSchema = z.object({
+  id: z.number(),
+  wo_id: z.number(),
+  from_status: z.string(),
+  to_status: z.string(),
+  action: z.string(),
+  actor_id: z.number().nullable(),
+  reason_code: z.string().nullable(),
+  notes: z.string().nullable(),
+  acted_at: z.string(),
 });
 
 const WoListPageSchema = z.object({
@@ -78,6 +132,7 @@ const WoListPageSchema = z.object({
 
 const WoGetResponseSchema = z.object({
   wo: WorkOrderSchema,
+  transitions: z.array(WoTransitionRowSchema),
 });
 
 const WoPreflightErrorSchema = z.object({

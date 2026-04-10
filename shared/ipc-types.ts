@@ -1269,7 +1269,7 @@ export interface DiScreenInput {
   expected_row_version: number;
   validated_urgency: string;
   review_team_id?: number | null;
-  classification_code_id: number;
+  classification_code_id?: number | null;
   reviewer_note?: string | null;
 }
 
@@ -1584,92 +1584,147 @@ export interface DiStatsPayload {
 
 export type WoStatus =
   | "draft"
+  | "awaiting_approval"
   | "planned"
-  | "released"
+  | "ready_to_schedule"
+  | "assigned"
+  | "waiting_for_prerequisite"
   | "in_progress"
-  | "on_hold"
-  | "completed"
-  | "verified"
+  | "paused"
+  | "mechanically_complete"
+  | "technically_verified"
   | "closed"
   | "cancelled";
+
+export type WoMacroState = "open" | "executing" | "completed" | "closed" | "cancelled";
 
 export interface WorkOrder {
   id: number;
   code: string;
+  // Classification
+  type_id: number;
+  status_id: number;
+  // Asset context
+  equipment_id: number | null;
+  component_id: number | null;
+  location_id: number | null;
+  // People
+  requester_id: number | null;
+  source_di_id: number | null;
+  entity_id: number | null;
+  planner_id: number | null;
+  approver_id: number | null;
+  assigned_group_id: number | null;
+  primary_responsible_id: number | null;
+  // Urgency
+  urgency_id: number | null;
+  // Core description
   title: string;
   description: string | null;
-  type_id: number | null;
-  type_label: string | null;
-  equipment_id: number | null;
-  equipment_code: string | null;
-  equipment_name: string | null;
-  location_id: number | null;
-  entity_id: number | null;
-  urgency_id: number | null;
-  urgency_label: string | null;
-  status: WoStatus;
-  assigned_to_id: number | null;
-  assigned_to_name: string | null;
-  team_id: number | null;
-  source_di_id: number | null;
-  source_di_code: string | null;
+  // Timing
   planned_start: string | null;
   planned_end: string | null;
+  scheduled_at: string | null;
   actual_start: string | null;
   actual_end: string | null;
+  mechanically_completed_at: string | null;
+  technically_verified_at: string | null;
+  closed_at: string | null;
+  cancelled_at: string | null;
+  // Duration accumulators
   expected_duration_hours: number | null;
   actual_duration_hours: number | null;
+  active_labor_hours: number | null;
+  total_waiting_hours: number | null;
+  downtime_hours: number | null;
+  // Cost accumulators
+  labor_cost: number | null;
+  parts_cost: number | null;
+  service_cost: number | null;
+  total_cost: number | null;
+  // Close-out evidence
+  recurrence_risk_level: string | null;
+  production_impact_id: number | null;
+  root_cause_summary: string | null;
+  corrective_action_summary: string | null;
+  verification_method: string | null;
+  // Metadata
   notes: string | null;
-  conclusion: string | null;
-  shift: WoShift | null;
+  cancel_reason: string | null;
   row_version: number;
-  created_by_id: number | null;
   created_at: string;
   updated_at: string;
-  closed_at: string | null;
+  // Join fields (populated by queries)
+  status_code?: string | null;
+  status_label?: string | null;
+  status_color?: string | null;
+  type_code?: string | null;
+  type_label?: string | null;
+  urgency_level?: number | null;
+  urgency_label?: string | null;
+  urgency_color?: string | null;
+  asset_code?: string | null;
+  asset_label?: string | null;
+  planner_username?: string | null;
+  responsible_username?: string | null;
+}
+
+export interface WoTransitionRow {
+  id: number;
+  wo_id: number;
+  from_status: string;
+  to_status: string;
+  action: string;
+  actor_id: number | null;
+  reason_code: string | null;
+  notes: string | null;
+  acted_at: string;
 }
 
 export interface WoCreateInput {
-  title: string;
-  description?: string | null;
-  type_id?: number | null;
+  type_id: number;
   equipment_id?: number | null;
   location_id?: number | null;
+  source_di_id?: number | null;
   entity_id?: number | null;
+  planner_id?: number | null;
   urgency_id?: number | null;
+  title: string;
+  description?: string | null;
+  notes?: string | null;
   planned_start?: string | null;
   planned_end?: string | null;
   expected_duration_hours?: number | null;
-  shift?: WoShift | null;
-  notes?: string | null;
-  created_by_id: number;
+  creator_id: number;
 }
 
 export interface WoDraftUpdateInput {
   id: number;
   expected_row_version: number;
   title?: string | null;
-  description?: string | null;
   type_id?: number | null;
   equipment_id?: number | null;
   location_id?: number | null;
-  entity_id?: number | null;
-  urgency_id?: number | null;
+  description?: string | null;
   planned_start?: string | null;
   planned_end?: string | null;
   expected_duration_hours?: number | null;
-  shift?: WoShift | null;
   notes?: string | null;
+  urgency_id?: number | null;
 }
 
 export interface WoListFilter {
-  status?: string[] | null;
-  type_id?: number | null;
-  urgency_id?: number | null;
+  status_codes?: string[] | null;
+  type_codes?: string[] | null;
   equipment_id?: number | null;
   entity_id?: number | null;
-  assigned_to_id?: number | null;
+  planner_id?: number | null;
+  primary_responsible_id?: number | null;
+  urgency_level?: number | null;
+  source_di_id?: number | null;
   search?: string | null;
+  date_from?: string | null;
+  date_to?: string | null;
   limit: number;
   offset: number;
 }
@@ -1681,6 +1736,14 @@ export interface WoListPage {
 
 export interface WoGetResponse {
   wo: WorkOrder;
+  transitions: WoTransitionRow[];
+}
+
+export interface WoCancelInput {
+  id: number;
+  expected_row_version: number;
+  actor_id: number;
+  cancel_reason: string;
 }
 
 // ── WO File 02 — Planning, Labor, Completion types ──────────────────────────
@@ -1741,12 +1804,6 @@ export interface WoPreflightError {
 export interface WoCloseInput {
   id: number;
   expected_row_version: number;
-}
-
-export interface WoCancelInput {
-  id: number;
-  expected_row_version: number;
-  reason?: string | null;
 }
 
 export interface WoLaborEntry {

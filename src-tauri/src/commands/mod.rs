@@ -13,6 +13,7 @@ pub mod rbac;
 pub mod reference;
 pub mod settings;
 pub mod updater;
+pub mod wo;
 
 use tauri::State;
 

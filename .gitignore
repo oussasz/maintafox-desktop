@@ -36,6 +36,11 @@ desktop.ini
 coverage/
 *.lcov
 
+# Tooling reports
+biome-check-report.json
+biome-output.txt
+cargo-check-admin.txt
+
 # Logs
 *.log
 npm-debug.log*

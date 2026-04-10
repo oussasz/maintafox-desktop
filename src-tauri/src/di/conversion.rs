@@ -137,65 +137,104 @@ pub async fn convert_di_to_work_order(
         return Err(AppError::ValidationFailed(errors));
     }
 
-    // ── 3. Generate WO code ───────────────────────────────────────────────
+    // ── 3. Create WO in work_orders table ───────────────────────────────
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    // Resolve draft status_id
+    let draft_row = txn
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM work_order_statuses WHERE code = 'draft'".to_string(),
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "work_order_statuses missing 'draft' row"
+            ))
+        })?;
+    let draft_status_id: i64 = draft_row
+        .try_get("", "id")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("draft status_id decode: {e}")))?;
+
+    // Resolve default type_id (corrective = 1)
+    let type_id: i64 = 1;
+
+    // Generate WO code (OT-NNNN)
     let max_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT COALESCE(MAX(CAST(SUBSTR(code, 5) AS INTEGER)), 0) AS max_seq \
-             FROM work_order_stubs WHERE code LIKE 'WOR-%'"
+            "SELECT COALESCE(MAX(CAST(SUBSTR(code, 4) AS INTEGER)), 0) AS max_seq \
+             FROM work_orders WHERE code LIKE 'OT-%'"
                 .to_string(),
         ))
         .await?;
-
     let next_seq: i64 = max_row
         .as_ref()
         .and_then(|row| row.try_get::<i64>("", "max_seq").ok())
         .unwrap_or(0)
         + 1;
-
-    let wo_code = format!("WOR-{next_seq:04}");
-
-    // ── 4. Insert WO stub ─────────────────────────────────────────────────
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let urgency = di
-        .validated_urgency
-        .as_deref()
-        .unwrap_or(&di.reported_urgency);
+    let wo_code = format!("OT-{next_seq:04}");
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO work_order_stubs \
-            (code, source_di_id, asset_id, org_node_id, title, urgency, status, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, 'draft', ?)",
+        "INSERT INTO work_orders (\
+            code, type_id, status_id, equipment_id, \
+            source_di_id, entity_id, requester_id, \
+            title, description, row_version, created_at, updated_at\
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             wo_code.clone().into(),
+            type_id.into(),
+            draft_status_id.into(),
+            if di.asset_id == 0 { sea_orm::Value::from(None::<i64>) } else { di.asset_id.into() },
             input.di_id.into(),
-            di.asset_id.into(),
-            di.org_node_id.into(),
+            if di.org_node_id == 0 { sea_orm::Value::from(None::<i64>) } else { di.org_node_id.into() },
+            input.actor_id.into(),
             di.title.clone().into(),
-            urgency.to_string().into(),
+            di.description.clone().into(),
+            now.clone().into(),
             now.clone().into(),
         ],
     ))
-    .await?;
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            AppError::ValidationFailed(vec!["Code OT en doublon. Veuillez réessayer.".into()])
+        } else {
+            AppError::Database(e)
+        }
+    })?;
 
-    // Get the inserted WO stub id
+    // Get the inserted WO id
     let wo_id_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM work_order_stubs WHERE code = ?",
+            "SELECT id FROM work_orders WHERE code = ?",
             [wo_code.clone().into()],
         ))
         .await?
         .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "Failed to retrieve WO stub id after insert"
-            ))
+            AppError::Internal(anyhow::anyhow!("Failed to retrieve WO id after insert"))
         })?;
 
     let wo_id: i64 = wo_id_row
         .try_get("", "id")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("WO stub id decode: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("WO id decode: {e}")))?;
+
+    // Insert initial WO transition log
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO wo_state_transition_log \
+            (wo_id, from_status, to_status, action, actor_id, notes, acted_at) \
+         VALUES (?, '__none__', 'draft', 'create_from_di', ?, ?, ?)",
+        [
+            wo_id.into(),
+            input.actor_id.into(),
+            input.conversion_notes.clone().map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
+            now.clone().into(),
+        ],
+    ))
+    .await?;
 
     // ── 5. Update DI status ───────────────────────────────────────────────
     let result = txn

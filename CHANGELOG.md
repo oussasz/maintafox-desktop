@@ -14,20 +14,62 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- Rust: `commands/profile.rs` — 4 IPC commands for user profile management:
-  `get_my_profile`, `update_my_profile`, `change_password`, `get_session_history`
-- Rust: Argon2id password verification and rehashing in `change_password` with audit event
-- Frontend: error banners on DI, WO, and Asset create forms for visible submit feedback
-- i18n: `assetMissingOrgNode` validation key in EN and FR (`di.json`)
+
+#### SP05 — Work Order Domain Model and Execution States (File 01, Sprints S1–S4)
+- Rust: migration 022 — full `work_orders` schema (replacing `work_order_stubs`),
+  `work_order_types` (7 system types), `work_order_statuses` (12-state machine),
+  `urgency_levels` (5 levels), `delay_reason_codes` (10 codes),
+  `wo_state_transition_log` (append-only audit)
+- Rust: `wo/domain.rs` — `WoStatus` 12-state enum with PRD §6.5 transition guards,
+  `WoMacroState`, `guard_wo_transition()`, `generate_wo_code()`, full `WorkOrder` struct
+- Rust: `wo/queries.rs` — `list_work_orders` (filtered, joined), `get_work_order`,
+  `get_wo_transition_log`, `create_work_order`, `update_wo_draft_fields`,
+  `cancel_work_order` with optimistic concurrency
+- Rust: `commands/wo.rs` — 5 IPC commands (`list_wo`, `get_wo`, `create_wo`,
+  `update_wo_draft`, `cancel_wo`) with permission-gated access (`ot.*` domain)
+- Frontend: `wo-service.ts` — typed Tauri invoke wrappers with Zod validation
+  for all WO commands
+- Frontend: `wo-store.ts` — Zustand store with list, pagination, filters, create/edit
+  form state, active WO detail, loading/saving/error pattern
+- Frontend: `WorkOrdersPage.tsx` — full WO workspace with 4 view tabs
+  (list, kanban, calendar, dashboard), multi-select filters, DI management panel
+- Frontend: `WoCreateForm.tsx` — create/edit-draft form with type, equipment,
+  urgency, planning fields
+- Frontend: `WoDiManagementPanel.tsx` — collapsible banner for unscheduled
+  DI-sourced work orders with quick-schedule action
+- Frontend: 8 WO component files updated for field rename alignment
+  (`WoDetailDialog`, `WoContextMenu`, `WoArchivePanel`, `WoPlanningPanel`,
+  `WoExecutionControls`, `WoPrintFiche`)
+- i18n: `ot.json` (FR/EN) — page, form, action, and DI panel labels including `edit` key
+- IPC types: `WorkOrder`, `WoListFilter`, `WoListPage`, `WoTransitionRow`,
+  `WoCreateInput`, `WoDraftUpdateInput`, `WoCancelInput`, `WoDetailPayload`
+
+#### SP04 — DI Review/Approval V2 Verification Fixes
+- Rust: `di/conversion.rs` — rewritten to insert into `work_orders` table (not
+  dropped `work_order_stubs`), uses `wo_state_transition_log`, generates `OT-NNNN` codes
+- Rust: `di/review.rs` — `classification_code_id` made optional in `DiScreenInput`;
+  validation skipped when `None`; UPDATE uses `COALESCE` for conditional persistence
+- Frontend: `StepUpDialog.tsx` — rewritten from plain div to shadcn Dialog (Radix-based)
+  with lockout after 3 failed attempts, 120-second window
+- Frontend: `DiApprovalDialog.tsx` — 2-step approval flow integrating StepUpDialog,
+  store error display
+- Frontend: `DiReviewPanel.tsx` — removed hard dependency on WORK.FAILURE_MODES
+  reference domain; classification forwarded from DI fields when available
+- Frontend: `di-review-store.ts` — added `awaiting_approval` to review queue filter;
+  screen action returns updated DI; approve chains `convertDiToWo()`
+- Frontend: `use-step-up.tsx` — fixed value import and error detection
 
 ### Fixed
-- DI create form: clicking "Create" did nothing when asset had no org_node_id —
-  now shows validation error instead of silently sending `org_node_id=0`
-- DI create form: catch block swallowed IPC errors — now surfaces error message in banner
-- WO create form: same silent-error pattern — added error state and banner
-- Asset create form: `closeForm()` ran even on submit failure — now only closes on success
-- DI list/detail Zod validation error (`is_modified: Expected boolean, received undefined`) —
-  changed to `z.boolean().default(false)` in di-service, di-conversion-service, di-review-service
+- DI review queue dead-end: `loadReviewQueue` only loaded `pending_review` and
+  `returned_for_clarification` but approve button required `awaiting_approval` —
+  added `awaiting_approval` to status filter
+- DI quick-screen button silently failed when `classification_code_id` was required
+  but WORK.FAILURE_MODES domain had no seeded data — made field optional in backend
+- WO conversion inserted into dropped `work_order_stubs` table — rewritten for
+  `work_orders`; transition log uses correct `wo_state_transition_log` table name
+- StepUpDialog trapped behind Radix focus lock of parent dialog — rewritten as
+  independent shadcn Dialog rendered before parent in JSX
+- Org/asset test files: added missing trailing newlines and test completions
 - Profile page infinite loading — 4 missing Rust IPC commands now implemented
 - `SessionHistoryEntry.id` type mismatch — `app_sessions.id` is TEXT (UUID), changed
   Zod schema to `z.union([z.number(), z.string()])` and TS type to `number | string`

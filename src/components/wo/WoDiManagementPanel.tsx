@@ -25,7 +25,8 @@ export function WoDiManagementPanel() {
   const diWos = useMemo(
     () =>
       items.filter(
-        (wo) => wo.source_di_id !== null && (wo.status === "draft" || wo.status === "planned"),
+        (wo) =>
+          wo.source_di_id !== null && (wo.status_code === "draft" || wo.status_code === "planned"),
       ),
     [items],
   );
@@ -65,8 +66,10 @@ export function WoDiManagementPanel() {
               {diWos.map((wo) => (
                 <tr key={wo.id} className="border-b border-surface-border last:border-0">
                   <td className="py-1.5 font-mono">{wo.code}</td>
-                  <td className="py-1.5 font-mono text-text-muted">{wo.source_di_code ?? "—"}</td>
-                  <td className="py-1.5 truncate max-w-[150px]">{wo.equipment_name ?? "—"}</td>
+                  <td className="py-1.5 font-mono text-text-muted">
+                    {wo.source_di_id ? `DI-${wo.source_di_id}` : "—"}
+                  </td>
+                  <td className="py-1.5 truncate max-w-[150px]">{wo.asset_label ?? "—"}</td>
                   <td className="py-1.5">
                     {wo.urgency_label && (
                       <Badge
@@ -82,7 +85,7 @@ export function WoDiManagementPanel() {
                       variant="outline"
                       className="text-[10px] border-0 bg-gray-100 text-gray-600"
                     >
-                      {t(`status.${wo.status}`)}
+                      {t(`status.${wo.status_code ?? "draft"}`)}
                     </Badge>
                   </td>
                   <td className="py-1.5 text-right">

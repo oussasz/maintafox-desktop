@@ -62,6 +62,7 @@ mod tests {
                 code: "SITE".to_string(),
                 label: "Site".to_string(),
                 icon_key: None,
+                color: None,
                 depth_hint: Some(0),
                 can_host_assets: true,
                 can_own_work: true,

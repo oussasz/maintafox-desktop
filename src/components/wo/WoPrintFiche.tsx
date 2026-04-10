@@ -27,16 +27,6 @@ function fmtDate(iso: string | null | undefined): string {
   }
 }
 
-function shiftLabel(s: string | null | undefined): string {
-  const map: Record<string, string> = {
-    morning: "Matin",
-    afternoon: "Après-midi",
-    night: "Nuit",
-    full_day: "Journée complète",
-  };
-  return s ? (map[s] ?? s) : "—";
-}
-
 function esc(v: string | null | undefined): string {
   if (!v) return "";
   return v
@@ -122,7 +112,7 @@ function buildHtml(
       <tr><th>Titre</th><td>${esc(wo.title)}</td></tr>
       <tr><th>Type</th><td>${esc(wo.type_label ?? "—")}</td></tr>
       <tr><th>Urgence</th><td>${esc(wo.urgency_label ?? "—")}</td></tr>
-      <tr><th>Statut</th><td>${esc(wo.status)}</td></tr>
+      <tr><th>Statut</th><td>${esc(wo.status_code ?? "—")}</td></tr>
       <tr><th>Créé le</th><td>${fmtDate(wo.created_at)}</td></tr>
     </table>
   </div>
@@ -130,7 +120,7 @@ function buildHtml(
   <div class="section">
     <h2>ÉQUIPEMENT CONCERNÉ</h2>
     <table>
-      <tr><th>Désignation</th><td>${esc(wo.equipment_name ?? "—")}${wo.equipment_code ? ` (${esc(wo.equipment_code)})` : ""}</td></tr>
+      <tr><th>Désignation</th><td>${esc(wo.asset_label ?? "—")}${wo.asset_code ? ` (${esc(wo.asset_code)})` : ""}</td></tr>
     </table>
   </div>
 
@@ -139,15 +129,15 @@ function buildHtml(
     <table>
       <tr><th>Début prévu</th><td>${fmtDate(wo.planned_start)}</td></tr>
       <tr><th>Fin prévue</th><td>${fmtDate(wo.planned_end)}</td></tr>
-      <tr><th>Poste</th><td>${shiftLabel(wo.shift)}</td></tr>
+      <tr><th>Poste</th><td>—</td></tr>
       <tr><th>Durée estimée</th><td>${wo.expected_duration_hours != null ? `${wo.expected_duration_hours}h` : "—"}</td></tr>
-      <tr><th>Assigné à</th><td>${esc(wo.assigned_to_name ?? "—")}</td></tr>
+      <tr><th>Assigné à</th><td>${esc(wo.responsible_username ?? "—")}</td></tr>
     </table>
   </div>
 
   <div class="section">
     <h2>DESCRIPTION</h2>
-    ${wo.source_di_code ? `<p style="font-size:10px;margin-bottom:4px;">Source DI : <strong>${esc(wo.source_di_code)}</strong></p>` : ""}
+    ${wo.source_di_id ? `<p style="font-size:10px;margin-bottom:4px;">Source DI : <strong>DI-${wo.source_di_id}</strong></p>` : ""}
     <div class="desc">${esc(wo.description ?? "—")}</div>
   </div>
 

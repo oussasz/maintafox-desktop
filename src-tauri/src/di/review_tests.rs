@@ -1,10 +1,10 @@
-//! Supervisor verification tests for Phase 2 SP04 File 02 Sprint S1.
+﻿//! Supervisor verification tests for Phase 2 SP04 File 02 Sprint S1.
 //!
-//! V1 — Screen action atomicity (transaction rollback on failure).
-//! V2 — Return requires non-empty reviewer_note.
-//! V3 — Approve step-up guard (tested at domain layer; IPC test is manual).
-//! V4 — Defer future-date guard: past dates rejected.
-//! V5 — Full lifecycle: create → screen → approve → defer → reactivate with 6 event rows.
+//! V1 â€” Screen action atomicity (transaction rollback on failure).
+//! V2 â€” Return requires non-empty reviewer_note.
+//! V3 â€” Approve step-up guard (tested at domain layer; IPC test is manual).
+//! V4 â€” Defer future-date guard: past dates rejected.
+//! V5 â€” Full lifecycle: create â†’ screen â†’ approve â†’ defer â†’ reactivate with 6 event rows.
 
 #[cfg(test)]
 mod tests {
@@ -18,9 +18,9 @@ mod tests {
         DiReactivateInput, DiReturnInput, DiScreenInput,
     };
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Test setup helpers (matching query_tests.rs patterns)
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     async fn setup() -> sea_orm::DatabaseConnection {
         let db = Database::connect("sqlite::memory:")
@@ -82,7 +82,7 @@ mod tests {
         .await
         .expect("insert test org_node");
 
-        // reference_domains → reference_sets → reference_values chain for classification FK
+        // reference_domains â†’ reference_sets â†’ reference_values chain for classification FK
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_domains (id, code, name, structure_type, governance_level, is_extendable, created_at, updated_at) \
@@ -103,7 +103,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (1, 1, 'MECH', 'Mécanique', 1);".to_string(),
+             VALUES (1, 1, 'MECH', 'MÃ©canique', 1);".to_string(),
         ))
         .await
         .expect("insert test reference_value");
@@ -141,7 +141,7 @@ mod tests {
     }
 
     /// Advance a DI from 'submitted' to 'pending_review' directly (simulates
-    /// the Submitted → PendingReview transition that the intake UI performs).
+    /// the Submitted â†’ PendingReview transition that the intake UI performs).
     async fn advance_to_pending_review(db: &sea_orm::DatabaseConnection, di_id: i64) {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -182,9 +182,9 @@ mod tests {
         .expect("row_version")
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V1 — Screen action atomicity
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V1 â€” Screen action atomicity
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // We simulate a failed screen attempt with an invalid classification FK.
     // The DI must remain in pending_review (no partial writes).
 
@@ -206,7 +206,7 @@ mod tests {
                 expected_row_version: 2, // bumped by advance helper
                 validated_urgency: "high".to_string(),
                 review_team_id: None,
-                classification_code_id: 9999, // non-existent FK
+                classification_code_id: Some(9999), // non-existent FK
                 reviewer_note: None,
             },
         )
@@ -214,7 +214,7 @@ mod tests {
 
         assert!(result.is_err(), "screen_di must fail with invalid classification FK");
 
-        // DI must still be in pending_review — transaction rolled back
+        // DI must still be in pending_review â€” transaction rolled back
         let status = get_di_status(&db, di.id).await;
         assert_eq!(
             status, "pending_review",
@@ -247,7 +247,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "INVALID_URGENCY".to_string(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: None,
             },
         )
@@ -277,7 +277,7 @@ mod tests {
                 expected_row_version: 1,
                 validated_urgency: "high".to_string(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: None,
             },
         )
@@ -289,9 +289,9 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V2 — Return requires non-empty reviewer_note
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V2 â€” Return requires non-empty reviewer_note
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v2_return_with_empty_note_returns_validation_error() {
@@ -309,7 +309,7 @@ mod tests {
                 di_id: di.id,
                 actor_id: user_id,
                 expected_row_version: 2,
-                reviewer_note: "".to_string(), // empty — must fail
+                reviewer_note: "".to_string(), // empty â€” must fail
             },
         )
         .await;
@@ -340,7 +340,7 @@ mod tests {
                 di_id: di.id,
                 actor_id: user_id,
                 expected_row_version: 2,
-                reviewer_note: "   ".to_string(), // whitespace — must fail
+                reviewer_note: "   ".to_string(), // whitespace â€” must fail
             },
         )
         .await;
@@ -377,22 +377,22 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V3 — Approve step-up guard
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V3 â€” Approve step-up guard
     //
     // At the domain layer, approve_di_for_planning does NOT check step-up
     // (that is enforced at the IPC command layer via require_step_up!).
     // Here we verify that the domain function works correctly when called,
     // and that it records step_up_used = true in the event log.
     // The actual IPC-layer step-up enforcement is tested manually.
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v3_approve_records_step_up_used_in_event_log() {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        // Create → pending_review → screen (→ awaiting_approval)
+        // Create â†’ pending_review â†’ screen (â†’ awaiting_approval)
         let di = create_intervention_request(&db, make_create_input(user_id))
             .await
             .expect("create DI");
@@ -406,7 +406,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "high".to_string(),
                 review_team_id: Some(1),
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: Some("Screened OK".to_string()),
             },
         )
@@ -451,7 +451,7 @@ mod tests {
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
 
-        // Try to approve directly from pending_review — must fail
+        // Try to approve directly from pending_review â€” must fail
         let result = approve_di_for_planning(
             &db,
             DiApproveInput {
@@ -469,16 +469,16 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V4 — Defer future-date guard
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V4 â€” Defer future-date guard
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v4_defer_with_past_date_returns_validation_error() {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        // Create → pending_review → screen → approve → defer with past date
+        // Create â†’ pending_review â†’ screen â†’ approve â†’ defer with past date
         let di = create_intervention_request(&db, make_create_input(user_id))
             .await
             .expect("create DI");
@@ -492,7 +492,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "medium".to_string(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: None,
             },
         )
@@ -511,7 +511,7 @@ mod tests {
         .await
         .expect("approve");
 
-        // Defer with yesterday's date — must fail
+        // Defer with yesterday's date â€” must fail
         let result = defer_di(
             &db,
             DiDeferInput {
@@ -553,7 +553,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "medium".to_string(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: None,
             },
         )
@@ -607,7 +607,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "medium".to_string(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: None,
             },
         )
@@ -633,7 +633,7 @@ mod tests {
                 actor_id: user_id,
                 expected_row_version: approved.row_version,
                 deferred_until: "2099-12-31".to_string(),
-                reason_code: "".to_string(), // empty — must fail
+                reason_code: "".to_string(), // empty â€” must fail
                 notes: None,
             },
         )
@@ -642,9 +642,9 @@ mod tests {
         assert!(result.is_err(), "defer must fail with empty reason_code");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V5 — Full lifecycle with 6 event rows
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V5 â€” Full lifecycle with 6 event rows
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v5_full_lifecycle_screen_approve_defer_reactivate() {
@@ -661,7 +661,7 @@ mod tests {
         advance_to_pending_review(&db, di.id).await;
         let version = get_row_version(&db, di.id).await;
 
-        // 3. Screen (pending_review → awaiting_approval, writes 2 events)
+        // 3. Screen (pending_review â†’ awaiting_approval, writes 2 events)
         let screened = screen_di(
             &db,
             DiScreenInput {
@@ -670,7 +670,7 @@ mod tests {
                 expected_row_version: version,
                 validated_urgency: "high".to_string(),
                 review_team_id: Some(1),
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: Some("Validated vibration concern".to_string()),
             },
         )
@@ -684,14 +684,14 @@ mod tests {
             "validated_urgency must be set"
         );
 
-        // 4. Approve (awaiting_approval → approved_for_planning)
+        // 4. Approve (awaiting_approval â†’ approved_for_planning)
         let approved = approve_di_for_planning(
             &db,
             DiApproveInput {
                 di_id: di.id,
                 actor_id: user_id,
                 expected_row_version: screened.row_version,
-                notes: Some("Approved — schedule next shutdown window".to_string()),
+                notes: Some("Approved â€” schedule next shutdown window".to_string()),
             },
         )
         .await
@@ -699,7 +699,7 @@ mod tests {
         assert_eq!(approved.status, "approved_for_planning");
         assert!(approved.approved_at.is_some(), "approved_at must be set");
 
-        // 5. Defer (approved_for_planning → deferred)
+        // 5. Defer (approved_for_planning â†’ deferred)
         let deferred = defer_di(
             &db,
             DiDeferInput {
@@ -719,14 +719,14 @@ mod tests {
             Some("2099-06-15")
         );
 
-        // 6. Reactivate (deferred → awaiting_approval)
+        // 6. Reactivate (deferred â†’ awaiting_approval)
         let reactivated = reactivate_deferred_di(
             &db,
             DiReactivateInput {
                 di_id: di.id,
                 actor_id: user_id,
                 expected_row_version: deferred.row_version,
-                notes: Some("Budget approved — reactivate for scheduling".to_string()),
+                notes: Some("Budget approved â€” reactivate for scheduling".to_string()),
             },
         )
         .await
@@ -737,7 +737,7 @@ mod tests {
             "deferred_until must be cleared after reactivation"
         );
 
-        // ── Verify screened_at and approved_at are PRESERVED (not overwritten) ──
+        // â”€â”€ Verify screened_at and approved_at are PRESERVED (not overwritten) â”€â”€
         assert!(
             reactivated.screened_at.is_some(),
             "screened_at must survive reactivation"
@@ -747,7 +747,7 @@ mod tests {
             "approved_at must survive reactivation"
         );
 
-        // ── Verify full event log: exactly 5 rows ──
+        // â”€â”€ Verify full event log: exactly 5 rows â”€â”€
         // screen(2: screened + advanced_to_approval) + approve(1) + defer(1) + reactivate(1) = 5
         let events = get_review_events(&db, di.id).await.expect("events");
         assert_eq!(
@@ -785,9 +785,9 @@ mod tests {
         assert_eq!(events[4].to_status, "awaiting_approval");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Additional: reject requires reason_code
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn reject_with_empty_reason_returns_error() {
@@ -841,9 +841,9 @@ mod tests {
         assert!(result.declined_at.is_some(), "declined_at must be set");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Optimistic concurrency on review actions
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn screen_with_stale_row_version_fails() {
@@ -860,10 +860,10 @@ mod tests {
             DiScreenInput {
                 di_id: di.id,
                 actor_id: user_id,
-                expected_row_version: 1, // stale — should be 2 after advance
+                expected_row_version: 1, // stale â€” should be 2 after advance
                 validated_urgency: "high".to_string(),
                 review_team_id: None,
-                classification_code_id: 1,
+                classification_code_id: Some(1),
                 reviewer_note: None,
             },
         )
@@ -874,7 +874,7 @@ mod tests {
         let err = result.unwrap_err();
         let err_str = err.to_string();
         assert!(
-            err_str.contains("version") || err_str.contains("modifié"),
+            err_str.contains("version") || err_str.contains("modifiÃ©"),
             "Error must mention version conflict: got '{err_str}'"
         );
     }

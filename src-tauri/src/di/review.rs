@@ -36,7 +36,7 @@ pub struct DiScreenInput {
     pub expected_row_version: i64,
     pub validated_urgency: String,
     pub review_team_id: Option<i64>,
-    pub classification_code_id: i64,
+    pub classification_code_id: Option<i64>,
     pub reviewer_note: Option<String>,
 }
 
@@ -345,19 +345,21 @@ pub async fn screen_di(
         AppError::ValidationFailed(vec![e])
     })?;
 
-    // 3. Validate classification_code_id resolves in reference_values
-    let ref_exists = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM reference_values WHERE id = ?",
-            [input.classification_code_id.into()],
-        ))
-        .await?;
-    if ref_exists.is_none() {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Code de classification introuvable (classification_code_id={}).",
-            input.classification_code_id
-        )]));
+    // 3. Validate classification_code_id resolves in reference_values (if provided)
+    if let Some(cid) = input.classification_code_id {
+        let ref_exists = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM reference_values WHERE id = ?",
+                [cid.into()],
+            ))
+            .await?;
+        if ref_exists.is_none() {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Code de classification introuvable (classification_code_id={}).",
+                cid
+            )]));
+        }
     }
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -370,7 +372,7 @@ pub async fn screen_di(
                 status = 'awaiting_approval', \
                 validated_urgency = ?, \
                 review_team_id = COALESCE(?, review_team_id), \
-                classification_code_id = ?, \
+                classification_code_id = COALESCE(?, classification_code_id), \
                 reviewer_note = COALESCE(?, reviewer_note), \
                 reviewer_id = ?, \
                 screened_at = ?, \
@@ -383,7 +385,10 @@ pub async fn screen_di(
                     .review_team_id
                     .map(sea_orm::Value::from)
                     .unwrap_or(sea_orm::Value::from(None::<i64>)),
-                input.classification_code_id.into(),
+                input
+                    .classification_code_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<i64>)),
                 input
                     .reviewer_note
                     .clone()

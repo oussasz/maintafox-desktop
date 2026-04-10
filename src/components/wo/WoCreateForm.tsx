@@ -218,14 +218,14 @@ export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormPro
         const input: WoCreateInput = {
           title: title.trim(),
           description: description.trim() || null,
-          type_id: typeId ? Number(typeId) : null,
+          type_id: typeId ? Number(typeId) : 1,
           equipment_id: selectedAsset?.id ?? null,
           urgency_id: urgencyId ? Number(urgencyId) : null,
           planned_start: plannedStart || null,
           planned_end: plannedEnd || null,
           expected_duration_hours: expectedDuration ? Number(expectedDuration) : null,
           notes: notes.trim() || null,
-          created_by_id: info.user_id,
+          creator_id: info.user_id,
         };
         const wo = await submitNewWo(input);
         onSubmitted(wo);

@@ -57,10 +57,10 @@ export function WoContextMenu({
   const { t } = useTranslation("ot");
   const { can } = usePermissions();
 
-  const canEdit = can("ot.edit") && EDITABLE_STATES.has(wo.status);
-  const canStart = can("ot.execute") && STARTABLE_STATES.has(wo.status);
-  const canComplete = can("ot.execute") && COMPLETABLE_STATES.has(wo.status);
-  const canCancel = can("ot.close") && !CANCELLABLE_DENY.has(wo.status);
+  const canEdit = can("ot.edit") && EDITABLE_STATES.has(wo.status_code ?? "");
+  const canStart = can("ot.execute") && STARTABLE_STATES.has(wo.status_code ?? "");
+  const canComplete = can("ot.execute") && COMPLETABLE_STATES.has(wo.status_code ?? "");
+  const canCancel = can("ot.close") && !CANCELLABLE_DENY.has(wo.status_code ?? "");
 
   return (
     <DropdownMenu>

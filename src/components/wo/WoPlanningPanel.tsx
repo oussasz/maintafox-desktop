@@ -47,14 +47,14 @@ export function WoPlanningPanel({ wo }: WoPlanningPanelProps) {
   const planWorkOrder = useWoStore((s) => s.planWorkOrder);
   const saving = useWoStore((s) => s.saving);
 
-  const editable = EDITABLE_STATUSES.has(wo.status);
+  const editable = EDITABLE_STATUSES.has(wo.status_code ?? "");
 
   const [plannedStart, setPlannedStart] = useState(wo.planned_start ?? "");
   const [plannedEnd, setPlannedEnd] = useState(wo.planned_end ?? "");
   const [duration, setDuration] = useState(
     wo.expected_duration_hours != null ? String(wo.expected_duration_hours) : "",
   );
-  const [shift, setShift] = useState<string>(wo.shift ?? "");
+  const [shift, setShift] = useState<string>("");
   const [dirty, setDirty] = useState(false);
 
   const markDirty = useCallback(() => setDirty(true), []);
@@ -81,7 +81,7 @@ export function WoPlanningPanel({ wo }: WoPlanningPanelProps) {
         </div>
         <div>
           <span className="text-muted-foreground">{t("detail.fields.equipment")}:</span>{" "}
-          <span className="font-medium">{wo.equipment_name ?? "—"}</span>
+          <span className="font-medium">{wo.asset_label ?? "—"}</span>
         </div>
         <div>
           <span className="text-muted-foreground">{t("detail.fields.priority")}:</span>{" "}
@@ -89,7 +89,7 @@ export function WoPlanningPanel({ wo }: WoPlanningPanelProps) {
         </div>
         <div>
           <span className="text-muted-foreground">{t("detail.fields.assignedTo")}:</span>{" "}
-          <span className="font-medium">{wo.assigned_to_name ?? "—"}</span>
+          <span className="font-medium">{wo.responsible_username ?? "—"}</span>
         </div>
       </div>
 

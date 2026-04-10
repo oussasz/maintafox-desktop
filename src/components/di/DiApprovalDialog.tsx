@@ -11,6 +11,7 @@ import { ArrowRight, Loader2, Printer } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { StepUpDialog } from "@/components/auth/StepUpDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -149,15 +150,24 @@ export function DiApprovalDialog() {
   const closeApproval = useDiReviewStore((s) => s.closeApproval);
   const approve = useDiReviewStore((s) => s.approve);
   const saving = useDiReviewStore((s) => s.saving);
+  const storeError = useDiReviewStore((s) => s.error);
   const { info } = useSession();
 
   const [note, setNote] = useState("");
+  const [showStepUp, setShowStepUp] = useState(false);
 
   const open = di !== null;
   const woCodePreview = di ? generateWoCodePreview(di.code) : "";
   const approverName = info?.display_name ?? info?.username ?? "";
 
-  const handleApprove = useCallback(async () => {
+  // Step 1: user clicks "Approve" → show step-up dialog
+  const handleApproveClick = useCallback(() => {
+    setShowStepUp(true);
+  }, []);
+
+  // Step 2: step-up verified → actually run the approve action
+  const handleStepUpVerified = useCallback(async () => {
+    setShowStepUp(false);
     if (!di) return;
     try {
       await approve({
@@ -169,9 +179,13 @@ export function DiApprovalDialog() {
       setNote("");
       closeApproval();
     } catch {
-      // error handled by store
+      // error is set in store; dialog stays open so user can retry
     }
   }, [di, approve, info, note, closeApproval]);
+
+  const handleStepUpCancel = useCallback(() => {
+    setShowStepUp(false);
+  }, []);
 
   const handlePrint = useCallback(() => {
     if (di) {
@@ -181,141 +195,159 @@ export function DiApprovalDialog() {
 
   const handleClose = useCallback(() => {
     setNote("");
+    setShowStepUp(false);
     closeApproval();
   }, [closeApproval]);
 
   if (!di) return null;
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
-      <DialogContent
-        className="max-w-3xl max-h-[85vh] flex flex-col p-0 gap-0"
-        onPointerDownOutside={(e) => e.preventDefault()}
-      >
-        <DialogHeader className="px-6 pt-5 pb-3">
-          <DialogTitle className="text-lg font-bold">{t("review.approvalTitle")}</DialogTitle>
-        </DialogHeader>
+    <>
+      <StepUpDialog
+        open={showStepUp}
+        onVerified={handleStepUpVerified}
+        onCancel={handleStepUpCancel}
+      />
+      <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
+        <DialogContent
+          className="max-w-3xl max-h-[85vh] flex flex-col p-0 gap-0"
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          <DialogHeader className="px-6 pt-5 pb-3">
+            <DialogTitle className="text-lg font-bold">{t("review.approvalTitle")}</DialogTitle>
+          </DialogHeader>
 
-        <Separator />
+          <Separator />
 
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-          {/* Conversion banner */}
-          <div className="flex items-center justify-center gap-3 rounded-lg bg-green-50 border border-green-200 py-3 px-4">
-            <span className="font-mono font-bold text-green-800">{di.code}</span>
-            <ArrowRight className="h-4 w-4 text-green-600" />
-            <span className="font-mono font-bold text-green-800">{woCodePreview}</span>
-          </div>
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            {/* Conversion banner */}
+            <div className="flex items-center justify-center gap-3 rounded-lg bg-green-50 border border-green-200 py-3 px-4">
+              <span className="font-mono font-bold text-green-800">{di.code}</span>
+              <ArrowRight className="h-4 w-4 text-green-600" />
+              <span className="font-mono font-bold text-green-800">{woCodePreview}</span>
+            </div>
 
-          {/* DI info card */}
-          <Card>
-            <CardContent className="p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-sm text-muted-foreground">{di.code}</span>
-                <span className="font-semibold text-sm">{di.title}</span>
-                <Badge
-                  variant="outline"
-                  className={`text-[10px] border-0 ml-auto ${STATUS_STYLE[di.status] ?? "bg-gray-100"}`}
-                >
-                  {di.status}
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className={`text-[10px] border-0 ${URGENCY_STYLE[di.reported_urgency] ?? ""}`}
-                >
-                  {t(`priority.${di.reported_urgency}`)}
-                </Badge>
-              </div>
-
-              {/* Equipment */}
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                <div>
-                  <span className="text-muted-foreground">{t("detail.fields.asset")}:</span>{" "}
-                  <span className="font-medium">#{di.asset_id}</span>
+            {/* DI info card */}
+            <Card>
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm text-muted-foreground">{di.code}</span>
+                  <span className="font-semibold text-sm">{di.title}</span>
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] border-0 ml-auto ${STATUS_STYLE[di.status] ?? "bg-gray-100"}`}
+                  >
+                    {di.status}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] border-0 ${URGENCY_STYLE[di.reported_urgency] ?? ""}`}
+                  >
+                    {t(`priority.${di.reported_urgency}`)}
+                  </Badge>
                 </div>
-                <div>
-                  <span className="text-muted-foreground">{t("detail.fields.orgNode")}:</span>{" "}
-                  <span className="font-medium">#{di.org_node_id}</span>
+
+                {/* Equipment */}
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <span className="text-muted-foreground">{t("detail.fields.asset")}:</span>{" "}
+                    <span className="font-medium">#{di.asset_id}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">{t("detail.fields.orgNode")}:</span>{" "}
+                    <span className="font-medium">#{di.org_node_id}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">{t("detail.fields.origin")}:</span>{" "}
+                    <span className="font-medium">{di.origin_type}</span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-muted-foreground">{t("detail.fields.origin")}:</span>{" "}
-                  <span className="font-medium">{di.origin_type}</span>
-                </div>
-              </div>
 
-              {/* Requester */}
-              <div className="text-xs">
-                <span className="text-muted-foreground">{t("detail.fields.reportedBy")}:</span>{" "}
-                <span className="font-medium">#{di.submitter_id}</span>
-                <span className="ml-4 text-muted-foreground">
-                  {t("detail.fields.reportedAt")}:
-                </span>{" "}
-                <span className="font-medium">{formatDate(di.submitted_at)}</span>
-              </div>
-
-              {/* Description */}
-              <div className="text-xs">
-                <p className="text-muted-foreground mb-1">{t("detail.fields.description")}:</p>
-                <p className="whitespace-pre-wrap">{di.description}</p>
-              </div>
-
-              {di.reviewer_note && (
+                {/* Requester */}
                 <div className="text-xs">
-                  <p className="text-muted-foreground mb-1">{t("review.reviewerNote")}:</p>
-                  <p className="whitespace-pre-wrap">{di.reviewer_note}</p>
+                  <span className="text-muted-foreground">{t("detail.fields.reportedBy")}:</span>{" "}
+                  <span className="font-medium">#{di.submitter_id}</span>
+                  <span className="ml-4 text-muted-foreground">
+                    {t("detail.fields.reportedAt")}:
+                  </span>{" "}
+                  <span className="font-medium">{formatDate(di.submitted_at)}</span>
                 </div>
-              )}
-            </CardContent>
-          </Card>
 
-          {/* Approval note */}
-          <div className="space-y-2">
-            <Label htmlFor="approval-note">{t("review.approvalNote")}</Label>
-            <Textarea
-              id="approval-note"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              maxLength={2000}
-              placeholder={t("review.approvalNotePlaceholder")}
-              rows={3}
-            />
-            <p className="text-[10px] text-muted-foreground text-right">{note.length}/2000</p>
+                {/* Description */}
+                <div className="text-xs">
+                  <p className="text-muted-foreground mb-1">{t("detail.fields.description")}:</p>
+                  <p className="whitespace-pre-wrap">{di.description}</p>
+                </div>
+
+                {di.reviewer_note && (
+                  <div className="text-xs">
+                    <p className="text-muted-foreground mb-1">{t("review.reviewerNote")}:</p>
+                    <p className="whitespace-pre-wrap">{di.reviewer_note}</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Approval note */}
+            <div className="space-y-2">
+              <Label htmlFor="approval-note">{t("review.approvalNote")}</Label>
+              <Textarea
+                id="approval-note"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                maxLength={2000}
+                placeholder={t("review.approvalNotePlaceholder")}
+                rows={3}
+              />
+              <p className="text-[10px] text-muted-foreground text-right">{note.length}/2000</p>
+            </div>
+
+            {/* Approver signature preview */}
+            <Card>
+              <CardContent className="p-3 flex items-center gap-4 text-xs">
+                <span className="text-muted-foreground">{t("review.approver")}:</span>
+                <span className="font-medium">{approverName}</span>
+                <span className="ml-auto text-muted-foreground">
+                  {new Date().toLocaleString("fr-FR")}
+                </span>
+              </CardContent>
+            </Card>
+
+            {/* Error feedback */}
+            {storeError && (
+              <div
+                role="alert"
+                className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              >
+                {storeError}
+              </div>
+            )}
           </div>
 
-          {/* Approver signature preview */}
-          <Card>
-            <CardContent className="p-3 flex items-center gap-4 text-xs">
-              <span className="text-muted-foreground">{t("review.approver")}:</span>
-              <span className="font-medium">{approverName}</span>
-              <span className="ml-auto text-muted-foreground">
-                {new Date().toLocaleString("fr-FR")}
-              </span>
-            </CardContent>
-          </Card>
-        </div>
+          <Separator />
 
-        <Separator />
-
-        <DialogFooter className="px-6 py-3 flex items-center justify-between">
-          <Button variant="outline" size="sm" onClick={handlePrint} className="gap-1.5">
-            <Printer className="h-3.5 w-3.5" />
-            {t("review.print")}
-          </Button>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handleClose}>
-              {t("form.cancel")}
+          <DialogFooter className="px-6 py-3 flex items-center justify-between">
+            <Button variant="outline" size="sm" onClick={handlePrint} className="gap-1.5">
+              <Printer className="h-3.5 w-3.5" />
+              {t("review.print")}
             </Button>
-            <Button
-              size="sm"
-              onClick={handleApprove}
-              disabled={saving}
-              className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {t("review.approveAndConvert")}
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={handleClose}>
+                {t("form.cancel")}
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleApproveClick}
+                disabled={saving}
+                className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+              >
+                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {t("review.approveAndConvert")}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

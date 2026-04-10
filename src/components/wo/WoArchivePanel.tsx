@@ -35,7 +35,7 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
     setLoading(true);
     try {
       const page = await listWos({
-        status: ["closed", "cancelled"],
+        status_codes: ["closed", "cancelled"],
         limit: 50,
         offset: 0,
       });
@@ -70,7 +70,7 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
         accessorKey: "status",
         header: t("list.columns.status"),
         cell: ({ row }) => {
-          const s = row.original.status;
+          const s = row.original.status_code;
           const isCancelled = s === "cancelled";
           return (
             <Badge

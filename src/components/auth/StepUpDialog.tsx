@@ -2,6 +2,16 @@ import { Lock } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { verifyStepUp } from "@/services/rbac-service";
 
 interface StepUpDialogProps {
@@ -17,7 +27,7 @@ const LOCKOUT_SECONDS = 30;
 
 /**
  * Reusable step-up re-authentication dialog.
- * Verifies the user's password for dangerous actions that require elevated confirmation.
+ * Uses Radix Dialog so it properly stacks above other dialogs.
  */
 export function StepUpDialog({
   open,
@@ -39,7 +49,6 @@ export function StepUpDialog({
     if (open) {
       setPassword("");
       setError(null);
-      // Don't reset attempts on re-open — keep the lockout state
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [open]);
@@ -91,40 +100,44 @@ export function StepUpDialog({
     [password, isLocked, loading, attempts, onVerified, t],
   );
 
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div
-        className="w-full max-w-sm rounded-lg border border-surface-border bg-surface-0 p-6 shadow-lg"
-        // biome-ignore lint/a11y/useSemanticElements: custom overlay dialog
-        role="dialog"
-        aria-modal="true"
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        if (!isOpen) onCancel();
+      }}
+    >
+      <DialogContent
+        className="max-w-sm"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
       >
-        <div className="flex items-center gap-3 mb-4">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100">
-            <Lock className="h-5 w-5 text-amber-700" />
+        <DialogHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100">
+              <Lock className="h-5 w-5 text-amber-700" />
+            </div>
+            <div>
+              <DialogTitle className="text-base">
+                {title ?? t("stepUp.title", "Confirmation d'identité requise")}
+              </DialogTitle>
+              <DialogDescription className="text-sm">
+                {description ??
+                  t(
+                    "stepUp.message",
+                    "Cette action est sensible. Saisissez votre mot de passe pour confirmer.",
+                  )}
+              </DialogDescription>
+            </div>
           </div>
-          <div>
-            <h3 className="text-base font-semibold text-text-primary">
-              {title ?? t("stepUp.title", "Confirmation d'identité requise")}
-            </h3>
-            <p className="text-sm text-text-secondary">
-              {description ??
-                t(
-                  "stepUp.message",
-                  "Cette action est sensible. Saisissez votre mot de passe pour confirmer.",
-                )}
-            </p>
-          </div>
-        </div>
+        </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="step-up-password" className="sr-only">
               {t("stepUp.passwordLabel", "Mot de passe")}
             </label>
-            <input
+            <Input
               ref={inputRef}
               id="step-up-password"
               type="password"
@@ -134,39 +147,34 @@ export function StepUpDialog({
               placeholder={t("stepUp.passwordLabel", "Mot de passe")}
               disabled={isLocked || loading}
               required
-              className="w-full rounded-md border border-surface-border bg-surface-1
-                         px-3 py-2 text-sm text-text-primary
-                         placeholder:text-text-muted
-                         focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary
-                         disabled:opacity-50"
             />
           </div>
 
           {error && (
             <div
               role="alert"
-              className="rounded-md bg-status-danger/10 px-3 py-2 text-sm text-status-danger"
+              className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
             >
               {error}
             </div>
           )}
 
-          <p className="text-xs text-text-muted">
+          <p className="text-xs text-muted-foreground">
             {t("stepUp.windowNote", "Fenêtre de vérification : 120 secondes")}
           </p>
 
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={onCancel} className="btn-ghost text-sm">
+          <DialogFooter>
+            <Button type="button" variant="outline" size="sm" onClick={onCancel}>
               {t("stepUp.cancel", "Annuler")}
-            </button>
-            <button type="submit" disabled={isLocked || loading} className="btn-primary text-sm">
+            </Button>
+            <Button type="submit" size="sm" disabled={isLocked || loading}>
               {loading
                 ? t("stepUp.submitting", "Vérification...")
                 : t("stepUp.submit", "Confirmer l'identité")}
-            </button>
-          </div>
+            </Button>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

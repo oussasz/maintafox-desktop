@@ -97,6 +97,7 @@
   },
   "action": {
     "create": "Nouvel OT",
+    "edit": "Modifier",
     "release": "Lancer l'OT",
     "start": "Démarrer",
     "pause": "Mettre en pause",

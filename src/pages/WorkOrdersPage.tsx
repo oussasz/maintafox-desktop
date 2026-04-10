@@ -61,7 +61,7 @@ export function WorkOrdersPage() {
   const loadWos = useWoStore((s) => s.loadWos);
   const openWo = useWoStore((s) => s.openWo);
   const activeWo = useWoStore((s) => s.activeWo);
-  const closeWo = useWoStore((s) => s.closeWo);
+  const closeWo = useWoStore((s) => s.closeActiveWo);
   const openCreateForm = useWoStore((s) => s.openCreateForm);
   const setFilter = useWoStore((s) => s.setFilter);
 
@@ -124,7 +124,7 @@ export function WorkOrdersPage() {
         accessorKey: "equipment_name",
         header: t("list.columns.equipment"),
         cell: ({ row }) => (
-          <span className="text-xs text-text-muted">{row.original.equipment_name ?? "—"}</span>
+          <span className="text-xs text-text-muted">{row.original.asset_label ?? "—"}</span>
         ),
       },
       {
@@ -136,7 +136,7 @@ export function WorkOrdersPage() {
         accessorKey: "status",
         header: t("list.columns.status"),
         cell: ({ row }) => {
-          const s = row.original.status;
+          const s = row.original.status_code ?? "draft";
           return (
             <Badge
               variant="outline"
@@ -151,7 +151,9 @@ export function WorkOrdersPage() {
         accessorKey: "assigned_to_name",
         header: t("list.columns.assignedTo"),
         cell: ({ row }) => (
-          <span className="text-xs text-text-muted">{row.original.assigned_to_name ?? "—"}</span>
+          <span className="text-xs text-text-muted">
+            {row.original.responsible_username ?? "—"}
+          </span>
         ),
       },
       {
@@ -302,7 +304,7 @@ export function WorkOrdersPage() {
       <WoFormDialog />
 
       {/* ── Detail dialog ────────────────────────────────────────────── */}
-      <WoDetailDialog wo={activeWo} open={activeWo !== null} onClose={closeWo} />
+      <WoDetailDialog wo={activeWo?.wo ?? null} open={activeWo !== null} onClose={closeWo} />
     </div>
   );
 }

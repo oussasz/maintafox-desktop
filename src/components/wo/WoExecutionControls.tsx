@@ -226,13 +226,13 @@ export function WoExecutionControls({ wo }: WoExecutionControlsProps) {
           )}
 
           {/* Quick add labor button */}
-          {wo.status === "in_progress" && (
+          {wo.status_code === "in_progress" && (
             <div className="pt-2">
               <Button
                 variant="outline"
                 size="sm"
                 className="gap-1.5 text-xs"
-                onClick={() => void handleStartLabor(wo.assigned_to_id ?? 0)}
+                onClick={() => void handleStartLabor(wo.primary_responsible_id ?? 0)}
               >
                 <Plus className="h-3 w-3" />
                 {t("action.addLabor")}
@@ -267,7 +267,7 @@ export function WoExecutionControls({ wo }: WoExecutionControlsProps) {
                   <button
                     type="button"
                     className="shrink-0"
-                    disabled={task.is_completed || wo.status !== "in_progress"}
+                    disabled={task.is_completed || wo.status_code !== "in_progress"}
                     onClick={() => void handleCompleteTask(task.id)}
                   >
                     {task.is_completed ? (
@@ -312,7 +312,7 @@ export function WoExecutionControls({ wo }: WoExecutionControlsProps) {
         </CardHeader>
         <CardContent className="px-4 pb-3">
           <p className="text-xs text-muted-foreground">{t("empty.noParts")}</p>
-          {wo.status === "in_progress" && (
+          {wo.status_code === "in_progress" && (
             <div className="pt-2">
               <Button variant="outline" size="sm" className="gap-1.5 text-xs">
                 <Plus className="h-3 w-3" />

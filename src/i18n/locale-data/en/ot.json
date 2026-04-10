@@ -97,6 +97,7 @@
   },
   "action": {
     "create": "New WO",
+    "edit": "Edit",
     "release": "Release WO",
     "start": "Start",
     "pause": "Put on hold",

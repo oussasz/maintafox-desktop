@@ -7,6 +7,7 @@
 
 import { create } from "zustand";
 
+import { convertDiToWo } from "@/services/di-conversion-service";
 import {
   approveDi,
   deferDi,
@@ -53,7 +54,7 @@ interface DiReviewStoreState {
   closeRejection: () => void;
   openReturn: (di: InterventionRequest) => void;
   closeReturn: () => void;
-  screen: (input: DiScreenInput) => Promise<void>;
+  screen: (input: DiScreenInput) => Promise<InterventionRequest>;
   returnForClarification: (input: DiReturnInput) => Promise<void>;
   reject: (input: DiRejectInput) => Promise<void>;
   approve: (input: DiApproveInput) => Promise<void>;
@@ -76,7 +77,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
     set({ error: null });
     try {
       const page = await listDis({
-        status: ["pending_review", "returned_for_clarification"],
+        status: ["pending_review", "returned_for_clarification", "awaiting_approval"],
         limit: 200,
         offset: 0,
       });
@@ -113,6 +114,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       const updated = await screenDi(input);
       set({ activeReviewDi: updated });
       await get().loadReviewQueue();
+      return updated;
     } catch (err) {
       set({ error: toErrorMessage(err) });
       throw err;
@@ -153,7 +155,24 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const updated = await approveDi(input);
-      set({ activeReviewDi: updated });
+      // Chain conversion: create WO from the approved DI
+      try {
+        await convertDiToWo({
+          diId: input.di_id,
+          expectedRowVersion: updated.row_version,
+          conversionNotes: input.notes ?? "",
+        });
+        // Re-fetch the DI to get the post-conversion state
+        try {
+          const fresh = await getDi(input.di_id);
+          set({ activeReviewDi: fresh.di });
+        } catch {
+          set({ activeReviewDi: updated });
+        }
+      } catch {
+        // Conversion may fail (missing permission, etc.); approval still succeeded
+        set({ activeReviewDi: updated });
+      }
       await get().loadReviewQueue();
     } catch (err) {
       set({ error: toErrorMessage(err) });

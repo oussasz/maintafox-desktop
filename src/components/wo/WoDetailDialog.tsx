@@ -25,6 +25,7 @@ import {
   History,
   Paperclip,
   Pause,
+  Pencil,
   Play,
   Printer,
   Settings,
@@ -162,6 +163,7 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
   const { can } = usePermissions();
 
   const saving = useWoStore((s) => s.saving);
+  const openCreateForm = useWoStore((s) => s.openCreateForm);
   const planWorkOrder = useWoStore((s) => s.planWorkOrder);
   const assignWorkOrder = useWoStore((s) => s.assignWorkOrder);
   const startWorkOrder = useWoStore((s) => s.startWorkOrder);
@@ -175,20 +177,21 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
   }, [wo]);
 
   // Determine visible tabs
-  const showExecution = wo ? EXECUTION_VISIBLE.has(wo.status) : false;
-  const showCloseout = wo ? CLOSEOUT_VISIBLE.has(wo.status) : false;
+  const showExecution = wo ? EXECUTION_VISIBLE.has(wo.status_code ?? "") : false;
+  const showCloseout = wo ? CLOSEOUT_VISIBLE.has(wo.status_code ?? "") : false;
 
   // Determine default tab
   const defaultTab = useMemo(() => {
     if (!wo) return "plan";
-    if (wo.status === "in_progress" || wo.status === "on_hold") return "execution";
-    if (CLOSEOUT_VISIBLE.has(wo.status)) return "closeout";
+    const sc = wo.status_code ?? "";
+    if (sc === "in_progress" || sc === "on_hold") return "execution";
+    if (CLOSEOUT_VISIBLE.has(sc)) return "closeout";
     return "plan";
   }, [wo]);
 
   if (!wo) return null;
 
-  const statusKey = statusToI18nKey(wo.status);
+  const statusKey = statusToI18nKey(wo.status_code ?? "draft");
 
   return (
     <>
@@ -212,7 +215,7 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
               <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
                 <Badge
                   variant="outline"
-                  className={`text-xs border-0 ${STATUS_STYLE[wo.status] ?? "bg-gray-100"}`}
+                  className={`text-xs border-0 ${STATUS_STYLE[wo.status_code ?? ""] ?? "bg-gray-100"}`}
                 >
                   {t(`status.${statusKey}` as const)}
                 </Badge>
@@ -236,8 +239,11 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
             <Card>
               <CardContent className="p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
                 <InfoRow label={t("detail.fields.type")} value={wo.type_label ?? "—"} />
-                <InfoRow label={t("detail.fields.equipment")} value={wo.equipment_name ?? "—"} />
-                <InfoRow label={t("detail.fields.assignedTo")} value={wo.assigned_to_name ?? "—"} />
+                <InfoRow label={t("detail.fields.equipment")} value={wo.asset_label ?? "—"} />
+                <InfoRow
+                  label={t("detail.fields.assignedTo")}
+                  value={wo.responsible_username ?? "—"}
+                />
                 <InfoRow
                   label={t("detail.fields.plannedStart")}
                   value={wo.planned_start ? formatDate(wo.planned_start) : "—"}
@@ -252,16 +258,10 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                     wo.expected_duration_hours != null ? `${wo.expected_duration_hours}h` : "—"
                   }
                 />
-                {wo.shift && (
-                  <InfoRow
-                    label={t("planning.shift")}
-                    value={t(`shift.${wo.shift === "full_day" ? "fullDay" : wo.shift}`)}
-                  />
-                )}
-                {wo.source_di_code && (
+                {wo.source_di_id && (
                   <InfoRow
                     label="DI"
-                    value={<span className="font-mono">{wo.source_di_code}</span>}
+                    value={<span className="font-mono">DI-{wo.source_di_id}</span>}
                   />
                 )}
               </CardContent>
@@ -310,14 +310,14 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                 <TabsContent value="closeout" className="pt-3">
                   <div className="space-y-3">
                     <h4 className="text-sm font-semibold">{t("detail.sections.closeout")}</h4>
-                    {wo.conclusion ? (
-                      <p className="text-sm whitespace-pre-wrap">{wo.conclusion}</p>
+                    {wo.corrective_action_summary ? (
+                      <p className="text-sm whitespace-pre-wrap">{wo.corrective_action_summary}</p>
                     ) : (
                       <p className="text-xs text-muted-foreground">{t("closeout.noReport")}</p>
                     )}
 
                     {/* Cost summary */}
-                    <WoCostSummaryCard woId={wo.id} status={wo.status} />
+                    <WoCostSummaryCard woId={wo.id} status={wo.status_code ?? ""} />
 
                     {/* Actual times summary */}
                     <div className="grid grid-cols-2 gap-3 text-xs">
@@ -390,6 +390,10 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                 saving={saving}
                 can={can}
                 t={t}
+                onEdit={() => {
+                  openCreateForm(wo);
+                  onClose();
+                }}
                 onPlan={() =>
                   void planWorkOrder({
                     id: wo.id,
@@ -400,7 +404,7 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                   void assignWorkOrder({
                     id: wo.id,
                     expected_row_version: wo.row_version,
-                    assigned_to_id: wo.assigned_to_id ?? 0,
+                    assigned_to_id: wo.primary_responsible_id ?? 0,
                   })
                 }
                 onStart={() =>
@@ -457,6 +461,7 @@ interface FooterActionsProps {
   saving: boolean;
   can: (p: string) => boolean;
   t: (key: string) => string;
+  onEdit: () => void;
   onPlan: () => void;
   onAssign: () => void;
   onStart: () => void;
@@ -471,6 +476,7 @@ function FooterActions({
   saving,
   can,
   t,
+  onEdit,
   onPlan,
   onAssign,
   onStart,
@@ -479,10 +485,18 @@ function FooterActions({
   onComplete,
   onClose,
 }: FooterActionsProps) {
-  const s = wo.status as WoStatus;
+  const s = (wo.status_code ?? "") as WoStatus;
 
   return (
     <>
+      {/* draft → Edit */}
+      {s === "draft" && can("ot.edit") && (
+        <Button size="sm" variant="outline" onClick={onEdit} disabled={saving} className="gap-1.5">
+          <Pencil className="h-3.5 w-3.5" />
+          {t("action.edit")}
+        </Button>
+      )}
+
       {/* draft / planned → Schedule */}
       {(s === "draft" || s === "planned") && can("ot.plan") && (
         <Button size="sm" variant="outline" onClick={onPlan} disabled={saving} className="gap-1.5">
@@ -492,7 +506,7 @@ function FooterActions({
       )}
 
       {/* ready_to_schedule → Assign */}
-      {s === "released" && can("ot.assign") && (
+      {s === "ready_to_schedule" && can("ot.assign") && (
         <Button
           size="sm"
           variant="outline"
@@ -560,7 +574,7 @@ function FooterActions({
       )}
 
       {/* paused / on_hold → Resume */}
-      {(s === "on_hold" || (s as string) === "paused") && can("ot.execute") && (
+      {(s === "paused" || (s as string) === "waiting_for_prerequisite") && can("ot.execute") && (
         <Button
           size="sm"
           onClick={onResume}
