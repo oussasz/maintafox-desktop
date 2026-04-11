@@ -1,4 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -75,6 +76,7 @@ const EXECUTION_EDITABLE_STATUSES = new Set([
 const TASK_RESULT_OPTIONS: TaskResultCode[] = ["ok", "nok", "na", "deferred"];
 
 export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
+  const { t } = useTranslation("ot");
   const { info } = useSession();
   const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
   const openCompletionDialog = useWoStore((s) => s.openCompletionDialog);
@@ -234,7 +236,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
     if (!actorId || !delayIntent) return;
 
     if (!delayReasonId) {
-      setDelayError("Delay reason is required.");
+      setDelayError(t("execution.delayReasonRequired"));
       return;
     }
 
@@ -258,7 +260,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
     } finally {
       setBusy(false);
     }
-  }, [actorId, delayIntent, delayReasonId, delayComment, wo.id, rowVersion, handleRefreshState]);
+  }, [actorId, delayIntent, delayReasonId, delayComment, wo.id, rowVersion, handleRefreshState, t]);
 
   const handleStartLabor = useCallback(async () => {
     if (!actorId) return;
@@ -400,19 +402,19 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
       )}
 
       <section className="space-y-2">
-        <h3 className="text-sm font-semibold">Execution Controls</h3>
+        <h3 className="text-sm font-semibold">{t("execution.controls")}</h3>
         <div className="flex flex-wrap items-center gap-2">
           {(statusCode === "assigned" || statusCode === "waiting_for_prerequisite") && (
             <>
               <Button onClick={() => void handleStart()} disabled={controlsDisabled || !actorId}>
-                Start
+                {t("execution.start")}
               </Button>
               <Button
                 variant="outline"
                 onClick={() => openDelayForm("hold")}
                 disabled={controlsDisabled || !actorId}
               >
-                Hold
+                {t("execution.hold")}
               </Button>
             </>
           )}
@@ -424,38 +426,36 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
                 onClick={() => openDelayForm("pause")}
                 disabled={controlsDisabled || !actorId}
               >
-                Pause
+                {t("execution.pause")}
               </Button>
               <Button onClick={openCompletionDialog} disabled={controlsDisabled || !actorId}>
-                Complete (Mech)
+                {t("execution.completeMech")}
               </Button>
             </>
           )}
 
           {statusCode === "paused" && (
             <Button onClick={() => void handleResume()} disabled={controlsDisabled || !actorId}>
-              Resume
+              {t("execution.resume")}
             </Button>
           )}
 
           {statusCode === "mechanically_complete" && (
-            <span className="text-sm text-muted-foreground">
-              No execution actions at this status.
-            </span>
+            <span className="text-sm text-muted-foreground">{t("execution.noActions")}</span>
           )}
         </div>
 
         {delayIntent && (
           <div className="rounded-md border p-3">
             <div className="mb-2 text-sm font-medium">
-              {delayIntent === "pause" ? "Pause Work Order" : "Hold for Prerequisite"}
+              {delayIntent === "pause" ? t("execution.pauseTitle") : t("execution.holdTitle")}
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-1">
-                <Label>Delay Reason</Label>
+                <Label>{t("execution.delayReason")}</Label>
                 <Select value={delayReasonId} onValueChange={setDelayReasonId}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select reason" />
+                    <SelectValue placeholder={t("execution.selectReason")} />
                   </SelectTrigger>
                   <SelectContent>
                     {reasonOptions.map((reason) => (
@@ -467,22 +467,22 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label>Comment (optional)</Label>
+                <Label>{t("execution.commentOptional")}</Label>
                 <Textarea
                   rows={2}
                   value={delayComment}
                   onChange={(e) => setDelayComment(e.target.value)}
-                  placeholder="Add context"
+                  placeholder={t("execution.addContext")}
                 />
               </div>
             </div>
             {delayError && <div className="mt-2 text-sm text-red-700">{delayError}</div>}
             <div className="mt-3 flex items-center gap-2">
               <Button onClick={() => void submitDelayAction()} disabled={busy || !actorId}>
-                Submit
+                {t("execution.submit")}
               </Button>
               <Button variant="outline" onClick={() => setDelayIntent(null)}>
-                Cancel
+                {t("execution.cancel")}
               </Button>
             </div>
           </div>
@@ -490,19 +490,21 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
       </section>
 
       <details open>
-        <summary className="cursor-pointer text-sm font-semibold">Labor Entries</summary>
+        <summary className="cursor-pointer text-sm font-semibold">
+          {t("execution.laborEntries")}
+        </summary>
         <div className="mt-3 space-y-3 rounded-md border p-3">
           <div className="grid gap-2 md:grid-cols-[180px_140px_auto_auto]">
             <Input
               type="number"
-              placeholder="Intervener ID"
+              placeholder={t("execution.intervenerId")}
               value={intervenerIdInput}
               onChange={(e) => setIntervenerIdInput(e.target.value)}
               disabled={controlsDisabled}
             />
             <Input
               type="number"
-              placeholder="Manual hours"
+              placeholder={t("execution.manualHours")}
               value={manualHours}
               onChange={(e) => setManualHours(e.target.value)}
               disabled={controlsDisabled}
@@ -512,19 +514,19 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
               onClick={() => void handleStartLabor()}
               disabled={controlsDisabled || !actorId}
             >
-              Start Labor
+              {t("execution.startLabor")}
             </Button>
             <Button
               variant="outline"
               onClick={() => void handleManualLabor()}
               disabled={controlsDisabled || !actorId}
             >
-              Add Manual Hours
+              {t("execution.addManualHours")}
             </Button>
           </div>
 
           {openLaborEntries.length === 0 && (
-            <div className="text-sm text-muted-foreground">No open labor entries.</div>
+            <div className="text-sm text-muted-foreground">{t("execution.noOpenLabor")}</div>
           )}
 
           {laborEntries.map((entry) => (
@@ -542,7 +544,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
                   onClick={() => void handleStopLabor(entry.id)}
                   disabled={controlsDisabled || !actorId}
                 >
-                  Stop
+                  {t("execution.stop")}
                 </Button>
               )}
             </div>
@@ -551,10 +553,12 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
       </details>
 
       <details open>
-        <summary className="cursor-pointer text-sm font-semibold">Parts Used</summary>
+        <summary className="cursor-pointer text-sm font-semibold">
+          {t("execution.partsUsed")}
+        </summary>
         <div className="mt-3 space-y-2 rounded-md border p-3">
           {parts.length === 0 && (
-            <div className="text-sm text-muted-foreground">No planned parts available.</div>
+            <div className="text-sm text-muted-foreground">{t("execution.noPlannedParts")}</div>
           )}
           {parts.map((part) => (
             <div
@@ -562,7 +566,9 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
               className="grid gap-2 rounded-md border p-2 md:grid-cols-[2fr_130px_130px_auto]"
             >
               <div className="text-sm">{part.article_ref || `Part #${part.id}`}</div>
-              <div className="text-sm">Planned: {part.quantity_planned}</div>
+              <div className="text-sm">
+                {t("execution.planned")}: {part.quantity_planned}
+              </div>
               <Input
                 type="number"
                 min="0"
@@ -576,7 +582,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
                 onClick={() => void handleRecordPartUsage(part.id)}
                 disabled={controlsDisabled}
               >
-                Save Usage
+                {t("execution.saveUsage")}
               </Button>
             </div>
           ))}
@@ -585,16 +591,18 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
             onClick={() => void handleNoParts()}
             disabled={controlsDisabled}
           >
-            No Parts Used
+            {t("execution.noPartsUsed")}
           </Button>
         </div>
       </details>
 
       <details open>
-        <summary className="cursor-pointer text-sm font-semibold">Task Execution</summary>
+        <summary className="cursor-pointer text-sm font-semibold">
+          {t("execution.taskExecution")}
+        </summary>
         <div className="mt-3 space-y-2 rounded-md border p-3">
           {tasks.length === 0 && (
-            <div className="text-sm text-muted-foreground">No tasks defined.</div>
+            <div className="text-sm text-muted-foreground">{t("execution.noTasks")}</div>
           )}
           {tasks.map((task) => {
             const incompleteMandatory = task.is_mandatory && !task.is_completed;
@@ -614,11 +622,13 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
                 <div className="text-sm">
                   {task.task_description}
                   {task.is_mandatory && (
-                    <span className="ml-2 text-xs font-semibold text-red-700">Mandatory</span>
+                    <span className="ml-2 text-xs font-semibold text-red-700">
+                      {t("execution.mandatory")}
+                    </span>
                   )}
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  Result: {task.result_code ?? "-"}
+                  {t("execution.result")}: {task.result_code ?? "-"}
                 </div>
                 <Select
                   value={taskResultCodes[task.id] ?? "ok"}
@@ -644,7 +654,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
                   onClick={() => void handleCompleteTask(task)}
                   disabled={controlsDisabled || task.is_completed || !actorId}
                 >
-                  Complete
+                  {t("execution.complete")}
                 </Button>
               </div>
             );

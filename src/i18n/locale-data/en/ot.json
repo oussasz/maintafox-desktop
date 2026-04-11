@@ -123,13 +123,43 @@
     "morning": "Morning",
     "afternoon": "Afternoon",
     "night": "Night",
-    "fullDay": "Full day"
+    "fullDay": "Full day",
+    "full_day": "Full day"
   },
   "planning": {
     "timing": "Timing",
     "shift": "Shift",
     "save": "Save planning",
-    "endBeforeStart": "End date must be after start date"
+    "endBeforeStart": "End date must be after start date",
+    "plannerId": "Planner ID",
+    "plannedStart": "Planned start",
+    "plannedEnd": "Planned end",
+    "selectShift": "Select shift",
+    "expectedDuration": "Expected duration (hours)",
+    "urgency": "Urgency",
+    "selectUrgency": "Select urgency",
+    "assignment": "Assignment",
+    "assignedGroupId": "Assigned group ID",
+    "primaryResponsibleId": "Primary responsible ID",
+    "scheduledAt": "Scheduled at",
+    "prerequisites": "Prerequisites checklist",
+    "addTask": "Add task",
+    "noTasks": "No tasks yet.",
+    "taskDescription": "Task description",
+    "minutes": "Minutes",
+    "mandatory": "Mandatory",
+    "saveTask": "Save",
+    "removeTask": "Remove",
+    "partsPlan": "Parts plan",
+    "addRow": "Add row",
+    "noPlannedParts": "No planned parts yet.",
+    "partReference": "Part reference",
+    "savePart": "Save",
+    "removePart": "Remove",
+    "plannedTotalCost": "Planned total cost",
+    "planWo": "Plan this WO",
+    "assign": "Assign",
+    "sessionRequired": "Session user required to submit."
   },
   "completion": {
     "title": "Mark work order complete",
@@ -149,7 +179,37 @@
     "noTasks": "No tasks defined.",
     "mandatory": "Required",
     "attachments": "Attachments",
-    "noAttachments": "No attachments."
+    "noAttachments": "No attachments.",
+    "controls": "Execution controls",
+    "start": "Start",
+    "hold": "Hold",
+    "pause": "Pause",
+    "completeMech": "Complete (Mech)",
+    "resume": "Resume",
+    "noActions": "No execution actions at this status.",
+    "pauseTitle": "Pause work order",
+    "holdTitle": "Hold for prerequisite",
+    "delayReason": "Delay reason",
+    "selectReason": "Select reason",
+    "commentOptional": "Comment (optional)",
+    "addContext": "Add context",
+    "submit": "Submit",
+    "cancel": "Cancel",
+    "delayReasonRequired": "Delay reason is required.",
+    "laborEntries": "Labor entries",
+    "intervenerId": "Intervener ID",
+    "manualHours": "Manual hours",
+    "startLabor": "Start labor",
+    "addManualHours": "Add manual hours",
+    "noOpenLabor": "No open labor entries.",
+    "partsUsed": "Parts used",
+    "noPlannedParts": "No planned parts available.",
+    "planned": "Planned",
+    "saveUsage": "Save usage",
+    "noPartsUsed": "No parts used",
+    "taskExecution": "Task execution",
+    "result": "Result",
+    "complete": "Complete"
   },
   "closeout": {
     "noReport": "No closeout report yet."
@@ -157,7 +217,8 @@
   "audit": {
     "created": "Created",
     "updated": "Last updated",
-    "closed": "Closed"
+    "closed": "Closed",
+    "actor": "by user"
   },
   "detail": {
     "close": "Close",
@@ -212,7 +273,8 @@
     "today": "Today",
     "mode": {
       "month": "Month",
-      "week": "Week"
+      "week": "Week",
+      "day": "Day"
     }
   },
   "dashboard": {

@@ -1,4 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,10 +65,10 @@ const URGENCY_LEVELS = [
 ] as const;
 
 const SHIFT_OPTIONS: Array<{ value: WoShift; label: string }> = [
-  { value: "morning", label: "Matin" },
-  { value: "afternoon", label: "Apres-midi" },
-  { value: "night", label: "Nuit" },
-  { value: "full_day", label: "Journee" },
+  { value: "morning", label: "morning" },
+  { value: "afternoon", label: "afternoon" },
+  { value: "night", label: "night" },
+  { value: "full_day", label: "full_day" },
 ];
 
 function toDatetimeLocal(value: string | null | undefined): string {
@@ -114,6 +115,7 @@ function toPartDraft(part: WoPart): PartDraft {
 }
 
 export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
+  const { t } = useTranslation("ot");
   const { info } = useSession();
   const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
 
@@ -408,10 +410,10 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       )}
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold">1. Timing</h3>
+        <h3 className="text-sm font-semibold">1. {t("planning.timing")}</h3>
         <div className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1">
-            <Label>Planner ID</Label>
+            <Label>{t("planning.plannerId")}</Label>
             <Input
               type="number"
               value={plannerId}
@@ -420,7 +422,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
             />
           </div>
           <div className="space-y-1">
-            <Label>Planned Start</Label>
+            <Label>{t("planning.plannedStart")}</Label>
             <Input
               type="datetime-local"
               value={plannedStart}
@@ -429,7 +431,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
             />
           </div>
           <div className="space-y-1">
-            <Label>Planned End</Label>
+            <Label>{t("planning.plannedEnd")}</Label>
             <Input
               type="datetime-local"
               value={plannedEnd}
@@ -438,26 +440,26 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
             />
           </div>
           <div className="space-y-1">
-            <Label>Shift</Label>
+            <Label>{t("planning.shift")}</Label>
             <Select
               value={shift}
               onValueChange={(value) => setShift(value as WoShift)}
               disabled={allFieldsDisabled}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select shift" />
+                <SelectValue placeholder={t("planning.selectShift")} />
               </SelectTrigger>
               <SelectContent>
                 {SHIFT_OPTIONS.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
-                    {option.label}
+                    {t(`shift.${option.label}`)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-1">
-            <Label>Expected Duration (hours)</Label>
+            <Label>{t("planning.expectedDuration")}</Label>
             <Input
               type="number"
               step="0.25"
@@ -471,10 +473,10 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold">2. Urgency</h3>
+        <h3 className="text-sm font-semibold">2. {t("planning.urgency")}</h3>
         <Select value={urgencyId} onValueChange={setUrgencyId} disabled={allFieldsDisabled}>
           <SelectTrigger className="max-w-sm">
-            <SelectValue placeholder="Select urgency" />
+            <SelectValue placeholder={t("planning.selectUrgency")} />
           </SelectTrigger>
           <SelectContent>
             {URGENCY_LEVELS.map((level) => (
@@ -490,10 +492,10 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-semibold">3. Assignment</h3>
+        <h3 className="text-sm font-semibold">3. {t("planning.assignment")}</h3>
         <div className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1">
-            <Label>Assigned Group ID</Label>
+            <Label>{t("planning.assignedGroupId")}</Label>
             <Input
               type="number"
               value={assignedGroupId}
@@ -502,7 +504,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
             />
           </div>
           <div className="space-y-1">
-            <Label>Primary Responsible User ID</Label>
+            <Label>{t("planning.primaryResponsibleId")}</Label>
             <Input
               type="number"
               value={primaryResponsibleId}
@@ -511,7 +513,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
             />
           </div>
           <div className="space-y-1">
-            <Label>Scheduled At</Label>
+            <Label>{t("planning.scheduledAt")}</Label>
             <Input
               type="datetime-local"
               value={scheduledAt}
@@ -524,21 +526,23 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">4. Prerequisites Checklist</h3>
+          <h3 className="text-sm font-semibold">4. {t("planning.prerequisites")}</h3>
           <Button size="sm" variant="outline" onClick={addTaskRow} disabled={allFieldsDisabled}>
-            Add Task
+            {t("planning.addTask")}
           </Button>
         </div>
 
         <div className="space-y-2">
-          {tasks.length === 0 && <div className="text-sm text-muted-foreground">No tasks yet.</div>}
+          {tasks.length === 0 && (
+            <div className="text-sm text-muted-foreground">{t("planning.noTasks")}</div>
+          )}
           {tasks.map((task) => (
             <div
               key={task.localId}
               className="grid gap-2 rounded-md border p-3 md:grid-cols-[2fr_100px_120px_auto_auto]"
             >
               <Input
-                placeholder="Task description"
+                placeholder={t("planning.taskDescription")}
                 value={task.task_description}
                 onChange={(e) => updateTaskRow(task.localId, { task_description: e.target.value })}
                 disabled={allFieldsDisabled || task.persisted}
@@ -558,7 +562,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                 value={task.estimated_minutes}
                 onChange={(e) => updateTaskRow(task.localId, { estimated_minutes: e.target.value })}
                 disabled={allFieldsDisabled || task.persisted}
-                placeholder="Minutes"
+                placeholder={t("planning.minutes")}
               />
               <label className="flex items-center gap-2 text-sm">
                 <input
@@ -567,7 +571,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                   onChange={(e) => updateTaskRow(task.localId, { is_mandatory: e.target.checked })}
                   disabled={allFieldsDisabled || task.persisted}
                 />
-                Mandatory
+                {t("planning.mandatory")}
               </label>
               <div className="flex items-center gap-2">
                 {!task.persisted && (
@@ -576,7 +580,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                     onClick={() => void saveTaskRow(task)}
                     disabled={allFieldsDisabled}
                   >
-                    Save
+                    {t("planning.saveTask")}
                   </Button>
                 )}
                 <Button
@@ -585,7 +589,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                   onClick={() => removeTaskRow(task.localId)}
                   disabled={allFieldsDisabled}
                 >
-                  Remove
+                  {t("planning.removeTask")}
                 </Button>
               </div>
             </div>
@@ -595,15 +599,15 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">5. Parts Plan</h3>
+          <h3 className="text-sm font-semibold">5. {t("planning.partsPlan")}</h3>
           <Button size="sm" variant="outline" onClick={addPartRow} disabled={allFieldsDisabled}>
-            Add Row
+            {t("planning.addRow")}
           </Button>
         </div>
 
         <div className="space-y-2">
           {parts.length === 0 && (
-            <div className="text-sm text-muted-foreground">No planned parts yet.</div>
+            <div className="text-sm text-muted-foreground">{t("planning.noPlannedParts")}</div>
           )}
           {parts.map((part) => (
             <div
@@ -611,7 +615,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
               className="grid gap-2 rounded-md border p-3 md:grid-cols-[2fr_120px_140px_auto_auto]"
             >
               <Input
-                placeholder="Part reference"
+                placeholder={t("planning.partReference")}
                 value={part.article_ref}
                 onChange={(e) => updatePartRow(part.localId, { article_ref: e.target.value })}
                 disabled={allFieldsDisabled || part.persisted}
@@ -644,7 +648,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                     onClick={() => void savePartRow(part)}
                     disabled={allFieldsDisabled}
                   >
-                    Save
+                    {t("planning.savePart")}
                   </Button>
                 )}
                 <Button
@@ -653,7 +657,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                   onClick={() => removePartRow(part.localId)}
                   disabled={allFieldsDisabled}
                 >
-                  Remove
+                  {t("planning.removePart")}
                 </Button>
               </div>
             </div>
@@ -661,7 +665,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
         </div>
 
         <div className="text-right text-sm font-semibold">
-          Planned Total Cost: {plannedCost.toFixed(2)}
+          {t("planning.plannedTotalCost")}: {plannedCost.toFixed(2)}
         </div>
       </section>
 
@@ -670,17 +674,17 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
           onClick={() => void handleMoveToReady()}
           disabled={allFieldsDisabled || !planReady || !requireActor}
         >
-          Plan this WO
+          {t("planning.planWo")}
         </Button>
         <Button
           variant="outline"
           onClick={() => void handleAssign()}
           disabled={allFieldsDisabled || !assignReady || !requireActor}
         >
-          Assign
+          {t("planning.assign")}
         </Button>
         {!requireActor && (
-          <span className="text-sm text-muted-foreground">Session user required to submit.</span>
+          <span className="text-sm text-muted-foreground">{t("planning.sessionRequired")}</span>
         )}
       </div>
     </div>

@@ -499,6 +499,472 @@ pub async fn seed_test_viewer_user(db: &DatabaseConnection) -> AppResult<()> {
     Ok(())
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// Work order demo data
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Seeds work orders across multiple statuses so the desktop UI has realistic
+/// data for every view (list, kanban, calendar, detail dialog) and for manual
+/// verification of close-out / attachment panels.
+///
+/// Own sentinel → idempotent.
+pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
+    let sentinel = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM work_orders WHERE code = 'WO-DEMO-001' LIMIT 1".to_string(),
+        ))
+        .await?;
+    if sentinel.is_some() {
+        tracing::info!("demo_seeder: work order demo data already present — skipping");
+        return Ok(());
+    }
+
+    tracing::info!("demo_seeder: inserting work order demo data …");
+    let now = Utc::now().to_rfc3339();
+
+    // Helper: resolve status id by code
+    async fn status_id(db: &DatabaseConnection, code: &str) -> AppResult<i64> {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM work_order_statuses WHERE code = ?",
+                [code.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("WO status not found: {code}")))?;
+        use sea_orm::TryGetable;
+        Ok(i64::try_get(&row, "", "id").map_err(|e| AppError::Internal(anyhow::anyhow!("{e:?}")))?)
+    }
+
+    // Resolve admin
+    let admin_id: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE username = 'admin' LIMIT 1".to_string(),
+        ))
+        .await?
+        .map(|r| {
+            use sea_orm::TryGetable;
+            i64::try_get(&r, "", "id").unwrap_or(1)
+        })
+        .unwrap_or(1);
+
+    // Resolve equipment ids (need a few for linking)
+    let mut eq_ids: Vec<i64> = Vec::new();
+    let eq_rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM equipment ORDER BY id LIMIT 12".to_string(),
+        ))
+        .await?;
+    for r in eq_rows {
+        use sea_orm::TryGetable;
+        eq_ids.push(i64::try_get(&r, "", "id").unwrap_or(0));
+    }
+
+    // Resolve an org node (first active one)
+    let entity_id: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM org_nodes WHERE code = 'DEMO-SITE' LIMIT 1".to_string(),
+        ))
+        .await?
+        .map(|r| {
+            use sea_orm::TryGetable;
+            i64::try_get(&r, "", "id").unwrap_or(1)
+        })
+        .unwrap_or(1);
+
+    // Pre-resolve status IDs
+    let s_draft = status_id(db, "draft").await?;
+    let s_planned = status_id(db, "planned").await?;
+    let s_ready = status_id(db, "ready_to_schedule").await?;
+    let s_assigned = status_id(db, "assigned").await?;
+    let s_in_progress = status_id(db, "in_progress").await?;
+    let s_paused = status_id(db, "paused").await?;
+    let s_mech_complete = status_id(db, "mechanically_complete").await?;
+    let s_tech_verified = status_id(db, "technically_verified").await?;
+    let s_closed = status_id(db, "closed").await?;
+
+    // WO definitions:
+    // (code, title, description, type_id, status_id, urgency_id, eq_index, planned_start, planned_end, duration_h)
+    let wo_defs: &[(&str, &str, &str, i64, i64, i64, usize, &str, &str, f64)] = &[
+        // 1. Draft — corrective
+        (
+            "WO-DEMO-001",
+            "Remplacement roulement pompe P-001",
+            "Suite DI vibrations anormales. Roulement côté accouplement à remplacer. Prévoir joint mécanique en même temps.",
+            1, s_draft, 4, 0,
+            "2026-04-15T08:00:00Z", "2026-04-15T16:00:00Z", 8.0,
+        ),
+        // 2. Draft — preventive
+        (
+            "WO-DEMO-002",
+            "Maintenance préventive moteur M-002",
+            "Graissage roulements, contrôle isolement, vérification alignement. Plan MP trimestriel.",
+            2, s_draft, 2, 3,
+            "2026-04-20T06:00:00Z", "2026-04-20T14:00:00Z", 4.0,
+        ),
+        // 3. Planned — preventive
+        (
+            "WO-DEMO-003",
+            "Inspection courroies convoyeur CONV-001",
+            "Inspection visuelle et mesure tension courroies. Vérifier usure et alignement galets.",
+            4, s_planned, 3, 4,
+            "2026-04-18T08:00:00Z", "2026-04-18T12:00:00Z", 4.0,
+        ),
+        // 4. Ready to schedule — corrective
+        (
+            "WO-DEMO-004",
+            "Réparation vanne régulation VAN-001",
+            "Vanne ne ferme plus complètement. Passage de vapeur détecté. Remplacer siège et clapet.",
+            1, s_ready, 4, 8,
+            "2026-04-16T08:00:00Z", "2026-04-16T16:00:00Z", 6.0,
+        ),
+        // 5. Assigned — emergency
+        (
+            "WO-DEMO-005",
+            "Dépannage urgence compresseur COMP-001",
+            "Alarme surpression répétée. Soupape de sécurité déclenchée. Intervention immédiate requise.",
+            5, s_assigned, 5, 6,
+            "2026-04-14T06:00:00Z", "2026-04-14T18:00:00Z", 10.0,
+        ),
+        // 6. In progress — corrective (for V1 test: cause not determined)
+        (
+            "WO-DEMO-006",
+            "Diagnostic cavitation pompe P-003",
+            "Bruit de cavitation à la mise en route. Vérifier pression aspiration, état roue, NPSH disponible.",
+            1, s_in_progress, 4, 10,
+            "2026-04-12T08:00:00Z", "2026-04-12T16:00:00Z", 8.0,
+        ),
+        // 7. In progress — improvement
+        (
+            "WO-DEMO-007",
+            "Installation capteur vibration pompe P-002",
+            "Montage capteur SKF CMSS2200 sur palier pompe doseuse. Câblage vers automate et paramétrage seuils.",
+            3, s_in_progress, 3, 1,
+            "2026-04-13T08:00:00Z", "2026-04-14T16:00:00Z", 12.0,
+        ),
+        // 8. Paused — corrective (waiting for parts)
+        (
+            "WO-DEMO-008",
+            "Remplacement joint SPI moteur M-001",
+            "Fuite huile réducteur. Joint SPI côté ventilateur à remplacer. En attente pièce (délai 5j).",
+            1, s_paused, 3, 2,
+            "2026-04-10T08:00:00Z", "2026-04-11T12:00:00Z", 6.0,
+        ),
+        // 9. Mechanically complete — corrective
+        (
+            "WO-DEMO-009",
+            "Réparation fuite circuit eau vanne VAN-002",
+            "Changement garniture vanne papillon terminé. En attente vérification technique avant remise en service.",
+            1, s_mech_complete, 3, 9,
+            "2026-04-08T08:00:00Z", "2026-04-08T16:00:00Z", 5.0,
+        ),
+        // 10. Technically verified — corrective (for V2/V3 close-out tests)
+        (
+            "WO-DEMO-010",
+            "Remplacement roulement moteur surpression M-003",
+            "Échauffement excessif carter (95°C). Roulement remplacé, alignement vérifié, test vibrations OK.",
+            1, s_tech_verified, 4, 11,
+            "2026-04-05T08:00:00Z", "2026-04-06T16:00:00Z", 12.0,
+        ),
+        // 11. Closed — preventive
+        (
+            "WO-DEMO-011",
+            "Vidange huile compresseur COMP-002",
+            "Vidange huile compresseur réfrigérant effectuée. Niveau rétabli. Filtre changé.",
+            2, s_closed, 2, 7,
+            "2026-04-01T08:00:00Z", "2026-04-01T12:00:00Z", 3.0,
+        ),
+        // 12. Closed — emergency
+        (
+            "WO-DEMO-012",
+            "Dépannage bande convoyeur CONV-002",
+            "Bande décentrée corrigée. Réglage tension et alignement galets effectués. Reprise production OK.",
+            5, s_closed, 4, 5,
+            "2026-03-28T06:00:00Z", "2026-03-28T14:00:00Z", 6.0,
+        ),
+    ];
+
+    for (code, title, desc, type_id, sid, urgency_id, eq_idx, p_start, p_end, dur) in wo_defs {
+        let eq_id = if *eq_idx < eq_ids.len() { Some(eq_ids[*eq_idx]) } else { None };
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO work_orders (
+                code, type_id, status_id, equipment_id, entity_id,
+                requester_id, planner_id, urgency_id,
+                title, description,
+                planned_start, planned_end, expected_duration_hours,
+                row_version, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            [
+                (*code).into(),
+                (*type_id).into(),
+                (*sid).into(),
+                eq_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
+                entity_id.into(),
+                admin_id.into(),
+                admin_id.into(),
+                (*urgency_id).into(),
+                (*title).into(),
+                (*desc).into(),
+                (*p_start).into(),
+                (*p_end).into(),
+                (*dur).into(),
+                now.clone().into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+
+        let wo_id = last_insert_id(db).await?;
+
+        // Transition log: record creation
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO wo_state_transition_log \
+             (wo_id, from_status, to_status, action, actor_id, acted_at) \
+             VALUES (?, 'none', 'draft', 'create', ?, ?)",
+            [wo_id.into(), admin_id.into(), now.clone().into()],
+        ))
+        .await?;
+
+        // ── Sub-entity data for specific WOs ──────────────────────────
+
+        // WO-DEMO-006 (in_progress): add tasks + failure detail with cause_not_determined
+        if *code == "WO-DEMO-006" {
+            // Tasks
+            for (seq, task_desc, mandatory) in [
+                (1, "Vérifier pression aspiration (manomètre)", true),
+                (2, "Contrôler état roue de pompe", true),
+                (3, "Calculer NPSH disponible vs requis", false),
+                (4, "Inspecter crépine d'aspiration", true),
+            ] {
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO work_order_tasks \
+                     (work_order_id, task_description, sequence_order, is_mandatory, is_completed) \
+                     VALUES (?, ?, ?, ?, 0)",
+                    [wo_id.into(), task_desc.into(), seq.into(), (mandatory as i32).into()],
+                ))
+                .await?;
+            }
+
+            // Failure detail: cause NOT determined (for V1 test)
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_failure_details \
+                 (work_order_id, cause_not_determined, is_temporary_repair, is_permanent_repair, notes) \
+                 VALUES (?, 1, 0, 0, 'Diagnostic en cours — cause cavitation non confirmée')",
+                [wo_id.into()],
+            ))
+            .await?;
+
+            // Labor / intervener
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_interveners \
+                 (work_order_id, intervener_id, started_at, hours_worked, hourly_rate, notes) \
+                 VALUES (?, ?, '2026-04-12T08:00:00Z', 4.0, 45.0, 'Diagnostic mécanique en cours')",
+                [wo_id.into(), admin_id.into()],
+            ))
+            .await?;
+        }
+
+        // WO-DEMO-010 (technically_verified): full data for close-out test
+        if *code == "WO-DEMO-010" {
+            // Tasks (all completed)
+            for (seq, task_desc) in [
+                (1, "Déposer roulement côté accouplement"),
+                (2, "Vérifier portée arbre et logement"),
+                (3, "Monter roulement neuf SKF 6312-2Z"),
+                (4, "Contrôle alignement laser"),
+                (5, "Test vibrations post-montage"),
+            ] {
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO work_order_tasks \
+                     (work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
+                     VALUES (?, ?, ?, 1, 1, ?, '2026-04-06T14:00:00Z')",
+                    [wo_id.into(), task_desc.into(), seq.into(), admin_id.into()],
+                ))
+                .await?;
+            }
+
+            // Parts
+            for (ref_code, qty, cost, notes) in [
+                ("SKF-6312-2Z", 1.0, 85.50, "Roulement rigide à billes"),
+                ("LOCTITE-641", 0.1, 12.00, "Adhésif de blocage roulement"),
+                ("GRAISSE-SKF-LGMT2", 0.5, 8.50, "Graisse lithium pour remontage"),
+            ] {
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO work_order_parts \
+                     (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    [
+                        wo_id.into(),
+                        ref_code.into(),
+                        qty.into(),
+                        qty.into(),
+                        cost.into(),
+                        notes.into(),
+                    ],
+                ))
+                .await?;
+            }
+
+            // Labor
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_interveners \
+                 (work_order_id, intervener_id, started_at, ended_at, hours_worked, hourly_rate, notes) \
+                 VALUES (?, ?, '2026-04-05T08:00:00Z', '2026-04-06T16:00:00Z', 12.0, 45.0, 'Remplacement complet roulement + alignement')",
+                [wo_id.into(), admin_id.into()],
+            ))
+            .await?;
+
+            // Failure detail: cause determined
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_failure_details \
+                 (work_order_id, cause_not_determined, is_temporary_repair, is_permanent_repair, notes) \
+                 VALUES (?, 0, 0, 1, 'Roulement grippé — usure normale fin de vie (18000h). Remplacé par neuf.')",
+                [wo_id.into()],
+            ))
+            .await?;
+
+            // Verification record
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_verifications \
+                 (work_order_id, verified_by_id, verified_at, result, return_to_service_confirmed, recurrence_risk_level, notes) \
+                 VALUES (?, ?, '2026-04-06T15:00:00Z', 'approved', 1, 'low', 'Vibrations post-montage: 2.1 mm/s — conforme ISO 10816')",
+                [wo_id.into(), admin_id.into()],
+            ))
+            .await?;
+        }
+
+        // WO-DEMO-009 (mechanically complete): partial data
+        if *code == "WO-DEMO-009" {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_tasks \
+                 (work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
+                 VALUES (?, 'Démonter vanne et remplacer garniture', 1, 1, 1, ?, '2026-04-08T14:00:00Z')",
+                [wo_id.into(), admin_id.into()],
+            ))
+            .await?;
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_tasks \
+                 (work_order_id, task_description, sequence_order, is_mandatory, is_completed) \
+                 VALUES (?, 'Test étanchéité sous pression', 2, 1, 0)",
+                [wo_id.into()],
+            ))
+            .await?;
+
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_interveners \
+                 (work_order_id, intervener_id, started_at, ended_at, hours_worked, hourly_rate) \
+                 VALUES (?, ?, '2026-04-08T08:00:00Z', '2026-04-08T15:00:00Z', 5.0, 45.0)",
+                [wo_id.into(), admin_id.into()],
+            ))
+            .await?;
+
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_parts \
+                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
+                 VALUES (?, 'GARNITURE-DN100', 1.0, 1.0, 125.00, 'Garniture PTFE vanne papillon DN100')",
+                [wo_id.into()],
+            ))
+            .await?;
+        }
+
+        // WO-DEMO-011 (closed): full close-out data
+        if *code == "WO-DEMO-011" {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_tasks \
+                 (work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
+                 VALUES (?, 'Vidanger huile usagée', 1, 1, 1, ?, '2026-04-01T09:30:00Z')",
+                [wo_id.into(), admin_id.into()],
+            ))
+            .await?;
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_tasks \
+                 (work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
+                 VALUES (?, 'Remplacer filtre huile', 2, 1, 1, ?, '2026-04-01T10:00:00Z')",
+                [wo_id.into(), admin_id.into()],
+            ))
+            .await?;
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_tasks \
+                 (work_order_id, task_description, sequence_order, is_mandatory, is_completed, completed_by_id, completed_at) \
+                 VALUES (?, 'Remplir huile neuve et vérifier niveau', 3, 1, 1, ?, '2026-04-01T10:30:00Z')",
+                [wo_id.into(), admin_id.into()],
+            ))
+            .await?;
+
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_parts \
+                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
+                 VALUES (?, 'HUILE-BITZER-BSE32', 5.0, 4.5, 18.00, 'Huile synthétique Bitzer BSE32')",
+                [wo_id.into()],
+            ))
+            .await?;
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_parts \
+                 (work_order_id, article_ref, quantity_planned, quantity_used, unit_cost, notes) \
+                 VALUES (?, 'FILTRE-BITZER-362104', 1.0, 1.0, 42.00, 'Filtre huile compresseur')",
+                [wo_id.into()],
+            ))
+            .await?;
+
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_interveners \
+                 (work_order_id, intervener_id, started_at, ended_at, hours_worked, hourly_rate) \
+                 VALUES (?, ?, '2026-04-01T08:00:00Z', '2026-04-01T11:00:00Z', 3.0, 45.0)",
+                [wo_id.into(), admin_id.into()],
+            ))
+            .await?;
+
+            // Failure detail
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_failure_details \
+                 (work_order_id, cause_not_determined, is_temporary_repair, is_permanent_repair, notes) \
+                 VALUES (?, 0, 0, 1, 'Maintenance préventive — vidange planifiée')",
+                [wo_id.into()],
+            ))
+            .await?;
+
+            // Verification
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO work_order_verifications \
+                 (work_order_id, verified_by_id, verified_at, result, return_to_service_confirmed, notes) \
+                 VALUES (?, ?, '2026-04-01T11:30:00Z', 'approved', 1, 'Niveau huile OK. Compresseur remis en service.')",
+                [wo_id.into(), admin_id.into()],
+            ))
+            .await?;
+        }
+    }
+
+    tracing::info!("demo_seeder: {} work orders seeded", wo_defs.len());
+    Ok(())
+}
+
 async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_string(

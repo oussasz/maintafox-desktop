@@ -71,7 +71,9 @@ const WO_COLS: &str = "\
     wo.labor_cost, wo.parts_cost, wo.service_cost, wo.total_cost, \
     wo.recurrence_risk_level, wo.production_impact_id, \
     wo.root_cause_summary, wo.corrective_action_summary, wo.verification_method, \
-    wo.notes, wo.cancel_reason, wo.parts_actuals_confirmed, wo.row_version, wo.created_at, wo.updated_at";
+    wo.notes, wo.cancel_reason, wo.parts_actuals_confirmed, \
+    wo.service_cost_input, wo.reopen_count, wo.last_closed_at, \
+    wo.row_version, wo.created_at, wo.updated_at";
 
 /// Join columns appended when full joins are present.
 const WO_JOIN_COLS: &str = "\

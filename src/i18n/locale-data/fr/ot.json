@@ -123,13 +123,43 @@
     "morning": "Matin",
     "afternoon": "Après-midi",
     "night": "Nuit",
-    "fullDay": "Journée"
+    "fullDay": "Journée",
+    "full_day": "Journée"
   },
   "planning": {
     "timing": "Planification horaire",
     "shift": "Poste",
     "save": "Enregistrer la planification",
-    "endBeforeStart": "La date de fin doit être après la date de début"
+    "endBeforeStart": "La date de fin doit être après la date de début",
+    "plannerId": "ID planificateur",
+    "plannedStart": "Début prévu",
+    "plannedEnd": "Fin prévue",
+    "selectShift": "Sélectionner le poste",
+    "expectedDuration": "Durée estimée (heures)",
+    "urgency": "Urgence",
+    "selectUrgency": "Sélectionner l'urgence",
+    "assignment": "Assignation",
+    "assignedGroupId": "ID groupe assigné",
+    "primaryResponsibleId": "ID responsable principal",
+    "scheduledAt": "Planifié le",
+    "prerequisites": "Liste de prérequis",
+    "addTask": "Ajouter une tâche",
+    "noTasks": "Aucune tâche pour le moment.",
+    "taskDescription": "Description de la tâche",
+    "minutes": "Minutes",
+    "mandatory": "Obligatoire",
+    "saveTask": "Enregistrer",
+    "removeTask": "Supprimer",
+    "partsPlan": "Plan de pièces",
+    "addRow": "Ajouter une ligne",
+    "noPlannedParts": "Aucune pièce planifiée.",
+    "partReference": "Référence pièce",
+    "savePart": "Enregistrer",
+    "removePart": "Supprimer",
+    "plannedTotalCost": "Coût total planifié",
+    "planWo": "Planifier cet OT",
+    "assign": "Assigner",
+    "sessionRequired": "Session utilisateur requise."
   },
   "completion": {
     "title": "Marquer l'OT terminé",
@@ -149,7 +179,37 @@
     "noTasks": "Aucune tâche définie.",
     "mandatory": "Obligatoire",
     "attachments": "Pièces jointes",
-    "noAttachments": "Aucune pièce jointe."
+    "noAttachments": "Aucune pièce jointe.",
+    "controls": "Contrôles d'exécution",
+    "start": "Démarrer",
+    "hold": "Mettre en attente",
+    "pause": "Mettre en pause",
+    "completeMech": "Compléter (Méc)",
+    "resume": "Reprendre",
+    "noActions": "Aucune action d'exécution pour ce statut.",
+    "pauseTitle": "Mettre en pause l'OT",
+    "holdTitle": "Attente de prérequis",
+    "delayReason": "Raison du délai",
+    "selectReason": "Sélectionner la raison",
+    "commentOptional": "Commentaire (optionnel)",
+    "addContext": "Ajouter du contexte",
+    "submit": "Soumettre",
+    "cancel": "Annuler",
+    "delayReasonRequired": "La raison du délai est requise.",
+    "laborEntries": "Entrées de main-d'œuvre",
+    "intervenerId": "ID intervenant",
+    "manualHours": "Heures manuelles",
+    "startLabor": "Démarrer main-d'œuvre",
+    "addManualHours": "Ajouter heures manuelles",
+    "noOpenLabor": "Aucune entrée de main-d'œuvre ouverte.",
+    "partsUsed": "Pièces utilisées",
+    "noPlannedParts": "Aucune pièce planifiée.",
+    "planned": "Planifié",
+    "saveUsage": "Enregistrer",
+    "noPartsUsed": "Aucune pièce utilisée",
+    "taskExecution": "Exécution des tâches",
+    "result": "Résultat",
+    "complete": "Compléter"
   },
   "closeout": {
     "noReport": "Aucun rapport de clôture."
@@ -157,7 +217,8 @@
   "audit": {
     "created": "Créé le",
     "updated": "Dernière mise à jour",
-    "closed": "Clôturé le"
+    "closed": "Clôturé le",
+    "actor": "par utilisateur"
   },
   "detail": {
     "close": "Fermer",
@@ -212,7 +273,8 @@
     "today": "Aujourd'hui",
     "mode": {
       "month": "Mois",
-      "week": "Semaine"
+      "week": "Semaine",
+      "day": "Jour"
     }
   },
   "dashboard": {

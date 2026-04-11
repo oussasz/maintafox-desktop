@@ -1787,7 +1787,8 @@ export interface WoResumeInput {
 }
 
 export interface WoMechCompleteInput {
-  id: number;
+  wo_id: number;
+  actor_id: number;
   expected_row_version: number;
   actual_end?: string | null;
   actual_duration_hours?: number | null;
@@ -1867,6 +1868,72 @@ export interface WoCostSummary {
   total_cost: number;
   expected_duration_hours: number | null;
   actual_duration_hours: number | null;
+}
+
+// ── WO Execution sub-entity types (from wo-execution-service) ────────────────
+
+export type TaskResultCode = "ok" | "nok" | "na" | "deferred";
+
+export type DowntimeType = "full" | "partial" | "standby" | "quality_loss";
+
+/** Task row as returned by execution commands (raw FK columns). */
+export interface WoExecTask {
+  id: number;
+  work_order_id: number;
+  task_description: string;
+  sequence_order: number;
+  estimated_minutes: number | null;
+  is_mandatory: boolean;
+  is_completed: boolean;
+  completed_by_id: number | null;
+  completed_at: string | null;
+  result_code: TaskResultCode | null;
+  notes: string | null;
+}
+
+/** Labor/intervener row as returned by execution commands (raw FK columns). */
+export interface WoIntervener {
+  id: number;
+  work_order_id: number;
+  intervener_id: number;
+  skill_id: number | null;
+  started_at: string | null;
+  ended_at: string | null;
+  hours_worked: number | null;
+  hourly_rate: number | null;
+  notes: string | null;
+}
+
+/** Part row as returned by execution commands (raw FK columns). */
+export interface WoExecPart {
+  id: number;
+  work_order_id: number;
+  article_id: number | null;
+  article_ref: string | null;
+  quantity_planned: number;
+  quantity_used: number | null;
+  unit_cost: number | null;
+  stock_location_id: number | null;
+  notes: string | null;
+}
+
+export interface WoDelaySegment {
+  id: number;
+  work_order_id: number;
+  started_at: string;
+  ended_at: string | null;
+  delay_reason_id: number | null;
+  comment: string | null;
+  entered_by_id: number | null;
+}
+
+export interface WoDowntimeSegment {
+  id: number;
+  work_order_id: number;
+  started_at: string;
+  ended_at: string | null;
+  downtime_type: DowntimeType;
+  comment: string | null;
 }
 
 export interface WoStatsPayload {

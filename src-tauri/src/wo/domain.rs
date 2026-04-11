@@ -253,6 +253,10 @@ pub struct WorkOrder {
     pub notes: Option<String>,
     pub cancel_reason: Option<String>,
     pub parts_actuals_confirmed: bool,
+    // Close-out lifecycle (migration 025)
+    pub service_cost_input: Option<f64>,
+    pub reopen_count: i64,
+    pub last_closed_at: Option<String>,
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -499,6 +503,15 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
             .try_get::<i64>("", "parts_actuals_confirmed")
             .map_err(|e| decode_err("parts_actuals_confirmed", e))?
             != 0,
+        service_cost_input: row
+            .try_get::<Option<f64>>("", "service_cost_input")
+            .map_err(|e| decode_err("service_cost_input", e))?,
+        reopen_count: row
+            .try_get::<i64>("", "reopen_count")
+            .map_err(|e| decode_err("reopen_count", e))?,
+        last_closed_at: row
+            .try_get::<Option<String>>("", "last_closed_at")
+            .map_err(|e| decode_err("last_closed_at", e))?,
         row_version: row
             .try_get::<i64>("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,

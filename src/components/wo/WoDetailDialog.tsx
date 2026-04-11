@@ -18,7 +18,6 @@
  */
 
 import {
-  Calendar,
   CheckCircle2,
   ClipboardCheck,
   FileText,
@@ -46,8 +45,10 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { WoAttachmentPanel } from "@/components/wo/WoAttachmentPanel";
+import { WoAuditTimeline } from "@/components/wo/WoAuditTimeline";
+import { WoCloseOutPanel } from "@/components/wo/WoCloseOutPanel";
 import { WoCompletionDialog } from "@/components/wo/WoCompletionDialog";
-import { WoCostSummaryCard } from "@/components/wo/WoCostSummaryCard";
 import { WoExecutionControls } from "@/components/wo/WoExecutionControls";
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
@@ -137,30 +138,15 @@ function statusToI18nKey(s: string): WoStatusKey {
   return map[s] ?? "draft";
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, locale: string): string {
   try {
-    return new Date(iso).toLocaleDateString("fr-FR", {
+    return new Date(iso).toLocaleDateString(locale, {
       day: "2-digit",
-      month: "2-digit",
+      month: "short",
       year: "numeric",
     });
   } catch {
     return iso;
-  }
-}
-
-function formatShiftLabel(shift: string | null | undefined): string {
-  switch (shift) {
-    case "morning":
-      return "Matin";
-    case "afternoon":
-      return "Apres-midi";
-    case "night":
-      return "Nuit";
-    case "full_day":
-      return "Journee";
-    default:
-      return "—";
   }
 }
 
@@ -175,7 +161,7 @@ interface WoDetailDialogProps {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
-  const { t } = useTranslation("ot");
+  const { t, i18n } = useTranslation("ot");
   const { can } = usePermissions();
 
   const saving = useWoStore((s) => s.saving);
@@ -271,13 +257,16 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                 />
                 <InfoRow
                   label={t("detail.fields.plannedStart")}
-                  value={wo.planned_start ? formatDate(wo.planned_start) : "—"}
+                  value={wo.planned_start ? formatDate(wo.planned_start, i18n.language) : "—"}
                 />
                 <InfoRow
                   label={t("detail.fields.plannedEnd")}
-                  value={wo.planned_end ? formatDate(wo.planned_end) : "—"}
+                  value={wo.planned_end ? formatDate(wo.planned_end, i18n.language) : "—"}
                 />
-                <InfoRow label={t("detail.fields.shift")} value={formatShiftLabel(wo.shift)} />
+                <InfoRow
+                  label={t("detail.fields.shift")}
+                  value={wo.shift ? t(`shift.${wo.shift}`) : "—"}
+                />
                 <InfoRow
                   label={t("detail.fields.estimatedHours")}
                   value={
@@ -334,75 +323,16 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
 
               {showCloseout && (
                 <TabsContent value="closeout" className="pt-3">
-                  <div className="space-y-3">
-                    <h4 className="text-sm font-semibold">{t("detail.sections.closeout")}</h4>
-                    {wo.corrective_action_summary ? (
-                      <p className="text-sm whitespace-pre-wrap">{wo.corrective_action_summary}</p>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">{t("closeout.noReport")}</p>
-                    )}
-
-                    {/* Cost summary */}
-                    <WoCostSummaryCard woId={wo.id} status={wo.status_code ?? ""} />
-
-                    {/* Actual times summary */}
-                    <div className="grid grid-cols-2 gap-3 text-xs">
-                      <div>
-                        <span className="text-muted-foreground">
-                          {t("detail.fields.actualStart")}:
-                        </span>{" "}
-                        <span className="font-medium">
-                          {wo.actual_start ? formatDate(wo.actual_start) : "—"}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">
-                          {t("detail.fields.actualEnd")}:
-                        </span>{" "}
-                        <span className="font-medium">
-                          {wo.actual_end ? formatDate(wo.actual_end) : "—"}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">
-                          {t("detail.fields.actualHours")}:
-                        </span>{" "}
-                        <span className="font-medium">
-                          {wo.actual_duration_hours != null ? `${wo.actual_duration_hours}h` : "—"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                  <WoCloseOutPanel wo={wo} canEdit={canEditWo} onClosed={onClose} />
                 </TabsContent>
               )}
 
               <TabsContent value="audit" className="pt-3">
-                <div className="space-y-2">
-                  <h4 className="text-sm font-semibold">{t("detail.sections.history")}</h4>
-                  <div className="text-xs text-muted-foreground space-y-1">
-                    <p>
-                      <Calendar className="inline h-3 w-3 mr-1" />
-                      {t("audit.created")}: {formatDate(wo.created_at)}
-                    </p>
-                    <p>
-                      <Calendar className="inline h-3 w-3 mr-1" />
-                      {t("audit.updated")}: {formatDate(wo.updated_at)}
-                    </p>
-                    {wo.closed_at && (
-                      <p>
-                        <Calendar className="inline h-3 w-3 mr-1" />
-                        {t("audit.closed")}: {formatDate(wo.closed_at)}
-                      </p>
-                    )}
-                  </div>
-                </div>
+                <WoAuditTimeline wo={wo} />
               </TabsContent>
 
               <TabsContent value="attachments" className="pt-3">
-                <div className="space-y-2">
-                  <h4 className="text-sm font-semibold">{t("execution.attachments")}</h4>
-                  <p className="text-xs text-muted-foreground">{t("execution.noAttachments")}</p>
-                </div>
+                <WoAttachmentPanel woId={wo.id} canUpload={canEditWo} canDelete={canEditWo} />
               </TabsContent>
             </Tabs>
           </div>

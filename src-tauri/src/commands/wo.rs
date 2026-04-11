@@ -1,24 +1,29 @@
 //! WO IPC commands.
 //!
-//! Phase 2 – Sub-phase 05 – File 01 Sprint S2 + File 02 Sprint S2.
+//! Phase 2 – Sub-phase 05 – File 01 Sprint S2 + File 02 Sprint S2 + File 03 Sprint S2.
 //!
 //! Permission gates:
-//!   ot.view    — list, get, list_labor, list_tasks, list_delay_segments, list_downtime_segments
+//!   ot.view    — list, get, list_labor, list_tasks, list_delay_segments, list_downtime_segments,
+//!                get_cost_summary, list_wo_attachments, get_cost_posting_hook,
+//!                get_wo_analytics_snapshot
 //!   ot.create  — create work order
 //!   ot.edit    — update draft, cancel, plan, assign, start, pause, resume, hold,
 //!                complete_mechanically, add_labor, close_labor, add_part,
 //!                record_part_usage, confirm_no_parts, add_task, complete_task,
-//!                open_downtime, close_downtime
+//!                open_downtime, close_downtime, save_failure_detail, save_verification,
+//!                close_wo, upload_wo_attachment, update_service_cost
+//!   ot.admin   — reopen_wo, delete_wo_attachment
 
 use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
-use crate::wo::{delay, execution, labor, parts, queries, tasks};
+use crate::wo::{analytics, attachments, closeout, costs, delay, execution, labor, parts, queries, tasks};
 use crate::{require_permission, require_session, require_step_up};
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use tauri::Manager;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) list_wo — requires ot.view
@@ -468,4 +473,200 @@ pub async fn list_downtime_segments(
     let user = require_session!(state);
     require_permission!(state, &user, "ot.view", PermissionScope::Global);
     delay::list_downtime_segments(&state.db, wo_id).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// File 03 — Close-Out, Verification, Cost, Attachments, Analytics
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Z) save_failure_detail — ot.edit
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn save_failure_detail(
+    input: closeout::SaveFailureDetailInput,
+    state: State<'_, AppState>,
+) -> AppResult<closeout::WoFailureDetail> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    closeout::save_failure_detail(&state.db, input).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AA) save_verification — ot.edit + step-up
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn save_verification(
+    input: closeout::SaveVerificationInput,
+    state: State<'_, AppState>,
+) -> AppResult<(closeout::WoVerification, crate::wo::domain::WorkOrder)> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    require_step_up!(state);
+    closeout::save_verification(&state.db, input).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AB) close_wo — ot.edit + step-up
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn close_wo(
+    input: closeout::WoCloseInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    require_step_up!(state);
+    closeout::close_wo(&state.db, input).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AC) reopen_wo — ot.admin + step-up
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn reopen_wo(
+    input: closeout::WoReopenInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.admin", PermissionScope::Global);
+    require_step_up!(state);
+    closeout::reopen_wo(&state.db, input).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AC-2) update_wo_rca — ot.edit
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn update_wo_rca(
+    input: closeout::UpdateWoRcaInput,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    closeout::update_wo_rca(&state.db, input).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AD) upload_wo_attachment — ot.edit
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn upload_wo_attachment(
+    app: tauri::AppHandle,
+    wo_id: i64,
+    file_name: String,
+    file_bytes: Vec<u8>,
+    mime_type: String,
+    notes: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<attachments::WoAttachment> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+
+    let input = attachments::WoAttachmentInput {
+        wo_id,
+        file_name,
+        file_bytes,
+        mime_type,
+        notes,
+        uploaded_by_id: i64::from(user.user_id),
+    };
+
+    attachments::save_wo_attachment(&state.db, &app_data_dir, input).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AE) list_wo_attachments — ot.view
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn list_wo_attachments(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<attachments::WoAttachment>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.view", PermissionScope::Global);
+    attachments::list_wo_attachments(&state.db, wo_id).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AF) delete_wo_attachment — ot.admin
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn delete_wo_attachment(
+    attachment_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.admin", PermissionScope::Global);
+    attachments::delete_wo_attachment_record(&state.db, attachment_id).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AG) get_cost_summary — ot.view
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn get_cost_summary(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<costs::WoCostSummary> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.view", PermissionScope::Global);
+    costs::get_cost_summary(&state.db, wo_id).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AH) update_service_cost — ot.edit
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn update_service_cost(
+    wo_id: i64,
+    service_cost: f64,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    costs::update_service_cost(&state.db, wo_id, service_cost, i64::from(user.user_id)).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AI) get_cost_posting_hook — ot.view
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn get_cost_posting_hook(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<costs::CostPostingHook> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.view", PermissionScope::Global);
+    costs::get_cost_posting_hook(&state.db, wo_id).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AJ) get_wo_analytics_snapshot — ot.view
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn get_wo_analytics_snapshot(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<analytics::WoAnalyticsSnapshot> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.view", PermissionScope::Global);
+    analytics::get_wo_analytics_snapshot(&state.db, wo_id).await
 }

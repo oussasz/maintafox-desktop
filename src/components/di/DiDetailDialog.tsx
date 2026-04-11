@@ -16,11 +16,12 @@
  * Phase 2 – Sub-phase 04 – Sprint S4.
  */
 
-import { Calendar, Shield, User, X } from "lucide-react";
+import { Calendar, Printer, Shield, User, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DiDetailPanel } from "@/components/di/DiDetailPanel";
+import { printDiFiche } from "@/components/di/DiPrintFiche";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -197,6 +198,10 @@ export function DiDetailDialog({ di, open, onClose }: DiDetailDialogProps) {
         {/* ── Footer ──────────────────────────────────────────────────── */}
         <Separator />
         <div className="flex items-center justify-end gap-2 px-6 py-3">
+          <Button variant="outline" size="sm" onClick={() => printDiFiche(di)} className="gap-1.5">
+            <Printer className="h-3.5 w-3.5" />
+            {t("review.print")}
+          </Button>
           <Button variant="outline" size="sm" onClick={onClose} className="gap-1.5">
             <X className="h-3.5 w-3.5" />
             {t("detail.close")}

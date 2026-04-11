@@ -23,6 +23,7 @@ mod m20260408_000021_org_node_type_color;
 mod m20260409_000022_wo_domain_core;
 mod m20260410_000023_wo_execution_sub_entities;
 mod m20260410_000024_wo_shift_column;
+mod m20260410_000025_wo_closeout_and_attachments;
 
 pub struct Migrator;
 
@@ -53,6 +54,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260409_000022_wo_domain_core::Migration),
             Box::new(m20260410_000023_wo_execution_sub_entities::Migration),
             Box::new(m20260410_000024_wo_shift_column::Migration),
+            Box::new(m20260410_000025_wo_closeout_and_attachments::Migration),
         ]
     }
 }

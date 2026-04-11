@@ -307,6 +307,22 @@ pub fn run() {
             commands::wo::close_downtime,
             commands::wo::list_delay_segments,
             commands::wo::list_downtime_segments,
+            // ── WO Close-Out (File 03) ────────────────────────────────────
+            commands::wo::save_failure_detail,
+            commands::wo::save_verification,
+            commands::wo::close_wo,
+            commands::wo::reopen_wo,
+            commands::wo::update_wo_rca,
+            // ── WO Attachments ────────────────────────────────────────────
+            commands::wo::upload_wo_attachment,
+            commands::wo::list_wo_attachments,
+            commands::wo::delete_wo_attachment,
+            // ── WO Costs ──────────────────────────────────────────────────
+            commands::wo::get_cost_summary,
+            commands::wo::update_service_cost,
+            commands::wo::get_cost_posting_hook,
+            // ── WO Analytics ──────────────────────────────────────────────
+            commands::wo::get_wo_analytics_snapshot,
             // ── Dashboard ─────────────────────────────────────────────────
             commands::dashboard::get_dashboard_kpis,
             commands::dashboard::get_dashboard_workload_chart,

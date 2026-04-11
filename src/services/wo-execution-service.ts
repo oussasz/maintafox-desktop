@@ -1,10 +1,25 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { WorkOrder, WoShift } from "@shared/ipc-types";
+import type {
+  DowntimeType,
+  TaskResultCode,
+  WoDelaySegment,
+  WoDowntimeSegment,
+  WoExecPart,
+  WoExecTask,
+  WoIntervener,
+  WoShift,
+  WorkOrder,
+} from "@shared/ipc-types";
 
-export type TaskResultCode = "ok" | "nok" | "na" | "deferred";
+// Re-export canonical types for backward compatibility
+export type { TaskResultCode, DowntimeType, WoIntervener, WoDelaySegment, WoDowntimeSegment };
 
-export type DowntimeType = "full" | "partial" | "standby" | "quality_loss";
+/** @deprecated Use WoExecTask from @shared/ipc-types */
+export type WoTask = WoExecTask;
+
+/** @deprecated Use WoExecPart from @shared/ipc-types */
+export type WoPart = WoExecPart;
 
 export interface WoPlanInput {
   wo_id: number;
@@ -59,6 +74,9 @@ export interface WoMechCompleteInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
+  actual_end?: string | null;
+  actual_duration_hours?: number | null;
+  conclusion?: string | null;
 }
 
 export interface AddLaborInput {
@@ -72,18 +90,6 @@ export interface AddLaborInput {
   notes?: string | null;
 }
 
-export interface WoIntervener {
-  id: number;
-  work_order_id: number;
-  intervener_id: number;
-  skill_id: number | null;
-  started_at: string | null;
-  ended_at: string | null;
-  hours_worked: number | null;
-  hourly_rate: number | null;
-  notes: string | null;
-}
-
 export interface AddPartInput {
   wo_id: number;
   article_id?: number | null;
@@ -93,57 +99,12 @@ export interface AddPartInput {
   notes?: string | null;
 }
 
-export interface WoPart {
-  id: number;
-  work_order_id: number;
-  article_id: number | null;
-  article_ref: string | null;
-  quantity_planned: number;
-  quantity_used: number | null;
-  unit_cost: number | null;
-  stock_location_id: number | null;
-  notes: string | null;
-}
-
 export interface AddTaskInput {
   wo_id: number;
   task_description: string;
   sequence_order: number;
   is_mandatory: boolean;
   estimated_minutes?: number | null;
-}
-
-export interface WoTask {
-  id: number;
-  work_order_id: number;
-  task_description: string;
-  sequence_order: number;
-  estimated_minutes: number | null;
-  is_mandatory: boolean;
-  is_completed: boolean;
-  completed_by_id: number | null;
-  completed_at: string | null;
-  result_code: TaskResultCode | null;
-  notes: string | null;
-}
-
-export interface WoDelaySegment {
-  id: number;
-  work_order_id: number;
-  started_at: string;
-  ended_at: string | null;
-  delay_reason_id: number | null;
-  comment: string | null;
-  entered_by_id: number | null;
-}
-
-export interface WoDowntimeSegment {
-  id: number;
-  work_order_id: number;
-  started_at: string;
-  ended_at: string | null;
-  downtime_type: DowntimeType;
-  comment: string | null;
 }
 
 interface IpcErrorLike {
@@ -231,15 +192,15 @@ export async function addLabor(input: AddLaborInput): Promise<WoIntervener> {
 }
 
 export async function closeLabor(
-  intervener_id: number,
-  ended_at: string,
-  actor_id: number,
+  intervenerId: number,
+  endedAt: string,
+  actorId: number,
 ): Promise<WoIntervener> {
-  return invoke<WoIntervener>("close_labor", { intervener_id, ended_at, actor_id });
+  return invoke<WoIntervener>("close_labor", { intervenerId, endedAt, actorId });
 }
 
-export async function listLabor(wo_id: number): Promise<WoIntervener[]> {
-  return invoke<WoIntervener[]>("list_labor", { wo_id });
+export async function listLabor(woId: number): Promise<WoIntervener[]> {
+  return invoke<WoIntervener[]>("list_labor", { woId });
 }
 
 export async function addPart(input: AddPartInput): Promise<WoPart> {
@@ -247,23 +208,23 @@ export async function addPart(input: AddPartInput): Promise<WoPart> {
 }
 
 export async function recordPartUsage(
-  wo_part_id: number,
-  quantity_used: number,
-  unit_cost?: number | null,
+  woPartId: number,
+  quantityUsed: number,
+  unitCost?: number | null,
 ): Promise<WoPart> {
   return invoke<WoPart>("record_part_usage", {
-    wo_part_id,
-    quantity_used,
-    unit_cost: unit_cost ?? null,
+    woPartId,
+    quantityUsed,
+    unitCost: unitCost ?? null,
   });
 }
 
-export async function confirmNoParts(wo_id: number): Promise<void> {
-  return invoke<void>("confirm_no_parts", { wo_id });
+export async function confirmNoParts(woId: number): Promise<void> {
+  return invoke<void>("confirm_no_parts", { woId });
 }
 
-export async function listParts(wo_id: number): Promise<WoPart[]> {
-  return invoke<WoPart[]>("list_wo_parts", { wo_id });
+export async function listParts(woId: number): Promise<WoPart[]> {
+  return invoke<WoPart[]>("list_wo_parts", { woId });
 }
 
 export async function addTask(input: AddTaskInput): Promise<WoTask> {
@@ -271,43 +232,43 @@ export async function addTask(input: AddTaskInput): Promise<WoTask> {
 }
 
 export async function completeTask(
-  task_id: number,
-  actor_id: number,
-  result_code: TaskResultCode,
+  taskId: number,
+  actorId: number,
+  resultCode: TaskResultCode,
   notes?: string | null,
 ): Promise<WoTask> {
-  return invoke<WoTask>("complete_task", { task_id, actor_id, result_code, notes: notes ?? null });
+  return invoke<WoTask>("complete_task", { taskId, actorId, resultCode, notes: notes ?? null });
 }
 
-export async function listTasks(wo_id: number): Promise<WoTask[]> {
-  return invoke<WoTask[]>("list_tasks", { wo_id });
+export async function listTasks(woId: number): Promise<WoTask[]> {
+  return invoke<WoTask[]>("list_tasks", { woId });
 }
 
 export async function openDowntime(
-  wo_id: number,
-  downtime_type: DowntimeType,
-  actor_id: number,
+  woId: number,
+  downtimeType: DowntimeType,
+  actorId: number,
   comment?: string | null,
 ): Promise<WoDowntimeSegment> {
   return invoke<WoDowntimeSegment>("open_downtime", {
-    wo_id,
-    downtime_type,
-    actor_id,
+    woId,
+    downtimeType,
+    actorId,
     comment: comment ?? null,
   });
 }
 
 export async function closeDowntime(
-  segment_id: number,
-  ended_at?: string | null,
+  segmentId: number,
+  endedAt?: string | null,
 ): Promise<WoDowntimeSegment> {
-  return invoke<WoDowntimeSegment>("close_downtime", { segment_id, ended_at: ended_at ?? null });
+  return invoke<WoDowntimeSegment>("close_downtime", { segmentId, endedAt: endedAt ?? null });
 }
 
-export async function listDelaySegments(wo_id: number): Promise<WoDelaySegment[]> {
-  return invoke<WoDelaySegment[]>("list_delay_segments", { wo_id });
+export async function listDelaySegments(woId: number): Promise<WoDelaySegment[]> {
+  return invoke<WoDelaySegment[]>("list_delay_segments", { woId });
 }
 
-export async function listDowntimeSegments(wo_id: number): Promise<WoDowntimeSegment[]> {
-  return invoke<WoDowntimeSegment[]>("list_downtime_segments", { wo_id });
+export async function listDowntimeSegments(woId: number): Promise<WoDowntimeSegment[]> {
+  return invoke<WoDowntimeSegment[]>("list_downtime_segments", { woId });
 }

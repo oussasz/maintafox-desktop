@@ -1,43 +1,42 @@
 /**
  * WoCalendarView.tsx
  *
- * Month / week calendar view for work orders.
- * WOs indexed by planned_start and rendered as urgency-coloured chips.
- * Phase 2 – Sub-phase 05 – File 04 – Sprint S4.
+ * Month / week / day calendar view for work orders.
+ * Same design as DiCalendarView — chips use border-l-2 urgency coloring.
+ * WOs indexed by planned_start.
+ * Phase 2 – Sub-phase 05.
  */
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { WorkOrder } from "@shared/ipc-types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type CalendarMode = "month" | "week";
+type CalendarMode = "month" | "week" | "day";
 
 interface WoCalendarViewProps {
   items: WorkOrder[];
   onSelect: (wo: WorkOrder) => void;
 }
 
-// ── Urgency colours ───────────────────────────────────────────────────────────
+// ── Urgency → border-left colour (matches DI pattern) ────────────────────────
 
-function urgencyColor(urgencyId: number | null): string {
-  switch (urgencyId) {
-    case 1:
-      return "bg-emerald-100 text-emerald-800";
-    case 2:
-      return "bg-blue-100 text-blue-800";
-    case 3:
-      return "bg-amber-100 text-amber-800";
-    case 4:
-    case 5:
-      return "bg-red-100 text-red-800";
-    default:
-      return "bg-gray-100 text-gray-600";
-  }
+const URGENCY_BORDER: Record<number, string> = {
+  1: "border-l-green-400", // very low
+  2: "border-l-green-400", // low
+  3: "border-l-yellow-400", // medium
+  4: "border-l-orange-400", // high
+  5: "border-l-red-500", // critical
+};
+
+function urgencyBorderClass(level: number | null | undefined): string {
+  if (level == null) return "border-l-gray-300";
+  return URGENCY_BORDER[level] ?? "border-l-gray-300";
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -62,6 +61,32 @@ function isSameDay(a: Date, b: Date): boolean {
 
 function dateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+type WoStatusKey =
+  | "draft"
+  | "planned"
+  | "released"
+  | "inProgress"
+  | "onHold"
+  | "completed"
+  | "verified"
+  | "closed"
+  | "cancelled";
+
+function statusToI18nKey(s: string): WoStatusKey {
+  const map: Record<string, WoStatusKey> = {
+    draft: "draft",
+    planned: "planned",
+    released: "released",
+    in_progress: "inProgress",
+    on_hold: "onHold",
+    completed: "completed",
+    verified: "verified",
+    closed: "closed",
+    cancelled: "cancelled",
+  };
+  return map[s] ?? "draft";
 }
 
 const MAX_CHIPS = 3;
@@ -97,7 +122,8 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
     setCursor((c) => {
       const d = new Date(c);
       if (mode === "month") d.setMonth(d.getMonth() - 1);
-      else d.setDate(d.getDate() - 7);
+      else if (mode === "week") d.setDate(d.getDate() - 7);
+      else d.setDate(d.getDate() - 1);
       return d;
     });
   }, [mode]);
@@ -106,7 +132,8 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
     setCursor((c) => {
       const d = new Date(c);
       if (mode === "month") d.setMonth(d.getMonth() + 1);
-      else d.setDate(d.getDate() + 7);
+      else if (mode === "week") d.setDate(d.getDate() + 7);
+      else d.setDate(d.getDate() + 1);
       return d;
     });
   }, [mode]);
@@ -152,12 +179,19 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
             <ChevronRight className="h-3.5 w-3.5" />
           </Button>
           <span className="text-sm font-semibold text-text-primary capitalize">
-            {formatMonthYear(cursor, i18n.language)}
+            {mode === "day"
+              ? cursor.toLocaleDateString(i18n.language, {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })
+              : formatMonthYear(cursor, i18n.language)}
           </span>
         </div>
 
         <div className="flex items-center rounded-md border p-0.5 gap-0.5">
-          {(["month", "week"] as CalendarMode[]).map((m) => (
+          {(["month", "week", "day"] as CalendarMode[]).map((m) => (
             <Button
               key={m}
               variant={mode === m ? "default" : "ghost"}
@@ -202,7 +236,7 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
                       <button
                         key={wo.id}
                         type="button"
-                        className={`w-full text-left text-[9px] rounded px-1 py-0.5 truncate cursor-pointer ${urgencyColor(wo.urgency_id)}`}
+                        className={`w-full text-left text-[9px] rounded px-1 py-0.5 truncate border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${urgencyBorderClass(wo.urgency_level)}`}
                         onClick={() => onSelect(wo)}
                       >
                         {wo.code}
@@ -239,7 +273,7 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
                       <button
                         key={wo.id}
                         type="button"
-                        className={`w-full text-left text-[10px] rounded px-1.5 py-1 cursor-pointer ${urgencyColor(wo.urgency_id)}`}
+                        className={`w-full text-left text-[10px] rounded px-1.5 py-1 border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${urgencyBorderClass(wo.urgency_level)}`}
                         onClick={() => onSelect(wo)}
                       >
                         <span className="font-mono">{wo.code}</span>
@@ -251,6 +285,38 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* ── Day View ──────────────────────────────────────────────── */}
+      {mode === "day" && (
+        <div className="flex-1 overflow-auto p-4">
+          {(() => {
+            const key = dateKey(cursor);
+            const wos = wosByDate.get(key) ?? [];
+            return wos.length === 0 ? (
+              <p className="text-sm text-text-muted text-center py-8">{t("empty.list")}</p>
+            ) : (
+              <div className="space-y-2">
+                {wos.map((wo) => (
+                  <button
+                    key={wo.id}
+                    type="button"
+                    className={`w-full text-left rounded-lg border border-surface-border p-3 border-l-4 hover:bg-surface-1 transition-colors cursor-pointer ${urgencyBorderClass(wo.urgency_level)}`}
+                    onClick={() => onSelect(wo)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-text-muted">{wo.code}</span>
+                      <Badge variant="outline" className="text-[10px] border-0 bg-surface-1">
+                        {t(`status.${statusToI18nKey(wo.status_code ?? "draft")}`)}
+                      </Badge>
+                    </div>
+                    <p className="text-sm mt-1">{wo.title}</p>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>

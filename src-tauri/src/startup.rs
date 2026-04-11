@@ -171,6 +171,9 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         if let Err(e) = crate::db::demo_seeder::seed_test_viewer_user(&app_state.db).await {
             warn!("startup: test viewer user seed returned error (non-fatal): {e}");
         }
+        if let Err(e) = crate::db::demo_seeder::seed_demo_work_orders(&app_state.db).await {
+            warn!("startup: work order demo seed returned error (non-fatal): {e}");
+        }
     }
 
     // Phase 4: entitlement cache (stub for Phase 4 — always succeeds here)

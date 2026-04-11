@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { useSession } from "@/hooks/use-session";
 import { useWoStore } from "@/stores/wo-store";
 import type { WorkOrder } from "@shared/ipc-types";
 
@@ -50,6 +51,7 @@ interface WoCompletionDialogProps {
 
 export function WoCompletionDialog({ wo }: WoCompletionDialogProps) {
   const { t } = useTranslation("ot");
+  const { info } = useSession();
   const open = useWoStore((s) => s.showCompletionDialog);
   const errors = useWoStore((s) => s.completionErrors);
   const closeDialog = useWoStore((s) => s.closeCompletionDialog);
@@ -60,15 +62,19 @@ export function WoCompletionDialog({ wo }: WoCompletionDialogProps) {
   const [hoursWorked, setHoursWorked] = useState("");
   const [conclusion, setConclusion] = useState("");
 
+  const actorId = info?.user_id ?? 0;
+
   const handleSubmit = useCallback(async () => {
+    if (!actorId) return;
     await completeWorkOrder({
-      id: wo.id,
+      wo_id: wo.id,
+      actor_id: actorId,
       expected_row_version: wo.row_version,
       actual_end: endDate || null,
       actual_duration_hours: hoursWorked ? Number(hoursWorked) : null,
       conclusion: conclusion || null,
     });
-  }, [wo, endDate, hoursWorked, conclusion, completeWorkOrder]);
+  }, [wo, actorId, endDate, hoursWorked, conclusion, completeWorkOrder]);
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && closeDialog()}>

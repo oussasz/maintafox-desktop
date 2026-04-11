@@ -88,6 +88,9 @@ pub struct WoMechCompleteInput {
     pub wo_id: i64,
     pub actor_id: i64,
     pub expected_row_version: i64,
+    pub actual_end: Option<String>,
+    pub actual_duration_hours: Option<f64>,
+    pub conclusion: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -869,7 +872,7 @@ pub async fn complete_wo_mechanically(
     let labor_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COALESCE(SUM(COALESCE(hours_worked, 0)), 0) AS total_labor \
+            "SELECT COALESCE(SUM(COALESCE(hours_worked, 0.0)), 0.0) AS total_labor \
              FROM work_order_interveners \
              WHERE work_order_id = ?",
             [input.wo_id.into()],
@@ -892,6 +895,9 @@ pub async fn complete_wo_mechanically(
                 status_id = ?, \
                 mechanically_completed_at = ?, \
                 active_labor_hours = ?, \
+                actual_end = COALESCE(?, actual_end), \
+                actual_duration_hours = COALESCE(?, actual_duration_hours), \
+                conclusion = COALESCE(?, conclusion), \
                 row_version = row_version + 1, \
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
@@ -899,6 +905,9 @@ pub async fn complete_wo_mechanically(
                 mech_complete_status_id.into(),
                 now.clone().into(),
                 total_labor.into(),
+                input.actual_end.clone().map(|v| v.into()).unwrap_or(sea_orm::Value::String(None)),
+                input.actual_duration_hours.map(|v| v.into()).unwrap_or(sea_orm::Value::Double(None)),
+                input.conclusion.clone().map(|v| v.into()).unwrap_or(sea_orm::Value::String(None)),
                 now.clone().into(),
                 input.wo_id.into(),
                 input.expected_row_version.into(),

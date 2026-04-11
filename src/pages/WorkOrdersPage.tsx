@@ -32,6 +32,7 @@ import { WoDashboardView } from "@/components/wo/WoDashboardView";
 import { WoDetailDialog } from "@/components/wo/WoDetailDialog";
 import { WoDiManagementPanel } from "@/components/wo/WoDiManagementPanel";
 import { WoFormDialog } from "@/components/wo/WoFormDialog";
+import { WoKanbanBoard } from "@/components/wo/WoKanbanBoard";
 import { useWoStore } from "@/stores/wo-store";
 import type { WorkOrder } from "@shared/ipc-types";
 
@@ -286,9 +287,7 @@ export function WorkOrdersPage() {
             </div>
           )}
           {view === "kanban" && (
-            <div className="flex items-center justify-center py-16 text-text-muted text-sm">
-              {t("empty.list")}
-            </div>
+            <WoKanbanBoard items={items} onCardClick={(wo) => void openWo(wo.id)} />
           )}
           {view === "calendar" && (
             <WoCalendarView items={items} onSelect={(wo) => void openWo(wo.id)} />
