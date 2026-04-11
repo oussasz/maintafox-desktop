@@ -9,7 +9,12 @@ pub mod closeout;
 pub mod costs;
 pub mod attachments;
 pub mod analytics;
+pub mod stats;
+pub mod audit;
+pub mod permissions;
 
+#[cfg(test)]
+mod audit_tests;
 #[cfg(test)]
 mod migration_tests;
 #[cfg(test)]
@@ -18,3 +23,5 @@ mod execution_tests;
 mod closeout_tests;
 #[cfg(test)]
 mod analytics_tests;
+#[cfg(test)]
+mod tests;

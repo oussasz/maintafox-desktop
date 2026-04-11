@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { statusToI18nKey } from "@/utils/wo-status";
 import type { WorkOrder } from "@shared/ipc-types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -63,35 +64,16 @@ function dateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-type WoStatusKey =
-  | "draft"
-  | "planned"
-  | "released"
-  | "inProgress"
-  | "onHold"
-  | "completed"
-  | "verified"
-  | "closed"
-  | "cancelled";
-
-function statusToI18nKey(s: string): WoStatusKey {
-  const map: Record<string, WoStatusKey> = {
-    draft: "draft",
-    planned: "planned",
-    released: "released",
-    in_progress: "inProgress",
-    on_hold: "onHold",
-    completed: "completed",
-    verified: "verified",
-    closed: "closed",
-    cancelled: "cancelled",
-  };
-  return map[s] ?? "draft";
-}
-
 const MAX_CHIPS = 3;
-const DAY_NAMES_FR = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
-const DAY_NAMES_EN = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function getDayNames(locale: string): string[] {
+  const base = new Date(2024, 0, 1); // Monday 2024-01-01
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(base);
+    d.setDate(d.getDate() + i);
+    return d.toLocaleDateString(locale, { weekday: "short" });
+  });
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -100,7 +82,7 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
   const [mode, setMode] = useState<CalendarMode>("month");
   const [cursor, setCursor] = useState(() => new Date());
 
-  const dayNames = i18n.language === "fr" ? DAY_NAMES_FR : DAY_NAMES_EN;
+  const dayNames = useMemo(() => getDayNames(i18n.language), [i18n.language]);
 
   // Index WOs by planned_start date
   const wosByDate = useMemo(() => {
@@ -236,6 +218,7 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
                       <button
                         key={wo.id}
                         type="button"
+                        aria-label={`${wo.code} – ${wo.title}`}
                         className={`w-full text-left text-[9px] rounded px-1 py-0.5 truncate border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${urgencyBorderClass(wo.urgency_level)}`}
                         onClick={() => onSelect(wo)}
                       >
@@ -273,6 +256,7 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
                       <button
                         key={wo.id}
                         type="button"
+                        aria-label={`${wo.code} – ${wo.title}`}
                         className={`w-full text-left text-[10px] rounded px-1.5 py-1 border-l-2 bg-surface-1 hover:bg-surface-2 cursor-pointer ${urgencyBorderClass(wo.urgency_level)}`}
                         onClick={() => onSelect(wo)}
                       >
@@ -304,6 +288,7 @@ export function WoCalendarView({ items, onSelect }: WoCalendarViewProps) {
                     type="button"
                     className={`w-full text-left rounded-lg border border-surface-border p-3 border-l-4 hover:bg-surface-1 transition-colors cursor-pointer ${urgencyBorderClass(wo.urgency_level)}`}
                     onClick={() => onSelect(wo)}
+                    aria-label={`${wo.code} – ${wo.title}`}
                   >
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs text-text-muted">{wo.code}</span>

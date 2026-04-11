@@ -49,39 +49,16 @@ import { WoAttachmentPanel } from "@/components/wo/WoAttachmentPanel";
 import { WoAuditTimeline } from "@/components/wo/WoAuditTimeline";
 import { WoCloseOutPanel } from "@/components/wo/WoCloseOutPanel";
 import { WoCompletionDialog } from "@/components/wo/WoCompletionDialog";
+import { WoCostSummaryCard } from "@/components/wo/WoCostSummaryCard";
 import { WoExecutionControls } from "@/components/wo/WoExecutionControls";
 import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useSession } from "@/hooks/use-session";
 import { useWoStore } from "@/stores/wo-store";
+import { formatDate } from "@/utils/format-date";
+import { statusToI18nKey, STATUS_STYLE, URGENCY_STYLE } from "@/utils/wo-status";
 import type { WoStatus, WorkOrder } from "@shared/ipc-types";
-
-// ── Status → badge style mapping ────────────────────────────────────────────
-
-const STATUS_STYLE: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-600",
-  planned: "bg-blue-100 text-blue-800",
-  released: "bg-sky-100 text-sky-800",
-  ready_to_schedule: "bg-indigo-100 text-indigo-800",
-  assigned: "bg-violet-100 text-violet-800",
-  in_progress: "bg-amber-100 text-amber-800",
-  on_hold: "bg-orange-100 text-orange-800",
-  paused: "bg-orange-100 text-orange-800",
-  mechanically_complete: "bg-teal-100 text-teal-800",
-  technically_verified: "bg-emerald-100 text-emerald-800",
-  completed: "bg-green-100 text-green-800",
-  verified: "bg-teal-100 text-teal-800",
-  closed: "bg-neutral-100 text-neutral-500",
-  cancelled: "bg-red-100 text-red-700",
-};
-
-const URGENCY_STYLE: Record<string, string> = {
-  "1": "bg-green-100 text-green-800",
-  "2": "bg-blue-100 text-blue-800",
-  "3": "bg-yellow-100 text-yellow-800",
-  "4": "bg-orange-100 text-orange-800",
-  "5": "bg-red-100 text-red-700",
-};
 
 // ── Status groupings for tab visibility ─────────────────────────────────────
 
@@ -93,8 +70,6 @@ const EXECUTION_VISIBLE: Set<string> = new Set([
   "on_hold",
   "mechanically_complete",
   "technically_verified",
-  "completed",
-  "verified",
   "closed",
   "cancelled",
 ]);
@@ -102,53 +77,8 @@ const EXECUTION_VISIBLE: Set<string> = new Set([
 const CLOSEOUT_VISIBLE: Set<string> = new Set([
   "mechanically_complete",
   "technically_verified",
-  "completed",
-  "verified",
   "closed",
 ]);
-
-type WoStatusKey =
-  | "draft"
-  | "planned"
-  | "released"
-  | "inProgress"
-  | "onHold"
-  | "completed"
-  | "verified"
-  | "closed"
-  | "cancelled";
-
-function statusToI18nKey(s: string): WoStatusKey {
-  const map: Record<string, WoStatusKey> = {
-    draft: "draft",
-    planned: "planned",
-    released: "released",
-    ready_to_schedule: "released",
-    assigned: "planned",
-    in_progress: "inProgress",
-    on_hold: "onHold",
-    paused: "onHold",
-    mechanically_complete: "completed",
-    technically_verified: "verified",
-    completed: "completed",
-    verified: "verified",
-    closed: "closed",
-    cancelled: "cancelled",
-  };
-  return map[s] ?? "draft";
-}
-
-function formatDate(iso: string, locale: string): string {
-  try {
-    return new Date(iso).toLocaleDateString(locale, {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  } catch {
-    return iso;
-  }
-}
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -163,6 +93,7 @@ interface WoDetailDialogProps {
 export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
   const { t, i18n } = useTranslation("ot");
   const { can } = usePermissions();
+  const { info } = useSession();
 
   const saving = useWoStore((s) => s.saving);
   const openCreateForm = useWoStore((s) => s.openCreateForm);
@@ -170,8 +101,8 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
   const closeWorkOrder = useWoStore((s) => s.closeWorkOrder);
 
   const handlePrint = useCallback(() => {
-    if (wo) void printWoFiche(wo);
-  }, [wo]);
+    if (wo) void printWoFiche(wo, t, i18n.language);
+  }, [wo, t, i18n.language]);
 
   // Determine visible tabs
   const showExecution = wo ? EXECUTION_VISIBLE.has(wo.status_code ?? "") : false;
@@ -275,12 +206,15 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                 />
                 {wo.source_di_id && (
                   <InfoRow
-                    label="DI"
+                    label={String(t("diPanel.title")).split(" ")[0] || "DI"}
                     value={<span className="font-mono">DI-{wo.source_di_id}</span>}
                   />
                 )}
               </CardContent>
             </Card>
+
+            {/* Cost summary */}
+            <WoCostSummaryCard woId={wo.id} status={wo.status_code ?? "draft"} />
 
             {/* Tabs */}
             <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -328,7 +262,7 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
               )}
 
               <TabsContent value="audit" className="pt-3">
-                <WoAuditTimeline wo={wo} />
+                <WoAuditTimeline woId={wo.id} />
               </TabsContent>
 
               <TabsContent value="attachments" className="pt-3">
@@ -352,13 +286,15 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                 }}
                 onSwitchToPlanning={() => setActiveTab("plan")}
                 onSwitchToExecution={() => setActiveTab("execution")}
+                onSwitchToCloseout={() => setActiveTab("closeout")}
                 onComplete={openCompletionDialog}
-                onClose={() =>
+                onClose={() => {
                   void closeWorkOrder({
-                    id: wo.id,
+                    wo_id: wo.id,
+                    actor_id: info?.user_id ?? 0,
                     expected_row_version: wo.row_version,
-                  })
-                }
+                  });
+                }}
               />
             </div>
             <div className="flex items-center gap-2">
@@ -391,6 +327,7 @@ interface FooterActionsProps {
   onEdit: () => void;
   onSwitchToPlanning: () => void;
   onSwitchToExecution: () => void;
+  onSwitchToCloseout: () => void;
   onComplete: () => void;
   onClose: () => void;
 }
@@ -403,6 +340,7 @@ function FooterActions({
   onEdit,
   onSwitchToPlanning,
   onSwitchToExecution,
+  onSwitchToCloseout,
   onComplete,
   onClose,
 }: FooterActionsProps) {
@@ -513,14 +451,14 @@ function FooterActions({
         </Button>
       )}
 
-      {/* mechanically_complete → Verify + Close */}
+      {/* mechanically_complete → Verify (opens closeout tab) + Close */}
       {(s as string) === "mechanically_complete" && (
         <>
           {can("ot.verify") && (
             <Button
               size="sm"
               variant="outline"
-              onClick={onClose}
+              onClick={onSwitchToCloseout}
               disabled={saving}
               className="gap-1.5"
             >

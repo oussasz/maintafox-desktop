@@ -8,16 +8,18 @@
 
 import { CheckCircle, ClipboardCheck, FileEdit, Play, Settings } from "lucide-react";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { formatShortDate } from "@/utils/format-date";
 import type { WorkOrder } from "@shared/ipc-types";
 
 // ── Kanban column definitions ───────────────────────────────────────────────
 
 interface KanbanColumnDef {
   id: string;
-  label: string;
+  i18nKey: string;
   icon: ReactNode;
   headerClass: string;
   statuses: string[];
@@ -26,35 +28,35 @@ interface KanbanColumnDef {
 const COLUMNS: KanbanColumnDef[] = [
   {
     id: "draft",
-    label: "Brouillon",
+    i18nKey: "kanban.draft",
     icon: <FileEdit className="h-4 w-4" />,
     headerClass: "bg-gray-50 text-gray-700 border-gray-200",
     statuses: ["draft", "awaiting_approval"],
   },
   {
     id: "planned",
-    label: "Planifié",
+    i18nKey: "kanban.planned",
     icon: <Settings className="h-4 w-4" />,
     headerClass: "bg-blue-50 text-blue-700 border-blue-200",
     statuses: ["planned", "ready_to_schedule", "assigned", "waiting_for_prerequisite"],
   },
   {
     id: "executing",
-    label: "En cours",
+    i18nKey: "kanban.executing",
     icon: <Play className="h-4 w-4" />,
     headerClass: "bg-amber-50 text-amber-700 border-amber-200",
-    statuses: ["in_progress", "paused"],
+    statuses: ["in_progress", "paused", "on_hold"],
   },
   {
     id: "closing",
-    label: "Clôture",
+    i18nKey: "kanban.closing",
     icon: <ClipboardCheck className="h-4 w-4" />,
     headerClass: "bg-purple-50 text-purple-700 border-purple-200",
     statuses: ["mechanically_complete", "technically_verified"],
   },
   {
     id: "done",
-    label: "Terminés",
+    i18nKey: "kanban.done",
     icon: <CheckCircle className="h-4 w-4" />,
     headerClass: "bg-slate-50 text-slate-600 border-slate-200",
     statuses: ["closed", "cancelled"],
@@ -80,6 +82,8 @@ interface WoKanbanBoardProps {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function WoKanbanBoard({ items, onCardClick }: WoKanbanBoardProps) {
+  const { t, i18n } = useTranslation("ot");
+
   // Group items by column
   const grouped = new Map<string, WorkOrder[]>();
   for (const col of COLUMNS) {
@@ -101,6 +105,8 @@ export function WoKanbanBoard({ items, onCardClick }: WoKanbanBoardProps) {
           def={col}
           items={grouped.get(col.id) ?? []}
           onCardClick={onCardClick}
+          t={t}
+          locale={i18n.language}
         />
       ))}
     </div>
@@ -113,10 +119,14 @@ function KanbanColumn({
   def,
   items,
   onCardClick,
+  t,
+  locale,
 }: {
   def: KanbanColumnDef;
   items: WorkOrder[];
   onCardClick: (wo: WorkOrder) => void;
+  t: (key: string) => string;
+  locale: string;
 }) {
   return (
     <div className="flex flex-col min-w-[260px] w-[260px] shrink-0 rounded-lg border bg-muted/30">
@@ -125,7 +135,7 @@ function KanbanColumn({
         className={`flex items-center gap-2 px-3 py-2.5 rounded-t-lg border-b font-medium text-sm ${def.headerClass}`}
       >
         {def.icon}
-        <span>{def.label}</span>
+        <span>{t(def.i18nKey)}</span>
         <Badge variant="secondary" className="ml-auto text-[10px] h-5 min-w-[20px] justify-center">
           {items.length}
         </Badge>
@@ -136,7 +146,9 @@ function KanbanColumn({
         {items.length === 0 ? (
           <p className="text-xs text-muted-foreground text-center py-8">—</p>
         ) : (
-          items.map((wo) => <WoKanbanCard key={wo.id} wo={wo} onClick={() => onCardClick(wo)} />)
+          items.map((wo) => (
+            <WoKanbanCard key={wo.id} wo={wo} onClick={() => onCardClick(wo)} locale={locale} />
+          ))
         )}
       </div>
     </div>
@@ -145,7 +157,15 @@ function KanbanColumn({
 
 // ── Card ────────────────────────────────────────────────────────────────────
 
-function WoKanbanCard({ wo, onClick }: { wo: WorkOrder; onClick: () => void }) {
+function WoKanbanCard({
+  wo,
+  onClick,
+  locale,
+}: {
+  wo: WorkOrder;
+  onClick: () => void;
+  locale: string;
+}) {
   const urgency = wo.urgency_level != null ? URGENCY_STYLE[wo.urgency_level] : null;
   const desc =
     wo.description && wo.description.length > 80
@@ -153,7 +173,18 @@ function WoKanbanCard({ wo, onClick }: { wo: WorkOrder; onClick: () => void }) {
       : wo.description;
 
   return (
-    <Card className="cursor-pointer hover:shadow-md transition-shadow border" onClick={onClick}>
+    <Card
+      className="cursor-pointer hover:shadow-md transition-shadow border"
+      onClick={onClick}
+      tabIndex={0}
+      role="button"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+    >
       <CardContent className="p-3 space-y-2">
         {/* Title row */}
         <div className="flex items-start justify-between gap-2">
@@ -204,24 +235,11 @@ function WoKanbanCard({ wo, onClick }: { wo: WorkOrder; onClick: () => void }) {
               variant="outline"
               className="text-[10px] px-1.5 py-0 ml-auto text-muted-foreground"
             >
-              {formatShortDate(wo.planned_start)}
+              {formatShortDate(wo.planned_start, locale)}
             </Badge>
           )}
         </div>
       </CardContent>
     </Card>
   );
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatShortDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
 }

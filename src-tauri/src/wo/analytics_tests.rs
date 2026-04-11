@@ -267,6 +267,9 @@ mod tests {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: rv,
+                actual_end: None,
+                actual_duration_hours: None,
+                conclusion: None,
             },
         )
         .await

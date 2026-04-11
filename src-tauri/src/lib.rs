@@ -298,6 +298,7 @@ pub fn run() {
             commands::wo::add_part,
             commands::wo::record_part_usage,
             commands::wo::confirm_no_parts,
+            commands::wo::list_wo_parts,
             // ── WO Tasks ──────────────────────────────────────────────────
             commands::wo::add_task,
             commands::wo::complete_task,
@@ -323,6 +324,11 @@ pub fn run() {
             commands::wo::get_cost_posting_hook,
             // ── WO Analytics ──────────────────────────────────────────────
             commands::wo::get_wo_analytics_snapshot,
+            // ── WO Stats (Dashboard) ──────────────────────────────────────
+            commands::wo::get_wo_stats,
+            // ── WO Audit ──────────────────────────────────────────────────
+            commands::wo::list_wo_change_events,
+            commands::wo::list_all_wo_change_events,
             // ── Dashboard ─────────────────────────────────────────────────
             commands::dashboard::get_dashboard_kpis,
             commands::dashboard::get_dashboard_workload_chart,

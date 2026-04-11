@@ -24,7 +24,7 @@ interface WoCostSummaryCardProps {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function WoCostSummaryCard({ woId, status }: WoCostSummaryCardProps) {
-  const { t } = useTranslation("ot");
+  const { t, i18n } = useTranslation("ot");
   const [cost, setCost] = useState<WoCostSummary | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -36,7 +36,8 @@ export function WoCostSummaryCard({ woId, status }: WoCostSummaryCardProps) {
       .then((c) => {
         if (!cancelled) setCost(c);
       })
-      .catch(() => {
+      .catch((e) => {
+        console.error("getCostSummary", e);
         if (!cancelled) setCost(null);
       })
       .finally(() => {
@@ -67,12 +68,12 @@ export function WoCostSummaryCard({ woId, status }: WoCostSummaryCardProps) {
       <CardContent className="p-3 space-y-2">
         <h4 className="text-sm font-semibold">{t("cost.title")}</h4>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-          <CostRow label={t("cost.labor")} value={cost.labor_cost} />
-          <CostRow label={t("cost.parts")} value={cost.parts_cost} />
-          <CostRow label={t("cost.services")} value={cost.service_cost} />
+          <CostRow label={t("cost.labor")} value={cost.labor_cost} locale={i18n.language} />
+          <CostRow label={t("cost.parts")} value={cost.parts_cost} locale={i18n.language} />
+          <CostRow label={t("cost.services")} value={cost.service_cost} locale={i18n.language} />
           <div className="col-span-2 border-t border-surface-border pt-1 mt-1 flex items-center justify-between text-sm font-bold">
             <span>{t("cost.total")}</span>
-            <span>{fmt(cost.total_cost)}</span>
+            <span>{fmt(cost.total_cost, i18n.language)}</span>
           </div>
         </div>
 
@@ -105,15 +106,15 @@ export function WoCostSummaryCard({ woId, status }: WoCostSummaryCardProps) {
 
 // ── Sub-components ──────────────────────────────────────────────────────────
 
-function CostRow({ label, value }: { label: string; value: number }) {
+function CostRow({ label, value, locale }: { label: string; value: number; locale: string }) {
   return (
     <>
       <span className="text-muted-foreground">{label}</span>
-      <span className="text-right font-mono">{fmt(value)}</span>
+      <span className="text-right font-mono">{fmt(value, locale)}</span>
     </>
   );
 }
 
-function fmt(v: number): string {
-  return v.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function fmt(v: number, locale: string): string {
+  return v.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }

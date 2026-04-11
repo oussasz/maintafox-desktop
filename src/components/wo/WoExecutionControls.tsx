@@ -16,6 +16,7 @@ import { useSession } from "@/hooks/use-session";
 import { getLookupValues } from "@/services/lookup-service";
 import {
   addLabor,
+  closeDowntime,
   completeTask,
   confirmNoParts,
   holdWo,
@@ -24,6 +25,7 @@ import {
   listLabor,
   listParts,
   listTasks,
+  openDowntime,
   pauseWo,
   recordPartUsage,
   resumeWo,
@@ -31,11 +33,14 @@ import {
   closeLabor,
   type TaskResultCode,
   type WoDelaySegment,
+  type WoDowntimeSegment,
   type WoIntervener,
   type WoPart,
   type WoTask,
 } from "@/services/wo-execution-service";
 import { useWoStore } from "@/stores/wo-store";
+import { formatDateTime } from "@/utils/format-date";
+import type { DowntimeType } from "@shared/ipc-types";
 import type { WorkOrder } from "@shared/ipc-types";
 
 interface WoExecutionControlsProps {
@@ -54,18 +59,6 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function formatDateTime(value: string | null): string {
-  if (!value) return "-";
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
-}
-
-function toErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  return fallback;
-}
-
 const EXECUTION_EDITABLE_STATUSES = new Set([
   "assigned",
   "waiting_for_prerequisite",
@@ -76,7 +69,7 @@ const EXECUTION_EDITABLE_STATUSES = new Set([
 const TASK_RESULT_OPTIONS: TaskResultCode[] = ["ok", "nok", "na", "deferred"];
 
 export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
-  const { t } = useTranslation("ot");
+  const { t, i18n } = useTranslation("ot");
   const { info } = useSession();
   const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
   const openCompletionDialog = useWoStore((s) => s.openCompletionDialog);
@@ -88,6 +81,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
   const [parts, setParts] = useState<WoPart[]>([]);
   const [tasks, setTasks] = useState<WoTask[]>([]);
   const [, setDelaySegments] = useState<WoDelaySegment[]>([]);
+  const [downtimeSegments, setDowntimeSegments] = useState<WoDowntimeSegment[]>([]);
 
   const [reasonOptions, setReasonOptions] = useState<DelayReasonOption[]>([]);
 
@@ -102,8 +96,10 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
   const [intervenerIdInput, setIntervenerIdInput] = useState("");
   const [manualHours, setManualHours] = useState("");
 
+  const [downtimeType, setDowntimeType] = useState<DowntimeType>("full");
+  const [downtimeComment, setDowntimeComment] = useState("");
+
   const [busy, setBusy] = useState(false);
-  const [, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -118,7 +114,6 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
   }, [intervenerIdInput, wo.primary_responsible_id, info?.user_id]);
 
   const loadData = useCallback(async () => {
-    setLoading(true);
     try {
       const [laborRows, partRows, taskRows, delayRows, downtimeRows, lookupReasons] =
         await Promise.all([
@@ -134,6 +129,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
       setParts(partRows);
       setTasks(taskRows);
       setDelaySegments(delayRows);
+      setDowntimeSegments(downtimeRows);
 
       const usageSeed: Record<number, string> = {};
       partRows.forEach((part) => {
@@ -152,25 +148,20 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
         .map((row) => row.delay_reason_id as number)
         .filter((id, idx, arr) => arr.indexOf(id) === idx)
         .filter((id) => !knownIds.has(id))
-        .map((id) => ({ id, label: `Reason #${id}` }));
+        .map((id) => ({ id, label: t("execution.reasonFallback", { id }) }));
 
       const mergedReasons = [...fromLookup, ...fromHistory];
       const fallbackReasons = Array.from({ length: 10 }, (_, idx) => ({
         id: idx + 1,
-        label: `Reason #${idx + 1}`,
+        label: t("execution.reasonFallback", { id: idx + 1 }),
       }));
 
       setReasonOptions(mergedReasons.length > 0 ? mergedReasons : fallbackReasons);
-
-      if (downtimeRows.length > 0) {
-        void downtimeRows;
-      }
     } catch (e) {
-      setError(toErrorMessage(e, "Unable to load execution data."));
-    } finally {
-      setLoading(false);
+      setError(t("execution.error.loadData"));
+      console.error("loadData", e);
     }
-  }, [wo.id]);
+  }, [wo.id, t]);
 
   useEffect(() => {
     void loadData();
@@ -201,11 +192,12 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
       });
       await handleRefreshState(next);
     } catch (e) {
-      setError(toErrorMessage(e, "Unable to start work order."));
+      setError(t("execution.error.startWo"));
+      console.error("handleStart", e);
     } finally {
       setBusy(false);
     }
-  }, [actorId, wo.id, rowVersion, handleRefreshState]);
+  }, [actorId, wo.id, rowVersion, handleRefreshState, t]);
 
   const handleResume = useCallback(async () => {
     if (!actorId) return;
@@ -219,11 +211,12 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
       });
       await handleRefreshState(next);
     } catch (e) {
-      setError(toErrorMessage(e, "Unable to resume work order."));
+      setError(t("execution.error.resumeWo"));
+      console.error("handleResume", e);
     } finally {
       setBusy(false);
     }
-  }, [actorId, wo.id, rowVersion, handleRefreshState]);
+  }, [actorId, wo.id, rowVersion, handleRefreshState, t]);
 
   const openDelayForm = useCallback((intent: DelayIntent) => {
     setDelayIntent(intent);
@@ -256,7 +249,8 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
       setDelayIntent(null);
       await handleRefreshState(next);
     } catch (e) {
-      setError(toErrorMessage(e, "Unable to submit delay action."));
+      setError(t("execution.error.submitDelay"));
+      console.error("submitDelayAction", e);
     } finally {
       setBusy(false);
     }
@@ -266,7 +260,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
     if (!actorId) return;
     const intervenerId = Number(intervenerIdInput);
     if (!Number.isFinite(intervenerId) || intervenerId <= 0) {
-      setError("Intervener ID is required.");
+      setError(t("execution.error.intervenerId"));
       return;
     }
 
@@ -280,11 +274,12 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
       });
       await loadData();
     } catch (e) {
-      setError(toErrorMessage(e, "Unable to start labor entry."));
+      setError(t("execution.error.startLabor"));
+      console.error("handleStartLabor", e);
     } finally {
       setBusy(false);
     }
-  }, [actorId, intervenerIdInput, wo.id, loadData]);
+  }, [actorId, intervenerIdInput, wo.id, loadData, t]);
 
   const handleStopLabor = useCallback(
     async (entryId: number) => {
@@ -295,12 +290,13 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
         await closeLabor(entryId, nowIso(), actorId);
         await loadData();
       } catch (e) {
-        setError(toErrorMessage(e, "Unable to close labor entry."));
+        setError(t("execution.error.closeLabor"));
+        console.error("handleStopLabor", e);
       } finally {
         setBusy(false);
       }
     },
-    [actorId, loadData],
+    [actorId, loadData, t],
   );
 
   const handleManualLabor = useCallback(async () => {
@@ -314,7 +310,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
       !Number.isFinite(hours) ||
       hours <= 0
     ) {
-      setError("Intervener ID and manual hours must be valid.");
+      setError(t("execution.error.invalidManualEntry"));
       return;
     }
 
@@ -329,17 +325,18 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
       setManualHours("");
       await loadData();
     } catch (e) {
-      setError(toErrorMessage(e, "Unable to add manual labor entry."));
+      setError(t("execution.error.addManualLabor"));
+      console.error("handleManualLabor", e);
     } finally {
       setBusy(false);
     }
-  }, [actorId, intervenerIdInput, manualHours, wo.id, loadData]);
+  }, [actorId, intervenerIdInput, manualHours, wo.id, loadData, t]);
 
   const handleRecordPartUsage = useCallback(
     async (partId: number) => {
       const value = Number(partUsage[partId] ?? "");
       if (!Number.isFinite(value) || value < 0) {
-        setError("Quantity used must be a valid non-negative number.");
+        setError(t("execution.error.invalidQuantity"));
         return;
       }
 
@@ -349,12 +346,13 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
         await recordPartUsage(partId, value);
         await loadData();
       } catch (e) {
-        setError(toErrorMessage(e, "Unable to record part usage."));
+        setError(t("execution.error.recordPart"));
+        console.error("handleRecordPartUsage", e);
       } finally {
         setBusy(false);
       }
     },
-    [partUsage, loadData],
+    [partUsage, loadData, t],
   );
 
   const handleNoParts = useCallback(async () => {
@@ -364,11 +362,12 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
       await confirmNoParts(wo.id);
       await loadData();
     } catch (e) {
-      setError(toErrorMessage(e, "Unable to confirm no parts used."));
+      setError(t("execution.error.confirmNoParts"));
+      console.error("handleNoParts", e);
     } finally {
       setBusy(false);
     }
-  }, [wo.id, loadData]);
+  }, [wo.id, loadData, t]);
 
   const handleCompleteTask = useCallback(
     async (task: WoTask) => {
@@ -380,17 +379,56 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
         await completeTask(task.id, actorId, resultCode);
         await loadData();
       } catch (e) {
-        setError(toErrorMessage(e, "Unable to complete task."));
+        setError(t("execution.error.completeTask"));
+        console.error("handleCompleteTask", e);
       } finally {
         setBusy(false);
       }
     },
-    [actorId, taskResultCodes, loadData],
+    [actorId, taskResultCodes, loadData, t],
   );
 
   const openLaborEntries = useMemo(
     () => laborEntries.filter((row) => !row.ended_at),
     [laborEntries],
+  );
+
+  const handleOpenDowntime = useCallback(async () => {
+    if (!actorId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await openDowntime(wo.id, downtimeType, actorId, downtimeComment.trim() || null);
+      setDowntimeComment("");
+      await loadData();
+    } catch (e) {
+      setError(t("execution.error.openDowntime"));
+      console.error("handleOpenDowntime", e);
+    } finally {
+      setBusy(false);
+    }
+  }, [actorId, wo.id, downtimeType, downtimeComment, loadData, t]);
+
+  const handleCloseDowntime = useCallback(
+    async (segmentId: number) => {
+      setBusy(true);
+      setError(null);
+      try {
+        await closeDowntime(segmentId, nowIso());
+        await loadData();
+      } catch (e) {
+        setError(t("execution.error.closeDowntime"));
+        console.error("handleCloseDowntime", e);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadData, t],
+  );
+
+  const openDowntimeSegments = useMemo(
+    () => downtimeSegments.filter((row) => !row.ended_at),
+    [downtimeSegments],
   );
 
   return (
@@ -535,9 +573,15 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
               className="grid gap-2 rounded-md border p-2 md:grid-cols-[120px_1fr_1fr_120px_auto]"
             >
               <div className="text-sm font-medium">#{entry.intervener_id}</div>
-              <div className="text-sm">Start: {formatDateTime(entry.started_at)}</div>
-              <div className="text-sm">End: {formatDateTime(entry.ended_at)}</div>
-              <div className="text-sm">Hours: {entry.hours_worked ?? "-"}</div>
+              <div className="text-sm">
+                {t("execution.laborStart")}: {formatDateTime(entry.started_at, i18n.language)}
+              </div>
+              <div className="text-sm">
+                {t("execution.laborEnd")}: {formatDateTime(entry.ended_at, i18n.language)}
+              </div>
+              <div className="text-sm">
+                {t("execution.laborHours")}: {entry.hours_worked ?? "-"}
+              </div>
               {!entry.ended_at && (
                 <Button
                   size="sm"
@@ -565,7 +609,9 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
               key={part.id}
               className="grid gap-2 rounded-md border p-2 md:grid-cols-[2fr_130px_130px_auto]"
             >
-              <div className="text-sm">{part.article_ref || `Part #${part.id}`}</div>
+              <div className="text-sm">
+                {part.article_ref || t("execution.partFallback", { id: part.id })}
+              </div>
               <div className="text-sm">
                 {t("execution.planned")}: {part.quantity_planned}
               </div>
@@ -659,6 +705,74 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
               </div>
             );
           })}
+        </div>
+      </details>
+      <details open>
+        <summary className="cursor-pointer text-sm font-semibold">
+          {t("execution.downtimeTracking")}
+        </summary>
+        <div className="mt-3 space-y-3 rounded-md border p-3">
+          <div className="grid gap-2 md:grid-cols-[180px_1fr_auto]">
+            <Select
+              value={downtimeType}
+              onValueChange={(v) => setDowntimeType(v as DowntimeType)}
+              disabled={controlsDisabled}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="full">{t("execution.downtimeFull")}</SelectItem>
+                <SelectItem value="partial">{t("execution.downtimePartial")}</SelectItem>
+                <SelectItem value="standby">{t("execution.downtimeStandby")}</SelectItem>
+                <SelectItem value="quality_loss">{t("execution.downtimeQualityLoss")}</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              placeholder={t("execution.downtimeComment")}
+              value={downtimeComment}
+              onChange={(e) => setDowntimeComment(e.target.value)}
+              disabled={controlsDisabled}
+            />
+            <Button
+              variant="outline"
+              onClick={() => void handleOpenDowntime()}
+              disabled={controlsDisabled || !actorId || openDowntimeSegments.length > 0}
+            >
+              {t("execution.openDowntime")}
+            </Button>
+          </div>
+
+          {downtimeSegments.length === 0 && (
+            <div className="text-sm text-muted-foreground">{t("execution.noDowntime")}</div>
+          )}
+
+          {downtimeSegments.map((seg) => (
+            <div
+              key={seg.id}
+              className="grid gap-2 rounded-md border p-2 md:grid-cols-[100px_1fr_1fr_1fr_auto]"
+            >
+              <div className="text-xs font-medium">
+                {t(`execution.downtime_${seg.downtime_type}`)}
+              </div>
+              <div className="text-xs">
+                {t("execution.laborStart")}: {formatDateTime(seg.started_at, i18n.language)}
+              </div>
+              <div className="text-xs">
+                {t("execution.laborEnd")}: {formatDateTime(seg.ended_at, i18n.language)}
+              </div>
+              <div className="text-xs text-muted-foreground">{seg.comment ?? "-"}</div>
+              {!seg.ended_at && (
+                <Button
+                  size="sm"
+                  onClick={() => void handleCloseDowntime(seg.id)}
+                  disabled={controlsDisabled}
+                >
+                  {t("execution.closeDowntime")}
+                </Button>
+              )}
+            </div>
+          ))}
         </div>
       </details>
     </div>

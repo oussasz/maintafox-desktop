@@ -16,8 +16,9 @@
  * Phase 2 – Sub-phase 04 – Sprint S4.
  */
 
-import { Calendar, Printer, Shield, User, X } from "lucide-react";
+import { Calendar, Check, ClipboardCheck, Printer, RotateCcw, Shield, User, X } from "lucide-react";
 import type { ReactNode } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DiDetailPanel } from "@/components/di/DiDetailPanel";
@@ -33,6 +34,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import { usePermissions } from "@/hooks/use-permissions";
+import { useDiReviewStore } from "@/stores/di-review-store";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 // ── Status → badge style mapping ────────────────────────────────────────────
@@ -105,14 +108,72 @@ interface DiDetailDialogProps {
   onClose: () => void;
 }
 
+// ── Statuses that can be acted on ───────────────────────────────────────────
+
+const SCREENABLE = new Set(["pending_review", "returned_for_clarification"]);
+const APPROVABLE = new Set(["awaiting_approval"]);
+const REVIEWABLE = new Set([
+  "submitted",
+  "pending_review",
+  "returned_for_clarification",
+  "screened",
+  "awaiting_approval",
+]);
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function DiDetailDialog({ di, open, onClose }: DiDetailDialogProps) {
   const { t } = useTranslation("di");
+  const { can } = usePermissions();
+  const openApproval = useDiReviewStore((s) => s.openApproval);
+  const openRejection = useDiReviewStore((s) => s.openRejection);
+  const openReturn = useDiReviewStore((s) => s.openReturn);
+  const screen = useDiReviewStore((s) => s.screen);
+  const [screenError, setScreenError] = useState<string | null>(null);
+
+  const handleScreen = useCallback(async () => {
+    if (!di) return;
+    setScreenError(null);
+    try {
+      const updated = await screen({
+        di_id: di.id,
+        actor_id: 0,
+        expected_row_version: di.row_version,
+        validated_urgency: di.reported_urgency,
+        classification_code_id: di.classification_code_id ?? di.symptom_code_id ?? null,
+        reviewer_note: null,
+      });
+      if (updated.status === "awaiting_approval") {
+        onClose();
+        openApproval(updated);
+      }
+    } catch (err) {
+      setScreenError(String(err));
+    }
+  }, [di, screen, onClose, openApproval]);
+
+  const handleApprove = useCallback(() => {
+    if (!di) return;
+    onClose();
+    openApproval(di);
+  }, [di, onClose, openApproval]);
+
+  const handleReject = useCallback(() => {
+    if (!di) return;
+    onClose();
+    openRejection(di);
+  }, [di, onClose, openRejection]);
+
+  const handleReturn = useCallback(() => {
+    if (!di) return;
+    onClose();
+    openReturn(di);
+  }, [di, onClose, openReturn]);
 
   if (!di) return null;
 
   const statusKey = statusToI18nKey(di.status);
+  const canReview = can("di.review") && REVIEWABLE.has(di.status);
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -197,16 +258,84 @@ export function DiDetailDialog({ di, open, onClose }: DiDetailDialogProps) {
 
         {/* ── Footer ──────────────────────────────────────────────────── */}
         <Separator />
-        <div className="flex items-center justify-end gap-2 px-6 py-3">
-          <Button variant="outline" size="sm" onClick={() => printDiFiche(di)} className="gap-1.5">
-            <Printer className="h-3.5 w-3.5" />
-            {t("review.print")}
-          </Button>
-          <Button variant="outline" size="sm" onClick={onClose} className="gap-1.5">
-            <X className="h-3.5 w-3.5" />
-            {t("detail.close")}
-          </Button>
+        <div className="flex items-center justify-between gap-2 px-6 py-3">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => printDiFiche(di)}
+              className="gap-1.5"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              {t("review.print")}
+            </Button>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Review action buttons — only for users with di.review, on reviewable statuses */}
+            {canReview && SCREENABLE.has(di.status) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                onClick={handleScreen}
+                title={t("review.screenAction", "Valider le tri")}
+              >
+                <ClipboardCheck className="h-3.5 w-3.5" />
+                {t("review.screenAction", "Valider")}
+              </Button>
+            )}
+            {canReview && APPROVABLE.has(di.status) && (
+              <Button
+                size="sm"
+                className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+                onClick={handleApprove}
+                title={t("action.approve")}
+              >
+                <Check className="h-3.5 w-3.5" />
+                {t("action.approve")}
+              </Button>
+            )}
+            {canReview && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                  onClick={handleReturn}
+                  title={t("review.returnAction")}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  {t("review.returnAction", "Retourner")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50"
+                  onClick={handleReject}
+                  title={t("action.reject")}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  {t("action.reject")}
+                </Button>
+              </>
+            )}
+            <Button variant="outline" size="sm" onClick={onClose} className="gap-1.5">
+              {t("detail.close")}
+            </Button>
+          </div>
         </div>
+
+        {/* Screen error */}
+        {screenError && (
+          <div className="px-6 pb-3">
+            <div
+              role="alert"
+              className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
+              {screenError}
+            </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

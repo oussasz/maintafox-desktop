@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 import { DataTable } from "@/components/data/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { listWos } from "@/services/wo-service";
+import { formatDate } from "@/utils/format-date";
 import type { WorkOrder } from "@shared/ipc-types";
 
 // ── Props ───────────────────────────────────────────────────────────────────
@@ -25,7 +26,7 @@ interface WoArchivePanelProps {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
-  const { t } = useTranslation("ot");
+  const { t, i18n } = useTranslation("ot");
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<WorkOrder[]>([]);
   const [total, setTotal] = useState(0);
@@ -41,6 +42,8 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
       });
       setItems(page.items);
       setTotal(page.total);
+    } catch (e) {
+      console.error("WoArchivePanel.load", e);
     } finally {
       setLoading(false);
     }
@@ -92,12 +95,12 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
         header: t("list.columns.closedAt"),
         cell: ({ row }) => (
           <span className="text-xs text-text-muted">
-            {row.original.closed_at ? formatDate(row.original.closed_at) : "—"}
+            {row.original.closed_at ? formatDate(row.original.closed_at, i18n.language) : "—"}
           </span>
         ),
       },
     ],
-    [t],
+    [t, i18n.language],
   );
 
   return (
@@ -106,6 +109,7 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
         type="button"
         className="flex items-center gap-2 w-full px-6 py-2.5 hover:bg-surface-1 transition-colors text-left"
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
       >
         {open ? (
           <ChevronDown className="h-4 w-4 text-text-muted" />
@@ -133,18 +137,4 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
       )}
     </div>
   );
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  } catch {
-    return iso;
-  }
 }

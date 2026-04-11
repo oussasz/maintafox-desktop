@@ -31,6 +31,13 @@ import type {
   InterventionRequest,
 } from "@shared/ipc-types";
 
+export interface ApproveResult {
+  approved: boolean;
+  converted: boolean;
+  woCode: string | null;
+  conversionError: string | null;
+}
+
 interface DiReviewStoreState {
   // Review queue
   reviewQueue: InterventionRequest[];
@@ -57,7 +64,7 @@ interface DiReviewStoreState {
   screen: (input: DiScreenInput) => Promise<InterventionRequest>;
   returnForClarification: (input: DiReturnInput) => Promise<void>;
   reject: (input: DiRejectInput) => Promise<void>;
-  approve: (input: DiApproveInput) => Promise<void>;
+  approve: (input: DiApproveInput) => Promise<ApproveResult>;
   defer: (input: DiDeferInput) => Promise<void>;
   reactivate: (input: DiReactivateInput) => Promise<void>;
 }
@@ -156,12 +163,17 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
     try {
       const updated = await approveDi(input);
       // Chain conversion: create WO from the approved DI
+      let converted = false;
+      let woCode: string | null = null;
+      let conversionError: string | null = null;
       try {
-        await convertDiToWo({
+        const result = await convertDiToWo({
           diId: input.di_id,
           expectedRowVersion: updated.row_version,
           conversionNotes: input.notes ?? "",
         });
+        converted = true;
+        woCode = result.wo_code;
         // Re-fetch the DI to get the post-conversion state
         try {
           const fresh = await getDi(input.di_id);
@@ -169,11 +181,13 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
         } catch {
           set({ activeReviewDi: updated });
         }
-      } catch {
-        // Conversion may fail (missing permission, etc.); approval still succeeded
+      } catch (err) {
+        // Conversion failed — approval still succeeded
+        conversionError = toErrorMessage(err);
         set({ activeReviewDi: updated });
       }
       await get().loadReviewQueue();
+      return { approved: true, converted, woCode, conversionError };
     } catch (err) {
       set({ error: toErrorMessage(err) });
       throw err;

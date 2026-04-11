@@ -26,36 +26,31 @@ import { DataTable } from "@/components/data/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { WoArchivePanel } from "@/components/wo/WoArchivePanel";
 import { WoCalendarView } from "@/components/wo/WoCalendarView";
 import { WoDashboardView } from "@/components/wo/WoDashboardView";
 import { WoDetailDialog } from "@/components/wo/WoDetailDialog";
 import { WoDiManagementPanel } from "@/components/wo/WoDiManagementPanel";
 import { WoFormDialog } from "@/components/wo/WoFormDialog";
-import { WoKanbanBoard } from "@/components/wo/WoKanbanBoard";
+import { WoKanbanView } from "@/components/wo/WoKanbanView";
 import { useWoStore } from "@/stores/wo-store";
+import { formatDate } from "@/utils/format-date";
+import { STATUS_STYLE, statusToI18nKey } from "@/utils/wo-status";
 import type { WorkOrder } from "@shared/ipc-types";
-
-// ── Status → badge style mapping ────────────────────────────────────────────
-
-const STATUS_STYLE: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-600",
-  planned: "bg-blue-100 text-blue-800",
-  released: "bg-sky-100 text-sky-800",
-  in_progress: "bg-amber-100 text-amber-800",
-  on_hold: "bg-orange-100 text-orange-800",
-  completed: "bg-green-100 text-green-800",
-  verified: "bg-teal-100 text-teal-800",
-  closed: "bg-neutral-100 text-neutral-500",
-  cancelled: "bg-red-100 text-red-700",
-};
 
 type WoViewMode = "list" | "kanban" | "calendar" | "dashboard";
 
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function WorkOrdersPage() {
-  const { t } = useTranslation("ot");
+  const { t, i18n } = useTranslation("ot");
   const items = useWoStore((s) => s.items);
   const total = useWoStore((s) => s.total);
   const loading = useWoStore((s) => s.loading);
@@ -93,6 +88,75 @@ export function WorkOrdersPage() {
     setFilter({ search: null });
     void loadWos();
   }, [setFilter, loadWos]);
+
+  // ── Status / type / priority filters ──────────────────────────────
+
+  const STATUS_OPTIONS = useMemo(
+    () =>
+      Object.keys(STATUS_STYLE).map((code) => ({
+        code,
+        label: t(`status.${statusToI18nKey(code)}`),
+      })),
+    [t],
+  );
+
+  const TYPE_OPTIONS = useMemo(
+    () =>
+      [
+        "corrective",
+        "preventive",
+        "predictive",
+        "improvement",
+        "inspection",
+        "overhaul",
+        "condition_based",
+        "permit",
+      ].map((code) => ({
+        code,
+        label: t(`type.${code === "condition_based" ? "conditionBased" : code}`),
+      })),
+    [t],
+  );
+
+  const PRIORITY_OPTIONS = useMemo(
+    () =>
+      [1, 2, 3, 4, 5].map((n) => ({
+        value: n,
+        label: `${n}`,
+      })),
+    [],
+  );
+
+  const [statusFilter, setStatusFilter] = useState<string>("__all__");
+  const [typeFilter, setTypeFilter] = useState<string>("__all__");
+  const [priorityFilter, setPriorityFilter] = useState<string>("__all__");
+
+  const handleStatusFilter = useCallback(
+    (val: string) => {
+      setStatusFilter(val);
+      setFilter({ status_codes: val === "__all__" ? null : [val] });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
+
+  const handleTypeFilter = useCallback(
+    (val: string) => {
+      setTypeFilter(val);
+      setFilter({ type_codes: val === "__all__" ? null : [val] });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
+
+  const handlePriorityFilter = useCallback(
+    (val: string) => {
+      setPriorityFilter(val);
+      setFilter({ urgency_level: val === "__all__" ? null : Number(val) });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
 
   // ── Load on mount ─────────────────────────────────────────────────────
 
@@ -162,12 +226,12 @@ export function WorkOrdersPage() {
         header: t("list.columns.plannedEnd"),
         cell: ({ row }) => (
           <span className="text-xs text-text-muted">
-            {row.original.planned_end ? formatDate(row.original.planned_end) : "—"}
+            {row.original.planned_end ? formatDate(row.original.planned_end, i18n.language) : "—"}
           </span>
         ),
       },
     ],
-    [t],
+    [t, i18n.language],
   );
 
   return (
@@ -198,7 +262,7 @@ export function WorkOrdersPage() {
               size="sm"
               className="h-7 px-2"
               onClick={() => switchView("list")}
-              title="List"
+              title={t("page.viewList")}
             >
               <List className="h-3.5 w-3.5" />
             </Button>
@@ -207,7 +271,7 @@ export function WorkOrdersPage() {
               size="sm"
               className="h-7 px-2"
               onClick={() => switchView("kanban")}
-              title="Kanban"
+              title={t("page.viewKanban")}
             >
               <Columns3 className="h-3.5 w-3.5" />
             </Button>
@@ -216,7 +280,7 @@ export function WorkOrdersPage() {
               size="sm"
               className="h-7 px-2"
               onClick={() => switchView("calendar")}
-              title="Calendar"
+              title={t("page.viewCalendar")}
             >
               <CalendarDays className="h-3.5 w-3.5" />
             </Button>
@@ -225,7 +289,7 @@ export function WorkOrdersPage() {
               size="sm"
               className="h-7 px-2"
               onClick={() => switchView("dashboard")}
-              title="Dashboard"
+              title={t("page.viewDashboard")}
             >
               <BarChart3 className="h-3.5 w-3.5" />
             </Button>
@@ -249,7 +313,7 @@ export function WorkOrdersPage() {
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
           <Input
             className="pl-9 h-8 text-sm"
-            placeholder={t("form.equipment.placeholder")}
+            placeholder={t("search.placeholder")}
             value={searchInput}
             onChange={handleSearchChange}
           />
@@ -263,6 +327,48 @@ export function WorkOrdersPage() {
             </button>
           )}
         </div>
+
+        <Select value={statusFilter} onValueChange={handleStatusFilter}>
+          <SelectTrigger className="h-8 w-[160px] text-sm">
+            <SelectValue placeholder={t("list.filters.status")} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">{t("list.filters.status")}</SelectItem>
+            {STATUS_OPTIONS.map((opt) => (
+              <SelectItem key={opt.code} value={opt.code}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={typeFilter} onValueChange={handleTypeFilter}>
+          <SelectTrigger className="h-8 w-[160px] text-sm">
+            <SelectValue placeholder={t("list.filters.type")} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">{t("list.filters.type")}</SelectItem>
+            {TYPE_OPTIONS.map((opt) => (
+              <SelectItem key={opt.code} value={opt.code}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={priorityFilter} onValueChange={handlePriorityFilter}>
+          <SelectTrigger className="h-8 w-[130px] text-sm">
+            <SelectValue placeholder={t("list.filters.priority")} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">{t("list.filters.priority")}</SelectItem>
+            {PRIORITY_OPTIONS.map((opt) => (
+              <SelectItem key={opt.value} value={String(opt.value)}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* ── DI management panel (ot.edit permission) ─────────────────── */}
@@ -287,7 +393,7 @@ export function WorkOrdersPage() {
             </div>
           )}
           {view === "kanban" && (
-            <WoKanbanBoard items={items} onCardClick={(wo) => void openWo(wo.id)} />
+            <WoKanbanView items={items} onCardClick={(wo) => void openWo(wo.id)} />
           )}
           {view === "calendar" && (
             <WoCalendarView items={items} onSelect={(wo) => void openWo(wo.id)} />
@@ -306,44 +412,4 @@ export function WorkOrdersPage() {
       <WoDetailDialog wo={activeWo?.wo ?? null} open={activeWo !== null} onClose={closeWo} />
     </div>
   );
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-type WoStatusKey =
-  | "draft"
-  | "planned"
-  | "released"
-  | "inProgress"
-  | "onHold"
-  | "completed"
-  | "verified"
-  | "closed"
-  | "cancelled";
-
-function statusToI18nKey(s: string): WoStatusKey {
-  const map: Record<string, WoStatusKey> = {
-    draft: "draft",
-    planned: "planned",
-    released: "released",
-    in_progress: "inProgress",
-    on_hold: "onHold",
-    completed: "completed",
-    verified: "verified",
-    closed: "closed",
-    cancelled: "cancelled",
-  };
-  return map[s] ?? "draft";
-}
-
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  } catch {
-    return iso;
-  }
 }

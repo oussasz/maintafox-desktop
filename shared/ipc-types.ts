@@ -1806,7 +1806,8 @@ export interface WoPreflightError {
 }
 
 export interface WoCloseInput {
-  id: number;
+  wo_id: number;
+  actor_id: number;
   expected_row_version: number;
 }
 

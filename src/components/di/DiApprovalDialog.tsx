@@ -7,7 +7,7 @@
  * Phase 2 – Sub-phase 04 – File 02 – Sprint S4.
  */
 
-import { ArrowRight, Loader2, Printer } from "lucide-react";
+import { ArrowRight, CheckCircle2, Loader2, Printer, TriangleAlert } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -27,6 +27,7 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
 import { useDiReviewStore } from "@/stores/di-review-store";
+import { useDiStore } from "@/stores/di-store";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -155,6 +156,13 @@ export function DiApprovalDialog() {
 
   const [note, setNote] = useState("");
   const [showStepUp, setShowStepUp] = useState(false);
+  const [conversionResult, setConversionResult] = useState<{
+    converted: boolean;
+    woCode: string | null;
+    conversionError: string | null;
+  } | null>(null);
+
+  const loadDis = useDiStore((s) => s.loadDis);
 
   const open = di !== null;
   const woCodePreview = di ? generateWoCodePreview(di.code) : "";
@@ -170,18 +178,30 @@ export function DiApprovalDialog() {
     setShowStepUp(false);
     if (!di) return;
     try {
-      await approve({
+      const result = await approve({
         di_id: di.id,
         actor_id: info?.user_id ?? 0,
         expected_row_version: di.row_version,
         notes: note || null,
       });
-      setNote("");
-      closeApproval();
+      // Refresh DI list so Kanban updates
+      void loadDis();
+      if (result.converted) {
+        // Show success with actual WO code, then auto-close after delay
+        setConversionResult(result);
+        setTimeout(() => {
+          setConversionResult(null);
+          setNote("");
+          closeApproval();
+        }, 3000);
+      } else {
+        // Approval succeeded but conversion failed — show warning, keep dialog open
+        setConversionResult(result);
+      }
     } catch {
       // error is set in store; dialog stays open so user can retry
     }
-  }, [di, approve, info, note, closeApproval]);
+  }, [di, approve, info, note, closeApproval, loadDis]);
 
   const handleStepUpCancel = useCallback(() => {
     setShowStepUp(false);
@@ -196,6 +216,7 @@ export function DiApprovalDialog() {
   const handleClose = useCallback(() => {
     setNote("");
     setShowStepUp(false);
+    setConversionResult(null);
     closeApproval();
   }, [closeApproval]);
 
@@ -320,6 +341,37 @@ export function DiApprovalDialog() {
                 className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
               >
                 {storeError}
+              </div>
+            )}
+
+            {/* Conversion result feedback */}
+            {conversionResult?.converted && (
+              <div
+                role="status"
+                className="rounded-md bg-green-100 border border-green-300 px-4 py-3 text-sm text-green-800 flex items-center gap-2"
+              >
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>
+                  {t("review.conversionSuccess", "DI approuvée et convertie en OT avec succès.")}{" "}
+                  <strong className="font-mono">{conversionResult.woCode}</strong>
+                </span>
+              </div>
+            )}
+            {conversionResult && !conversionResult.converted && (
+              <div
+                role="alert"
+                className="rounded-md bg-amber-100 border border-amber-300 px-4 py-3 text-sm text-amber-800 flex items-start gap-2"
+              >
+                <TriangleAlert className="h-4 w-4 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium">
+                    {t(
+                      "review.conversionFailed",
+                      "DI approuvée mais la conversion en OT a échoué.",
+                    )}
+                  </p>
+                  <p className="text-xs mt-1">{conversionResult.conversionError}</p>
+                </div>
               </div>
             )}
           </div>

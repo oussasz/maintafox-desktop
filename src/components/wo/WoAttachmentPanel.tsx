@@ -20,6 +20,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -66,15 +67,16 @@ function attachmentIcon(mime: string) {
   }
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} o`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+function formatBytes(bytes: number, t: (key: string) => string): string {
+  if (bytes < 1024) return `${bytes} ${t("attachment.bytes")}`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} ${t("attachment.kilobytes")}`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} ${t("attachment.megabytes")}`;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPanelProps) {
+  const { t } = useTranslation("ot");
   const [attachments, setAttachments] = useState<WoAttachment[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -112,7 +114,7 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
       // Validate size before any IPC call
       for (const file of fileArray) {
         if (file.size > MAX_WO_ATTACHMENT_SIZE_BYTES) {
-          setError(`Le fichier « ${file.name} » dépasse la taille maximale de ${MAX_SIZE_MB} Mo.`);
+          setError(t("attachment.fileTooLarge", { name: file.name, size: MAX_SIZE_MB }));
           return;
         }
       }
@@ -137,7 +139,7 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
         setUploading(false);
       }
     },
-    [woId, loadAttachments],
+    [woId, loadAttachments, t],
   );
 
   // ── Delete handler ──────────────────────────────────────────────────
@@ -193,7 +195,7 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-semibold text-text-primary">Pièces jointes</h3>
+      <h3 className="text-sm font-semibold text-text-primary">{t("attachment.title")}</h3>
 
       {/* Error banner */}
       {error && (
@@ -232,11 +234,11 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
             <FileUp className="h-6 w-6 text-muted-foreground" />
           )}
           <p className="text-sm text-muted-foreground">
-            {uploading
-              ? "Téléversement en cours…"
-              : "Glisser-déposer ou cliquer pour ajouter un fichier"}
+            {uploading ? t("attachment.uploading") : t("attachment.dropHint")}
           </p>
-          <p className="text-xs text-muted-foreground">Max {MAX_SIZE_MB} Mo</p>
+          <p className="text-xs text-muted-foreground">
+            {t("attachment.maxSize", { size: MAX_SIZE_MB })}
+          </p>
           <input
             ref={fileInputRef}
             type="file"
@@ -253,7 +255,7 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
       ) : attachments.length === 0 ? (
-        <p className="py-4 text-center text-sm text-muted-foreground">Aucune pièce jointe.</p>
+        <p className="py-4 text-center text-sm text-muted-foreground">{t("attachment.empty")}</p>
       ) : (
         <ul className="divide-y divide-surface-border rounded-md border border-surface-border">
           {attachments.map((att) => (
@@ -263,8 +265,8 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-text-primary">{att.file_name}</p>
                 <p className="text-xs text-muted-foreground">
-                  {formatBytes(att.size_bytes)} ·{" "}
-                  {new Date(att.uploaded_at).toLocaleDateString("fr-FR", {
+                  {formatBytes(att.size_bytes, t)} ·{" "}
+                  {new Date(att.uploaded_at).toLocaleDateString(undefined, {
                     day: "2-digit",
                     month: "short",
                     year: "numeric",
@@ -281,10 +283,10 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
                         size="sm"
                         onClick={() => void handleDelete(att.id)}
                       >
-                        Confirmer
+                        {t("attachment.confirm")}
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>
-                        Annuler
+                        {t("attachment.cancel")}
                       </Button>
                     </div>
                   ) : (
@@ -292,7 +294,7 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
                       variant="ghost"
                       size="icon"
                       onClick={() => setConfirmDeleteId(att.id)}
-                      title="Supprimer la pièce jointe"
+                      title={t("attachment.deleteTitle")}
                     >
                       <Trash2 className="h-4 w-4 text-muted-foreground" />
                     </Button>

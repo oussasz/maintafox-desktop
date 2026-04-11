@@ -20,6 +20,7 @@ import {
   Lock,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -43,6 +44,7 @@ import {
   closeWo,
   updateWoRca,
   updateServiceCost,
+  getWoAnalyticsSnapshot,
   CloseoutBlockingError,
 } from "@/services/wo-closeout-service";
 import { completeMechanically } from "@/services/wo-execution-service";
@@ -96,6 +98,7 @@ function SuccessBanner({ message }: { message: string }) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps) {
+  const { t } = useTranslation("ot");
   const { info } = useSession();
   const { withStepUp, StepUpDialogElement } = useStepUp();
 
@@ -153,10 +156,38 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const [verificationError, setVerificationError] = useState<string | null>(null);
 
   // ── S4 — Close ────────────────────────────────────────────────────────
-  const [stepUpPin, setStepUpPin] = useState("");
   const [closing, setClosing] = useState(false);
   const [blockingErrors, setBlockingErrors] = useState<string[]>([]);
   const [closeError, setCloseError] = useState<string | null>(null);
+
+  // ── Pre-populate from existing failure data (GA-049) ────────────────
+  useEffect(() => {
+    let cancelled = false;
+    void getWoAnalyticsSnapshot(wo.id)
+      .then((snap) => {
+        if (cancelled) return;
+        const fd = snap.failure_details[0];
+        if (fd) {
+          setSymptomId(fd.symptom_id);
+          setFailureModeId(fd.failure_mode_id);
+          setFailureCauseId(fd.failure_cause_id);
+          setFailureEffectId(fd.failure_effect_id);
+          setCauseNotDetermined(fd.cause_not_determined);
+          if (fd.is_temporary_repair) setRepairType("temporary");
+          else if (fd.is_permanent_repair) setRepairType("permanent");
+          if (fd.notes) setNarrative(fd.notes);
+        }
+        if (snap.root_cause_summary) setRootCauseSummary(snap.root_cause_summary);
+        if (snap.corrective_action_summary) setCorrectiveAction(snap.corrective_action_summary);
+        if (snap.service_cost > 0) setServiceCost(String(snap.service_cost));
+      })
+      .catch(() => {
+        // Analytics not available yet — continue with empty form
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wo.id]);
 
   // Keep currentWo in sync with prop changes (e.g., parent refreshes)
   useEffect(() => {
@@ -303,20 +334,23 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
 
       {/* ══ Section 1 — Symptom & Narrative ══════════════════════════════ */}
       <section className="space-y-4">
-        <SectionHeader icon={<AlertCircle className="h-4 w-4" />} title="Symptôme & Narrative" />
+        <SectionHeader
+          icon={<AlertCircle className="h-4 w-4" />}
+          title={t("closeout.sectionSymptom")}
+        />
 
         <div className="space-y-2">
-          <Label htmlFor="wo-symptom">Symptôme observé</Label>
+          <Label htmlFor="wo-symptom">{t("closeout.observedSymptom")}</Label>
           <Select
             value={symptomId !== null ? String(symptomId) : "none"}
             onValueChange={(v) => setSymptomId(v === "none" ? null : Number(v))}
             disabled={!isDetailEditable}
           >
             <SelectTrigger id="wo-symptom">
-              <SelectValue placeholder="Sélectionner un symptôme…" />
+              <SelectValue placeholder={t("closeout.selectSymptom")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="none">— Aucun —</SelectItem>
+              <SelectItem value="none">{t("closeout.noneOption")}</SelectItem>
               {symptoms.map((s) => (
                 <SelectItem key={s.id} value={String(s.id)}>
                   {s.label}
@@ -327,10 +361,10 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="wo-narrative">Description / Narrative</Label>
+          <Label htmlFor="wo-narrative">{t("closeout.narrative")}</Label>
           <Textarea
             id="wo-narrative"
-            placeholder="Décrire la défaillance observée…"
+            placeholder={t("closeout.narrativePlaceholder")}
             value={narrative}
             onChange={(e) => setNarrative(e.target.value)}
             disabled={!isDetailEditable}
@@ -341,7 +375,10 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
 
       {/* ══ Section 2 — Failure Analysis ═════════════════════════════════ */}
       <section className="space-y-4">
-        <SectionHeader icon={<WrenchIcon className="h-4 w-4" />} title="Analyse de défaillance" />
+        <SectionHeader
+          icon={<WrenchIcon className="h-4 w-4" />}
+          title={t("closeout.sectionFailure")}
+        />
 
         <div className="flex items-center gap-2">
           <Checkbox
@@ -351,23 +388,23 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
             disabled={!isDetailEditable}
           />
           <Label htmlFor="wo-cause-nd" className="cursor-pointer">
-            Cause non déterminée
+            {t("closeout.causeNotDetermined")}
           </Label>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
-            <Label htmlFor="wo-failure-mode">Mode de défaillance</Label>
+            <Label htmlFor="wo-failure-mode">{t("closeout.failureMode")}</Label>
             <Select
               value={failureModeId !== null ? String(failureModeId) : "none"}
               onValueChange={(v) => setFailureModeId(v === "none" ? null : Number(v))}
               disabled={!isDetailEditable || causeNotDetermined}
             >
               <SelectTrigger id="wo-failure-mode">
-                <SelectValue placeholder="Mode…" />
+                <SelectValue placeholder={t("closeout.failureModePlaceholder")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">— Aucun —</SelectItem>
+                <SelectItem value="none">{t("closeout.noneOption")}</SelectItem>
                 {failureModes.map((m) => (
                   <SelectItem key={m.id} value={String(m.id)}>
                     {m.label}
@@ -378,17 +415,17 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="wo-failure-cause">Cause</Label>
+            <Label htmlFor="wo-failure-cause">{t("closeout.failureCause")}</Label>
             <Select
               value={failureCauseId !== null ? String(failureCauseId) : "none"}
               onValueChange={(v) => setFailureCauseId(v === "none" ? null : Number(v))}
               disabled={!isDetailEditable || causeNotDetermined}
             >
               <SelectTrigger id="wo-failure-cause">
-                <SelectValue placeholder="Cause…" />
+                <SelectValue placeholder={t("closeout.failureCausePlaceholder")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">— Aucune —</SelectItem>
+                <SelectItem value="none">{t("closeout.noneOptionF")}</SelectItem>
                 {failureCauses.map((c) => (
                   <SelectItem key={c.id} value={String(c.id)}>
                     {c.label}
@@ -399,17 +436,17 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="wo-failure-effect">Effet</Label>
+            <Label htmlFor="wo-failure-effect">{t("closeout.failureEffect")}</Label>
             <Select
               value={failureEffectId !== null ? String(failureEffectId) : "none"}
               onValueChange={(v) => setFailureEffectId(v === "none" ? null : Number(v))}
               disabled={!isDetailEditable || causeNotDetermined}
             >
               <SelectTrigger id="wo-failure-effect">
-                <SelectValue placeholder="Effet…" />
+                <SelectValue placeholder={t("closeout.failureEffectPlaceholder")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">— Aucun —</SelectItem>
+                <SelectItem value="none">{t("closeout.noneOption")}</SelectItem>
                 {failureEffects.map((e) => (
                   <SelectItem key={e.id} value={String(e.id)}>
                     {e.label}
@@ -423,13 +460,13 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
 
       {/* ══ Section 3 — Action Performed ═════════════════════════════════ */}
       <section className="space-y-4">
-        <SectionHeader icon={<Save className="h-4 w-4" />} title="Action réalisée" />
+        <SectionHeader icon={<Save className="h-4 w-4" />} title={t("closeout.sectionAction")} />
 
         <div className="space-y-2">
-          <Label htmlFor="wo-corrective-action">Action corrective</Label>
+          <Label htmlFor="wo-corrective-action">{t("closeout.correctiveAction")}</Label>
           <Textarea
             id="wo-corrective-action"
-            placeholder="Décrire les actions correctives effectuées…"
+            placeholder={t("closeout.correctiveActionPlaceholder")}
             value={correctiveAction}
             onChange={(e) => setCorrectiveAction(e.target.value)}
             disabled={!isDetailEditable}
@@ -438,10 +475,10 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="wo-root-cause">Cause racine</Label>
+          <Label htmlFor="wo-root-cause">{t("closeout.rootCause")}</Label>
           <Textarea
             id="wo-root-cause"
-            placeholder="Résumé de la cause racine identifiée…"
+            placeholder={t("closeout.rootCausePlaceholder")}
             value={rootCauseSummary}
             onChange={(e) => setRootCauseSummary(e.target.value)}
             disabled={!isDetailEditable}
@@ -450,7 +487,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         </div>
 
         <div className="space-y-2">
-          <Label>Type de réparation</Label>
+          <Label>{t("closeout.repairType")}</Label>
           <div className="flex gap-4">
             {(["temporary", "permanent", "na"] as const).map((val) => (
               <label key={val} className="flex cursor-pointer items-center gap-1.5">
@@ -464,7 +501,11 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
                   className="accent-primary"
                 />
                 <span className="text-sm">
-                  {val === "temporary" ? "Temporaire" : val === "permanent" ? "Permanente" : "S/O"}
+                  {val === "temporary"
+                    ? t("closeout.temporary")
+                    : val === "permanent"
+                      ? t("closeout.permanent")
+                      : t("closeout.notApplicable")}
                 </span>
               </label>
             ))}
@@ -472,7 +513,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="wo-service-cost">Coût de service (€)</Label>
+          <Label htmlFor="wo-service-cost">{t("closeout.serviceCost")}</Label>
           <Input
             id="wo-service-cost"
             type="number"
@@ -490,14 +531,14 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         {isDetailEditable && (
           <div className="space-y-2">
             {detailError && <ErrorBanner message={detailError} />}
-            {detailSuccess && <SuccessBanner message="Détails enregistrés." />}
+            {detailSuccess && <SuccessBanner message={t("closeout.detailsSaved")} />}
             <Button onClick={() => void handleSaveDetails()} disabled={savingDetails}>
               {savingDetails ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
                 <Save className="mr-2 h-4 w-4" />
               )}
-              Enregistrer les détails
+              {t("closeout.saveDetails")}
             </Button>
           </div>
         )}
@@ -506,14 +547,15 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         <WoCostSummaryCard woId={wo.id} status={statusCode} />
       </section>
       <section className="space-y-4">
-        <SectionHeader icon={<ShieldCheck className="h-4 w-4" />} title="Retour en service" />
+        <SectionHeader
+          icon={<ShieldCheck className="h-4 w-4" />}
+          title={t("closeout.sectionReturn")}
+        />
 
         {/* 4a — Mechanical completion */}
         {MECH_COMPLETABLE_STATUSES.has(statusCode) && (
           <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">
-              Marquer l'OT comme mécaniquement complet lorsque les travaux physiques sont terminés.
-            </p>
+            <p className="text-sm text-muted-foreground">{t("closeout.mechCompleteHint")}</p>
             {mechError && <ErrorBanner message={mechError} />}
             <Button
               variant="outline"
@@ -525,7 +567,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
               ) : (
                 <WrenchIcon className="mr-2 h-4 w-4" />
               )}
-              Marquer mécaniquement complet
+              {t("closeout.markMechComplete")}
             </Button>
           </div>
         )}
@@ -533,16 +575,18 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         {/* 4b — Technical verification form */}
         {VERIFIABLE_STATUSES.has(statusCode) && (
           <div className="space-y-4 rounded-md border border-surface-border p-4">
-            <h4 className="text-sm font-medium text-text-primary">Vérification technique</h4>
+            <h4 className="text-sm font-medium text-text-primary">
+              {t("closeout.technicalVerification")}
+            </h4>
 
             <div className="space-y-2">
-              <Label>Résultat</Label>
+              <Label>{t("closeout.verificationResult")}</Label>
               <div className="flex gap-4">
                 {(
                   [
-                    { value: "pass", label: "Approuvé", cls: "text-green-700" },
-                    { value: "fail", label: "Refusé", cls: "text-destructive" },
-                    { value: "monitor", label: "Surveiller", cls: "text-amber-600" },
+                    { value: "pass", label: t("closeout.resultPass"), cls: "text-green-700" },
+                    { value: "fail", label: t("closeout.resultFail"), cls: "text-destructive" },
+                    { value: "monitor", label: t("closeout.resultMonitor"), cls: "text-amber-600" },
                   ] as const
                 ).map(({ value, label, cls }) => (
                   <label key={value} className="flex cursor-pointer items-center gap-1.5">
@@ -570,16 +614,16 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
                   disabled={!canEdit || savingVerification}
                 />
                 <Label htmlFor="wo-rts-confirmed" className="cursor-pointer">
-                  Retour en service confirmé
+                  {t("closeout.returnToService")}
                 </Label>
               </div>
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="wo-ver-notes">Notes de vérification</Label>
+              <Label htmlFor="wo-ver-notes">{t("closeout.verificationNotes")}</Label>
               <Textarea
                 id="wo-ver-notes"
-                placeholder="Observations, tests effectués…"
+                placeholder={t("closeout.verificationNotesPlaceholder")}
                 value={verificationNotes}
                 onChange={(e) => setVerificationNotes(e.target.value)}
                 disabled={!canEdit || savingVerification}
@@ -603,7 +647,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
               ) : (
                 <ShieldCheck className="mr-2 h-4 w-4" />
               )}
-              Soumettre vérification
+              {t("closeout.submitVerification")}
             </Button>
           </div>
         )}
@@ -611,31 +655,17 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         {/* 4c — Closure */}
         {CLOSEABLE_STATUSES.has(statusCode) && (
           <div className="space-y-4 rounded-md border border-surface-border p-4">
-            <h4 className="text-sm font-medium text-text-primary">Fermeture de l'OT</h4>
-            <p className="text-sm text-muted-foreground">
-              La fermeture est irréversible (sauf via le flux de réouverture supervisé). Une
-              authentification renforcée (PIN) est requise.
-            </p>
+            <h4 className="text-sm font-medium text-text-primary">{t("closeout.closureTitle")}</h4>
+            <p className="text-sm text-muted-foreground">{t("closeout.closureWarning")}</p>
 
-            {/* Step-up PIN — button stays disabled until filled */}
-            <div className="space-y-1">
-              <Label htmlFor="wo-close-pin">Code PIN (authentification renforcée)</Label>
-              <Input
-                id="wo-close-pin"
-                type="password"
-                placeholder="Saisir le PIN…"
-                value={stepUpPin}
-                onChange={(e) => setStepUpPin(e.target.value)}
-                disabled={!canEdit || closing}
-                className="w-48"
-                autoComplete="current-password"
-              />
-            </div>
+            {/* Step-up authentication handled by withStepUp hook */}
 
             {/* Blocking errors from preflight */}
             {blockingErrors.length > 0 && (
               <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3">
-                <p className="mb-2 text-sm font-medium text-destructive">Conditions bloquantes :</p>
+                <p className="mb-2 text-sm font-medium text-destructive">
+                  {t("closeout.blockingConditions")}
+                </p>
                 <ul className="space-y-1">
                   {blockingErrors.map((err, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm text-destructive">
@@ -649,17 +679,13 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
 
             {closeError && <ErrorBanner message={closeError} />}
 
-            <Button
-              variant="destructive"
-              onClick={handleClose}
-              disabled={!canEdit || closing || stepUpPin.trim() === ""}
-            >
+            <Button variant="destructive" onClick={handleClose} disabled={!canEdit || closing}>
               {closing ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
                 <Lock className="mr-2 h-4 w-4" />
               )}
-              Fermer l'OT
+              {t("closeout.closeWo")}
             </Button>
           </div>
         )}

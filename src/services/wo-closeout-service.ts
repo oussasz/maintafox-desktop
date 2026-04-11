@@ -272,10 +272,6 @@ export async function deleteWoAttachment(attachmentId: number): Promise<void> {
 
 // -- Costs --
 
-export async function getCostSummary(woId: number): Promise<WoCostSummary> {
-  return invoke<WoCostSummary>("get_cost_summary", { woId });
-}
-
 export async function updateServiceCost(woId: number, serviceCost: number): Promise<void> {
   await invoke<void>("update_service_cost", { woId, serviceCost });
 }

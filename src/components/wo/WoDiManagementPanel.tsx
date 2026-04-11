@@ -19,6 +19,7 @@ import { useWoStore } from "@/stores/wo-store";
 export function WoDiManagementPanel() {
   const { t } = useTranslation("ot");
   const items = useWoStore((s) => s.items);
+  const openWo = useWoStore((s) => s.openWo);
   const [open, setOpen] = useState(true);
 
   // Filter to DI-sourced WOs in draft or planned status
@@ -55,7 +56,7 @@ export function WoDiManagementPanel() {
             <thead>
               <tr className="text-left text-text-muted border-b border-surface-border">
                 <th className="pb-1.5 font-medium">{t("list.columns.number")}</th>
-                <th className="pb-1.5 font-medium">DI</th>
+                <th className="pb-1.5 font-medium">{t("diPanel.columnDi")}</th>
                 <th className="pb-1.5 font-medium">{t("list.columns.equipment")}</th>
                 <th className="pb-1.5 font-medium">{t("list.columns.priority")}</th>
                 <th className="pb-1.5 font-medium">{t("list.columns.status")}</th>
@@ -89,7 +90,12 @@ export function WoDiManagementPanel() {
                     </Badge>
                   </td>
                   <td className="py-1.5 text-right">
-                    <Button variant="outline" size="sm" className="h-6 px-2 text-[10px]">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-[10px]"
+                      onClick={() => void openWo(wo.id)}
+                    >
                       {t("diPanel.schedule")}
                     </Button>
                   </td>

@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSession } from "@/hooks/use-session";
+import { listOrgTree } from "@/services/org-node-service";
 import {
   addPart,
   addTask,
@@ -49,6 +50,11 @@ interface PartDraft {
   persisted: boolean;
 }
 
+interface SelectOption {
+  value: string;
+  label: string;
+}
+
 const PLAN_EDITABLE_STATUSES = new Set([
   "draft",
   "awaiting_approval",
@@ -57,11 +63,11 @@ const PLAN_EDITABLE_STATUSES = new Set([
 ]);
 
 const URGENCY_LEVELS = [
-  { id: 1, label: "Very Low", swatch: "bg-emerald-500" },
-  { id: 2, label: "Low", swatch: "bg-lime-500" },
-  { id: 3, label: "Medium", swatch: "bg-amber-500" },
-  { id: 4, label: "High", swatch: "bg-orange-500" },
-  { id: 5, label: "Critical", swatch: "bg-red-500" },
+  { id: 1, i18nKey: "form.urgency.veryLow", swatch: "bg-emerald-500" },
+  { id: 2, i18nKey: "form.urgency.low", swatch: "bg-lime-500" },
+  { id: 3, i18nKey: "form.urgency.medium", swatch: "bg-amber-500" },
+  { id: 4, i18nKey: "form.urgency.high", swatch: "bg-orange-500" },
+  { id: 5, i18nKey: "form.urgency.critical", swatch: "bg-red-500" },
 ] as const;
 
 const SHIFT_OPTIONS: Array<{ value: WoShift; label: string }> = [
@@ -118,6 +124,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
   const { t } = useTranslation("ot");
   const { info } = useSession();
   const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
+  const woItems = useWoStore((s) => s.items);
 
   const [statusCode, setStatusCode] = useState(wo.status_code ?? "draft");
   const [rowVersion, setRowVersion] = useState(wo.row_version);
@@ -144,6 +151,8 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [groupOptions, setGroupOptions] = useState<SelectOption[]>([]);
+  const [responsibleOptions, setResponsibleOptions] = useState<SelectOption[]>([]);
 
   useEffect(() => {
     setStatusCode(wo.status_code ?? "draft");
@@ -166,6 +175,66 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       setPlannerId(String(info.user_id));
     }
   }, [plannerId, info?.user_id]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadGroupOptions() {
+      try {
+        const rows = await listOrgTree();
+        if (cancelled) return;
+
+        const opts = rows
+          .map((row) => ({
+            value: String(row.node.id),
+            label: row.node.code ? `${row.node.name} (${row.node.code})` : row.node.name,
+          }))
+          .sort((a, b) => a.label.localeCompare(b.label));
+
+        setGroupOptions(opts);
+      } catch {
+        if (!cancelled) setGroupOptions([]);
+      }
+    }
+
+    void loadGroupOptions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const dedup = new Map<string, string>();
+
+    for (const item of woItems) {
+      if (item.primary_responsible_id != null) {
+        const id = String(item.primary_responsible_id);
+        const label = item.responsible_username?.trim() || `User #${id}`;
+        dedup.set(id, label);
+      }
+    }
+
+    if (info?.user_id != null) {
+      const id = String(info.user_id);
+      if (!dedup.has(id)) {
+        dedup.set(id, info.username ?? `User #${id}`);
+      }
+    }
+
+    if (wo.primary_responsible_id != null) {
+      const id = String(wo.primary_responsible_id);
+      if (!dedup.has(id)) {
+        dedup.set(id, wo.responsible_username ?? `User #${id}`);
+      }
+    }
+
+    const opts = Array.from(dedup.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    setResponsibleOptions(opts);
+  }, [woItems, wo.primary_responsible_id, wo.responsible_username, info?.user_id, info?.username]);
 
   useEffect(() => {
     let cancelled = false;
@@ -239,7 +308,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       setStatusCode(next.status_code ?? statusCode);
       await refreshActiveWo();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to plan work order.");
+      setError(e instanceof Error ? e.message : t("planning.error.plan"));
     } finally {
       setBusy(false);
     }
@@ -256,6 +325,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
     urgencyId,
     refreshActiveWo,
     statusCode,
+    t,
   ]);
 
   const handleAssign = useCallback(async () => {
@@ -279,7 +349,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       setStatusCode(next.status_code ?? statusCode);
       await refreshActiveWo();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to assign work order.");
+      setError(e instanceof Error ? e.message : t("planning.error.assign"));
     } finally {
       setBusy(false);
     }
@@ -293,6 +363,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
     scheduledAt,
     refreshActiveWo,
     statusCode,
+    t,
   ]);
 
   const addTaskRow = useCallback(() => {
@@ -338,12 +409,12 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
           prev.map((task) => (task.localId === row.localId ? toTaskDraft(created) : task)),
         );
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Unable to add task.");
+        setError(e instanceof Error ? e.message : t("planning.error.addTask"));
       } finally {
         setBusy(false);
       }
     },
-    [allFieldsDisabled, wo.id],
+    [allFieldsDisabled, wo.id, t],
   );
 
   const addPartRow = useCallback(() => {
@@ -393,12 +464,12 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
           prev.map((part) => (part.localId === row.localId ? toPartDraft(created) : part)),
         );
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Unable to add planned part.");
+        setError(e instanceof Error ? e.message : t("planning.error.addPart"));
       } finally {
         setBusy(false);
       }
     },
-    [allFieldsDisabled, wo.id],
+    [allFieldsDisabled, wo.id, t],
   );
 
   return (
@@ -483,7 +554,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
               <SelectItem key={level.id} value={String(level.id)}>
                 <span className="inline-flex items-center gap-2">
                   <span className={`h-2.5 w-2.5 rounded-full ${level.swatch}`} />
-                  {level.label}
+                  {t(level.i18nKey)}
                 </span>
               </SelectItem>
             ))}
@@ -496,21 +567,43 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
         <div className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1">
             <Label>{t("planning.assignedGroupId")}</Label>
-            <Input
-              type="number"
-              value={assignedGroupId}
-              onChange={(e) => setAssignedGroupId(e.target.value)}
+            <Select
+              value={assignedGroupId || "__none"}
+              onValueChange={(value) => setAssignedGroupId(value === "__none" ? "" : value)}
               disabled={allFieldsDisabled}
-            />
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={t("planning.assignedGroupId")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">—</SelectItem>
+                {groupOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1">
             <Label>{t("planning.primaryResponsibleId")}</Label>
-            <Input
-              type="number"
-              value={primaryResponsibleId}
-              onChange={(e) => setPrimaryResponsibleId(e.target.value)}
+            <Select
+              value={primaryResponsibleId || "__none"}
+              onValueChange={(value) => setPrimaryResponsibleId(value === "__none" ? "" : value)}
               disabled={allFieldsDisabled}
-            />
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={t("planning.primaryResponsibleId")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">—</SelectItem>
+                {responsibleOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1">
             <Label>{t("planning.scheduledAt")}</Label>

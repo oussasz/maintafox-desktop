@@ -9,28 +9,23 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 import type {
-  WoAddLaborInput,
   WoAssignInput,
   WoCancelInput,
   WoCloseInput,
-  WoCloseLaborInput,
   WoCostSummary,
   WoCreateInput,
   WoDraftUpdateInput,
   WoGetResponse,
-  WoLaborEntry,
   WoListFilter,
   WoListPage,
   WoMechCompleteInput,
   WoMechCompleteResponse,
-  WoPartUsage,
   WoPauseInput,
   WoPlanInput,
   WoPreflightError,
   WoResumeInput,
   WoStartInput,
   WoStatsPayload,
-  WoTask,
   WorkOrder,
 } from "@shared/ipc-types";
 
@@ -319,78 +314,6 @@ export async function cancelWo(input: WoCancelInput): Promise<WorkOrder> {
   } catch (err) {
     rethrowIfVersionConflict(err);
   }
-}
-
-// ── Labor ─────────────────────────────────────────────────────────────────────
-
-const LaborEntrySchema = z.object({
-  id: z.number(),
-  work_order_id: z.number(),
-  intervener_id: z.number(),
-  intervener_name: z.string().nullable(),
-  skill: z.string().nullable(),
-  started_at: z.string().nullable(),
-  ended_at: z.string().nullable(),
-  hours_worked: z.number().nullable(),
-  hourly_rate: z.number().nullable(),
-  notes: z.string().nullable(),
-  created_at: z.string(),
-});
-
-export async function listLabor(workOrderId: number): Promise<WoLaborEntry[]> {
-  const raw = await invoke<unknown>("list_wo_labor", { workOrderId });
-  return z.array(LaborEntrySchema).parse(raw) as WoLaborEntry[];
-}
-
-export async function addLabor(input: WoAddLaborInput): Promise<WoLaborEntry> {
-  const raw = await invoke<unknown>("add_wo_labor", { input });
-  return LaborEntrySchema.parse(raw) as WoLaborEntry;
-}
-
-export async function closeLabor(input: WoCloseLaborInput): Promise<WoLaborEntry> {
-  const raw = await invoke<unknown>("close_wo_labor", { input });
-  return LaborEntrySchema.parse(raw) as WoLaborEntry;
-}
-
-// ── Tasks ─────────────────────────────────────────────────────────────────────
-
-const TaskSchema = z.object({
-  id: z.number(),
-  work_order_id: z.number(),
-  sequence: z.number(),
-  description: z.string(),
-  is_mandatory: z.boolean(),
-  is_completed: z.boolean(),
-  completed_at: z.string().nullable(),
-  completed_by_id: z.number().nullable(),
-});
-
-export async function listTasks(workOrderId: number): Promise<WoTask[]> {
-  const raw = await invoke<unknown>("list_wo_tasks", { workOrderId });
-  return z.array(TaskSchema).parse(raw) as WoTask[];
-}
-
-export async function completeTask(taskId: number): Promise<WoTask> {
-  const raw = await invoke<unknown>("complete_wo_task", { taskId });
-  return TaskSchema.parse(raw) as WoTask;
-}
-
-// ── Parts ─────────────────────────────────────────────────────────────────────
-
-const PartUsageSchema = z.object({
-  id: z.number(),
-  work_order_id: z.number(),
-  part_id: z.number().nullable(),
-  part_label: z.string().nullable(),
-  quantity_planned: z.number().nullable(),
-  quantity_actual: z.number().nullable(),
-  unit_cost: z.number().nullable(),
-  notes: z.string().nullable(),
-});
-
-export async function listParts(workOrderId: number): Promise<WoPartUsage[]> {
-  const raw = await invoke<unknown>("list_wo_parts", { workOrderId });
-  return z.array(PartUsageSchema).parse(raw) as WoPartUsage[];
 }
 
 // ── Cost summary ──────────────────────────────────────────────────────────────
