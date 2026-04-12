@@ -76,7 +76,7 @@ function formatBytes(bytes: number, t: (key: string) => string): string {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPanelProps) {
-  const { t } = useTranslation("ot");
+  const { t, i18n } = useTranslation("ot");
   const [attachments, setAttachments] = useState<WoAttachment[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -266,7 +266,7 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
                 <p className="truncate text-sm font-medium text-text-primary">{att.file_name}</p>
                 <p className="text-xs text-muted-foreground">
                   {formatBytes(att.size_bytes, t)} ·{" "}
-                  {new Date(att.uploaded_at).toLocaleDateString(undefined, {
+                  {new Date(att.uploaded_at).toLocaleDateString(i18n.language, {
                     day: "2-digit",
                     month: "short",
                     year: "numeric",

@@ -19,28 +19,21 @@ import {
   closeDowntime,
   completeTask,
   confirmNoParts,
-  holdWo,
-  listDelaySegments,
   listDowntimeSegments,
   listLabor,
   listParts,
   listTasks,
   openDowntime,
-  pauseWo,
   recordPartUsage,
-  resumeWo,
-  startWo,
   closeLabor,
   type TaskResultCode,
-  type WoDelaySegment,
   type WoDowntimeSegment,
   type WoIntervener,
-  type WoPart,
-  type WoTask,
 } from "@/services/wo-execution-service";
+import { holdWo, pauseWo, resumeWo, startWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import { formatDateTime } from "@/utils/format-date";
-import type { DowntimeType } from "@shared/ipc-types";
+import type { DowntimeType, WoExecPart, WoExecTask } from "@shared/ipc-types";
 import type { WorkOrder } from "@shared/ipc-types";
 
 interface WoExecutionControlsProps {
@@ -78,9 +71,8 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
   const [rowVersion, setRowVersion] = useState(wo.row_version);
 
   const [laborEntries, setLaborEntries] = useState<WoIntervener[]>([]);
-  const [parts, setParts] = useState<WoPart[]>([]);
-  const [tasks, setTasks] = useState<WoTask[]>([]);
-  const [, setDelaySegments] = useState<WoDelaySegment[]>([]);
+  const [parts, setParts] = useState<WoExecPart[]>([]);
+  const [tasks, setTasks] = useState<WoExecTask[]>([]);
   const [downtimeSegments, setDowntimeSegments] = useState<WoDowntimeSegment[]>([]);
 
   const [reasonOptions, setReasonOptions] = useState<DelayReasonOption[]>([]);
@@ -115,20 +107,17 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
 
   const loadData = useCallback(async () => {
     try {
-      const [laborRows, partRows, taskRows, delayRows, downtimeRows, lookupReasons] =
-        await Promise.all([
-          listLabor(wo.id),
-          listParts(wo.id).catch(() => []),
-          listTasks(wo.id).catch(() => []),
-          listDelaySegments(wo.id).catch(() => []),
-          listDowntimeSegments(wo.id).catch(() => []),
-          getLookupValues("delay_reason_codes").catch(() => []),
-        ]);
+      const [laborRows, partRows, taskRows, downtimeRows, lookupReasons] = await Promise.all([
+        listLabor(wo.id),
+        listParts(wo.id).catch(() => []),
+        listTasks(wo.id).catch(() => []),
+        listDowntimeSegments(wo.id).catch(() => []),
+        getLookupValues("delay_reason_codes").catch(() => []),
+      ]);
 
       setLaborEntries(laborRows);
       setParts(partRows);
       setTasks(taskRows);
-      setDelaySegments(delayRows);
       setDowntimeSegments(downtimeRows);
 
       const usageSeed: Record<number, string> = {};
@@ -142,21 +131,12 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
         label: r.label,
       }));
 
-      const knownIds = new Set(fromLookup.map((r) => r.id));
-      const fromHistory: DelayReasonOption[] = delayRows
-        .filter((row) => row.delay_reason_id != null)
-        .map((row) => row.delay_reason_id as number)
-        .filter((id, idx, arr) => arr.indexOf(id) === idx)
-        .filter((id) => !knownIds.has(id))
-        .map((id) => ({ id, label: t("execution.reasonFallback", { id }) }));
-
-      const mergedReasons = [...fromLookup, ...fromHistory];
       const fallbackReasons = Array.from({ length: 10 }, (_, idx) => ({
         id: idx + 1,
         label: t("execution.reasonFallback", { id: idx + 1 }),
       }));
 
-      setReasonOptions(mergedReasons.length > 0 ? mergedReasons : fallbackReasons);
+      setReasonOptions(fromLookup.length > 0 ? fromLookup : fallbackReasons);
     } catch (e) {
       setError(t("execution.error.loadData"));
       console.error("loadData", e);
@@ -370,7 +350,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
   }, [wo.id, loadData, t]);
 
   const handleCompleteTask = useCallback(
-    async (task: WoTask) => {
+    async (task: WoExecTask) => {
       if (!actorId) return;
       const resultCode = taskResultCodes[task.id] ?? "ok";
       setBusy(true);

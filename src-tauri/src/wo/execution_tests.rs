@@ -734,8 +734,8 @@ mod tests {
 
         assert_eq!(
             wo_lines.len(),
-            25,
-            "invoke_handler must contain exactly 25 WO commands (5 prior + 20 new)"
+            41,
+            "invoke_handler must contain exactly 41 WO commands"
         );
 
         let mut seen = std::collections::HashSet::new();

@@ -957,10 +957,12 @@ mod tests {
                 "di.convert",
                 "di.create",
                 "di.create.own",
+                "di.delete",
                 "di.review",
+                "di.submit",
                 "di.view",
             ],
-            "Exactly 7 canonical di.* permissions must exist"
+            "Exactly 9 canonical di.* permissions must exist (7 legacy + di.submit + di.delete from migration 029)"
         );
     }
 

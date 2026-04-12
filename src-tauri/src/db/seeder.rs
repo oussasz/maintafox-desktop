@@ -1878,6 +1878,72 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         }
     }
 
+    // ── Migration-028 system roles (INSERT OR IGNORE'd by the migration) ─
+    // These mirror the 4 seeder roles above but with spec-defined names.
+
+    // Superadmin -> all permissions (mirrors Administrator)
+    if let Some(rid) = get_role_id_by_name(db, "Superadmin").await? {
+        assign_all_permissions_to_role(db, rid, &now).await?;
+    }
+
+    // Maintenance Supervisor -> same exclusions as Supervisor
+    if let Some(rid) = get_role_id_by_name(db, "Maintenance Supervisor").await? {
+        assign_permissions_excluding(db, rid, &excluded_for_supervisor, &now).await?;
+    }
+
+    // Maintenance Technician -> same permissions as Operator
+    if let Some(rid) = get_role_id_by_name(db, "Maintenance Technician").await? {
+        for perm_name in &operator_permissions {
+            assign_permission_by_name(db, rid, perm_name, &now).await?;
+        }
+    }
+
+    // Planner/Scheduler -> planning & scheduling focus
+    let planner_permissions = [
+        "ot.view",
+        "ot.create",
+        "ot.edit",
+        "di.view",
+        "di.create",
+        "pm.view",
+        "pm.manage",
+        "pm.approve",
+        "plan.view",
+        "plan.manage",
+        "eq.view",
+        "inv.view",
+        "inv.manage",
+        "inv.order",
+        "org.view",
+        "per.view",
+        "ref.view",
+        "rep.view",
+        "rep.export",
+        "arc.view",
+        "doc.view",
+        "log.view",
+        "ram.view",
+        "cfg.view",
+    ];
+    if let Some(rid) = get_role_id_by_name(db, "Planner/Scheduler").await? {
+        for perm_name in &planner_permissions {
+            assign_permission_by_name(db, rid, perm_name, &now).await?;
+        }
+    }
+
+    // Read Only Observer -> same view-only permissions as Readonly
+    if let Some(rid) = get_role_id_by_name(db, "Read Only Observer").await? {
+        #[allow(clippy::case_sensitive_file_extension_comparisons)]
+        let view_perms: Vec<&str> = operator_permissions
+            .iter()
+            .copied()
+            .filter(|p| p.ends_with(".view"))
+            .collect();
+        for perm_name in view_perms {
+            assign_permission_by_name(db, rid, perm_name, &now).await?;
+        }
+    }
+
     tracing::info!("seeder::system_roles_seeded");
     Ok(())
 }

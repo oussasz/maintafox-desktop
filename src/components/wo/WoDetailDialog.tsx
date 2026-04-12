@@ -101,8 +101,8 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
   const closeWorkOrder = useWoStore((s) => s.closeWorkOrder);
 
   const handlePrint = useCallback(() => {
-    if (wo) void printWoFiche(wo, t, i18n.language);
-  }, [wo, t, i18n.language]);
+    if (wo) void printWoFiche(wo, t, i18n.resolvedLanguage || i18n.language || "fr");
+  }, [wo, t, i18n.resolvedLanguage, i18n.language]);
 
   // Determine visible tabs
   const showExecution = wo ? EXECUTION_VISIBLE.has(wo.status_code ?? "") : false;
@@ -289,9 +289,10 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                 onSwitchToCloseout={() => setActiveTab("closeout")}
                 onComplete={openCompletionDialog}
                 onClose={() => {
+                  if (!info?.user_id) return;
                   void closeWorkOrder({
                     wo_id: wo.id,
-                    actor_id: info?.user_id ?? 0,
+                    actor_id: info.user_id,
                     expected_row_version: wo.row_version,
                   });
                 }}

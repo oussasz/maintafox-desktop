@@ -66,10 +66,10 @@ const COLUMNS: KanbanColumnDef[] = [
 // ── Urgency styling ─────────────────────────────────────────────────────────
 
 const URGENCY_STYLE: Record<number, { class: string; icon: string }> = {
-  1: { class: "bg-red-100 text-red-700", icon: "✗" },
-  2: { class: "bg-orange-100 text-orange-800", icon: "↑" },
-  3: { class: "bg-yellow-100 text-yellow-800", icon: "–" },
-  4: { class: "bg-green-100 text-green-800", icon: "↓" },
+  1: { class: "bg-green-100 text-green-800", icon: "↓" },
+  2: { class: "bg-yellow-100 text-yellow-800", icon: "–" },
+  3: { class: "bg-orange-100 text-orange-800", icon: "↑" },
+  4: { class: "bg-red-100 text-red-700", icon: "✗" },
 };
 
 // ── Props ───────────────────────────────────────────────────────────────────

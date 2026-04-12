@@ -8,76 +8,12 @@ import type {
   WoExecPart,
   WoExecTask,
   WoIntervener,
-  WoShift,
+  WoMechCompleteInput,
   WorkOrder,
 } from "@shared/ipc-types";
 
 // Re-export canonical types for backward compatibility
 export type { TaskResultCode, DowntimeType, WoIntervener, WoDelaySegment, WoDowntimeSegment };
-
-/** @deprecated Use WoExecTask from @shared/ipc-types */
-export type WoTask = WoExecTask;
-
-/** @deprecated Use WoExecPart from @shared/ipc-types */
-export type WoPart = WoExecPart;
-
-export interface WoPlanInput {
-  wo_id: number;
-  actor_id: number;
-  expected_row_version: number;
-  planner_id: number;
-  planned_start: string;
-  planned_end: string;
-  shift?: WoShift | null;
-  expected_duration_hours?: number | null;
-  urgency_id?: number | null;
-}
-
-export interface WoAssignInput {
-  wo_id: number;
-  actor_id: number;
-  expected_row_version: number;
-  assigned_group_id?: number | null;
-  primary_responsible_id?: number | null;
-  scheduled_at?: string | null;
-}
-
-export interface WoStartInput {
-  wo_id: number;
-  actor_id: number;
-  expected_row_version: number;
-}
-
-export interface WoPauseInput {
-  wo_id: number;
-  actor_id: number;
-  expected_row_version: number;
-  delay_reason_id: number;
-  comment?: string | null;
-}
-
-export interface WoResumeInput {
-  wo_id: number;
-  actor_id: number;
-  expected_row_version: number;
-}
-
-export interface WoHoldInput {
-  wo_id: number;
-  actor_id: number;
-  expected_row_version: number;
-  delay_reason_id: number;
-  comment?: string | null;
-}
-
-export interface WoMechCompleteInput {
-  wo_id: number;
-  actor_id: number;
-  expected_row_version: number;
-  actual_end?: string | null;
-  actual_duration_hours?: number | null;
-  conclusion?: string | null;
-}
 
 export interface AddLaborInput {
   wo_id: number;
@@ -155,30 +91,6 @@ function maybeWrapBlockingError(error: unknown): never {
   throw error;
 }
 
-export async function planWo(input: WoPlanInput): Promise<WorkOrder> {
-  return invoke<WorkOrder>("plan_wo", { input });
-}
-
-export async function assignWo(input: WoAssignInput): Promise<WorkOrder> {
-  return invoke<WorkOrder>("assign_wo", { input });
-}
-
-export async function startWo(input: WoStartInput): Promise<WorkOrder> {
-  return invoke<WorkOrder>("start_wo", { input });
-}
-
-export async function pauseWo(input: WoPauseInput): Promise<WorkOrder> {
-  return invoke<WorkOrder>("pause_wo", { input });
-}
-
-export async function resumeWo(input: WoResumeInput): Promise<WorkOrder> {
-  return invoke<WorkOrder>("resume_wo", { input });
-}
-
-export async function holdWo(input: WoHoldInput): Promise<WorkOrder> {
-  return invoke<WorkOrder>("hold_wo", { input });
-}
-
 export async function completeMechanically(input: WoMechCompleteInput): Promise<WorkOrder> {
   try {
     return await invoke<WorkOrder>("complete_wo_mechanically", { input });
@@ -203,16 +115,16 @@ export async function listLabor(woId: number): Promise<WoIntervener[]> {
   return invoke<WoIntervener[]>("list_labor", { woId });
 }
 
-export async function addPart(input: AddPartInput): Promise<WoPart> {
-  return invoke<WoPart>("add_part", { input });
+export async function addPart(input: AddPartInput): Promise<WoExecPart> {
+  return invoke<WoExecPart>("add_part", { input });
 }
 
 export async function recordPartUsage(
   woPartId: number,
   quantityUsed: number,
   unitCost?: number | null,
-): Promise<WoPart> {
-  return invoke<WoPart>("record_part_usage", {
+): Promise<WoExecPart> {
+  return invoke<WoExecPart>("record_part_usage", {
     woPartId,
     quantityUsed,
     unitCost: unitCost ?? null,
@@ -223,12 +135,12 @@ export async function confirmNoParts(woId: number): Promise<void> {
   return invoke<void>("confirm_no_parts", { woId });
 }
 
-export async function listParts(woId: number): Promise<WoPart[]> {
-  return invoke<WoPart[]>("list_wo_parts", { woId });
+export async function listParts(woId: number): Promise<WoExecPart[]> {
+  return invoke<WoExecPart[]>("list_wo_parts", { woId });
 }
 
-export async function addTask(input: AddTaskInput): Promise<WoTask> {
-  return invoke<WoTask>("add_task", { input });
+export async function addTask(input: AddTaskInput): Promise<WoExecTask> {
+  return invoke<WoExecTask>("add_task", { input });
 }
 
 export async function completeTask(
@@ -236,12 +148,12 @@ export async function completeTask(
   actorId: number,
   resultCode: TaskResultCode,
   notes?: string | null,
-): Promise<WoTask> {
-  return invoke<WoTask>("complete_task", { taskId, actorId, resultCode, notes: notes ?? null });
+): Promise<WoExecTask> {
+  return invoke<WoExecTask>("complete_task", { taskId, actorId, resultCode, notes: notes ?? null });
 }
 
-export async function listTasks(woId: number): Promise<WoTask[]> {
-  return invoke<WoTask[]>("list_tasks", { woId });
+export async function listTasks(woId: number): Promise<WoExecTask[]> {
+  return invoke<WoExecTask[]>("list_tasks", { woId });
 }
 
 export async function openDowntime(

@@ -11,11 +11,11 @@ import { z } from "zod";
 import type {
   WoAssignInput,
   WoCancelInput,
-  WoCloseInput,
   WoCostSummary,
   WoCreateInput,
   WoDraftUpdateInput,
   WoGetResponse,
+  WoHoldInput,
   WoListFilter,
   WoListPage,
   WoMechCompleteInput,
@@ -281,6 +281,15 @@ export async function resumeWo(input: WoResumeInput): Promise<WorkOrder> {
   }
 }
 
+export async function holdWo(input: WoHoldInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("hold_wo", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
 export async function completeWoMechanically(
   input: WoMechCompleteInput,
 ): Promise<WoMechCompleteResponse> {
@@ -294,15 +303,6 @@ export async function completeWoMechanically(
     if (isIpcError(err) && err.code === "VALIDATION_FAILED") {
       throw new CompletionBlockedError(extractPreflightErrors(err));
     }
-    rethrowIfVersionConflict(err);
-  }
-}
-
-export async function closeWo(input: WoCloseInput): Promise<WorkOrder> {
-  try {
-    const raw = await invoke<unknown>("close_wo", { input });
-    return WorkOrderSchema.parse(raw) as WorkOrder;
-  } catch (err) {
     rethrowIfVersionConflict(err);
   }
 }

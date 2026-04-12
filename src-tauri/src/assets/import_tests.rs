@@ -1147,7 +1147,7 @@ mod tests {
         let now = chrono::Utc::now().to_rfc3339();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO user_scope_assignments \
+            "INSERT OR IGNORE INTO user_scope_assignments \
              (sync_id, user_id, role_id, scope_type, created_at, updated_at) \
              VALUES ('test-assign', 1, \
                (SELECT id FROM roles WHERE name = 'Administrator'), \
@@ -1175,7 +1175,7 @@ mod tests {
         let now = chrono::Utc::now().to_rfc3339();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO user_scope_assignments \
+            "INSERT OR IGNORE INTO user_scope_assignments \
              (sync_id, user_id, role_id, scope_type, created_at, updated_at) \
              VALUES ('test-op', 2, \
                (SELECT id FROM roles WHERE name = 'Operator'), \

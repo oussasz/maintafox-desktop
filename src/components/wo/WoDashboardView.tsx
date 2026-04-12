@@ -19,18 +19,20 @@ export function WoDashboardView() {
   const { t } = useTranslation("ot");
   const [stats, setStats] = useState<WoStatsPayload | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await getWoStats();
       setStats(data);
-    } catch {
-      // silent
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("dashboard.loadError"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -41,6 +43,25 @@ export function WoDashboardView() {
       <div className="flex items-center justify-center py-16 text-text-muted">
         <RefreshCw className="h-5 w-5 animate-spin mr-2" />
         {t("dashboard.loading")}
+      </div>
+    );
+  }
+
+  if (error && !stats) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3">
+        <div className="flex items-center gap-2 text-destructive">
+          <AlertTriangle className="h-5 w-5" />
+          <span className="text-sm font-medium">{error}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => void load()}
+          className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          {t("dashboard.retry")}
+        </button>
       </div>
     );
   }

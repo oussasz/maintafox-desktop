@@ -8,10 +8,10 @@
 
 import { create } from "zustand";
 
+import { closeWo } from "@/services/wo-closeout-service";
 import {
   assignWo,
   cancelWo,
-  closeWo,
   CompletionBlockedError,
   completeWoMechanically,
   createWo,

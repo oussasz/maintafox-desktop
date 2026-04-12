@@ -80,6 +80,7 @@
   },
   "status": {
     "draft": "Brouillon",
+    "awaitingApproval": "En attente d'approbation",
     "planned": "Planifié",
     "released": "Lancé",
     "readyToSchedule": "Prêt à programmer",
@@ -384,6 +385,8 @@
   },
   "dashboard": {
     "loading": "Chargement des statistiques…",
+    "loadError": "\u00c9chec du chargement des donn\u00e9es du tableau de bord.",
+    "retry": "R\u00e9essayer",
     "total": "Total OT",
     "inProgress": "En cours",
     "completed": "Terminés",
@@ -417,7 +420,9 @@
     "megabytes": "Mo"
   },
   "archive": {
-    "title": "Archive (Clôturés / Annulés)"
+    "title": "Archive (Clôturés / Annulés)",
+    "loadError": "Échec du chargement des OT archivés.",
+    "retry": "Réessayer"
   },
   "search": {
     "placeholder": "Rechercher par code, titre, équipement…"

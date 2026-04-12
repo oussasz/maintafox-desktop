@@ -1,4 +1,9 @@
 {
+  "common": {
+    "cancel": "Cancel",
+    "close": "Close",
+    "loading": "Loading…"
+  },
   "page": {
     "title": "Administration",
     "subtitle": "User, role, and permission management"
@@ -31,7 +36,116 @@
   },
   "roles": {
     "fullAccess": "Full access",
-    "noPermissions": "No permissions"
+    "noPermissions": "No permissions",
+    "list": "Roles",
+    "selectRole": "Select a role to view and edit its permissions.",
+    "system": "System",
+    "custom": "Custom",
+    "save": "Save",
+    "saved": "Role updated",
+    "delete": "Delete",
+    "deleted": "Role deleted",
+    "create": {
+      "title": "Create role",
+      "description": "Define a name and optionally select a template.",
+      "template": "Template",
+      "noTemplate": "No template",
+      "confirm": "Create"
+    },
+    "fields": {
+      "name": "Name",
+      "description": "Description"
+    },
+    "errors": {
+      "loadFailed": "Failed to load roles",
+      "saveFailed": "Failed to save role",
+      "deleteFailed": "Cannot delete this role"
+    },
+    "dependencyWarnings": "Dependency warnings",
+    "hardDepErrors": "Missing required dependencies — save blocked",
+    "warnDeps": "Missing recommended dependencies",
+    "requires": "requires",
+    "suggests": "suggests",
+    "simulate": {
+      "title": "Simulate access",
+      "description": "Preview effective permissions for a user within a given scope.",
+      "userId": "User ID",
+      "scope": "Scope",
+      "run": "Simulate",
+      "warnings": "Dependency warnings",
+      "blocked": "Blocked by"
+    }
+  },
+  "users": {
+    "search": "Search users…",
+    "active": "Active",
+    "inactive": "Inactive",
+    "deactivated": "User deactivated",
+    "emergency": "Emergency",
+    "columns": {
+      "username": "Username",
+      "displayName": "Display name",
+      "identityMode": "Auth",
+      "status": "Status",
+      "roles": "Roles",
+      "lastSeen": "Last seen"
+    },
+    "filter": {
+      "all": "All",
+      "active": "Active",
+      "inactive": "Inactive",
+      "allModes": "All modes",
+      "local": "Local",
+      "sso": "SSO",
+      "hybrid": "Hybrid"
+    },
+    "fields": {
+      "username": "Username",
+      "identityMode": "Authentication mode",
+      "status": "Status",
+      "lastSeen": "Last seen"
+    },
+    "detail": {
+      "identity": "Identity",
+      "roles": "Assigned roles",
+      "noRoles": "No roles assigned.",
+      "permissions": "Effective permissions"
+    },
+    "actions": {
+      "revoke": "Revoke",
+      "deactivate": "Deactivate"
+    },
+    "assignRole": {
+      "title": "Assign role",
+      "description": "Select a role and scope type.",
+      "role": "Role",
+      "selectRole": "Choose a role",
+      "scope": "Scope",
+      "confirm": "Assign"
+    },
+    "create": "New user",
+    "create.title": "New user",
+    "create.description": "Create a user account and set the authentication mode.",
+    "create.password": "Password",
+    "create.confirmPassword": "Confirm password",
+    "create.passwordTooShort": "8 characters minimum",
+    "create.passwordNeedUpper": "One uppercase letter required",
+    "create.passwordNeedLower": "One lowercase letter required",
+    "create.passwordNeedDigit": "One digit required",
+    "create.passwordMismatch": "Passwords do not match",
+    "create.forceChange": "Force password change on first login",
+    "create.confirm": "Create",
+    "create.success": "User created",
+    "create.error": "Failed to create user",
+    "create.strength": {
+      "weak": "Weak",
+      "medium": "Medium",
+      "strong": "Strong"
+    },
+    "errors": {
+      "loadFailed": "Failed to load users",
+      "deactivateFailed": "Failed to deactivate user"
+    }
   },
   "profile": {
     "memberSince": "Member since",
@@ -70,6 +184,20 @@
     "enterPasswordToClearPin": "Enter your password to remove PIN",
     "trustedDevices": "Trusted Devices",
     "viewDevices": "View / Revoke",
+    "trustedDevicesTitle": "Trusted Devices",
+    "unknownDevice": "Unknown device",
+    "trustedSince": "Trusted since",
+    "lastSeen": "Last seen:",
+    "revoke": "Revoke",
+    "revoking": "Revoking...",
+    "revoked": "Revoked",
+    "deviceRevoked": "Device trust revoked.",
+    "noDevices": "No trusted devices found.",
+    "close": "Close",
+    "saveSuccess": "Changes saved.",
+    "saveError": "Save failed.",
+    "notificationPreferences": "Notification Preferences",
+    "notificationsPlaceholder": "Available after notification module is enabled.",
     "sessionHistory": "Session History",
     "date": "Date",
     "device": "Device",
@@ -99,5 +227,53 @@
     "save": "Save policy",
     "saving": "Saving...",
     "saved": "Policy saved successfully."
+  },
+  "permissions": {
+    "domains": "Domains",
+    "search": "Search…",
+    "export": "Export CSV",
+    "addCustom": "Add",
+    "empty": "No permissions in this domain.",
+    "created": "Permission created",
+    "table": {
+      "name": "Name",
+      "description": "Description",
+      "dangerous": "Dangerous",
+      "stepUp": "Step-up",
+      "type": "Type"
+    },
+    "badges": {
+      "dangerous": "Dangerous",
+      "stepUp": "Step-up",
+      "system": "System",
+      "custom": "Custom"
+    },
+    "fields": {
+      "name": "Name",
+      "description": "Description"
+    },
+    "create": {
+      "title": "Create custom permission",
+      "description": "Custom permissions use the 'cst.' prefix and cannot be dangerous.",
+      "descPlaceholder": "Brief description of this permission",
+      "confirm": "Create"
+    },
+    "errors": {
+      "loadFailed": "Failed to load permissions",
+      "createFailed": "Failed to create permission",
+      "mustStartWithCst": "Name must start with 'cst.'",
+      "nameTooShort": "Add at least one character after 'cst.'",
+      "systemPrefix": "Reserved system prefix"
+    },
+    "dependencies": {
+      "title": "Dependencies",
+      "none": "No dependencies",
+      "hard": "Required (hard)",
+      "warn": "Recommended (warn)",
+      "requires": "Requires",
+      "requiredBy": "Required by",
+      "suggests": "Suggests",
+      "suggestedBy": "Suggested by"
+    }
   }
 }

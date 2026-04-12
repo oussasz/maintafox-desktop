@@ -13,18 +13,10 @@ import {
 } from "@/components/ui/select";
 import { useSession } from "@/hooks/use-session";
 import { listOrgTree } from "@/services/org-node-service";
-import {
-  addPart,
-  addTask,
-  assignWo,
-  listParts,
-  listTasks,
-  planWo,
-  type WoPart,
-  type WoTask,
-} from "@/services/wo-execution-service";
+import { addPart, addTask, listParts, listTasks } from "@/services/wo-execution-service";
+import { assignWo, planWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
-import type { WorkOrder, WoShift } from "@shared/ipc-types";
+import type { WoExecPart, WoExecTask, WorkOrder, WoShift } from "@shared/ipc-types";
 
 interface WoPlanningPanelProps {
   wo: WorkOrder;
@@ -97,7 +89,7 @@ function parseNumber(value: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function toTaskDraft(task: WoTask): TaskDraft {
+function toTaskDraft(task: WoExecTask): TaskDraft {
   return {
     localId: `task-${task.id}`,
     id: task.id,
@@ -109,7 +101,7 @@ function toTaskDraft(task: WoTask): TaskDraft {
   };
 }
 
-function toPartDraft(part: WoPart): PartDraft {
+function toPartDraft(part: WoExecPart): PartDraft {
   return {
     localId: `part-${part.id}`,
     id: part.id,

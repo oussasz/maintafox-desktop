@@ -49,7 +49,14 @@ macro_rules! require_session {
 #[macro_export]
 macro_rules! require_permission {
     ($state:expr, $user:expr, $perm:expr, $scope:expr) => {{
-        let has = $crate::auth::rbac::check_permission(&$state.db, $user.user_id, $perm, &$scope).await?;
+        let has = $crate::auth::rbac::check_permission_cached(
+            &$state.db,
+            &$state.permission_cache,
+            $user.user_id,
+            $perm,
+            &$scope,
+        )
+        .await?;
 
         if !has {
             return Err($crate::errors::AppError::PermissionDenied(format!(
@@ -58,15 +65,10 @@ macro_rules! require_permission {
             )));
         }
 
-        // If the permission requires step-up, verify it
-        let guard = $state.session.read().await;
-        let needs_step_up = $crate::auth::rbac::permission_requires_step_up(&$state.db, $perm)
-            .await
-            .unwrap_or(false);
-
-        if needs_step_up && !guard.is_step_up_valid() {
-            return Err($crate::errors::AppError::StepUpRequired);
-        }
+        // NOTE: Step-up enforcement is NOT done here. Use the explicit
+        // `require_step_up!(state)` macro in commands that perform
+        // dangerous write operations.  Read-only commands that merely
+        // check a permission should never demand step-up.
     }};
 }
 

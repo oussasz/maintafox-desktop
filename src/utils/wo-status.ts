@@ -6,6 +6,7 @@
 
 export type WoStatusKey =
   | "draft"
+  | "awaitingApproval"
   | "planned"
   | "released"
   | "readyToSchedule"
@@ -21,6 +22,7 @@ export type WoStatusKey =
 
 const STATUS_MAP: Record<string, WoStatusKey> = {
   draft: "draft",
+  awaiting_approval: "awaitingApproval",
   planned: "planned",
   released: "released",
   ready_to_schedule: "readyToSchedule",
@@ -42,6 +44,7 @@ export function statusToI18nKey(s: string): WoStatusKey {
 
 export const STATUS_STYLE: Record<string, string> = {
   draft: "bg-gray-100 text-gray-600",
+  awaiting_approval: "bg-purple-100 text-purple-800",
   planned: "bg-blue-100 text-blue-800",
   released: "bg-sky-100 text-sky-800",
   ready_to_schedule: "bg-indigo-100 text-indigo-800",

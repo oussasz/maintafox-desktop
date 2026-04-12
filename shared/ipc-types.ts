@@ -1754,36 +1754,52 @@ export interface WoCancelInput {
 export type WoShift = "morning" | "afternoon" | "night" | "full_day";
 
 export interface WoPlanInput {
-  id: number;
+  wo_id: number;
+  actor_id: number;
   expected_row_version: number;
-  planned_start?: string | null;
-  planned_end?: string | null;
-  expected_duration_hours?: number | null;
+  planner_id: number;
+  planned_start: string;
+  planned_end: string;
   shift?: WoShift | null;
-  assigned_to_id?: number | null;
-  team_id?: number | null;
+  expected_duration_hours?: number | null;
+  urgency_id?: number | null;
 }
 
 export interface WoAssignInput {
-  id: number;
+  wo_id: number;
+  actor_id: number;
   expected_row_version: number;
-  assigned_to_id: number;
-  team_id?: number | null;
+  assigned_group_id?: number | null;
+  primary_responsible_id?: number | null;
+  scheduled_at?: string | null;
 }
 
 export interface WoStartInput {
-  id: number;
+  wo_id: number;
+  actor_id: number;
   expected_row_version: number;
 }
 
 export interface WoPauseInput {
-  id: number;
+  wo_id: number;
+  actor_id: number;
   expected_row_version: number;
+  delay_reason_id: number;
+  comment?: string | null;
 }
 
 export interface WoResumeInput {
-  id: number;
+  wo_id: number;
+  actor_id: number;
   expected_row_version: number;
+}
+
+export interface WoHoldInput {
+  wo_id: number;
+  actor_id: number;
+  expected_row_version: number;
+  delay_reason_id: number;
+  comment?: string | null;
 }
 
 export interface WoMechCompleteInput {
@@ -1996,6 +2012,14 @@ export interface SessionHistoryEntry {
   status: string;
 }
 
+export interface TrustedDeviceEntry {
+  id: string;
+  device_label: string | null;
+  trusted_at: string;
+  last_seen_at: string | null;
+  is_revoked: boolean;
+}
+
 export interface UserPresence {
   user_id: number;
   status: "active" | "idle" | "offline";
@@ -2037,4 +2061,186 @@ export interface RbacSettingEntry {
   key: string;
   value: string;
   description: string | null;
+}
+
+// ─── Admin Users & Roles (SP06-F01) ───────────────────────────────────────
+
+export interface RoleAssignmentSummary {
+  assignment_id: number;
+  role_id: number;
+  role_name: string;
+  scope_type: string;
+  scope_reference: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  is_emergency: boolean;
+}
+
+export interface UserWithRoles {
+  id: number;
+  username: string;
+  display_name: string | null;
+  identity_mode: string;
+  is_active: boolean;
+  force_password_change: boolean;
+  last_seen_at: string | null;
+  roles: RoleAssignmentSummary[];
+}
+
+export interface UserScopeAssignment {
+  id: number;
+  user_id: number;
+  role_id: number;
+  scope_type: string;
+  scope_reference: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  assigned_by_id: number | null;
+  notes: string | null;
+  is_emergency: boolean;
+  emergency_reason: string | null;
+  emergency_expires_at: string | null;
+  created_at: string;
+  deleted_at: string | null;
+}
+
+export interface UserDetail {
+  user: UserWithRoles;
+  scope_assignments: UserScopeAssignment[];
+  effective_permissions: string[];
+}
+
+export interface UserListFilter {
+  is_active?: boolean;
+  identity_mode?: string;
+  search?: string;
+}
+
+export interface UpdateUserInput {
+  user_id: number;
+  username?: string;
+  personnel_id?: number | null;
+  force_password_change?: boolean;
+  is_active?: boolean;
+}
+
+export interface AssignRoleScopeInput {
+  user_id: number;
+  role_id: number;
+  scope_type: string;
+  scope_reference?: string | null;
+  valid_from?: string | null;
+  valid_to?: string | null;
+}
+
+export interface RoleWithPermissions {
+  id: number;
+  name: string;
+  description: string | null;
+  role_type: string;
+  status: string;
+  is_system: boolean;
+  permissions: string[];
+}
+
+export interface RoleDetail {
+  role: RoleWithPermissions;
+  dependency_warnings: string[];
+}
+
+export interface CreateRoleInput {
+  name: string;
+  description?: string | null;
+  permission_names: string[];
+}
+
+export interface UpdateRoleInput {
+  role_id: number;
+  description?: string | null;
+  add_permissions?: string[];
+  remove_permissions?: string[];
+}
+
+export interface RoleTemplate {
+  id: number;
+  name: string;
+  description: string | null;
+  module_set_json: string;
+  is_system: boolean;
+}
+
+export interface SimulateAccessInput {
+  user_id: number;
+  scope_type: string;
+  scope_reference?: string | null;
+}
+
+export interface SimulateAccessResult {
+  permissions: Record<string, boolean>;
+  assignments: UserScopeAssignment[];
+  dependency_warnings: string[];
+  blocked_by: string[];
+}
+
+export interface IdPayload {
+  id: number;
+}
+
+// ─── Permission Catalog (SP06-F02) ─────────────────────────────────────────
+
+export interface PermissionWithSystem {
+  id: number;
+  name: string;
+  description: string | null;
+  category: string;
+  is_dangerous: boolean;
+  requires_step_up: boolean;
+  is_system: boolean;
+}
+
+export interface PermissionListFilter {
+  category?: string;
+  is_dangerous?: boolean;
+  search?: string;
+}
+
+export interface PermissionDependencyRow {
+  id: number;
+  permission_name: string;
+  required_permission_name: string;
+  dependency_type: string;
+}
+
+export interface CreateCustomPermissionInput {
+  name: string;
+  description?: string | null;
+  category?: string | null;
+}
+
+export interface MissingDependency {
+  permission_name: string;
+  required_permission_name: string;
+  dependency_type: string;
+}
+
+export interface RoleValidationResult {
+  missing_hard_deps: MissingDependency[];
+  warn_deps: MissingDependency[];
+  unknown_permissions: string[];
+  is_valid: boolean;
+}
+
+// ─── Emergency Elevation (SP06-F02) ────────────────────────────────────────
+
+export interface GrantEmergencyElevationInput {
+  user_id: number;
+  role_id: number;
+  scope_type: string;
+  scope_reference?: string | null;
+  reason: string;
+  expires_at: string;
+}
+
+export interface RevokeEmergencyElevationInput {
+  assignment_id: number;
 }

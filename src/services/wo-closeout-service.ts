@@ -7,6 +7,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import { VersionConflictError, WorkOrderSchema } from "@/services/wo-service";
 import type { WorkOrder } from "@shared/ipc-types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -236,8 +237,13 @@ export async function saveVerification(
 
 export async function closeWo(input: WoCloseInput): Promise<WorkOrder> {
   try {
-    return await invoke<WorkOrder>("close_wo", { input });
+    const raw = await invoke<unknown>("close_wo", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
   } catch (error) {
+    const ipc = error as { code?: string; message?: string };
+    if (ipc?.code === "VALIDATION_FAILED" && ipc.message?.includes("version")) {
+      throw new VersionConflictError(ipc.message);
+    }
     maybeWrapBlockingError(error);
   }
 }

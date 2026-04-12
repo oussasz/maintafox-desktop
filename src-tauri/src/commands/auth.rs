@@ -173,9 +173,12 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
     let mut session_guard = state.session.write().await;
     let session = session_guard.create_session(auth_user);
 
-    // Capture data before dropping the write lock
+    // Capture data before further mutation
     let session_id = session.session_db_id.clone();
     let expires_rfc3339 = session.expires_at.to_rfc3339();
+
+    // A successful password login is equivalent to a step-up verification.
+    session_guard.record_step_up();
     drop(session_guard);
 
     // Record in DB for audit purposes

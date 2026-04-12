@@ -22,6 +22,7 @@ import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useSession } from "@/hooks/use-session";
 import { cn } from "@/lib/utils";
 import { useWoStore } from "@/stores/wo-store";
 import type { WorkOrder } from "@shared/ipc-types";
@@ -301,6 +302,7 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
   const [toasts, setToasts] = useState<InlineToast[]>([]);
   const toastCounter = useRef(0);
   const draggedWo = useRef<WorkOrder | null>(null);
+  const { info: session } = useSession();
   const assignWorkOrder = useWoStore((s) => s.assignWorkOrder);
 
   const addToast = useCallback((message: string) => {
@@ -360,12 +362,14 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
       if (
         targetMacroState === "open" &&
         validTargets.includes("assigned") &&
-        wo.primary_responsible_id
+        wo.primary_responsible_id &&
+        session?.user_id
       ) {
         void assignWorkOrder({
-          id: wo.id,
+          wo_id: wo.id,
+          actor_id: session.user_id,
           expected_row_version: wo.row_version,
-          assigned_to_id: wo.primary_responsible_id,
+          primary_responsible_id: wo.primary_responsible_id,
         }).catch((err: unknown) => {
           addToast(String(err));
         });
@@ -374,7 +378,7 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
         onCardClick(wo);
       }
     },
-    [addToast, assignWorkOrder, onCardClick, t],
+    [addToast, assignWorkOrder, onCardClick, session.user_id, t],
   );
 
   return (
@@ -382,16 +386,16 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
       {/* Inline error toasts */}
       {toasts.length > 0 && (
         <div className="absolute top-0 right-0 z-50 flex flex-col gap-2 p-3 max-w-sm">
-          {toasts.map((t) => (
+          {toasts.map((toast) => (
             <div
-              key={t.id}
+              key={toast.id}
               className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive shadow-md"
             >
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>{t.message}</span>
+              <span>{toast.message}</span>
               <button
                 className="ml-auto shrink-0 opacity-70 hover:opacity-100"
-                onClick={() => setToasts((p) => p.filter((x) => x.id !== t.id))}
+                onClick={() => setToasts((p) => p.filter((x) => x.id !== toast.id))}
               >
                 <XCircle className="h-3.5 w-3.5" />
               </button>

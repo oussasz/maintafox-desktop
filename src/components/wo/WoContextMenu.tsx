@@ -23,7 +23,7 @@ import type { WorkOrder } from "@shared/ipc-types";
 // ── Status sets ─────────────────────────────────────────────────────────────
 
 const EDITABLE_STATES = new Set(["draft", "planned"]);
-const STARTABLE_STATES = new Set(["released", "assigned"]);
+const STARTABLE_STATES = new Set(["assigned", "waiting_for_prerequisite"]);
 const COMPLETABLE_STATES = new Set(["in_progress"]);
 const CANCELLABLE_DENY = new Set(["closed", "cancelled"]);
 

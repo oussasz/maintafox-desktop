@@ -23,6 +23,7 @@ pub mod locale;
 pub mod migrations;
 pub mod models;
 pub mod org;
+pub mod rbac;
 pub mod reference;
 pub mod repository;
 pub mod security;
@@ -121,9 +122,35 @@ pub fn run() {
             commands::profile::update_my_profile,
             commands::profile::change_password,
             commands::profile::get_session_history,
+            commands::profile::list_trusted_devices,
+            commands::profile::revoke_my_device,
             // ── RBAC ──────────────────────────────────────────────────────
             commands::rbac::get_my_permissions,
             commands::rbac::verify_step_up,
+            // ── Admin Stats ────────────────────────────────────────────────
+            commands::admin_stats::get_admin_stats,
+            // ── Admin Users & Roles ───────────────────────────────────────
+            commands::admin_users::list_users,
+            commands::admin_users::get_user,
+            commands::admin_users::create_user,
+            commands::admin_users::update_user,
+            commands::admin_users::deactivate_user,
+            commands::admin_users::assign_role_scope,
+            commands::admin_users::revoke_role_scope,
+            commands::admin_users::list_roles,
+            commands::admin_users::get_role,
+            commands::admin_users::create_role,
+            commands::admin_users::update_role,
+            commands::admin_users::delete_role,
+            commands::admin_users::list_role_templates,
+            commands::admin_users::simulate_access,
+            commands::admin_users::grant_emergency_elevation,
+            commands::admin_users::revoke_emergency_elevation,
+            // ── Admin Permissions ─────────────────────────────────────────
+            commands::admin_permissions::list_permissions,
+            commands::admin_permissions::get_permission_dependencies,
+            commands::admin_permissions::create_custom_permission,
+            commands::admin_permissions::validate_role_permissions,
             // ── Locale ────────────────────────────────────────────────────
             commands::locale::get_locale_preference,
             commands::locale::set_locale_preference,

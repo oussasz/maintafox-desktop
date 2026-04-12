@@ -1,4 +1,4 @@
-﻿import { ArrowLeft, Camera, KeyRound, Lock, Shield, Smartphone } from "lucide-react";
+﻿import { ArrowLeft, Bell, Camera, KeyRound, Lock, Shield, Smartphone, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
@@ -8,9 +8,16 @@ import {
   changePassword,
   getMyProfile,
   getSessionHistory,
+  listTrustedDevices,
+  revokeMyDevice,
   updateMyProfile,
 } from "@/services/user-service";
-import type { SessionHistoryEntry, UpdateProfileInput, UserProfile } from "@shared/ipc-types";
+import type {
+  SessionHistoryEntry,
+  TrustedDeviceEntry,
+  UpdateProfileInput,
+  UserProfile,
+} from "@shared/ipc-types";
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -53,6 +60,17 @@ export function ProfilePage() {
   // dialogs
   const [pwDialogOpen, setPwDialogOpen] = useState(false);
   const [pinDialogOpen, setPinDialogOpen] = useState(false);
+  const [devicesDialogOpen, setDevicesDialogOpen] = useState(false);
+
+  // toast
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  // auto-dismiss toast
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   // ── load data ─────────────────────────────────────────────────────────
 
@@ -87,8 +105,10 @@ export function ProfilePage() {
       const updated = await updateMyProfile(draft);
       setProfile(updated);
       setEditing(false);
-    } catch {
-      /* toast would go here */
+      setToast({ type: "success", message: t("profile.saveSuccess", "Changes saved.") });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : t("profile.saveError", "Save failed.");
+      setToast({ type: "error", message: msg });
     } finally {
       setSaving(false);
     }
@@ -307,11 +327,28 @@ export function ProfilePage() {
             </div>
             <button
               type="button"
+              onClick={() => setDevicesDialogOpen(true)}
               className="text-xs font-medium text-primary hover:text-primary/80"
             >
               {t("profile.viewDevices", "View / Revoke")}
             </button>
           </div>
+        </div>
+      </section>
+
+      {/* ── Notification Preferences (placeholder) ─────────────────── */}
+      <section>
+        <h2 className="text-sm font-semibold text-text-primary mb-3">
+          {t("profile.notificationPreferences", "Notification Preferences")}
+        </h2>
+        <div className="rounded-lg border border-dashed border-surface-border px-4 py-6 text-center">
+          <Bell className="mx-auto h-6 w-6 text-text-muted mb-2" />
+          <p className="text-sm text-text-muted">
+            {t(
+              "profile.notificationsPlaceholder",
+              "Available after notification module is enabled.",
+            )}
+          </p>
         </div>
       </section>
 
@@ -378,6 +415,39 @@ export function ProfilePage() {
             void loadData();
           }}
         />
+      )}
+
+      {/* ── Trusted Devices Dialog ─────────────────────────────────────── */}
+      {devicesDialogOpen && (
+        <TrustedDevicesDialog
+          onClose={() => setDevicesDialogOpen(false)}
+          onRevoked={() => {
+            setToast({
+              type: "success",
+              message: t("profile.deviceRevoked", "Device trust revoked."),
+            });
+          }}
+        />
+      )}
+
+      {/* ── Toast ──────────────────────────────────────────────────────── */}
+      {toast && (
+        <div
+          className={`fixed bottom-4 right-4 z-50 rounded-lg px-4 py-3 text-sm shadow-lg ${
+            toast.type === "success" ? "bg-emerald-600 text-white" : "bg-red-600 text-white"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span>{toast.message}</span>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className="ml-2 text-white/70 hover:text-white"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -592,6 +662,127 @@ function PinSetupDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess
           </button>
         </div>
       </form>
+    </DialogOverlay>
+  );
+}
+
+// ── TrustedDevicesDialog ──────────────────────────────────────────────────
+
+function TrustedDevicesDialog({
+  onClose,
+  onRevoked,
+}: {
+  onClose: () => void;
+  onRevoked: () => void;
+}) {
+  const { t } = useTranslation("admin");
+  const [devices, setDevices] = useState<TrustedDeviceEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [revoking, setRevoking] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const result = await listTrustedDevices();
+        setDevices(result);
+      } catch {
+        /* list will stay empty */
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleRevoke = async (deviceId: string) => {
+    setRevoking(deviceId);
+    try {
+      await revokeMyDevice(deviceId);
+      setDevices((prev) => prev.map((d) => (d.id === deviceId ? { ...d, is_revoked: true } : d)));
+      onRevoked();
+    } catch {
+      /* ignore */
+    } finally {
+      setRevoking(null);
+    }
+  };
+
+  const formatDeviceDate = (iso: string) =>
+    new Date(iso).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+  return (
+    <DialogOverlay onClose={onClose}>
+      <h3 className="text-base font-semibold text-text-primary mb-4">
+        <Smartphone className="inline h-4 w-4 mr-1" />
+        {t("profile.trustedDevicesTitle", "Trusted Devices")}
+      </h3>
+
+      {loading ? (
+        <div className="flex justify-center py-8">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
+        </div>
+      ) : devices.length === 0 ? (
+        <p className="py-4 text-sm text-text-muted text-center">
+          {t("profile.noDevices", "No trusted devices found.")}
+        </p>
+      ) : (
+        <div className="space-y-3 max-h-80 overflow-y-auto">
+          {devices.map((d) => (
+            <div
+              key={d.id}
+              className={`flex items-center justify-between rounded-lg border px-3 py-2.5 ${
+                d.is_revoked ? "border-red-200 bg-red-50/30" : "border-surface-border"
+              }`}
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-text-primary truncate">
+                  {d.device_label ?? t("profile.unknownDevice", "Unknown device")}
+                </p>
+                <p className="text-xs text-text-muted">
+                  {t("profile.trustedSince", "Trusted since")} {formatDeviceDate(d.trusted_at)}
+                </p>
+                {d.last_seen_at && (
+                  <p className="text-xs text-text-muted">
+                    {t("profile.lastSeen", "Last seen:")} {formatDeviceDate(d.last_seen_at)}
+                  </p>
+                )}
+              </div>
+              {d.is_revoked ? (
+                <span className="text-xs text-red-600 font-medium shrink-0">
+                  {t("profile.revoked", "Revoked")}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleRevoke(d.id)}
+                  disabled={revoking === d.id}
+                  className="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  {revoking === d.id
+                    ? t("profile.revoking", "Revoking...")
+                    : t("profile.revoke", "Revoke")}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-4 flex justify-end">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md px-3 py-1.5 text-sm text-text-muted hover:text-text-primary"
+        >
+          {t("profile.close", "Close")}
+        </button>
+      </div>
     </DialogOverlay>
   );
 }

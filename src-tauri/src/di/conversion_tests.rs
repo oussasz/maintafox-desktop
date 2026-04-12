@@ -251,11 +251,11 @@ mod tests {
             "DI must remain approved_for_planning after failed conversion"
         );
 
-        // No WO stub should exist — entire transaction rolled back
+        // No WO should exist — entire transaction rolled back
         let wo_count = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM work_order_stubs WHERE source_di_id = ?",
+                "SELECT COUNT(*) AS cnt FROM work_orders WHERE source_di_id = ?",
                 [di_id.into()],
             ))
             .await
@@ -264,7 +264,7 @@ mod tests {
         let cnt: i64 = wo_count.try_get("", "cnt").expect("cnt");
         assert_eq!(
             cnt, 0,
-            "No WO stub must exist after rolled-back conversion"
+            "No WO must exist after rolled-back conversion"
         );
 
         // No transition log for 'convert' action should exist
@@ -535,31 +535,34 @@ mod tests {
             "DI.converted_to_wo_id must reference the WO stub"
         );
 
-        // WO code must match WOR-NNNN pattern
+        // WO code must match OT-NNNN pattern
         assert!(
-            result.wo_code.starts_with("WOR-"),
-            "WO code must start with 'WOR-': got '{}'",
+            result.wo_code.starts_with("OT-"),
+            "WO code must start with 'OT-': got '{}'",
             result.wo_code
         );
 
-        // WO stub row must exist with correct data
+        // WO row must exist with correct data in work_orders
         let wo_row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT id, code, source_di_id, asset_id, status FROM work_order_stubs WHERE id = ?",
+                "SELECT w.id, w.code, w.source_di_id, w.equipment_id, s.code AS status \
+                 FROM work_orders w \
+                 JOIN work_order_statuses s ON s.id = w.status_id \
+                 WHERE w.id = ?",
                 [result.wo_id.into()],
             ))
             .await
             .expect("query")
-            .expect("WO stub must exist");
+            .expect("WO must exist");
 
         let wo_source: i64 = wo_row.try_get("", "source_di_id").expect("source_di_id");
         let wo_status: String = wo_row.try_get("", "status").expect("status");
         let wo_code: String = wo_row.try_get("", "code").expect("code");
 
-        assert_eq!(wo_source, di_id, "WO stub must reference the source DI");
-        assert_eq!(wo_status, "draft", "WO stub status must be 'draft'");
-        assert_eq!(wo_code, result.wo_code, "WO stub code must match result");
+        assert_eq!(wo_source, di_id, "WO must reference the source DI");
+        assert_eq!(wo_status, "draft", "WO status must be 'draft'");
+        assert_eq!(wo_code, result.wo_code, "WO code must match result");
 
         // row_version must have incremented
         let rv = get_row_version(&db, di_id).await;
@@ -657,8 +660,8 @@ mod tests {
         .await
         .expect("second conversion");
 
-        assert_eq!(r1.wo_code, "WOR-0001", "First WO code must be WOR-0001");
-        assert_eq!(r2.wo_code, "WOR-0002", "Second WO code must be WOR-0002");
+        assert_eq!(r1.wo_code, "OT-0001", "First WO code must be OT-0001");
+        assert_eq!(r2.wo_code, "OT-0002", "Second WO code must be OT-0002");
     }
 
     // ═══════════════════════════════════════════════════════════════════════

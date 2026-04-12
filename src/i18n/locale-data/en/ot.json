@@ -80,6 +80,7 @@
   },
   "status": {
     "draft": "Draft",
+    "awaitingApproval": "Awaiting approval",
     "planned": "Planned",
     "released": "Released",
     "readyToSchedule": "Ready to schedule",
@@ -384,6 +385,8 @@
   },
   "dashboard": {
     "loading": "Loading statistics…",
+    "loadError": "Failed to load dashboard data.",
+    "retry": "Retry",
     "total": "Total WOs",
     "inProgress": "In Progress",
     "completed": "Completed",
@@ -417,7 +420,9 @@
     "megabytes": "MB"
   },
   "archive": {
-    "title": "Archive (Closed / Cancelled)"
+    "title": "Archive (Closed / Cancelled)",
+    "loadError": "Failed to load archived work orders.",
+    "retry": "Retry"
   },
   "search": {
     "placeholder": "Search by code, title, equipment…"

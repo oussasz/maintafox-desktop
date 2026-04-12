@@ -5,7 +5,6 @@ import {
   Wrench,
   ClipboardList,
   Users,
-  UserCog,
   Package,
   CalendarClock,
   Activity,
@@ -170,10 +169,10 @@ export const defaultNavItems: NavItem[] = [
     requiredPermission: "per.view",
   },
   {
-    key: "users",
-    labelKey: "nav.users",
-    path: "/users",
-    icon: <UserCog className="h-4 w-4" />,
+    key: "admin",
+    labelKey: "nav.admin",
+    path: "/admin",
+    icon: <ShieldCheck className="h-4 w-4" />,
     requiredPermission: "adm.users",
   },
   {

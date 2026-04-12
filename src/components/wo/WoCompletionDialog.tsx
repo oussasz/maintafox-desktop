@@ -9,7 +9,7 @@
  */
 
 import { AlertTriangle, CheckCircle, Clock, FileText } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -61,6 +61,15 @@ export function WoCompletionDialog({ wo }: WoCompletionDialogProps) {
   const [endDate, setEndDate] = useState(() => toDatetimeLocal(new Date()));
   const [hoursWorked, setHoursWorked] = useState("");
   const [conclusion, setConclusion] = useState("");
+
+  // Reset form state when dialog opens or WO changes
+  useEffect(() => {
+    if (open) {
+      setEndDate(toDatetimeLocal(new Date()));
+      setHoursWorked("");
+      setConclusion("");
+    }
+  }, [open, wo?.id]);
 
   const actorId = info?.user_id ?? 0;
 

@@ -11,7 +11,7 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::auth::{password, session_manager};
+use crate::auth::{device, password, session_manager};
 use crate::errors::{AppError, AppResult};
 use crate::require_session;
 use crate::state::AppState;
@@ -329,4 +329,83 @@ pub async fn get_session_history(
     }
 
     Ok(entries)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// E) list_trusted_devices
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Serialize)]
+pub struct TrustedDeviceEntry {
+    pub id: String,
+    pub device_label: Option<String>,
+    pub trusted_at: String,
+    pub last_seen_at: Option<String>,
+    pub is_revoked: bool,
+}
+
+#[tauri::command]
+pub async fn list_trusted_devices(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<TrustedDeviceEntry>> {
+    let user = require_session!(state);
+
+    let rows = state
+        .db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"SELECT id, device_label, trusted_at, last_seen_at, is_revoked
+              FROM trusted_devices
+              WHERE user_id = ?
+              ORDER BY trusted_at DESC",
+            [user.user_id.into()],
+        ))
+        .await?;
+
+    let mut entries = Vec::with_capacity(rows.len());
+    for row in &rows {
+        entries.push(TrustedDeviceEntry {
+            id: row.try_get::<String>("", "id").unwrap_or_default(),
+            device_label: row
+                .try_get::<Option<String>>("", "device_label")
+                .unwrap_or(None),
+            trusted_at: row
+                .try_get::<String>("", "trusted_at")
+                .unwrap_or_default(),
+            last_seen_at: row
+                .try_get::<Option<String>>("", "last_seen_at")
+                .unwrap_or(None),
+            is_revoked: row.try_get::<i32>("", "is_revoked").unwrap_or(0) == 1,
+        });
+    }
+
+    Ok(entries)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// F) revoke_my_device
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn revoke_my_device(
+    device_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    device::revoke_device_trust(&state.db, &device_id, user.user_id).await?;
+
+    crate::audit::emit(
+        &state.db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::DEVICE_TRUST_REVOKED,
+            actor_id: Some(user.user_id),
+            entity_type: Some("trusted_device"),
+            entity_id: Some(&device_id),
+            summary: "Device trust revoked by user from profile page",
+            ..Default::default()
+        },
+    )
+    .await;
+
+    Ok(())
 }

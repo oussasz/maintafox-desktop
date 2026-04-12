@@ -1,4 +1,9 @@
 {
+  "common": {
+    "cancel": "Annuler",
+    "close": "Fermer",
+    "loading": "Chargement…"
+  },
   "page": {
     "title": "Administration",
     "subtitle": "Gestion des utilisateurs, rôles et permissions"
@@ -31,7 +36,116 @@
   },
   "roles": {
     "fullAccess": "Accès complet",
-    "noPermissions": "Aucune permission"
+    "noPermissions": "Aucune permission",
+    "list": "Rôles",
+    "selectRole": "Sélectionnez un rôle pour voir et modifier ses permissions.",
+    "system": "Système",
+    "custom": "Personnalisé",
+    "save": "Enregistrer",
+    "saved": "Rôle mis à jour",
+    "delete": "Supprimer",
+    "deleted": "Rôle supprimé",
+    "create": {
+      "title": "Créer un rôle",
+      "description": "Définissez un nom et sélectionnez éventuellement un modèle.",
+      "template": "Modèle",
+      "noTemplate": "Sans modèle",
+      "confirm": "Créer"
+    },
+    "fields": {
+      "name": "Nom",
+      "description": "Description"
+    },
+    "errors": {
+      "loadFailed": "Erreur de chargement des rôles",
+      "saveFailed": "Erreur de sauvegarde",
+      "deleteFailed": "Impossible de supprimer ce rôle"
+    },
+    "dependencyWarnings": "Avertissements de dépendance",
+    "hardDepErrors": "Dépendances obligatoires manquantes — sauvegarde bloquée",
+    "warnDeps": "Dépendances recommandées manquantes",
+    "requires": "requiert",
+    "suggests": "suggère",
+    "simulate": {
+      "title": "Simuler l'accès",
+      "description": "Visualisez les permissions effectives d'un utilisateur dans un périmètre donné.",
+      "userId": "ID utilisateur",
+      "scope": "Périmètre",
+      "run": "Simuler",
+      "warnings": "Avertissements de dépendance",
+      "blocked": "Bloqué par"
+    }
+  },
+  "users": {
+    "search": "Rechercher un utilisateur…",
+    "active": "Actif",
+    "inactive": "Inactif",
+    "deactivated": "Utilisateur désactivé",
+    "emergency": "Urgence",
+    "columns": {
+      "username": "Identifiant",
+      "displayName": "Nom affiché",
+      "identityMode": "Auth",
+      "status": "Statut",
+      "roles": "Rôles",
+      "lastSeen": "Dernière connexion"
+    },
+    "filter": {
+      "all": "Tous",
+      "active": "Actifs",
+      "inactive": "Inactifs",
+      "allModes": "Tous modes",
+      "local": "Local",
+      "sso": "SSO",
+      "hybrid": "Hybride"
+    },
+    "fields": {
+      "username": "Identifiant",
+      "identityMode": "Mode d'authentification",
+      "status": "Statut",
+      "lastSeen": "Dernière connexion"
+    },
+    "detail": {
+      "identity": "Identité",
+      "roles": "Rôles assignés",
+      "noRoles": "Aucun rôle assigné.",
+      "permissions": "Permissions effectives"
+    },
+    "actions": {
+      "revoke": "Révoquer",
+      "deactivate": "Désactiver"
+    },
+    "assignRole": {
+      "title": "Assigner un rôle",
+      "description": "Sélectionnez un rôle et un type de périmètre.",
+      "role": "Rôle",
+      "selectRole": "Choisir un rôle",
+      "scope": "Périmètre",
+      "confirm": "Assigner"
+    },
+    "create": "Nouvel utilisateur",
+    "create.title": "Nouvel utilisateur",
+    "create.description": "Créez un compte utilisateur et définissez son mode d'authentification.",
+    "create.password": "Mot de passe",
+    "create.confirmPassword": "Confirmer le mot de passe",
+    "create.passwordTooShort": "8 caractères minimum",
+    "create.passwordNeedUpper": "Une majuscule requise",
+    "create.passwordNeedLower": "Une minuscule requise",
+    "create.passwordNeedDigit": "Un chiffre requis",
+    "create.passwordMismatch": "Les mots de passe ne correspondent pas",
+    "create.forceChange": "Forcer le changement au premier login",
+    "create.confirm": "Créer",
+    "create.success": "Utilisateur créé",
+    "create.error": "Erreur lors de la création",
+    "create.strength": {
+      "weak": "Faible",
+      "medium": "Moyen",
+      "strong": "Fort"
+    },
+    "errors": {
+      "loadFailed": "Erreur de chargement des utilisateurs",
+      "deactivateFailed": "Erreur lors de la désactivation"
+    }
   },
   "profile": {
     "memberSince": "Membre depuis",
@@ -70,6 +184,20 @@
     "enterPasswordToClearPin": "Entrez votre mot de passe pour supprimer le PIN",
     "trustedDevices": "Appareils de confiance",
     "viewDevices": "Voir / Révoquer",
+    "trustedDevicesTitle": "Appareils de confiance",
+    "unknownDevice": "Appareil inconnu",
+    "trustedSince": "Approuvé depuis",
+    "lastSeen": "Dernière connexion :",
+    "revoke": "Révoquer",
+    "revoking": "Révocation...",
+    "revoked": "Révoqué",
+    "deviceRevoked": "Confiance de l'appareil révoquée.",
+    "noDevices": "Aucun appareil de confiance trouvé.",
+    "close": "Fermer",
+    "saveSuccess": "Modifications enregistrées.",
+    "saveError": "Échec de l'enregistrement.",
+    "notificationPreferences": "Préférences de notification",
+    "notificationsPlaceholder": "Disponible après l'activation du module de notifications.",
     "sessionHistory": "Historique des sessions",
     "date": "Date",
     "device": "Appareil",
@@ -99,5 +227,53 @@
     "save": "Enregistrer la politique",
     "saving": "Enregistrement...",
     "saved": "Politique enregistrée avec succès."
+  },
+  "permissions": {
+    "domains": "Domaines",
+    "search": "Rechercher…",
+    "export": "Exporter CSV",
+    "addCustom": "Ajouter",
+    "empty": "Aucune permission dans ce domaine.",
+    "created": "Permission créée",
+    "table": {
+      "name": "Nom",
+      "description": "Description",
+      "dangerous": "Dangereux",
+      "stepUp": "Step-up",
+      "type": "Type"
+    },
+    "badges": {
+      "dangerous": "Dangereux",
+      "stepUp": "Step-up",
+      "system": "Système",
+      "custom": "Personnalisé"
+    },
+    "fields": {
+      "name": "Nom",
+      "description": "Description"
+    },
+    "create": {
+      "title": "Créer une permission personnalisée",
+      "description": "Les permissions personnalisées utilisent le préfixe 'cst.' et ne peuvent pas être dangereuses.",
+      "descPlaceholder": "Brève description de cette permission",
+      "confirm": "Créer"
+    },
+    "errors": {
+      "loadFailed": "Erreur de chargement des permissions",
+      "createFailed": "Erreur lors de la création",
+      "mustStartWithCst": "Le nom doit commencer par 'cst.'",
+      "nameTooShort": "Ajoutez au moins un caractère après 'cst.'",
+      "systemPrefix": "Préfixe système réservé"
+    },
+    "dependencies": {
+      "title": "Dépendances",
+      "none": "Aucune dépendance",
+      "hard": "Obligatoire (hard)",
+      "warn": "Recommandé (warn)",
+      "requires": "Requiert",
+      "requiredBy": "Requis par",
+      "suggests": "Suggère",
+      "suggestedBy": "Suggéré par"
+    }
   }
 }

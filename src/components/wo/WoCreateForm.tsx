@@ -121,7 +121,7 @@ export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormPro
 
   useEffect(() => {
     if (initial?.equipment_id && !selectedAsset) {
-      void searchAssets({ query: null, limit: 1 }).then((results) => {
+      void searchAssets({ query: initial.asset_code ?? null, limit: 20 }).then((results) => {
         const match = results.find((a) => a.id === initial.equipment_id);
         if (match) setSelectedAsset(match);
       });
@@ -459,7 +459,7 @@ export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormPro
         <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
           {t("form.cancel")}
         </Button>
-        <Button size="sm" onClick={handleSubmit} disabled={saving || !isValid}>
+        <Button size="sm" onClick={() => void handleSubmit()} disabled={saving || !isValid}>
           {saving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
           {isEdit ? t("form.update") : t("form.submit")}
         </Button>

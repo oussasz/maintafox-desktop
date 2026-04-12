@@ -31,9 +31,11 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
   const [items, setItems] = useState<WorkOrder[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const page = await listWos({
         status_codes: ["closed", "cancelled"],
@@ -43,11 +45,12 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
       setItems(page.items);
       setTotal(page.total);
     } catch (e) {
+      setError(t("archive.loadError"));
       console.error("WoArchivePanel.load", e);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (open && items.length === 0) {
@@ -124,15 +127,27 @@ export function WoArchivePanel({ onRowClick }: WoArchivePanelProps) {
 
       {open && (
         <div className="px-6 pb-4">
-          <DataTable
-            columns={columns}
-            data={items}
-            searchable
-            pageSize={10}
-            isLoading={loading}
-            skeletonRows={5}
-            onRowClick={(row) => onRowClick?.(row)}
-          />
+          {error ? (
+            <div className="flex items-center justify-between rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <span>{error}</span>
+              <button
+                className="ml-2 text-xs underline hover:no-underline"
+                onClick={() => void load()}
+              >
+                {t("archive.retry")}
+              </button>
+            </div>
+          ) : (
+            <DataTable
+              columns={columns}
+              data={items}
+              searchable
+              pageSize={10}
+              isLoading={loading}
+              skeletonRows={5}
+              onRowClick={(row) => onRowClick?.(row)}
+            />
+          )}
         </div>
       )}
     </div>

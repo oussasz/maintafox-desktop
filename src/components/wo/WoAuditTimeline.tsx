@@ -88,9 +88,9 @@ function applyResultBadge(result: string, t: (key: string) => string) {
   }
 }
 
-function formatActedAt(iso: string): string {
+function formatActedAt(iso: string, locale: string): string {
   try {
-    return new Date(iso).toLocaleString(undefined, {
+    return new Date(iso).toLocaleString(locale, {
       day: "2-digit",
       month: "short",
       year: "numeric",
@@ -111,7 +111,7 @@ interface WoAuditTimelineProps {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
-  const { t } = useTranslation("ot");
+  const { t, i18n } = useTranslation("ot");
   const [events, setEvents] = useState<WoChangeEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -205,7 +205,7 @@ export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
 
             <p className="mt-1 text-xs text-muted-foreground">
               {evt.actor_id != null ? t("audit.user", { id: evt.actor_id }) : t("audit.system")} ·{" "}
-              {formatActedAt(evt.acted_at)}
+              {formatActedAt(evt.acted_at, i18n.language)}
             </p>
           </div>
         </div>

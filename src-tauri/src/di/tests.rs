@@ -796,18 +796,18 @@ mod tests {
             "converted_at must be set after conversion"
         );
 
-        // Verify WO stub exists with source_di_id
+        // Verify WO exists with source_di_id
         let wo_row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT source_di_id, status FROM work_order_stubs WHERE id = ?",
+                "SELECT source_di_id FROM work_orders WHERE id = ?",
                 [conversion.wo_id.into()],
             ))
             .await
-            .expect("query WO stub")
-            .expect("WO stub must exist");
+            .expect("query WO")
+            .expect("WO must exist");
         let source_di_id: i64 = wo_row.try_get("", "source_di_id").expect("source_di_id");
-        assert_eq!(source_di_id, di.id, "WO stub must link back to source DI");
+        assert_eq!(source_di_id, di.id, "WO must link back to source DI");
 
         // Record conversion audit event
         audit::record_di_change_event(
