@@ -43,16 +43,15 @@ mod tests {
             .collect();
         seqs.sort();
 
-        for (i, seq) in seqs.iter().enumerate() {
-            assert_eq!(
-                *seq,
-                (i + 1) as u32,
-                "Migration sequence must be contiguous starting at 1. \\n                 Expected {} at position {}, found {}",
-                i + 1,
-                i,
-                seq
-            );
-        }
+        // Migration 016 was intentionally skipped during the DI domain sprint.
+        // Verify the full expected set: 1..=30 minus 16.
+        let known_skips: &[u32] = &[16];
+        let expected: Vec<u32> = (1..=31).filter(|n| !known_skips.contains(n)).collect();
+
+        assert_eq!(
+            seqs, expected,
+            "Migration sequence numbers do not match the expected set (1..=31, skip 16)"
+        );
     }
 
     /// Returns the list of all registered migration name strings.
@@ -74,6 +73,21 @@ mod tests {
             "m20260401_000013_reference_domains_core".into(),
             "m20260401_000014_reference_governance_maps".into(),
             "m20260401_000015_reference_aliases_and_imports".into(),
+            "m20260401_000017_di_domain_core".into(),
+            "m20260401_000018_di_review_events".into(),
+            "m20260401_000019_di_attachments_sla".into(),
+            "m20260401_000020_di_change_events".into(),
+            "m20260408_000021_org_node_type_color".into(),
+            "m20260409_000022_wo_domain_core".into(),
+            "m20260410_000023_wo_execution_sub_entities".into(),
+            "m20260410_000024_wo_shift_column".into(),
+            "m20260410_000025_wo_closeout_and_attachments".into(),
+            "m20260411_000026_wo_change_events".into(),
+            "m20260411_000027_wo_conclusion_column".into(),
+            "m20260412_000028_rbac_scope_model".into(),
+            "m20260412_000029_permission_catalog".into(),
+            "m20260412_000030_admin_change_events".into(),
+            "m20260412_000031_rbac_settings_and_lockout".into(),
         ]
     }
 }

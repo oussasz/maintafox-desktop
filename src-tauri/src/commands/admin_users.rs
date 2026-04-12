@@ -47,6 +47,7 @@ pub struct UserWithRoles {
     pub is_active: bool,
     pub force_password_change: bool,
     pub last_seen_at: Option<String>,
+    pub locked_until: Option<String>,
     pub roles: Vec<RoleAssignmentSummary>,
 }
 
@@ -167,6 +168,15 @@ pub struct IdPayload {
     pub id: i64,
 }
 
+// ── Presence DTO ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct UserPresence {
+    pub user_id: i64,
+    pub status: String, // "active" | "idle" | "offline"
+    pub last_activity_at: Option<String>,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  RBAC change notification helpers
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -236,7 +246,7 @@ pub async fn list_users(
     let where_clause = conditions.join(" AND ");
     let sql = format!(
         "SELECT ua.id, ua.username, ua.display_name, ua.identity_mode, \
-                ua.is_active, ua.force_password_change, ua.last_seen_at \
+                ua.is_active, ua.force_password_change, ua.last_seen_at, ua.locked_until \
          FROM user_accounts ua \
          WHERE {where_clause} \
          ORDER BY ua.username ASC"
@@ -259,6 +269,7 @@ pub async fn list_users(
             is_active: r.try_get::<i32>("", "is_active")? == 1,
             force_password_change: r.try_get::<i32>("", "force_password_change")? == 1,
             last_seen_at: r.try_get("", "last_seen_at").ok(),
+            locked_until: r.try_get::<Option<String>>("", "locked_until").unwrap_or(None),
             roles,
         });
     }
@@ -280,7 +291,7 @@ pub async fn get_user(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, username, display_name, identity_mode, is_active, \
-                    force_password_change, last_seen_at \
+                    force_password_change, last_seen_at, locked_until \
              FROM user_accounts WHERE id = ? AND deleted_at IS NULL",
             [user_id.into()],
         ))
@@ -305,6 +316,7 @@ pub async fn get_user(
             is_active: row.try_get::<i32>("", "is_active")? == 1,
             force_password_change: row.try_get::<i32>("", "force_password_change")? == 1,
             last_seen_at: row.try_get("", "last_seen_at").ok(),
+            locked_until: row.try_get::<Option<String>>("", "locked_until").unwrap_or(None),
             roles,
         },
         scope_assignments,
@@ -567,7 +579,7 @@ pub async fn assign_role_scope(
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM roles WHERE id = ? AND deleted_at IS NULL",
+            "SELECT id FROM roles WHERE id = ? AND deleted_at IS NULL AND status != 'retired'",
             [input.role_id.into()],
         ))
         .await?;
@@ -692,7 +704,7 @@ pub async fn list_roles(state: State<'_, AppState>) -> AppResult<Vec<RoleWithPer
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, name, description, role_type, status, is_system \
-             FROM roles WHERE deleted_at IS NULL ORDER BY is_system DESC, name ASC",
+             FROM roles WHERE deleted_at IS NULL AND status != 'retired' ORDER BY is_system DESC, name ASC",
             [],
         ))
         .await?;
@@ -729,7 +741,7 @@ pub async fn get_role(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, name, description, role_type, status, is_system \
-             FROM roles WHERE id = ? AND deleted_at IS NULL",
+             FROM roles WHERE id = ? AND deleted_at IS NULL AND status != 'retired'",
             [role_id.into()],
         ))
         .await?
@@ -740,7 +752,17 @@ pub async fn get_role(
 
     let perms = load_role_permission_names(&state.db, role_id).await?;
     let perm_set: HashSet<String> = perms.iter().cloned().collect();
-    let warnings = compute_dependency_warnings(&state.db, &perm_set).await?;
+    let warnings = match compute_dependency_warnings(&state.db, &perm_set).await {
+        Ok(w) => w,
+        Err(err) => {
+            tracing::warn!(
+                role_id = role_id,
+                error = ?err,
+                "get_role: dependency warning computation failed; returning empty warning list"
+            );
+            Vec::new()
+        }
+    };
 
     Ok(RoleDetail {
         role: RoleWithPermissions {
@@ -778,7 +800,7 @@ pub async fn create_role(
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM roles WHERE LOWER(name) = LOWER(?) AND deleted_at IS NULL",
+            "SELECT id FROM roles WHERE LOWER(name) = LOWER(?) AND deleted_at IS NULL AND status != 'retired'",
             [input.name.clone().into()],
         ))
         .await?;
@@ -866,7 +888,7 @@ pub async fn update_role(
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT is_system FROM roles WHERE id = ? AND deleted_at IS NULL",
+            "SELECT is_system FROM roles WHERE id = ? AND deleted_at IS NULL AND status != 'retired'",
             [input.role_id.into()],
         ))
         .await?
@@ -968,7 +990,7 @@ pub async fn delete_role(
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT is_system FROM roles WHERE id = ? AND deleted_at IS NULL",
+            "SELECT is_system FROM roles WHERE id = ? AND deleted_at IS NULL AND status != 'retired'",
             [role_id.into()],
         ))
         .await?
@@ -1226,6 +1248,161 @@ pub async fn revoke_emergency_elevation(
     notify_rbac_user_change(&app, &state, target_user_id, "emergency_revoked");
 
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ACCOUNT LOCKOUT MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Unlock a locked user account. Resets failed attempts, lockout timer, and
+/// consecutive lockout counter. Writes an admin change event for audit.
+#[tauri::command]
+pub async fn unlock_user_account(
+    user_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let admin = require_session!(state);
+    require_permission!(state, &admin, "adm.users", PermissionScope::Global);
+    require_step_up!(state);
+
+    // Verify user exists
+    let exists = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE id = ?",
+            [user_id.into()],
+        ))
+        .await?;
+
+    if exists.is_none() {
+        return Err(AppError::NotFound {
+            entity: "user_accounts".into(),
+            id: user_id.to_string(),
+        });
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    state
+        .db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts \
+             SET failed_login_attempts = 0, \
+                 locked_until = NULL, \
+                 consecutive_lockouts = 0, \
+                 updated_at = ? \
+             WHERE id = ?",
+            [now.into(), user_id.into()],
+        ))
+        .await?;
+
+    // Write admin change event
+    let _ = state
+        .db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO admin_change_events \
+             (action, actor_id, target_user_id, summary, step_up_used) \
+             VALUES ('account_unlocked', ?, ?, 'Admin unlocked user account', 1)",
+            [
+                (admin.user_id as i64).into(),
+                user_id.into(),
+            ],
+        ))
+        .await;
+
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  USER PRESENCE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Batch-fetch presence status for a list of user IDs.
+/// Any authenticated user can call this — presence is not sensitive data.
+#[tauri::command]
+pub async fn get_user_presence(
+    user_ids: Vec<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<UserPresence>> {
+    let _user = require_session!(state);
+
+    if user_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build parameterized IN clause
+    let placeholders: Vec<String> = user_ids.iter().map(|_| "?".to_string()).collect();
+    let now_str = chrono::Utc::now().to_rfc3339();
+    let sql = format!(
+        "SELECT CAST(s.user_id AS TEXT) AS user_id, s.last_activity_at \
+         FROM app_sessions s \
+         WHERE CAST(s.user_id AS TEXT) IN ({}) \
+           AND s.is_revoked = 0 \
+           AND s.expires_at > ? \
+         ORDER BY s.last_activity_at DESC",
+        placeholders.join(", ")
+    );
+
+    let mut values: Vec<sea_orm::Value> = user_ids
+        .iter()
+        .map(|id| sea_orm::Value::from(id.to_string()))
+        .collect();
+    values.push(now_str.into());
+
+    let rows = state
+        .db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            values,
+        ))
+        .await?;
+
+    // Collect best (most recent) session per user
+    let mut best: HashMap<String, Option<String>> = HashMap::new();
+    for r in &rows {
+        let uid: String = r.try_get("", "user_id").unwrap_or_default();
+        let activity: Option<String> = r.try_get("", "last_activity_at").ok();
+        best.entry(uid).or_insert(activity);
+    }
+
+    let now = chrono::Utc::now();
+    let idle_threshold = chrono::Duration::minutes(5);
+
+    let mut results: Vec<UserPresence> = Vec::with_capacity(user_ids.len());
+    for uid in &user_ids {
+        let uid_str = uid.to_string();
+        let (status, last_activity_at) = match best.get(&uid_str) {
+            Some(Some(ts)) => {
+                let parsed = chrono::DateTime::parse_from_rfc3339(ts)
+                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%SZ")
+                        .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S"))
+                        .map(|ndt| ndt.and_utc().fixed_offset()));
+                match parsed {
+                    Ok(dt) => {
+                        if now.signed_duration_since(dt) <= idle_threshold {
+                            ("active".to_string(), Some(ts.clone()))
+                        } else {
+                            ("idle".to_string(), Some(ts.clone()))
+                        }
+                    }
+                    Err(_) => ("idle".to_string(), Some(ts.clone())),
+                }
+            }
+            Some(None) => ("idle".to_string(), None),
+            None => ("offline".to_string(), None),
+        };
+
+        results.push(UserPresence {
+            user_id: *uid,
+            status,
+            last_activity_at,
+        });
+    }
+
+    Ok(results)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

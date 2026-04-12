@@ -113,6 +113,7 @@ pub fn run() {
             commands::auth::login,
             commands::auth::logout,
             commands::auth::get_session_info,
+            commands::auth::touch_session,
             commands::auth::get_device_trust_status,
             commands::auth::revoke_device_trust,
             commands::auth::unlock_session,
@@ -146,7 +147,18 @@ pub fn run() {
             commands::admin_users::simulate_access,
             commands::admin_users::grant_emergency_elevation,
             commands::admin_users::revoke_emergency_elevation,
-            // ── Admin Permissions ─────────────────────────────────────────
+            commands::admin_users::unlock_user_account,
+            commands::admin_users::get_user_presence,
+            // ── Admin Governance (SP06-F03) ─────────────────────────────
+            commands::admin_governance::list_active_sessions,
+            commands::admin_governance::revoke_session,
+            commands::admin_governance::list_delegation_policies,
+            commands::admin_governance::create_delegation_policy,
+            commands::admin_governance::update_delegation_policy,
+            commands::admin_governance::delete_delegation_policy,
+            commands::admin_governance::list_emergency_grants,
+            commands::admin_governance::export_role_model,
+            commands::admin_governance::import_role_model,            // ── Admin Permissions ─────────────────────────────────────────
             commands::admin_permissions::list_permissions,
             commands::admin_permissions::get_permission_dependencies,
             commands::admin_permissions::create_custom_permission,

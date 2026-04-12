@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useStepUp } from "@/hooks/use-step-up";
 import { useToast } from "@/hooks/use-toast";
 import {
   listRoles,
@@ -192,13 +193,16 @@ function CreateRoleDialog({
   onClose,
   templates,
   onCreated,
+  withStepUp,
 }: {
   open: boolean;
   onClose: () => void;
   templates: RoleTemplate[];
   onCreated: () => void;
+  withStepUp: <T>(action: () => Promise<T>) => Promise<T>;
 }) {
   const { t } = useTranslation("admin");
+  const { toast } = useToast();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [templateId, setTemplateId] = useState<string>("");
@@ -223,12 +227,21 @@ function CreateRoleDialog({
         description: description.trim() || null,
         permission_names: permissionNames,
       };
-      await createRole(input);
+      await withStepUp(() => createRole(input));
+      toast({ title: t("roles.created", "Rôle créé"), variant: "success" });
       onCreated();
       onClose();
       setName("");
       setDescription("");
       setTemplateId("");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("cancelled")) {
+        toast({
+          title: msg || t("roles.errors.createFailed", "Erreur de création"),
+          variant: "destructive",
+        });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -265,12 +278,17 @@ function CreateRoleDialog({
           {templates.length > 0 && (
             <div className="space-y-1.5">
               <label className="text-sm font-medium">{t("roles.create.template", "Modèle")}</label>
-              <Select value={templateId} onValueChange={setTemplateId}>
+              <Select
+                value={templateId || "__none__"}
+                onValueChange={(v) => setTemplateId(v === "__none__" ? "" : v)}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder={t("roles.create.noTemplate", "Sans modèle")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">{t("roles.create.noTemplate", "Sans modèle")}</SelectItem>
+                  <SelectItem value="__none__">
+                    {t("roles.create.noTemplate", "Sans modèle")}
+                  </SelectItem>
                   {templates.map((tmpl) => (
                     <SelectItem key={tmpl.id} value={String(tmpl.id)}>
                       {tmpl.name}
@@ -427,6 +445,7 @@ export function RoleEditorPanel() {
   const { t } = useTranslation("admin");
   const { can } = usePermissions();
   const { toast } = useToast();
+  const { withStepUp, StepUpDialogElement } = useStepUp();
 
   // Data
   const [roles, setRoles] = useState<RoleWithPermissions[]>([]);
@@ -491,9 +510,17 @@ export function RoleEditorPanel() {
     setPendingRemove(new Set());
     getRole(selectedRoleId)
       .then(setRoleDetail)
-      .catch(() => setRoleDetail(null))
+      .catch((err) => {
+        console.error("getRole failed:", err);
+        toast({
+          title: t("roles.errors.loadDetailFailed", "Impossible de charger le rôle"),
+          description: err instanceof Error ? err.message : String(err),
+          variant: "destructive",
+        });
+        setRoleDetail(null);
+      })
       .finally(() => setDetailLoading(false));
-  }, [selectedRoleId]);
+  }, [selectedRoleId, t, toast]);
 
   // Computed active permissions (original + pending)
   const activePermissions = useMemo(() => {
@@ -568,7 +595,7 @@ export function RoleEditorPanel() {
         add_permissions: [...pendingAdd],
         remove_permissions: [...pendingRemove],
       };
-      await updateRole(input);
+      await withStepUp(() => updateRole(input));
       toast({ title: t("roles.saved", "Rôle mis à jour"), variant: "success" });
       setPendingAdd(new Set());
       setPendingRemove(new Set());
@@ -585,13 +612,15 @@ export function RoleEditorPanel() {
 
   const handleDelete = async (roleId: number) => {
     try {
-      await deleteRole(roleId);
+      await withStepUp(() => deleteRole(roleId));
       toast({ title: t("roles.deleted", "Rôle supprimé"), variant: "success" });
       setSelectedRoleId(null);
       void fetchRoles();
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       toast({
         title: t("roles.errors.deleteFailed", "Impossible de supprimer ce rôle"),
+        description: msg,
         variant: "destructive",
       });
     }
@@ -777,8 +806,10 @@ export function RoleEditorPanel() {
         onClose={() => setShowCreate(false)}
         templates={templates}
         onCreated={() => void fetchRoles()}
+        withStepUp={withStepUp}
       />
       <SimulateDialog open={showSimulate} onClose={() => setShowSimulate(false)} />
+      {StepUpDialogElement}
     </div>
   );
 }

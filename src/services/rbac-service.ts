@@ -9,10 +9,14 @@ import type {
   AdminStatsPayload,
   AssignRoleScopeInput,
   CreateCustomPermissionInput,
+  CreateDelegationInput,
   CreateRoleInput,
   CreateUserInput,
+  DelegationPolicyView,
+  EmergencyGrantView,
   GrantEmergencyElevationInput,
   IdPayload,
+  ImportResult,
   PasswordPolicySettings,
   PermissionDependencyRow,
   PermissionListFilter,
@@ -21,13 +25,17 @@ import type {
   RbacSettingEntry,
   RevokeEmergencyElevationInput,
   RoleDetail,
+  RoleExportPayload,
+  RoleImportPayload,
   RoleTemplate,
   RoleValidationResult,
   RoleWithPermissions,
+  SessionSummary,
   SimulateAccessInput,
   SimulateAccessResult,
   StepUpRequest,
   StepUpResponse,
+  UpdateDelegationInput,
   UpdateRoleInput,
   UpdateUserInput,
   UserDetail,
@@ -101,7 +109,7 @@ const UserPresenceSchema = z.object({
 });
 
 export async function getUserPresence(userIds: number[]): Promise<UserPresence[]> {
-  const raw = await invoke<unknown[]>("get_user_presence", { user_ids: userIds });
+  const raw = await invoke<unknown[]>("get_user_presence", { userIds });
   return z.array(UserPresenceSchema).parse(raw);
 }
 
@@ -128,6 +136,7 @@ const UserWithRolesSchema = z.object({
   is_active: z.boolean(),
   force_password_change: z.boolean(),
   last_seen_at: z.string().nullable(),
+  locked_until: z.string().nullable(),
   roles: z.array(RoleAssignmentSummarySchema),
 });
 
@@ -160,7 +169,7 @@ export async function listUsers(filter: UserListFilter): Promise<UserWithRoles[]
 }
 
 export async function getUser(userId: number): Promise<UserDetail> {
-  const raw = await invoke<unknown>("get_user", { user_id: userId });
+  const raw = await invoke<unknown>("get_user", { userId });
   return UserDetailSchema.parse(raw);
 }
 
@@ -174,7 +183,7 @@ export async function updateUser(input: UpdateUserInput): Promise<void> {
 }
 
 export async function deactivateUser(userId: number): Promise<void> {
-  await invoke<void>("deactivate_user", { user_id: userId });
+  await invoke<void>("deactivate_user", { userId });
 }
 
 export async function assignRoleScope(input: AssignRoleScopeInput): Promise<IdPayload> {
@@ -183,7 +192,7 @@ export async function assignRoleScope(input: AssignRoleScopeInput): Promise<IdPa
 }
 
 export async function revokeRoleScope(assignmentId: number): Promise<void> {
-  await invoke<void>("revoke_role_scope", { assignment_id: assignmentId });
+  await invoke<void>("revoke_role_scope", { assignmentId });
 }
 
 // ── Role management ───────────────────────────────────────────────────────
@@ -224,7 +233,7 @@ export async function listRoles(): Promise<RoleWithPermissions[]> {
 }
 
 export async function getRole(roleId: number): Promise<RoleDetail> {
-  const raw = await invoke<unknown>("get_role", { role_id: roleId });
+  const raw = await invoke<unknown>("get_role", { roleId });
   return RoleDetailSchema.parse(raw);
 }
 
@@ -238,7 +247,7 @@ export async function updateRole(input: UpdateRoleInput): Promise<void> {
 }
 
 export async function deleteRole(roleId: number): Promise<void> {
-  await invoke<void>("delete_role", { role_id: roleId });
+  await invoke<void>("delete_role", { roleId });
 }
 
 export async function listRoleTemplates(): Promise<RoleTemplate[]> {
@@ -252,7 +261,7 @@ export async function simulateAccess(input: SimulateAccessInput): Promise<Simula
 }
 
 export async function unlockUserAccount(userId: number): Promise<void> {
-  await invoke<void>("unlock_user_account", { user_id: userId });
+  await invoke<void>("unlock_user_account", { userId });
 }
 
 // ── RBAC settings (password policy, lockout) ──────────────────────────────
@@ -364,4 +373,118 @@ export async function revokeEmergencyElevation(
   input: RevokeEmergencyElevationInput,
 ): Promise<void> {
   await invoke<void>("revoke_emergency_elevation", { input });
+}
+
+// ── Admin Governance — Session Visibility (SP06-F03) ──────────────────────
+
+const SessionSummarySchema = z.object({
+  session_id: z.string(),
+  user_id: z.string(),
+  username: z.string(),
+  device_id: z.string().nullable(),
+  device_name: z.string().nullable(),
+  device_trust_status: z.string(),
+  session_started_at: z.string(),
+  last_activity_at: z.string().nullable(),
+  is_current_session: z.boolean(),
+  current_role_names: z.array(z.string()),
+});
+
+export async function listActiveSessions(): Promise<SessionSummary[]> {
+  const raw = await invoke<unknown[]>("list_active_sessions");
+  return z.array(SessionSummarySchema).parse(raw);
+}
+
+export async function revokeSession(sessionId: string): Promise<void> {
+  await invoke<void>("revoke_session", { sessionId });
+}
+
+// ── Admin Governance — Delegation (SP06-F03) ──────────────────────────────
+
+const DelegationPolicyViewSchema = z.object({
+  id: z.number(),
+  admin_role_id: z.number(),
+  admin_role_name: z.string(),
+  managed_scope_type: z.string(),
+  managed_scope_reference: z.string().nullable(),
+  allowed_domains: z.array(z.string()),
+  requires_step_up_for_publish: z.boolean(),
+});
+
+export async function listDelegationPolicies(): Promise<DelegationPolicyView[]> {
+  const raw = await invoke<unknown[]>("list_delegation_policies");
+  return z.array(DelegationPolicyViewSchema).parse(raw);
+}
+
+export async function createDelegationPolicy(
+  input: CreateDelegationInput,
+): Promise<DelegationPolicyView> {
+  const raw = await invoke<unknown>("create_delegation_policy", { input });
+  return DelegationPolicyViewSchema.parse(raw);
+}
+
+export async function updateDelegationPolicy(input: UpdateDelegationInput): Promise<void> {
+  await invoke<void>("update_delegation_policy", { input });
+}
+
+export async function deleteDelegationPolicy(policyId: number): Promise<void> {
+  await invoke<void>("delete_delegation_policy", { policyId });
+}
+
+// ── Admin Governance — Emergency Grants (SP06-F03) ────────────────────────
+
+const EmergencyGrantViewSchema = z.object({
+  assignment_id: z.number(),
+  user_id: z.number(),
+  username: z.string(),
+  role_id: z.number(),
+  role_name: z.string(),
+  scope_type: z.string(),
+  scope_reference: z.string().nullable(),
+  emergency_reason: z.string().nullable(),
+  emergency_expires_at: z.string().nullable(),
+  assigned_by_username: z.string().nullable(),
+  created_at: z.string(),
+  is_expired: z.boolean(),
+});
+
+export async function listEmergencyGrants(): Promise<EmergencyGrantView[]> {
+  const raw = await invoke<unknown[]>("list_emergency_grants");
+  return z.array(EmergencyGrantViewSchema).parse(raw);
+}
+
+// ── Admin Governance — Role Import/Export (SP06-F03) ──────────────────────
+
+const RoleExportEntrySchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  description: z.string().nullable(),
+  permissions: z.array(z.string()),
+  is_system: z.boolean(),
+});
+
+const RoleExportPayloadSchema = z.object({
+  roles: z.array(RoleExportEntrySchema),
+  exported_at: z.string(),
+  exported_by: z.string(),
+});
+
+const SkippedRoleSchema = z.object({
+  name: z.string(),
+  errors: z.array(z.string()),
+});
+
+const ImportResultSchema = z.object({
+  imported_count: z.number(),
+  skipped: z.array(SkippedRoleSchema),
+});
+
+export async function exportRoleModel(roleIds: number[]): Promise<RoleExportPayload> {
+  const raw = await invoke<unknown>("export_role_model", { roleIds });
+  return RoleExportPayloadSchema.parse(raw);
+}
+
+export async function importRoleModel(payload: RoleImportPayload): Promise<ImportResult> {
+  const raw = await invoke<unknown>("import_role_model", { payload });
+  return ImportResultSchema.parse(raw);
 }

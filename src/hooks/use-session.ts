@@ -9,10 +9,23 @@ import {
 } from "@/services/auth-service";
 import type { SessionInfo, LoginRequest } from "@shared/ipc-types";
 
+/** Extract message and code from a Tauri IPC error object or standard Error. */
+function extractTauriError(e: unknown, fallback: string): { message: string; code: string | null } {
+  if (e instanceof Error) {
+    return { message: e.message, code: null };
+  }
+  if (typeof e === "object" && e !== null && "message" in e && "code" in e) {
+    const obj = e as { code: string; message: string };
+    return { message: obj.message, code: obj.code };
+  }
+  return { message: fallback, code: null };
+}
+
 interface SessionState {
   info: SessionInfo | null;
   isLoading: boolean;
   error: string | null;
+  errorCode: string | null;
 }
 
 interface SessionActions {
@@ -46,18 +59,21 @@ export function useSession(): SessionState & SessionActions {
     info: null,
     isLoading: true,
     error: null,
+    errorCode: null,
   });
 
   const refresh = useCallback(async () => {
-    setState((s) => ({ ...s, isLoading: true, error: null }));
+    setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const info = await getSessionInfo();
-      setState({ info, isLoading: false, error: null });
+      setState({ info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
+      const { message, code } = extractTauriError(e, "Erreur de session.");
       setState({
         info: UNAUTHENTICATED,
         isLoading: false,
-        error: e instanceof Error ? e.message : "Erreur de session.",
+        error: message,
+        errorCode: code,
       });
     }
   }, []);
@@ -67,15 +83,17 @@ export function useSession(): SessionState & SessionActions {
   }, [refresh]);
 
   const login = useCallback(async (req: LoginRequest) => {
-    setState((s) => ({ ...s, isLoading: true, error: null }));
+    setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const response = await authLogin(req);
-      setState({ info: response.session_info, isLoading: false, error: null });
+      setState({ info: response.session_info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
+      const { message, code } = extractTauriError(e, "Identifiant ou mot de passe invalide.");
       setState((s) => ({
         ...s,
         isLoading: false,
-        error: e instanceof Error ? e.message : "Identifiant ou mot de passe invalide.",
+        error: message,
+        errorCode: code,
       }));
       throw e; // re-throw so the login form can react
     }
@@ -85,41 +103,47 @@ export function useSession(): SessionState & SessionActions {
     setState((s) => ({ ...s, isLoading: true }));
     try {
       await authLogout();
-      setState({ info: UNAUTHENTICATED, isLoading: false, error: null });
+      setState({ info: UNAUTHENTICATED, isLoading: false, error: null, errorCode: null });
     } catch (e) {
+      const { message } = extractTauriError(e, "Erreur lors de la d\u00e9connexion.");
       setState((s) => ({
         ...s,
         isLoading: false,
-        error: e instanceof Error ? e.message : "Erreur lors de la déconnexion.",
+        error: message,
+        errorCode: null,
       }));
     }
   }, []);
 
   const unlock = useCallback(async (password: string) => {
-    setState((s) => ({ ...s, isLoading: true, error: null }));
+    setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const info = await authUnlock(password);
-      setState({ info, isLoading: false, error: null });
+      setState({ info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
+      const { message } = extractTauriError(e, "\u00c9chec du d\u00e9verrouillage.");
       setState((s) => ({
         ...s,
         isLoading: false,
-        error: e instanceof Error ? e.message : "Échec du déverrouillage.",
+        error: message,
+        errorCode: null,
       }));
       throw e;
     }
   }, []);
 
   const changePassword = useCallback(async (newPassword: string) => {
-    setState((s) => ({ ...s, isLoading: true, error: null }));
+    setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const info = await authForceChange(newPassword);
-      setState({ info, isLoading: false, error: null });
+      setState({ info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
+      const { message } = extractTauriError(e, "\u00c9chec du changement de mot de passe.");
       setState((s) => ({
         ...s,
         isLoading: false,
-        error: e instanceof Error ? e.message : "Échec du changement de mot de passe.",
+        error: message,
+        errorCode: null,
       }));
       throw e;
     }

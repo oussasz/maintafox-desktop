@@ -275,5 +275,165 @@
       "suggests": "Suggests",
       "suggestedBy": "Suggested by"
     }
+  },
+  "sessions": {
+    "title": "Active Sessions",
+    "columns": {
+      "username": "User",
+      "deviceName": "Device",
+      "trustStatus": "Trust",
+      "sessionStart": "Started",
+      "lastActivity": "Last Activity",
+      "roles": "Roles",
+      "actions": "Actions"
+    },
+    "badges": {
+      "trusted": "Trusted",
+      "revoked": "Revoked",
+      "unknown": "Unknown",
+      "currentSession": "Current session"
+    },
+    "revoke": "Revoke",
+    "revokeConfirm": "Revoke this session?",
+    "revokeConfirmDesc": "The user will be disconnected immediately.",
+    "revoked": "Session revoked",
+    "cannotRevokeSelf": "Cannot revoke your own session",
+    "autoRefresh": "Auto-refresh every 30s",
+    "noSessions": "No active sessions.",
+    "errors": {
+      "loadFailed": "Failed to load sessions",
+      "revokeFailed": "Failed to revoke session"
+    }
+  },
+  "delegation": {
+    "title": "Delegation Policies",
+    "columns": {
+      "adminRole": "Admin Role",
+      "scope": "Scope",
+      "domains": "Allowed Domains",
+      "stepUp": "Step-up Required",
+      "actions": "Actions"
+    },
+    "create": "New Policy",
+    "createTitle": "Create Delegation Policy",
+    "createDesc": "Define delegation boundaries for an admin role.",
+    "edit": "Edit",
+    "editTitle": "Edit Delegation Policy",
+    "delete": "Delete",
+    "deleteConfirm": "Delete this delegation policy?",
+    "deleteConfirmDesc": "This action cannot be undone.",
+    "created": "Policy created",
+    "updated": "Policy updated",
+    "deleted": "Policy deleted",
+    "fields": {
+      "adminRole": "Admin Role",
+      "selectRole": "Choose a role",
+      "scopeType": "Scope Type",
+      "scopeReference": "Scope Reference",
+      "allowedDomains": "Allowed Domains",
+      "selectDomains": "Select domains",
+      "requiresStepUp": "Require step-up for publishing"
+    },
+    "scopeTypes": {
+      "tenant": "Global (tenant)",
+      "site": "Site",
+      "department": "Department"
+    },
+    "noPolicies": "No delegation policies.",
+    "errors": {
+      "loadFailed": "Failed to load policies",
+      "createFailed": "Failed to create policy",
+      "updateFailed": "Failed to update policy",
+      "deleteFailed": "Failed to delete policy"
+    }
+  },
+  "emergency": {
+    "title": "Emergency Elevations",
+    "columns": {
+      "username": "User",
+      "role": "Role",
+      "scope": "Scope",
+      "reason": "Reason",
+      "expiresAt": "Expires",
+      "grantedBy": "Granted By",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "grant": "Emergency Access",
+    "grantTitle": "Grant Emergency Access",
+    "grantDesc": "Grant temporary elevated access to a user.",
+    "revoke": "Revoke",
+    "revokeConfirm": "Revoke this emergency access?",
+    "revokeConfirmDesc": "The user will immediately lose elevated access.",
+    "granted": "Emergency access granted",
+    "revokedSuccess": "Emergency access revoked",
+    "badges": {
+      "active": "Active",
+      "expired": "Expired"
+    },
+    "countdown": {
+      "remaining": "Remaining",
+      "hours": "h",
+      "minutes": "min",
+      "seconds": "s"
+    },
+    "fields": {
+      "user": "User",
+      "selectUser": "Choose a user",
+      "role": "Role",
+      "selectRole": "Choose a role",
+      "scopeType": "Scope Type",
+      "scopeReference": "Scope Reference",
+      "reason": "Reason (min. 20 characters)",
+      "reasonPlaceholder": "Describe the reason for this emergency elevation...",
+      "expiryMinutes": "Duration (minutes)",
+      "expiryRange": "1 to 480 minutes (8h max)"
+    },
+    "noGrants": "No emergency elevations.",
+    "errors": {
+      "loadFailed": "Failed to load grants",
+      "grantFailed": "Failed to grant access",
+      "revokeFailed": "Failed to revoke access",
+      "reasonTooShort": "Reason must be at least 20 characters"
+    }
+  },
+  "importExport": {
+    "title": "Role Import / Export",
+    "export": {
+      "title": "Export Roles",
+      "selectRoles": "Select roles to export",
+      "button": "Export JSON",
+      "noSelection": "Select at least one role.",
+      "success": "Export completed"
+    },
+    "import": {
+      "title": "Import Roles",
+      "selectFile": "Choose a JSON file",
+      "preview": "Import Preview",
+      "button": "Confirm Import",
+      "noFile": "No file selected.",
+      "parsing": "Parsing file...",
+      "parseError": "Failed to parse JSON file",
+      "columns": {
+        "name": "Role Name",
+        "permissions": "Permissions",
+        "warnings": "Warnings",
+        "status": "Status"
+      },
+      "badges": {
+        "valid": "Valid",
+        "hasWarnings": "Warnings",
+        "blocked": "Blocked"
+      },
+      "success": "Import complete: {{count}} role(s) imported",
+      "skipped": "{{count}} role(s) skipped",
+      "result": "Import Result"
+    },
+    "noRoles": "No roles available.",
+    "errors": {
+      "loadFailed": "Failed to load roles",
+      "exportFailed": "Failed to export",
+      "importFailed": "Failed to import"
+    }
   }
 }

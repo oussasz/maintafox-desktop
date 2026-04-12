@@ -1,8 +1,9 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, EyeOff, Plus, ShieldCheck, UserX } from "lucide-react";
+import { Eye, EyeOff, LockOpen, Plus, ShieldCheck, UserX } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { OnlinePresenceIndicator } from "@/components/admin/OnlinePresenceIndicator";
 import { DataTable } from "@/components/data/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import {
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useStepUp } from "@/hooks/use-step-up";
 import { useToast } from "@/hooks/use-toast";
 import {
   listUsers,
@@ -34,6 +36,7 @@ import {
   assignRoleScope,
   revokeRoleScope,
   listRoles,
+  unlockUserAccount,
 } from "@/services/rbac-service";
 import type {
   UserWithRoles,
@@ -539,6 +542,7 @@ export function UserListPanel() {
   const { t } = useTranslation("admin");
   const { can } = usePermissions();
   const { toast } = useToast();
+  const { withStepUp, StepUpDialogElement } = useStepUp();
 
   // Data
   const [users, setUsers] = useState<UserWithRoles[]>([]);
@@ -608,13 +612,35 @@ export function UserListPanel() {
     [fetchUsers, toast, t],
   );
 
+  // Unlock handler
+  const handleUnlock = useCallback(
+    async (userId: number) => {
+      try {
+        await withStepUp(() => unlockUserAccount(userId));
+        toast({ title: t("users.unlocked", "Compte déverrouillé"), variant: "success" });
+        void fetchUsers();
+      } catch {
+        toast({
+          title: t("users.errors.unlockFailed", "Erreur lors du déverrouillage"),
+          variant: "destructive",
+        });
+      }
+    },
+    [fetchUsers, toast, t, withStepUp],
+  );
+
   // Columns
   const columns: ColumnDef<UserWithRoles>[] = useMemo(
     () => [
       {
         accessorKey: "username",
         header: t("users.columns.username", "Identifiant"),
-        cell: ({ row }) => <span className="font-mono text-xs">{row.original.username}</span>,
+        cell: ({ row }) => (
+          <div className="flex items-center gap-1.5">
+            <OnlinePresenceIndicator userId={row.original.id} />
+            <span className="font-mono text-xs">{row.original.username}</span>
+          </div>
+        ),
       },
       {
         accessorKey: "display_name",
@@ -633,11 +659,28 @@ export function UserListPanel() {
       {
         id: "status",
         header: t("users.columns.status", "Statut"),
-        cell: ({ row }) => (
-          <Badge variant={row.original.is_active ? "default" : "destructive"}>
-            {row.original.is_active ? t("users.active", "Actif") : t("users.inactive", "Inactif")}
-          </Badge>
-        ),
+        cell: ({ row }) => {
+          const isLocked =
+            row.original.locked_until != null &&
+            row.original.locked_until > new Date().toISOString();
+          return (
+            <div className="flex items-center gap-1">
+              <Badge variant={row.original.is_active ? "default" : "destructive"}>
+                {row.original.is_active
+                  ? t("users.active", "Actif")
+                  : t("users.inactive", "Inactif")}
+              </Badge>
+              {isLocked && (
+                <Badge
+                  variant="outline"
+                  className="border-amber-300 bg-amber-50 text-amber-700 text-[10px]"
+                >
+                  {t("users.locked", "Verrouillé")}
+                </Badge>
+              )}
+            </div>
+          );
+        },
       },
       {
         id: "roleCount",
@@ -656,6 +699,21 @@ export function UserListPanel() {
         header: "",
         cell: ({ row }) => (
           <div className="flex items-center gap-1">
+            {can("adm.users") &&
+              row.original.locked_until != null &&
+              row.original.locked_until > new Date().toISOString() && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title={t("users.unlock", "Déverrouiller")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleUnlock(row.original.id);
+                  }}
+                >
+                  <LockOpen className="h-3.5 w-3.5 text-amber-600" />
+                </Button>
+              )}
             {can("adm.users") && (
               <Button
                 variant="ghost"
@@ -684,7 +742,7 @@ export function UserListPanel() {
         ),
       },
     ],
-    [t, can, handleDeactivate],
+    [t, can, handleDeactivate, handleUnlock],
   );
 
   return (
@@ -767,6 +825,9 @@ export function UserListPanel() {
         onClose={() => setShowCreate(false)}
         onCreated={() => void fetchUsers()}
       />
+
+      {/* Step-up re-authentication dialog (for unlock) */}
+      {StepUpDialogElement}
     </div>
   );
 }

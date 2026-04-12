@@ -2084,6 +2084,7 @@ export interface UserWithRoles {
   is_active: boolean;
   force_password_change: boolean;
   last_seen_at: string | null;
+  locked_until: string | null;
   roles: RoleAssignmentSummary[];
 }
 
@@ -2243,4 +2244,98 @@ export interface GrantEmergencyElevationInput {
 
 export interface RevokeEmergencyElevationInput {
   assignment_id: number;
+}
+
+// ─── Admin Governance — Session Visibility (SP06-F03) ──────────────────────
+
+export interface SessionSummary {
+  session_id: string;
+  user_id: string;
+  username: string;
+  device_id: string | null;
+  device_name: string | null;
+  device_trust_status: string;
+  session_started_at: string;
+  last_activity_at: string | null;
+  is_current_session: boolean;
+  current_role_names: string[];
+}
+
+// ─── Admin Governance — Delegation (SP06-F03) ──────────────────────────────
+
+export interface DelegationPolicyView {
+  id: number;
+  admin_role_id: number;
+  admin_role_name: string;
+  managed_scope_type: string;
+  managed_scope_reference: string | null;
+  allowed_domains: string[];
+  requires_step_up_for_publish: boolean;
+}
+
+export interface CreateDelegationInput {
+  admin_role_id: number;
+  managed_scope_type: string;
+  managed_scope_reference?: string | null;
+  allowed_domains: string[];
+  requires_step_up_for_publish: boolean;
+}
+
+export interface UpdateDelegationInput {
+  policy_id: number;
+  allowed_domains?: string[];
+  requires_step_up_for_publish?: boolean;
+}
+
+// ─── Admin Governance — Emergency Grants (SP06-F03) ────────────────────────
+
+export interface EmergencyGrantView {
+  assignment_id: number;
+  user_id: number;
+  username: string;
+  role_id: number;
+  role_name: string;
+  scope_type: string;
+  scope_reference: string | null;
+  emergency_reason: string | null;
+  emergency_expires_at: string | null;
+  assigned_by_username: string | null;
+  created_at: string;
+  is_expired: boolean;
+}
+
+// ─── Admin Governance — Role Import/Export (SP06-F03) ──────────────────────
+
+export interface RoleExportEntry {
+  id: number;
+  name: string;
+  description: string | null;
+  permissions: string[];
+  is_system: boolean;
+}
+
+export interface RoleExportPayload {
+  roles: RoleExportEntry[];
+  exported_at: string;
+  exported_by: string;
+}
+
+export interface RoleImportEntry {
+  name: string;
+  description?: string | null;
+  permissions: string[];
+}
+
+export interface RoleImportPayload {
+  roles: RoleImportEntry[];
+}
+
+export interface SkippedRole {
+  name: string;
+  errors: string[];
+}
+
+export interface ImportResult {
+  imported_count: number;
+  skipped: SkippedRole[];
 }

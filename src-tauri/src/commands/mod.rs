@@ -1,3 +1,4 @@
+pub mod admin_governance;
 pub mod admin_permissions;
 pub mod admin_stats;
 pub mod admin_users;

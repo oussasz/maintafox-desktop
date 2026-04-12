@@ -253,7 +253,7 @@ pub async fn record_failed_login(db: &DatabaseConnection, user_id: i32) -> AppRe
     Ok(())
 }
 
-/// Reset `failed_login_attempts` and `locked_until` after successful login.
+/// Reset `failed_login_attempts`, `locked_until`, and `consecutive_lockouts` after successful login.
 pub async fn record_successful_login(db: &DatabaseConnection, user_id: i32) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
@@ -261,6 +261,7 @@ pub async fn record_successful_login(db: &DatabaseConnection, user_id: i32) -> A
         r"UPDATE user_accounts
            SET failed_login_attempts = 0,
                locked_until = NULL,
+               consecutive_lockouts = 0,
                last_login_at = ?,
                last_seen_at = ?,
                updated_at = ?
@@ -281,9 +282,9 @@ pub async fn create_session_record(
     let now = Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r"INSERT INTO app_sessions (id, user_id, created_at, expires_at, is_revoked)
-           VALUES (?, ?, ?, ?, 0)",
-        [session_db_id.into(), user_id.into(), now.into(), expires_at.into()],
+        r"INSERT INTO app_sessions (id, user_id, created_at, expires_at, last_activity_at, is_revoked)
+           VALUES (?, ?, ?, ?, ?, 0)",
+        [session_db_id.into(), user_id.to_string().into(), now.clone().into(), expires_at.into(), now.into()],
     ))
     .await?;
     Ok(())

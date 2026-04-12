@@ -233,6 +233,9 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
     // Seed a limited test user for permission testing
     seed_test_viewer_user(db).await?;
 
+    // Seed technicien user for lockout testing
+    seed_technicien_user(db).await?;
+
     Ok(())
 }
 
@@ -496,6 +499,52 @@ pub async fn seed_test_viewer_user(db: &DatabaseConnection) -> AppResult<()> {
     .await?;
 
     tracing::info!("demo_seeder: test user 'viewer_noref' created (no role, no permissions)");
+    Ok(())
+}
+
+/// Creates a "technicien" demo user with a basic role for lockout testing.
+pub async fn seed_technicien_user(db: &DatabaseConnection) -> AppResult<()> {
+    let existing = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE username = ?",
+            ["technicien".into()],
+        ))
+        .await?;
+    if existing.is_some() {
+        // Reset lockout counters in case of stale test state
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET failed_login_attempts = 0, locked_until = NULL, consecutive_lockouts = 0 WHERE username = ?",
+            ["technicien".into()],
+        ))
+        .await?;
+        tracing::info!("demo_seeder: technicien user already exists — lockout counters reset");
+        return Ok(());
+    }
+
+    let password_hash = crate::auth::password::hash_password("Tech#2026!")?;
+    let now = Utc::now().to_rfc3339();
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r"INSERT INTO user_accounts
+            (sync_id, username, display_name, identity_mode, password_hash,
+             is_active, is_admin, force_password_change, failed_login_attempts,
+             created_at, updated_at, row_version)
+          VALUES (?, ?, ?, 'local', ?, 1, 0, 0, 0, ?, ?, 1)",
+        [
+            Uuid::new_v4().to_string().into(),
+            "technicien".into(),
+            "Technicien Terrain".into(),
+            password_hash.into(),
+            now.clone().into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+
+    tracing::info!("demo_seeder: technicien user created (password: Tech#2026!)");
     Ok(())
 }
 

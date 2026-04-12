@@ -1,4 +1,4 @@
-import { ArrowRight, Eye, EyeOff, Lock, ShieldCheck, User } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Lock, ShieldAlert, ShieldCheck, User } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
@@ -112,14 +112,22 @@ export function LoginPage() {
           </div>
 
           {/* Error */}
-          {session.error && (
+          {session.error && session.errorCode === "ACCOUNT_LOCKED" ? (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700"
+            >
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{session.error}</span>
+            </div>
+          ) : session.error ? (
             <div
               role="alert"
               className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600"
             >
               {session.error}
             </div>
-          )}
+          ) : null}
 
           {/* Submit */}
           <button

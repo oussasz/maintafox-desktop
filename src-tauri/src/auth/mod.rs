@@ -10,6 +10,7 @@
 //!   - All IPC commands that need auth call `require_session!(&state)`.
 
 pub mod device;
+pub mod lockout;
 pub mod password;
 pub mod rbac;
 pub mod session_manager;

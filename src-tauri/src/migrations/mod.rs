@@ -28,6 +28,8 @@ mod m20260411_000026_wo_change_events;
 mod m20260411_000027_wo_conclusion_column;
 mod m20260412_000028_rbac_scope_model;
 mod m20260412_000029_permission_catalog;
+mod m20260412_000030_admin_change_events;
+mod m20260412_000031_rbac_settings_and_lockout;
 
 pub struct Migrator;
 
@@ -63,6 +65,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260411_000027_wo_conclusion_column::Migration),
             Box::new(m20260412_000028_rbac_scope_model::Migration),
             Box::new(m20260412_000029_permission_catalog::Migration),
+            Box::new(m20260412_000030_admin_change_events::Migration),
+            Box::new(m20260412_000031_rbac_settings_and_lockout::Migration),
         ]
     }
 }

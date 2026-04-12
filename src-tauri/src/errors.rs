@@ -34,6 +34,9 @@ pub enum AppError {
     #[error("Step-up verification required for this action")]
     StepUpRequired,
 
+    #[error("Account locked until {until}")]
+    AccountLocked { until: String },
+
     #[error("Internal error: {0}")]
     Internal(#[from] anyhow::Error),
 }
@@ -58,6 +61,7 @@ impl serde::Serialize for AppError {
             Self::Permission { .. } => "PERMISSION_DENIED",
             Self::PermissionDenied(_) => "PERMISSION_DENIED",
             Self::StepUpRequired => "STEP_UP_REQUIRED",
+            Self::AccountLocked { .. } => "ACCOUNT_LOCKED",
             Self::Internal(_) => "INTERNAL_ERROR",
         };
         state.serialize_field("code", code)?;

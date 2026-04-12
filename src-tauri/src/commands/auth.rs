@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use tracing::warn;
 
-use crate::auth::{password, session_manager};
+use crate::auth::{lockout, password, session_manager};
 use crate::errors::{AppError, AppResult};
 use crate::require_session;
 use crate::state::AppState;
@@ -64,6 +64,12 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
         Some(r) => r,
     };
 
+    // ── Account lockout check (OWASP brute-force protection) ─────────────
+    lockout::check_lockout(&state.db, user_id).await?;
+
+    // Load lockout policy for recording failed attempts later
+    let lockout_policy = lockout::LockoutPolicy::load(&state.db).await;
+
     // Verify password
     let stored_hash = match pw_hash {
         None => {
@@ -85,7 +91,7 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
 
     let password_ok = password::verify_password(&payload.password, &stored_hash)?;
     if !password_ok {
-        session_manager::record_failed_login(&state.db, user_id).await?;
+        lockout::record_failed_attempt(&state.db, user_id, &lockout_policy).await?;
         warn!(username = %username, "login::wrong_password");
         crate::audit::emit(
             &state.db,
@@ -235,6 +241,32 @@ pub async fn logout(state: State<'_, AppState>) -> AppResult<()> {
 #[tauri::command]
 pub async fn get_session_info(state: State<'_, AppState>) -> AppResult<session_manager::SessionInfo> {
     Ok(state.session.read().await.session_info())
+}
+
+/// Heartbeat: update in-memory + DB `last_activity_at` for the current session.
+/// The frontend calls this periodically so the presence query sees fresh activity.
+#[tauri::command]
+pub async fn touch_session(state: State<'_, AppState>) -> AppResult<()> {
+    let session_db_id = {
+        let mut guard = state.session.write().await;
+        guard.touch();
+        match &guard.current {
+            Some(s) => s.session_db_id.clone(),
+            None => return Ok(()),
+        }
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let _ = state
+        .db
+        .execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            "UPDATE app_sessions SET last_activity_at = ? WHERE id = ?",
+            [now.into(), session_db_id.into()],
+        ))
+        .await;
+
+    Ok(())
 }
 
 // ── Device trust IPC commands ─────────────────────────────────────────────────

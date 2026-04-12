@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 
 import { getUserPresence } from "@/services/rbac-service";
@@ -26,6 +27,8 @@ async function fetchPresence(userIds: number[]): Promise<void> {
         cachedPresence.set(p.user_id, p);
       }
       cacheTimestamp = Date.now();
+    } catch {
+      // IPC failure — leave cache stale, will retry on next interval
     } finally {
       pendingFetch = null;
     }
@@ -62,6 +65,8 @@ export function OnlinePresenceIndicator({ userId, size = "sm" }: OnlinePresenceI
 
   useEffect(() => {
     const update = async () => {
+      // Touch current user's session so presence stays fresh
+      invoke("touch_session").catch(() => {});
       await fetchPresence([userId]);
       const cached = cachedPresence.get(userId);
       setStatus(cached?.status ?? "offline");

@@ -378,7 +378,7 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
         onCardClick(wo);
       }
     },
-    [addToast, assignWorkOrder, onCardClick, session.user_id, t],
+    [addToast, assignWorkOrder, onCardClick, session?.user_id, t],
   );
 
   return (

@@ -9,6 +9,7 @@
 //!   macros defined in [`crate::auth`].
 
 pub mod cache;
+pub mod delegation;
 pub mod macros;
 pub mod model;
 pub mod resolver;

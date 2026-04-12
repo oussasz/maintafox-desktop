@@ -60,6 +60,17 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Frontend: `use-step-up.tsx` — fixed value import and error detection
 
 ### Fixed
+- SP06 admin role management runtime gaps (Supervisor V1-V6 verification):
+  Role detail loading, deletion visibility, and step-up mutation flows now align with
+  backend command contracts and UI expectations.
+- Frontend IPC contract hardening in `rbac-service.ts`:
+  direct Tauri command argument payloads now use camelCase keys (`roleId`, `userId`,
+  `assignmentId`, `sessionId`, `policyId`, `roleIds`, `userIds`) to prevent runtime
+  "missing required key" command errors.
+- Role retirement behavior consistency:
+  retired roles are now excluded from active role list/detail/mutation paths so deleting
+  a custom role removes it from the visible role list after refresh.
+
 - DI review queue dead-end: `loadReviewQueue` only loaded `pending_review` and
   `returned_for_clarification` but approve button required `awaiting_approval` —
   added `awaiting_approval` to status filter

@@ -275,5 +275,165 @@
       "suggests": "Suggère",
       "suggestedBy": "Suggéré par"
     }
+  },
+  "sessions": {
+    "title": "Sessions actives",
+    "columns": {
+      "username": "Utilisateur",
+      "deviceName": "Appareil",
+      "trustStatus": "Confiance",
+      "sessionStart": "Début",
+      "lastActivity": "Dernière activité",
+      "roles": "Rôles",
+      "actions": "Actions"
+    },
+    "badges": {
+      "trusted": "Approuvé",
+      "revoked": "Révoqué",
+      "unknown": "Inconnu",
+      "currentSession": "Session actuelle"
+    },
+    "revoke": "Révoquer",
+    "revokeConfirm": "Voulez-vous révoquer cette session ?",
+    "revokeConfirmDesc": "L'utilisateur sera déconnecté immédiatement.",
+    "revoked": "Session révoquée",
+    "cannotRevokeSelf": "Impossible de révoquer votre propre session",
+    "autoRefresh": "Actualisation auto. toutes les 30s",
+    "noSessions": "Aucune session active.",
+    "errors": {
+      "loadFailed": "Erreur de chargement des sessions",
+      "revokeFailed": "Erreur lors de la révocation"
+    }
+  },
+  "delegation": {
+    "title": "Politiques de délégation",
+    "columns": {
+      "adminRole": "Rôle admin",
+      "scope": "Périmètre",
+      "domains": "Domaines autorisés",
+      "stepUp": "Step-up requis",
+      "actions": "Actions"
+    },
+    "create": "Nouvelle politique",
+    "createTitle": "Créer une politique de délégation",
+    "createDesc": "Définissez les limites de délégation pour un rôle administrateur.",
+    "edit": "Modifier",
+    "editTitle": "Modifier la politique de délégation",
+    "delete": "Supprimer",
+    "deleteConfirm": "Voulez-vous supprimer cette politique de délégation ?",
+    "deleteConfirmDesc": "Cette action est irréversible.",
+    "created": "Politique créée",
+    "updated": "Politique mise à jour",
+    "deleted": "Politique supprimée",
+    "fields": {
+      "adminRole": "Rôle administrateur",
+      "selectRole": "Choisir un rôle",
+      "scopeType": "Type de périmètre",
+      "scopeReference": "Référence du périmètre",
+      "allowedDomains": "Domaines autorisés",
+      "selectDomains": "Sélectionner les domaines",
+      "requiresStepUp": "Exiger le step-up pour la publication"
+    },
+    "scopeTypes": {
+      "tenant": "Global (tenant)",
+      "site": "Site",
+      "department": "Département"
+    },
+    "noPolicies": "Aucune politique de délégation.",
+    "errors": {
+      "loadFailed": "Erreur de chargement des politiques",
+      "createFailed": "Erreur lors de la création",
+      "updateFailed": "Erreur lors de la mise à jour",
+      "deleteFailed": "Erreur lors de la suppression"
+    }
+  },
+  "emergency": {
+    "title": "Élévations d'urgence",
+    "columns": {
+      "username": "Utilisateur",
+      "role": "Rôle",
+      "scope": "Périmètre",
+      "reason": "Raison",
+      "expiresAt": "Expiration",
+      "grantedBy": "Accordé par",
+      "status": "Statut",
+      "actions": "Actions"
+    },
+    "grant": "Accès d'urgence",
+    "grantTitle": "Accorder un accès d'urgence",
+    "grantDesc": "Accordez un accès temporaire élevé à un utilisateur.",
+    "revoke": "Révoquer",
+    "revokeConfirm": "Voulez-vous révoquer cet accès d'urgence ?",
+    "revokeConfirmDesc": "L'utilisateur perdra immédiatement l'accès élevé.",
+    "granted": "Accès d'urgence accordé",
+    "revokedSuccess": "Accès d'urgence révoqué",
+    "badges": {
+      "active": "Actif",
+      "expired": "Expiré"
+    },
+    "countdown": {
+      "remaining": "Restant",
+      "hours": "h",
+      "minutes": "min",
+      "seconds": "s"
+    },
+    "fields": {
+      "user": "Utilisateur",
+      "selectUser": "Choisir un utilisateur",
+      "role": "Rôle",
+      "selectRole": "Choisir un rôle",
+      "scopeType": "Type de périmètre",
+      "scopeReference": "Référence du périmètre",
+      "reason": "Raison (min. 20 caractères)",
+      "reasonPlaceholder": "Décrivez la raison de cette élévation d'urgence...",
+      "expiryMinutes": "Durée (minutes)",
+      "expiryRange": "1 à 480 minutes (8h max)"
+    },
+    "noGrants": "Aucune élévation d'urgence.",
+    "errors": {
+      "loadFailed": "Erreur de chargement",
+      "grantFailed": "Erreur lors de l'attribution",
+      "revokeFailed": "Erreur lors de la révocation",
+      "reasonTooShort": "La raison doit contenir au moins 20 caractères"
+    }
+  },
+  "importExport": {
+    "title": "Import / Export de rôles",
+    "export": {
+      "title": "Exporter des rôles",
+      "selectRoles": "Sélectionnez les rôles à exporter",
+      "button": "Exporter JSON",
+      "noSelection": "Sélectionnez au moins un rôle.",
+      "success": "Export réalisé avec succès"
+    },
+    "import": {
+      "title": "Importer des rôles",
+      "selectFile": "Choisir un fichier JSON",
+      "preview": "Aperçu de l'import",
+      "button": "Confirmer l'import",
+      "noFile": "Aucun fichier sélectionné.",
+      "parsing": "Analyse du fichier...",
+      "parseError": "Erreur de lecture du fichier JSON",
+      "columns": {
+        "name": "Nom du rôle",
+        "permissions": "Permissions",
+        "warnings": "Avertissements",
+        "status": "Statut"
+      },
+      "badges": {
+        "valid": "Valide",
+        "hasWarnings": "Avertissements",
+        "blocked": "Bloqué"
+      },
+      "success": "Import terminé : {{count}} rôle(s) importé(s)",
+      "skipped": "{{count}} rôle(s) ignoré(s)",
+      "result": "Résultat de l'import"
+    },
+    "noRoles": "Aucun rôle disponible.",
+    "errors": {
+      "loadFailed": "Erreur de chargement des rôles",
+      "exportFailed": "Erreur lors de l'export",
+      "importFailed": "Erreur lors de l'import"
+    }
   }
 }
