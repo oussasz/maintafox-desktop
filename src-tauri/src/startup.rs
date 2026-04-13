@@ -1,0 +1,240 @@
+use std::time::Instant;
+use std::path::PathBuf;
+
+use tauri::{AppHandle, Emitter, Manager};
+use tracing::{error, info, warn};
+
+use crate::errors::AppResult;
+
+/// Cold-start budget from PRD §14.1 (milliseconds).
+const COLD_START_BUDGET_MS: u64 = 4_000;
+
+/// Events emitted to the frontend during startup.
+/// Corresponding TypeScript types live in shared/ipc-types.ts.
+#[derive(serde::Serialize, Clone)]
+#[serde(tag = "stage", rename_all = "snake_case")]
+pub enum StartupEvent {
+    DbReady,
+    MigrationsComplete { applied: u32 },
+    EntitlementCacheLoaded,
+    Ready,
+    Failed { reason: String },
+}
+
+// ── Pure helpers (unit-testable without Tauri runtime) ──────────────────────
+
+/// Validates that the startup duration is within the given budget.
+///
+/// Returns `(elapsed_ms, within_budget)`.
+/// Cold start budget: PRD §14.1 = 4 000 ms.
+#[allow(clippy::cast_possible_truncation)]
+pub fn validate_startup_duration(start: Instant, budget_ms: u64) -> (u64, bool) {
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    (elapsed_ms, elapsed_ms <= budget_ms)
+}
+
+/// Builds a human-readable startup diagnostic message for tracing output.
+pub fn format_startup_message(elapsed_ms: u64, within_budget: bool, budget_ms: u64) -> String {
+    if within_budget {
+        format!("Startup complete in {elapsed_ms}ms (within {budget_ms}ms budget)")
+    } else {
+        format!(
+            "WARNING: Startup took {elapsed_ms}ms which exceeds the {budget_ms}ms cold-start budget"
+        )
+    }
+}
+
+/// Forces a WAL checkpoint on the local SQLite database.
+/// Must be called before any destructive migration is applied.
+/// Returns Ok(()) on success or an error if the checkpoint fails.
+pub async fn force_wal_checkpoint(db: &sea_orm::DatabaseConnection) -> crate::errors::AppResult<()> {
+    use sea_orm::{ConnectionTrait, Statement, DbBackend};
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "PRAGMA wal_checkpoint(FULL);".to_string(),
+    ))
+    .await
+    .map(|_| ())
+    .map_err(|e| crate::errors::AppError::Database(
+        sea_orm::DbErr::Custom(format!("WAL checkpoint failed: {}", e))
+    ))
+}
+
+/// Creates a pre-migration backup of the database file.
+/// Called when detecting that a pending migration is classified as destructive.
+pub fn backup_database(
+    db_path: &PathBuf,
+    backup_dir: &PathBuf,
+) -> crate::errors::AppResult<PathBuf> {
+    use std::time::SystemTime;
+    use chrono::{DateTime, Utc};
+
+    let timestamp = DateTime::<Utc>::from(SystemTime::now())
+        .format("%Y%m%d_%H%M%S")
+        .to_string();
+
+    let backup_filename = format!("pre_migration_{}.db", timestamp);
+    let backup_path = backup_dir.join(&backup_filename);
+
+    std::fs::create_dir_all(backup_dir)
+        .map_err(crate::errors::AppError::Io)?;
+
+    std::fs::copy(db_path, &backup_path)
+        .map_err(|e| crate::errors::AppError::Io(
+            std::io::Error::new(std::io::ErrorKind::Other, format!("Pre-migration backup failed: {}", e))
+        ))?;
+
+    tracing::info!(
+        backup_path = %backup_path.display(),
+        "startup::pre_migration_backup_complete"
+    );
+
+    Ok(backup_path)
+}
+
+// ── Startup sequence ────────────────────────────────────────────────────────
+
+/// Run the ordered startup sequence.
+///
+/// Called once from the `setup` hook in lib.rs after the window is created.
+/// On success, emits `StartupEvent::Ready` and calls `window.show()`.
+/// On failure, emits `StartupEvent::Failed` and shows the window with a
+/// minimal error surface so the user is not left with an invisible process.
+#[allow(clippy::cast_possible_truncation)]
+pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
+    let startup_start = Instant::now();
+
+    let window = app
+        .get_webview_window("main")
+        .expect("main window must exist");
+
+    // Phase 1: database integrity and connection
+    info!("startup: initialising database");
+    let db_path = resolve_db_path(&app)?;
+    match crate::db::init_db(&db_path).await {
+        Ok(conn) => {
+            let state = crate::state::AppState::new(conn);
+            app.manage(state);
+            info!(
+                elapsed_ms = startup_start.elapsed().as_millis() as u64,
+                "startup::db_ready"
+            );
+            emit_event(&app, StartupEvent::DbReady);
+        }
+        Err(e) => {
+            let reason = format!("Database initialisation failed: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    }
+
+    // Phase 2: schema migrations
+    info!("startup: running migrations");
+    let app_state = app.state::<crate::state::AppState>();
+    match crate::db::run_migrations(&app_state.db).await {
+        Ok(()) => {
+            info!(
+                elapsed_ms = startup_start.elapsed().as_millis() as u64,
+                "startup::migrations_complete"
+            );
+            emit_event(&app, StartupEvent::MigrationsComplete { applied: 0 });
+        }
+        Err(e) => {
+            let reason = format!("Migration failed: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    }
+
+    // Phase 3: seed system data (idempotent — INSERT OR IGNORE)
+    info!("startup: seeding system data");
+    if let Err(e) = crate::db::seeder::seed_system_data(&app_state.db).await {
+        warn!("startup: system seed returned error (non-fatal): {e}");
+    }
+
+    // Phase 3b: seed demo data for development (idempotent — checks sentinel)
+    #[cfg(debug_assertions)]
+    {
+        info!("startup: seeding demo data (dev build)");
+        if let Err(e) = crate::db::demo_seeder::seed_demo_data(&app_state.db).await {
+            warn!("startup: demo seed returned error (non-fatal): {e}");
+        }
+        // Reference domain + test-user seeders have their own sentinels,
+        // so they run even when the main demo seeder was already applied.
+        if let Err(e) = crate::db::demo_seeder::seed_reference_demo_data(&app_state.db).await {
+            warn!("startup: reference demo seed returned error (non-fatal): {e}");
+        }
+        if let Err(e) = crate::db::demo_seeder::seed_test_viewer_user(&app_state.db).await {
+            warn!("startup: test viewer user seed returned error (non-fatal): {e}");
+        }
+        if let Err(e) = crate::db::demo_seeder::seed_technicien_user(&app_state.db).await {
+            warn!("startup: technicien user seed returned error (non-fatal): {e}");
+        }
+        if let Err(e) = crate::db::demo_seeder::seed_demo_work_orders(&app_state.db).await {
+            warn!("startup: work order demo seed returned error (non-fatal): {e}");
+        }
+    }
+
+    // Phase 4: entitlement cache (stub for Phase 4 — always succeeds here)
+    info!("startup: loading entitlement cache");
+    info!(
+        elapsed_ms = startup_start.elapsed().as_millis() as u64,
+        "startup::entitlement_cache_loaded"
+    );
+    emit_event(&app, StartupEvent::EntitlementCacheLoaded);
+
+    // Phase 5: notification scheduler background loop (non-fatal)
+    {
+        let scheduler_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::notifications::scheduler::start_notification_scheduler(scheduler_db).await;
+        });
+        info!("startup: notification scheduler started");
+    }
+
+    // ── Budget check and ready ──────────────────────────────────────────
+    let (total_ms, within_budget) =
+        validate_startup_duration(startup_start, COLD_START_BUDGET_MS);
+
+    if within_budget {
+        info!(elapsed_ms = total_ms, "startup::complete");
+    } else {
+        warn!(
+            elapsed_ms = total_ms,
+            budget_ms = COLD_START_BUDGET_MS,
+            "startup::COLD_START_BUDGET_EXCEEDED — review DB init and migration time"
+        );
+    }
+
+    emit_event(&app, StartupEvent::Ready);
+    window
+        .show()
+        .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("{e}")))?;
+
+    Ok(())
+}
+
+/// Resolve the database file path inside the Tauri app data directory.
+/// Creates the directory if it does not already exist.
+fn resolve_db_path(app: &AppHandle) -> AppResult<String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("{e}")))?;
+    std::fs::create_dir_all(&dir).map_err(crate::errors::AppError::Io)?;
+    let db_file = dir.join("maintafox.db");
+    db_file
+        .to_str()
+        .map(String::from)
+        .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("Non-UTF8 app data path")))
+}
+
+fn emit_event(app: &AppHandle, event: StartupEvent) {
+    if let Err(e) = app.emit("startup_event", event) {
+        error!("failed to emit startup event: {e}");
+    }
+}
