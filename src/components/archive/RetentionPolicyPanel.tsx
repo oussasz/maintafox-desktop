@@ -13,13 +13,8 @@ import {
   listRetentionPolicies,
   updateRetentionPolicy,
 } from "@/services/archive-service";
+import { type ActivityEventSummary, listActivityEvents } from "@/services/activity-service";
 import { toErrorMessage } from "@/utils/errors";
-
-interface ChangeHistoryEntry {
-  policyId: number;
-  changedAt: string;
-  note: string;
-}
 
 export function RetentionPolicyPanel() {
   const { can, isLoading: permissionsLoading } = usePermissions();
@@ -30,8 +25,8 @@ export function RetentionPolicyPanel() {
   const [error, setError] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
   const [selectedPolicyId, setSelectedPolicyId] = useState<number | null>(null);
-  const [history, setHistory] = useState<ChangeHistoryEntry[]>([]);
-  const [loadedAt, setLoadedAt] = useState<string | null>(null);
+  const [persistedHistory, setPersistedHistory] = useState<ActivityEventSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -39,7 +34,6 @@ export function RetentionPolicyPanel() {
     try {
       const data = await listRetentionPolicies();
       setRows(data);
-      setLoadedAt(new Date().toISOString());
       if (!selectedPolicyId) {
         const first = data.at(0);
         if (first) {
@@ -53,9 +47,34 @@ export function RetentionPolicyPanel() {
     }
   }, [selectedPolicyId]);
 
+  const loadHistory = useCallback(async (policyId: number) => {
+    setHistoryLoading(true);
+    try {
+      const events = await listActivityEvents({
+        source_module: "archive",
+        source_record_type: "retention_policy",
+        source_record_id: String(policyId),
+        limit: 50,
+        offset: 0,
+      });
+      setPersistedHistory(events);
+    } catch {
+      // Non-critical: silently ignore if activity_events not yet available
+      setPersistedHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (selectedPolicyId !== null) {
+      void loadHistory(selectedPolicyId);
+    }
+  }, [selectedPolicyId, loadHistory]);
 
   const patchPolicy = useCallback(
     async (policy: RetentionPolicy, changes: Partial<RetentionPolicy>) => {
@@ -90,15 +109,10 @@ export function RetentionPolicyPanel() {
 
         await updateRetentionPolicy(payload);
 
-        const changedKeys = Object.keys(changes);
-        setHistory((prev) => [
-          {
-            policyId: policy.id,
-            changedAt: new Date().toISOString(),
-            note: `Updated ${changedKeys.join(", ")}`,
-          },
-          ...prev,
-        ]);
+        // Reload persisted history from activity_events after successful update
+        if (policy.id === selectedPolicyId) {
+          void loadHistory(policy.id);
+        }
       } catch (err) {
         setError(toErrorMessage(err));
         await load();
@@ -106,12 +120,7 @@ export function RetentionPolicyPanel() {
         setSavingId(null);
       }
     },
-    [canEdit, load],
-  );
-
-  const selectedHistory = useMemo(
-    () => history.filter((entry) => entry.policyId === selectedPolicyId),
-    [history, selectedPolicyId],
+    [canEdit, load, loadHistory, selectedPolicyId],
   );
 
   if (loading) {
@@ -217,43 +226,61 @@ export function RetentionPolicyPanel() {
       </div>
 
       <div className="space-y-3 rounded-lg border p-4">
-        <div className="flex items-center gap-2">
-          <History className="h-4 w-4" />
-          <h4 className="text-sm font-semibold">Change history</h4>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <History className="h-4 w-4" />
+            <h4 className="text-sm font-semibold">Change history</h4>
+          </div>
+          {selectedPolicyId && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2 text-xs"
+              onClick={() => void loadHistory(selectedPolicyId)}
+            >
+              Refresh
+            </Button>
+          )}
         </div>
 
         {selectedPolicyId ? (
           <>
-            <p className="text-xs text-muted-foreground">Policy ID: {selectedPolicyId}</p>
-            {loadedAt && (
-              <p className="text-xs text-muted-foreground">
-                Snapshot loaded at {new Date(loadedAt).toLocaleString()}
-              </p>
-            )}
-            {selectedHistory.length > 0 ? (
-              <div className="space-y-2">
-                {selectedHistory.map((entry, idx) => (
-                  <div key={`${entry.policyId}-${entry.changedAt}-${idx}`} className="rounded border p-2">
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(entry.changedAt).toLocaleString()}
-                    </p>
-                    <p className="text-sm">{entry.note}</p>
-                  </div>
-                ))}
+            {historyLoading ? (
+              <p className="text-xs text-muted-foreground">Loading history…</p>
+            ) : persistedHistory.length > 0 ? (
+              <div className="max-h-[400px] space-y-2 overflow-y-auto">
+                {persistedHistory.map((event) => {
+                  const summary =
+                    event.summary_json && typeof event.summary_json === "object"
+                      ? (event.summary_json as Record<string, unknown>)
+                      : null;
+                  return (
+                    <div key={event.id} className="rounded border p-2">
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(event.happened_at).toLocaleString()}
+                      </p>
+                      <p className="mt-0.5 text-sm font-medium">{event.event_code}</p>
+                      {summary?.["result"] != null && (
+                        <p className="text-xs text-muted-foreground">
+                          Result: {`${summary["result"]}`}
+                        </p>
+                      )}
+                      {event.actor_username && (
+                        <p className="text-xs text-muted-foreground">By: {event.actor_username}</p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                No edits in this session yet. Persistent audit timeline will be linked in SP07-F03.
+                No persisted events found for this policy.
               </p>
             )}
           </>
         ) : (
           <p className="text-sm text-muted-foreground">Select a row to inspect change history.</p>
         )}
-
-        <Button size="sm" variant="outline" onClick={() => void load()}>
-          Refresh
-        </Button>
       </div>
     </div>
   );

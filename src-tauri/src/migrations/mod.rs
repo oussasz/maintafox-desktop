@@ -34,6 +34,7 @@ mod m20260413_000032_rbac_hardening;
 mod m20260413_000033_password_policy_settings;
 mod m20260901_000034_notification_core;
 mod m20261001_000035_archive_core;
+mod m20261101_000036_activity_audit_log;
 
 pub struct Migrator;
 
@@ -75,6 +76,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260413_000033_password_policy_settings::Migration),
             Box::new(m20260901_000034_notification_core::Migration),
             Box::new(m20261001_000035_archive_core::Migration),
+            Box::new(m20261101_000036_activity_audit_log::Migration),
         ]
     }
 }

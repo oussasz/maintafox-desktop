@@ -9,6 +9,7 @@
 #![allow(clippy::unnecessary_literal_bound)]
 
 pub mod assets;
+pub mod activity;
 pub mod archive;
 pub mod audit;
 pub mod auth;
@@ -207,6 +208,15 @@ pub fn run() {
             commands::archive::set_legal_hold,
             commands::archive::list_retention_policies,
             commands::archive::update_retention_policy,
+            // ── Activity Feed & Audit Log ─────────────────────────────────
+            commands::activity_feed::list_activity_events,
+            commands::activity_feed::get_activity_event,
+            commands::activity_feed::save_activity_filter,
+            commands::activity_feed::list_saved_activity_filters,
+            commands::activity_feed::get_event_chain,
+            commands::audit_log::list_audit_events,
+            commands::audit_log::get_audit_event,
+            commands::audit_log::export_audit_log,
             // ── Lookup ────────────────────────────────────────────────────
             commands::lookup::list_lookup_domains,
             commands::lookup::get_lookup_values,

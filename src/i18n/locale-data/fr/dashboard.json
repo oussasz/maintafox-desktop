@@ -1,0 +1,31 @@
+{
+  "page": {
+    "title": "Tableau de bord",
+    "welcome": "Bienvenue, {{name}}"
+  },
+  "kpi": {
+    "openDis": "DI ouvertes",
+    "openWos": "OT ouvertes",
+    "totalAssets": "Équipements",
+    "overdueItems": "En retard",
+    "noChange": "aucun changement",
+    "vsPrevious": "vs période précédente",
+    "notAvailableYet": "Données non disponibles (module à venir)",
+    "comingSoon": "Module à venir"
+  },
+  "chart": {
+    "title": "Charge de travail — {{days}} derniers jours",
+    "diCreated": "DI créées",
+    "woCompleted": "OT terminées",
+    "pmDue": "MP prévues",
+    "loading": "Chargement…",
+    "empty": "Pas encore assez de données",
+    "ariaLabel": "Graphique charge de travail"
+  },
+  "quickActions": {
+    "title": "Actions rapides",
+    "newDi": "+ Nouvelle DI",
+    "newWo": "+ Nouvel OT",
+    "newAsset": "+ Nouvel équipement"
+  }
+}

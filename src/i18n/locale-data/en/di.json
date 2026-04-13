@@ -1,0 +1,260 @@
+{
+  "page": {
+    "title": "Intervention Requests",
+    "titleDetail": "Request detail",
+    "titleNew": "New request",
+    "titleEdit": "Edit request"
+  },
+  "list": {
+    "columns": {
+      "number": "No.",
+      "subject": "Subject",
+      "equipment": "Equipment",
+      "status": "Status",
+      "priority": "Priority",
+      "reportedBy": "Reported by",
+      "reportedAt": "Reported on",
+      "assignedTo": "Assigned to",
+      "sla": "SLA"
+    },
+    "filters": {
+      "status": "Status",
+      "priority": "Priority",
+      "assignedTo": "Assigned to",
+      "dateRange": "Date range"
+    }
+  },
+  "detail": {
+    "close": "Close",
+    "safety": "Safety",
+    "sections": {
+      "request": "Request",
+      "analysis": "Analysis",
+      "resolution": "Resolution",
+      "history": "History"
+    },
+    "fields": {
+      "number": "Number",
+      "subject": "Subject",
+      "description": "Description",
+      "equipment": "Equipment",
+      "priority": "Priority",
+      "status": "Status",
+      "reportedBy": "Reported by",
+      "reportedAt": "Reported on",
+      "assignedTo": "Assigned to",
+      "dueDate": "Due date",
+      "closedAt": "Closed on",
+      "conclusion": "Conclusion",
+      "origin": "Origin",
+      "asset": "Equipment",
+      "orgNode": "Org. node",
+      "impact": "Impact",
+      "production": "Production"
+    }
+  },
+  "form": {
+    "section": {
+      "requester": "Requester",
+      "equipment": "Equipment",
+      "general": "General Information"
+    },
+    "subject": {
+      "label": "Subject",
+      "placeholder": "Briefly describe the problem"
+    },
+    "description": {
+      "label": "Detailed description",
+      "placeholder": "Describe the symptom, conditions..."
+    },
+    "equipment": {
+      "label": "Equipment",
+      "placeholder": "Select equipment"
+    },
+    "equipmentSearch": "Search equipment...",
+    "priority": {
+      "label": "Priority"
+    },
+    "observedAt": {
+      "label": "Observation date"
+    },
+    "originType": {
+      "label": "Origin"
+    },
+    "impactLevel": {
+      "label": "Impact level"
+    },
+    "safetyFlag": {
+      "label": "Safety concern"
+    },
+    "environmentalFlag": {
+      "label": "Environmental concern"
+    },
+    "qualityFlag": {
+      "label": "Quality concern"
+    },
+    "productionImpact": {
+      "label": "Production impact"
+    },
+    "origin": {
+      "operator": "Operator",
+      "technician": "Technician",
+      "inspection": "Inspection",
+      "pm": "Preventive maintenance",
+      "iot": "IoT / Sensor",
+      "quality": "Quality",
+      "hse": "HSE",
+      "production": "Production",
+      "external": "External"
+    },
+    "impact": {
+      "unknown": "Unknown",
+      "none": "None",
+      "minor": "Minor",
+      "major": "Major",
+      "critical": "Critical"
+    },
+    "validation": {
+      "titleRequired": "Title is required",
+      "descriptionRequired": "Description is required",
+      "equipmentRequired": "Equipment is required",
+      "originRequired": "Origin is required",
+      "urgencyRequired": "Priority is required",
+      "impactRequired": "Impact level is required",
+      "assetMissingOrgNode": "The selected equipment has no organizational unit. Please assign one first."
+    },
+    "cancel": "Cancel",
+    "submit": "Create request",
+    "update": "Save changes"
+  },
+  "status": {
+    "new": "New",
+    "inReview": "In review",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "inProgress": "In progress",
+    "resolved": "Resolved",
+    "closed": "Closed",
+    "cancelled": "Cancelled"
+  },
+  "priority": {
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "critical": "Critical"
+  },
+  "action": {
+    "create": "New Request",
+    "approve": "Approve",
+    "reject": "Reject",
+    "assignTo": "Assign to",
+    "convertToWO": "Convert to Work Order",
+    "close": "Close",
+    "addComment": "Add comment"
+  },
+  "empty": {
+    "list": "No intervention requests found.",
+    "listHint": "Create a new request or adjust the filters.",
+    "noComments": "No comments for this request."
+  },
+  "lookup": {
+    "existingValues": "Existing values",
+    "loading": "Loading…",
+    "empty": "No values yet. Create one on the right.",
+    "editTitle": "Edit value",
+    "createTitle": "New value",
+    "newEntry": "New",
+    "name": "Name",
+    "namePlaceholder": "Value name",
+    "description": "Description",
+    "descriptionPlaceholder": "Optional description…",
+    "suggestions": "Suggestions",
+    "create": "Create",
+    "update": "Update",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "close": "Close",
+    "manage": "Manage"
+  },
+  "sla": {
+    "title": "SLA Rules",
+    "description": "Configure response and resolution targets for each urgency level.",
+    "loading": "Loading rules…",
+    "empty": "No SLA rules configured.",
+    "columns": {
+      "name": "Rule",
+      "urgency": "Urgency",
+      "response": "Response (h)",
+      "resolution": "Resolution (h)",
+      "escalation": "Escalation (h)",
+      "active": "Active"
+    },
+    "save": "Save",
+    "saving": "Saving…",
+    "close": "Close"
+  },
+  "review": {
+    "panelTitle": "Pending DIs",
+    "modified": "Modified",
+    "view": "View details",
+    "returnAction": "Return",
+    "approvalTitle": "Approve & Convert to Work Order",
+    "approvalNote": "Approval note",
+    "approvalNotePlaceholder": "Optional note for the approval record…",
+    "approver": "Approver",
+    "print": "Print",
+    "approveAndConvert": "Approve & Convert",
+    "reviewerNote": "Reviewer note",
+    "rejectionTitle": "Reject Intervention Request",
+    "reasonCode": "Rejection reason",
+    "reasonCodePlaceholder": "Enter the reason for rejection",
+    "reasonCodeRequired": "A rejection reason is required",
+    "rejectionNotes": "Additional notes",
+    "rejectionNotesPlaceholder": "Optional additional context…",
+    "irreversibleWarning": "This action is irreversible.",
+    "rejectAndConfirm": "Reject & Confirm",
+    "returnTitle": "Return for Clarification",
+    "clarificationNote": "Clarification note",
+    "clarificationNotePlaceholder": "Describe what information is needed…",
+    "clarificationRequired": "A clarification note is required",
+    "returnInfo": "The request will be returned to the requester."
+  },
+  "dashboard": {
+    "total": "Total",
+    "pending": "Pending",
+    "inProgress": "In progress",
+    "slaCompliance": "SLA compliance",
+    "closedThisMonth": "Closed (month)",
+    "overdue": "Overdue",
+    "safetyIssues": "Safety issues",
+    "avgAge": "Avg. age",
+    "statusDistribution": "Status distribution",
+    "priorityDistribution": "Priority distribution",
+    "trend": "Trend",
+    "allTime": "All",
+    "created": "Created",
+    "closed": "Closed",
+    "topEquipment": "Top 10 Equipment",
+    "overdueDis": "Overdue DIs",
+    "daysOverdue": "Days overdue"
+  },
+  "calendar": {
+    "today": "Today",
+    "mode": {
+      "month": "Month",
+      "week": "Week",
+      "day": "Day"
+    }
+  },
+  "archive": {
+    "title": "Archive"
+  },
+  "contextMenu": {
+    "viewDetail": "View detail",
+    "edit": "Edit",
+    "delete": "Delete",
+    "approve": "Approve",
+    "reject": "Reject",
+    "return": "Return for clarification"
+  }
+}

@@ -1,0 +1,439 @@
+{
+  "common": {
+    "cancel": "Annuler",
+    "close": "Fermer",
+    "loading": "Chargement…"
+  },
+  "page": {
+    "title": "Administration",
+    "subtitle": "Gestion des utilisateurs, rôles et permissions"
+  },
+  "tabs": {
+    "users": "Utilisateurs",
+    "roles": "Rôles",
+    "permissions": "Permissions",
+    "sessions": "Sessions",
+    "delegation": "Délégation",
+    "emergency": "Urgence",
+    "importExport": "Import / Export",
+    "audit": "Audit"
+  },
+  "metrics": {
+    "activeUsers": "Utilisateurs actifs",
+    "roles": "Rôles",
+    "activeSessions": "Sessions actives",
+    "unassigned": "Sans affectation"
+  },
+  "placeholders": {
+    "userList": "Gestion des utilisateurs — panneau en cours d'implémentation.",
+    "roleEditor": "Éditeur de rôles — panneau en cours d'implémentation.",
+    "permissionCatalog": "Catalogue des permissions — panneau en cours d'implémentation.",
+    "sessionVisibility": "Visibilité des sessions — panneau en cours d'implémentation.",
+    "delegation": "Gestionnaire de délégation — panneau en cours d'implémentation.",
+    "emergency": "Élévation d'urgence — panneau en cours d'implémentation.",
+    "importExport": "Import/export de rôles — panneau en cours d'implémentation.",
+    "audit": "Chronologie d'audit — panneau en cours d'implémentation."
+  },
+  "roles": {
+    "fullAccess": "Accès complet",
+    "noPermissions": "Aucune permission",
+    "list": "Rôles",
+    "selectRole": "Sélectionnez un rôle pour voir et modifier ses permissions.",
+    "system": "Système",
+    "custom": "Personnalisé",
+    "save": "Enregistrer",
+    "saved": "Rôle mis à jour",
+    "delete": "Supprimer",
+    "deleted": "Rôle supprimé",
+    "create": {
+      "title": "Créer un rôle",
+      "description": "Définissez un nom et sélectionnez éventuellement un modèle.",
+      "template": "Modèle",
+      "noTemplate": "Sans modèle",
+      "confirm": "Créer"
+    },
+    "fields": {
+      "name": "Nom",
+      "description": "Description"
+    },
+    "errors": {
+      "loadFailed": "Erreur de chargement des rôles",
+      "saveFailed": "Erreur de sauvegarde",
+      "deleteFailed": "Impossible de supprimer ce rôle"
+    },
+    "dependencyWarnings": "Avertissements de dépendance",
+    "hardDepErrors": "Dépendances obligatoires manquantes — sauvegarde bloquée",
+    "warnDeps": "Dépendances recommandées manquantes",
+    "requires": "requiert",
+    "suggests": "suggère",
+    "simulate": {
+      "title": "Simuler l'accès",
+      "description": "Visualisez les permissions effectives d'un utilisateur dans un périmètre donné.",
+      "userId": "ID utilisateur",
+      "scope": "Périmètre",
+      "run": "Simuler",
+      "warnings": "Avertissements de dépendance",
+      "blocked": "Bloqué par"
+    }
+  },
+  "users": {
+    "search": "Rechercher un utilisateur…",
+    "active": "Actif",
+    "inactive": "Inactif",
+    "deactivated": "Utilisateur désactivé",
+    "emergency": "Urgence",
+    "columns": {
+      "username": "Identifiant",
+      "displayName": "Nom affiché",
+      "identityMode": "Auth",
+      "status": "Statut",
+      "roles": "Rôles",
+      "lastSeen": "Dernière connexion"
+    },
+    "filter": {
+      "all": "Tous",
+      "active": "Actifs",
+      "inactive": "Inactifs",
+      "allModes": "Tous modes",
+      "local": "Local",
+      "sso": "SSO",
+      "hybrid": "Hybride"
+    },
+    "fields": {
+      "username": "Identifiant",
+      "identityMode": "Mode d'authentification",
+      "status": "Statut",
+      "lastSeen": "Dernière connexion"
+    },
+    "detail": {
+      "identity": "Identité",
+      "roles": "Rôles assignés",
+      "noRoles": "Aucun rôle assigné.",
+      "permissions": "Permissions effectives"
+    },
+    "actions": {
+      "revoke": "Révoquer",
+      "deactivate": "Désactiver"
+    },
+    "assignRole": {
+      "title": "Assigner un rôle",
+      "description": "Sélectionnez un rôle et un type de périmètre.",
+      "role": "Rôle",
+      "selectRole": "Choisir un rôle",
+      "scope": "Périmètre",
+      "confirm": "Assigner"
+    },
+    "create": "Nouvel utilisateur",
+    "create.title": "Nouvel utilisateur",
+    "create.description": "Créez un compte utilisateur et définissez son mode d'authentification.",
+    "create.password": "Mot de passe",
+    "create.confirmPassword": "Confirmer le mot de passe",
+    "create.passwordTooShort": "8 caractères minimum",
+    "create.passwordNeedUpper": "Une majuscule requise",
+    "create.passwordNeedLower": "Une minuscule requise",
+    "create.passwordNeedDigit": "Un chiffre requis",
+    "create.passwordMismatch": "Les mots de passe ne correspondent pas",
+    "create.forceChange": "Forcer le changement au premier login",
+    "create.confirm": "Créer",
+    "create.success": "Utilisateur créé",
+    "create.error": "Erreur lors de la création",
+    "create.strength": {
+      "weak": "Faible",
+      "medium": "Moyen",
+      "strong": "Fort"
+    },
+    "errors": {
+      "loadFailed": "Erreur de chargement des utilisateurs",
+      "deactivateFailed": "Erreur lors de la désactivation"
+    }
+  },
+  "profile": {
+    "memberSince": "Membre depuis",
+    "personalInfo": "Informations personnelles",
+    "edit": "Modifier",
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "saving": "Enregistrement...",
+    "displayName": "Nom d'affichage",
+    "email": "Email",
+    "phone": "Téléphone",
+    "language": "Langue",
+    "security": "Sécurité",
+    "password": "Mot de passe",
+    "lastChanged": "Dernière modification :",
+    "changePassword": "Changer",
+    "changePasswordTitle": "Changer le mot de passe",
+    "currentPassword": "Mot de passe actuel",
+    "newPassword": "Nouveau mot de passe",
+    "confirmPassword": "Confirmer le mot de passe",
+    "passwordMismatch": "Les mots de passe ne correspondent pas.",
+    "passwordError": "Échec du changement de mot de passe.",
+    "pinUnlock": "PIN de déverrouillage rapide",
+    "pinConfigured": "Configuré",
+    "pinNotSet": "Non configuré",
+    "setPin": "Configurer",
+    "changePin": "Modifier",
+    "removePin": "Supprimer",
+    "setPinTitle": "Configurer un PIN",
+    "changePinTitle": "Modifier le PIN",
+    "newPin": "Nouveau PIN (4-6 chiffres)",
+    "confirmPin": "Confirmer le PIN",
+    "pinMismatch": "Les PIN ne correspondent pas.",
+    "pinFormat": "Le PIN doit contenir 4 à 6 chiffres.",
+    "pinError": "Échec de la configuration du PIN.",
+    "enterPasswordToClearPin": "Entrez votre mot de passe pour supprimer le PIN",
+    "trustedDevices": "Appareils de confiance",
+    "viewDevices": "Voir / Révoquer",
+    "trustedDevicesTitle": "Appareils de confiance",
+    "unknownDevice": "Appareil inconnu",
+    "trustedSince": "Approuvé depuis",
+    "lastSeen": "Dernière connexion :",
+    "revoke": "Révoquer",
+    "revoking": "Révocation...",
+    "revoked": "Révoqué",
+    "deviceRevoked": "Confiance de l'appareil révoquée.",
+    "noDevices": "Aucun appareil de confiance trouvé.",
+    "close": "Fermer",
+    "saveSuccess": "Modifications enregistrées.",
+    "saveError": "Échec de l'enregistrement.",
+    "notificationPreferences": "Préférences de notification",
+    "notificationsPlaceholder": "Disponible après l'activation du module de notifications.",
+    "sessionHistory": "Historique des sessions",
+    "date": "Date",
+    "device": "Appareil",
+    "duration": "Durée",
+    "status": "Statut",
+    "noSessions": "Aucun historique de session."
+  },
+  "passwordPolicy": {
+    "title": "Politique de mot de passe",
+    "maxAgeDays": "Expiration (jours)",
+    "maxAgeDaysHint": "0 = pas d'expiration",
+    "warnDays": "Avertissement (jours avant expiration)",
+    "minLength": "Longueur minimale",
+    "complexity": "Exigences de complexité",
+    "requireUppercase": "Majuscule requise",
+    "requireLowercase": "Minuscule requise",
+    "requireDigit": "Chiffre requis",
+    "requireSpecial": "Caractère spécial requis",
+    "preview": "Aperçu de la politique :",
+    "previewText": "Min {{len}} car.",
+    "upper": "MAJ",
+    "lower": "min",
+    "digit": "chiffre",
+    "special": "spécial",
+    "expiresEvery": "Expire tous les {{days}} jours",
+    "noExpiry": "Pas d'expiration",
+    "save": "Enregistrer la politique",
+    "saving": "Enregistrement...",
+    "saved": "Politique enregistrée avec succès."
+  },
+  "permissions": {
+    "domains": "Domaines",
+    "search": "Rechercher…",
+    "export": "Exporter CSV",
+    "addCustom": "Ajouter",
+    "empty": "Aucune permission dans ce domaine.",
+    "created": "Permission créée",
+    "table": {
+      "name": "Nom",
+      "description": "Description",
+      "dangerous": "Dangereux",
+      "stepUp": "Step-up",
+      "type": "Type"
+    },
+    "badges": {
+      "dangerous": "Dangereux",
+      "stepUp": "Step-up",
+      "system": "Système",
+      "custom": "Personnalisé"
+    },
+    "fields": {
+      "name": "Nom",
+      "description": "Description"
+    },
+    "create": {
+      "title": "Créer une permission personnalisée",
+      "description": "Les permissions personnalisées utilisent le préfixe 'cst.' et ne peuvent pas être dangereuses.",
+      "descPlaceholder": "Brève description de cette permission",
+      "confirm": "Créer"
+    },
+    "errors": {
+      "loadFailed": "Erreur de chargement des permissions",
+      "createFailed": "Erreur lors de la création",
+      "mustStartWithCst": "Le nom doit commencer par 'cst.'",
+      "nameTooShort": "Ajoutez au moins un caractère après 'cst.'",
+      "systemPrefix": "Préfixe système réservé"
+    },
+    "dependencies": {
+      "title": "Dépendances",
+      "none": "Aucune dépendance",
+      "hard": "Obligatoire (hard)",
+      "warn": "Recommandé (warn)",
+      "requires": "Requiert",
+      "requiredBy": "Requis par",
+      "suggests": "Suggère",
+      "suggestedBy": "Suggéré par"
+    }
+  },
+  "sessions": {
+    "title": "Sessions actives",
+    "columns": {
+      "username": "Utilisateur",
+      "deviceName": "Appareil",
+      "trustStatus": "Confiance",
+      "sessionStart": "Début",
+      "lastActivity": "Dernière activité",
+      "roles": "Rôles",
+      "actions": "Actions"
+    },
+    "badges": {
+      "trusted": "Approuvé",
+      "revoked": "Révoqué",
+      "unknown": "Inconnu",
+      "currentSession": "Session actuelle"
+    },
+    "revoke": "Révoquer",
+    "revokeConfirm": "Voulez-vous révoquer cette session ?",
+    "revokeConfirmDesc": "L'utilisateur sera déconnecté immédiatement.",
+    "revoked": "Session révoquée",
+    "cannotRevokeSelf": "Impossible de révoquer votre propre session",
+    "autoRefresh": "Actualisation auto. toutes les 30s",
+    "noSessions": "Aucune session active.",
+    "errors": {
+      "loadFailed": "Erreur de chargement des sessions",
+      "revokeFailed": "Erreur lors de la révocation"
+    }
+  },
+  "delegation": {
+    "title": "Politiques de délégation",
+    "columns": {
+      "adminRole": "Rôle admin",
+      "scope": "Périmètre",
+      "domains": "Domaines autorisés",
+      "stepUp": "Step-up requis",
+      "actions": "Actions"
+    },
+    "create": "Nouvelle politique",
+    "createTitle": "Créer une politique de délégation",
+    "createDesc": "Définissez les limites de délégation pour un rôle administrateur.",
+    "edit": "Modifier",
+    "editTitle": "Modifier la politique de délégation",
+    "delete": "Supprimer",
+    "deleteConfirm": "Voulez-vous supprimer cette politique de délégation ?",
+    "deleteConfirmDesc": "Cette action est irréversible.",
+    "created": "Politique créée",
+    "updated": "Politique mise à jour",
+    "deleted": "Politique supprimée",
+    "fields": {
+      "adminRole": "Rôle administrateur",
+      "selectRole": "Choisir un rôle",
+      "scopeType": "Type de périmètre",
+      "scopeReference": "Référence du périmètre",
+      "allowedDomains": "Domaines autorisés",
+      "selectDomains": "Sélectionner les domaines",
+      "requiresStepUp": "Exiger le step-up pour la publication"
+    },
+    "scopeTypes": {
+      "tenant": "Global (tenant)",
+      "site": "Site",
+      "department": "Département"
+    },
+    "noPolicies": "Aucune politique de délégation.",
+    "errors": {
+      "loadFailed": "Erreur de chargement des politiques",
+      "createFailed": "Erreur lors de la création",
+      "updateFailed": "Erreur lors de la mise à jour",
+      "deleteFailed": "Erreur lors de la suppression"
+    }
+  },
+  "emergency": {
+    "title": "Élévations d'urgence",
+    "columns": {
+      "username": "Utilisateur",
+      "role": "Rôle",
+      "scope": "Périmètre",
+      "reason": "Raison",
+      "expiresAt": "Expiration",
+      "grantedBy": "Accordé par",
+      "status": "Statut",
+      "actions": "Actions"
+    },
+    "grant": "Accès d'urgence",
+    "grantTitle": "Accorder un accès d'urgence",
+    "grantDesc": "Accordez un accès temporaire élevé à un utilisateur.",
+    "revoke": "Révoquer",
+    "revokeConfirm": "Voulez-vous révoquer cet accès d'urgence ?",
+    "revokeConfirmDesc": "L'utilisateur perdra immédiatement l'accès élevé.",
+    "granted": "Accès d'urgence accordé",
+    "revokedSuccess": "Accès d'urgence révoqué",
+    "badges": {
+      "active": "Actif",
+      "expired": "Expiré"
+    },
+    "countdown": {
+      "remaining": "Restant",
+      "hours": "h",
+      "minutes": "min",
+      "seconds": "s"
+    },
+    "fields": {
+      "user": "Utilisateur",
+      "selectUser": "Choisir un utilisateur",
+      "role": "Rôle",
+      "selectRole": "Choisir un rôle",
+      "scopeType": "Type de périmètre",
+      "scopeReference": "Référence du périmètre",
+      "reason": "Raison (min. 20 caractères)",
+      "reasonPlaceholder": "Décrivez la raison de cette élévation d'urgence...",
+      "expiryMinutes": "Durée (minutes)",
+      "expiryRange": "1 à 480 minutes (8h max)"
+    },
+    "noGrants": "Aucune élévation d'urgence.",
+    "errors": {
+      "loadFailed": "Erreur de chargement",
+      "grantFailed": "Erreur lors de l'attribution",
+      "revokeFailed": "Erreur lors de la révocation",
+      "reasonTooShort": "La raison doit contenir au moins 20 caractères"
+    }
+  },
+  "importExport": {
+    "title": "Import / Export de rôles",
+    "export": {
+      "title": "Exporter des rôles",
+      "selectRoles": "Sélectionnez les rôles à exporter",
+      "button": "Exporter JSON",
+      "noSelection": "Sélectionnez au moins un rôle.",
+      "success": "Export réalisé avec succès"
+    },
+    "import": {
+      "title": "Importer des rôles",
+      "selectFile": "Choisir un fichier JSON",
+      "preview": "Aperçu de l'import",
+      "button": "Confirmer l'import",
+      "noFile": "Aucun fichier sélectionné.",
+      "parsing": "Analyse du fichier...",
+      "parseError": "Erreur de lecture du fichier JSON",
+      "columns": {
+        "name": "Nom du rôle",
+        "permissions": "Permissions",
+        "warnings": "Avertissements",
+        "status": "Statut"
+      },
+      "badges": {
+        "valid": "Valide",
+        "hasWarnings": "Avertissements",
+        "blocked": "Bloqué"
+      },
+      "success": "Import terminé : {{count}} rôle(s) importé(s)",
+      "skipped": "{{count}} rôle(s) ignoré(s)",
+      "result": "Résultat de l'import"
+    },
+    "noRoles": "Aucun rôle disponible.",
+    "errors": {
+      "loadFailed": "Erreur de chargement des rôles",
+      "exportFailed": "Erreur lors de l'export",
+      "importFailed": "Erreur lors de l'import"
+    }
+  }
+}

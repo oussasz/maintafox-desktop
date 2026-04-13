@@ -376,6 +376,15 @@ pub async fn restore_archive_item(
             "failed",
         )
         .await;
+        emit_archive_activity_event(
+            &state.db,
+            payload.archive_item_id,
+            i64::from(user.user_id),
+            "archive.restore_blocked",
+            "blocked",
+            "restore",
+        )
+        .await;
         return Err(AppError::PermissionDenied(
             "Restore blocked: restore_policy is not allowed for this item".to_string(),
         ));
@@ -391,6 +400,15 @@ pub async fn restore_archive_item(
                 Some(i64::from(user.user_id)),
                 Some("restore blocked: restore_until_at is missing for until_date policy"),
                 "failed",
+            )
+            .await;
+            emit_archive_activity_event(
+                &state.db,
+                payload.archive_item_id,
+                i64::from(user.user_id),
+                "archive.restore_blocked",
+                "blocked",
+                "restore",
             )
             .await;
             return Err(AppError::ValidationFailed(vec![
@@ -420,6 +438,15 @@ pub async fn restore_archive_item(
                 "failed",
             )
             .await;
+            emit_archive_activity_event(
+                &state.db,
+                payload.archive_item_id,
+                i64::from(user.user_id),
+                "archive.restore_blocked",
+                "blocked",
+                "restore",
+            )
+            .await;
             return Err(AppError::PermissionDenied(
                 "Restore blocked: restore window has expired".to_string(),
             ));
@@ -435,6 +462,15 @@ pub async fn restore_archive_item(
             Some(i64::from(user.user_id)),
             Some("restore blocked: legal hold is enabled"),
             "failed",
+        )
+        .await;
+        emit_archive_activity_event(
+            &state.db,
+            payload.archive_item_id,
+            i64::from(user.user_id),
+            "archive.restore_blocked",
+            "blocked",
+            "restore",
         )
         .await;
         return Err(AppError::PermissionDenied(
@@ -455,6 +491,15 @@ pub async fn restore_archive_item(
                     "failed",
                 )
                 .await;
+                emit_archive_activity_event(
+                    &state.db,
+                    payload.archive_item_id,
+                    i64::from(user.user_id),
+                    "archive.restore_blocked",
+                    "blocked",
+                    "restore",
+                )
+                .await;
                 return Err(AppError::PermissionDenied(
                     "Restore blocked: retention policy does not allow restore".to_string(),
                 ));
@@ -472,15 +517,15 @@ pub async fn restore_archive_item(
     )
     .await?;
 
-    if let Err(err) = write_restore_activity_event_fire_and_log(
+    emit_archive_activity_event(
         &state.db,
         payload.archive_item_id,
         i64::from(user.user_id),
+        "archive.restore_requested",
+        "success",
+        "restore",
     )
-    .await
-    {
-        tracing::warn!(error = %err, "archive::restore activity event write skipped");
-    }
+    .await;
 
     Ok(ArchiveRestoreResult {
         archive_item_id: payload.archive_item_id,
@@ -587,6 +632,15 @@ pub async fn purge_archive_items(
                     "failed",
                 )
                 .await;
+                emit_archive_activity_event(
+                    &state.db,
+                    archive_item_id,
+                    i64::from(user.user_id),
+                    "archive.purge_blocked",
+                    "blocked",
+                    "purge",
+                )
+                .await;
                 blocked_items.push(PurgeBlockedItem {
                     archive_item_id,
                     reason,
@@ -632,6 +686,16 @@ pub async fn purge_archive_items(
                 [(*archive_item_id).into()],
             ))
             .await?;
+
+        emit_archive_activity_event(
+            &state.db,
+            *archive_item_id,
+            i64::from(user.user_id),
+            "archive.purged",
+            "success",
+            "purge",
+        )
+        .await;
 
         purged_item_ids.push(*archive_item_id);
     }
@@ -895,47 +959,36 @@ async fn load_retention_policy_by_id(
     Ok(row.map(|r| parse_retention_policy(&r)))
 }
 
-async fn write_restore_activity_event_fire_and_log(
+/// Fire-and-log an activity event for a completed (success) archive restore.
+async fn emit_archive_activity_event(
     db: &sea_orm::DatabaseConnection,
     archive_item_id: i64,
     actor_id: i64,
-) -> AppResult<()> {
-    let exists = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT 1 AS ok
-             FROM sqlite_master
-             WHERE type = 'table'
-               AND name = 'activity_events'
-             LIMIT 1",
-            [],
-        ))
-        .await?
-        .is_some();
-    if !exists {
-        return Ok(());
+    event_code: &str,
+    result: &str,
+    action: &str,
+) {
+    let input = crate::activity::emitter::ActivityEventInput {
+        event_class: "operational".to_string(),
+        event_code: event_code.to_string(),
+        source_module: "archive".to_string(),
+        source_record_type: Some("archive_item".to_string()),
+        source_record_id: Some(archive_item_id.to_string()),
+        entity_scope_id: None,
+        actor_id: Some(actor_id),
+        severity: if result == "blocked" { "warning".to_string() } else { "info".to_string() },
+        summary_json: Some(serde_json::json!({
+            "archive_item_id": archive_item_id,
+            "action": action,
+            "result": result,
+        })),
+        correlation_id: None,
+        visibility_scope: "global".to_string(),
+    };
+    // Fire-and-log: failure must never break the archive command
+    if let Err(err) = crate::activity::emitter::emit_activity_event(db, input).await {
+        tracing::warn!(error = %err, archive_item_id, action, "archive::emit_activity_event skipped");
     }
-
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO activity_events
-            (source_module, source_record_id, event_type, actor_user_id, event_at, payload_json)
-         VALUES
-            ('archive', ?, 'archive_restore_requested', ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?)",
-        [
-            archive_item_id.to_string().into(),
-            actor_id.into(),
-            serde_json::json!({
-                "archive_item_id": archive_item_id,
-                "action": "restore",
-            })
-            .to_string()
-            .into(),
-        ],
-    ))
-    .await?;
-
-    Ok(())
 }
 
 async fn load_archive_purge_strict_mode(state: &State<'_, AppState>) -> AppResult<bool> {

@@ -1,0 +1,7 @@
+0000000000000000000000000000000000000000 375a15a27f0b0114c59b11fa4eeceda90ad72b1d oussasz <brahimi.oussamaa@gmail.com> 1775423114 +0100	branch: Created from develop
+375a15a27f0b0114c59b11fa4eeceda90ad72b1d ee81bf6cb8d88291b033b9c64396f8b72f27a845 oussasz <brahimi.oussamaa@gmail.com> 1775423967 +0100	commit: [P2-SP01-F01] Org structure model, node types, and relationship rules
+ee81bf6cb8d88291b033b9c64396f8b72f27a845 e96ea22359352442a2c36f6b298d0d2aef12b67e oussasz <brahimi.oussamaa@gmail.com> 1775424474 +0100	commit (merge): Merge remote-tracking branch 'origin/main' into feature/p2-sp01-f01-org-structure-model
+e96ea22359352442a2c36f6b298d0d2aef12b67e 5a9d38cfb8f355234e2d249be422e82d4d4a365b oussasz <brahimi.oussamaa@gmail.com> 1775424870 +0100	commit: fix: read MAX(version_number) as i64 to match SQLite aggregate type
+5a9d38cfb8f355234e2d249be422e82d4d4a365b 2db558b2337baea492098329aa76db48bf1c4b33 oussasz <brahimi.oussamaa@gmail.com> 1775425750 +0100	commit: style: flatten closure to satisfy rustfmt single-line preference
+2db558b2337baea492098329aa76db48bf1c4b33 4d7fdb8998a12ba6329d9e246b23e4bd04352b85 oussasz <brahimi.oussamaa@gmail.com> 1775577963 +0100	commit: feat: complete DI module (SP04 files 01-04) with org, assets, reference foundations
+4d7fdb8998a12ba6329d9e246b23e4bd04352b85 99f572b222cc09aba303029d1e4864545cb9779c oussasz <brahimi.oussamaa@gmail.com> 1775759658 +0100	commit: feat: complete SP04 gap closure — DI/WO/Asset form error handling, Zod schema fixes, profile IPC commands, full frontend components

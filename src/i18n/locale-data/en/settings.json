@@ -1,0 +1,162 @@
+{
+  "page": {
+    "title": "Settings",
+    "description": "Manage application settings",
+    "noSettings": "No settings in this category",
+    "loading": "Loading settings…",
+    "loadError": "Failed to load settings"
+  },
+  "categories": {
+    "localization": "Localization",
+    "appearance": "Appearance",
+    "system": "System",
+    "backup": "Backup"
+  },
+  "table": {
+    "key": "Key",
+    "value": "Value",
+    "scope": "Scope",
+    "risk": "Risk",
+    "status": "Status",
+    "lastModified": "Last Modified",
+    "actions": "Actions"
+  },
+  "editor": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "saving": "Saving…",
+    "saveSuccess": "Setting saved successfully",
+    "saveError": "Error saving setting",
+    "invalidJson": "Invalid JSON value"
+  },
+  "risk": {
+    "low": "Low",
+    "high": "High"
+  },
+  "validation": {
+    "valid": "Valid",
+    "draft": "Draft",
+    "error": "Error",
+    "untested": "Untested"
+  },
+  "scope": {
+    "tenant": "Tenant",
+    "device": "Device"
+  },
+  "keys": {
+    "locale.primary_language": "Primary Language",
+    "locale.fallback_language": "Fallback Language",
+    "locale.date_format": "Date Format",
+    "locale.number_format": "Number Format",
+    "locale.week_start_day": "Week Start Day",
+    "appearance.color_mode": "Color Mode",
+    "appearance.density": "Display Density",
+    "appearance.text_scale": "Text Scale",
+    "updater.release_channel": "Release Channel",
+    "updater.auto_check": "Auto Check",
+    "backup.retention_daily": "Daily Retention (days)",
+    "backup.retention_weekly": "Weekly Retention (weeks)",
+    "backup.retention_monthly": "Monthly Retention (months)",
+    "diagnostics.log_retention_days": "Log Retention (days)"
+  },
+  "auditLog": {
+    "title": "Change Log",
+    "empty": "No changes recorded",
+    "summary": "Summary",
+    "changedAt": "Date",
+    "changedBy": "By",
+    "stepUp": "Step-up"
+  },
+  "sidebar": {
+    "search": "Search categories…"
+  },
+  "policy": {
+    "governedTitle": "Governed Setting",
+    "governedDescription": "This setting uses the Draft → Test → Activate workflow.",
+    "active": "Active",
+    "activeConfig": "Active Configuration",
+    "draftConfig": "Draft Configuration",
+    "noSnapshot": "No policy snapshot activated yet.",
+    "noDraft": "No draft exists. Click \"Edit Draft\" to create one.",
+    "version": "Version {{version}}",
+    "activatedAt": "Activated {{date}}",
+    "currentValues": "Current Values",
+    "draftPending": "Draft pending",
+    "requiresStepUp": "Step-up required",
+    "editDraft": "Edit Draft",
+    "testDraft": "Test Draft",
+    "activate": "Activate",
+    "discard": "Discard",
+    "draftSaved": "Draft saved successfully",
+    "draftSaveError": "Failed to save draft",
+    "testPassed": "All validation rules passed",
+    "testFailed": "Some validation rules failed",
+    "testError": "Failed to run validation",
+    "testResults": "Test Results",
+    "activated": "Policy activated successfully",
+    "activateError": "Failed to activate policy",
+    "stepUpRequired": "Step-up authentication required to activate this policy",
+    "discarded": "Draft discarded",
+    "discardError": "Failed to discard draft",
+    "discardConfirmTitle": "Discard Draft?",
+    "discardConfirmDescription": "This will permanently delete the current draft. This action cannot be undone.",
+    "changeHistory": "Change History",
+    "historyActive": "Active",
+    "historySuperseded": "Superseded",
+    "historyDraft": "Draft",
+    "fields": {
+      "max_session_hours": "Max Session (hours)",
+      "idle_timeout_minutes": "Idle Timeout (minutes)",
+      "step_up_window_seconds": "Step-up Window (seconds)",
+      "min_length": "Minimum Length",
+      "require_uppercase": "Require Uppercase",
+      "require_number": "Require Number",
+      "max_age_days": "Max Age (days)",
+      "history_count": "History Count",
+      "schedule_cron": "Schedule (cron)",
+      "retention_days": "Retention (days)",
+      "include_photos": "Include Photos",
+      "compression_level": "Compression Level"
+    }
+  },
+  "permissionDenied": "You do not have permission to access settings",
+  "options": {
+    "language": {
+      "fr": "Français",
+      "en": "English"
+    },
+    "dateFormat": {
+      "dmy": "DD/MM/YYYY",
+      "mdy": "MM/DD/YYYY",
+      "iso": "YYYY-MM-DD (ISO)"
+    },
+    "numberFormat": {
+      "fr": "French (1 234,56)",
+      "en": "English (1,234.56)"
+    },
+    "weekStart": {
+      "monday": "Monday",
+      "sunday": "Sunday"
+    },
+    "colorMode": {
+      "light": "Light",
+      "dark": "Dark"
+    },
+    "density": {
+      "compact": "Compact",
+      "standard": "Standard",
+      "comfortable": "Comfortable"
+    },
+    "textScale": {
+      "small": "Small (85%)",
+      "default": "Normal (100%)",
+      "large": "Large (115%)",
+      "extraLarge": "Extra Large (130%)"
+    },
+    "channel": {
+      "stable": "Stable",
+      "beta": "Beta"
+    }
+  }
+}

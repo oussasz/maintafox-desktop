@@ -2557,3 +2557,124 @@ export interface AdminChangeEventDetail {
   step_up_used: boolean;
   apply_result: string;
 }
+
+// ─── Activity Feed & Audit Log (SP07-F03) ──────────────────────────────────
+
+export interface ActivityFilter {
+  event_class?: string;
+  event_code?: string;
+  source_module?: string;
+  source_record_type?: string;
+  source_record_id?: string;
+  entity_scope_id?: number;
+  actor_id?: number;
+  severity?: string;
+  date_from?: string;
+  date_to?: string;
+  correlation_id?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ActivityEventSummary {
+  id: number;
+  event_class: string;
+  event_code: string;
+  source_module: string;
+  source_record_type: string | null;
+  source_record_id: string | null;
+  entity_scope_id: number | null;
+  actor_id: number | null;
+  actor_username: string | null;
+  happened_at: string;
+  severity: string;
+  summary_json: unknown | null;
+  correlation_id: string | null;
+  visibility_scope: string;
+}
+
+export interface ActivityEventDetail {
+  event: ActivityEventSummary;
+  correlated_events: ActivityEventSummary[];
+  source_record_link: string | null;
+}
+
+export interface SaveFilterInput {
+  view_name: string;
+  filter_json: unknown;
+  is_default: boolean;
+}
+
+export interface SavedActivityFilter {
+  id: number;
+  user_id: number;
+  view_name: string;
+  filter_json: unknown;
+  is_default: boolean;
+}
+
+export interface EventChainNode {
+  table: string;
+  event_id: number;
+  happened_at: string;
+  event_code: string | null;
+  action_code: string | null;
+  source_module: string | null;
+  link_type: string | null;
+}
+
+export interface EventChain {
+  events: EventChainNode[];
+}
+
+export interface AuditFilter {
+  action_code?: string;
+  actor_id?: number;
+  target_type?: string;
+  result?: string;
+  date_from?: string;
+  date_to?: string;
+  retention_class?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AuditEventSummary {
+  id: number;
+  action_code: string;
+  target_type: string | null;
+  target_id: string | null;
+  actor_id: number | null;
+  actor_username: string | null;
+  auth_context: string;
+  result: string;
+  happened_at: string;
+  retention_class: string;
+}
+
+export interface AuditEventDetail {
+  id: number;
+  action_code: string;
+  target_type: string | null;
+  target_id: string | null;
+  actor_id: number | null;
+  actor_username: string | null;
+  auth_context: string;
+  result: string;
+  before_hash: string | null;
+  after_hash: string | null;
+  happened_at: string;
+  retention_class: string;
+  details_json: unknown | null;
+}
+
+export interface ExportAuditInput {
+  filter: AuditFilter;
+  export_reason: string;
+}
+
+export interface ExportResult {
+  event_export_run_id: number;
+  row_count: number;
+  rows_json: unknown;
+}

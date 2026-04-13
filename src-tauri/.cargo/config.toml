@@ -1,0 +1,11 @@
+[env]
+SQLX_OFFLINE = "true"
+
+[profile.release]
+lto = "thin"
+opt-level = "s"
+strip = true
+
+[profile.dev]
+opt-level = 1
+debug = true

@@ -1,0 +1,31 @@
+{
+  "page": {
+    "title": "Dashboard",
+    "welcome": "Welcome, {{name}}"
+  },
+  "kpi": {
+    "openDis": "Open DIs",
+    "openWos": "Open WOs",
+    "totalAssets": "Assets",
+    "overdueItems": "Overdue",
+    "noChange": "no change",
+    "vsPrevious": "vs previous period",
+    "notAvailableYet": "Data not available (module coming soon)",
+    "comingSoon": "Coming soon"
+  },
+  "chart": {
+    "title": "Workload — Last {{days}} Days",
+    "diCreated": "DI Created",
+    "woCompleted": "WO Completed",
+    "pmDue": "PM Due",
+    "loading": "Loading…",
+    "empty": "Not enough data yet",
+    "ariaLabel": "Workload chart"
+  },
+  "quickActions": {
+    "title": "Quick Actions",
+    "newDi": "+ New DI",
+    "newWo": "+ New WO",
+    "newAsset": "+ New Asset"
+  }
+}

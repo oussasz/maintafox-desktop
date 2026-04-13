@@ -1,0 +1,439 @@
+{
+  "common": {
+    "cancel": "Cancel",
+    "close": "Close",
+    "loading": "Loading…"
+  },
+  "page": {
+    "title": "Administration",
+    "subtitle": "User, role, and permission management"
+  },
+  "tabs": {
+    "users": "Users",
+    "roles": "Roles",
+    "permissions": "Permissions",
+    "sessions": "Sessions",
+    "delegation": "Delegation",
+    "emergency": "Emergency",
+    "importExport": "Import / Export",
+    "audit": "Audit"
+  },
+  "metrics": {
+    "activeUsers": "Active Users",
+    "roles": "Roles",
+    "activeSessions": "Active Sessions",
+    "unassigned": "Unassigned"
+  },
+  "placeholders": {
+    "userList": "User management — panel implementation in progress.",
+    "roleEditor": "Role editor — panel implementation in progress.",
+    "permissionCatalog": "Permission catalog — panel implementation in progress.",
+    "sessionVisibility": "Session visibility — panel implementation in progress.",
+    "delegation": "Delegation manager — panel implementation in progress.",
+    "emergency": "Emergency elevation — panel implementation in progress.",
+    "importExport": "Role import/export — panel implementation in progress.",
+    "audit": "Audit timeline — panel implementation in progress."
+  },
+  "roles": {
+    "fullAccess": "Full access",
+    "noPermissions": "No permissions",
+    "list": "Roles",
+    "selectRole": "Select a role to view and edit its permissions.",
+    "system": "System",
+    "custom": "Custom",
+    "save": "Save",
+    "saved": "Role updated",
+    "delete": "Delete",
+    "deleted": "Role deleted",
+    "create": {
+      "title": "Create role",
+      "description": "Define a name and optionally select a template.",
+      "template": "Template",
+      "noTemplate": "No template",
+      "confirm": "Create"
+    },
+    "fields": {
+      "name": "Name",
+      "description": "Description"
+    },
+    "errors": {
+      "loadFailed": "Failed to load roles",
+      "saveFailed": "Failed to save role",
+      "deleteFailed": "Cannot delete this role"
+    },
+    "dependencyWarnings": "Dependency warnings",
+    "hardDepErrors": "Missing required dependencies — save blocked",
+    "warnDeps": "Missing recommended dependencies",
+    "requires": "requires",
+    "suggests": "suggests",
+    "simulate": {
+      "title": "Simulate access",
+      "description": "Preview effective permissions for a user within a given scope.",
+      "userId": "User ID",
+      "scope": "Scope",
+      "run": "Simulate",
+      "warnings": "Dependency warnings",
+      "blocked": "Blocked by"
+    }
+  },
+  "users": {
+    "search": "Search users…",
+    "active": "Active",
+    "inactive": "Inactive",
+    "deactivated": "User deactivated",
+    "emergency": "Emergency",
+    "columns": {
+      "username": "Username",
+      "displayName": "Display name",
+      "identityMode": "Auth",
+      "status": "Status",
+      "roles": "Roles",
+      "lastSeen": "Last seen"
+    },
+    "filter": {
+      "all": "All",
+      "active": "Active",
+      "inactive": "Inactive",
+      "allModes": "All modes",
+      "local": "Local",
+      "sso": "SSO",
+      "hybrid": "Hybrid"
+    },
+    "fields": {
+      "username": "Username",
+      "identityMode": "Authentication mode",
+      "status": "Status",
+      "lastSeen": "Last seen"
+    },
+    "detail": {
+      "identity": "Identity",
+      "roles": "Assigned roles",
+      "noRoles": "No roles assigned.",
+      "permissions": "Effective permissions"
+    },
+    "actions": {
+      "revoke": "Revoke",
+      "deactivate": "Deactivate"
+    },
+    "assignRole": {
+      "title": "Assign role",
+      "description": "Select a role and scope type.",
+      "role": "Role",
+      "selectRole": "Choose a role",
+      "scope": "Scope",
+      "confirm": "Assign"
+    },
+    "create": "New user",
+    "create.title": "New user",
+    "create.description": "Create a user account and set the authentication mode.",
+    "create.password": "Password",
+    "create.confirmPassword": "Confirm password",
+    "create.passwordTooShort": "8 characters minimum",
+    "create.passwordNeedUpper": "One uppercase letter required",
+    "create.passwordNeedLower": "One lowercase letter required",
+    "create.passwordNeedDigit": "One digit required",
+    "create.passwordMismatch": "Passwords do not match",
+    "create.forceChange": "Force password change on first login",
+    "create.confirm": "Create",
+    "create.success": "User created",
+    "create.error": "Failed to create user",
+    "create.strength": {
+      "weak": "Weak",
+      "medium": "Medium",
+      "strong": "Strong"
+    },
+    "errors": {
+      "loadFailed": "Failed to load users",
+      "deactivateFailed": "Failed to deactivate user"
+    }
+  },
+  "profile": {
+    "memberSince": "Member since",
+    "personalInfo": "Personal Information",
+    "edit": "Edit",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving...",
+    "displayName": "Display name",
+    "email": "Email",
+    "phone": "Phone",
+    "language": "Language",
+    "security": "Security",
+    "password": "Password",
+    "lastChanged": "Last changed:",
+    "changePassword": "Change",
+    "changePasswordTitle": "Change Password",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm password",
+    "passwordMismatch": "Passwords do not match.",
+    "passwordError": "Password change failed.",
+    "pinUnlock": "Quick Unlock PIN",
+    "pinConfigured": "Configured",
+    "pinNotSet": "Not configured",
+    "setPin": "Set up",
+    "changePin": "Change",
+    "removePin": "Remove",
+    "setPinTitle": "Set Up PIN",
+    "changePinTitle": "Change PIN",
+    "newPin": "New PIN (4-6 digits)",
+    "confirmPin": "Confirm PIN",
+    "pinMismatch": "PINs do not match.",
+    "pinFormat": "PIN must be 4 to 6 digits.",
+    "pinError": "PIN setup failed.",
+    "enterPasswordToClearPin": "Enter your password to remove PIN",
+    "trustedDevices": "Trusted Devices",
+    "viewDevices": "View / Revoke",
+    "trustedDevicesTitle": "Trusted Devices",
+    "unknownDevice": "Unknown device",
+    "trustedSince": "Trusted since",
+    "lastSeen": "Last seen:",
+    "revoke": "Revoke",
+    "revoking": "Revoking...",
+    "revoked": "Revoked",
+    "deviceRevoked": "Device trust revoked.",
+    "noDevices": "No trusted devices found.",
+    "close": "Close",
+    "saveSuccess": "Changes saved.",
+    "saveError": "Save failed.",
+    "notificationPreferences": "Notification Preferences",
+    "notificationsPlaceholder": "Available after notification module is enabled.",
+    "sessionHistory": "Session History",
+    "date": "Date",
+    "device": "Device",
+    "duration": "Duration",
+    "status": "Status",
+    "noSessions": "No session history."
+  },
+  "passwordPolicy": {
+    "title": "Password Policy",
+    "maxAgeDays": "Expiry (days)",
+    "maxAgeDaysHint": "0 = no expiry",
+    "warnDays": "Warning (days before expiry)",
+    "minLength": "Minimum length",
+    "complexity": "Complexity requirements",
+    "requireUppercase": "Uppercase required",
+    "requireLowercase": "Lowercase required",
+    "requireDigit": "Digit required",
+    "requireSpecial": "Special character required",
+    "preview": "Policy preview:",
+    "previewText": "Min {{len}} char.",
+    "upper": "UPPER",
+    "lower": "lower",
+    "digit": "digit",
+    "special": "special",
+    "expiresEvery": "Expires every {{days}} days",
+    "noExpiry": "No expiry",
+    "save": "Save policy",
+    "saving": "Saving...",
+    "saved": "Policy saved successfully."
+  },
+  "permissions": {
+    "domains": "Domains",
+    "search": "Search…",
+    "export": "Export CSV",
+    "addCustom": "Add",
+    "empty": "No permissions in this domain.",
+    "created": "Permission created",
+    "table": {
+      "name": "Name",
+      "description": "Description",
+      "dangerous": "Dangerous",
+      "stepUp": "Step-up",
+      "type": "Type"
+    },
+    "badges": {
+      "dangerous": "Dangerous",
+      "stepUp": "Step-up",
+      "system": "System",
+      "custom": "Custom"
+    },
+    "fields": {
+      "name": "Name",
+      "description": "Description"
+    },
+    "create": {
+      "title": "Create custom permission",
+      "description": "Custom permissions use the 'cst.' prefix and cannot be dangerous.",
+      "descPlaceholder": "Brief description of this permission",
+      "confirm": "Create"
+    },
+    "errors": {
+      "loadFailed": "Failed to load permissions",
+      "createFailed": "Failed to create permission",
+      "mustStartWithCst": "Name must start with 'cst.'",
+      "nameTooShort": "Add at least one character after 'cst.'",
+      "systemPrefix": "Reserved system prefix"
+    },
+    "dependencies": {
+      "title": "Dependencies",
+      "none": "No dependencies",
+      "hard": "Required (hard)",
+      "warn": "Recommended (warn)",
+      "requires": "Requires",
+      "requiredBy": "Required by",
+      "suggests": "Suggests",
+      "suggestedBy": "Suggested by"
+    }
+  },
+  "sessions": {
+    "title": "Active Sessions",
+    "columns": {
+      "username": "User",
+      "deviceName": "Device",
+      "trustStatus": "Trust",
+      "sessionStart": "Started",
+      "lastActivity": "Last Activity",
+      "roles": "Roles",
+      "actions": "Actions"
+    },
+    "badges": {
+      "trusted": "Trusted",
+      "revoked": "Revoked",
+      "unknown": "Unknown",
+      "currentSession": "Current session"
+    },
+    "revoke": "Revoke",
+    "revokeConfirm": "Revoke this session?",
+    "revokeConfirmDesc": "The user will be disconnected immediately.",
+    "revoked": "Session revoked",
+    "cannotRevokeSelf": "Cannot revoke your own session",
+    "autoRefresh": "Auto-refresh every 30s",
+    "noSessions": "No active sessions.",
+    "errors": {
+      "loadFailed": "Failed to load sessions",
+      "revokeFailed": "Failed to revoke session"
+    }
+  },
+  "delegation": {
+    "title": "Delegation Policies",
+    "columns": {
+      "adminRole": "Admin Role",
+      "scope": "Scope",
+      "domains": "Allowed Domains",
+      "stepUp": "Step-up Required",
+      "actions": "Actions"
+    },
+    "create": "New Policy",
+    "createTitle": "Create Delegation Policy",
+    "createDesc": "Define delegation boundaries for an admin role.",
+    "edit": "Edit",
+    "editTitle": "Edit Delegation Policy",
+    "delete": "Delete",
+    "deleteConfirm": "Delete this delegation policy?",
+    "deleteConfirmDesc": "This action cannot be undone.",
+    "created": "Policy created",
+    "updated": "Policy updated",
+    "deleted": "Policy deleted",
+    "fields": {
+      "adminRole": "Admin Role",
+      "selectRole": "Choose a role",
+      "scopeType": "Scope Type",
+      "scopeReference": "Scope Reference",
+      "allowedDomains": "Allowed Domains",
+      "selectDomains": "Select domains",
+      "requiresStepUp": "Require step-up for publishing"
+    },
+    "scopeTypes": {
+      "tenant": "Global (tenant)",
+      "site": "Site",
+      "department": "Department"
+    },
+    "noPolicies": "No delegation policies.",
+    "errors": {
+      "loadFailed": "Failed to load policies",
+      "createFailed": "Failed to create policy",
+      "updateFailed": "Failed to update policy",
+      "deleteFailed": "Failed to delete policy"
+    }
+  },
+  "emergency": {
+    "title": "Emergency Elevations",
+    "columns": {
+      "username": "User",
+      "role": "Role",
+      "scope": "Scope",
+      "reason": "Reason",
+      "expiresAt": "Expires",
+      "grantedBy": "Granted By",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "grant": "Emergency Access",
+    "grantTitle": "Grant Emergency Access",
+    "grantDesc": "Grant temporary elevated access to a user.",
+    "revoke": "Revoke",
+    "revokeConfirm": "Revoke this emergency access?",
+    "revokeConfirmDesc": "The user will immediately lose elevated access.",
+    "granted": "Emergency access granted",
+    "revokedSuccess": "Emergency access revoked",
+    "badges": {
+      "active": "Active",
+      "expired": "Expired"
+    },
+    "countdown": {
+      "remaining": "Remaining",
+      "hours": "h",
+      "minutes": "min",
+      "seconds": "s"
+    },
+    "fields": {
+      "user": "User",
+      "selectUser": "Choose a user",
+      "role": "Role",
+      "selectRole": "Choose a role",
+      "scopeType": "Scope Type",
+      "scopeReference": "Scope Reference",
+      "reason": "Reason (min. 20 characters)",
+      "reasonPlaceholder": "Describe the reason for this emergency elevation...",
+      "expiryMinutes": "Duration (minutes)",
+      "expiryRange": "1 to 480 minutes (8h max)"
+    },
+    "noGrants": "No emergency elevations.",
+    "errors": {
+      "loadFailed": "Failed to load grants",
+      "grantFailed": "Failed to grant access",
+      "revokeFailed": "Failed to revoke access",
+      "reasonTooShort": "Reason must be at least 20 characters"
+    }
+  },
+  "importExport": {
+    "title": "Role Import / Export",
+    "export": {
+      "title": "Export Roles",
+      "selectRoles": "Select roles to export",
+      "button": "Export JSON",
+      "noSelection": "Select at least one role.",
+      "success": "Export completed"
+    },
+    "import": {
+      "title": "Import Roles",
+      "selectFile": "Choose a JSON file",
+      "preview": "Import Preview",
+      "button": "Confirm Import",
+      "noFile": "No file selected.",
+      "parsing": "Parsing file...",
+      "parseError": "Failed to parse JSON file",
+      "columns": {
+        "name": "Role Name",
+        "permissions": "Permissions",
+        "warnings": "Warnings",
+        "status": "Status"
+      },
+      "badges": {
+        "valid": "Valid",
+        "hasWarnings": "Warnings",
+        "blocked": "Blocked"
+      },
+      "success": "Import complete: {{count}} role(s) imported",
+      "skipped": "{{count}} role(s) skipped",
+      "result": "Import Result"
+    },
+    "noRoles": "No roles available.",
+    "errors": {
+      "loadFailed": "Failed to load roles",
+      "exportFailed": "Failed to export",
+      "importFailed": "Failed to import"
+    }
+  }
+}

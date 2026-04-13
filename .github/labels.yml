@@ -1,0 +1,82 @@
+# GitHub Labels — Maintafox Desktop
+#
+# Import these labels via GitHub CLI:
+#   gh label create "<name>" --color "<color>" --description "<description>"
+#
+# Or use the repository Settings → Labels page to create them manually.
+
+# Phase labels
+- name: "phase:1"
+  color: "0075ca"
+  description: "Phase 1 — Secure Foundation"
+- name: "phase:2"
+  color: "0075ca"
+  description: "Phase 2 — Core Execution Backbone"
+- name: "phase:3"
+  color: "0075ca"
+  description: "Phase 3 — Planning, Compliance, and Material Control"
+- name: "phase:4"
+  color: "0075ca"
+  description: "Phase 4 — Control Plane and Integrations"
+- name: "phase:5"
+  color: "0075ca"
+  description: "Phase 5 — Advanced Reliability and Launch Hardening"
+
+# Type labels
+- name: "type:feature"
+  color: "0e8a16"
+  description: "New feature or sprint implementation"
+- name: "type:bug"
+  color: "d73a4a"
+  description: "Something isn't working"
+- name: "type:chore"
+  color: "e4e669"
+  description: "Maintenance, dependencies, config"
+- name: "type:security"
+  color: "b60205"
+  description: "Security-related issue or improvement"
+- name: "type:performance"
+  color: "d93f0b"
+  description: "Performance improvement"
+- name: "type:docs"
+  color: "0075ca"
+  description: "Documentation only"
+
+# Status labels
+- name: "status:in-progress"
+  color: "fbca04"
+  description: "Actively being worked on"
+- name: "status:blocked"
+  color: "b60205"
+  description: "Cannot proceed — dependency or blocker"
+- name: "status:awaiting-supervisor"
+  color: "c5def5"
+  description: "Waiting for supervisor acceptance testing"
+- name: "status:accepted"
+  color: "0e8a16"
+  description: "Accepted by supervisor, ready to merge"
+
+# Priority labels
+- name: "priority:critical"
+  color: "b60205"
+  description: "Must be resolved before next sprint starts"
+- name: "priority:high"
+  color: "d93f0b"
+  description: "Important, address this sprint"
+- name: "priority:normal"
+  color: "fbca04"
+  description: "Standard priority"
+- name: "priority:low"
+  color: "e4e669"
+  description: "Nice to have, address when capacity allows"
+
+# Sprint planning labels
+- name: "sprint:current"
+  color: "0e8a16"
+  description: "In scope for the current sprint"
+- name: "sprint:next"
+  color: "bfd4f2"
+  description: "Queued for the next sprint"
+- name: "sprint:backlog"
+  color: "e4e669"
+  description: "In backlog — not yet scheduled"

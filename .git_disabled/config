@@ -1,0 +1,39 @@
+[core]
+	repositoryformatversion = 0
+	filemode = false
+	bare = false
+	logallrefupdates = true
+	symlinks = false
+	ignorecase = true
+	hooksPath = .husky/_
+[remote "origin"]
+	url = https://github.com/oussasz/maintafox-desktop.git
+	fetch = +refs/heads/*:refs/remotes/origin/*
+[branch "main"]
+	remote = origin
+	merge = refs/heads/main
+[branch "develop"]
+	remote = origin
+	merge = refs/heads/develop
+	vscode-merge-base = origin/main
+[branch "staging"]
+	remote = origin
+	merge = refs/heads/staging
+[branch "feature/p2-sp00-f02-data-table-chart-primitives"]
+	vscode-merge-base = origin/develop
+	remote = origin
+	merge = refs/heads/feature/p2-sp00-f02-data-table-chart-primitives
+[branch "chore/fix-ci-checks"]
+	vscode-merge-base = origin/develop
+	remote = origin
+	merge = refs/heads/chore/fix-ci-checks
+[branch "feature/p2-sp00-f03-shell-refinements"]
+	vscode-merge-base = origin/develop
+[branch "feature/p2-sp01-f01-org-structure-model"]
+	vscode-merge-base = origin/develop
+	remote = origin
+	merge = refs/heads/feature/p2-sp01-f01-org-structure-model
+[branch "feature/p2-sp05-f01-wo-domain-and-states"]
+	vscode-merge-base = origin/feature/p2-sp01-f01-org-structure-model
+	remote = origin
+	merge = refs/heads/feature/p2-sp05-f01-wo-domain-and-states
