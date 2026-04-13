@@ -9,6 +9,7 @@
 #![allow(clippy::unnecessary_literal_bound)]
 
 pub mod assets;
+pub mod archive;
 pub mod audit;
 pub mod auth;
 pub mod background;
@@ -197,6 +198,15 @@ pub fn run() {
             commands::notifications::list_notification_rules,
             commands::notifications::update_notification_rule,
             commands::notifications::list_notification_categories,
+            // ── Archive ───────────────────────────────────────────────────
+            commands::archive::list_archive_items,
+            commands::archive::get_archive_item,
+            commands::archive::restore_archive_item,
+            commands::archive::export_archive_items,
+            commands::archive::purge_archive_items,
+            commands::archive::set_legal_hold,
+            commands::archive::list_retention_policies,
+            commands::archive::update_retention_policy,
             // ── Lookup ────────────────────────────────────────────────────
             commands::lookup::list_lookup_domains,
             commands::lookup::get_lookup_values,

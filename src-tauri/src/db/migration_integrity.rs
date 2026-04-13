@@ -44,13 +44,13 @@ mod tests {
         seqs.sort();
 
         // Migration 016 was intentionally skipped during the DI domain sprint.
-        // Verify the full expected set: 1..=34 minus 16.
+        // Verify the full expected set: 1..=35 minus 16.
         let known_skips: &[u32] = &[16];
-        let expected: Vec<u32> = (1..=34).filter(|n| !known_skips.contains(n)).collect();
+        let expected: Vec<u32> = (1..=35).filter(|n| !known_skips.contains(n)).collect();
 
         assert_eq!(
             seqs, expected,
-            "Migration sequence numbers do not match the expected set (1..=34, skip 16)"
+            "Migration sequence numbers do not match the expected set (1..=35, skip 16)"
         );
     }
 
@@ -91,6 +91,7 @@ mod tests {
             "m20260413_000032_rbac_hardening".into(),
             "m20260413_000033_password_policy_settings".into(),
             "m20260901_000034_notification_core".into(),
+            "m20261001_000035_archive_core".into(),
         ]
     }
 }

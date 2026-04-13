@@ -236,6 +236,134 @@ export interface NotificationCategory {
   is_user_configurable: boolean;
 }
 
+// ─── Archive ───────────────────────────────────────────────────────────────
+
+export interface ArchiveFilterInput {
+  source_module?: string;
+  archive_class?: string;
+  legal_hold?: boolean;
+  search_text?: string;
+  date_from?: string;
+  date_to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ArchiveItemSummary {
+  id: number;
+  source_module: string;
+  source_record_id: string;
+  archive_class: string;
+  source_state: string | null;
+  archive_reason_code: string;
+  archived_at: string;
+  archived_by_id: number | null;
+  retention_policy_id: number | null;
+  restore_policy: string;
+  restore_until_at: string | null;
+  legal_hold: boolean;
+  checksum_sha256: string | null;
+  search_text: string | null;
+}
+
+export interface ArchivePayloadRow {
+  id: number;
+  archive_item_id: number;
+  payload_json: unknown;
+  workflow_history_json: string | null;
+  attachment_manifest_json: string | null;
+  config_version_refs_json: string | null;
+  payload_size_bytes: number;
+}
+
+export interface ArchiveActionRow {
+  id: number;
+  archive_item_id: number;
+  action: string;
+  action_by_id: number | null;
+  action_at: string;
+  reason_note: string | null;
+  result_status: string;
+}
+
+export interface RetentionPolicy {
+  id: number;
+  module_code: string;
+  archive_class: string;
+  retention_years: number;
+  purge_mode: string;
+  allow_restore: boolean;
+  allow_purge: boolean;
+  requires_legal_hold_check: boolean;
+}
+
+export interface ArchiveItemDetail {
+  item: ArchiveItemSummary;
+  payload: ArchivePayloadRow | null;
+  actions: ArchiveActionRow[];
+  retention_policy: RetentionPolicy | null;
+  checksum_valid: boolean;
+}
+
+export interface RestoreInput {
+  archive_item_id: number;
+  reason_note: string;
+}
+
+export interface ArchiveRestoreResult {
+  archive_item_id: number;
+  restore_action_id: number;
+  message: string;
+}
+
+export interface ExportInput {
+  archive_item_ids: number[];
+  export_reason?: string;
+}
+
+export interface ExportedArchivePayload {
+  archive_item_id: number;
+  source_module: string;
+  source_record_id: string;
+  archive_class: string;
+  payload_json: unknown;
+}
+
+export interface ExportPayload {
+  items: ExportedArchivePayload[];
+}
+
+export interface PurgeInput {
+  archive_item_ids: number[];
+  purge_reason: string;
+}
+
+export interface PurgeBlockedItem {
+  archive_item_id: number;
+  reason: string;
+}
+
+export interface PurgeResult {
+  strict_mode: boolean;
+  purged_item_ids: number[];
+  blocked_items: PurgeBlockedItem[];
+}
+
+export interface LegalHoldInput {
+  archive_item_id: number;
+  enable: boolean;
+  reason_note: string;
+}
+
+export interface UpdateRetentionInput {
+  policy_id: number;
+  retention_years?: number;
+  purge_mode?: string;
+  allow_restore?: boolean;
+  allow_purge?: boolean;
+  requires_legal_hold_check?: boolean;
+}
+
 // ─── Updater ───────────────────────────────────────────────────────────────
 
 export interface UpdateCheckResult {

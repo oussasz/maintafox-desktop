@@ -4,6 +4,7 @@ pub mod admin_permissions;
 pub mod admin_stats;
 pub mod admin_users;
 pub mod app;
+pub mod archive;
 pub mod assets;
 pub mod auth;
 pub mod backup;
