@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { ArchiveExplorer } from "@/components/archive/ArchiveExplorer";
 import { PermissionProvider } from "@/contexts/PermissionContext";
-import type { ArchiveFilterInput, ArchiveItemSummary } from "@/services/archive-service";
+import type { ArchiveFilterInput, ArchiveItemDetail, ArchiveItemSummary } from "@/services/archive-service";
 
 const mockGetMyPermissions = vi.fn();
 
@@ -70,13 +70,18 @@ const archiveMocks = vi.hoisted(() => {
   return {
     fixtureItems,
     listArchiveItems: vi.fn((_filter: ArchiveFilterInput) => Promise.resolve(fixtureItems)),
-    getArchiveItem: vi.fn((_id: number) =>
-      Promise.reject(new Error("getArchiveItem not stubbed for this test")),
+    getArchiveItem: vi.fn(
+      (_id: number): Promise<ArchiveItemDetail> =>
+        Promise.reject(new Error("getArchiveItem not stubbed for this test")) as Promise<ArchiveItemDetail>,
     ),
-    exportArchiveItems: vi.fn(),
-    purgeArchiveItems: vi.fn(),
-    restoreArchiveItem: vi.fn(),
-    setLegalHold: vi.fn(),
+    exportArchiveItems: vi.fn((_payload: unknown) =>
+      Promise.resolve({ items: [{ archive_item_id: 1, payload_json: { ok: true } }] }),
+    ),
+    purgeArchiveItems: vi.fn((_payload: unknown) => Promise.resolve({ strict_mode: true, purged_item_ids: [] })),
+    restoreArchiveItem: vi.fn((_payload: unknown) =>
+      Promise.resolve({ archive_item_id: 1, restore_action_id: 1, message: "ok" }),
+    ),
+    setLegalHold: vi.fn((_payload: unknown) => Promise.resolve()),
   };
 });
 
@@ -133,6 +138,8 @@ describe("ArchiveExplorer — folder tree after filter updates (SP07 carry-forwa
     mockGetMyPermissions.mockReset();
     mockGetMyPermissions.mockResolvedValue(makePermissions());
     archiveMocks.listArchiveItems.mockReset();
+    archiveMocks.getArchiveItem.mockReset();
+    archiveMocks.exportArchiveItems.mockReset();
     archiveMocks.listArchiveItems.mockImplementation(() =>
       Promise.resolve(archiveMocks.fixtureItems),
     );
@@ -197,6 +204,41 @@ describe("ArchiveExplorer — folder tree after filter updates (SP07 carry-forwa
     fireEvent.click(within(tree).getByText("work_orders"));
     await waitFor(() => {
       expect(lastListArchiveFilter()?.source_module).toBe("work_orders");
+    });
+  });
+
+  it("surfaces a user-visible error when single-item export fails", async () => {
+    renderExplorer();
+
+    const detail: ArchiveItemDetail = {
+      item: archiveMocks.fixtureItems[0]!,
+      payload: {
+        id: 10,
+        archive_item_id: 1,
+        payload_json: { foo: "bar" },
+        workflow_history_json: null,
+        attachment_manifest_json: null,
+        config_version_refs_json: null,
+        payload_size_bytes: 12,
+      },
+      actions: [],
+      retention_policy: null,
+      checksum_valid: true,
+    };
+    archiveMocks.getArchiveItem.mockResolvedValue(detail);
+
+    archiveMocks.exportArchiveItems.mockRejectedValueOnce(new Error("export failed"));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading archive items...")).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("WO-1001"));
+
+    const exportButton = await screen.findByRole("button", { name: "Export" });
+    fireEvent.click(exportButton);
+    await waitFor(() => {
+      expect(screen.getByText("export failed")).toBeInTheDocument();
     });
   });
 });

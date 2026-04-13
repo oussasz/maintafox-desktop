@@ -25,6 +25,7 @@ export function RetentionPolicyPanel() {
   const [error, setError] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
   const [selectedPolicyId, setSelectedPolicyId] = useState<number | null>(null);
+  const [retentionDrafts, setRetentionDrafts] = useState<Record<number, string>>({});
   const [persistedHistory, setPersistedHistory] = useState<ActivityEventSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -69,6 +70,16 @@ export function RetentionPolicyPanel() {
       setSelectedPolicyId(rows[0]!.id);
     }
   }, [rows, selectedPolicyId]);
+
+  useEffect(() => {
+    setRetentionDrafts((prev) => {
+      const next: Record<number, string> = {};
+      for (const row of rows) {
+        next[row.id] = savingId === row.id ? (prev[row.id] ?? String(row.retention_years)) : String(row.retention_years);
+      }
+      return next;
+    });
+  }, [rows, savingId]);
 
   useEffect(() => {
     if (selectedPolicyId !== null) {
@@ -123,6 +134,20 @@ export function RetentionPolicyPanel() {
     [canEdit, load, loadHistory, selectedPolicyId],
   );
 
+  const commitRetentionYears = useCallback(
+    (policy: RetentionPolicy) => {
+      const draft = retentionDrafts[policy.id] ?? String(policy.retention_years);
+      const nextValue = Number.parseInt(draft, 10);
+      if (Number.isNaN(nextValue)) {
+        setRetentionDrafts((prev) => ({ ...prev, [policy.id]: String(policy.retention_years) }));
+        return;
+      }
+      if (nextValue === policy.retention_years) return;
+      void patchPolicy(policy, { retention_years: nextValue });
+    },
+    [patchPolicy, retentionDrafts],
+  );
+
   if (loading) {
     return <div className="text-sm text-muted-foreground">Loading retention policies...</div>;
   }
@@ -170,11 +195,16 @@ export function RetentionPolicyPanel() {
                       min={0}
                       className="h-8 w-24"
                       disabled={!canEdit || savingId === row.id}
-                      value={row.retention_years}
+                      value={retentionDrafts[row.id] ?? String(row.retention_years)}
                       onChange={(e) => {
-                        const nextValue = Number.parseInt(e.target.value, 10);
-                        if (Number.isNaN(nextValue)) return;
-                        void patchPolicy(row, { retention_years: nextValue });
+                        setRetentionDrafts((prev) => ({ ...prev, [row.id]: e.target.value }));
+                      }}
+                      onBlur={() => commitRetentionYears(row)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitRetentionYears(row);
+                        }
                       }}
                     />
                   </TableCell>

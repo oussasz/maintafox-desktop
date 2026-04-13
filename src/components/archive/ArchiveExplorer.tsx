@@ -613,10 +613,23 @@ function ArchiveItemDetailView({
           <Button
             size="sm"
             variant="outline"
+            disabled={actionBusy}
             onClick={() =>
-              void exportArchiveItems({ archive_item_ids: [detail.item.id], export_reason: "Single item export" }).then(
-                (payload) => downloadAsJson(`archive-${detail.item.id}.json`, payload.items[0]?.payload_json ?? payload),
-              )
+              void (async () => {
+                setActionError(null);
+                setActionBusy(true);
+                try {
+                  const payload = await exportArchiveItems({
+                    archive_item_ids: [detail.item.id],
+                    export_reason: "Single item export",
+                  });
+                  downloadAsJson(`archive-${detail.item.id}.json`, payload.items[0]?.payload_json ?? payload);
+                } catch (err) {
+                  setActionError(toErrorMessage(err));
+                } finally {
+                  setActionBusy(false);
+                }
+              })()
             }
           >
             Export

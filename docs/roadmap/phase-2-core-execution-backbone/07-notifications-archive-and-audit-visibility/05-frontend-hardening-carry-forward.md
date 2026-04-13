@@ -43,12 +43,14 @@ Scope: Post-File-04 professional review (frontend-focused)
 
 ## Execution Checklist for File 05
 
-- [ ] Add robust error handling for single-item archive export (`ArchiveExplorer` detail panel)
-- [ ] Complete accessibility labeling pass for activity/audit filter controls
-- [ ] Refactor `RetentionPolicyPanel` numeric edits to commit-on-blur/Enter
-- [ ] Add user-visible error feedback on audit detail expansion failure
-- [ ] Persist saved-view selection state in `ActivityFeedPanel`
-- [ ] Add/extend Vitest coverage for all above flows
+- [x] Add robust error handling for single-item archive export (`ArchiveExplorer` detail panel)
+- [x] Complete accessibility labeling pass for activity/audit filter controls
+- [x] Refactor `RetentionPolicyPanel` numeric edits to commit-on-blur/Enter
+- [x] Add user-visible error feedback on audit detail expansion failure
+- [x] Persist saved-view selection state in `ActivityFeedPanel`
+- [x] Add/extend Vitest coverage for all above flows
+
+**Completed:** 2026-04-13 — `pnpm typecheck` and targeted Vitest suites for ArchiveExplorer, ActivityFeedPanel, AuditLogViewer, and RetentionPolicyPanel all pass.
 
 ---
 

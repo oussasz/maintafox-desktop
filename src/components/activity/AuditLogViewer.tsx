@@ -32,6 +32,8 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [detailsMap, setDetailsMap] = useState<Record<number, AuditEventDetail>>({});
+  const [detailErrors, setDetailErrors] = useState<Record<number, string>>({});
+  const [detailLoadingMap, setDetailLoadingMap] = useState<Record<number, boolean>>({});
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
 
   const [actionCode, setActionCode] = useState("");
@@ -99,19 +101,47 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
       <CardContent className="space-y-3">
         <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
           <Input
+            id="audit-filter-action-code"
+            aria-label="Action code filter"
             placeholder="action_code prefix"
             value={actionCode}
             onChange={(e) => setActionCode(e.target.value)}
           />
-          <Input placeholder="result" value={result} onChange={(e) => setResult(e.target.value)} />
-          <Input placeholder="actor_id" value={actorId} onChange={(e) => setActorId(e.target.value)} />
           <Input
+            id="audit-filter-result"
+            aria-label="Result filter"
+            placeholder="result"
+            value={result}
+            onChange={(e) => setResult(e.target.value)}
+          />
+          <Input
+            id="audit-filter-actor-id"
+            aria-label="Actor ID filter"
+            placeholder="actor_id"
+            value={actorId}
+            onChange={(e) => setActorId(e.target.value)}
+          />
+          <Input
+            id="audit-filter-retention-class"
+            aria-label="Retention class filter"
             placeholder="retention_class"
             value={retentionClass}
             onChange={(e) => setRetentionClass(e.target.value)}
           />
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          <Input
+            id="audit-filter-date-from"
+            aria-label="Date from filter"
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+          />
+          <Input
+            id="audit-filter-date-to"
+            aria-label="Date to filter"
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -209,11 +239,19 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                     void (async () => {
                       setExpandedId((prev) => (prev === row.id ? null : row.id));
                       if (!detailsMap[row.id]) {
+                        setDetailLoadingMap((prev) => ({ ...prev, [row.id]: true }));
                         try {
                           const detail = await getAuditEvent(row.id);
                           setDetailsMap((prev) => ({ ...prev, [row.id]: detail }));
-                        } catch {
-                          // keep row visible even when detail fetch fails
+                          setDetailErrors((prev) => {
+                            const next = { ...prev };
+                            delete next[row.id];
+                            return next;
+                          });
+                        } catch (err) {
+                          setDetailErrors((prev) => ({ ...prev, [row.id]: toErrorMessage(err) }));
+                        } finally {
+                          setDetailLoadingMap((prev) => ({ ...prev, [row.id]: false }));
                         }
                       }
                     })()
@@ -229,6 +267,12 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                 </button>
                 {expandedId === row.id && (
                   <div className="mt-2 rounded bg-muted p-2 text-xs">
+                    {detailLoadingMap[row.id] && (
+                      <div className="mb-1 text-muted-foreground">Loading detail...</div>
+                    )}
+                    {detailErrors[row.id] && (
+                      <div className="mb-1 text-destructive">{detailErrors[row.id]}</div>
+                    )}
                     <div>
                       <span className="text-muted-foreground">target:</span> {row.target_type ?? "—"} /{" "}
                       {row.target_id ?? "—"}

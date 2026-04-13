@@ -35,6 +35,7 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
   const [chainLoading, setChainLoading] = useState<Record<number, boolean>>({});
   const [savedViews, setSavedViews] = useState<SavedActivityFilter[]>([]);
   const [saveViewName, setSaveViewName] = useState("");
+  const [selectedSavedViewId, setSelectedSavedViewId] = useState("");
 
   const [eventClass, setEventClass] = useState<string>("");
   const [sourceModule, setSourceModule] = useState<string>("");
@@ -181,22 +182,56 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-          <Input placeholder="event_class" value={eventClass} onChange={(e) => setEventClass(e.target.value)} />
-          <Input placeholder="source_module" value={sourceModule} onChange={(e) => setSourceModule(e.target.value)} />
-          <Input placeholder="severity" value={severity} onChange={(e) => setSeverity(e.target.value)} />
           <Input
+            id="activity-filter-event-class"
+            aria-label="Event class filter"
+            placeholder="event_class"
+            value={eventClass}
+            onChange={(e) => setEventClass(e.target.value)}
+          />
+          <Input
+            id="activity-filter-source-module"
+            aria-label="Source module filter"
+            placeholder="source_module"
+            value={sourceModule}
+            onChange={(e) => setSourceModule(e.target.value)}
+          />
+          <Input
+            id="activity-filter-severity"
+            aria-label="Severity filter"
+            placeholder="severity"
+            value={severity}
+            onChange={(e) => setSeverity(e.target.value)}
+          />
+          <Input
+            id="activity-filter-entity-scope-id"
+            aria-label="Entity scope ID filter"
             placeholder="entity_scope_id"
             value={entityScopeId}
             onChange={(e) => setEntityScopeId(e.target.value)}
           />
           <Input
+            id="activity-filter-correlation-id"
+            aria-label="Correlation ID filter"
             placeholder="correlation_id"
             value={correlationId}
             onChange={(e) => setCorrelationId(e.target.value)}
           />
           <div className="grid grid-cols-2 gap-2">
-            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            <Input
+              id="activity-filter-date-from"
+              aria-label="Date from filter"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+            />
+            <Input
+              id="activity-filter-date-to"
+              aria-label="Date to filter"
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+            />
           </div>
         </div>
 
@@ -215,6 +250,7 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
               setCorrelationId("");
               setDateFrom("");
               setDateTo("");
+              setSelectedSavedViewId("");
               setOffset(0);
               setAppliedFilter({ limit: PAGE_SIZE, offset: 0 });
             }}
@@ -222,8 +258,15 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
             Reset
           </Button>
           <div className="flex items-center gap-2 rounded-md border px-2 py-1 text-xs">
-            <Checkbox checked={autoRefresh} onCheckedChange={(v) => setAutoRefresh(Boolean(v))} />
-            Auto-refresh (30s)
+            <Checkbox
+              id="activity-auto-refresh"
+              aria-label="Auto-refresh activity feed"
+              checked={autoRefresh}
+              onCheckedChange={(v) => setAutoRefresh(Boolean(v))}
+            />
+            <label htmlFor="activity-auto-refresh" className="cursor-pointer">
+              Auto-refresh (30s)
+            </label>
           </div>
           <Button size="sm" variant="ghost" onClick={() => void loadData()}>
             <RefreshCw className="mr-1 h-3 w-3" /> Refresh
@@ -232,9 +275,11 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
 
         <div className="flex flex-wrap items-center gap-2">
           <select
+            aria-label="Saved activity views"
             className="h-9 rounded-md border px-2 text-sm"
-            value=""
+            value={selectedSavedViewId}
             onChange={(e) => {
+              setSelectedSavedViewId(e.target.value);
               const id = Number(e.target.value);
               const selected = savedViews.find((s) => s.id === id);
               if (!selected || typeof selected.filter_json !== "object" || selected.filter_json === null) return;
@@ -265,6 +310,7 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
           </select>
           <Input
             className="max-w-[220px]"
+            aria-label="Saved activity view name"
             placeholder="Save current view as..."
             value={saveViewName}
             onChange={(e) => setSaveViewName(e.target.value)}
