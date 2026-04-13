@@ -1095,7 +1095,7 @@ mod tests {
         let cnt: i64 = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) as cnt FROM audit_events WHERE event_type = ?",
+                "SELECT COUNT(*) as cnt FROM audit_events WHERE action_code = ?",
                 [crate::audit::event_type::SESSION_UNLOCKED_WITH_PIN.into()],
             ))
             .await

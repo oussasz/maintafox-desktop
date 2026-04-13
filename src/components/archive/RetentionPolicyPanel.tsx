@@ -34,18 +34,12 @@ export function RetentionPolicyPanel() {
     try {
       const data = await listRetentionPolicies();
       setRows(data);
-      if (!selectedPolicyId) {
-        const first = data.at(0);
-        if (first) {
-          setSelectedPolicyId(first.id);
-        }
-      }
     } catch (err) {
       setError(toErrorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [selectedPolicyId]);
+  }, []);
 
   const loadHistory = useCallback(async (policyId: number) => {
     setHistoryLoading(true);
@@ -69,6 +63,12 @@ export function RetentionPolicyPanel() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (selectedPolicyId === null && rows.length > 0) {
+      setSelectedPolicyId(rows[0]!.id);
+    }
+  }, [rows, selectedPolicyId]);
 
   useEffect(() => {
     if (selectedPolicyId !== null) {

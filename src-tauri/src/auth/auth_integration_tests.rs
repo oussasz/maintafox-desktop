@@ -252,20 +252,25 @@ mod tests {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT event_type, actor_id, summary FROM audit_events WHERE event_type = ?",
+                "SELECT action_code, actor_id, details_json FROM audit_events WHERE action_code = ?",
                 [crate::audit::event_type::LOGIN_SUCCESS.into()],
             ))
             .await
             .expect("query")
             .expect("V5 FAIL: no login.success row in audit_events");
 
-        let et: String = row.try_get("", "event_type").unwrap();
-        let actor: String = row.try_get("", "actor_id").unwrap();
-        let summary: String = row.try_get("", "summary").unwrap();
+        let code: String = row.try_get("", "action_code").unwrap();
+        let actor: i64 = row.try_get("", "actor_id").unwrap();
+        let details_raw: String = row.try_get("", "details_json").unwrap();
+        let details: serde_json::Value = serde_json::from_str(&details_raw).expect("V5: details_json");
 
-        assert_eq!(et, "login.success", "V5 FAIL: event_type mismatch");
-        assert_eq!(actor, "1", "V5 FAIL: actor_id mismatch");
-        assert_eq!(summary, "Successful login", "V5 FAIL: summary mismatch");
+        assert_eq!(code, "login.success", "V5 FAIL: action_code mismatch");
+        assert_eq!(actor, 1, "V5 FAIL: actor_id mismatch");
+        assert_eq!(
+            details["summary"].as_str(),
+            Some("Successful login"),
+            "V5 FAIL: summary in details_json mismatch"
+        );
     }
 
     // ── V6 — audit::emit writes login.failure row to audit_events ───────
@@ -289,20 +294,29 @@ mod tests {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT event_type, summary, detail_json FROM audit_events WHERE event_type = ?",
+                "SELECT action_code, details_json FROM audit_events WHERE action_code = ?",
                 [crate::audit::event_type::LOGIN_FAILURE.into()],
             ))
             .await
             .expect("query")
             .expect("V6 FAIL: no login.failure row in audit_events");
 
-        let et: String = row.try_get("", "event_type").unwrap();
-        assert_eq!(et, "login.failure", "V6 FAIL: event_type mismatch");
+        let code: String = row.try_get("", "action_code").unwrap();
+        assert_eq!(code, "login.failure", "V6 FAIL: action_code mismatch");
 
-        let detail: String = row.try_get("", "detail_json").unwrap();
+        let details_raw: String = row.try_get("", "details_json").unwrap();
+        let details: serde_json::Value = serde_json::from_str(&details_raw).expect("V6: details_json");
+        assert_eq!(
+            details["summary"].as_str(),
+            Some("Failed login attempt — wrong password"),
+            "V6 FAIL: summary in details_json mismatch"
+        );
+        let nested = details
+            .get("detail")
+            .expect("V6 FAIL: expected detail object in details_json");
         assert!(
-            detail.contains("username_provided"),
-            "V6 FAIL: detail_json should contain username_provided"
+            nested.to_string().contains("username_provided"),
+            "V6 FAIL: nested detail should contain username_provided"
         );
     }
 
@@ -327,17 +341,24 @@ mod tests {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT event_type, actor_id, summary FROM audit_events WHERE event_type = ?",
+                "SELECT action_code, actor_id, details_json FROM audit_events WHERE action_code = ?",
                 [crate::audit::event_type::STEP_UP_SUCCESS.into()],
             ))
             .await
             .expect("query")
             .expect("V7 FAIL: no step_up.success row in audit_events");
 
-        let et: String = row.try_get("", "event_type").unwrap();
-        let actor: String = row.try_get("", "actor_id").unwrap();
+        let code: String = row.try_get("", "action_code").unwrap();
+        let actor: i64 = row.try_get("", "actor_id").unwrap();
+        let details_raw: String = row.try_get("", "details_json").unwrap();
+        let details: serde_json::Value = serde_json::from_str(&details_raw).expect("V7: details_json");
 
-        assert_eq!(et, "step_up.success", "V7 FAIL: event_type mismatch");
-        assert_eq!(actor, "1", "V7 FAIL: actor_id mismatch");
+        assert_eq!(code, "step_up.success", "V7 FAIL: action_code mismatch");
+        assert_eq!(actor, 1, "V7 FAIL: actor_id mismatch");
+        assert_eq!(
+            details["summary"].as_str(),
+            Some("Step-up reauthentication verified"),
+            "V7 FAIL: summary in details_json mismatch"
+        );
     }
 }

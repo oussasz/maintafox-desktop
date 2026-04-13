@@ -136,7 +136,7 @@ pub struct ImportResult {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Write an immutable row to `admin_change_events`.
-async fn record_admin_event(
+pub(crate) async fn record_admin_event(
     db: &sea_orm::DatabaseConnection,
     action: &str,
     actor_id: i64,

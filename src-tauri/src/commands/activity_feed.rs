@@ -1,13 +1,13 @@
 use std::collections::{HashSet, VecDeque};
 
-use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
-use crate::{require_permission, require_session};
+use crate::require_session;
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct ActivityFilter {
@@ -89,36 +89,23 @@ pub struct EventChain {
     pub events: Vec<EventChainNode>,
 }
 
+#[derive(Debug, Clone)]
+struct LogViewAccess {
+    has_global: bool,
+    accessible_entities: Vec<i64>,
+}
+
 #[tauri::command]
 pub async fn list_activity_events(
     filter: Option<ActivityFilter>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ActivityEventSummary>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "log.view", PermissionScope::Global);
+    let access = resolve_log_view_access(&state, user.user_id).await?;
 
     let filter = filter.unwrap_or_default();
     let limit = filter.limit.unwrap_or(50).clamp(1, 500);
     let offset = filter.offset.unwrap_or(0).max(0);
-
-    let has_global_view = crate::auth::rbac::check_permission_cached(
-        &state.db,
-        &state.permission_cache,
-        user.user_id,
-        "log.view",
-        &PermissionScope::Global,
-    )
-    .await?;
-
-    let accessible_entities = if has_global_view {
-        Vec::new()
-    } else {
-        resolve_accessible_entity_scope_ids(&state, user.user_id).await?
-    };
-
-    if !has_global_view && accessible_entities.is_empty() {
-        return Ok(Vec::new());
-    }
 
     let mut sql = String::from(
         "SELECT
@@ -187,9 +174,9 @@ pub async fn list_activity_events(
         values.push(v.into());
     }
 
-    if !has_global_view {
+    if !access.has_global {
         sql.push_str(" AND ae.entity_scope_id IN (");
-        for (idx, entity_id) in accessible_entities.iter().enumerate() {
+        for (idx, entity_id) in access.accessible_entities.iter().enumerate() {
             if idx > 0 {
                 sql.push_str(", ");
             }
@@ -225,7 +212,7 @@ pub async fn get_activity_event(
     state: State<'_, AppState>,
 ) -> AppResult<ActivityEventDetail> {
     let user = require_session!(state);
-    require_permission!(state, &user, "log.view", PermissionScope::Global);
+    let access = resolve_log_view_access(&state, user.user_id).await?;
 
     let row = state
         .db
@@ -248,14 +235,21 @@ pub async fn get_activity_event(
         })?;
 
     let event = parse_activity_summary(&row);
+    if !access.has_global {
+        match event.entity_scope_id {
+            Some(entity_id) if access.accessible_entities.contains(&entity_id) => {}
+            _ => {
+                return Err(AppError::PermissionDenied(
+                    "Permission denied: log.view access does not cover this entity scope".to_string(),
+                ));
+            }
+        }
+    }
     let correlation = event.correlation_id.clone();
 
     let correlated_rows = if let Some(correlation_id) = correlation {
-        state
-            .db
-            .query_all(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT
+        let mut corr_sql = String::from(
+            "SELECT
                     ae.id, ae.event_class, ae.event_code, ae.source_module, ae.source_record_type,
                     ae.source_record_id, ae.entity_scope_id, ae.actor_id, ua.username AS actor_username,
                     ae.happened_at, ae.severity, ae.summary_json, ae.correlation_id, ae.visibility_scope
@@ -263,9 +257,28 @@ pub async fn get_activity_event(
                  LEFT JOIN user_accounts ua ON ua.id = ae.actor_id
                  WHERE ae.correlation_id = ?
                    AND ae.id != ?
-                 ORDER BY ae.happened_at DESC
-                 LIMIT 100",
-                [correlation_id.into(), event_id.into()],
+            ",
+        );
+        let mut corr_values: Vec<Value> = vec![correlation_id.into(), event_id.into()];
+        if !access.has_global {
+            corr_sql.push_str(" AND ae.entity_scope_id IN (");
+            for (idx, entity_id) in access.accessible_entities.iter().enumerate() {
+                if idx > 0 {
+                    corr_sql.push_str(", ");
+                }
+                corr_sql.push('?');
+                corr_values.push((*entity_id).into());
+            }
+            corr_sql.push(')');
+        }
+        corr_sql.push_str(" ORDER BY ae.happened_at DESC LIMIT 100");
+
+        state
+            .db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                corr_sql,
+                corr_values,
             ))
             .await?
     } else {
@@ -300,7 +313,7 @@ pub async fn save_activity_filter(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "log.view", PermissionScope::Global);
+    let _ = resolve_log_view_access(&state, user.user_id).await?;
 
     if payload.view_name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -349,7 +362,7 @@ pub async fn list_saved_activity_filters(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SavedActivityFilter>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "log.view", PermissionScope::Global);
+    let _ = resolve_log_view_access(&state, user.user_id).await?;
 
     let rows = state
         .db
@@ -382,14 +395,12 @@ pub async fn list_saved_activity_filters(
     Ok(out)
 }
 
-#[tauri::command]
-pub async fn get_event_chain(
-    payload: EventChainInput,
-    state: State<'_, AppState>,
+/// Build a correlated event chain from [`event_links`] (BFS). Used by [`get_event_chain`]
+/// and by integration tests that need the same graph walk without IPC.
+pub async fn build_event_chain(
+    db: &DatabaseConnection,
+    payload: &EventChainInput,
 ) -> AppResult<EventChain> {
-    let user = require_session!(state);
-    require_permission!(state, &user, "log.view", PermissionScope::Global);
-
     let mut queue: VecDeque<(String, i64)> = VecDeque::new();
     let mut visited: HashSet<(String, i64)> = HashSet::new();
     let mut events: Vec<EventChainNode> = Vec::new();
@@ -406,12 +417,11 @@ pub async fn get_event_chain(
             continue;
         }
 
-        if let Some(node) = fetch_chain_node(&state, &table, event_id, None).await? {
+        if let Some(node) = fetch_chain_node_db(db, &table, event_id, None).await? {
             events.push(node);
         }
 
-        let links = state
-            .db
+        let links = db
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT parent_event_id, child_event_id, parent_table, child_table, link_type
@@ -441,7 +451,6 @@ pub async fn get_event_chain(
                     .try_get::<String>("", "child_table")
                     .unwrap_or_else(|_| "activity_events".to_string()),
             );
-            let link_type = link.try_get::<String>("", "link_type").ok();
 
             let neighbor = if parent_table == table && parent_id == event_id {
                 (child_table, child_id)
@@ -457,9 +466,6 @@ pub async fn get_event_chain(
                 break;
             }
 
-            if let Some(node) = fetch_chain_node(&state, &neighbor.0, neighbor.1, link_type).await? {
-                events.push(node);
-            }
             queue.push_back(neighbor);
         }
     }
@@ -467,6 +473,35 @@ pub async fn get_event_chain(
     events.sort_by(|a, b| a.happened_at.cmp(&b.happened_at));
 
     Ok(EventChain { events })
+}
+
+#[tauri::command]
+pub async fn get_event_chain(
+    payload: EventChainInput,
+    state: State<'_, AppState>,
+) -> AppResult<EventChain> {
+    let user = require_session!(state);
+    let access = resolve_log_view_access(&state, user.user_id).await?;
+    if !access.has_global {
+        if normalize_event_table(&payload.root_table) != "activity_events" {
+            return Err(AppError::PermissionDenied(
+                "Permission denied: entity-scoped log.view can only open activity event chains"
+                    .to_string(),
+            ));
+        }
+        let entity_scope_id =
+            fetch_activity_entity_scope_id(&state.db, payload.root_event_id).await?;
+        match entity_scope_id {
+            Some(entity_id) if access.accessible_entities.contains(&entity_id) => {}
+            _ => {
+                return Err(AppError::PermissionDenied(
+                    "Permission denied: log.view access does not cover this chain root".to_string(),
+                ));
+            }
+        }
+    }
+
+    build_event_chain(&state.db, &payload).await
 }
 
 fn parse_activity_summary(row: &sea_orm::QueryResult) -> ActivityEventSummary {
@@ -513,12 +548,17 @@ async fn resolve_accessible_entity_scope_ids(
         .db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT DISTINCT scope_reference
-             FROM user_scope_assignments
-             WHERE user_id = ?
-               AND deleted_at IS NULL
-               AND scope_type IN ('entity', 'org_node')",
-            [user_id.into()],
+            "SELECT DISTINCT usa.scope_reference
+             FROM user_scope_assignments usa
+             INNER JOIN role_permissions rp ON rp.role_id = usa.role_id
+             INNER JOIN permissions p ON p.id = rp.permission_id
+             WHERE usa.user_id = ?
+               AND usa.deleted_at IS NULL
+               AND (usa.valid_from IS NULL OR usa.valid_from <= datetime('now'))
+               AND (usa.valid_to IS NULL OR usa.valid_to >= datetime('now'))
+               AND usa.scope_type IN ('entity', 'org_node')
+               AND p.name = 'log.view'",
+            [i64::from(user_id).into()],
         ))
         .await?;
 
@@ -536,6 +576,58 @@ async fn resolve_accessible_entity_scope_ids(
     Ok(ids)
 }
 
+async fn resolve_log_view_access(
+    state: &State<'_, AppState>,
+    user_id: i32,
+) -> AppResult<LogViewAccess> {
+    let has_global = crate::auth::rbac::check_permission_cached(
+        &state.db,
+        &state.permission_cache,
+        user_id,
+        "log.view",
+        &PermissionScope::Global,
+    )
+    .await?;
+    if has_global {
+        return Ok(LogViewAccess {
+            has_global: true,
+            accessible_entities: Vec::new(),
+        });
+    }
+
+    let accessible_entities = resolve_accessible_entity_scope_ids(state, user_id).await?;
+    if accessible_entities.is_empty() {
+        return Err(AppError::PermissionDenied(
+            "Permission denied: no accessible entity scopes for log.view".to_string(),
+        ));
+    }
+
+    Ok(LogViewAccess {
+        has_global: false,
+        accessible_entities,
+    })
+}
+
+async fn fetch_activity_entity_scope_id(
+    db: &DatabaseConnection,
+    event_id: i64,
+) -> AppResult<Option<i64>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT entity_scope_id FROM activity_events WHERE id = ? LIMIT 1",
+            [event_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "activity_event".to_string(),
+            id: event_id.to_string(),
+        })?;
+    Ok(row
+        .try_get::<Option<i64>>("", "entity_scope_id")
+        .unwrap_or(None))
+}
+
 fn normalize_event_table(table: &str) -> String {
     match table {
         "activity_events" | "audit_events" | "notification_events" => table.to_string(),
@@ -543,8 +635,8 @@ fn normalize_event_table(table: &str) -> String {
     }
 }
 
-async fn fetch_chain_node(
-    state: &State<'_, AppState>,
+async fn fetch_chain_node_db(
+    db: &DatabaseConnection,
     table: &str,
     event_id: i64,
     link_type: Option<String>,
@@ -564,8 +656,7 @@ async fn fetch_chain_node(
         }
     };
 
-    let row = state
-        .db
+    let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,

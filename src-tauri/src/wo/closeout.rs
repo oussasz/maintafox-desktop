@@ -11,6 +11,8 @@
 //!   get_failure_details     — list failure detail rows for a WO
 //!   get_verifications       — list verification rows for a WO
 
+use crate::activity::emitter;
+use crate::audit;
 use crate::errors::{AppError, AppResult};
 use crate::wo::queries;
 use chrono::Utc;
@@ -889,6 +891,31 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     .await?;
 
     txn.commit().await?;
+
+    let wo_id_str = input.wo_id.to_string();
+    let _ = emitter::emit_wo_event(
+        db,
+        input.wo_id,
+        "wo.closed",
+        Some(input.actor_id),
+        None,
+        None,
+    )
+    .await;
+
+    let actor_i32 = i32::try_from(input.actor_id).unwrap_or(0);
+    audit::emit(
+        db,
+        audit::AuditEvent {
+            event_type: "wo.closed",
+            actor_id: Some(actor_i32),
+            entity_type: Some("work_order"),
+            entity_id: Some(wo_id_str.as_str()),
+            summary: "Work order closed",
+            ..Default::default()
+        },
+    )
+    .await;
 
     queries::get_work_order(db, input.wo_id)
         .await?

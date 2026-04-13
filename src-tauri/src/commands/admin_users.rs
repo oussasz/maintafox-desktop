@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use crate::auth::rbac::PermissionScope;
+use crate::auth::session_manager::AuthenticatedUser;
 use crate::errors::{AppError, AppResult};
 use crate::rbac::cache::RbacChangedPayload;
 use crate::rbac::{model, resolver};
@@ -441,7 +442,7 @@ pub async fn create_user(
         crate::audit::emit(
             &state.db,
             crate::audit::AuditEvent {
-                event_type: "auth.user_created",
+                event_type: crate::audit::event_type::USER_CREATED,
                 actor_id: Some(caller.user_id as i32),
                 entity_type: Some("user_account"),
                 entity_id: Some(new_id_str.as_str()),
@@ -568,7 +569,7 @@ pub async fn deactivate_user(
         crate::audit::emit(
             &state.db,
             crate::audit::AuditEvent {
-                event_type: "auth.user_deactivated",
+                event_type: crate::audit::event_type::USER_DEACTIVATED,
                 actor_id: Some(caller.user_id as i32),
                 entity_type: Some("user_account"),
                 entity_id: Some(target_str.as_str()),
@@ -582,17 +583,16 @@ pub async fn deactivate_user(
     Ok(())
 }
 
-/// Assign a role to a user at a given scope.
-#[tauri::command]
-pub async fn assign_role_scope(
+/// Shared implementation for [`assign_role_scope`]. When `emit_frontend` is true and `app` is
+/// `Some`, emits `rbac-changed` to the webview; integration tests pass `false` / `None` because
+/// `AppHandle<MockRuntime>` is not compatible with production `AppHandle`.
+pub(crate) async fn assign_role_scope_impl(
+    state: &AppState,
+    caller: &AuthenticatedUser,
     input: AssignRoleScopeInput,
-    app: AppHandle,
-    state: State<'_, AppState>,
+    emit_frontend: bool,
+    app: Option<&AppHandle>,
 ) -> AppResult<IdPayload> {
-    let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
-    require_step_up!(state);
-
     // Validate scope_type
     if !["tenant", "entity", "site", "team", "org_node"].contains(&input.scope_type.as_str()) {
         return Err(AppError::ValidationFailed(vec![
@@ -638,6 +638,7 @@ pub async fn assign_role_scope(
     let role_id_for_audit = input.role_id;
     let user_id_for_audit = input.user_id;
     let scope_type_for_audit = input.scope_type.clone();
+    let scope_reference_for_audit = input.scope_reference.clone();
 
     // INSERT — the UNIQUE index (uidx_usa_user_role_scope) prevents duplicates
     state
@@ -654,7 +655,9 @@ pub async fn assign_role_scope(
                 input.user_id.into(),
                 input.role_id.into(),
                 input.scope_type.into(),
-                input.scope_reference.map_or(sea_orm::Value::String(None), |s| s.into()),
+                scope_reference_for_audit
+                    .clone()
+                    .map_or(sea_orm::Value::String(None), |s| s.into()),
                 input.valid_from.map_or(sea_orm::Value::String(None), |s| s.into()),
                 input.valid_to.map_or(sea_orm::Value::String(None), |s| s.into()),
                 i64::from(caller.user_id).into(),
@@ -684,30 +687,76 @@ pub async fn assign_role_scope(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to retrieve assignment id")))?;
 
     let new_id: i64 = id_row.try_get("", "id")?;
-    notify_rbac_user_change(&app, &state, user_id_for_audit, "role_assigned");
+
+    if emit_frontend {
+        if let Some(app) = app {
+            notify_rbac_user_change(app, state, user_id_for_audit, "role_assigned");
+        }
+    } else if let Ok(mut cache) = state.permission_cache.try_write() {
+        cache.invalidate_user(user_id_for_audit);
+    }
+
+    let detail_json = serde_json::json!({
+        "role_id": role_id_for_audit,
+        "scope_type": scope_type_for_audit,
+        "assignment_id": new_id,
+    });
+    let detail_str = detail_json.to_string();
+
+    crate::commands::admin_governance::record_admin_event(
+        &state.db,
+        "role_assigned",
+        i64::from(caller.user_id),
+        Some(user_id_for_audit),
+        Some(role_id_for_audit),
+        Some(scope_type_for_audit.as_str()),
+        scope_reference_for_audit.as_deref(),
+        Some("Role scope assignment created"),
+        Some(detail_str.as_str()),
+        true,
+    )
+    .await?;
 
     {
         let target_str = user_id_for_audit.to_string();
-        let detail = format!(
-            r#"{{"role_id":{},"scope_type":"{}","assignment_id":{}}}"#,
-            role_id_for_audit, scope_type_for_audit, new_id
-        );
         crate::audit::emit(
             &state.db,
             crate::audit::AuditEvent {
-                event_type: "rbac.role_assigned",
-                actor_id: Some(caller.user_id as i32),
+                event_type: crate::audit::event_type::ROLE_ASSIGNED,
+                actor_id: Some(caller.user_id),
                 entity_type: Some("user_account"),
                 entity_id: Some(target_str.as_str()),
                 summary: "Role scope assignment created",
-                detail_json: Some(detail),
+                detail_json: Some(detail_str.clone()),
                 ..Default::default()
             },
         )
         .await;
     }
 
+    let _ = crate::activity::emitter::emit_rbac_event(
+        &state.db,
+        Some(i64::from(caller.user_id)),
+        "rbac.role_assigned",
+        Some(detail_json),
+    )
+    .await;
+
     Ok(IdPayload { id: new_id })
+}
+
+/// Assign a role to a user at a given scope.
+#[tauri::command]
+pub async fn assign_role_scope(
+    input: AssignRoleScopeInput,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<IdPayload> {
+    let caller = require_session!(state);
+    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_step_up!(state);
+
+    assign_role_scope_impl(state.inner(), &caller, input, true, Some(&app)).await
 }
 
 /// Revoke a role-scope assignment (soft-delete).
@@ -759,7 +808,7 @@ pub async fn revoke_role_scope(
         crate::audit::emit(
             &state.db,
             crate::audit::AuditEvent {
-                event_type: "rbac.role_revoked",
+                event_type: crate::audit::event_type::ROLE_REVOKED,
                 actor_id: Some(caller.user_id as i32),
                 entity_type: Some("user_scope_assignment"),
                 entity_id: Some(target_str.as_str()),
@@ -1284,7 +1333,7 @@ pub async fn grant_emergency_elevation(
         crate::audit::emit(
             &state.db,
             crate::audit::AuditEvent {
-                event_type: "rbac.emergency_grant_created",
+                event_type: crate::audit::event_type::RBAC_EMERGENCY_GRANT_CREATED,
                 actor_id: Some(caller.user_id as i32),
                 entity_type: Some("user_account"),
                 entity_id: Some(target_str.as_str()),

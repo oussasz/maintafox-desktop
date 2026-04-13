@@ -48,6 +48,8 @@ mod startup_tests;
 mod state_tests;
 #[cfg(test)]
 mod window_tests;
+#[cfg(test)]
+pub mod observability;
 
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;

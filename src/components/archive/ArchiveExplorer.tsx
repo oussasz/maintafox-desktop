@@ -2,7 +2,6 @@ import {
   AlertTriangle,
   Archive,
   CalendarDays,
-  CheckCircle2,
   ClipboardList,
   Database,
   FileJson,
@@ -171,8 +170,8 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
   const stats = useMemo(() => {
     const total = filteredItems.length;
     const legalHoldCount = filteredItems.filter((i) => i.legal_hold).length;
-    const pendingPurgeCount = filteredItems.filter((i) => !i.legal_hold).length;
-    return { total, legalHoldCount, pendingPurgeCount };
+    const purgeEligibleNoHoldCount = filteredItems.filter((i) => !i.legal_hold).length;
+    return { total, legalHoldCount, purgeEligibleNoHoldCount };
   }, [filteredItems]);
 
   const toggleClassFilter = useCallback((archiveClass: string) => {
@@ -209,38 +208,53 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
 
   const runBulkExport = useCallback(async () => {
     if (selectedRows.length === 0) return;
-    const payload = await exportArchiveItems({
-      archive_item_ids: selectedRows.map((r) => r.id),
-      export_reason: "Bulk export from archive explorer",
-    });
-    downloadAsJson(`archive-export-${new Date().toISOString()}.json`, payload);
+    setError(null);
+    try {
+      const payload = await exportArchiveItems({
+        archive_item_ids: selectedRows.map((r) => r.id),
+        export_reason: "Bulk export from archive explorer",
+      });
+      downloadAsJson(`archive-export-${new Date().toISOString()}.json`, payload);
+    } catch (err) {
+      setError(toErrorMessage(err));
+    }
   }, [selectedRows]);
 
   const runBulkLegalHold = useCallback(async () => {
     if (selectedRows.length === 0) return;
     const reason = window.prompt("Reason for legal hold (required):");
     if (!reason?.trim()) return;
-    for (const row of selectedRows) {
-      await setLegalHold({
-        archive_item_id: row.id,
-        enable: true,
-        reason_note: reason.trim(),
-      });
+    setError(null);
+    try {
+      for (const row of selectedRows) {
+        await setLegalHold({
+          archive_item_id: row.id,
+          enable: true,
+          reason_note: reason.trim(),
+        });
+      }
+      clearBulkSelection();
+      await loadItems();
+    } catch (err) {
+      setError(toErrorMessage(err));
     }
-    clearBulkSelection();
-    await loadItems();
   }, [clearBulkSelection, loadItems, selectedRows]);
 
   const runBulkPurge = useCallback(async () => {
     if (selectedRows.length === 0) return;
     const reason = window.prompt("Reason for purge (required):");
     if (!reason?.trim()) return;
-    await purgeArchiveItems({
-      archive_item_ids: selectedRows.map((row) => row.id),
-      purge_reason: reason.trim(),
-    });
-    clearBulkSelection();
-    await loadItems();
+    setError(null);
+    try {
+      await purgeArchiveItems({
+        archive_item_ids: selectedRows.map((row) => row.id),
+        purge_reason: reason.trim(),
+      });
+      clearBulkSelection();
+      await loadItems();
+    } catch (err) {
+      setError(toErrorMessage(err));
+    }
   }, [clearBulkSelection, loadItems, selectedRows]);
 
   return (
@@ -256,7 +270,10 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
                 <FolderTree className="h-4 w-4" />
                 Folder tree
               </div>
-              <div className="max-h-60 overflow-auto pr-1 text-sm">
+              <div
+                className="max-h-60 overflow-auto pr-1 text-sm"
+                data-testid="archive-folder-tree"
+              >
                 {Array.from(moduleClassYearTree.entries())
                   .sort(([a], [b]) => a.localeCompare(b))
                   .map(([module, classMap]) => (
@@ -328,10 +345,13 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
               />
               <div className="flex items-center gap-2 text-sm">
                 <Checkbox
+                  id="archive-legal-hold-only"
                   checked={legalHoldOnly}
                   onCheckedChange={(checked) => setLegalHoldOnly(checked)}
                 />
-                <span>Legal Hold only</span>
+                <label htmlFor="archive-legal-hold-only" className="cursor-pointer">
+                  Legal Hold only
+                </label>
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Archive class filters</p>
@@ -416,7 +436,11 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                   <StatCard label="Total archived" value={stats.total} icon={Archive} />
                   <StatCard label="Legal hold" value={stats.legalHoldCount} icon={ShieldAlert} />
-                  <StatCard label="Pending purge" value={stats.pendingPurgeCount} icon={AlertTriangle} />
+                  <StatCard
+                    label="Purge-eligible (no hold)"
+                    value={stats.purgeEligibleNoHoldCount}
+                    icon={AlertTriangle}
+                  />
                 </div>
 
                 <div className="rounded-md border">

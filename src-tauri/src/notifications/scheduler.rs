@@ -14,6 +14,11 @@ pub async fn start_notification_scheduler(pool: SqlitePool) {
     }
 }
 
+#[cfg(test)]
+pub async fn run_scheduler_tick_for_test(pool: &SqlitePool) -> Result<()> {
+    run_scheduler_tick(pool).await
+}
+
 async fn run_scheduler_tick(pool: &SqlitePool) -> Result<()> {
     pool.execute(Statement::from_string(
         DbBackend::Sqlite,

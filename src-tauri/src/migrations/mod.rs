@@ -35,6 +35,8 @@ mod m20260413_000033_password_policy_settings;
 mod m20260901_000034_notification_core;
 mod m20261001_000035_archive_core;
 mod m20261101_000036_activity_audit_log;
+mod m20261201_000037_observability_permissions;
+mod m20260414_000038_audit_events_integer_pk;
 
 pub struct Migrator;
 
@@ -77,6 +79,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260901_000034_notification_core::Migration),
             Box::new(m20261001_000035_archive_core::Migration),
             Box::new(m20261101_000036_activity_audit_log::Migration),
+            Box::new(m20261201_000037_observability_permissions::Migration),
+            Box::new(m20260414_000038_audit_events_integer_pk::Migration),
         ]
     }
 }

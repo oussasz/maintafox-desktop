@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { usePermissions } from "@/hooks/use-permissions";
 import {
   type ActivityEventSummary,
   type ActivityFilter,
@@ -24,12 +25,14 @@ interface ActivityFeedPanelProps {
 }
 
 export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
+  const { can, isLoading: permissionsLoading } = usePermissions();
   const [items, setItems] = useState<ActivityEventSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [expanded, setExpanded] = useState<Record<number, string>>({});
+  const [chainLoading, setChainLoading] = useState<Record<number, boolean>>({});
   const [savedViews, setSavedViews] = useState<SavedActivityFilter[]>([]);
   const [saveViewName, setSaveViewName] = useState("");
 
@@ -41,6 +44,10 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
   const [offset, setOffset] = useState(0);
+  const [appliedFilter, setAppliedFilter] = useState<ActivityFilter>({
+    limit: PAGE_SIZE,
+    offset: 0,
+  });
 
   const currentFilter = useMemo<ActivityFilter>(() => {
     const out: ActivityFilter = { limit: PAGE_SIZE, offset };
@@ -69,17 +76,24 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
     setLoading(true);
     setError(null);
     try {
-      setItems(await listActivityEvents(currentFilter));
+      setItems(await listActivityEvents(appliedFilter));
     } catch (err) {
       setError(toErrorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [currentFilter]);
+  }, [appliedFilter]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    setAppliedFilter({
+      limit: PAGE_SIZE,
+      offset: 0,
+    });
+  }, []);
 
   useEffect(() => {
     void loadSavedViews();
@@ -113,15 +127,52 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
       });
       return;
     }
-    const chain = await getEventChain(row.id, "activity_events");
-    const text = chain.events
-      .map((e) => {
-        const code = e.event_code ?? e.action_code ?? "unknown";
-        return `- ${e.happened_at} [${e.link_type ?? "related"}] ${code}`;
-      })
-      .join("\n");
-    setExpanded((prev) => ({ ...prev, [row.id]: text }));
+    setChainLoading((prev) => ({ ...prev, [row.id]: true }));
+    try {
+      const chain = await getEventChain(row.id, "activity_events");
+      const text = chain.events
+        .map((e) => {
+          const code = e.event_code ?? e.action_code ?? "unknown";
+          return `- ${e.happened_at} [${e.link_type ?? "related"}] ${code}`;
+        })
+        .join("\n");
+      setExpanded((prev) => ({ ...prev, [row.id]: text }));
+    } catch (err) {
+      setError(toErrorMessage(err));
+    } finally {
+      setChainLoading((prev) => ({ ...prev, [row.id]: false }));
+    }
   };
+
+  const applyFilters = useCallback(() => {
+    setOffset(0);
+    setAppliedFilter({
+      ...currentFilter,
+      offset: 0,
+      limit: PAGE_SIZE,
+    });
+  }, [currentFilter]);
+
+  if (permissionsLoading) {
+    return (
+      <Card className={className}>
+        <CardContent className="pt-6 text-sm text-muted-foreground">Loading permissions…</CardContent>
+      </Card>
+    );
+  }
+
+  if (!can("log.view")) {
+    return (
+      <Card className={className}>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Activity Feed</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">
+          You do not have permission to view activity logs.
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className={className}>
@@ -150,7 +201,7 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={() => void loadData()}>
+          <Button size="sm" onClick={applyFilters}>
             Apply filters
           </Button>
           <Button
@@ -165,6 +216,7 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
               setDateFrom("");
               setDateTo("");
               setOffset(0);
+              setAppliedFilter({ limit: PAGE_SIZE, offset: 0 });
             }}
           >
             Reset
@@ -221,7 +273,7 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
             size="sm"
             variant="outline"
             disabled={!saveViewName.trim()}
-            onClick={() =>
+            onClick={() => {
               void (async () => {
                 await saveActivityFilter({
                   view_name: saveViewName.trim(),
@@ -230,8 +282,10 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
                 });
                 setSaveViewName("");
                 await loadSavedViews();
-              })()
-            }
+              })().catch((err: unknown) => {
+                setError(toErrorMessage(err));
+              });
+            }}
           >
             Save current view
           </Button>
@@ -243,6 +297,8 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
             <span>{error}</span>
           </div>
         )}
+
+        {loading && <div className="text-sm text-muted-foreground">Loading activity feed...</div>}
 
         <div className="space-y-3">
           {grouped.map(([day, rows]) => (
@@ -274,10 +330,11 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
                       size="sm"
                       variant="ghost"
                       className="h-7 px-2 text-xs"
+                      disabled={Boolean(chainLoading[row.id])}
                       onClick={() => void handleExpand(row)}
                     >
                       <Link2 className="mr-1 h-3 w-3" />
-                      Correlation chain
+                      {chainLoading[row.id] ? "Loading chain..." : "Correlation chain"}
                     </Button>
                   </div>
 
@@ -301,7 +358,13 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
             size="sm"
             variant="outline"
             disabled={offset === 0}
-            onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_SIZE))}
+            onClick={() =>
+              setOffset((prev) => {
+                const nextOffset = Math.max(0, prev - PAGE_SIZE);
+                setAppliedFilter((current) => ({ ...current, offset: nextOffset, limit: PAGE_SIZE }));
+                return nextOffset;
+              })
+            }
           >
             Previous
           </Button>
@@ -309,7 +372,13 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
             size="sm"
             variant="outline"
             disabled={items.length < PAGE_SIZE}
-            onClick={() => setOffset((prev) => prev + PAGE_SIZE)}
+            onClick={() =>
+              setOffset((prev) => {
+                const nextOffset = prev + PAGE_SIZE;
+                setAppliedFilter((current) => ({ ...current, offset: nextOffset, limit: PAGE_SIZE }));
+                return nextOffset;
+              })
+            }
           >
             Next
           </Button>

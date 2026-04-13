@@ -32,6 +32,7 @@ pub mod event_type {
     pub const PIN_SET: &str = "user.pin_set";
     pub const PIN_CLEARED: &str = "user.pin_cleared";
     pub const SESSION_UNLOCKED_WITH_PIN: &str = "session.unlocked_with_pin";
+    pub const RBAC_EMERGENCY_GRANT_CREATED: &str = "rbac.emergency_grant_created";
 }
 
 /// Builder for audit event parameters.

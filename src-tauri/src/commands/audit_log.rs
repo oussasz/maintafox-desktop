@@ -71,6 +71,7 @@ pub async fn list_audit_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AuditEventSummary>> {
     let user = require_session!(state);
+    ensure_log_view_access(&state, user.user_id).await?;
     let has_adm_audit = crate::auth::rbac::check_permission_cached(
         &state.db,
         &state.permission_cache,
@@ -127,6 +128,7 @@ pub async fn list_audit_events(
 #[tauri::command]
 pub async fn get_audit_event(event_id: i64, state: State<'_, AppState>) -> AppResult<AuditEventDetail> {
     let user = require_session!(state);
+    ensure_log_view_access(&state, user.user_id).await?;
     let has_adm_audit = crate::auth::rbac::check_permission_cached(
         &state.db,
         &state.permission_cache,
@@ -157,7 +159,7 @@ pub async fn get_audit_event(event_id: i64, state: State<'_, AppState>) -> AppRe
     let actor_id = row.try_get::<Option<i64>>("", "actor_id").unwrap_or(None);
     if !has_adm_audit && actor_id != Some(i64::from(user.user_id)) {
         return Err(AppError::PermissionDenied(
-            "Permission requise : adm.audit or own actor_id event".to_string(),
+            "Permission required: adm.audit or own actor_id event".to_string(),
         ));
     }
 
@@ -358,4 +360,46 @@ fn build_audit_filter_query(filter: &AuditFilter, include_actor_username: bool) 
     values.push(offset.into());
 
     (sql, values)
+}
+
+async fn ensure_log_view_access(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
+    let has_global = crate::auth::rbac::check_permission_cached(
+        &state.db,
+        &state.permission_cache,
+        user_id,
+        "log.view",
+        &PermissionScope::Global,
+    )
+    .await?;
+    if has_global {
+        return Ok(());
+    }
+
+    let row = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS cnt
+             FROM user_scope_assignments usa
+             INNER JOIN role_permissions rp ON rp.role_id = usa.role_id
+             INNER JOIN permissions p ON p.id = rp.permission_id
+             WHERE usa.user_id = ?
+               AND usa.deleted_at IS NULL
+               AND (usa.valid_from IS NULL OR usa.valid_from <= datetime('now'))
+               AND (usa.valid_to IS NULL OR usa.valid_to >= datetime('now'))
+               AND usa.scope_type IN ('entity', 'org_node', 'site', 'team')
+               AND p.name = 'log.view'",
+            [i64::from(user_id).into()],
+        ))
+        .await?;
+    let scoped_count = row
+        .and_then(|r| r.try_get::<i64>("", "cnt").ok())
+        .unwrap_or(0);
+    if scoped_count > 0 {
+        Ok(())
+    } else {
+        Err(AppError::PermissionDenied(
+            "Permission denied: log.view is required".to_string(),
+        ))
+    }
 }

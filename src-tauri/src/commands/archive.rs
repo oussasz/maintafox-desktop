@@ -986,9 +986,7 @@ async fn emit_archive_activity_event(
         visibility_scope: "global".to_string(),
     };
     // Fire-and-log: failure must never break the archive command
-    if let Err(err) = crate::activity::emitter::emit_activity_event(db, input).await {
-        tracing::warn!(error = %err, archive_item_id, action, "archive::emit_activity_event skipped");
-    }
+    let _ = crate::activity::emitter::emit_activity_event(db, input).await;
 }
 
 async fn load_archive_purge_strict_mode(state: &State<'_, AppState>) -> AppResult<bool> {
@@ -1010,12 +1008,13 @@ async fn load_archive_purge_strict_mode(state: &State<'_, AppState>) -> AppResul
     Ok(true)
 }
 
-async fn evaluate_purge_eligibility(
-    state: &State<'_, AppState>,
+/// Shared purge gate logic (retention, legal hold, policy flags). Used by
+/// [`purge_archive_items`] and by cross-module integration tests.
+pub(crate) async fn evaluate_purge_eligibility_db(
+    db: &sea_orm::DatabaseConnection,
     archive_item_id: i64,
 ) -> AppResult<Option<String>> {
-    let row = state
-        .db
+    let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT
@@ -1065,8 +1064,7 @@ async fn evaluate_purge_eligibility(
     };
 
     let archived_at = row.try_get::<String>("", "archived_at").unwrap_or_default();
-    let elapsed = state
-        .db
+    let elapsed = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT CASE
@@ -1085,6 +1083,13 @@ async fn evaluate_purge_eligibility(
     }
 
     Ok(None)
+}
+
+async fn evaluate_purge_eligibility(
+    state: &State<'_, AppState>,
+    archive_item_id: i64,
+) -> AppResult<Option<String>> {
+    evaluate_purge_eligibility_db(&state.db, archive_item_id).await
 }
 
 async fn write_archive_action(

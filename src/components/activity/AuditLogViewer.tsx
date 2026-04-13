@@ -85,6 +85,12 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
     });
   }, []);
 
+  useEffect(() => {
+    void loadData();
+    // Initial load on mount; subsequent reloads are user-driven via Apply/Refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <Card className={className}>
       <CardHeader className="pb-3">
