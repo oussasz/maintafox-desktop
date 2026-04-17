@@ -1425,6 +1425,13 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
             false,
             false,
         ),
+        (
+            "org.admin",
+            "Manage org structure model and types",
+            "organization",
+            true,
+            true,
+        ),
         // ── Personnel (per) ──────────────────────────────────────────────
         ("per.view", "View personnel records", "personnel", false, false),
         ("per.manage", "Create/edit personnel records", "personnel", false, false),

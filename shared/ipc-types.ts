@@ -326,3 +326,76 @@ export interface RestoreTestResult {
   integrity_check_output: string;
   warnings: string[];
 }
+
+// ─── Organization & Site Operating Model (SP01-F01) ───────────────────────────
+
+export interface OrgStructureModel {
+  id: number;
+  sync_id: string;
+  version_number: number;
+  /** "draft" | "active" | "superseded" | "archived" */
+  status: string;
+  description: string | null;
+  activated_at: string | null;
+  activated_by_id: number | null;
+  superseded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrgNodeType {
+  id: number;
+  sync_id: string;
+  structure_model_id: number;
+  code: string;
+  label: string;
+  icon_key: string | null;
+  depth_hint: number | null;
+  can_host_assets: boolean;
+  can_own_work: boolean;
+  can_carry_cost_center: boolean;
+  can_aggregate_kpis: boolean;
+  can_receive_permits: boolean;
+  is_root_type: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrgRelationshipRule {
+  id: number;
+  structure_model_id: number;
+  parent_type_id: number;
+  parent_type_label: string | null;
+  child_type_id: number;
+  child_type_label: string | null;
+  min_children: number | null;
+  max_children: number | null;
+  created_at: string;
+}
+
+export interface CreateStructureModelPayload {
+  description: string | null;
+}
+
+export interface CreateOrgNodeTypePayload {
+  structure_model_id: number;
+  code: string;
+  label: string;
+  icon_key?: string;
+  depth_hint?: number;
+  can_host_assets: boolean;
+  can_own_work: boolean;
+  can_carry_cost_center: boolean;
+  can_aggregate_kpis: boolean;
+  can_receive_permits: boolean;
+  is_root_type: boolean;
+}
+
+export interface CreateRelationshipRulePayload {
+  structure_model_id: number;
+  parent_type_id: number;
+  child_type_id: number;
+  min_children?: number;
+  max_children?: number;
+}

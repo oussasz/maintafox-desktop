@@ -4,6 +4,7 @@ pub mod backup;
 pub mod diagnostics;
 pub mod locale;
 pub mod lookup;
+pub mod org;
 pub mod rbac;
 pub mod settings;
 pub mod updater;
