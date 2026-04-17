@@ -2,6 +2,7 @@ import { Suspense, lazy } from "react";
 import { Outlet, type RouteObject, createBrowserRouter } from "react-router-dom";
 
 import { AuthGuard } from "@/components/auth/AuthGuard";
+import { ProductLicenseGate } from "@/components/auth/ProductLicenseGate";
 import { PermissionRoute } from "@/components/auth/PermissionRoute";
 import { AppShell } from "@/components/layout/AppShell";
 import { DashboardPage } from "@/pages/DashboardPage";
@@ -123,134 +124,143 @@ function ShellLayout() {
 }
 
 const routes: RouteObject[] = [
-  // ── Public routes (no shell, no auth required) ───────────────────────
   {
-    path: "login",
     element: (
-      <Suspense
-        fallback={
-          <div className="flex h-screen items-center justify-center bg-surface-0">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
-          </div>
-        }
-      >
-        <LoginPage />
-      </Suspense>
+      <ProductLicenseGate>
+        <Outlet />
+      </ProductLicenseGate>
     ),
-  },
-  // ── Protected routes (auth required → shell layout) ──────────────────
-  {
-    element: <AuthGuard />,
     children: [
+      // ── Public routes (license-gated, no shell, no auth required) ───────
       {
-        element: <ShellLayout />,
+        path: "login",
+        element: (
+          <Suspense
+            fallback={
+              <div className="flex h-screen items-center justify-center bg-surface-0">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
+              </div>
+            }
+          >
+            <LoginPage />
+          </Suspense>
+        ),
+      },
+      // ── Protected routes (license + auth required → shell layout) ───────
+      {
+        element: <AuthGuard />,
         children: [
-          { index: true, element: <DashboardPage /> },
           {
-            element: <PageSuspense />,
+            element: <ShellLayout />,
             children: [
+              { index: true, element: <DashboardPage /> },
               {
-                element: <PermissionRoute permission="eq.view" />,
+                element: <PageSuspense />,
                 children: [
-                  { path: "equipment", element: <EquipmentPage /> },
-                  { path: "equipment/import", element: <AssetImportPage /> },
+                  {
+                    element: <PermissionRoute permission="eq.view" />,
+                    children: [
+                      { path: "equipment", element: <EquipmentPage /> },
+                      { path: "equipment/import", element: <AssetImportPage /> },
+                    ],
+                  },
+                  {
+                    element: <PermissionRoute permission="di.view" />,
+                    children: [{ path: "requests", element: <RequestsPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="ot.view" />,
+                    children: [{ path: "work-orders", element: <WorkOrdersPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="plan.view" />,
+                    children: [{ path: "planning", element: <PlanningPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="pm.view" />,
+                    children: [{ path: "pm", element: <PmPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="ptw.view" />,
+                    children: [{ path: "permits", element: <PermitsPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="ins.view" />,
+                    children: [{ path: "inspections", element: <InspectionsPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="trn.view" />,
+                    children: [{ path: "training", element: <TrainingPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="inv.view" />,
+                    children: [{ path: "inventory", element: <InventoryPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="rep.view" />,
+                    children: [
+                      { path: "analytics", element: <AnalyticsPage /> },
+                      { path: "reliability", element: <ReliabilityPage /> },
+                    ],
+                  },
+                  {
+                    element: <PermissionRoute permission="fin.view" />,
+                    children: [{ path: "budget", element: <BudgetPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="per.view" />,
+                    children: [{ path: "personnel", element: <PersonnelPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="adm.users" />,
+                    children: [{ path: "users", element: <UsersPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute anyOf={["adm.users", "adm.roles"]} />,
+                    children: [{ path: "admin", element: <AdminPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="org.view" />,
+                    children: [{ path: "org", element: <OrgPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="ref.view" />,
+                    children: [{ path: "lookups", element: <LookupsPage /> }],
+                  },
+                  { path: "notifications", element: <NotificationsPage /> },
+                  {
+                    element: <PermissionRoute permission="doc.view" />,
+                    children: [{ path: "documentation", element: <DocumentationPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="iot.view" />,
+                    children: [{ path: "iot", element: <IotPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="erp.view" />,
+                    children: [{ path: "erp", element: <ErpPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="arc.view" />,
+                    children: [{ path: "archive", element: <ArchivePage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="log.view" />,
+                    children: [{ path: "activity", element: <ActivityPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="adm.settings" />,
+                    children: [{ path: "settings", element: <SettingsPage /> }],
+                  },
+                  {
+                    element: <PermissionRoute permission="cfg.view" />,
+                    children: [{ path: "configuration", element: <ConfigurationPage /> }],
+                  },
+                  { path: "diagnostics", element: <DiagnosticsPage /> },
+                  { path: "profile", element: <ProfilePage /> },
+                  { path: "unauthorized", element: <UnauthorizedPage /> },
                 ],
               },
-              {
-                element: <PermissionRoute permission="di.view" />,
-                children: [{ path: "requests", element: <RequestsPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="ot.view" />,
-                children: [{ path: "work-orders", element: <WorkOrdersPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="plan.view" />,
-                children: [{ path: "planning", element: <PlanningPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="pm.view" />,
-                children: [{ path: "pm", element: <PmPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="ptw.view" />,
-                children: [{ path: "permits", element: <PermitsPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="ins.view" />,
-                children: [{ path: "inspections", element: <InspectionsPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="trn.view" />,
-                children: [{ path: "training", element: <TrainingPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="inv.view" />,
-                children: [{ path: "inventory", element: <InventoryPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="rep.view" />,
-                children: [
-                  { path: "analytics", element: <AnalyticsPage /> },
-                  { path: "reliability", element: <ReliabilityPage /> },
-                ],
-              },
-              {
-                element: <PermissionRoute permission="fin.view" />,
-                children: [{ path: "budget", element: <BudgetPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="per.view" />,
-                children: [{ path: "personnel", element: <PersonnelPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="adm.users" />,
-                children: [{ path: "users", element: <UsersPage /> }],
-              },
-              {
-                element: <PermissionRoute anyOf={["adm.users", "adm.roles"]} />,
-                children: [{ path: "admin", element: <AdminPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="org.view" />,
-                children: [{ path: "org", element: <OrgPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="ref.view" />,
-                children: [{ path: "lookups", element: <LookupsPage /> }],
-              },
-              { path: "notifications", element: <NotificationsPage /> },
-              {
-                element: <PermissionRoute permission="doc.view" />,
-                children: [{ path: "documentation", element: <DocumentationPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="iot.view" />,
-                children: [{ path: "iot", element: <IotPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="erp.view" />,
-                children: [{ path: "erp", element: <ErpPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="arc.view" />,
-                children: [{ path: "archive", element: <ArchivePage /> }],
-              },
-              {
-                element: <PermissionRoute permission="log.view" />,
-                children: [{ path: "activity", element: <ActivityPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="adm.settings" />,
-                children: [{ path: "settings", element: <SettingsPage /> }],
-              },
-              {
-                element: <PermissionRoute permission="cfg.view" />,
-                children: [{ path: "configuration", element: <ConfigurationPage /> }],
-              },
-              { path: "diagnostics", element: <DiagnosticsPage /> },
-              { path: "profile", element: <ProfilePage /> },
-              { path: "unauthorized", element: <UnauthorizedPage /> },
             ],
           },
         ],

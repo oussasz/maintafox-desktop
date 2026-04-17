@@ -211,7 +211,7 @@ function SyncIndicator({ state, isOnline }: { state: string; isOnline: boolean }
     );
   }
 
-  if (state === "syncing") {
+  if (state === "running") {
     return (
       <span
         className="flex items-center gap-1 rounded px-2 py-1 text-xs
@@ -220,6 +220,32 @@ function SyncIndicator({ state, isOnline }: { state: string; isOnline: boolean }
       >
         <RefreshCw className="h-3.5 w-3.5 animate-spin-slow" />
         <span className="hidden sm:inline">{t("sync.syncing")}</span>
+      </span>
+    );
+  }
+
+  if (state === "degraded") {
+    return (
+      <span
+        className="flex items-center gap-1 rounded px-2 py-1 text-xs
+                   bg-status-warning/10 text-status-warning"
+        title={t("sync.error")}
+      >
+        <AlertCircle className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">Degraded</span>
+      </span>
+    );
+  }
+
+  if (state === "blocked" || state === "paused") {
+    return (
+      <span
+        className="flex items-center gap-1 rounded px-2 py-1 text-xs
+                   bg-status-warning/10 text-status-warning"
+        title={state === "paused" ? "Sync paused by operator policy" : "Sync blocked by policy"}
+      >
+        <AlertCircle className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">{state === "paused" ? "Paused" : "Blocked"}</span>
       </span>
     );
   }
@@ -233,6 +259,15 @@ function SyncIndicator({ state, isOnline }: { state: string; isOnline: boolean }
       >
         <AlertCircle className="h-3.5 w-3.5" />
         <span className="hidden sm:inline">{t("sync.error")}</span>
+      </span>
+    );
+  }
+
+  if (state === "scheduled") {
+    return (
+      <span className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-muted" title="Sync scheduled">
+        <Clock className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">Scheduled</span>
       </span>
     );
   }

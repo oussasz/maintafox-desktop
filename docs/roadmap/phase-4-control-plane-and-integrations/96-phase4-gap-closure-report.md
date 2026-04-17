@@ -10,12 +10,16 @@
 
 - Contract freeze: `91-control-plane-v1-contract-freeze.md`
 - Placeholder inventory: `92-placeholders-and-hardcodes-inventory.md`
+- Final artifact index: `99-phase4-final-artifact-index.md`
 - Sprint 8 VPS hardening evidence (TLS + host controls + secret rotation)
 - Sprint 9 observability evidence (SLO endpoint + structured logs + drill record)
 - Sprint 10 UAT + RC closeout bundle:
   - `/root/sprint10-uat-20260417T130406Z-postfix/uat-results.json`
   - `/root/sprint10-uat-20260417T130406Z-postfix/uat-results.md`
   - `/root/sprint10-rc-closeout-20260417T130406Z.tar.gz`
+- Vendor-console frontend hardening evidence bundle:
+  - `/root/logs/frontend-hardening-20260417T145601Z.tar.gz`
+  - `sha256: a6a9ef2aa047e6c5d5ab5f1690f627d658c172261c9db51970d8d1a184b96e2b`
 - CI guard:
   - `pnpm run guard:phase4:fixtures`
   - implemented by `scripts/check-control-plane-fixture-imports.ts`
@@ -30,14 +34,13 @@
 - **Desktop activation state machine** enforces online/offline reconciliation and explicit deny states.  
 - **Force-update governance** is policy-driven end-to-end (tenant/cohort -> claim response -> desktop gate).
 
-### Dev-only bypass hardening
+### Authentication hardening (vendor console)
 
-- `VITE_DEV_MOCK_AUTH` paths are now constrained to **DEV mode only**:
-  - `maintafox-vendor-console/src/components/auth/AuthGuard.tsx`
-  - `maintafox-vendor-console/src/services/admin-permissions.ts`
-  - `maintafox-vendor-console/src/pages/LoginPage.tsx`
+- `VITE_DEV_MOCK_AUTH` bypass path has been fully removed from vendor-console production code.
+- `MOCK_VENDOR_PERMISSIONS` fallback has been removed from runtime permissions loading.
+- Unused fixture sources have been removed from vendor-console source.
 
-This prevents accidental production bypass activation.
+This removes accidental auth bypass risk and enforces real login + permissions in all environments.
 
 ---
 

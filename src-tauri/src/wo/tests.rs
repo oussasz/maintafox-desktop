@@ -477,6 +477,8 @@ mod tests {
                 article_ref: Some("P-001".into()),
                 quantity_planned: 2.0,
                 unit_cost: Some(45.0),
+                stock_location_id: None,
+                auto_reserve: Some(false),
                 notes: None,
             },
         )
@@ -780,6 +782,8 @@ mod tests {
                 article_ref: Some("P-ROLLUP".into()),
                 quantity_planned: 2.0,
                 unit_cost: Some(45.0),
+                stock_location_id: None,
+                auto_reserve: Some(false),
                 notes: None,
             },
         )
@@ -1107,6 +1111,8 @@ mod tests {
                 article_ref: Some("FULL-14".into()),
                 quantity_planned: 2.0,
                 unit_cost: Some(45.0),
+                stock_location_id: None,
+                auto_reserve: Some(false),
                 notes: None,
             },
         )

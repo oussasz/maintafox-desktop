@@ -1,4 +1,4 @@
-﻿//! Reference import/export pipeline.
+//! Reference import/export pipeline.
 //!
 //! Phase 2 - Sub-phase 03 - File 03 - Sprint S2.
 //!
@@ -32,12 +32,6 @@ use super::sets;
 use super::values;
 
 // â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-/// Valid batch status values.
-const BATCH_STATUSES: &[&str] = &["uploaded", "validated", "applied", "failed"];
-
-/// Valid row validation statuses.
-const ROW_STATUSES: &[&str] = &["pending", "valid", "warning", "error"];
 
 // â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

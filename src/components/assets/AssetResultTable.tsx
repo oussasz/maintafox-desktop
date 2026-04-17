@@ -22,21 +22,33 @@ import { cn } from "@/lib/utils";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
 import type { AssetSearchResult } from "@shared/ipc-types";
 
-// ── Status → badge variant mapping ──────────────────────────────────────────
-
-type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
-
-const STATUS_VARIANT: Record<string, BadgeVariant> = {
-  ACTIVE: "default",
-  OPERATIONAL: "default",
-  STANDBY: "secondary",
-  MAINTENANCE: "outline",
-  DECOMMISSIONED: "destructive",
-  SCRAPPED: "destructive",
+// ── Status → badge style mapping (same pattern as DI/OT) ───────────────────
+const STATUS_STYLE: Record<string, string> = {
+  ACTIVE: "bg-green-100 text-green-800",
+  ACTIVE_IN_SERVICE: "bg-green-100 text-green-800",
+  STANDBY: "bg-amber-100 text-amber-800",
+  MAINTENANCE: "bg-blue-100 text-blue-800",
+  DECOMMISSIONED: "bg-red-100 text-red-700",
+  SCRAPPED: "bg-slate-100 text-slate-600",
 };
 
-function statusVariant(code: string): BadgeVariant {
-  return STATUS_VARIANT[code] ?? "outline";
+const STATUS_ALIAS: Record<string, string> = {
+  OPERATIONAL: "ACTIVE",
+  ACTIVE_IN_SERVICE: "ACTIVE",
+};
+
+function normalizeStatusCode(code: string): string {
+  const normalized = code.trim().toUpperCase();
+  return STATUS_ALIAS[normalized] ?? normalized;
+}
+
+function formatFallbackStatusLabel(code: string): string {
+  return code
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 export function AssetResultTable() {
@@ -117,44 +129,44 @@ export function AssetResultTable() {
 
 function StatusBadge({ code }: { code: string }) {
   const { t } = useTranslation("equipment");
-  const variant = statusVariant(code);
+  const normalizedCode = normalizeStatusCode(code);
+  const className = `text-[10px] border-0 ${STATUS_STYLE[normalizedCode] ?? "bg-gray-100 text-gray-600"}`;
 
-  switch (code) {
+  switch (normalizedCode) {
     case "ACTIVE":
-    case "OPERATIONAL":
       return (
-        <Badge variant={variant} className="text-xs">
+        <Badge variant="outline" className={className}>
           {t("status.operational")}
         </Badge>
       );
     case "STANDBY":
       return (
-        <Badge variant={variant} className="text-xs">
+        <Badge variant="outline" className={className}>
           {t("status.standby")}
         </Badge>
       );
     case "MAINTENANCE":
       return (
-        <Badge variant={variant} className="text-xs">
+        <Badge variant="outline" className={className}>
           {t("status.maintenance")}
         </Badge>
       );
     case "DECOMMISSIONED":
       return (
-        <Badge variant={variant} className="text-xs">
+        <Badge variant="outline" className={className}>
           {t("status.decommissioned")}
         </Badge>
       );
     case "SCRAPPED":
       return (
-        <Badge variant={variant} className="text-xs">
+        <Badge variant="outline" className={className}>
           {t("status.scrapped")}
         </Badge>
       );
     default:
       return (
-        <Badge variant="outline" className="text-xs">
-          {code}
+        <Badge variant="outline" className={className}>
+          {formatFallbackStatusLabel(normalizedCode)}
         </Badge>
       );
   }

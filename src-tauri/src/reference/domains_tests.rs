@@ -120,7 +120,13 @@ mod tests {
             .await
             .expect("list domains");
 
-        assert_eq!(list.len(), 2);
+        assert!(
+            list.len() >= 2,
+            "list should include at least the two newly created domains"
+        );
+        let codes: Vec<&str> = list.iter().map(|d| d.code.as_str()).collect();
+        assert!(codes.contains(&"FAILURE_CLASS"));
+        assert!(codes.contains(&"EQUIPMENT_FAMILY"));
     }
 
     #[tokio::test]

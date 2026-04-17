@@ -505,6 +505,8 @@ mod tests {
                 article_ref: Some("BEARING-6205".into()),
                 quantity_planned: 5.0,
                 unit_cost: Some(20.0),
+                stock_location_id: None,
+                auto_reserve: Some(false),
                 notes: None,
             },
         )

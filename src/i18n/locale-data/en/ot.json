@@ -7,7 +7,8 @@
     "viewList": "List",
     "viewKanban": "Kanban",
     "viewCalendar": "Calendar",
-    "viewDashboard": "Dashboard"
+    "viewDashboard": "Dashboard",
+    "filterSettings": "Filter settings"
   },
   "list": {
     "columns": {

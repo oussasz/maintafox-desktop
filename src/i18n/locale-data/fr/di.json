@@ -3,7 +3,12 @@
     "title": "Demandes d'intervention",
     "titleDetail": "Détail de la demande",
     "titleNew": "Nouvelle demande",
-    "titleEdit": "Modifier la demande"
+    "titleEdit": "Modifier la demande",
+    "viewList": "Liste",
+    "viewKanban": "Kanban",
+    "viewCalendar": "Calendrier",
+    "viewDashboard": "Tableau de bord",
+    "filterSettings": "Paramètres des filtres"
   },
   "list": {
     "columns": {
@@ -248,6 +253,9 @@
   },
   "archive": {
     "title": "Archive"
+  },
+  "search": {
+    "placeholder": "Rechercher par code, objet, description…"
   },
   "contextMenu": {
     "viewDetail": "Voir le détail",

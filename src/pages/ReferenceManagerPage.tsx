@@ -9,12 +9,14 @@
  * Phase 2 – Sub-phase 03 – Sprint S4 (GAP REF-01).
  */
 
-import { AlertTriangle, Database, Download, Plus, RefreshCw } from "lucide-react";
+import { AlertTriangle, Database, Download, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DomainBrowserPanel } from "@/components/lookups/DomainBrowserPanel";
+import { InventoryArticleFamilyManagerPanel } from "@/components/lookups/InventoryArticleFamilyManagerPanel";
+import { InventoryTaxCategoryManagerPanel } from "@/components/lookups/InventoryTaxCategoryManagerPanel";
 import { ReferenceImportWizard } from "@/components/lookups/ReferenceImportWizard";
 import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor";
 import { Badge } from "@/components/ui/badge";
@@ -22,8 +24,13 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { usePermissions } from "@/hooks/use-permissions";
 import { createDraftReferenceSet } from "@/services/reference-service";
-import { useReferenceManagerStore } from "@/stores/reference-manager-store";
-import type { ReferenceDomain } from "@shared/ipc-types";
+import {
+  INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
+  INVENTORY_ARTICLE_FAMILY_SET_ID,
+  INVENTORY_TAX_CATEGORY_DOMAIN_ID,
+  INVENTORY_TAX_CATEGORY_SET_ID,
+  useReferenceManagerStore,
+} from "@/stores/reference-manager-store";
 
 // ── Status label key mapping (shared with DomainBrowserPanel) ─────────────
 
@@ -89,10 +96,6 @@ export function ReferenceManagerPage() {
     },
     [loadSetsForDomain],
   );
-
-  const handleRenameDomain = useCallback((_domain: ReferenceDomain) => {
-    // Rename dialog will be wired in a follow-up sprint
-  }, []);
 
   // ── Permission gate ─────────────────────────────────────────────────────
 
@@ -190,14 +193,17 @@ export function ReferenceManagerPage() {
               size="sm"
               className="gap-1.5"
               onClick={() => setImportOpen(true)}
-              disabled={!selectedDomainId || !selectedSetId}
+              disabled={
+                !selectedDomainId ||
+                !selectedSetId ||
+                ((selectedDomainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID &&
+                  selectedSetId === INVENTORY_ARTICLE_FAMILY_SET_ID) ||
+                  (selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
+                    selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID))
+              }
             >
               <Download className="h-3.5 w-3.5" />
               {t("page.import")}
-            </Button>
-            <Button variant="outline" size="sm" className="gap-1.5">
-              <Plus className="h-3.5 w-3.5" />
-              {t("page.newDomain")}
             </Button>
           </PermissionGate>
           <Button
@@ -218,12 +224,17 @@ export function ReferenceManagerPage() {
         {/* Left pane: domain browser */}
         <DomainBrowserPanel
           onCreateDraftSet={(domainId) => void handleCreateDraftSet(domainId)}
-          onRenameDomain={handleRenameDomain}
         />
 
         {/* Right pane: value editor area */}
         <main className="flex-1 min-w-0">
-          {selectedSetId && selectedDomainId ? (
+          {selectedDomainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID &&
+          selectedSetId === INVENTORY_ARTICLE_FAMILY_SET_ID ? (
+            <InventoryArticleFamilyManagerPanel />
+          ) : selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
+            selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID ? (
+            <InventoryTaxCategoryManagerPanel />
+          ) : selectedSetId && selectedDomainId ? (
             <ReferenceValueEditor setId={selectedSetId} domainId={selectedDomainId} />
           ) : (
             <div className="flex h-full items-center justify-center p-6">
@@ -237,7 +248,16 @@ export function ReferenceManagerPage() {
       </div>
 
       {/* Import wizard */}
-      {selectedDomainId && selectedSetId && (
+      {selectedDomainId &&
+        selectedSetId &&
+        !(
+          selectedDomainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID &&
+          selectedSetId === INVENTORY_ARTICLE_FAMILY_SET_ID
+        ) &&
+        !(
+          selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
+          selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID
+        ) && (
         <ReferenceImportWizard
           domainId={selectedDomainId}
           targetSetId={selectedSetId}
@@ -245,7 +265,7 @@ export function ReferenceManagerPage() {
           onOpenChange={setImportOpen}
           onComplete={handleRefresh}
         />
-      )}
+        )}
     </div>
   );
 }

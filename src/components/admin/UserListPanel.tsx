@@ -25,9 +25,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { PersonnelPickerCombobox } from "@/components/personnel/PersonnelCard";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { useToast } from "@/hooks/use-toast";
+import { listPersonnel } from "@/services/personnel-service";
 import {
   listUsers,
   getUser,
@@ -45,6 +47,7 @@ import type {
   CreateUserInput,
   AssignRoleScopeInput,
   RoleWithPermissions,
+  Personnel,
 } from "@shared/ipc-types";
 
 // ── Detail sheet ────────────────────────────────────────────────────────────
@@ -249,6 +252,8 @@ function CreateUserDialog({
 }) {
   const { t } = useTranslation("admin");
   const { toast } = useToast();
+  const { can } = usePermissions();
+  const canViewPersonnel = can("per.view");
 
   const [username, setUsername] = useState("");
   const [identityMode, setIdentityMode] = useState("local");
@@ -257,6 +262,38 @@ function CreateUserDialog({
   const [showPassword, setShowPassword] = useState(false);
   const [forceChange, setForceChange] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [personnelId, setPersonnelId] = useState<number | null>(null);
+  const [personnelItems, setPersonnelItems] = useState<Personnel[]>([]);
+  const [personnelLoading, setPersonnelLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setPersonnelId(null);
+      return;
+    }
+    if (!canViewPersonnel) return;
+    let cancelled = false;
+    setPersonnelLoading(true);
+    void listPersonnel({ limit: 2000, offset: 0 })
+      .then((page) => {
+        if (!cancelled) setPersonnelItems(page.items);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPersonnelItems([]);
+          toast({
+            title: t("users.create.personnelLoadError", "Could not load personnel list"),
+            variant: "destructive",
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPersonnelLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, canViewPersonnel, t, toast]);
 
   const showPasswordFields = identityMode !== "sso";
   const passwordRequired = identityMode === "local";
@@ -296,6 +333,7 @@ function CreateUserDialog({
       const input: CreateUserInput = {
         username: username.trim(),
         identity_mode: identityMode,
+        ...(personnelId != null ? { personnel_id: personnelId } : {}),
         ...(showPasswordFields && password
           ? { initial_password: password, force_password_change: forceChange }
           : {}),
@@ -310,6 +348,7 @@ function CreateUserDialog({
       setConfirmPassword("");
       setIdentityMode("local");
       setForceChange(true);
+      setPersonnelId(null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast({
@@ -346,6 +385,44 @@ function CreateUserDialog({
               placeholder="jean.dupont"
               autoComplete="off"
             />
+          </div>
+
+          {/* Optional link to personnel */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">
+              {t("users.create.linkPersonnel", "Link to existing personnel")}
+            </label>
+            <p className="text-xs text-text-secondary">
+              {t(
+                "users.create.linkPersonnelHint",
+                "Optional. Recommended so the account matches profile, skills, and assignments for that person.",
+              )}
+            </p>
+            {canViewPersonnel ? (
+              personnelLoading ? (
+                <p className="text-xs text-text-secondary">
+                  {t("common.loading", "Chargement…")}
+                </p>
+              ) : (
+                <PersonnelPickerCombobox
+                  items={personnelItems}
+                  value={personnelId}
+                  onChange={setPersonnelId}
+                  disabled={submitting}
+                  placeholder={t(
+                    "users.create.personnelSearchPlaceholder",
+                    "Search by name or employee code…",
+                  )}
+                />
+              )
+            ) : (
+              <p className="text-xs text-amber-800 dark:text-amber-200">
+                {t(
+                  "users.create.noPersonnelPermission",
+                  "Listing personnel requires the « per.view » permission. You can create the account without a link and associate it later.",
+                )}
+              </p>
+            )}
           </div>
 
           {/* Identity mode */}

@@ -825,15 +825,15 @@ mod tests {
         )).await.expect("org_node");
         db.execute(Statement::from_string(DbBackend::Sqlite,
             "INSERT INTO reference_domains (id, code, name, structure_type, governance_level, is_extendable, created_at, updated_at) \
-             VALUES (1, 'DI_CLASS', 'DI Classification', 'flat', 'tenant_managed', 1, datetime('now'), datetime('now'))".to_string()
+             VALUES (900001, 'DI_CLASS', 'DI Classification', 'flat', 'tenant_managed', 1, datetime('now'), datetime('now'))".to_string()
         )).await.expect("ref_domain");
         db.execute(Statement::from_string(DbBackend::Sqlite,
             "INSERT INTO reference_sets (id, domain_id, version_no, status, created_at) \
-             VALUES (1, 1, 1, 'published', datetime('now'))".to_string()
+             VALUES (900001, 900001, 1, 'published', datetime('now'))".to_string()
         )).await.expect("ref_set");
         db.execute(Statement::from_string(DbBackend::Sqlite,
             "INSERT INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (1, 1, 'MECH', 'Mécanique', 1)".to_string()
+             VALUES (900001, 900001, 'MECH', 'Mécanique', 1)".to_string()
         )).await.expect("ref_value");
 
         // Get seeded admin user
@@ -881,7 +881,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "high".into(),
                 review_team_id: Some(1),
-                classification_code_id: Some(1),
+                classification_code_id: Some(900001),
                 reviewer_note: Some("Validated".into()),
             },
         )
@@ -997,7 +997,7 @@ mod tests {
                 expected_row_version: 2, // row_version after manual advance
                 validated_urgency: "high".into(),
                 review_team_id: None,
-                classification_code_id: Some(1),
+                classification_code_id: Some(900001),
                 reviewer_note: Some("Test screen".into()),
             },
         )
@@ -1147,15 +1147,15 @@ mod tests {
         )).await.expect("org_node");
         db.execute(Statement::from_string(DbBackend::Sqlite,
             "INSERT OR IGNORE INTO reference_domains (id, code, name, structure_type, governance_level, is_extendable, created_at, updated_at) \
-             VALUES (1, 'DI_CLASS', 'DI Classification', 'flat', 'tenant_managed', 1, datetime('now'), datetime('now'))".to_string()
+             VALUES (900001, 'DI_CLASS', 'DI Classification', 'flat', 'tenant_managed', 1, datetime('now'), datetime('now'))".to_string()
         )).await.expect("ref_domain");
         db.execute(Statement::from_string(DbBackend::Sqlite,
             "INSERT OR IGNORE INTO reference_sets (id, domain_id, version_no, status, created_at) \
-             VALUES (1, 1, 1, 'published', datetime('now'))".to_string()
+             VALUES (900001, 900001, 1, 'published', datetime('now'))".to_string()
         )).await.expect("ref_set");
         db.execute(Statement::from_string(DbBackend::Sqlite,
             "INSERT OR IGNORE INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (1, 1, 'MECH', 'Mécanique', 1)".to_string()
+             VALUES (900001, 900001, 'MECH', 'Mécanique', 1)".to_string()
         )).await.expect("ref_value");
     }
 

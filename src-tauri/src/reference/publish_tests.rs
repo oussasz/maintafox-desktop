@@ -364,9 +364,17 @@ mod tests {
         assert!(dim_names.contains(&"reliability_events"));
         assert!(dim_names.contains(&"external_integrations"));
 
-        // Unavailable modules should have explicit status.
+        // Assets and PM plans are wired. Depending on changed codes they can
+        // report either "available" (impacts evaluated) or "no_impact".
         for dim in &impact.dimensions {
-            if dim.module != "assets" {
+            if dim.module == "assets" || dim.module == "pm_plans" {
+                assert!(
+                    dim.status == "available" || dim.status == "no_impact",
+                    "module {} should be available or no_impact, got {}",
+                    dim.module,
+                    dim.status
+                );
+            } else {
                 assert_eq!(dim.status, "unavailable",
                     "module {} should be unavailable", dim.module);
             }

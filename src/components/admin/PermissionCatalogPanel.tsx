@@ -138,6 +138,13 @@ const SYSTEM_PREFIXES = [
   "ins.",
   "cfg.",
   "adm.",
+  "sync.",
+  "console.",
+  "customer.",
+  "entitlement.",
+  "rollout.",
+  "platform.",
+  "audit.",
 ];
 
 // ── Create Custom Permission Dialog ─────────────────────────────────────────
@@ -429,6 +436,10 @@ export function PermissionCatalogPanel() {
     if (permissionsByDomain["cst"] && permissionsByDomain["cst"].length > 0) {
       list.push("cst");
     }
+    const extras = Object.keys(permissionsByDomain)
+      .filter((d) => d !== "_" && !list.includes(d))
+      .sort();
+    list.push(...extras);
     return list;
   }, [permissionsByDomain]);
 

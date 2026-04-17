@@ -75,6 +75,8 @@ mod errors_tests {
         let cases: Vec<(AppError, &str)> = vec![
             (AppError::Database(sea_orm::DbErr::Custom("x".into())), "DATABASE_ERROR"),
             (AppError::Auth("x".into()), "AUTH_ERROR"),
+            (AppError::TenantScopeViolation("x".into()), "TENANT_SCOPE_VIOLATION"),
+            (AppError::SessionClaimInvalid("x".into()), "SESSION_CLAIM_INVALID"),
             (
                 AppError::NotFound {
                     entity: "e".into(),
@@ -100,6 +102,13 @@ mod errors_tests {
                 "PERMISSION_DENIED",
             ),
             (AppError::PermissionDenied("x".into()), "PERMISSION_DENIED"),
+            (
+                AppError::LicenseDenied {
+                    reason_code: "entitlement_violation".into(),
+                    message: "blocked".into(),
+                },
+                "LICENSE_DENIED",
+            ),
             (AppError::StepUpRequired, "STEP_UP_REQUIRED"),
             (AppError::Internal(anyhow::anyhow!("boom")), "INTERNAL_ERROR"),
         ];

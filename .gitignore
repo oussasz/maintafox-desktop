@@ -9,6 +9,8 @@ build/
 
 # Rust build artifacts
 src-tauri/target/
+src-tauri/target-agent-*/
+target-agent-test/
 
 # Environment files (never commit secrets)
 .env

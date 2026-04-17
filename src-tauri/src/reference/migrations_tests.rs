@@ -274,6 +274,8 @@ mod tests {
                 display_name: Some("Admin S3".to_string()),
                 is_admin: true,
                 force_password_change: false,
+                tenant_id: "tenant-test".into(),
+                token_tenant_id: "tenant-test".into(),
             });
         }
 

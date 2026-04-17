@@ -163,6 +163,10 @@ pub struct DeviceTrustStatus {
     pub device_label: Option<String>,
     /// When this device's trust was established (ISO 8601)
     pub trusted_at: Option<String>,
+    /// Machine activation denial code if offline eligibility failed.
+    pub offline_denial_code: Option<String>,
+    /// Human-readable operator message describing the denial reason.
+    pub offline_denial_message: Option<String>,
 }
 
 // â”€â”€ trusted_devices CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

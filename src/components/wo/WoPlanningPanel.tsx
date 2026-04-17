@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -12,11 +12,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSession } from "@/hooks/use-session";
+import { evaluateInventoryUnitCost, listInventoryArticles, listInventoryLocations } from "@/services/inventory-service";
 import { listOrgTree } from "@/services/org-node-service";
 import { addPart, addTask, listParts, listTasks } from "@/services/wo-execution-service";
 import { assignWo, planWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
-import type { WoExecPart, WoExecTask, WorkOrder, WoShift } from "@shared/ipc-types";
+import type { InventoryArticle, StockLocation, WoExecPart, WoExecTask, WorkOrder, WoShift } from "@shared/ipc-types";
 
 interface WoPlanningPanelProps {
   wo: WorkOrder;
@@ -36,9 +37,13 @@ interface TaskDraft {
 interface PartDraft {
   localId: string;
   id?: number;
+  article_id: number | null;
   article_ref: string;
+  stock_location_id: number | null;
+  article_query: string;
   quantity_planned: string;
   unit_cost: string;
+  reservation_id: number | null;
   persisted: boolean;
 }
 
@@ -105,9 +110,13 @@ function toPartDraft(part: WoExecPart): PartDraft {
   return {
     localId: `part-${part.id}`,
     id: part.id,
+    article_id: part.article_id ?? null,
     article_ref: part.article_ref ?? "",
+    stock_location_id: part.stock_location_id ?? null,
+    article_query: part.article_ref ?? "",
     quantity_planned: String(part.quantity_planned),
     unit_cost: part.unit_cost != null ? String(part.unit_cost) : "",
+    reservation_id: part.reservation_id ?? null,
     persisted: true,
   };
 }
@@ -140,11 +149,15 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
 
   const [tasks, setTasks] = useState<TaskDraft[]>([]);
   const [parts, setParts] = useState<PartDraft[]>([]);
+  const [articleOptions, setArticleOptions] = useState<InventoryArticle[]>([]);
+  const [locationOptions, setLocationOptions] = useState<StockLocation[]>([]);
+  const [activeArticleField, setActiveArticleField] = useState<string | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [groupOptions, setGroupOptions] = useState<SelectOption[]>([]);
   const [responsibleOptions, setResponsibleOptions] = useState<SelectOption[]>([]);
+  const lastValuationKeyByPart = useRef<Record<string, string>>({});
 
   useEffect(() => {
     setStatusCode(wo.status_code ?? "draft");
@@ -230,6 +243,29 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
 
   useEffect(() => {
     let cancelled = false;
+    async function loadInventoryData() {
+      try {
+        const [articlesRows, locationRows] = await Promise.all([
+          listInventoryArticles({ search: null }),
+          listInventoryLocations(null),
+        ]);
+        if (cancelled) return;
+        setArticleOptions(articlesRows.filter((row) => row.is_active === 1));
+        setLocationOptions(locationRows.filter((row) => row.is_active === 1));
+      } catch {
+        if (cancelled) return;
+        setArticleOptions([]);
+        setLocationOptions([]);
+      }
+    }
+    void loadInventoryData();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
 
     async function loadPlanningData() {
       try {
@@ -254,6 +290,34 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       cancelled = true;
     };
   }, [wo.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      for (const part of parts) {
+        if (part.persisted || part.article_id == null || part.stock_location_id == null) continue;
+        const loc = locationOptions.find((l) => l.id === part.stock_location_id);
+        if (!loc) continue;
+        const key = `${part.article_id}:${part.stock_location_id}`;
+        if (lastValuationKeyByPart.current[part.localId] === key) continue;
+        try {
+          const r = await evaluateInventoryUnitCost(part.article_id, loc.warehouse_id, part.stock_location_id);
+          if (cancelled) return;
+          lastValuationKeyByPart.current[part.localId] = key;
+          setParts((prev) =>
+            prev.map((p) =>
+              p.localId === part.localId && !p.persisted ? { ...p, unit_cost: String(r.unit_cost) } : p,
+            ),
+          );
+        } catch {
+          lastValuationKeyByPart.current[part.localId] = key;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [parts, locationOptions]);
 
   const isPastPlannedStatus = !PLAN_EDITABLE_STATUSES.has(statusCode);
   const allFieldsDisabled = !canEdit || isPastPlannedStatus || busy;
@@ -414,9 +478,13 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       ...prev,
       {
         localId: `new-part-${Date.now()}-${prev.length}`,
+        article_id: null,
         article_ref: "",
-        quantity_planned: "0",
-        unit_cost: "0",
+        stock_location_id: null,
+        article_query: "",
+        quantity_planned: "",
+        unit_cost: "",
+        reservation_id: null,
         persisted: false,
       },
     ]);
@@ -437,7 +505,16 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       }
 
       const quantityPlanned = parseNumber(row.quantity_planned);
-      if (quantityPlanned == null) {
+      if (quantityPlanned == null || quantityPlanned <= 0) {
+        setError(t("planning.error.addPart"));
+        return;
+      }
+      if (row.article_id == null) {
+        setError(t("planning.error.addPart"));
+        return;
+      }
+      if (row.stock_location_id == null) {
+        setError(t("planning.error.addPart"));
         return;
       }
 
@@ -446,9 +523,12 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       try {
         const created = await addPart({
           wo_id: wo.id,
+          article_id: row.article_id,
           article_ref: row.article_ref.trim() || null,
           quantity_planned: quantityPlanned,
           unit_cost: parseNumber(row.unit_cost),
+          stock_location_id: row.stock_location_id,
+          auto_reserve: true,
           notes: null,
         });
 
@@ -607,6 +687,12 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
             />
           </div>
         </div>
+        {groupOptions.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No organizational groups are loaded. Define and publish at least one org node (team / site) in the
+            Organization structure designer so you can assign this work order.
+          </p>
+        ) : null}
       </section>
 
       <section className="space-y-3">
@@ -694,59 +780,145 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
           {parts.length === 0 && (
             <div className="text-sm text-muted-foreground">{t("planning.noPlannedParts")}</div>
           )}
-          {parts.map((part) => (
-            <div
-              key={part.localId}
-              className="grid gap-2 rounded-md border p-3 md:grid-cols-[2fr_120px_140px_auto_auto]"
-            >
-              <Input
-                placeholder={t("planning.partReference")}
-                value={part.article_ref}
-                onChange={(e) => updatePartRow(part.localId, { article_ref: e.target.value })}
-                disabled={allFieldsDisabled || part.persisted}
-              />
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={part.quantity_planned}
-                onChange={(e) => updatePartRow(part.localId, { quantity_planned: e.target.value })}
-                disabled={allFieldsDisabled || part.persisted}
-              />
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={part.unit_cost}
-                onChange={(e) => updatePartRow(part.localId, { unit_cost: e.target.value })}
-                disabled={allFieldsDisabled || part.persisted}
-              />
-              <div className="flex items-center text-sm font-medium">
-                {(
-                  (parseNumber(part.quantity_planned) ?? 0) * (parseNumber(part.unit_cost) ?? 0)
-                ).toFixed(2)}
-              </div>
-              <div className="flex items-center gap-2">
-                {!part.persisted && (
+          {parts.map((part) => {
+            const filteredArticles = articleOptions
+              .filter((article) => {
+                const term = part.article_query.trim().toLowerCase();
+                if (!term) return true;
+                return `${article.article_code} ${article.article_name}`.toLowerCase().includes(term);
+              })
+              .slice(0, 60);
+
+            return (
+              <div
+                key={part.localId}
+                className="grid gap-2 rounded-md border p-3 md:grid-cols-[2fr_2fr_120px_140px_auto_auto]"
+              >
+                <div className="relative space-y-1">
+                  <Label>{t("planning.partReference")}</Label>
+                  <Input
+                    placeholder={t("planning.partReference")}
+                    value={part.article_query}
+                    onFocus={() => setActiveArticleField(part.localId)}
+                    onBlur={() => {
+                      setTimeout(() => {
+                        setActiveArticleField((current) => (current === part.localId ? null : current));
+                      }, 100);
+                    }}
+                    onChange={(e) =>
+                      updatePartRow(part.localId, {
+                        article_query: e.target.value,
+                        article_id: null,
+                        article_ref: "",
+                      })
+                    }
+                    disabled={allFieldsDisabled || part.persisted}
+                  />
+                  {activeArticleField === part.localId && !allFieldsDisabled && !part.persisted && (
+                    <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
+                      {filteredArticles.length === 0 ? (
+                        <div className="px-2 py-1.5 text-sm text-muted-foreground">No matching article</div>
+                      ) : (
+                        filteredArticles.map((article) => (
+                          <button
+                            key={article.id}
+                            type="button"
+                            className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              const articleLabel = `${article.article_code} - ${article.article_name}`;
+                              updatePartRow(part.localId, {
+                                article_id: article.id,
+                                article_ref: articleLabel,
+                                article_query: articleLabel,
+                              });
+                              setActiveArticleField(null);
+                            }}
+                          >
+                            {article.article_code} - {article.article_name}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <Label>Stock location</Label>
+                  <Select
+                    value={part.stock_location_id != null ? String(part.stock_location_id) : "__none"}
+                    onValueChange={(value) =>
+                      updatePartRow(part.localId, {
+                        stock_location_id: value === "__none" ? null : Number(value),
+                      })
+                    }
+                    disabled={allFieldsDisabled || part.persisted}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Location" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">--</SelectItem>
+                      {locationOptions.map((location) => (
+                        <SelectItem key={location.id} value={String(location.id)}>
+                          {location.warehouse_code}/{location.code} - {location.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Planned qty</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={part.quantity_planned}
+                    onChange={(e) => updatePartRow(part.localId, { quantity_planned: e.target.value })}
+                    disabled={allFieldsDisabled || part.persisted}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Unit cost</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={part.unit_cost}
+                    onChange={(e) => updatePartRow(part.localId, { unit_cost: e.target.value })}
+                    disabled={allFieldsDisabled || part.persisted}
+                  />
+                  {part.persisted && part.reservation_id != null ? (
+                    <p className="text-xs text-muted-foreground">Stock reservation ID: {part.reservation_id}</p>
+                  ) : null}
+                  {part.persisted && part.reservation_id == null ? (
+                    <p className="text-xs text-amber-800">No stock reservation on this line.</p>
+                  ) : null}
+                </div>
+                <div className="flex items-end text-sm font-medium">
+                  {((parseNumber(part.quantity_planned) ?? 0) * (parseNumber(part.unit_cost) ?? 0)).toFixed(2)}
+                </div>
+                <div className="flex items-end gap-2">
+                  {!part.persisted && (
+                    <Button
+                      size="sm"
+                      onClick={() => void savePartRow(part)}
+                      disabled={allFieldsDisabled}
+                    >
+                      {t("planning.savePart")}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
-                    onClick={() => void savePartRow(part)}
+                    variant="outline"
+                    onClick={() => removePartRow(part.localId)}
                     disabled={allFieldsDisabled}
                   >
-                    {t("planning.savePart")}
+                    {t("planning.removePart")}
                   </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => removePartRow(part.localId)}
-                  disabled={allFieldsDisabled}
-                >
-                  {t("planning.removePart")}
-                </Button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="text-right text-sm font-semibold">

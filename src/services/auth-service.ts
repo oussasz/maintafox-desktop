@@ -27,6 +27,8 @@ const sessionInfoSchema = z.object({
   last_activity_at: z.string().nullable(),
   password_expires_in_days: z.number().nullable().default(null),
   pin_configured: z.boolean().nullable().default(null),
+  tenant_id: z.string().nullable().default(null),
+  token_tenant_id: z.string().nullable().default(null),
 });
 
 const loginResponseSchema = z.object({

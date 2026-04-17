@@ -18,6 +18,7 @@ import type {
 const UserProfileSchema = z.object({
   id: z.number(),
   username: z.string(),
+  personnel_id: z.number().nullable(),
   display_name: z.string().nullable(),
   email: z.string().nullable(),
   phone: z.string().nullable(),

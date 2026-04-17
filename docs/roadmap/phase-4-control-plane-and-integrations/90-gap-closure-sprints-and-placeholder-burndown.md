@@ -326,7 +326,7 @@ Run full UAT and compliance validation on real infrastructure, close all remaini
 
 - **Completed (Cursor Agent):** Sprint 1, 2, 3, 4, 5, 6, 7.
 - **Completed (Joint):** Sprint 8 baseline delivered by VPS Agent; Sprint 9 artifacts + observability instrumentation delivered by Cursor Agent.
-- **Completed (Joint):** Sprint 10 UAT rerun passed (`15/15`) on real infrastructure; RC recommendation `GO_CANDIDATE_PENDING_HUMAN_SIGNOFF`.
+- **Completed (Joint):** Sprint 10 UAT rerun passed (`15/15`) on real infrastructure; RC decision `GO`.
 - **Prepared artifacts (Cursor Agent):**
   - `93-observability-slo-and-runbooks-pack.md` (runbooks, on-call matrix, dashboard/alerts)
   - `95-incident-drill-evidence-and-postmortem-template.md` (drill evidence + reusable template)
@@ -334,10 +334,17 @@ Run full UAT and compliance validation on real infrastructure, close all remaini
   - `96-phase4-gap-closure-report.md` (zero-placeholder closure evidence)
 - **New quality gate active:** CI fixture/mock import guard (`pnpm run guard:phase4:fixtures`).
 
+### Track alignment note
+
+- This file is the full Phase 4 master plan (10-sprint closure model).
+- `97-tenant-activation-auth-onboarding-sprints.md` is a focused onboarding stream view (9-sprint sequence) and is considered aligned with this master status at RC `GO`.
+
 ### Sprint 10 runtime evidence (VPS)
 
 - UAT pass bundle: `/root/sprint10-uat-20260417T130406Z-postfix/`
 - RC closeout bundle: `/root/sprint10-rc-closeout-20260417T130406Z/`
+- Frontend hardening evidence bundle: `/root/logs/frontend-hardening-20260417T145601Z.tar.gz`
+- Frontend hardening bundle SHA-256: `a6a9ef2aa047e6c5d5ab5f1690f627d658c172261c9db51970d8d1a184b96e2b`
 - API image digest: `sha256:49d57a8b35d146c3237f548fc1918d988edb8fced1845f4b0c57dd0b53fc3ce0`
 - Edge image digest: `sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10`
 

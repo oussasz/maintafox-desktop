@@ -332,6 +332,8 @@ mod tests {
             display_name: Some(username.to_string()),
             is_admin: false,
             force_password_change: false,
+            tenant_id: "tenant-test".to_string(),
+            token_tenant_id: "tenant-test".to_string(),
         }
     }
 

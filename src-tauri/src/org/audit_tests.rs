@@ -660,6 +660,8 @@ mod tests {
                 display_name: Some("Admin".into()),
                 is_admin: true,
                 force_password_change: false,
+                tenant_id: "tenant-test".into(),
+                token_tenant_id: "tenant-test".into(),
             });
         }
 

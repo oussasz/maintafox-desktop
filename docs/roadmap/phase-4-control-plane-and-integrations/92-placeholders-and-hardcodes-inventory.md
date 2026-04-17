@@ -65,14 +65,23 @@ Append one of:
 - `OPEN` (default)
 - `IN_PROGRESS`
 - `CLOSED (commit: <sha>)`
+- `CLOSED (evidence: <artifact or doc ref>)`
 
 ---
 
 ## 6) Closure Snapshot (2026-04-17)
 
-- **CLOSED (pending commit reference update):** PH4-001 -> PH4-010, PH4-014 -> PH4-018.
-- **OPEN / verify in vendor-console branch history:** PH4-011, PH4-012, PH4-013.
-- **IN_PROGRESS (VPS Agent / Sprint 8):** PH4-019, PH4-020.
+- **CLOSED (evidence: `96-phase4-gap-closure-report.md`):**
+  - PH4-001 -> PH4-010
+  - PH4-011, PH4-012, PH4-013
+  - PH4-014 -> PH4-018
+  - PH4-019, PH4-020
+
+### Closure note
+
+- Detailed runtime and bundle evidence is indexed in:
+  - `99-phase4-final-artifact-index.md`
+  - `94-uat-compliance-and-rc-signoff-pack.md`
 
 ### Automated guard now active
 

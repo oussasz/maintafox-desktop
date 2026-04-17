@@ -217,7 +217,7 @@ These remain frozen under additive evolution rules only (no breaking field renam
 
 ## 9) Runtime Conformance Snapshot (2026-04-17)
 
-- Sprint 10 rerun passed (`15/15`) with `GO_CANDIDATE_PENDING_HUMAN_SIGNOFF`.
+- Sprint 10 rerun passed (`15/15`) with final RC decision `GO`.
 - Route verification evidence confirms full control-plane route set availability (HTTP `200/201` as expected).
 - Immutable deployment identifiers:
   - API image digest: `sha256:49d57a8b35d146c3237f548fc1918d988edb8fced1845f4b0c57dd0b53fc3ce0`

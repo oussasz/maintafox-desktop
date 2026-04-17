@@ -32,6 +32,8 @@ export interface AddPartInput {
   article_ref?: string | null;
   quantity_planned: number;
   unit_cost?: number | null;
+  stock_location_id?: number | null;
+  auto_reserve?: boolean | null;
   notes?: string | null;
 }
 

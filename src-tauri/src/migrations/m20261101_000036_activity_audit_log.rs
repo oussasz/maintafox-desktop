@@ -102,8 +102,24 @@ impl MigrationTrait for Migration {
             .await?;
         add_column_if_missing(db, "audit_events", "before_hash", "TEXT NULL").await?;
         add_column_if_missing(db, "audit_events", "after_hash", "TEXT NULL").await?;
-        add_column_if_missing(db, "audit_events", "happened_at", "TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))")
+        // SQLite forbids non-constant DEFAULT on ALTER TABLE ADD COLUMN (e.g. strftime).
+        // Add nullable column, then backfill from legacy `occurred_at` when present.
+        add_column_if_missing(db, "audit_events", "happened_at", "TEXT NULL").await?;
+        if has_column(db, "audit_events", "occurred_at").await? {
+            db.execute_unprepared(
+                "UPDATE audit_events SET happened_at = \
+                 COALESCE(NULLIF(TRIM(CAST(occurred_at AS TEXT)), ''), \
+                          strftime('%Y-%m-%dT%H:%M:%SZ','now')) \
+                 WHERE happened_at IS NULL",
+            )
             .await?;
+        } else {
+            db.execute_unprepared(
+                "UPDATE audit_events SET happened_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+                 WHERE happened_at IS NULL",
+            )
+            .await?;
+        }
         add_column_if_missing(
             db,
             "audit_events",

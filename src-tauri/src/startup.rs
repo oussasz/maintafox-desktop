@@ -179,8 +179,11 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         }
     }
 
-    // Phase 4: entitlement cache (stub for Phase 4 — always succeeds here)
+    // Phase 4: entitlement cache and offline-safe fallback state.
     info!("startup: loading entitlement cache");
+    if let Err(err) = crate::entitlements::queries::get_entitlement_summary(&app_state.db).await {
+        warn!("startup: entitlement cache warmup failed (non-fatal): {err}");
+    }
     info!(
         elapsed_ms = startup_start.elapsed().as_millis() as u64,
         "startup::entitlement_cache_loaded"

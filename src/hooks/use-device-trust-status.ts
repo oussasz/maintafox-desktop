@@ -18,6 +18,8 @@ export function useDeviceTrustStatus(): DeviceTrustStatus {
     offline_hours_remaining: null,
     device_label: null,
     trusted_at: null,
+    offline_denial_code: null,
+    offline_denial_message: null,
     status: "unknown",
   });
 
@@ -35,6 +37,8 @@ export function useDeviceTrustStatus(): DeviceTrustStatus {
         offline_hours_remaining: null,
         device_label: null,
         trusted_at: null,
+        offline_denial_code: null,
+        offline_denial_message: null,
         status: "unknown",
       });
     }

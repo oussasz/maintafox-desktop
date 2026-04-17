@@ -13,6 +13,57 @@ import { listReferenceDomains, listReferenceSets } from "@/services/reference-se
 import { toErrorMessage } from "@/utils/errors";
 import type { ReferenceDomain, ReferenceSet } from "@shared/ipc-types";
 
+export const INVENTORY_ARTICLE_FAMILY_DOMAIN_ID = -101;
+export const INVENTORY_ARTICLE_FAMILY_SET_ID = -101;
+export const INVENTORY_TAX_CATEGORY_DOMAIN_ID = -102;
+export const INVENTORY_TAX_CATEGORY_SET_ID = -102;
+
+const INVENTORY_ARTICLE_FAMILY_DOMAIN: ReferenceDomain = {
+  id: INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
+  code: "INVENTORY.ARTICLE_FAMILY",
+  name: "Familles articles de stock",
+  structure_type: "flat",
+  governance_level: "tenant_managed",
+  is_extendable: true,
+  validation_rules_json: null,
+  created_at: "",
+  updated_at: "",
+};
+
+const INVENTORY_ARTICLE_FAMILY_SET: ReferenceSet = {
+  id: INVENTORY_ARTICLE_FAMILY_SET_ID,
+  domain_id: INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
+  version_no: 1,
+  status: "published",
+  effective_from: null,
+  created_by_id: null,
+  created_at: "",
+  published_at: null,
+};
+
+const INVENTORY_TAX_CATEGORY_DOMAIN: ReferenceDomain = {
+  id: INVENTORY_TAX_CATEGORY_DOMAIN_ID,
+  code: "INVENTORY.TAX_CATEGORY",
+  name: "Catégories TVA articles de stock",
+  structure_type: "flat",
+  governance_level: "tenant_managed",
+  is_extendable: true,
+  validation_rules_json: null,
+  created_at: "",
+  updated_at: "",
+};
+
+const INVENTORY_TAX_CATEGORY_SET: ReferenceSet = {
+  id: INVENTORY_TAX_CATEGORY_SET_ID,
+  domain_id: INVENTORY_TAX_CATEGORY_DOMAIN_ID,
+  version_no: 1,
+  status: "published",
+  effective_from: null,
+  created_by_id: null,
+  created_at: "",
+  published_at: null,
+};
+
 // ── Store interface ───────────────────────────────────────────────────────────
 
 interface ReferenceManagerStoreState {
@@ -73,7 +124,23 @@ export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((se
     set({ domainsLoading: true, error: null });
     try {
       const domains = await listReferenceDomains();
-      set({ domains });
+      const hasInventoryFamilyDomain = domains.some(
+        (domain) => domain.id === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
+      );
+      const hasInventoryTaxDomain = domains.some((domain) => domain.id === INVENTORY_TAX_CATEGORY_DOMAIN_ID);
+      const nextDomains = [
+        ...domains,
+        ...(hasInventoryFamilyDomain ? [] : [INVENTORY_ARTICLE_FAMILY_DOMAIN]),
+        ...(hasInventoryTaxDomain ? [] : [INVENTORY_TAX_CATEGORY_DOMAIN]),
+      ].sort((a, b) => a.name.localeCompare(b.name));
+      set({
+        domains: nextDomains,
+        setsMap: {
+          ...get().setsMap,
+          [INVENTORY_ARTICLE_FAMILY_DOMAIN_ID]: [INVENTORY_ARTICLE_FAMILY_SET],
+          [INVENTORY_TAX_CATEGORY_DOMAIN_ID]: [INVENTORY_TAX_CATEGORY_SET],
+        },
+      });
     } catch (err) {
       set({ error: toErrorMessage(err) });
     } finally {
@@ -82,6 +149,25 @@ export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((se
   },
 
   loadSetsForDomain: async (domainId) => {
+    if (domainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID) {
+      set({
+        setsMap: {
+          ...get().setsMap,
+          [INVENTORY_ARTICLE_FAMILY_DOMAIN_ID]: [INVENTORY_ARTICLE_FAMILY_SET],
+        },
+      });
+      return;
+    }
+    if (domainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID) {
+      set({
+        setsMap: {
+          ...get().setsMap,
+          [INVENTORY_TAX_CATEGORY_DOMAIN_ID]: [INVENTORY_TAX_CATEGORY_SET],
+        },
+      });
+      return;
+    }
+
     const { setsLoading } = get();
     if (setsLoading[domainId]) return;
 

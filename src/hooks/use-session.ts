@@ -48,6 +48,8 @@ const UNAUTHENTICATED: SessionInfo = {
   last_activity_at: null,
   password_expires_in_days: null,
   pin_configured: null,
+  tenant_id: null,
+  token_tenant_id: null,
 };
 
 /**

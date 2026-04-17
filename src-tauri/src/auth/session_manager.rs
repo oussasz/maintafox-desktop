@@ -31,6 +31,8 @@ pub struct AuthenticatedUser {
     pub display_name: Option<String>,
     pub is_admin: bool,
     pub force_password_change: bool,
+    pub tenant_id: String,
+    pub token_tenant_id: String,
 }
 
 /// The full context of an active local session.
@@ -87,6 +89,14 @@ pub struct SessionInfo {
     pub pin_configured: Option<bool>,
     pub expires_at: Option<String>,
     pub last_activity_at: Option<String>,
+    pub tenant_id: Option<String>,
+    pub token_tenant_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TenantScopeResolution {
+    pub tenant_id: String,
+    pub token_tenant_id: String,
 }
 
 /// The session manager holds the current session in memory.
@@ -202,6 +212,8 @@ impl SessionManager {
                 pin_configured: None,
                 expires_at: None,
                 last_activity_at: None,
+                tenant_id: None,
+                token_tenant_id: None,
             },
             Some(s) => SessionInfo {
                 is_authenticated: !s.is_expired() && !s.is_idle_locked(),
@@ -215,9 +227,75 @@ impl SessionManager {
                 pin_configured: Some(s.pin_configured),
                 expires_at: Some(s.expires_at.to_rfc3339()),
                 last_activity_at: Some(s.last_activity_at.to_rfc3339()),
+                tenant_id: Some(s.user.tenant_id.clone()),
+                token_tenant_id: Some(s.user.token_tenant_id.clone()),
             },
         }
     }
+}
+
+/// Resolve runtime tenant claims for the current activated tenant.
+///
+/// Rules:
+/// - If active tenant-scoped assignments have explicit `scope_reference` values,
+///   the activated tenant must be one of them.
+/// - If active tenant-scoped assignments exist but are wildcard (`scope_reference` NULL),
+///   the user is treated as allowed on the activated tenant.
+/// - If no active tenant-scoped assignment exists, deny access.
+pub async fn resolve_tenant_scope_for_user(
+    db: &DatabaseConnection,
+    user_id: i32,
+    activated_tenant_id: &str,
+) -> AppResult<Option<TenantScopeResolution>> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"SELECT scope_reference
+               FROM user_scope_assignments
+               WHERE user_id = ?
+                 AND scope_type = 'tenant'
+                 AND deleted_at IS NULL
+                 AND (valid_from IS NULL OR valid_from <= ?)
+                 AND (valid_to   IS NULL OR valid_to   >= ?)",
+            [user_id.into(), now.clone().into(), now.into()],
+        ))
+        .await?;
+
+    if rows.is_empty() {
+        return Ok(None);
+    }
+
+    let mut has_wildcard_scope = false;
+    let mut explicit_tenant_scope: Vec<String> = Vec::new();
+    for row in &rows {
+        match row.try_get::<Option<String>>("", "scope_reference").ok().flatten() {
+            Some(value) if !value.trim().is_empty() => explicit_tenant_scope.push(value),
+            _ => has_wildcard_scope = true,
+        }
+    }
+
+    if explicit_tenant_scope.is_empty() {
+        if has_wildcard_scope {
+            return Ok(Some(TenantScopeResolution {
+                tenant_id: activated_tenant_id.to_string(),
+                token_tenant_id: activated_tenant_id.to_string(),
+            }));
+        }
+        return Ok(None);
+    }
+
+    let tenant_matches = explicit_tenant_scope
+        .iter()
+        .any(|tenant_scope| tenant_scope == activated_tenant_id);
+    if !tenant_matches {
+        return Ok(None);
+    }
+
+    Ok(Some(TenantScopeResolution {
+        tenant_id: activated_tenant_id.to_string(),
+        token_tenant_id: activated_tenant_id.to_string(),
+    }))
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
@@ -340,6 +418,8 @@ mod tests {
             display_name: Some("Test User".into()),
             is_admin: false,
             force_password_change: false,
+            tenant_id: "tenant-test".into(),
+            token_tenant_id: "tenant-test".into(),
         }
     }
 

@@ -141,6 +141,8 @@ impl MigrationTrait for Migration {
 
             // ── Budget/Finance (fin) ─────────────────────────────────────
             ("fin.view",    "View budgets and cost center reports",       "fin", 0, 0),
+            ("fin.budget",  "Manage budget baselines and forecast drafts","fin", 1, 0),
+            ("fin.report",  "Generate governed finance reports and exports","fin", 0, 0),
             ("fin.manage",  "Manage budget baselines and forecasts",      "fin", 1, 0),
             ("fin.approve", "Approve cost events and commitments",        "fin", 1, 1),
             ("fin.post",    "Post cost actuals to ERP",                   "fin", 1, 1),

@@ -17,6 +17,8 @@ export function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const tenantScopeDenied = session.errorCode === "TENANT_SCOPE_VIOLATION";
+  const staleSessionClaims = session.errorCode === "SESSION_CLAIM_INVALID";
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -119,6 +121,28 @@ export function LoginPage() {
             >
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{session.error}</span>
+            </div>
+          ) : session.error && tenantScopeDenied ? (
+            <div
+              role="alert"
+              className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+            >
+              <p className="font-medium">Compte non autorisé pour le tenant activé</p>
+              <p className="mt-1">{session.error}</p>
+              <p className="mt-1 text-xs">
+                Action: utilisez un compte autorisé pour ce tenant ou réactivez l'appareil avec la clé du bon tenant.
+              </p>
+            </div>
+          ) : session.error && staleSessionClaims ? (
+            <div
+              role="alert"
+              className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800"
+            >
+              <p className="font-medium">Contexte de session périmé</p>
+              <p className="mt-1">{session.error}</p>
+              <p className="mt-1 text-xs">
+                Action: reconnectez-vous pour rafraîchir les claims tenant après un changement d'activation.
+              </p>
             </div>
           ) : session.error ? (
             <div

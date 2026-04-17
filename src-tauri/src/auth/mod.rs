@@ -68,6 +68,9 @@ macro_rules! require_permission {
             )));
         }
 
+        $crate::entitlements::queries::enforce_capability_for_permission(&$state.db, $perm).await?;
+        $crate::license::queries::enforce_permission_matrix(&$state.db, $user.user_id, $perm).await?;
+
         // NOTE: Step-up enforcement is NOT done here. Use the explicit
         // `require_step_up!(state)` macro in commands that perform
         // dangerous write operations.  Read-only commands that merely

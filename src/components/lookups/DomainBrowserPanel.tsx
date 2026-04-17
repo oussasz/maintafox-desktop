@@ -15,7 +15,6 @@ import {
   FolderOpen,
   Lock,
   MoreVertical,
-  Pencil,
   Plus,
   Search,
 } from "lucide-react";
@@ -32,7 +31,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useReferenceManagerStore } from "@/stores/reference-manager-store";
+import {
+  INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
+  INVENTORY_TAX_CATEGORY_DOMAIN_ID,
+  useReferenceManagerStore,
+} from "@/stores/reference-manager-store";
 import type { ReferenceDomain, ReferenceSet } from "@shared/ipc-types";
 
 // ── Status badge variant mapping ──────────────────────────────────────────────
@@ -67,10 +70,9 @@ function statusLabelKey(status: string) {
 
 interface DomainBrowserPanelProps {
   onCreateDraftSet?: (domainId: number) => void;
-  onRenameDomain?: (domain: ReferenceDomain) => void;
 }
 
-export function DomainBrowserPanel({ onCreateDraftSet, onRenameDomain }: DomainBrowserPanelProps) {
+export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps) {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
 
@@ -223,6 +225,8 @@ export function DomainBrowserPanel({ onCreateDraftSet, onRenameDomain }: DomainB
         )}
 
         {filteredDomains.map((domain) => {
+          const isInventoryFamilyDomain = domain.id === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID;
+          const isInventoryTaxDomain = domain.id === INVENTORY_TAX_CATEGORY_DOMAIN_ID;
           const isExpanded = expandedDomainIds.includes(domain.id);
           const isSelected = selectedDomainId === domain.id && selectedSetId === null;
           const sets = setsMap[domain.id] ?? [];
@@ -282,7 +286,7 @@ export function DomainBrowserPanel({ onCreateDraftSet, onRenameDomain }: DomainB
                 )}
 
                 {/* Context menu */}
-                {can("ref.manage") && (
+                {can("ref.manage") && !isInventoryFamilyDomain && !isInventoryTaxDomain && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
@@ -298,10 +302,6 @@ export function DomainBrowserPanel({ onCreateDraftSet, onRenameDomain }: DomainB
                       <DropdownMenuItem onClick={() => onCreateDraftSet?.(domain.id)}>
                         <Plus className="mr-2 h-3.5 w-3.5" />
                         {t("browser.newSet")}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onRenameDomain?.(domain)}>
-                        <Pencil className="mr-2 h-3.5 w-3.5" />
-                        {t("browser.renameDomain")}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>

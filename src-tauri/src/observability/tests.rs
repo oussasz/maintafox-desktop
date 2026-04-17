@@ -346,6 +346,8 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
             article_ref: Some("OBS-P1".into()),
             quantity_planned: 2.0,
             unit_cost: Some(45.0),
+            stock_location_id: None,
+            auto_reserve: Some(false),
             notes: None,
         },
     )
@@ -1030,6 +1032,8 @@ async fn test_obs_10_rbac_mutation_emits_both_activity_and_audit() {
         display_name: None,
         is_admin: true,
         force_password_change: false,
+        tenant_id: "tenant-test".into(),
+        token_tenant_id: "tenant-test".into(),
     };
     let state = AppState::new(db.clone());
     assign_role_scope_impl(
@@ -1280,6 +1284,8 @@ async fn test_obs_12_full_observability_chain() {
             article_ref: Some("OBS12".into()),
             quantity_planned: 2.0,
             unit_cost: Some(45.0),
+            stock_location_id: None,
+            auto_reserve: Some(false),
             notes: None,
         },
     )

@@ -48,6 +48,7 @@ export const MODULE_NAMESPACES = {
   settings: "settings", // §6.18 Application Settings
   diagnostics: "diagnostics", // §6.20 Diagnostics & Support Bundle
   configuration: "configuration", // §6.26 Configuration Engine
+  vendorConsole: "vendorConsole", // Phase 4 vendor control-plane console
 } as const;
 
 export type EagerNamespace = (typeof EAGER_NAMESPACES)[number];

@@ -406,7 +406,17 @@ async fn probe_dimension(
             probe_assets(db, domain_code, changed_codes).await
         }
         "work_orders" => unavailable_module("work_orders"),
-        "pm_plans" => unavailable_module("pm_plans"),
+        "pm_plans" => {
+            if changed_codes.is_empty() {
+                return ModuleImpact {
+                    module: dimension.to_string(),
+                    status: "no_impact".into(),
+                    affected_count: 0,
+                    details: Some("Aucune valeur modifiee dans ce jeu.".into()),
+                };
+            }
+            probe_pm_plans(db, domain_code, changed_codes).await
+        }
         "inventory" => unavailable_module("inventory"),
         "reliability_events" => unavailable_module("reliability_events"),
         "external_integrations" => unavailable_module("external_integrations"),
@@ -473,6 +483,75 @@ async fn probe_assets(
             status: "available".into(),
             affected_count: 0,
             details: Some("Aucun equipement impacte.".into()),
+        }
+    }
+}
+
+/// Probe PM strategy dimension: checks plan criticality and required skill mappings.
+async fn probe_pm_plans(
+    db: &impl ConnectionTrait,
+    domain_code: &str,
+    changed_codes: &[String],
+) -> ModuleImpact {
+    let mut total: i64 = 0;
+
+    // Criticality-driven impact on PM plans.
+    let is_criticality = domain_code.to_ascii_uppercase().contains("CRITICALITY");
+    if is_criticality {
+        for code in changed_codes {
+            if let Ok(Some(row)) = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT COUNT(*) AS cnt FROM pm_plans p
+                     JOIN lookup_values lv ON lv.id = p.criticality_value_id
+                     WHERE lv.code = ? AND lv.is_active = 1",
+                    [code.clone().into()],
+                ))
+                .await
+            {
+                if let Ok(cnt) = row.try_get::<i64>("", "cnt") {
+                    total += cnt;
+                }
+            }
+        }
+    }
+
+    // Skill-code impact on PM plan versions where required_skills_json stores code arrays.
+    let is_skills = domain_code.eq_ignore_ascii_case("PERSONNEL.SKILLS");
+    if is_skills {
+        for code in changed_codes {
+            let like_pattern = format!("%\"{code}\"%");
+            if let Ok(Some(row)) = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT COUNT(DISTINCT pv.pm_plan_id) AS cnt
+                     FROM pm_plan_versions pv
+                     WHERE pv.required_skills_json IS NOT NULL
+                       AND pv.required_skills_json LIKE ?",
+                    [like_pattern.into()],
+                ))
+                .await
+            {
+                if let Ok(cnt) = row.try_get::<i64>("", "cnt") {
+                    total += cnt;
+                }
+            }
+        }
+    }
+
+    if total > 0 {
+        ModuleImpact {
+            module: "pm_plans".into(),
+            status: "available".into(),
+            affected_count: total,
+            details: Some(format!("{total} plan(s) PM impacte(s).")),
+        }
+    } else {
+        ModuleImpact {
+            module: "pm_plans".into(),
+            status: "available".into(),
+            affected_count: 0,
+            details: Some("Aucun plan PM impacte.".into()),
         }
     }
 }

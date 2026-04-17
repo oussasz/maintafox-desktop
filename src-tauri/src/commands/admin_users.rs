@@ -392,6 +392,35 @@ pub async fn create_user(
         )]));
     }
 
+    if let Some(pid) = input.personnel_id {
+        let p_exists = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM personnel WHERE id = ?",
+                [pid.into()],
+            ))
+            .await?;
+        if p_exists.is_none() {
+            return Err(AppError::ValidationFailed(vec![
+                "Personnel record not found.".into(),
+            ]));
+        }
+        let linked = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM user_accounts WHERE personnel_id = ? AND deleted_at IS NULL",
+                [pid.into()],
+            ))
+            .await?;
+        if linked.is_some() {
+            return Err(AppError::ValidationFailed(vec![
+                "This personnel record is already linked to another user account.".into(),
+            ]));
+        }
+    }
+
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let sync_id = Uuid::new_v4().to_string();
     // Capture before move into SQL params

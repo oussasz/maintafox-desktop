@@ -14,6 +14,8 @@
 //!     set via `confirm_no_parts_used`.
 
 use crate::errors::{AppError, AppResult};
+use crate::inventory::domain::{InventoryIssueInput, InventoryReleaseReservationInput, InventoryReserveInput};
+use crate::inventory::queries as inventory_queries;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +33,9 @@ pub struct WoPart {
     pub quantity_used: Option<f64>,
     pub unit_cost: Option<f64>,
     pub stock_location_id: Option<i64>,
+    pub reservation_id: Option<i64>,
+    pub quantity_reserved: f64,
+    pub quantity_issued: f64,
     pub notes: Option<String>,
 }
 
@@ -41,6 +46,8 @@ pub struct AddPartInput {
     pub article_ref: Option<String>,
     pub quantity_planned: f64,
     pub unit_cost: Option<f64>,
+    pub stock_location_id: Option<i64>,
+    pub auto_reserve: Option<bool>,
     pub notes: Option<String>,
 }
 
@@ -78,6 +85,15 @@ fn map_part(row: &sea_orm::QueryResult) -> AppResult<WoPart> {
         stock_location_id: row
             .try_get::<Option<i64>>("", "stock_location_id")
             .map_err(|e| decode_err("stock_location_id", e))?,
+        reservation_id: row
+            .try_get::<Option<i64>>("", "reservation_id")
+            .map_err(|e| decode_err("reservation_id", e))?,
+        quantity_reserved: row
+            .try_get::<f64>("", "quantity_reserved")
+            .map_err(|e| decode_err("quantity_reserved", e))?,
+        quantity_issued: row
+            .try_get::<f64>("", "quantity_issued")
+            .map_err(|e| decode_err("quantity_issued", e))?,
         notes: row
             .try_get::<Option<String>>("", "notes")
             .map_err(|e| decode_err("notes", e))?,
@@ -105,7 +121,39 @@ async fn load_wo_status_code(db: &DatabaseConnection, wo_id: i64) -> AppResult<S
 }
 
 const PART_COLS: &str =
-    "id, work_order_id, article_id, article_ref, quantity_planned, quantity_used, unit_cost, stock_location_id, notes";
+    "id, work_order_id, article_id, article_ref, quantity_planned, quantity_used, unit_cost, \
+     stock_location_id, reservation_id, quantity_reserved, quantity_issued, notes";
+
+async fn load_wo_source_context(
+    db: &DatabaseConnection,
+    wo_id: i64,
+) -> AppResult<(String, Option<i64>, String)> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT wo.code AS wo_code, wo.source_di_id, wot.code AS type_code
+             FROM work_orders wo
+             JOIN work_order_types wot ON wot.id = wo.type_id
+             WHERE wo.id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: wo_id.to_string(),
+        })?;
+    let wo_code: String = row.try_get("", "wo_code").map_err(|e| decode_err("wo_code", e))?;
+    let source_di_id: Option<i64> = row
+        .try_get("", "source_di_id")
+        .map_err(|e| decode_err("source_di_id", e))?;
+    let type_code: String = row.try_get("", "type_code").map_err(|e| decode_err("type_code", e))?;
+    let source_type = if type_code.eq_ignore_ascii_case("preventive") {
+        "PM_WO".to_string()
+    } else {
+        "WO".to_string()
+    };
+    Ok((source_type, source_di_id, wo_code))
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) add_planned_part
@@ -131,8 +179,8 @@ pub async fn add_planned_part(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_parts \
-         (work_order_id, article_id, article_ref, quantity_planned, unit_cost, notes) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+         (work_order_id, article_id, article_ref, quantity_planned, unit_cost, stock_location_id, notes) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             input
@@ -149,6 +197,10 @@ pub async fn add_planned_part(
                 .unit_cost
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<f64>)),
+            input
+                .stock_location_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
             input
                 .notes
                 .clone()
@@ -168,7 +220,50 @@ pub async fn add_planned_part(
         .ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!("Failed to re-read part after insert"))
         })?;
-    map_part(&row)
+    let mut created = map_part(&row)?;
+
+    let should_auto_reserve = input.auto_reserve.unwrap_or(true);
+    if should_auto_reserve {
+        if let (Some(article_id), Some(location_id)) = (created.article_id, created.stock_location_id) {
+            if created.quantity_planned > 0.0 {
+                let (source_type, _source_di_id, wo_code) = load_wo_source_context(db, created.work_order_id).await?;
+                let reservation = inventory_queries::reserve_stock(
+                    db,
+                    InventoryReserveInput {
+                        article_id,
+                        location_id,
+                        quantity: created.quantity_planned,
+                        source_type,
+                        source_id: Some(created.work_order_id),
+                        source_ref: Some(wo_code),
+                        notes: Some("WO planned part reservation".to_string()),
+                    },
+                )
+                .await?;
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE work_order_parts
+                     SET reservation_id = ?, quantity_reserved = ?
+                     WHERE id = ?",
+                    [reservation.id.into(), reservation.quantity_reserved.into(), created.id.into()],
+                ))
+                .await?;
+                let updated = db
+                    .query_one(Statement::from_sql_and_values(
+                        DbBackend::Sqlite,
+                        &format!("SELECT {PART_COLS} FROM work_order_parts WHERE id = ?"),
+                        [created.id.into()],
+                    ))
+                    .await?
+                    .ok_or_else(|| {
+                        AppError::Internal(anyhow::anyhow!("Failed to re-read part after reservation"))
+                    })?;
+                created = map_part(&updated)?;
+            }
+        }
+    }
+
+    Ok(created)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -212,13 +307,45 @@ pub async fn record_actual_usage(
         ]));
     }
 
+    if let Some(reservation_id) = part.reservation_id {
+        let previous_used = part.quantity_used.unwrap_or(0.0);
+        if quantity_used > previous_used {
+            let delta = quantity_used - previous_used;
+            let (source_type, _source_di_id, wo_code) = load_wo_source_context(db, part.work_order_id).await?;
+            inventory_queries::issue_reserved_stock(
+                db,
+                InventoryIssueInput {
+                    reservation_id,
+                    quantity: delta,
+                    source_type: Some(source_type),
+                    source_id: Some(part.work_order_id),
+                    source_ref: Some(wo_code),
+                    notes: Some("WO part usage issue".to_string()),
+                },
+            )
+            .await?;
+        } else if quantity_used < previous_used {
+            inventory_queries::return_reserved_stock(
+                db,
+                crate::inventory::domain::InventoryReturnInput {
+                    reservation_id,
+                    quantity: previous_used - quantity_used,
+                    notes: Some("WO part usage rollback".to_string()),
+                },
+            )
+            .await?;
+        }
+    }
+
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_order_parts SET \
             quantity_used = ?, \
+            quantity_issued = ?, \
             unit_cost = COALESCE(?, unit_cost) \
          WHERE id = ?",
         [
+            quantity_used.into(),
             quantity_used.into(),
             unit_cost
                 .map(sea_orm::Value::from)
@@ -251,6 +378,28 @@ pub async fn confirm_no_parts_used(
     wo_id: i64,
     _actor_id: i64,
 ) -> AppResult<()> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT reservation_id FROM work_order_parts
+             WHERE work_order_id = ? AND reservation_id IS NOT NULL",
+            [wo_id.into()],
+        ))
+        .await?;
+    for row in rows {
+        let reservation_id: i64 = row
+            .try_get("", "reservation_id")
+            .map_err(|e| decode_err("reservation_id", e))?;
+        inventory_queries::release_stock_reservation(
+            db,
+            InventoryReleaseReservationInput {
+                reservation_id,
+                notes: Some("WO marked as no parts used".to_string()),
+            },
+        )
+        .await?;
+    }
+
     let rows = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

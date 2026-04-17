@@ -3,8 +3,6 @@
 //! Phase 2 - Sub-phase 00 - File 02 - Sprint S4.
 //!
 //! Provides aggregated counts for the Dashboard KPI grid and workload chart.
-//! WO and PM tables do not exist yet (Phase 5), so those KPIs return 0
-//! with a graceful "not_available" flag. The frontend renders them as "—".
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::Serialize;
@@ -58,9 +56,9 @@ pub struct DashboardWorkloadChart {
 /// Returns KPI counts for the dashboard card grid.
 ///
 /// - Open DIs: count of intervention_requests NOT in terminal states
-/// - Open WOs: always 0 (table not yet created — Phase 5)
+/// - Open WOs: count of WOs not in terminal status
 /// - Total Assets: count of equipment rows
-/// - Overdue Items: DIs that have been in non-terminal status for > 7 days
+/// - Overdue Items: DIs + PM occurrences currently overdue
 ///
 /// Each KPI also returns a `previous_value` (same window shifted back)
 /// so the frontend can compute the trend delta.
@@ -124,9 +122,22 @@ pub async fn get_dashboard_kpis(state: State<'_, AppState>) -> AppResult<Dashboa
         },
         open_wos: KpiValue {
             key: "open_wos".into(),
-            value: 0,
-            previous_value: 0,
-            available: false, // WO table doesn't exist yet
+            value: count_scalar(
+                db,
+                "SELECT COUNT(*) AS cnt FROM work_orders wo \
+                 JOIN work_order_statuses s ON s.id = wo.status_id \
+                 WHERE s.code NOT IN ('closed','cancelled')",
+            )
+            .await,
+            previous_value: count_scalar(
+                db,
+                "SELECT COUNT(*) AS cnt FROM work_orders wo \
+                 JOIN work_order_statuses s ON s.id = wo.status_id \
+                 WHERE s.code NOT IN ('closed','cancelled') \
+                 AND wo.created_at <= datetime('now', '-7 days')",
+            )
+            .await,
+            available: true,
         },
         total_assets: KpiValue {
             key: "total_assets".into(),
@@ -136,8 +147,24 @@ pub async fn get_dashboard_kpis(state: State<'_, AppState>) -> AppResult<Dashboa
         },
         overdue_items: KpiValue {
             key: "overdue_items".into(),
-            value: overdue_count,
-            previous_value: prev_overdue,
+            value: overdue_count
+                + count_scalar(
+                    db,
+                    "SELECT COUNT(*) AS cnt FROM pm_occurrences \
+                     WHERE status NOT IN ('completed','cancelled','missed') \
+                     AND due_at IS NOT NULL \
+                     AND due_at < datetime('now')",
+                )
+                .await,
+            previous_value: prev_overdue
+                + count_scalar(
+                    db,
+                    "SELECT COUNT(*) AS cnt FROM pm_occurrences \
+                     WHERE status NOT IN ('completed','cancelled','missed') \
+                     AND due_at IS NOT NULL \
+                     AND due_at < datetime('now', '-7 days')",
+                )
+                .await,
             available: true,
         },
     })
@@ -149,8 +176,8 @@ pub async fn get_dashboard_kpis(state: State<'_, AppState>) -> AppResult<Dashboa
 ///
 /// For each day in the period, counts:
 /// - DIs created on that date
-/// - WOs completed (always 0 — Phase 5)
-/// - PM due (always 0 — Phase 5)
+/// - WOs completed
+/// - PM due
 #[tauri::command]
 pub async fn get_dashboard_workload_chart(
     period_days: i64,
@@ -188,11 +215,32 @@ pub async fn get_dashboard_workload_chart(
         )
         .await;
 
+        let wo_completed = count_scalar(
+            db,
+            &format!(
+                "SELECT COUNT(*) AS cnt FROM work_orders wo \
+                 JOIN work_order_statuses s ON s.id = wo.status_id \
+                 WHERE s.code = 'closed' AND date(wo.closed_at) = '{date_str}'"
+            ),
+        )
+        .await;
+
+        let pm_due = count_scalar(
+            db,
+            &format!(
+                "SELECT COUNT(*) AS cnt FROM pm_occurrences \
+                 WHERE due_at IS NOT NULL \
+                 AND date(due_at) = '{date_str}' \
+                 AND status NOT IN ('completed','cancelled','missed')"
+            ),
+        )
+        .await;
+
         days.push(WorkloadDay {
             date: date_str,
             di_created,
-            wo_completed: 0, // Phase 5
-            pm_due: 0,       // Phase 5
+            wo_completed,
+            pm_due,
         });
     }
 

@@ -62,6 +62,8 @@ export const fixtures = {
     force_password_change: true,
     expires_at: new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
     last_activity_at: new Date().toISOString(),
+    tenant_id: "ten_demo",
+    token_tenant_id: "ten_demo",
   },
   noSession: {
     is_authenticated: false,
@@ -73,6 +75,8 @@ export const fixtures = {
     force_password_change: null,
     expires_at: null,
     last_activity_at: null,
+    tenant_id: null,
+    token_tenant_id: null,
   },
   // ── Updater ──────────────────────────────────────────────────────────────
   updateCheckNoUpdate: {

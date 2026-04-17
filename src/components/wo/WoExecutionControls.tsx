@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
 import { getLookupValues } from "@/services/lookup-service";
+import { listInventoryReservations, releaseInventoryReservation } from "@/services/inventory-service";
 import {
   addLabor,
   closeDowntime,
@@ -34,7 +35,7 @@ import { holdWo, pauseWo, resumeWo, startWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import { formatDateTime } from "@/utils/format-date";
 import type { DowntimeType, WoExecPart, WoExecTask } from "@shared/ipc-types";
-import type { WorkOrder } from "@shared/ipc-types";
+import type { StockReservation, WorkOrder } from "@shared/ipc-types";
 
 interface WoExecutionControlsProps {
   wo: WorkOrder;
@@ -74,6 +75,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
   const [parts, setParts] = useState<WoExecPart[]>([]);
   const [tasks, setTasks] = useState<WoExecTask[]>([]);
   const [downtimeSegments, setDowntimeSegments] = useState<WoDowntimeSegment[]>([]);
+  const [reservations, setReservations] = useState<StockReservation[]>([]);
 
   const [reasonOptions, setReasonOptions] = useState<DelayReasonOption[]>([]);
 
@@ -114,11 +116,16 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
         listDowntimeSegments(wo.id).catch(() => []),
         getLookupValues("delay_reason_codes").catch(() => []),
       ]);
+      const woReservations = await listInventoryReservations({
+        source_id: wo.id,
+        include_inactive: true,
+      }).catch(() => []);
 
       setLaborEntries(laborRows);
       setParts(partRows);
       setTasks(taskRows);
       setDowntimeSegments(downtimeRows);
+      setReservations(woReservations);
 
       const usageSeed: Record<number, string> = {};
       partRows.forEach((part) => {
@@ -411,6 +418,23 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
     [downtimeSegments],
   );
 
+  const handleReleaseReservation = useCallback(
+    async (reservationId: number) => {
+      setBusy(true);
+      setError(null);
+      try {
+        await releaseInventoryReservation({ reservation_id: reservationId });
+        await loadData();
+      } catch (e) {
+        setError("Failed to release reservation.");
+        console.error("handleReleaseReservation", e);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadData],
+  );
+
   return (
     <div className="space-y-4">
       {error && (
@@ -590,7 +614,7 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
               className="grid gap-2 rounded-md border p-2 md:grid-cols-[2fr_130px_130px_auto]"
             >
               <div className="text-sm">
-                {part.article_ref || t("execution.partFallback", { id: part.id })}
+                {part.article_ref || (part.article_id != null ? `Article #${part.article_id}` : `Part #${part.id}`)}
               </div>
               <div className="text-sm">
                 {t("execution.planned")}: {part.quantity_planned}
@@ -619,6 +643,47 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
           >
             {t("execution.noPartsUsed")}
           </Button>
+        </div>
+      </details>
+
+      <details open>
+        <summary className="cursor-pointer text-sm font-semibold">Stock reservations</summary>
+        <div className="mt-3 space-y-2 rounded-md border p-3">
+          {reservations.length === 0 && (
+            <div className="text-sm text-muted-foreground">
+              No reservation linked to this WO yet.
+            </div>
+          )}
+          {reservations.map((reservation) => (
+            <div
+              key={reservation.id}
+              className="grid gap-2 rounded-md border p-2 md:grid-cols-[2fr_110px_110px_140px_auto]"
+            >
+              <div className="text-sm">
+                <div className="font-medium">
+                  {reservation.article_code} - {reservation.article_name}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {reservation.warehouse_code}/{reservation.location_code}
+                </div>
+              </div>
+              <div className="text-sm">
+                Reserved: {reservation.quantity_reserved}
+              </div>
+              <div className="text-sm">
+                Issued: {reservation.quantity_issued}
+              </div>
+              <div className="text-sm capitalize">{reservation.status}</div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || reservation.status === "released" || !canEdit}
+                onClick={() => void handleReleaseReservation(reservation.id)}
+              >
+                Release
+              </Button>
+            </div>
+          ))}
         </div>
       </details>
 

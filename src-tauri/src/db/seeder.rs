@@ -1,11 +1,11 @@
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 use uuid::Uuid;
 
 /// Current version of the system seed data set.
 /// Increment this when adding new system domains or values in a release.
-pub const SEED_SCHEMA_VERSION: i32 = 1;
+pub const SEED_SCHEMA_VERSION: i32 = 2;
 
 /// Baseline settings seeded on first startup after settings migration is applied.
 /// Tuple format: (`setting_key`, category, `setting_scope`, `setting_value_json`)
@@ -177,6 +177,87 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         db,
         "inventory.movement_type",
         "Type de mouvement stock",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.stocking_type",
+        "Type de stockage article",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.tax_category",
+        "Catégorie fiscale article",
+        "tenant",
+        true,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.procurement_category",
+        "Catégorie approvisionnement article",
+        "tenant",
+        true,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.procurement_status",
+        "Statut processus approvisionnement",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.erp_posting_state",
+        "Statut de publication ERP",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.repairable_status",
+        "Statut cycle pièce réparable",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.variance_reason",
+        "Code motif écart inventaire",
+        "tenant",
+        true,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.currency",
+        "Devise valorisation stock",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.erp_reconcile_state",
+        "Etat rapprochement ERP piece / mouvement",
         "system",
         false,
         false,
@@ -1148,6 +1229,266 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         .await?;
     }
 
+    // inventory.stocking_type
+    {
+        let d = get_domain_id(db, "inventory.stocking_type").await?;
+        seed_value(
+            db,
+            d,
+            "STOCKED",
+            "Article stocké",
+            "Article stocké",
+            "Stocked item",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "NON_STOCK",
+            "Article non stocké",
+            "Article non stocké",
+            "Non-stock item",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REPAIRABLE",
+            "Pièce réparable",
+            "Pièce réparable",
+            "Repairable spare",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "CONSUMABLE",
+            "Consommable",
+            "Consommable",
+            "Consumable",
+            None,
+            4,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.tax_category
+    {
+        let d = get_domain_id(db, "inventory.tax_category").await?;
+        seed_value(db, d, "TVA_0", "TVA 0%", "TVA 0%", "VAT 0%", None, 1, true).await?;
+        seed_value(db, d, "TVA_7", "TVA 7%", "TVA 7%", "VAT 7%", None, 2, true).await?;
+        seed_value(db, d, "TVA_10", "TVA 10%", "TVA 10%", "VAT 10%", None, 3, true).await?;
+        seed_value(db, d, "TVA_20", "TVA 20%", "TVA 20%", "VAT 20%", None, 4, true).await?;
+    }
+
+    // inventory.procurement_category
+    {
+        let d = get_domain_id(db, "inventory.procurement_category").await?;
+        seed_value(
+            db,
+            d,
+            "BUY",
+            "Achat externe",
+            "Achat externe",
+            "External purchase",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REPAIR",
+            "Réparation externe",
+            "Réparation externe",
+            "External repair",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "INTERNAL",
+            "Appro interne",
+            "Appro interne",
+            "Internal supply",
+            None,
+            3,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.procurement_status
+    {
+        let d = get_domain_id(db, "inventory.procurement_status").await?;
+        seed_value(db, d, "DRAFT", "Brouillon", "Brouillon", "Draft", None, 1, true).await?;
+        seed_value(db, d, "SUBMITTED", "Soumise", "Soumise", "Submitted", None, 2, true).await?;
+        seed_value(db, d, "APPROVED", "Approuvée", "Approuvée", "Approved", None, 3, true).await?;
+        seed_value(
+            db,
+            d,
+            "PARTIALLY_RECEIVED",
+            "Partiellement réceptionnée",
+            "Partiellement réceptionnée",
+            "Partially received",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RECEIVED_CLOSED",
+            "Réception terminée",
+            "Réception terminée",
+            "Received & closed",
+            None,
+            5,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "CANCELLED", "Annulée", "Annulée", "Cancelled", None, 6, true).await?;
+        seed_value(db, d, "CLOSED", "Clôturée", "Clôturée", "Closed", None, 7, true).await?;
+    }
+
+    // inventory.erp_posting_state
+    {
+        let d = get_domain_id(db, "inventory.erp_posting_state").await?;
+        seed_value(db, d, "PENDING_POSTING", "À publier", "À publier", "Pending posting", None, 1, true).await?;
+        seed_value(db, d, "POSTED", "Publié", "Publié", "Posted", None, 2, true).await?;
+        seed_value(
+            db,
+            d,
+            "POSTING_FAILED",
+            "Publication en erreur",
+            "Publication en erreur",
+            "Posting failed",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "RECONCILED", "Rapproché", "Rapproché", "Reconciled", None, 4, true).await?;
+    }
+
+    // inventory.repairable_status
+    {
+        let d = get_domain_id(db, "inventory.repairable_status").await?;
+        seed_value(db, d, "REQUESTED", "Demandée", "Demandée", "Requested", None, 1, true).await?;
+        seed_value(db, d, "RELEASED", "Sortie magasin", "Sortie magasin", "Released", None, 2, true).await?;
+        seed_value(
+            db,
+            d,
+            "SENT_FOR_REPAIR",
+            "Envoyée en réparation",
+            "Envoyée en réparation",
+            "Sent for repair",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RETURNED_FROM_REPAIR",
+            "Reçue de réparation",
+            "Reçue de réparation",
+            "Returned from repair",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "CLOSED", "Clôturée", "Clôturée", "Closed", None, 5, true).await?;
+        seed_value(db, d, "SCRAPPED", "Rebut", "Rebut", "Scrapped", None, 6, true).await?;
+        seed_value(db, d, "CANCELLED", "Annulée", "Annulée", "Cancelled", None, 7, true).await?;
+    }
+
+    // inventory.variance_reason
+    {
+        let d = get_domain_id(db, "inventory.variance_reason").await?;
+        seed_value(
+            db,
+            d,
+            "COUNT_ERROR",
+            "Erreur de comptage",
+            "Erreur de comptage",
+            "Count error",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "DAMAGE",
+            "Dommage / casse",
+            "Dommage / casse",
+            "Damage / breakage",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "THEFT_LOSS",
+            "Perte / vol",
+            "Perte / vol",
+            "Loss / theft",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "UNRECORDED_RECEIPT",
+            "Réception non enregistrée",
+            "Réception non enregistrée",
+            "Unrecorded receipt",
+            None,
+            4,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.currency
+    {
+        let d = get_domain_id(db, "inventory.currency").await?;
+        seed_value(db, d, "EUR", "EUR", "EUR", "EUR", None, 1, true).await?;
+        seed_value(db, d, "USD", "USD", "USD", "USD", None, 2, true).await?;
+    }
+
+    // inventory.erp_reconcile_state
+    {
+        let d = get_domain_id(db, "inventory.erp_reconcile_state").await?;
+        seed_value(db, d, "POSTED", "Comptabilise", "Comptabilise", "Posted", None, 1, true).await?;
+        seed_value(db, d, "PENDING_RECONCILE", "En attente rapprochement", "En attente rapprochement", "Pending reconcile", None, 2, true).await?;
+        seed_value(db, d, "RECONCILED", "Rapproche", "Rapproche", "Reconciled", None, 3, true).await?;
+        seed_value(db, d, "CONFLICT", "Conflit", "Conflit", "Conflict", None, 4, true).await?;
+    }
+
     // org.responsibility_type
     {
         let d = get_domain_id(db, "org.responsibility_type").await?;
@@ -1278,6 +1619,8 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         .await?;
     }
 
+    seed_inventory_valuation_policies(db).await?;
+
     // ── 3. Seed RBAC: permissions and system roles ───────────────────────
     seed_permissions(db).await?;
     seed_system_roles(db).await?;
@@ -1352,6 +1695,51 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
 }
 
 // ── Helper: insert domain if not exists ───────────────────────────────────
+async fn seed_inventory_valuation_policies(db: &DatabaseConnection) -> AppResult<()> {
+    let row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT lv.id AS id FROM lookup_values lv
+             INNER JOIN lookup_domains ld ON ld.id = lv.domain_id
+             WHERE ld.domain_key = 'inventory.currency' AND lv.code = 'EUR' AND lv.is_active = 1
+             LIMIT 1"
+                .to_string(),
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(());
+    };
+    let eur_id: i64 = row.try_get("", "id")?;
+    let policies: [(&str, &str, &str, i32, Option<f64>); 3] = [
+        ("DEFAULT-LAST-RECEIPT", "Default last receipt", "LAST_RECEIPT", 10, None),
+        ("DEFAULT-MOVING", "Default moving average", "MOVING_AVG", 20, None),
+        ("DEFAULT-STANDARD", "Default standard fallback", "STANDARD", 100, Some(0.0)),
+    ];
+    for (code, name, method, sort, std) in policies {
+        let std_v: Value = match std {
+            Some(v) => v.into(),
+            None => Value::Float(None),
+        };
+        let _ = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT OR IGNORE INTO inventory_valuation_policies
+                 (code, name, scope_level, warehouse_id, family_id, article_id, valuation_method, currency_value_id, standard_unit_cost, contract_ref, sort_order, is_active, created_at, updated_at)
+                 VALUES (?, ?, 0, NULL, NULL, NULL, ?, ?, ?, NULL, ?, 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+                [
+                    (*code).into(),
+                    (*name).into(),
+                    (*method).into(),
+                    eur_id.into(),
+                    std_v,
+                    sort.into(),
+                ],
+            ))
+            .await;
+    }
+    Ok(())
+}
+
 async fn seed_domain(
     db: &DatabaseConnection,
     domain_key: &str,
@@ -1540,6 +1928,7 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
         // ── Personnel (per) ──────────────────────────────────────────────
         ("per.view", "View personnel records", "personnel", false, false),
         ("per.manage", "Create/edit personnel records", "personnel", false, false),
+        ("per.report", "View and export workforce reports", "personnel", false, false),
         (
             "per.sensitiveview",
             "View sensitive personnel fields",
@@ -1627,6 +2016,56 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
             false,
         ),
         ("adm.audit", "View the full audit log", "administration", false, false),
+        // ── Vendor control-plane console (vcn) ─────────────────────────────
+        (
+            "console.view",
+            "Access vendor control-plane console shell",
+            "vendor_console",
+            false,
+            false,
+        ),
+        (
+            "customer.manage",
+            "Manage tenant customer records in vendor console",
+            "vendor_console",
+            true,
+            false,
+        ),
+        (
+            "entitlement.manage",
+            "Change entitlements and license posture (vendor console)",
+            "vendor_console",
+            true,
+            true,
+        ),
+        (
+            "sync.operate",
+            "Vendor-console sync operations (queues, repair windows)",
+            "vendor_console",
+            true,
+            true,
+        ),
+        (
+            "rollout.manage",
+            "Publish and roll back control-plane update rollouts",
+            "vendor_console",
+            true,
+            true,
+        ),
+        (
+            "platform.observe",
+            "View platform health and integration status (vendor console)",
+            "vendor_console",
+            false,
+            false,
+        ),
+        (
+            "audit.view",
+            "Read vendor-scoped audit and evidence trails",
+            "vendor_console",
+            false,
+            false,
+        ),
         // ── Planning (plan) ──────────────────────────────────────────────
         (
             "plan.view",
@@ -1699,6 +2138,8 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
         ("ptw.cancel", "Cancel active work permits", "safety", true, true),
         // ── Budget / Finance (fin) ───────────────────────────────────────
         ("fin.view", "View budgets and cost data", "finance", false, false),
+        ("fin.budget", "Manage governed budget baselines", "finance", true, false),
+        ("fin.report", "Export governed budget reports", "finance", false, false),
         ("fin.manage", "Manage budgets and cost centers", "finance", false, false),
         ("fin.approve", "Approve budget changes", "finance", true, true),
         // ── Inspection (ins) ─────────────────────────────────────────────
@@ -1838,6 +2279,7 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         "ot.edit",
         "org.view",
         "per.view",
+        "per.report",
         "ref.view",
         "inv.view",
         "inv.manage",
@@ -1854,6 +2296,7 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         "ptw.view",
         "ptw.create",
         "fin.view",
+        "fin.report",
         "ins.view",
         "ins.complete",
         "cfg.view",
@@ -1916,6 +2359,7 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         "inv.order",
         "org.view",
         "per.view",
+        "per.report",
         "ref.view",
         "rep.view",
         "rep.export",

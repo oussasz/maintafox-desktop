@@ -44,13 +44,13 @@ mod tests {
         seqs.sort();
 
         // Migration 016 was intentionally skipped during the DI domain sprint.
-        // Verify the full expected set: 1..=38 minus 16.
+        // Verify the full expected set: 1..=39 minus 16.
         let known_skips: &[u32] = &[16];
-        let expected: Vec<u32> = (1..=38).filter(|n| !known_skips.contains(n)).collect();
+        let expected: Vec<u32> = (1..=39).filter(|n| !known_skips.contains(n)).collect();
 
         assert_eq!(
             seqs, expected,
-            "Migration sequence numbers do not match the expected set (1..=38, skip 16)"
+            "Migration sequence numbers do not match the expected set (1..=39, skip 16)"
         );
     }
 
@@ -95,6 +95,7 @@ mod tests {
             "m20261101_000036_activity_audit_log".into(),
             "m20261201_000037_observability_permissions".into(),
             "m20260414_000038_audit_events_integer_pk".into(),
+            "m20260415_000039_personnel_core".into(),
         ]
     }
 }

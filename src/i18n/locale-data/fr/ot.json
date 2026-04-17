@@ -7,7 +7,8 @@
     "viewList": "Liste",
     "viewKanban": "Kanban",
     "viewCalendar": "Calendrier",
-    "viewDashboard": "Tableau de bord"
+    "viewDashboard": "Tableau de bord",
+    "filterSettings": "Paramètres des filtres"
   },
   "list": {
     "columns": {

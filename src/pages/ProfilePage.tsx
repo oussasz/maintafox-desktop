@@ -5,6 +5,13 @@ import { Link } from "react-router-dom";
 
 import { clearPin, setPin } from "@/services/auth-service";
 import {
+  declareOwnSkill,
+  getPersonnelWorkloadSummary,
+  listPersonnelSkillReferenceValues,
+  listPersonnelWorkHistory,
+  listSkillsMatrix,
+} from "@/services/personnel-service";
+import {
   changePassword,
   getMyProfile,
   getSessionHistory,
@@ -13,6 +20,10 @@ import {
   updateMyProfile,
 } from "@/services/user-service";
 import type {
+  PersonnelSkillReferenceValue,
+  PersonnelWorkHistoryEntry,
+  PersonnelWorkloadSummary,
+  SkillMatrixRow,
   SessionHistoryEntry,
   TrustedDeviceEntry,
   UpdateProfileInput,
@@ -45,6 +56,13 @@ export function ProfilePage() {
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [sessions, setSessions] = useState<SessionHistoryEntry[]>([]);
+  const [mySkills, setMySkills] = useState<SkillMatrixRow[]>([]);
+  const [skillCatalog, setSkillCatalog] = useState<PersonnelSkillReferenceValue[]>([]);
+  const [workHistory, setWorkHistory] = useState<PersonnelWorkHistoryEntry[]>([]);
+  const [workload, setWorkload] = useState<PersonnelWorkloadSummary | null>(null);
+  const [selectedSkillRef, setSelectedSkillRef] = useState<number | null>(null);
+  const [selectedSkillLevel, setSelectedSkillLevel] = useState(3);
+  const [declaringSkill, setDeclaringSkill] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // edit mode
@@ -86,6 +104,27 @@ export function ProfilePage() {
         phone: p.phone,
         language: p.language,
       });
+
+      if (p.personnel_id != null) {
+        const [catalog, skills, history, summary] = await Promise.all([
+          listPersonnelSkillReferenceValues(),
+          listSkillsMatrix({ personnel_id: p.personnel_id, include_inactive: true }),
+          listPersonnelWorkHistory(p.personnel_id, 20),
+          getPersonnelWorkloadSummary(p.personnel_id),
+        ]);
+        setSkillCatalog(catalog);
+        setMySkills(skills);
+        setWorkHistory(history);
+        setWorkload(summary);
+        if (catalog.length > 0) {
+          setSelectedSkillRef((prev) => prev ?? (catalog[0]?.id ?? null));
+        }
+      } else {
+        setSkillCatalog([]);
+        setMySkills([]);
+        setWorkHistory([]);
+        setWorkload(null);
+      }
     } catch {
       /* ignore — UI shows empty */
     } finally {
@@ -111,6 +150,26 @@ export function ProfilePage() {
       setToast({ type: "error", message: msg });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDeclareSkill = async () => {
+    if (!profile?.personnel_id || !selectedSkillRef) return;
+    setDeclaringSkill(true);
+    try {
+      await declareOwnSkill({
+        reference_value_id: selectedSkillRef,
+        proficiency_level: selectedSkillLevel,
+        is_primary: false,
+      });
+      setToast({ type: "success", message: t("profile.skillDeclared", "Skill declared.") });
+      const refreshed = await listSkillsMatrix({ personnel_id: profile.personnel_id, include_inactive: true });
+      setMySkills(refreshed);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : t("profile.skillDeclareError", "Skill declaration failed.");
+      setToast({ type: "error", message: msg });
+    } finally {
+      setDeclaringSkill(false);
     }
   };
 
@@ -241,6 +300,102 @@ export function ProfilePage() {
           />
         </div>
       </section>
+
+      {profile.personnel_id != null && (
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-text-primary">
+            {t("profile.personnelSelfService", "Personnel Self-Service")}
+          </h2>
+          <div className="rounded-lg border border-surface-border p-4 space-y-4">
+            <div className="text-xs text-text-muted">
+              {t("profile.linkedPersonnelId", "Linked personnel ID")}: {profile.personnel_id}
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+              <select
+                className="h-9 rounded-md border border-surface-border bg-surface-1 px-2 text-sm"
+                value={selectedSkillRef ?? ""}
+                onChange={(e) => setSelectedSkillRef(e.target.value ? Number(e.target.value) : null)}
+              >
+                {skillCatalog.map((skill) => (
+                  <option key={skill.id} value={skill.id}>
+                    {skill.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="h-9 rounded-md border border-surface-border bg-surface-1 px-2 text-sm"
+                value={selectedSkillLevel}
+                onChange={(e) => setSelectedSkillLevel(Number(e.target.value))}
+              >
+                {[1, 2, 3, 4, 5].map((lvl) => (
+                  <option key={lvl} value={lvl}>
+                    {t("profile.level", "Level")} {lvl}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => void handleDeclareSkill()}
+                disabled={declaringSkill || selectedSkillRef == null}
+                className="rounded-md bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary/90 disabled:opacity-50"
+              >
+                {declaringSkill
+                  ? t("profile.declaringSkill", "Declaring...")
+                  : t("profile.declareOwnSkill", "Declare own skill")}
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-medium text-text-secondary">
+                {t("profile.mySkills", "My declared skills")}
+              </div>
+              {mySkills.length === 0 ? (
+                <div className="text-xs text-text-muted">{t("profile.noSkills", "No skills declared.")}</div>
+              ) : (
+                mySkills.map((s) => (
+                  <div key={`${s.skill_code}-${s.proficiency_level}`} className="text-sm text-text-primary">
+                    {s.skill_label ?? s.skill_code ?? "—"} · {t("profile.level", "Level")}{" "}
+                    {s.proficiency_level ?? "—"}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="grid gap-2 md:grid-cols-2">
+              <div className="rounded border border-surface-border p-3">
+                <div className="mb-2 text-xs font-medium text-text-secondary">
+                  {t("profile.workloadSummary", "Workload summary")}
+                </div>
+                <div className="text-sm text-text-primary">
+                  {t("profile.openWo", "Open WO")}: {workload?.open_work_orders ?? 0}
+                </div>
+                <div className="text-sm text-text-primary">
+                  {t("profile.inProgressWo", "In progress WO")}: {workload?.in_progress_work_orders ?? 0}
+                </div>
+                <div className="text-sm text-text-primary">
+                  {t("profile.pendingDi", "Pending DI")}: {workload?.pending_interventions ?? 0}
+                </div>
+              </div>
+              <div className="rounded border border-surface-border p-3">
+                <div className="mb-2 text-xs font-medium text-text-secondary">
+                  {t("profile.recentWorkHistory", "Recent work history")}
+                </div>
+                <div className="space-y-1">
+                  {workHistory.slice(0, 4).map((h) => (
+                    <div key={`${h.source_module}-${h.record_id}`} className="text-xs text-text-primary">
+                      {h.source_module.toUpperCase()} {h.record_code ?? h.record_id} · {h.role_code}
+                    </div>
+                  ))}
+                  {workHistory.length === 0 ? (
+                    <div className="text-xs text-text-muted">{t("profile.noHistory", "No history found.")}</div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ── Security ───────────────────────────────────────────────────── */}
       <section>

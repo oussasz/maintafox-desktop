@@ -11,6 +11,7 @@ import {
   BarChart3,
   CalendarDays,
   Columns3,
+  Filter,
   List,
   Plus,
   RefreshCw,
@@ -62,8 +63,9 @@ export function WorkOrdersPage() {
   const setFilter = useWoStore((s) => s.setFilter);
 
   const [view, setView] = useState<WoViewMode>(
-    () => (localStorage.getItem("wo-view-mode") as WoViewMode) || "list",
+    () => (localStorage.getItem("wo-view-mode") as WoViewMode) || "kanban",
   );
+  const [showFilters, setShowFilters] = useState(() => localStorage.getItem("wo-show-filters") !== "0");
 
   // ── Search with debounce ──────────────────────────────────────────────
 
@@ -167,6 +169,14 @@ export function WorkOrdersPage() {
   const switchView = useCallback((v: WoViewMode) => {
     setView(v);
     localStorage.setItem("wo-view-mode", v);
+  }, []);
+
+  const toggleFilters = useCallback(() => {
+    setShowFilters((prev) => {
+      const next = !prev;
+      localStorage.setItem("wo-show-filters", next ? "1" : "0");
+      return next;
+    });
   }, []);
 
   // ── Columns ───────────────────────────────────────────────────────────
@@ -298,6 +308,16 @@ export function WorkOrdersPage() {
           <Button
             variant="outline"
             size="sm"
+            onClick={toggleFilters}
+            title={t("page.filterSettings")}
+            className="gap-1.5"
+          >
+            <Filter className="h-3.5 w-3.5" />
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => void loadWos()}
             disabled={loading}
             className="gap-1.5"
@@ -308,68 +328,70 @@ export function WorkOrdersPage() {
       </div>
 
       {/* ── Filters ──────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 px-6 py-2 border-b border-surface-border">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
-          <Input
-            className="pl-9 h-8 text-sm"
-            placeholder={t("search.placeholder")}
-            value={searchInput}
-            onChange={handleSearchChange}
-          />
-          {searchInput && (
-            <button
-              type="button"
-              className="absolute right-2 top-2 text-text-muted hover:text-text-primary"
-              onClick={clearSearch}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
+      {showFilters && (
+        <div className="flex items-center gap-2 px-6 py-2 border-b border-surface-border">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
+            <Input
+              className="pl-9 h-8 text-sm"
+              placeholder={t("search.placeholder")}
+              value={searchInput}
+              onChange={handleSearchChange}
+            />
+            {searchInput && (
+              <button
+                type="button"
+                className="absolute right-2 top-2 text-text-muted hover:text-text-primary"
+                onClick={clearSearch}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          <Select value={statusFilter} onValueChange={handleStatusFilter}>
+            <SelectTrigger className="h-8 w-[160px] text-sm">
+              <SelectValue placeholder={t("list.filters.status")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">{t("list.filters.status")}</SelectItem>
+              {STATUS_OPTIONS.map((opt) => (
+                <SelectItem key={opt.code} value={opt.code}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={typeFilter} onValueChange={handleTypeFilter}>
+            <SelectTrigger className="h-8 w-[160px] text-sm">
+              <SelectValue placeholder={t("list.filters.type")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">{t("list.filters.type")}</SelectItem>
+              {TYPE_OPTIONS.map((opt) => (
+                <SelectItem key={opt.code} value={opt.code}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={priorityFilter} onValueChange={handlePriorityFilter}>
+            <SelectTrigger className="h-8 w-[130px] text-sm">
+              <SelectValue placeholder={t("list.filters.priority")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">{t("list.filters.priority")}</SelectItem>
+              {PRIORITY_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={String(opt.value)}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-
-        <Select value={statusFilter} onValueChange={handleStatusFilter}>
-          <SelectTrigger className="h-8 w-[160px] text-sm">
-            <SelectValue placeholder={t("list.filters.status")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">{t("list.filters.status")}</SelectItem>
-            {STATUS_OPTIONS.map((opt) => (
-              <SelectItem key={opt.code} value={opt.code}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={typeFilter} onValueChange={handleTypeFilter}>
-          <SelectTrigger className="h-8 w-[160px] text-sm">
-            <SelectValue placeholder={t("list.filters.type")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">{t("list.filters.type")}</SelectItem>
-            {TYPE_OPTIONS.map((opt) => (
-              <SelectItem key={opt.code} value={opt.code}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={priorityFilter} onValueChange={handlePriorityFilter}>
-          <SelectTrigger className="h-8 w-[130px] text-sm">
-            <SelectValue placeholder={t("list.filters.priority")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">{t("list.filters.priority")}</SelectItem>
-            {PRIORITY_OPTIONS.map((opt) => (
-              <SelectItem key={opt.value} value={String(opt.value)}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      )}
 
       {/* ── DI management panel (ot.edit permission) ─────────────────── */}
       <PermissionGate permission="ot.edit">

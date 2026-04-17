@@ -86,7 +86,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_domains (id, code, name, structure_type, governance_level, is_extendable, created_at, updated_at) \
-             VALUES (1, 'DI_CLASSIFICATION', 'DI Classification', 'flat', 'tenant_managed', 1, \
+             VALUES (900001, 'DI_CLASSIFICATION', 'DI Classification', 'flat', 'tenant_managed', 1, \
              datetime('now'), datetime('now'));".to_string(),
         ))
         .await
@@ -95,7 +95,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_sets (id, domain_id, version_no, status, created_at) \
-             VALUES (1, 1, 1, 'published', datetime('now'));".to_string(),
+             VALUES (900001, 900001, 1, 'published', datetime('now'));".to_string(),
         ))
         .await
         .expect("insert test reference_set");
@@ -103,7 +103,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (1, 1, 'MECH', 'MÃ©canique', 1);".to_string(),
+             VALUES (900001, 900001, 'MECH', 'MÃ©canique', 1);".to_string(),
         ))
         .await
         .expect("insert test reference_value");
@@ -247,7 +247,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "INVALID_URGENCY".to_string(),
                 review_team_id: None,
-                classification_code_id: Some(1),
+                classification_code_id: Some(900001),
                 reviewer_note: None,
             },
         )
@@ -277,7 +277,7 @@ mod tests {
                 expected_row_version: 1,
                 validated_urgency: "high".to_string(),
                 review_team_id: None,
-                classification_code_id: Some(1),
+                classification_code_id: Some(900001),
                 reviewer_note: None,
             },
         )
@@ -406,7 +406,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "high".to_string(),
                 review_team_id: Some(1),
-                classification_code_id: Some(1),
+                classification_code_id: Some(900001),
                 reviewer_note: Some("Screened OK".to_string()),
             },
         )
@@ -492,7 +492,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "medium".to_string(),
                 review_team_id: None,
-                classification_code_id: Some(1),
+                classification_code_id: Some(900001),
                 reviewer_note: None,
             },
         )
@@ -553,7 +553,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "medium".to_string(),
                 review_team_id: None,
-                classification_code_id: Some(1),
+                classification_code_id: Some(900001),
                 reviewer_note: None,
             },
         )
@@ -607,7 +607,7 @@ mod tests {
                 expected_row_version: 2,
                 validated_urgency: "medium".to_string(),
                 review_team_id: None,
-                classification_code_id: Some(1),
+                classification_code_id: Some(900001),
                 reviewer_note: None,
             },
         )
@@ -670,7 +670,7 @@ mod tests {
                 expected_row_version: version,
                 validated_urgency: "high".to_string(),
                 review_team_id: Some(1),
-                classification_code_id: Some(1),
+                classification_code_id: Some(900001),
                 reviewer_note: Some("Validated vibration concern".to_string()),
             },
         )
@@ -863,7 +863,7 @@ mod tests {
                 expected_row_version: 1, // stale â€” should be 2 after advance
                 validated_urgency: "high".to_string(),
                 review_team_id: None,
-                classification_code_id: Some(1),
+                classification_code_id: Some(900001),
                 reviewer_note: None,
             },
         )

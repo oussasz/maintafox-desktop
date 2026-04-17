@@ -3,7 +3,12 @@
     "title": "Intervention Requests",
     "titleDetail": "Request detail",
     "titleNew": "New request",
-    "titleEdit": "Edit request"
+    "titleEdit": "Edit request",
+    "viewList": "List",
+    "viewKanban": "Kanban",
+    "viewCalendar": "Calendar",
+    "viewDashboard": "Dashboard",
+    "filterSettings": "Filter settings"
   },
   "list": {
     "columns": {
@@ -248,6 +253,9 @@
   },
   "archive": {
     "title": "Archive"
+  },
+  "search": {
+    "placeholder": "Search by code, subject, description…"
   },
   "contextMenu": {
     "viewDetail": "View detail",

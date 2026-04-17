@@ -16,6 +16,13 @@ use crate::errors::{AppError, AppResult};
 use crate::require_session;
 use crate::state::AppState;
 
+fn tenant_mismatch_recovery_message(activated_tenant: &str) -> String {
+    format!(
+        "Ce compte n'est pas autorisé pour le tenant activé ({activated_tenant}). \
+        Connectez-vous avec un compte autorisé pour ce tenant ou réactivez l'appareil avec la clé correcte."
+    )
+}
+
 /// Input for the login command. Received from the React login form.
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
@@ -150,21 +157,42 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
             }
             // Online + revoked: allow login but do not re-register trust
         }
-        // Known device, offline: check grace window
+        // Known device, offline: apply strict activation/offline eligibility checks.
         (Some(_), false) => {
-            let (allowed, _) = crate::auth::device::check_offline_access(&state.db, user_id, &fingerprint).await?;
-            if !allowed {
+            let decision =
+                crate::activation::queries::evaluate_offline_activation_policy(&state.db, user_id, &fingerprint)
+                    .await?;
+            if !decision.allowed {
                 return Err(AppError::Auth(
-                    "Fen\u{00ea}tre de connexion hors ligne expir\u{00e9}e. Connexion en ligne requise.".into(),
+                    decision.denial_message.unwrap_or_else(|| {
+                        "Connexion hors ligne refus\u{00e9}e par la politique d'activation.".to_string()
+                    }),
                 ));
             }
             tracing::info!(username = %username, "login::offline_access_granted");
         }
-        // Known device, online: update last_seen_at
+        // Known device, online: apply reconnect revocation and refresh trust heartbeat.
         (Some(_), true) => {
+            if let Some(reason) = crate::activation::queries::process_reconnect_revocation(&state.db).await? {
+                return Err(AppError::Auth(format!(
+                    "Connexion refus\u{00e9}e: r\u{00e9}vocation d'activation appliqu\u{00e9}e \u{00e0} la reconnexion ({reason})."
+                )));
+            }
             crate::auth::device::register_device_trust(&state.db, user_id, &fingerprint, None).await?;
         }
     }
+
+    let activated_tenant_id = crate::commands::product_license::get_activation_claim_tenant_id(&state.db)
+        .await?
+        .ok_or_else(|| {
+            AppError::SessionClaimInvalid(
+                "Activation tenant claim is missing on this device. Re-enter the activation key to continue.".into(),
+            )
+        })?;
+
+    let tenant_scope = session_manager::resolve_tenant_scope_for_user(&state.db, user_id, &activated_tenant_id)
+        .await?
+        .ok_or_else(|| AppError::TenantScopeViolation(tenant_mismatch_recovery_message(&activated_tenant_id)))?;
 
     // ── Password expiry enforcement ────────────────────────────────────
     let policy = password_policy::PasswordPolicy::load(&state.db).await;
@@ -243,6 +271,8 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
         display_name,
         is_admin,
         force_password_change: effective_force_pw_change,
+        tenant_id: tenant_scope.tenant_id,
+        token_tenant_id: tenant_scope.token_tenant_id,
     };
 
     let mut session_guard = state.session.write().await;
@@ -320,6 +350,31 @@ pub async fn logout(state: State<'_, AppState>) -> AppResult<()> {
 /// Called by the React shell to decide which screen to show on startup.
 #[tauri::command]
 pub async fn get_session_info(state: State<'_, AppState>) -> AppResult<session_manager::SessionInfo> {
+    let maybe_session = state.session.read().await.current.clone();
+    let Some(current_session) = maybe_session else {
+        return Ok(state.session.read().await.session_info());
+    };
+    if current_session.is_expired() {
+        return Ok(state.session.read().await.session_info());
+    }
+
+    let activated_tenant_id = crate::commands::product_license::get_activation_claim_tenant_id(&state.db)
+        .await?
+        .ok_or_else(|| {
+            AppError::SessionClaimInvalid(
+                "Activation tenant claim is missing on this device. Re-enter the activation key to continue.".into(),
+            )
+        })?;
+    if current_session.user.tenant_id != activated_tenant_id {
+        {
+            let mut session_guard = state.session.write().await;
+            session_guard.clear_session();
+        }
+        return Err(AppError::SessionClaimInvalid(
+            "Session tenant claim is stale. Please sign in again for the currently activated tenant.".into(),
+        ));
+    }
+
     Ok(state.session.read().await.session_info())
 }
 
@@ -363,6 +418,8 @@ pub async fn get_device_trust_status(state: State<'_, AppState>) -> AppResult<de
 
     let trust = device::get_device_trust(&state.db, user.user_id, &fingerprint).await?;
     let (offline_allowed, offline_hours) = device::check_offline_access(&state.db, user.user_id, &fingerprint).await?;
+    let decision =
+        crate::activation::queries::evaluate_offline_activation_policy(&state.db, user.user_id, &fingerprint).await?;
 
     Ok(device::DeviceTrustStatus {
         device_fingerprint: fingerprint,
@@ -372,6 +429,8 @@ pub async fn get_device_trust_status(state: State<'_, AppState>) -> AppResult<de
         offline_hours_remaining: offline_hours,
         device_label: trust.as_ref().and_then(|t| t.device_label.clone()),
         trusted_at: trust.as_ref().map(|t| t.trusted_at.clone()),
+        offline_denial_code: decision.denial_code,
+        offline_denial_message: decision.denial_message,
     })
 }
 

@@ -37,6 +37,8 @@ async fn t1_login_success_creates_session() {
         display_name,
         is_admin,
         force_password_change: force_pw,
+        tenant_id: "tenant-test".into(),
+        token_tenant_id: "tenant-test".into(),
     });
 
     session_manager::record_successful_login(&db, user_id)
@@ -112,6 +114,8 @@ async fn t4_logout_clears_session() {
         display_name,
         is_admin,
         force_password_change: force_pw,
+        tenant_id: "tenant-test".into(),
+        token_tenant_id: "tenant-test".into(),
     });
     assert!(mgr.is_authenticated(), "T4: should be authenticated after login");
 
@@ -233,6 +237,8 @@ async fn t7_session_expires_in_8_hours() {
         display_name,
         is_admin,
         force_password_change: force_pw,
+        tenant_id: "tenant-test".into(),
+        token_tenant_id: "tenant-test".into(),
     });
     let after = chrono::Utc::now();
 

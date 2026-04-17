@@ -24,6 +24,7 @@ use crate::state::AppState;
 pub struct UserProfile {
     pub id: i32,
     pub username: String,
+    pub personnel_id: Option<i64>,
     pub display_name: Option<String>,
     pub email: Option<String>,
     pub phone: Option<String>,
@@ -75,7 +76,7 @@ pub async fn get_my_profile(state: State<'_, AppState>) -> AppResult<UserProfile
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r"SELECT u.id, u.username, u.display_name,
+            r"SELECT u.id, u.username, u.personnel_id, u.display_name,
                      u.identity_mode, u.created_at,
                      u.password_changed_at,
                      CASE WHEN u.pin_hash IS NOT NULL THEN 1 ELSE 0 END AS pin_configured,
@@ -97,6 +98,9 @@ pub async fn get_my_profile(state: State<'_, AppState>) -> AppResult<UserProfile
         username: row
             .try_get::<String>("", "username")
             .unwrap_or_default(),
+        personnel_id: row
+            .try_get::<Option<i64>>("", "personnel_id")
+            .unwrap_or(None),
         display_name: row
             .try_get::<Option<String>>("", "display_name")
             .unwrap_or(None),

@@ -30,7 +30,8 @@
     "db:reset": "pnpm tsx scripts/dev-db-reset.ts",
     "db:reset:ci": "pnpm tsx scripts/dev-db-reset.ts --yes",
     "migrate:check": "tsx scripts/check-migrations.ts",
-    "audit:tauri-conf": "pnpm tsx scripts/audit-tauri-conf.ts"
+    "audit:tauri-conf": "pnpm tsx scripts/audit-tauri-conf.ts",
+    "guard:phase4:fixtures": "pnpm tsx scripts/check-control-plane-fixture-imports.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",

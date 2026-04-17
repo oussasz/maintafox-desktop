@@ -55,6 +55,9 @@ jobs:
       - name: Migration integrity check
         run: pnpm run migrate:check
 
+      - name: Phase 4 fixture/mock import guard
+        run: pnpm run guard:phase4:fixtures
+
       - name: Check CHANGELOG has Unreleased entry (PRs to main only)
         if: github.base_ref == 'main'
         shell: bash

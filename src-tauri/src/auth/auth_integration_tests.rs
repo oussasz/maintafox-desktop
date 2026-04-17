@@ -34,6 +34,19 @@ mod tests {
         db
     }
 
+    async fn admin_user_id(db: &sea_orm::DatabaseConnection) -> i32 {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let row = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM user_accounts WHERE username = 'admin'".to_string(),
+            ))
+            .await
+            .expect("admin lookup query should succeed")
+            .expect("admin row should exist");
+        row.try_get("", "id").expect("admin id should decode")
+    }
+
     // ── V3 — Session info before login is unauthenticated. ──────────────
 
     #[test]
@@ -58,6 +71,11 @@ mod tests {
         assert!(
             info.last_activity_at.is_none(),
             "V3 FAIL: last_activity_at should be null"
+        );
+        assert!(info.tenant_id.is_none(), "V3 FAIL: tenant_id should be null");
+        assert!(
+            info.token_tenant_id.is_none(),
+            "V3 FAIL: token_tenant_id should be null"
         );
     }
 
@@ -92,6 +110,8 @@ mod tests {
             display_name,
             is_admin,
             force_password_change: force_pw_change,
+            tenant_id: "tenant-test".into(),
+            token_tenant_id: "tenant-test".into(),
         };
 
         let mut mgr = SessionManager::new();
@@ -122,6 +142,71 @@ mod tests {
             "V1 FAIL: force_password_change should be true"
         );
         assert_eq!(info.is_admin, Some(true), "V1 FAIL: is_admin should be true");
+        assert_eq!(info.tenant_id.as_deref(), Some("tenant-test"));
+        assert_eq!(info.token_tenant_id.as_deref(), Some("tenant-test"));
+    }
+
+    #[tokio::test]
+    async fn v1b_tenant_scope_resolution_allows_wildcard_tenant_assignment() {
+        let db = setup_db().await;
+        let admin_id = admin_user_id(&db).await;
+
+        let resolution = session_manager::resolve_tenant_scope_for_user(&db, admin_id, "tenant-activated")
+            .await
+            .expect("tenant scope resolution should succeed");
+        assert!(
+            resolution.is_some(),
+            "V1b FAIL: wildcard tenant assignment should authorize activated tenant"
+        );
+    }
+
+    #[tokio::test]
+    async fn v2c_tenant_scope_resolution_denies_mismatched_explicit_tenant() {
+        let db = setup_db().await;
+        let admin_id = admin_user_id(&db).await;
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let now = chrono::Utc::now().to_rfc3339();
+        let role_row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                r"SELECT role_id
+                   FROM user_scope_assignments
+                   WHERE user_id = ?
+                     AND scope_type = 'tenant'
+                     AND deleted_at IS NULL
+                   LIMIT 1",
+                [admin_id.into()],
+            ))
+            .await
+            .expect("role lookup should succeed")
+            .expect("admin should have at least one tenant scope assignment");
+        let role_id: i32 = role_row.try_get("", "role_id").expect("role_id should decode");
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO user_scope_assignments
+                   (sync_id, user_id, role_id, scope_type, scope_reference,
+                    valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version)
+               VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, NULL, 'test explicit tenant scope', ?, ?, 1)",
+            [
+                "test-mismatch-scope-sync-id".into(),
+                admin_id.into(),
+                role_id.into(),
+                "tenant-other".into(),
+                now.clone().into(),
+                now.into(),
+            ],
+        ))
+        .await
+        .expect("explicit tenant scope insert should succeed");
+
+        let resolution = session_manager::resolve_tenant_scope_for_user(&db, admin_id, "tenant-activated")
+            .await
+            .expect("tenant scope resolution should succeed");
+        assert!(
+            resolution.is_none(),
+            "V2c FAIL: explicit tenant mismatch must deny access"
+        );
     }
 
     // ── V2 — Login with wrong password gives opaque error. ──────────────
@@ -212,6 +297,8 @@ mod tests {
             display_name,
             is_admin,
             force_password_change: force_pw,
+            tenant_id: "tenant-test".into(),
+            token_tenant_id: "tenant-test".into(),
         });
         assert!(mgr.is_authenticated(), "V4 FAIL: should be authenticated after login");
 

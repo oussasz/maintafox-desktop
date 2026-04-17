@@ -43,6 +43,50 @@ pub async fn resolve_recipients(
                     {
                         user_ids.insert(user_id);
                     }
+                } else if source_module == "pm" {
+                    if let Some(user_id) = query_optional_i64(
+                        pool,
+                        "SELECT wo.primary_responsible_id
+                         FROM pm_occurrences po
+                         JOIN work_orders wo ON wo.id = po.linked_work_order_id
+                         WHERE po.id = ?",
+                        [source_id.into()],
+                        "primary_responsible_id",
+                    )
+                    .await?
+                    {
+                        user_ids.insert(user_id);
+                    } else if let Some(team_id) = query_optional_i64(
+                        pool,
+                        "SELECT pp.assigned_group_id
+                         FROM pm_occurrences po
+                         JOIN pm_plans pp ON pp.id = po.pm_plan_id
+                         WHERE po.id = ?",
+                        [source_id.into()],
+                        "assigned_group_id",
+                    )
+                    .await?
+                    {
+                        let rows = pool
+                            .query_all(Statement::from_sql_and_values(
+                                DbBackend::Sqlite,
+                                "SELECT DISTINCT usa.user_id
+                                 FROM user_scope_assignments usa
+                                 JOIN user_accounts ua ON ua.id = usa.user_id
+                                 WHERE usa.scope_type = 'team'
+                                   AND usa.scope_reference = ?
+                                   AND usa.deleted_at IS NULL
+                                   AND ua.is_active = 1
+                                   AND (usa.valid_to IS NULL OR usa.valid_to >= strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+                                [team_id.to_string().into()],
+                            ))
+                            .await?;
+                        for row in rows {
+                            if let Ok(user_id) = row.try_get::<i64>("", "user_id") {
+                                user_ids.insert(user_id);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -163,6 +207,41 @@ pub async fn resolve_recipients(
                 for row in rows {
                     if let Ok(user_id) = row.try_get::<i64>("", "user_id") {
                         user_ids.insert(user_id);
+                    }
+                }
+            } else if let Some((source_module, source_id)) = extract_source(payload) {
+                if source_module == "pm" {
+                    if let Some(node_id) = query_optional_i64(
+                        pool,
+                        "SELECT e.installed_at_node_id
+                         FROM pm_occurrences po
+                         JOIN pm_plans pp ON pp.id = po.pm_plan_id
+                         JOIN equipment e ON e.id = pp.asset_scope_id
+                         WHERE po.id = ? AND pp.asset_scope_type = 'equipment'",
+                        [source_id.into()],
+                        "installed_at_node_id",
+                    )
+                    .await?
+                    {
+                        let rows = pool
+                            .query_all(Statement::from_sql_and_values(
+                                DbBackend::Sqlite,
+                                "SELECT DISTINCT usa.user_id
+                                 FROM user_scope_assignments usa
+                                 JOIN user_accounts ua ON ua.id = usa.user_id
+                                 WHERE usa.scope_type IN ('entity', 'org_node')
+                                   AND usa.scope_reference = ?
+                                   AND usa.deleted_at IS NULL
+                                   AND ua.is_active = 1
+                                   AND (usa.valid_to IS NULL OR usa.valid_to >= strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+                                [node_id.to_string().into()],
+                            ))
+                            .await?;
+                        for row in rows {
+                            if let Ok(user_id) = row.try_get::<i64>("", "user_id") {
+                                user_ids.insert(user_id);
+                            }
+                        }
                     }
                 }
             }

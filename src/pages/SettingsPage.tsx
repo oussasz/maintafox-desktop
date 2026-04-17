@@ -3,9 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { LicenseEnforcementPanel } from "@/components/license/LicenseEnforcementPanel";
 import { PolicyEditorPanel, partitionSettings } from "@/components/settings/PolicyEditorPanel";
 import { SettingsCategorySidebar } from "@/components/settings/SettingsCategorySidebar";
 import { SettingsValueEditor } from "@/components/settings/SettingsValueEditor";
+import { SyncFeedbackPanel } from "@/components/sync/SyncFeedbackPanel";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -148,6 +150,9 @@ export function SettingsPage() {
               </CardContent>
             </Card>
           </div>
+
+          <SyncFeedbackPanel />
+          <LicenseEnforcementPanel />
 
           {/* Audit log */}
           {auditLog.length > 0 && (

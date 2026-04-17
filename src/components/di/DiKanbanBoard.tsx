@@ -71,6 +71,13 @@ const URGENCY_STYLE: Record<string, { class: string; icon: string }> = {
   low: { class: "bg-green-100 text-green-800", icon: "↓" },
 };
 
+const URGENCY_BAR: Record<string, string> = {
+  critical: "bg-red-600",
+  high: "bg-orange-500",
+  medium: "bg-amber-400",
+  low: "bg-emerald-400",
+};
+
 const ORIGIN_LABELS: Record<string, string> = {
   operator: "Opérateur",
   technician: "Technicien",
@@ -106,15 +113,17 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
   }
 
   return (
-    <div className="flex gap-3 h-full overflow-x-auto p-4">
-      {COLUMNS.map((col) => (
-        <KanbanColumn
-          key={col.id}
-          def={col}
-          items={grouped.get(col.id) ?? []}
-          onCardClick={onCardClick}
-        />
-      ))}
+    <div className="relative flex flex-col h-full">
+      <div className="flex gap-3 flex-1 overflow-x-auto p-1 pb-2">
+        {COLUMNS.map((col) => (
+          <KanbanColumn
+            key={col.id}
+            def={col}
+            items={grouped.get(col.id) ?? []}
+            onCardClick={onCardClick}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -131,7 +140,7 @@ function KanbanColumn({
   onCardClick: (di: InterventionRequest) => void;
 }) {
   return (
-    <div className="flex flex-col min-w-[260px] w-[260px] shrink-0 rounded-lg border bg-muted/30">
+    <div className="flex flex-col min-w-[220px] max-w-[260px] flex-1 rounded-lg border bg-muted/30">
       {/* Column header */}
       <div
         className={`flex items-center gap-2 px-3 py-2.5 rounded-t-lg border-b font-medium text-sm ${def.headerClass}`}
@@ -161,9 +170,14 @@ function DiKanbanCard({ di, onClick }: { di: InterventionRequest; onClick: () =>
   const { t } = useTranslation("di");
   const urgency = URGENCY_STYLE[di.reported_urgency];
   const desc = di.description.length > 80 ? `${di.description.substring(0, 80)}…` : di.description;
+  const urgencyBarClass = URGENCY_BAR[di.reported_urgency] ?? "bg-gray-300";
 
   return (
-    <Card className="cursor-pointer hover:shadow-md transition-shadow border" onClick={onClick}>
+    <Card
+      className="cursor-pointer hover:shadow-md transition-shadow border overflow-hidden"
+      onClick={onClick}
+    >
+      <div className={`h-1 w-full ${urgencyBarClass}`} />
       <CardContent className="p-3 space-y-2">
         {/* Title row */}
         <div className="flex items-start justify-between gap-2">

@@ -1,31 +1,39 @@
-﻿import { ArchiveExplorer } from "@/components/archive/ArchiveExplorer";
+﻿import { Archive } from "lucide-react";
+import { useTranslation } from "react-i18next";
+
+import { ArchiveExplorer } from "@/components/archive/ArchiveExplorer";
 import { RetentionPolicyPanel } from "@/components/archive/RetentionPolicyPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function ArchivePage() {
+  const { t } = useTranslation("archive");
+
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Archivage</h1>
-        <p className="text-sm text-muted-foreground">
-          Browse archived records, verify integrity, and manage retention policies.
-        </p>
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b border-surface-border px-6 py-3">
+        <div className="flex items-center gap-3">
+          <Archive className="h-5 w-5 text-text-muted" aria-hidden />
+          <div>
+            <h1 className="text-xl font-semibold text-text-primary">{t("page.title")}</h1>
+            <p className="mt-0.5 text-sm text-text-muted">{t("page.subtitle")}</p>
+          </div>
+        </div>
       </div>
 
-      <Tabs defaultValue="explorer">
-        <TabsList className="grid w-full max-w-sm grid-cols-2">
-          <TabsTrigger value="explorer">Archive Explorer</TabsTrigger>
-          <TabsTrigger value="retention">Retention Policies</TabsTrigger>
-        </TabsList>
-        <TabsContent value="explorer">
-          <ArchiveExplorer className="mt-2" />
-        </TabsContent>
-        <TabsContent value="retention">
-          <div className="mt-2">
+      <div className="min-h-0 flex-1 overflow-auto p-6">
+        <Tabs defaultValue="explorer" className="w-full">
+          <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsTrigger value="explorer">{t("tabs.explorer")}</TabsTrigger>
+            <TabsTrigger value="retention">{t("tabs.retention")}</TabsTrigger>
+          </TabsList>
+          <TabsContent value="explorer" className="mt-4">
+            <ArchiveExplorer />
+          </TabsContent>
+          <TabsContent value="retention" className="mt-4">
             <RetentionPolicyPanel />
-          </div>
-        </TabsContent>
-      </Tabs>
+          </TabsContent>
+        </Tabs>
+      </div>
     </div>
   );
 }

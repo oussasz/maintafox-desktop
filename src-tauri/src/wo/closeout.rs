@@ -14,6 +14,7 @@
 use crate::activity::emitter;
 use crate::audit;
 use crate::errors::{AppError, AppResult};
+use crate::inventory::queries as inventory_queries;
 use crate::wo::queries;
 use chrono::Utc;
 use sea_orm::{
@@ -784,6 +785,29 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // ── Return all blocking errors at once ────────────────────────────────
     if !preflight.is_ok() {
         return Err(AppError::ValidationFailed(preflight.errors));
+    }
+
+    // Release any remaining WO/PM reservation envelopes during closeout.
+    // This keeps inventory state aligned with closed execution context.
+    let reservation_rows = txn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT DISTINCT reservation_id
+             FROM work_order_parts
+             WHERE work_order_id = ? AND reservation_id IS NOT NULL",
+            [input.wo_id.into()],
+        ))
+        .await?;
+    for row in reservation_rows {
+        let reservation_id: i64 = row
+            .try_get("", "reservation_id")
+            .map_err(|e| decode_err("reservation_id", e))?;
+        inventory_queries::release_stock_reservation_with_connection(
+            &txn,
+            reservation_id,
+            Some("WO closeout reservation release"),
+        )
+        .await?;
     }
 
     // ── Compute final costs ───────────────────────────────────────────────

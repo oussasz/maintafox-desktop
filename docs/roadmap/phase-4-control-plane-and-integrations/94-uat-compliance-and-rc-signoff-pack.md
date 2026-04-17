@@ -64,6 +64,7 @@ Expected artifacts:
   - HTTPS on console/api (from Sprint 8)
   - secret rotation log
   - firewall/fail2ban posture
+- final artifact pointer index (`99-phase4-final-artifact-index.md`)
 
 ---
 
@@ -108,4 +109,5 @@ Expected artifacts:
   - `/root/sprint10-uat-20260417T130406Z-postfix/uat-results.md`
   - `/root/phase4-rc/94-uat-compliance-and-rc-signoff-pack.md`
   - `/root/sprint10-route-verification-20260417T000000Z.txt`
+  - `/root/logs/frontend-hardening-20260417T145601Z.tar.gz` (`sha256: a6a9ef2aa047e6c5d5ab5f1690f627d658c172261c9db51970d8d1a184b96e2b`)
 
