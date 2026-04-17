@@ -174,3 +174,24 @@ This report is a **point-in-time compliance snapshot**. Re-verify after any chan
 
 **Maintafox Desktop — Release Control Compliance**  
 Generated as part of the Phase 4 release-control hardening initiative.
+
+---
+
+## Appendix A — Document delivery (this file)
+
+This report is proposed to `main` via pull request so it respects protected-branch rules (PR required, **signed commits** on `main`, required checks).  
+**PR:** https://github.com/oussasz/maintafox-desktop/pull/11  
+
+If required checks fail for reasons unrelated to this documentation change (for example `cargo audit` advisories on transitive dependencies), treat that as a **separate remediation track**; the release-control *policy* snapshot in this report remains valid as of the audit date.
+
+---
+
+## Appendix B — Sole maintainer merge path
+
+`main` is configured for **two** approving reviews. As the sole developer and release manager, you may:
+
+- Use **one** approval plus a second reviewer when available, or  
+- Temporarily **lower required approvals to 1** on `main` in branch protection settings, or  
+- Merge with **administrator** privileges only when policy allows and you document the exception.
+
+**Signed commits:** Pushes to `main` require verified signatures. Configure GPG or SSH commit signing locally, or use GitHub’s merge options that satisfy your org’s signing rules.
