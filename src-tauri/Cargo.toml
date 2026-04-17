@@ -1,6 +1,6 @@
 [package]
 name = "maintafox"
-version = "0.1.0-dev"
+version = "0.4.0-dev"
 edition = "2021"
 rust-version = "1.78"
 build = "build.rs"
