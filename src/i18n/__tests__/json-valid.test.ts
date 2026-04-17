@@ -25,7 +25,16 @@ function assertLeafStrings(obj: Record<string, unknown>, path = ""): void {
 }
 
 // ── Top-level key structure ─────────────────────────────────────
-const COMMON_TOP_KEYS = ["app", "action", "status", "label", "confirm", "pagination", "time"];
+const COMMON_TOP_KEYS = [
+  "app",
+  "action",
+  "status",
+  "label",
+  "confirm",
+  "pagination",
+  "table",
+  "time",
+];
 const AUTH_TOP_KEYS = ["login", "logout", "session", "stepUp", "device"];
 
 describe("json-valid: common namespace", () => {

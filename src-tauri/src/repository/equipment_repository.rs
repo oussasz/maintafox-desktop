@@ -116,12 +116,12 @@ pub async fn list_equipment(
     let where_sql = where_clauses.join(" AND ");
 
     let count_sql = format!(
-        r#"SELECT COUNT(*) as cnt FROM equipment e
+        r"SELECT COUNT(*) as cnt FROM equipment e
            LEFT JOIN org_nodes n ON n.id = e.installed_at_node_id
-           WHERE {where_sql}"#,
+           WHERE {where_sql}",
     );
     let list_sql = format!(
-        r#"
+        r"
         SELECT e.id, e.sync_id, e.asset_id_code, e.name, e.lifecycle_status,
                e.class_id, ec.name AS class_name,
                e.installed_at_node_id, n.name AS node_name,
@@ -134,7 +134,7 @@ pub async fn list_equipment(
         WHERE {where_sql}
         ORDER BY e.asset_id_code ASC
         LIMIT {} OFFSET {}
-        "#,
+        ",
         page.limit(),
         page.offset()
     );
@@ -157,7 +157,7 @@ pub async fn list_equipment(
 
 /// Fetches full equipment detail by id.
 pub async fn get_equipment_by_id(db: &DatabaseConnection, equipment_id: i32) -> AppResult<EquipmentDetail> {
-    let sql = r#"
+    let sql = r"
         SELECT e.id, e.sync_id, e.asset_id_code, e.name, e.lifecycle_status,
                e.class_id, ec.name AS class_name,
                e.installed_at_node_id, n.name AS node_name,
@@ -171,7 +171,7 @@ pub async fn get_equipment_by_id(db: &DatabaseConnection, equipment_id: i32) -> 
         LEFT JOIN org_nodes n ON n.id = e.installed_at_node_id
         LEFT JOIN lookup_values lv ON lv.id = e.criticality_value_id
         WHERE e.id = ? AND e.deleted_at IS NULL
-    "#;
+    ";
     let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, [equipment_id.into()]);
     EquipmentDetail::find_by_statement(stmt)
         .one(db)

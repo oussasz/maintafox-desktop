@@ -115,7 +115,15 @@
     "firstPage": "First page",
     "lastPage": "Last page",
     "nextPage": "Next page",
-    "previousPage": "Previous page"
+    "previousPage": "Previous page",
+    "pageOf": "Page {{page}} of {{total}}"
+  },
+  "table": {
+    "sortAscending": "Sort ascending",
+    "sortDescending": "Sort descending",
+    "clearSort": "Clear sort",
+    "searchPlaceholder": "Search...",
+    "loading": "Loading data..."
   },
   "time": {
     "just_now": "Just now",

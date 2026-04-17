@@ -8,27 +8,28 @@ use uuid::Uuid;
 pub const SEED_SCHEMA_VERSION: i32 = 1;
 
 /// Baseline settings seeded on first startup after settings migration is applied.
-/// Tuple format: (setting_key, category, setting_scope, setting_value_json)
+/// Tuple format: (`setting_key`, category, `setting_scope`, `setting_value_json`)
 const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
     ("locale.primary_language", "localization", "tenant", r#""fr""#),
     ("locale.fallback_language", "localization", "tenant", r#""en""#),
     ("locale.date_format", "localization", "tenant", r#""DD/MM/YYYY""#),
     ("locale.number_format", "localization", "tenant", r#""fr-FR""#),
-    ("locale.week_start_day", "localization", "tenant", r#"1"#),
+    ("locale.week_start_day", "localization", "tenant", r"1"),
     ("appearance.color_mode", "appearance", "tenant", r#""light""#),
     ("appearance.density", "appearance", "tenant", r#""standard""#),
-    ("appearance.text_scale", "appearance", "tenant", r#"1.0"#),
+    ("appearance.text_scale", "appearance", "tenant", r"1.0"),
     ("updater.release_channel", "system", "device", r#""stable""#),
-    ("updater.auto_check", "system", "device", r#"true"#),
-    ("backup.retention_daily", "backup", "tenant", r#"7"#),
-    ("backup.retention_weekly", "backup", "tenant", r#"4"#),
-    ("backup.retention_monthly", "backup", "tenant", r#"12"#),
-    ("diagnostics.log_retention_days", "system", "device", r#"30"#),
+    ("updater.auto_check", "system", "device", r"true"),
+    ("backup.retention_daily", "backup", "tenant", r"7"),
+    ("backup.retention_weekly", "backup", "tenant", r"4"),
+    ("backup.retention_monthly", "backup", "tenant", r"12"),
+    ("diagnostics.log_retention_days", "system", "device", r"30"),
 ];
 
 /// Inserts all system-governed lookup domains and values idempotently.
+///
 /// Safe to call on every startup: uses INSERT OR IGNORE semantics.
-/// On completion, records `seed_schema_version = SEED_SCHEMA_VERSION` in system_config.
+/// On completion, records `seed_schema_version = SEED_SCHEMA_VERSION` in `system_config`.
 pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     tracing::info!("seeder::starting system seed (version {})", SEED_SCHEMA_VERSION);
 
@@ -1209,9 +1210,9 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"INSERT INTO system_config (key, value, updated_at)
+        r"INSERT INTO system_config (key, value, updated_at)
            VALUES ('seed_schema_version', ?, ?)
-           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"#,
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         [SEED_SCHEMA_VERSION.to_string().into(), now.into()],
     ))
     .await?;
@@ -1223,7 +1224,7 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     Ok(())
 }
 
-/// Seeds baseline rows in app_settings if the table is still empty.
+/// Seeds baseline rows in `app_settings` if the table is still empty.
 /// Safe to call on every startup after migrations.
 pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
     let count_row = db
@@ -1248,10 +1249,10 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
     for (setting_key, category, setting_scope, setting_value_json) in DEFAULT_SETTINGS {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"INSERT OR IGNORE INTO app_settings
+            r"INSERT OR IGNORE INTO app_settings
                    (setting_key, category, setting_scope, setting_value_json,
                     setting_risk, validation_status, last_modified_at)
-               VALUES (?, ?, ?, ?, 'low', 'valid', ?)"#,
+               VALUES (?, ?, ?, ?, 'low', 'valid', ?)",
             [
                 (*setting_key).into(),
                 (*category).into(),
@@ -1284,18 +1285,18 @@ async fn seed_domain(
     let sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"INSERT OR IGNORE INTO lookup_domains
+        r"INSERT OR IGNORE INTO lookup_domains
                (sync_id, domain_key, display_name, domain_type,
                 is_ordered, is_extensible, is_locked, schema_version,
                 created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)"#,
+           VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)",
         [
             sync_id.into(),
             domain_key.into(),
             display_name.into(),
             domain_type.into(),
-            (is_ordered as i32).into(),
-            (is_extensible as i32).into(),
+            i32::from(is_ordered).into(),
+            i32::from(is_extensible).into(),
             now.clone().into(),
             now.into(),
         ],
@@ -1322,6 +1323,7 @@ async fn get_domain_id(db: &DatabaseConnection, domain_key: &str) -> AppResult<i
 }
 
 // ── Helper: insert value if not exists ───────────────────────────────────
+#[allow(clippy::too_many_arguments)]
 async fn seed_value(
     db: &DatabaseConnection,
     domain_id: i32,
@@ -1337,11 +1339,11 @@ async fn seed_value(
     let sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"INSERT OR IGNORE INTO lookup_values
+        r"INSERT OR IGNORE INTO lookup_values
                (sync_id, domain_id, code, label, fr_label, en_label,
                 color, sort_order, is_active, is_system,
                 created_at, updated_at, row_version)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 1)"#,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 1)",
         [
             sync_id.into(),
             domain_id.into(),
@@ -1349,9 +1351,9 @@ async fn seed_value(
             label.into(),
             fr_label.into(),
             en_label.into(),
-            color.map(|s| s.to_string()).into(),
+            color.map(std::string::ToString::to_string).into(),
             sort_order.into(),
-            (is_system as i32).into(),
+            i32::from(is_system).into(),
             now.clone().into(),
             now.into(),
         ],
@@ -1367,7 +1369,7 @@ async fn seed_value(
 /// Seeds the full permission catalogue from PRD §6.7.
 /// Uses INSERT OR IGNORE — safe to call multiple times.
 /// Permissions are ordered by domain prefix then action suffix.
-/// All seeded permissions have is_system = 1 and cannot be deleted.
+/// All seeded permissions have `is_system` = 1 and cannot be deleted.
 async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
     // Permission rows: (name, description, category, is_dangerous, requires_step_up)
     // Format: dot-notation `domain.action`
@@ -1422,6 +1424,13 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
             "organization",
             false,
             false,
+        ),
+        (
+            "org.admin",
+            "Manage org structure model and types",
+            "organization",
+            true,
+            true,
         ),
         // ── Personnel (per) ──────────────────────────────────────────────
         ("per.view", "View personnel records", "personnel", false, false),
@@ -1632,15 +1641,15 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
     for (name, desc, category, is_dangerous, requires_step_up) in permissions {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"INSERT OR IGNORE INTO permissions
+            r"INSERT OR IGNORE INTO permissions
                    (name, description, category, is_dangerous, requires_step_up, is_system, created_at)
-               VALUES (?, ?, ?, ?, ?, 1, ?)"#,
+               VALUES (?, ?, ?, ?, ?, 1, ?)",
             [
                 (*name).into(),
                 (*desc).into(),
                 (*category).into(),
-                (*is_dangerous as i32).into(),
-                (*requires_step_up as i32).into(),
+                i32::from(*is_dangerous).into(),
+                i32::from(*requires_step_up).into(),
                 now.clone().into(),
             ],
         ))
@@ -1675,9 +1684,9 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         let sync_id = Uuid::new_v4().to_string();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"INSERT OR IGNORE INTO roles
+            r"INSERT OR IGNORE INTO roles
                    (sync_id, name, description, is_system, role_type, status, created_at, updated_at, row_version)
-               VALUES (?, ?, ?, 1, ?, 'active', ?, ?, 1)"#,
+               VALUES (?, ?, ?, 1, ?, 'active', ?, ?, 1)",
             [
                 sync_id.into(),
                 (*name).into(),
@@ -1754,6 +1763,7 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
 
     // Readonly -> only *.view permissions (subset of operator's list)
     if let Some(rid) = get_role_id_by_name(db, "Readonly").await? {
+        #[allow(clippy::case_sensitive_file_extension_comparisons)]
         let view_perms: Vec<&str> = operator_permissions
             .iter()
             .copied()
@@ -1784,8 +1794,8 @@ async fn get_role_id_by_name(db: &DatabaseConnection, name: &str) -> AppResult<O
 async fn assign_all_permissions_to_role(db: &DatabaseConnection, role_id: i32, now: &str) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
-           SELECT ?, id, ? FROM permissions WHERE is_system = 1"#,
+        r"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
+           SELECT ?, id, ? FROM permissions WHERE is_system = 1",
         [role_id.into(), now.into()],
     ))
     .await?;
@@ -1800,9 +1810,9 @@ async fn assign_permissions_excluding(
 ) -> AppResult<()> {
     let placeholders = excluded.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
-        r#"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
+        r"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
            SELECT ?, id, ? FROM permissions
-           WHERE is_system = 1 AND name NOT IN ({placeholders})"#,
+           WHERE is_system = 1 AND name NOT IN ({placeholders})",
     );
     let mut values: Vec<sea_orm::Value> = vec![role_id.into(), now.into()];
     for e in excluded {
@@ -1821,8 +1831,8 @@ async fn assign_permission_by_name(
 ) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
-           SELECT ?, id, ? FROM permissions WHERE name = ?"#,
+        r"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
+           SELECT ?, id, ? FROM permissions WHERE name = ?",
         [role_id.into(), now.into(), permission_name.into()],
     ))
     .await?;
@@ -1863,11 +1873,11 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r#"INSERT OR IGNORE INTO user_accounts
+        r"INSERT OR IGNORE INTO user_accounts
                (sync_id, username, display_name, identity_mode, password_hash,
                 is_active, is_admin, force_password_change,
                 failed_login_attempts, created_at, updated_at, row_version)
-           VALUES (?, ?, ?, ?, ?, 1, 1, 1, 0, ?, ?, 1)"#,
+           VALUES (?, ?, ?, ?, ?, 1, 1, 1, 0, ?, ?, 1)",
         [
             sync_id.into(),
             "admin".into(),

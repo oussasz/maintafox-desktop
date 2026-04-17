@@ -14,6 +14,46 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Org: Structure model service — versioned schema lifecycle (draft → active →
+  superseded → archived) with atomic publish transition (P2-SP01-F01-S1)
+- Org: Node type service — tenant-defined vocabulary with 5 capability flags
+  (`can_host_assets`, `can_own_work`, `can_carry_cost_center`, `can_aggregate_kpis`,
+  `can_receive_permits`), root-type uniqueness, draft-model guard (P2-SP01-F01-S2)
+- Org: Relationship rules service — parent-child type pairing rules with duplicate
+  prevention, draft-model guard, and JOINed label denormalization (P2-SP01-F01-S2)
+- Org: 11 IPC commands (`list_org_structure_models`, `get_active_org_structure_model`,
+  `create_org_structure_model`, `publish_org_structure_model`,
+  `archive_org_structure_model`, `list_org_node_types`, `create_org_node_type`,
+  `deactivate_org_node_type`, `list_org_relationship_rules`,
+  `create_org_relationship_rule`, `delete_org_relationship_rule`) with `org.view` /
+  `org.admin` permission gates (P2-SP01-F01-S3)
+- Org: `org-service.ts` — frontend IPC wrappers for all 11 org commands (P2-SP01-F01-S3)
+- Org: `org-store.ts` — Zustand store caching active model, node types, and relationship
+  rules with `loadActiveModelConfig()` action (P2-SP01-F01-S3)
+- Org: `org.view`, `org.manage`, `org.admin` permission seeds; `org.admin` marked
+  dangerous with step-up required (P2-SP01-F01-S3)
+- Org: 29 integration tests covering structure model lifecycle, node type CRUD,
+  capability flags, root-type uniqueness, relationship rules, and draft-model
+  guards (P2-SP01-F01)
+- Shared: `OrgStructureModel`, `OrgNodeType`, `OrgRelationshipRule`,
+  `CreateStructureModelPayload`, `CreateOrgNodeTypePayload`,
+  `CreateRelationshipRulePayload` types added to `shared/ipc-types.ts` (P2-SP01-F01-S3)
+- Shell: Role-scoped sidebar — nav items filtered by `usePermissions().can()` with
+  `requiredPermission` field on 24 of 27 items; 3 always-visible (dashboard,
+  notifications, profile); empty groups auto-hidden (P2-SP00-F03-S1)
+- Shell: Command palette (`⌘K` / `Ctrl+K`) — Dialog-based search over nav-registry
+  with bilingual matching, permission filtering, and keyboard navigation (P2-SP00-F03-S2)
+- Shell: `useNotificationCount` polling hook — queries `get_unread_notification_count`
+  IPC every 30 s with silent fallback to 0 when backend unavailable (P2-SP00-F03-S3)
+- Shell: `useDeviceTrustStatus` hook — fetches device trust status from Rust backend
+  with silent fallback to `unknown` (P2-SP00-F03-S3)
+- Shell: User menu enhancements — session time-remaining indicator and device trust
+  badge (`SessionTimeIndicator`, `DeviceTrustBadge`) in TopBar dropdown (P2-SP00-F03-S3)
+- Shell: Sidebar verification tests — 4 tests covering admin/non-admin/always-visible/
+  empty-group scenarios (P2-SP00-F03-S1)
+- i18n: Added `commandPalette.title`, `session.timeRemaining`, `session.expired`,
+  `session.active`, `device.trusted`, `device.untrusted` keys to FR and EN shell
+  namespaces (P2-SP00-F03)
 - Monorepo scaffold: Tauri 2.x + React 18 + TypeScript 5 workspace structure
 - Rust application core with `AppError` typed error system and `AppResult<T>` alias
 - `health_check` IPC command with typed `HealthCheckResponse` contract in `shared/ipc-types.ts`

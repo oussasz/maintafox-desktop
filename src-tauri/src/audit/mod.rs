@@ -65,39 +65,33 @@ pub async fn emit(db: &DatabaseConnection, event: AuditEvent<'_>) {
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"INSERT OR IGNORE INTO audit_events
+            r"INSERT OR IGNORE INTO audit_events
                    (id, event_type, actor_id, actor_name, entity_type,
                     entity_id, summary, detail_json, device_id, occurred_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 id.into(),
                 event.event_type.into(),
                 event
                     .actor_id
-                    .map(|v| v.to_string().into())
-                    .unwrap_or(sea_orm::Value::String(None)),
+                    .map_or(sea_orm::Value::String(None), |v| v.to_string().into()),
                 event
                     .actor_name
-                    .map(|s| s.to_string().into())
-                    .unwrap_or(sea_orm::Value::String(None)),
+                    .map_or(sea_orm::Value::String(None), |s| s.to_string().into()),
                 event
                     .entity_type
-                    .map(|s| s.to_string().into())
-                    .unwrap_or(sea_orm::Value::String(None)),
+                    .map_or(sea_orm::Value::String(None), |s| s.to_string().into()),
                 event
                     .entity_id
-                    .map(|s| s.to_string().into())
-                    .unwrap_or(sea_orm::Value::String(None)),
+                    .map_or(sea_orm::Value::String(None), |s| s.to_string().into()),
                 event.summary.into(),
                 event
                     .detail_json
                     .clone()
-                    .map(Into::into)
-                    .unwrap_or(sea_orm::Value::String(None)),
+                    .map_or(sea_orm::Value::String(None), Into::into),
                 event
                     .device_id
-                    .map(|s| s.to_string().into())
-                    .unwrap_or(sea_orm::Value::String(None)),
+                    .map_or(sea_orm::Value::String(None), |s| s.to_string().into()),
                 now.into(),
             ],
         ))

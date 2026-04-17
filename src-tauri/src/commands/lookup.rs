@@ -21,6 +21,7 @@ pub async fn list_lookup_domains(
 }
 
 /// Returns all active values for a given domain key.
+///
 /// This is the primary call for populating dropdowns, filter chips, and badge resolvers.
 /// Pass `domainKey` as the stable programmatic key (e.g. "equipment.criticality").
 #[tauri::command]

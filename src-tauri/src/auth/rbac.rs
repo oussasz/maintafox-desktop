@@ -6,7 +6,7 @@
 //!
 //! Scope resolution rule: if the user holds the permission at ANY scope that covers
 //! the requested resource, the check passes. The scope hierarchy is:
-//!   tenant > entity > site > team > org_node
+//!   tenant > entity > site > team > `org_node`
 
 use crate::errors::AppResult;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -71,7 +71,7 @@ pub async fn check_permission(
     };
 
     let sql = format!(
-        r#"
+        r"
         SELECT COUNT(*) as cnt
         FROM user_scope_assignments usa
         INNER JOIN role_permissions rp ON rp.role_id = usa.role_id
@@ -82,7 +82,7 @@ pub async fn check_permission(
           AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?)
           AND p.name = ?
           AND {scope_sql}
-    "#
+    "
     );
 
     let mut values: Vec<sea_orm::Value> = vec![user_id.into(), now.clone().into(), now.into(), permission_name.into()];
@@ -109,7 +109,7 @@ pub async fn get_user_permissions(db: &DatabaseConnection, user_id: i32) -> AppR
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r#"SELECT DISTINCT p.name, p.description, p.category,
+            r"SELECT DISTINCT p.name, p.description, p.category,
                   p.is_dangerous, p.requires_step_up
            FROM permissions p
            INNER JOIN role_permissions rp ON rp.permission_id = p.id
@@ -118,7 +118,7 @@ pub async fn get_user_permissions(db: &DatabaseConnection, user_id: i32) -> AppR
              AND usa.deleted_at IS NULL
              AND (usa.valid_from IS NULL OR usa.valid_from <= ?)
              AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?)
-           ORDER BY p.name"#,
+           ORDER BY p.name",
             [user_id.into(), now.clone().into(), now.into()],
         ))
         .await?;
