@@ -1,1 +1,198 @@
-{}
+﻿{
+  "page": {
+    "title": "Preventive Maintenance Strategies",
+    "filters": "Filters",
+    "searchPlaceholder": "Search by plan code or title",
+    "clearSearch": "Clear search",
+    "allLifecycles": "All lifecycles",
+    "allStrategies": "All strategies"
+  },
+  "actions": {
+    "refresh": "Refresh",
+    "generate": "Generate Planning",
+    "newPlan": "New plan",
+    "newVersion": "New version",
+    "editVersion": "Edit",
+    "publish": "Publish",
+    "transition": "Update plan status",
+    "transitionOccurrence": "Apply",
+    "logExecution": "Log execution",
+    "viewFindings": "View findings",
+    "createFollowUpDi": "Create DI follow-up",
+    "createFollowUpWo": "Create WO follow-up",
+    "touch": "Refresh plan snapshot",
+    "cancel": "Cancel",
+    "create": "Create",
+    "save": "Save",
+    "moveToStatus": "Move to {{status}}",
+    "refreshTaskLists": "Refresh task lists",
+    "saveTaskListToReferences": "Save to reference data",
+    "clearSelection": "Clear selection",
+    "delete": "Delete",
+    "deletePlan": "Delete plan",
+    "deleteVersion": "Delete version",
+    "confirmDelete": "Delete permanently"
+  },
+  "fields": {
+    "code": "Code",
+    "title": "Title",
+    "description": "Description",
+    "strategy": "Strategy",
+    "scopeType": "Asset scope type",
+    "scopeId": "Asset scope id",
+    "lifecycle": "Lifecycle",
+    "reasonCode": "Reason code",
+    "reason": "Reason",
+    "effectiveFrom": "Effective from",
+    "effectiveTo": "Effective to",
+    "triggerDefinitionJson": "Trigger definition JSON",
+    "intervalUnit": "Interval unit",
+    "intervalValue": "Interval value",
+    "meterSource": "Meter source",
+    "eventCode": "Event code",
+    "conditionCode": "Condition code",
+    "taskListReference": "Maintenance task list (reference)",
+    "taskContent": "Task content",
+    "taskContentPlaceholder": "One step per line, for example:\nInspect belts\nCheck lubrication\nTighten terminals",
+    "newTaskListName": "New maintenance task list name",
+    "requiredPartsJson": "Required parts JSON",
+    "requiredSkillsJson": "Required skills JSON (code array)",
+    "requiredToolsJson": "Required tools JSON",
+    "requiredParts": "Required parts",
+    "requiredSkills": "Required skills",
+    "requiredTools": "Required tools",
+    "searchPartsPlaceholder": "Search parts by code or label",
+    "searchSkillsPlaceholder": "Search skills by code or label",
+    "searchToolsPlaceholder": "Search tools by code or label",
+    "estimatedDurationHours": "Estimated duration (h)",
+    "estimatedLaborCost": "Estimated labor cost",
+    "estimatedPartsCost": "Estimated parts cost",
+    "estimatedServiceCost": "Estimated service cost",
+    "changeReason": "Change reason",
+    "executionResult": "Execution result",
+    "findingType": "Finding type",
+    "severity": "Severity",
+    "findingDescription": "Finding description"
+  },
+  "sections": {
+    "versions": "Plan versions",
+    "occurrences": "Forecast occurrences",
+    "executions": "Execution history",
+    "findingsForExecution": "Findings for execution #{{id}}",
+    "recurringFindings": "Recurring findings (90d)"
+  },
+  "labels": {
+    "active": "Active",
+    "inactive": "Inactive",
+    "loading": "Loading...",
+    "none": "None",
+    "noResults": "No matching items",
+    "selectedCount": "{{count}} selected"
+  },
+  "reasons": {
+    "capacity_constraint": "Capacity constraint",
+    "asset_unavailable": "Asset unavailable",
+    "material_missing": "Material missing",
+    "weather_constraint": "Weather constraint",
+    "safety_constraint": "Safety constraint",
+    "other": "Other"
+  },
+  "options": {
+    "intervalUnit": {
+      "day": "Daily",
+      "week": "Weekly",
+      "month": "Monthly",
+      "year": "Annually"
+    },
+    "meterSource": {
+      "odometer": "Odometer",
+      "operatingHours": "Operating hours"
+    }
+  },
+  "metrics": {
+    "overdue": "Overdue",
+    "dueToday": "Due today",
+    "next7d": "Due next 7d",
+    "ready": "Ready for scheduling"
+  },
+  "table": {
+    "code": "Code",
+    "strategy": "Strategy",
+    "status": "Status",
+    "version": "Version",
+    "window": "Effective window",
+    "due": "Due",
+    "basis": "Basis",
+    "workOrder": "Work order",
+    "occurrence": "Occurrence",
+    "result": "Result",
+    "actualDuration": "Actual duration (h)",
+    "findingType": "Finding type",
+    "plan": "Plan",
+    "count": "Count",
+    "lastSeen": "Last seen",
+    "actions": "Actions"
+  },
+  "dialogs": {
+    "newPlan": {
+      "title": "Create PM plan",
+      "description": "Create a governed PM strategy with lifecycle controls."
+    },
+    "newVersion": {
+      "title": "Create PM version",
+      "description": "Draft a new version before publishing it."
+    },
+    "editVersion": {
+      "title": "Edit PM version",
+      "description": "Only draft versions can be edited."
+    },
+    "execution": {
+      "title": "Log PM execution",
+      "description": "Capture completion outcome, findings, and follow-up routing."
+    },
+    "deletePlan": {
+      "title": "Delete PM plan",
+      "description": "Delete plan {{code}}? This action is permanent and allowed only for draft plans without versions."
+    },
+    "deleteVersion": {
+      "title": "Delete PM version",
+      "description": "Delete version v{{version}}? This action is permanent and allowed only for draft versions."
+    }
+  },
+  "guidance": {
+    "activationTitle": "How to make this plan active",
+    "activationPath": "Use lifecycle steps in order: draft -> proposed -> approved -> active. A draft plan will not drive active PM operations.",
+    "currentStatus": "Current status: {{status}}",
+    "alreadyOperational": "Already active or beyond activation path"
+  },
+  "empty": {
+    "noPlanSelected": "Select a PM plan to view and manage versions.",
+    "noPlansMatch": "No plans match the current search/filter."
+  },
+  "hints": {
+    "publishBlockedByLifecycle": "To publish this draft version, first set plan status to approved, active, or suspended.",
+    "publishDraftOnly": "Publish is available only for draft versions.",
+    "editVersionDraftOnly": "Edit is available only for draft versions.",
+    "deletePlanDraftOnly": "Delete is available only for draft plans.",
+    "deleteVersionDraftOnly": "Delete is available only for draft versions.",
+    "lifecycleAction": "This updates the plan status (lifecycle). Status controls what actions are allowed, including version publishing.",
+    "touchAction": "Refresh plan snapshot saves the current plan record (updated date + row version) without changing business data.",
+    "generationNeedPlan": "Select a plan first, then generate forecast occurrences.",
+    "generationNeedLifecycle": "Generation works when the selected plan is active and in lifecycle active or suspended.",
+    "generationNeedVersion": "Publish at least one version before generation.",
+    "generationReady": "Generation is ready: click Generate Planning to create due occurrences.",
+    "occurrenceSameStatus": "Choose a different status before applying transition."
+  },
+  "messages": {
+    "touchStarted": "Saving plan snapshot...",
+    "touchCompleted": "Plan snapshot saved.",
+    "generationStarted": "Generating forecast occurrences...",
+    "generationCreated": "Generation completed: {{count}} new occurrences created.",
+    "generationNoNew": "Generation completed: no new occurrences were created for current inputs.",
+    "planDeleted": "Plan {{code}} deleted.",
+    "versionDeleted": "Version v{{version}} deleted."
+  },
+  "errors": {
+    "taskListNameRequired": "Please provide a task list name before saving to references."
+  }
+}

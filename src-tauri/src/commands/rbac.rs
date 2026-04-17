@@ -2,13 +2,16 @@
 //!
 //! Exposes permission queries and step-up verification to the frontend.
 
+use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::auth::password_policy::PasswordPolicy;
 use crate::auth::rbac;
+use crate::auth::rbac::PermissionScope;
 use crate::auth::{password, session_manager};
 use crate::errors::{AppError, AppResult};
-use crate::require_session;
+use crate::{require_permission, require_session};
 use crate::state::AppState;
 
 /// Return the effective permission set for the currently authenticated user.
@@ -33,6 +36,26 @@ pub struct StepUpRequest {
 pub struct StepUpResponse {
     pub success: bool,
     pub expires_at: String,
+}
+
+/// Generic key/value row returned from `rbac_settings`.
+#[derive(Debug, Serialize)]
+pub struct RbacSettingEntry {
+    pub key: String,
+    pub value: String,
+    pub description: Option<String>,
+}
+
+/// Password policy settings consumed by the admin panel.
+#[derive(Debug, Serialize)]
+pub struct PasswordPolicySettings {
+    pub max_age_days: i64,
+    pub warn_days_before_expiry: i64,
+    pub min_length: usize,
+    pub require_uppercase: bool,
+    pub require_lowercase: bool,
+    pub require_digit: bool,
+    pub require_special: bool,
 }
 
 /// Verify the user's password for a dangerous-action step-up.
@@ -95,5 +118,80 @@ pub async fn verify_step_up(payload: StepUpRequest, state: State<'_, AppState>) 
     Ok(StepUpResponse {
         success: true,
         expires_at,
+    })
+}
+
+/// List RBAC settings by key prefix. Requires `adm.settings`.
+#[tauri::command]
+pub async fn get_rbac_settings(prefix: String, state: State<'_, AppState>) -> AppResult<Vec<RbacSettingEntry>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+
+    let pattern = format!("{}%", prefix.trim());
+    let rows = state
+        .db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"SELECT key, value, description
+               FROM rbac_settings
+               WHERE key LIKE ?
+               ORDER BY key",
+            [pattern.into()],
+        ))
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| RbacSettingEntry {
+            key: row.try_get::<String>("", "key").unwrap_or_default(),
+            value: row.try_get::<String>("", "value").unwrap_or_default(),
+            description: row.try_get::<Option<String>>("", "description").unwrap_or(None),
+        })
+        .collect())
+}
+
+/// Update one `rbac_settings` value. Requires `adm.settings`.
+#[tauri::command]
+pub async fn update_rbac_setting(key: String, value: String, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "La clé de configuration est obligatoire.".into(),
+        ]));
+    }
+
+    state
+        .db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO rbac_settings (key, value, description)
+              VALUES (?, ?, NULL)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [key.into(), value.into()],
+        ))
+        .await?;
+
+    Ok(())
+}
+
+/// Return the resolved password policy used by login/password-change flows.
+/// Requires `adm.settings`.
+#[tauri::command]
+pub async fn get_password_policy(state: State<'_, AppState>) -> AppResult<PasswordPolicySettings> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+
+    let policy = PasswordPolicy::load(&state.db).await;
+    Ok(PasswordPolicySettings {
+        max_age_days: policy.max_age_days,
+        warn_days_before_expiry: policy.warn_days_before_expiry,
+        min_length: policy.min_length,
+        require_uppercase: policy.require_uppercase,
+        require_lowercase: policy.require_lowercase,
+        require_digit: policy.require_digit,
+        require_special: policy.require_special,
     })
 }

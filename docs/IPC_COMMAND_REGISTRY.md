@@ -314,6 +314,188 @@ Each entry must include:
 
 ---
 
+### `list_org_structure_models`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/org.rs` |
+| **Input** | None |
+| **Output** | `AppResult<Vec<OrgStructureModel>>` → `OrgStructureModel[]` |
+| **TS Type** | `OrgStructureModel` in `shared/ipc-types.ts` |
+| **Auth required** | Yes + `org.view` |
+| **AppState fields** | `db` (read), `session` (read) |
+| **TS Service** | `org-service.ts::listOrgStructureModels` |
+| **Phase** | Phase 2 · Sub-phase 01 · File 01 · Sprint S3 |
+| **Description** | Returns all structure models ordered by version number descending. Used by the org configuration UI to display model history and manage drafts. |
+| **PRD Ref** | §6.2 Organization & Site Operating Model |
+
+---
+
+### `get_active_org_structure_model`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/org.rs` |
+| **Input** | None |
+| **Output** | `AppResult<Option<OrgStructureModel>>` → `OrgStructureModel \| null` |
+| **TS Type** | `OrgStructureModel` in `shared/ipc-types.ts` |
+| **Auth required** | Yes + `org.view` |
+| **AppState fields** | `db` (read), `session` (read) |
+| **TS Service** | `org-service.ts::getActiveOrgStructureModel` |
+| **Phase** | Phase 2 · Sub-phase 01 · File 01 · Sprint S3 |
+| **Description** | Returns the currently active structure model, or null if none has been published. Called by the org store on initialization and by any module that needs to know the current org schema. |
+| **PRD Ref** | §6.2 |
+
+---
+
+### `create_org_structure_model`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/org.rs` |
+| **Input** | `CreateStructureModelPayload { description?: string }` |
+| **Output** | `AppResult<OrgStructureModel>` → `OrgStructureModel` |
+| **TS Type** | `CreateStructureModelPayload`, `OrgStructureModel` in `shared/ipc-types.ts` |
+| **Auth required** | Yes + `org.admin` (dangerous, step-up) |
+| **AppState fields** | `db` (read + write), `session` (read) |
+| **TS Service** | `org-service.ts::createOrgStructureModel` |
+| **Phase** | Phase 2 · Sub-phase 01 · File 01 · Sprint S3 |
+| **Description** | Creates a new structure model in draft status. Version number auto-increments from the highest existing version. Only admins with step-up can create models. |
+| **PRD Ref** | §6.2 |
+
+---
+
+### `publish_org_structure_model`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/org.rs` |
+| **Input** | `model_id: i32` |
+| **Output** | `AppResult<OrgStructureModel>` → `OrgStructureModel` |
+| **TS Type** | `OrgStructureModel` in `shared/ipc-types.ts` |
+| **Auth required** | Yes + `org.admin` (dangerous, step-up) |
+| **AppState fields** | `db` (read + write), `session` (read) |
+| **TS Service** | `org-service.ts::publishOrgStructureModel` |
+| **Phase** | Phase 2 · Sub-phase 01 · File 01 · Sprint S3 |
+| **Description** | Publishes a draft model as the new active model. The previously active model transitions to superseded. Only draft models can be published. Validation (F04) must be called before this command. |
+| **Errors** | `VALIDATION_ERROR` if model is not in draft status |
+| **PRD Ref** | §6.2 |
+
+---
+
+### `archive_org_structure_model`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/org.rs` |
+| **Input** | `model_id: i32` |
+| **Output** | `AppResult<OrgStructureModel>` → `OrgStructureModel` |
+| **TS Type** | `OrgStructureModel` in `shared/ipc-types.ts` |
+| **Auth required** | Yes + `org.admin` (dangerous, step-up) |
+| **AppState fields** | `db` (read + write), `session` (read) |
+| **TS Service** | `org-service.ts::archiveOrgStructureModel` |
+| **Phase** | Phase 2 · Sub-phase 01 · File 01 · Sprint S3 |
+| **Description** | Archives a draft or superseded model. Active models cannot be archived — a new model must be published first. |
+| **Errors** | `VALIDATION_ERROR` if model is active |
+| **PRD Ref** | §6.2 |
+
+---
+
+### `list_org_node_types`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/org.rs` |
+| **Input** | `structure_model_id: i32` |
+| **Output** | `AppResult<Vec<OrgNodeType>>` → `OrgNodeType[]` |
+| **TS Type** | `OrgNodeType` in `shared/ipc-types.ts` |
+| **Auth required** | Yes + `org.view` |
+| **AppState fields** | `db` (read), `session` (read) |
+| **TS Service** | `org-service.ts::listOrgNodeTypes` |
+| **Phase** | Phase 2 · Sub-phase 01 · File 01 · Sprint S3 |
+| **Description** | Returns all node types for a given structure model, ordered by depth hint and label. Used to populate the node type configuration panel and tree-builder constraints. |
+| **PRD Ref** | §6.2 |
+
+---
+
+### `create_org_node_type`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/org.rs` |
+| **Input** | `CreateNodeTypePayload { structure_model_id, code, label, icon_key?, depth_hint?, can_host_assets, can_own_work, can_carry_cost_center, can_aggregate_kpis, can_receive_permits, is_root_type }` |
+| **Output** | `AppResult<OrgNodeType>` → `OrgNodeType` |
+| **TS Type** | `CreateOrgNodeTypePayload`, `OrgNodeType` in `shared/ipc-types.ts` |
+| **Auth required** | Yes + `org.admin` (dangerous, step-up) |
+| **AppState fields** | `db` (read + write), `session` (read) |
+| **TS Service** | `org-service.ts::createOrgNodeType` |
+| **Phase** | Phase 2 · Sub-phase 01 · File 01 · Sprint S3 |
+| **Description** | Creates a node type in a draft structure model. Validates code uniqueness within the model and enforces single root-type constraint. Only draft models accept new node types. |
+| **Errors** | `VALIDATION_ERROR` if model not draft, code duplicate, or second root type |
+| **PRD Ref** | §6.2 |
+
+---
+
+### `deactivate_org_node_type`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/org.rs` |
+| **Input** | `node_type_id: i32` |
+| **Output** | `AppResult<OrgNodeType>` → `OrgNodeType` |
+| **TS Type** | `OrgNodeType` in `shared/ipc-types.ts` |
+| **Auth required** | Yes + `org.admin` (dangerous, step-up) |
+| **AppState fields** | `db` (read + write), `session` (read) |
+| **TS Service** | `org-service.ts::deactivateOrgNodeType` |
+| **Phase** | Phase 2 · Sub-phase 01 · File 01 · Sprint S3 |
+| **Description** | Deactivates a node type. Cannot deactivate if org nodes of this type exist. Returns the updated node type with `is_active = false`. |
+| **Errors** | `VALIDATION_ERROR` if nodes of this type exist |
+| **PRD Ref** | §6.2 |
+
+---
+
+### `list_org_relationship_rules`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/org.rs` |
+| **Input** | `structure_model_id: i32` |
+| **Output** | `AppResult<Vec<OrgRelationshipRule>>` → `OrgRelationshipRule[]` |
+| **TS Type** | `OrgRelationshipRule` in `shared/ipc-types.ts` |
+| **Auth required** | Yes + `org.view` |
+| **AppState fields** | `db` (read), `session` (read) |
+| **TS Service** | `org-service.ts::listOrgRelationshipRules` |
+| **Phase** | Phase 2 · Sub-phase 01 · File 01 · Sprint S3 |
+| **Description** | Returns all relationship rules for a structure model with JOINed parent/child type labels for display. Ordered by parent label then child label. |
+| **PRD Ref** | §6.2 |
+
+---
+
+### `create_org_relationship_rule`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/org.rs` |
+| **Input** | `CreateRelationshipRulePayload { structure_model_id, parent_type_id, child_type_id, min_children?, max_children? }` |
+| **Output** | `AppResult<OrgRelationshipRule>` → `OrgRelationshipRule` |
+| **TS Type** | `CreateRelationshipRulePayload`, `OrgRelationshipRule` in `shared/ipc-types.ts` |
+| **Auth required** | Yes + `org.admin` (dangerous, step-up) |
+| **AppState fields** | `db` (read + write), `session` (read) |
+| **TS Service** | `org-service.ts::createOrgRelationshipRule` |
+| **Phase** | Phase 2 · Sub-phase 01 · File 01 · Sprint S3 |
+| **Description** | Creates a relationship rule in a draft model defining which node types can be children of which parent types. Prevents duplicate parent-child combinations. |
+| **Errors** | `VALIDATION_ERROR` if model not draft or rule already exists |
+| **PRD Ref** | §6.2 |
+
+---
+
+### `delete_org_relationship_rule`
+| Field | Value |
+|---|---|
+| **Location** | `src-tauri/src/commands/org.rs` |
+| **Input** | `rule_id: i32` |
+| **Output** | `AppResult<()>` → `null` |
+| **TS Type** | — |
+| **Auth required** | Yes + `org.admin` (dangerous, step-up) |
+| **AppState fields** | `db` (read + write), `session` (read) |
+| **TS Service** | `org-service.ts::deleteOrgRelationshipRule` |
+| **Phase** | Phase 2 · Sub-phase 01 · File 01 · Sprint S3 |
+| **Description** | Deletes a relationship rule from a draft model. Rules in published or superseded models cannot be deleted. |
+| **Errors** | `NOT_FOUND`, `VALIDATION_ERROR` if model not draft |
+| **PRD Ref** | §6.2 |
+
+---
+
 ## Command Summary
 
 | Command | Rust handler | Auth required | AppState fields used | TypeScript service |
@@ -336,6 +518,37 @@ Each entry must include:
 | `verify_step_up` | `commands::rbac::verify_step_up` | Yes | `db` (read), `session` (read + write) | `rbac-service.ts::verifyStepUp` |
 | `get_locale_preference` | `commands::locale::get_locale_preference` | No | `db` (read) | `locale-service.ts::getLocalePreference` |
 | `set_locale_preference` | `commands::locale::set_locale_preference` | Yes | `db` (read + write), `session` (read) | `locale-service.ts::setLocalePreference` |
+| `list_org_structure_models` | `commands::org::list_org_structure_models` | Yes + org.view | `db` (read), `session` (read) | `org-service.ts::listOrgStructureModels` |
+| `get_active_org_structure_model` | `commands::org::get_active_org_structure_model` | Yes + org.view | `db` (read), `session` (read) | `org-service.ts::getActiveOrgStructureModel` |
+| `create_org_structure_model` | `commands::org::create_org_structure_model` | Yes + org.admin | `db` (read + write), `session` (read) | `org-service.ts::createOrgStructureModel` |
+| `publish_org_structure_model` | `commands::org::publish_org_structure_model` | Yes + org.admin | `db` (read + write), `session` (read) | `org-service.ts::publishOrgStructureModel` |
+| `archive_org_structure_model` | `commands::org::archive_org_structure_model` | Yes + org.admin | `db` (read + write), `session` (read) | `org-service.ts::archiveOrgStructureModel` |
+| `list_org_node_types` | `commands::org::list_org_node_types` | Yes + org.view | `db` (read), `session` (read) | `org-service.ts::listOrgNodeTypes` |
+| `create_org_node_type` | `commands::org::create_org_node_type` | Yes + org.admin | `db` (read + write), `session` (read) | `org-service.ts::createOrgNodeType` |
+| `deactivate_org_node_type` | `commands::org::deactivate_org_node_type` | Yes + org.admin | `db` (read + write), `session` (read) | `org-service.ts::deactivateOrgNodeType` |
+| `list_org_relationship_rules` | `commands::org::list_org_relationship_rules` | Yes + org.view | `db` (read), `session` (read) | `org-service.ts::listOrgRelationshipRules` |
+| `create_org_relationship_rule` | `commands::org::create_org_relationship_rule` | Yes + org.admin | `db` (read + write), `session` (read) | `org-service.ts::createOrgRelationshipRule` |
+| `delete_org_relationship_rule` | `commands::org::delete_org_relationship_rule` | Yes + org.admin | `db` (read + write), `session` (read) | `org-service.ts::deleteOrgRelationshipRule` |
+| `list_di` | `commands::di::list_di` | Yes + di.view | `db` (read), `session` (read) | `di-service.ts::listDis` |
+| `get_di` | `commands::di::get_di` | Yes + di.view | `db` (read), `session` (read) | `di-service.ts::getDi` |
+| `create_di` | `commands::di::create_di` | Yes + di.create | `db` (read + write), `session` (read) | `di-service.ts::createDi` |
+| `update_di_draft` | `commands::di::update_di_draft` | Yes + di.create | `db` (read + write), `session` (read) | `di-service.ts::updateDiDraft` |
+| `screen_di` | `commands::di::screen_di` | Yes + di.review | `db` (read + write), `session` (read) | `di-review-service.ts::screenDi` |
+| `return_di` | `commands::di::return_di` | Yes + di.review | `db` (read + write), `session` (read) | `di-review-service.ts::returnDi` |
+| `reject_di` | `commands::di::reject_di` | Yes + di.review | `db` (read + write), `session` (read) | `di-review-service.ts::rejectDi` |
+| `approve_di` | `commands::di::approve_di` | Yes + di.approve + step-up | `db` (read + write), `session` (read) | `di-review-service.ts::approveDi` |
+| `defer_di` | `commands::di::defer_di` | Yes + di.approve | `db` (read + write), `session` (read) | `di-review-service.ts::deferDi` |
+| `reactivate_di` | `commands::di::reactivate_di` | Yes + di.approve | `db` (read + write), `session` (read) | `di-review-service.ts::reactivateDi` |
+| `get_di_review_events` | `commands::di::get_di_review_events` | Yes + di.view | `db` (read), `session` (read) | `di-review-service.ts::getDiReviewEvents` |
+| `upload_di_attachment` | `commands::di::upload_di_attachment` | Yes + di.create | `db` (read + write), `session` (read) | `di-attachment-service.ts::uploadDiAttachment` |
+| `list_di_attachments` | `commands::di::list_di_attachments` | Yes + di.view | `db` (read), `session` (read) | `di-attachment-service.ts::listDiAttachments` |
+| `delete_di_attachment` | `commands::di::delete_di_attachment` | Yes + di.create | `db` (read + write), `session` (read) | `di-attachment-service.ts::deleteDiAttachment` |
+| `convert_di_to_wo` | `commands::di::convert_di_to_wo` | Yes + di.convert + step-up | `db` (read + write), `session` (read) | `di-conversion-service.ts::convertDiToWo` |
+| `get_sla_status` | `commands::di::get_sla_status` | Yes + di.view | `db` (read), `session` (read) | `di-conversion-service.ts::getSlaStatus` |
+| `list_sla_rules` | `commands::di::list_sla_rules` | Yes + di.view | `db` (read), `session` (read) | `di-conversion-service.ts::listSlaRules` |
+| `update_sla_rule` | `commands::di::update_sla_rule` | Yes + di.admin | `db` (read + write), `session` (read) | `di-conversion-service.ts::updateSlaRule` |
+| `list_di_change_events` | `commands::di::list_di_change_events` | Yes + di.view | `db` (read), `session` (read) | `di-audit-service.ts::listDiChangeEvents` |
+| `list_all_di_change_events` | `commands::di::list_all_di_change_events` | Yes + di.admin | `db` (read), `session` (read) | `di-audit-service.ts::listAllDiChangeEvents` |
 
 ## Rules
 

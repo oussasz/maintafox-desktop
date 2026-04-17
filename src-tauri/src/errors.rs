@@ -10,6 +10,12 @@ pub enum AppError {
     #[error("Authentication error: {0}")]
     Auth(String),
 
+    #[error("Tenant scope violation: {0}")]
+    TenantScopeViolation(String),
+
+    #[error("Session claim invalid: {0}")]
+    SessionClaimInvalid(String),
+
     #[error("Record not found: {entity} with id {id}")]
     NotFound { entity: String, id: String },
 
@@ -31,8 +37,14 @@ pub enum AppError {
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
 
+    #[error("License denied [{reason_code}]: {message}")]
+    LicenseDenied { reason_code: String, message: String },
+
     #[error("Step-up verification required for this action")]
     StepUpRequired,
+
+    #[error("Account locked until {until}")]
+    AccountLocked { until: String },
 
     #[error("Internal error: {0}")]
     Internal(#[from] anyhow::Error),
@@ -50,6 +62,8 @@ impl serde::Serialize for AppError {
         let code = match self {
             Self::Database(_) => "DATABASE_ERROR",
             Self::Auth(_) => "AUTH_ERROR",
+            Self::TenantScopeViolation(_) => "TENANT_SCOPE_VIOLATION",
+            Self::SessionClaimInvalid(_) => "SESSION_CLAIM_INVALID",
             Self::NotFound { .. } => "NOT_FOUND",
             Self::ValidationFailed(_) => "VALIDATION_FAILED",
             Self::SyncError(_) => "SYNC_ERROR",
@@ -57,7 +71,9 @@ impl serde::Serialize for AppError {
             Self::Serialization(_) => "SERIALIZATION_ERROR",
             Self::Permission { .. } => "PERMISSION_DENIED",
             Self::PermissionDenied(_) => "PERMISSION_DENIED",
+            Self::LicenseDenied { .. } => "LICENSE_DENIED",
             Self::StepUpRequired => "STEP_UP_REQUIRED",
+            Self::AccountLocked { .. } => "ACCOUNT_LOCKED",
             Self::Internal(_) => "INTERNAL_ERROR",
         };
         state.serialize_field("code", code)?;

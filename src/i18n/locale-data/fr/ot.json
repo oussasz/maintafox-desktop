@@ -3,7 +3,12 @@
     "title": "Ordres de travail",
     "titleDetail": "Détail de l'ordre de travail",
     "titleNew": "Nouvel ordre de travail",
-    "titleEdit": "Modifier l'ordre de travail"
+    "titleEdit": "Modifier l'ordre de travail",
+    "viewList": "Liste",
+    "viewKanban": "Kanban",
+    "viewCalendar": "Calendrier",
+    "viewDashboard": "Tableau de bord",
+    "filterSettings": "Paramètres des filtres"
   },
   "list": {
     "columns": {
@@ -25,7 +30,305 @@
       "assignedTo": "Assigné à"
     }
   },
+  "form": {
+    "title": {
+      "label": "Titre",
+      "placeholder": "Description courte de l'intervention"
+    },
+    "description": {
+      "label": "Description",
+      "placeholder": "Instructions détaillées pour l'exécutant"
+    },
+    "type": {
+      "label": "Type"
+    },
+    "urgency": {
+      "label": "Urgence",
+      "veryLow": "Très basse",
+      "low": "Basse",
+      "medium": "Normale",
+      "high": "Haute",
+      "critical": "Critique"
+    },
+    "equipment": {
+      "label": "Équipement",
+      "placeholder": "Rechercher…"
+    },
+    "location": {
+      "label": "Emplacement"
+    },
+    "entity": {
+      "label": "Entité"
+    },
+    "plannedStart": {
+      "label": "Début prévu"
+    },
+    "plannedEnd": {
+      "label": "Fin prévue"
+    },
+    "duration": {
+      "label": "Durée estimée (h)"
+    },
+    "notes": {
+      "label": "Remarques"
+    },
+    "cancel": "Annuler",
+    "submit": "Créer l'ordre de travail",
+    "update": "Enregistrer les modifications",
+    "validation": {
+      "titleRequired": "Le titre est requis"
+    }
+  },
+  "status": {
+    "draft": "Brouillon",
+    "awaitingApproval": "En attente d'approbation",
+    "planned": "Planifié",
+    "released": "Lancé",
+    "readyToSchedule": "Prêt à programmer",
+    "assigned": "Assigné",
+    "waitingForPrerequisite": "En attente de prérequis",
+    "inProgress": "En cours",
+    "onHold": "En attente",
+    "paused": "En pause",
+    "mechanicallyComplete": "Mécaniquement complet",
+    "technicallyVerified": "Techniquement vérifié",
+    "completed": "Terminé",
+    "verified": "Vérifié",
+    "closed": "Clôturé",
+    "cancelled": "Annulé"
+  },
+  "type": {
+    "corrective": "Correctif",
+    "preventive": "Préventif",
+    "predictive": "Prédictif",
+    "improvement": "Amélioration",
+    "inspection": "Inspection",
+    "overhaul": "Révision générale",
+    "conditionBased": "Conditionnel",
+    "permit": "Permis de travail"
+  },
+  "action": {
+    "create": "Nouvel OT",
+    "edit": "Modifier",
+    "release": "Lancer l'OT",
+    "start": "Démarrer",
+    "pause": "Mettre en pause",
+    "complete": "Marquer terminé",
+    "verify": "Vérifier et approuver",
+    "close": "Clôturer",
+    "addLabor": "Ajouter main-d'œuvre",
+    "addPart": "Ajouter une pièce",
+    "addDelay": "Enregistrer un délai"
+  },
+  "empty": {
+    "list": "Aucun ordre de travail.",
+    "listHint": "Créez un nouvel OT ou ajustez les filtres.",
+    "noParts": "Aucune pièce consommée.",
+    "noLabor": "Aucune main-d'œuvre enregistrée.",
+    "noDelays": "Aucun délai enregistré."
+  },
+  "diPanel": {
+    "title": "OT issus de DI non programmés",
+    "schedule": "Programmer",
+    "columnDi": "DI"
+  },
+  "shift": {
+    "morning": "Matin",
+    "afternoon": "Après-midi",
+    "night": "Nuit",
+    "fullDay": "Journée",
+    "full_day": "Journée"
+  },
+  "planning": {
+    "timing": "Planification horaire",
+    "shift": "Poste",
+    "save": "Enregistrer la planification",
+    "endBeforeStart": "La date de fin doit être après la date de début",
+    "plannerId": "ID planificateur",
+    "plannedStart": "Début prévu",
+    "plannedEnd": "Fin prévue",
+    "selectShift": "Sélectionner le poste",
+    "expectedDuration": "Durée estimée (heures)",
+    "urgency": "Urgence",
+    "selectUrgency": "Sélectionner l'urgence",
+    "assignment": "Assignation",
+    "assignedGroupId": "ID groupe assigné",
+    "primaryResponsibleId": "ID responsable principal",
+    "scheduledAt": "Planifié le",
+    "prerequisites": "Liste de prérequis",
+    "addTask": "Ajouter une tâche",
+    "noTasks": "Aucune tâche pour le moment.",
+    "taskDescription": "Description de la tâche",
+    "minutes": "Minutes",
+    "mandatory": "Obligatoire",
+    "saveTask": "Enregistrer",
+    "removeTask": "Supprimer",
+    "partsPlan": "Plan de pièces",
+    "addRow": "Ajouter une ligne",
+    "noPlannedParts": "Aucune pièce planifiée.",
+    "partReference": "Référence pièce",
+    "savePart": "Enregistrer",
+    "removePart": "Supprimer",
+    "plannedTotalCost": "Coût total planifié",
+    "planWo": "Planifier cet OT",
+    "assign": "Assigner",
+    "sessionRequired": "Session utilisateur requise.",
+    "error": {
+      "plan": "Impossible de planifier l'ordre de travail.",
+      "assign": "Impossible d'assigner l'ordre de travail.",
+      "addTask": "Impossible d'ajouter la tâche.",
+      "addPart": "Impossible d'ajouter la pièce planifiée."
+    }
+  },
+  "completion": {
+    "title": "Marquer l'OT terminé",
+    "endDate": "Date / heure de fin",
+    "hoursWorked": "Heures travaillées",
+    "hoursPlaceholder": "Saisie manuelle optionnelle",
+    "report": "Rapport / Observations",
+    "reportPlaceholder": "Rapport de fin d'intervention…",
+    "submit": "Marquer terminé",
+    "blockers": "Problèmes bloquants"
+  },
+  "execution": {
+    "title": "Exécution",
+    "startedAt": "Démarré à",
+    "stop": "Arrêter",
+    "tasks": "Tâches",
+    "noTasks": "Aucune tâche définie.",
+    "mandatory": "Obligatoire",
+    "attachments": "Pièces jointes",
+    "noAttachments": "Aucune pièce jointe.",
+    "controls": "Contrôles d'exécution",
+    "start": "Démarrer",
+    "hold": "Mettre en attente",
+    "pause": "Mettre en pause",
+    "completeMech": "Compléter (Méc)",
+    "resume": "Reprendre",
+    "noActions": "Aucune action d'exécution pour ce statut.",
+    "pauseTitle": "Mettre en pause l'OT",
+    "holdTitle": "Attente de prérequis",
+    "delayReason": "Raison du délai",
+    "selectReason": "Sélectionner la raison",
+    "commentOptional": "Commentaire (optionnel)",
+    "addContext": "Ajouter du contexte",
+    "submit": "Soumettre",
+    "cancel": "Annuler",
+    "delayReasonRequired": "La raison du délai est requise.",
+    "laborEntries": "Entrées de main-d'œuvre",
+    "intervenerId": "ID intervenant",
+    "manualHours": "Heures manuelles",
+    "startLabor": "Démarrer main-d'œuvre",
+    "addManualHours": "Ajouter heures manuelles",
+    "noOpenLabor": "Aucune entrée de main-d'œuvre ouverte.",
+    "partsUsed": "Pièces utilisées",
+    "noPlannedParts": "Aucune pièce planifiée.",
+    "planned": "Planifié",
+    "saveUsage": "Enregistrer",
+    "noPartsUsed": "Aucune pièce utilisée",
+    "taskExecution": "Exécution des tâches",
+    "result": "Résultat",
+    "complete": "Compléter",
+    "laborStart": "Début",
+    "laborEnd": "Fin",
+    "laborHours": "Heures",
+    "partFallback": "Pièce #{{id}}",
+    "reasonFallback": "Raison #{{id}}",
+    "error": {
+      "startWo": "Impossible de démarrer l'ordre de travail.",
+      "resumeWo": "Impossible de reprendre l'ordre de travail.",
+      "submitDelay": "Impossible de soumettre l'action de délai.",
+      "intervenerId": "L'ID intervenant est requis.",
+      "startLabor": "Impossible de démarrer l'entrée de main-d'œuvre.",
+      "closeLabor": "Impossible de fermer l'entrée de main-d'œuvre.",
+      "invalidManualEntry": "L'ID intervenant et les heures doivent être valides.",
+      "addManualLabor": "Impossible d'ajouter l'entrée manuelle.",
+      "invalidQuantity": "La quantité doit être un nombre positif ou nul.",
+      "recordPart": "Impossible d'enregistrer l'utilisation de la pièce.",
+      "confirmNoParts": "Impossible de confirmer aucune pièce utilisée.",
+      "completeTask": "Impossible de compléter la tâche.",
+      "loadData": "Impossible de charger les données d'exécution.",
+      "openDowntime": "Impossible d'ouvrir le segment d'arrêt.",
+      "closeDowntime": "Impossible de fermer le segment d'arrêt."
+    },
+    "downtimeTracking": "Suivi des arrêts",
+    "openDowntime": "Ouvrir arrêt",
+    "closeDowntime": "Fermer arrêt",
+    "noDowntime": "Aucun segment d'arrêt enregistré.",
+    "downtimeComment": "Commentaire (optionnel)",
+    "downtimeFull": "Arrêt complet",
+    "downtimePartial": "Arrêt partiel",
+    "downtimeStandby": "En attente",
+    "downtimeQualityLoss": "Perte de qualité",
+    "downtime_full": "Complet",
+    "downtime_partial": "Partiel",
+    "downtime_standby": "Attente",
+    "downtime_quality_loss": "Qualité"
+  },
+  "closeout": {
+    "noReport": "Aucun rapport de clôture.",
+    "sectionSymptom": "Symptôme & Narrative",
+    "observedSymptom": "Symptôme observé",
+    "selectSymptom": "Sélectionner un symptôme…",
+    "noneOption": "— Aucun —",
+    "noneOptionF": "— Aucune —",
+    "narrative": "Description / Narrative",
+    "narrativePlaceholder": "Décrire la défaillance observée…",
+    "sectionFailure": "Analyse de défaillance",
+    "causeNotDetermined": "Cause non déterminée",
+    "failureMode": "Mode de défaillance",
+    "failureModePlaceholder": "Mode…",
+    "failureCause": "Cause",
+    "failureCausePlaceholder": "Cause…",
+    "failureEffect": "Effet",
+    "failureEffectPlaceholder": "Effet…",
+    "sectionAction": "Action réalisée",
+    "correctiveAction": "Action corrective",
+    "correctiveActionPlaceholder": "Décrire les actions correctives effectuées…",
+    "rootCause": "Cause racine",
+    "rootCausePlaceholder": "Résumé de la cause racine identifiée…",
+    "repairType": "Type de réparation",
+    "temporary": "Temporaire",
+    "permanent": "Permanente",
+    "notApplicable": "S/O",
+    "serviceCost": "Coût de service (€)",
+    "detailsSaved": "Détails enregistrés.",
+    "saveDetails": "Enregistrer les détails",
+    "sectionReturn": "Retour en service",
+    "mechCompleteHint": "Marquer l'OT comme mécaniquement complet lorsque les travaux physiques sont terminés.",
+    "markMechComplete": "Marquer mécaniquement complet",
+    "technicalVerification": "Vérification technique",
+    "verificationResult": "Résultat",
+    "resultPass": "Approuvé",
+    "resultFail": "Refusé",
+    "resultMonitor": "Surveiller",
+    "returnToService": "Retour en service confirmé",
+    "verificationNotes": "Notes de vérification",
+    "verificationNotesPlaceholder": "Observations, tests effectués…",
+    "submitVerification": "Soumettre vérification",
+    "closureTitle": "Fermeture de l'OT",
+    "closureWarning": "La fermeture est irréversible (sauf via le flux de réouverture supervisé). Une authentification renforcée (PIN) est requise.",
+    "pinLabel": "Code PIN (authentification renforcée)",
+    "pinPlaceholder": "Saisir le PIN…",
+    "blockingConditions": "Conditions bloquantes :",
+    "closeWo": "Fermer l'OT"
+  },
+  "audit": {
+    "created": "Créé le",
+    "updated": "Dernière mise à jour",
+    "closed": "Clôturé le",
+    "actor": "par utilisateur",
+    "applied": "Appliqué",
+    "blocked": "Bloqué",
+    "partial": "Partiel",
+    "stepUp": "Vérification",
+    "loadError": "Impossible de charger le journal d'audit\u00a0: ",
+    "empty": "Aucun événement d'audit enregistré pour cet ordre de travail.",
+    "user": "Utilisateur #{{id}}",
+    "system": "Système"
+  },
   "detail": {
+    "close": "Fermer",
     "sections": {
       "general": "Général",
       "planning": "Planification",
@@ -47,6 +350,7 @@
       "team": "Équipe",
       "plannedStart": "Début planifié",
       "plannedEnd": "Fin planifiée",
+      "shift": "Poste",
       "actualStart": "Début réel",
       "actualEnd": "Fin réelle",
       "estimatedHours": "Heures estimées",
@@ -54,51 +358,157 @@
       "conclusion": "Rapport de clôture"
     }
   },
-  "form": {
-    "title": {
-      "label": "Titre",
-      "placeholder": "Description courte de l'intervention"
-    },
-    "description": {
-      "label": "Description",
-      "placeholder": "Instructions détaillées pour l'exécutant"
+  "footer": {
+    "schedule": "Programmer",
+    "assign": "Assigner",
+    "resume": "Reprendre"
+  },
+  "print": {
+    "button": "Imprimer",
+    "title": "Fiche d'impression OT"
+  },
+  "cost": {
+    "title": "Résumé des coûts",
+    "loading": "Chargement des coûts…",
+    "labor": "Main-d'œuvre",
+    "parts": "Pièces",
+    "services": "Services",
+    "total": "Total",
+    "variance": "Écart"
+  },
+  "calendar": {
+    "today": "Aujourd'hui",
+    "mode": {
+      "month": "Mois",
+      "week": "Semaine",
+      "day": "Jour"
     }
   },
-  "status": {
+  "dashboard": {
+    "loading": "Chargement des statistiques…",
+    "loadError": "\u00c9chec du chargement des donn\u00e9es du tableau de bord.",
+    "retry": "R\u00e9essayer",
+    "total": "Total OT",
+    "inProgress": "En cours",
+    "completed": "Terminés",
+    "overdue": "En retard",
+    "statusDistribution": "Répartition par statut",
+    "urgencyDistribution": "Répartition par urgence",
+    "completionTrend": "Tendance de clôture",
+    "backlogByEntity": "Arriéré par entité"
+  },
+  "contextMenu": {
+    "viewDetail": "Voir détail",
+    "edit": "Modifier",
+    "start": "Démarrer",
+    "complete": "Compléter",
+    "print": "Imprimer",
+    "duplicate": "Dupliquer",
+    "cancel": "Annuler"
+  },
+  "attachment": {
+    "title": "Pièces jointes",
+    "uploading": "Téléversement en cours…",
+    "dropHint": "Glisser-déposer ou cliquer pour ajouter un fichier",
+    "maxSize": "Max {{size}} Mo",
+    "empty": "Aucune pièce jointe.",
+    "confirm": "Confirmer",
+    "cancel": "Annuler",
+    "deleteTitle": "Supprimer la pièce jointe",
+    "fileTooLarge": "Le fichier « {{name}} » dépasse la taille maximale de {{size}} Mo.",
+    "bytes": "o",
+    "kilobytes": "Ko",
+    "megabytes": "Mo"
+  },
+  "archive": {
+    "title": "Archive (Clôturés / Annulés)",
+    "loadError": "Échec du chargement des OT archivés.",
+    "retry": "Réessayer"
+  },
+  "search": {
+    "placeholder": "Rechercher par code, titre, équipement…"
+  },
+  "kanban": {
     "draft": "Brouillon",
     "planned": "Planifié",
-    "released": "Lancé",
-    "inProgress": "En cours",
-    "onHold": "En attente",
-    "completed": "Terminé",
-    "verified": "Vérifié",
-    "closed": "Clôturé",
-    "cancelled": "Annulé"
+    "executing": "En cours",
+    "closing": "Clôture",
+    "done": "Terminés",
+    "columnOpen": "Ouvert",
+    "columnExecuting": "En exécution",
+    "columnCompleted": "Terminé",
+    "columnClosed": "Fermé",
+    "columnCancelled": "Annulé",
+    "emptyOpen": "Aucun ordre de travail ouvert",
+    "emptyExecuting": "Aucun ordre de travail en cours",
+    "emptyCompleted": "Aucun ordre de travail terminé",
+    "emptyClosed": "Aucun ordre de travail fermé",
+    "emptyCancelled": "Aucun ordre de travail annulé",
+    "unassigned": "Non assigné",
+    "loadMore": "Charger plus ({{count}} restants)",
+    "transitionNotAllowed": "Impossible de déplacer \"{{code}}\" de \"{{from}}\" vers {{to}}. Transition non permise."
   },
-  "type": {
-    "corrective": "Correctif",
-    "preventive": "Préventif",
-    "predictive": "Prédictif",
-    "improvement": "Amélioration",
-    "inspection": "Inspection",
-    "permit": "Permis de travail"
+  "shift": {
+    "morning": "Matin",
+    "afternoon": "Après-midi",
+    "night": "Nuit",
+    "full_day": "Journée complète"
   },
-  "action": {
-    "release": "Lancer l'OT",
-    "start": "Démarrer",
-    "pause": "Mettre en pause",
-    "complete": "Marquer terminé",
-    "verify": "Vérifier et approuver",
-    "close": "Clôturer",
-    "addLabor": "Ajouter main-d'œuvre",
-    "addPart": "Ajouter une pièce",
-    "addDelay": "Enregistrer un délai"
-  },
-  "empty": {
-    "list": "Aucun ordre de travail.",
-    "listHint": "Créez un nouvel OT ou ajustez les filtres.",
-    "noParts": "Aucune pièce consommée.",
-    "noLabor": "Aucune main-d'œuvre enregistrée.",
-    "noDelays": "Aucun délai enregistré."
+  "print": {
+    "pageTitle": "Fiche OT",
+    "heading": "Fiche d'Ordre de Travail",
+    "confidential": "Document confidentiel",
+    "reference": "Référence",
+    "issueDate": "Date d'émission",
+    "identification": "IDENTIFICATION",
+    "woCode": "Code OT",
+    "woTitle": "Titre",
+    "woType": "Type",
+    "woUrgency": "Urgence",
+    "woStatus": "Statut",
+    "createdAt": "Créé le",
+    "equipment": "ÉQUIPEMENT CONCERNÉ",
+    "designation": "Désignation",
+    "planning": "PLANIFICATION",
+    "plannedStart": "Début prévu",
+    "plannedEnd": "Fin prévue",
+    "shift": "Poste",
+    "estimatedDuration": "Durée estimée",
+    "assignedTo": "Assigné à",
+    "description": "DESCRIPTION",
+    "sourceDi": "Source DI",
+    "tasks": "TÂCHES",
+    "taskDescription": "Description",
+    "taskStatus": "Statut",
+    "interveners": "INTERVENANTS",
+    "name": "Nom",
+    "skill": "Compétence",
+    "hours": "Heures",
+    "partsUsed": "PIÈCES UTILISÉES",
+    "quantity": "Qté",
+    "unitCost": "Coût unit.",
+    "requester": "Demandeur",
+    "technician": "Exécutant",
+    "maintenanceManager": "Resp. Maintenance",
+    "signature": "Signature",
+    "date": "Date",
+    "failureAnalysis": "ANALYSE DE DÉFAILLANCE",
+    "failureMode": "Mode de défaillance",
+    "failureCause": "Cause de défaillance",
+    "failureEffect": "Effet de défaillance",
+    "repairType": "Type de réparation",
+    "temporary": "Temporaire",
+    "permanent": "Permanente",
+    "notes": "Notes",
+    "rootCause": "Cause racine",
+    "correctiveAction": "Action corrective",
+    "verification": "VÉRIFICATION TECHNIQUE",
+    "verificationResult": "Résultat",
+    "returnToService": "Retour en service",
+    "costSummary": "RÉSUMÉ DES COÛTS",
+    "laborCost": "Main-d'œuvre",
+    "partsCost": "Pièces",
+    "serviceCost": "Services",
+    "totalCost": "Total"
   }
 }

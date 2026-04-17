@@ -9,6 +9,8 @@ build/
 
 # Rust build artifacts
 src-tauri/target/
+src-tauri/target-agent-*/
+target-agent-test/
 
 # Environment files (never commit secrets)
 .env
@@ -35,6 +37,11 @@ desktop.ini
 # CI artifacts
 coverage/
 *.lcov
+
+# Tooling reports
+biome-check-report.json
+biome-output.txt
+cargo-check-admin.txt
 
 # Logs
 *.log

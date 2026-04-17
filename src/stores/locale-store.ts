@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 
 import { i18n, DEFAULT_LOCALE } from "@/i18n";
+import { toErrorMessage } from "@/utils/errors";
 import { getLocaleDirection } from "@/utils/formatters";
 import type { LocalePreference } from "@shared/ipc-types";
 
@@ -53,7 +54,7 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
         activeLocale: DEFAULT_LOCALE,
         direction: getLocaleDirection(DEFAULT_LOCALE),
         isLoading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: toErrorMessage(err),
       });
     }
   },
@@ -74,7 +75,7 @@ export const useLocaleStore = create<LocaleState>()((set) => ({
       console.error("locale-store: failed to set preference", err);
       set({
         isLoading: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: toErrorMessage(err),
       });
     }
   },

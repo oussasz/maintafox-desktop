@@ -3,7 +3,12 @@
     "title": "Demandes d'intervention",
     "titleDetail": "Détail de la demande",
     "titleNew": "Nouvelle demande",
-    "titleEdit": "Modifier la demande"
+    "titleEdit": "Modifier la demande",
+    "viewList": "Liste",
+    "viewKanban": "Kanban",
+    "viewCalendar": "Calendrier",
+    "viewDashboard": "Tableau de bord",
+    "filterSettings": "Paramètres des filtres"
   },
   "list": {
     "columns": {
@@ -25,6 +30,8 @@
     }
   },
   "detail": {
+    "close": "Fermer",
+    "safety": "Sécurité",
     "sections": {
       "request": "Demande",
       "analysis": "Analyse",
@@ -43,10 +50,20 @@
       "assignedTo": "Assigné à",
       "dueDate": "Échéance",
       "closedAt": "Date de clôture",
-      "conclusion": "Conclusion"
+      "conclusion": "Conclusion",
+      "origin": "Origine",
+      "asset": "Équipement",
+      "orgNode": "Nœud org.",
+      "impact": "Impact",
+      "production": "Production"
     }
   },
   "form": {
+    "section": {
+      "requester": "Déclarant",
+      "equipment": "Équipement",
+      "general": "Informations générales"
+    },
     "subject": {
       "label": "Objet",
       "placeholder": "Décrivez brièvement le problème"
@@ -59,9 +76,61 @@
       "label": "Équipement concerné",
       "placeholder": "Sélectionnez un équipement"
     },
+    "equipmentSearch": "Rechercher un équipement...",
     "priority": {
       "label": "Priorité"
-    }
+    },
+    "observedAt": {
+      "label": "Date de constatation"
+    },
+    "originType": {
+      "label": "Origine"
+    },
+    "impactLevel": {
+      "label": "Niveau d'impact"
+    },
+    "safetyFlag": {
+      "label": "Enjeu sécurité"
+    },
+    "environmentalFlag": {
+      "label": "Enjeu environnemental"
+    },
+    "qualityFlag": {
+      "label": "Enjeu qualité"
+    },
+    "productionImpact": {
+      "label": "Impact production"
+    },
+    "origin": {
+      "operator": "Opérateur",
+      "technician": "Technicien",
+      "inspection": "Inspection",
+      "pm": "Maintenance préventive",
+      "iot": "IoT / Capteur",
+      "quality": "Qualité",
+      "hse": "HSE",
+      "production": "Production",
+      "external": "Externe"
+    },
+    "impact": {
+      "unknown": "Inconnu",
+      "none": "Aucun",
+      "minor": "Mineur",
+      "major": "Majeur",
+      "critical": "Critique"
+    },
+    "validation": {
+      "titleRequired": "Le titre est requis",
+      "descriptionRequired": "La description est requise",
+      "equipmentRequired": "L'équipement est requis",
+      "originRequired": "L'origine est requise",
+      "urgencyRequired": "La priorité est requise",
+      "impactRequired": "Le niveau d'impact est requis",
+      "assetMissingOrgNode": "L'équipement sélectionné n'a pas d'unité organisationnelle. Veuillez en attribuer une d'abord."
+    },
+    "cancel": "Annuler",
+    "submit": "Créer la demande",
+    "update": "Enregistrer les modifications"
   },
   "status": {
     "new": "Nouvelle",
@@ -80,6 +149,7 @@
     "critical": "Critique"
   },
   "action": {
+    "create": "Nouvelle DI",
     "approve": "Approuver",
     "reject": "Rejeter",
     "assignTo": "Assigner à",
@@ -91,5 +161,108 @@
     "list": "Aucune demande d'intervention.",
     "listHint": "Créez une nouvelle demande ou ajustez les filtres.",
     "noComments": "Aucun commentaire pour cette demande."
+  },
+  "lookup": {
+    "existingValues": "Valeurs existantes",
+    "loading": "Chargement…",
+    "empty": "Aucune valeur. Créez-en une à droite.",
+    "editTitle": "Modifier la valeur",
+    "createTitle": "Nouvelle valeur",
+    "newEntry": "Nouveau",
+    "name": "Nom",
+    "namePlaceholder": "Nom de la valeur",
+    "description": "Description",
+    "descriptionPlaceholder": "Description optionnelle…",
+    "suggestions": "Suggestions",
+    "create": "Créer",
+    "update": "Mettre à jour",
+    "saving": "Enregistrement…",
+    "cancel": "Annuler",
+    "close": "Fermer",
+    "manage": "Gérer"
+  },
+  "sla": {
+    "title": "Règles SLA",
+    "description": "Configurez les délais de réponse et de résolution pour chaque niveau d'urgence.",
+    "loading": "Chargement des règles…",
+    "empty": "Aucune règle SLA configurée.",
+    "columns": {
+      "name": "Règle",
+      "urgency": "Urgence",
+      "response": "Réponse (h)",
+      "resolution": "Résolution (h)",
+      "escalation": "Escalade (h)",
+      "active": "Actif"
+    },
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "close": "Fermer"
+  },
+  "review": {
+    "panelTitle": "DI en attente de validation",
+    "modified": "Modifiée",
+    "view": "Voir le détail",
+    "returnAction": "Renvoyer",
+    "approvalTitle": "Approuver & Convertir en OT",
+    "approvalNote": "Note d'approbation",
+    "approvalNotePlaceholder": "Note optionnelle pour le dossier d'approbation…",
+    "approver": "Approbateur",
+    "print": "Imprimer",
+    "approveAndConvert": "Approuver & Convertir",
+    "reviewerNote": "Note du valideur",
+    "rejectionTitle": "Rejeter la demande d'intervention",
+    "reasonCode": "Motif de rejet",
+    "reasonCodePlaceholder": "Saisissez le motif du rejet",
+    "reasonCodeRequired": "Le motif de rejet est requis",
+    "rejectionNotes": "Notes complémentaires",
+    "rejectionNotesPlaceholder": "Contexte additionnel optionnel…",
+    "irreversibleWarning": "Cette action est irréversible.",
+    "rejectAndConfirm": "Rejeter & Confirmer",
+    "returnTitle": "Renvoyer pour clarification",
+    "clarificationNote": "Note de clarification",
+    "clarificationNotePlaceholder": "Décrivez les informations nécessaires…",
+    "clarificationRequired": "La note de clarification est requise",
+    "returnInfo": "La DI sera renvoyée au déclarant."
+  },
+  "dashboard": {
+    "total": "Total",
+    "pending": "En attente",
+    "inProgress": "En cours",
+    "slaCompliance": "SLA respecté",
+    "closedThisMonth": "Clôturées (mois)",
+    "overdue": "En retard",
+    "safetyIssues": "Enjeux sécurité",
+    "avgAge": "Âge moyen",
+    "statusDistribution": "Répartition par statut",
+    "priorityDistribution": "Répartition par priorité",
+    "trend": "Tendance",
+    "allTime": "Tout",
+    "created": "Créées",
+    "closed": "Clôturées",
+    "topEquipment": "Top 10 Équipements",
+    "overdueDis": "DI en retard",
+    "daysOverdue": "Jours de retard"
+  },
+  "calendar": {
+    "today": "Aujourd'hui",
+    "mode": {
+      "month": "Mois",
+      "week": "Semaine",
+      "day": "Jour"
+    }
+  },
+  "archive": {
+    "title": "Archive"
+  },
+  "search": {
+    "placeholder": "Rechercher par code, objet, description…"
+  },
+  "contextMenu": {
+    "viewDetail": "Voir le détail",
+    "edit": "Modifier",
+    "delete": "Supprimer",
+    "approve": "Approuver",
+    "reject": "Rejeter",
+    "return": "Renvoyer pour clarification"
   }
 }

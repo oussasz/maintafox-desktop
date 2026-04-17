@@ -1,31 +1,52 @@
 import {
   Menu,
-  Bell,
   RefreshCw,
   AlertCircle,
   User,
   LogOut,
   Settings,
   UserCircle,
+  Shield,
+  ShieldAlert,
+  Clock,
 } from "lucide-react";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, Link } from "react-router-dom";
 
+import { CommandPalette } from "@/components/shell/CommandPalette";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { useDeviceTrustStatus } from "@/hooks/use-device-trust-status";
+import { useSession } from "@/hooks/use-session";
 import { logout as authLogout } from "@/services/auth-service";
 import { useAppStore } from "@/store/app-store";
+import type { DeviceTrustStatus } from "@shared/ipc-types";
 
 export function TopBar() {
   const { t } = useTranslation("shell");
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const syncStatus = useAppStore((s) => s.syncStatus);
-  const unreadCount = useAppStore((s) => s.unreadNotificationCount);
   const isOnline = useAppStore((s) => s.isOnline);
   const displayName = useAppStore((s) => s.currentUserDisplayName);
+  const { info: sessionInfo } = useSession();
+  const deviceTrust = useDeviceTrustStatus();
 
   const navigate = useNavigate();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Ctrl+K / ⌘K global shortcut for command palette
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCommandPaletteOpen((v) => !v);
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -67,9 +88,15 @@ export function TopBar() {
       {/* Logo / product name */}
       <span className="text-sm font-semibold text-text-primary select-none mr-4">Maintafox</span>
 
-      {/* Search placeholder — populated in Phase 2 */}
+      {/* Search — opens command palette */}
       <div className="flex-1 hidden md:flex items-center">
         <div
+          onClick={() => setCommandPaletteOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") setCommandPaletteOpen(true);
+          }}
+          role="button"
+          tabIndex={0}
           className="flex items-center gap-2 rounded-md border border-surface-border
                      bg-surface-2 px-3 py-1 text-sm text-text-muted cursor-pointer
                      hover:border-primary-light transition-colors duration-fast w-72"
@@ -78,6 +105,7 @@ export function TopBar() {
           <span>{t("search.placeholder")}</span>
         </div>
       </div>
+      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
 
       {/* Right controls */}
       <div className="ml-auto flex items-center gap-1">
@@ -85,21 +113,7 @@ export function TopBar() {
         <SyncIndicator state={syncStatus.state} isOnline={isOnline} />
 
         {/* Notification bell */}
-        <button
-          aria-label={t("notifications.label", { count: unreadCount })}
-          className="relative btn-ghost px-2 py-1.5"
-        >
-          <Bell className="h-4 w-4" />
-          {unreadCount > 0 && (
-            <span
-              className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center
-                         justify-center rounded-full bg-status-danger
-                         text-2xs font-bold text-white"
-            >
-              {unreadCount > 99 ? "99+" : unreadCount}
-            </span>
-          )}
-        </button>
+        <NotificationBell />
 
         {/* User menu */}
         <div ref={userMenuRef} className="relative">
@@ -138,6 +152,11 @@ export function TopBar() {
                   {displayName}
                 </div>
               )}
+              {/* Session & device trust info */}
+              <div className="px-3 py-2 space-y-1 border-b border-surface-border">
+                <SessionTimeIndicator expiresAt={sessionInfo?.expires_at ?? null} />
+                <DeviceTrustBadge status={deviceTrust} />
+              </div>
               <Link
                 to="/profile"
                 onClick={() => setUserMenuOpen(false)}
@@ -192,7 +211,7 @@ function SyncIndicator({ state, isOnline }: { state: string; isOnline: boolean }
     );
   }
 
-  if (state === "syncing") {
+  if (state === "running") {
     return (
       <span
         className="flex items-center gap-1 rounded px-2 py-1 text-xs
@@ -201,6 +220,32 @@ function SyncIndicator({ state, isOnline }: { state: string; isOnline: boolean }
       >
         <RefreshCw className="h-3.5 w-3.5 animate-spin-slow" />
         <span className="hidden sm:inline">{t("sync.syncing")}</span>
+      </span>
+    );
+  }
+
+  if (state === "degraded") {
+    return (
+      <span
+        className="flex items-center gap-1 rounded px-2 py-1 text-xs
+                   bg-status-warning/10 text-status-warning"
+        title={t("sync.error")}
+      >
+        <AlertCircle className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">Degraded</span>
+      </span>
+    );
+  }
+
+  if (state === "blocked" || state === "paused") {
+    return (
+      <span
+        className="flex items-center gap-1 rounded px-2 py-1 text-xs
+                   bg-status-warning/10 text-status-warning"
+        title={state === "paused" ? "Sync paused by operator policy" : "Sync blocked by policy"}
+      >
+        <AlertCircle className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">{state === "paused" ? "Paused" : "Blocked"}</span>
       </span>
     );
   }
@@ -218,5 +263,66 @@ function SyncIndicator({ state, isOnline }: { state: string; isOnline: boolean }
     );
   }
 
+  if (state === "scheduled") {
+    return (
+      <span className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-muted" title="Sync scheduled">
+        <Clock className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">Scheduled</span>
+      </span>
+    );
+  }
+
   return null;
+}
+
+/* ── Session time remaining ───────────────────────────────────────────── */
+
+function SessionTimeIndicator({ expiresAt }: { expiresAt: string | null }) {
+  const { t } = useTranslation("shell");
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!expiresAt) return;
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, [expiresAt]);
+
+  const label = useMemo(() => {
+    if (!expiresAt) return null;
+    const diff = new Date(expiresAt).getTime() - now;
+    if (diff <= 0) return t("session.expired");
+    const mins = Math.ceil(diff / 60_000);
+    return t("session.timeRemaining", { minutes: mins });
+  }, [expiresAt, now, t]);
+
+  if (!label) return null;
+
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-text-muted">
+      <Clock className="h-3 w-3" />
+      {label}
+    </span>
+  );
+}
+
+/* ── Device trust badge ───────────────────────────────────────────────── */
+
+function DeviceTrustBadge({ status }: { status: DeviceTrustStatus }) {
+  const { t } = useTranslation("shell");
+
+  if (status.status === "trusted") {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-status-success">
+        <Shield className="h-3 w-3" />
+        {t("device.trusted")}
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-status-warning">
+      <ShieldAlert className="h-3 w-3" />
+      {t("device.untrusted")}
+    </span>
+  );
 }

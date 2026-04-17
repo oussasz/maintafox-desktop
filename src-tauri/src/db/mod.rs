@@ -1,3 +1,4 @@
+pub mod demo_seeder;
 pub mod integrity;
 pub mod migration_integrity;
 pub mod org_schema;

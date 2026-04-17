@@ -87,5 +87,214 @@
     "listHint": "Créez votre premier équipement ou ajustez les filtres.",
     "noMeters": "Aucun compteur enregistré.",
     "noDocuments": "Aucun document joint."
+  },
+  "registry": {
+    "title": "Registre des actifs",
+    "refresh": "Actualiser",
+    "resultCount": "{{count}} résultat(s)",
+    "viewTable": "Tableau",
+    "viewTree": "Arbre",
+    "search": {
+      "placeholder": "Rechercher par code, nom, n° de série…",
+      "apply": "Rechercher",
+      "clear": "Effacer"
+    },
+    "filters": {
+      "all": "Tous"
+    },
+    "detail": {
+      "noSelection": "Sélectionnez un actif pour afficher ses détails.",
+      "loadError": "Échec du chargement des détails.",
+      "hierarchy": "Hiérarchie",
+      "noChildren": "Aucun actif enfant lié.",
+      "noEvents": "Aucun événement de cycle de vie enregistré.",
+      "primary": "Principal",
+      "documentCount": "{{count}} document(s) lié(s)"
+    }
+  },
+  "createForm": {
+    "button": "Créer un actif",
+    "title": "Créer un actif",
+    "description": "Créer un nouvel actif et l'affecter à un nœud d'organisation.",
+    "selectCriticality": "Sélectionner la criticité",
+    "selectOrg": "Sélectionner le nœud d'organisation",
+    "parentAsset": "Actif parent",
+    "searchParent": "Rechercher un actif parent",
+    "clearParent": "Effacer le parent",
+    "descriptionLabel": "Description",
+    "maintainableBoundary": "Frontière maintenable",
+    "submit": "Créer"
+  },
+  "editForm": {
+    "button": "Modifier",
+    "title": "Modifier l'actif",
+    "description": "Mettre à jour les données d'identité et de cycle de vie de cet actif.",
+    "lastModified": "Dernière modification : {{date}}",
+    "submit": "Enregistrer",
+    "unsavedTitle": "Modifications non enregistrées",
+    "unsavedDescription": "Vous avez des modifications non enregistrées. Voulez-vous continuer l'édition ou les abandonner ?",
+    "keepEditing": "Continuer l'édition",
+    "discardChanges": "Abandonner les modifications"
+  },
+  "tree": {
+    "search": "Rechercher dans l'arbre",
+    "empty": "Aucun actif correspondant dans l'arbre.",
+    "ariaLabel": "Arbre des actifs"
+  },
+  "contextMenu": {
+    "addChild": "Ajouter un sous-actif",
+    "edit": "Modifier",
+    "copyCode": "Copier le code",
+    "move": "Déplacer",
+    "decommission": "Déclasser"
+  },
+  "qr": {
+    "button": "Code QR",
+    "download": "Télécharger",
+    "print": "Imprimer"
+  },
+  "binding": {
+    "title": "Liaisons inter-modules",
+    "notImplemented": "Pas encore disponible",
+    "domains": {
+      "di": "Demandes d'intervention",
+      "wo": "Ordres de travail",
+      "pm": "Plans de maintenance",
+      "failure": "Événements de panne",
+      "document": "Documents",
+      "iot": "Signaux IoT",
+      "erp": "Mapping ERP"
+    }
+  },
+  "import": {
+    "page": {
+      "title": "Import d'équipements"
+    },
+    "steps": {
+      "upload": "Téléverser",
+      "validate": "Valider",
+      "preview": "Aperçu",
+      "apply": "Appliquer",
+      "done": "Terminé"
+    },
+    "status": {
+      "valid": "Valide",
+      "warning": "Avertissement",
+      "error": "Erreur"
+    },
+    "upload": {
+      "title": "Téléverser un fichier CSV",
+      "description": "Sélectionnez un fichier CSV contenant les équipements à importer.",
+      "hint": "Glissez un fichier CSV ici ou cliquez pour parcourir.",
+      "selectFile": "Choisir un fichier"
+    },
+    "validate": {
+      "title": "Validation des données",
+      "description": "Fichier : {{filename}} — {{rows}} ligne(s) chargée(s).",
+      "file": "Fichier",
+      "rows": "Lignes",
+      "run": "Lancer la validation"
+    },
+    "preview": {
+      "title": "Aperçu et inspection",
+      "description": "Vérifiez chaque ligne avant de procéder à l'import. Les conflits sont clairement identifiés.",
+      "total": "Total",
+      "columns": {
+        "code": "Code",
+        "externalKey": "Clé externe",
+        "status": "Statut",
+        "action": "Action",
+        "messages": "Messages"
+      },
+      "includeWarnings": "Inclure les lignes avec avertissements"
+    },
+    "apply": {
+      "run": "Appliquer l'import"
+    },
+    "done": {
+      "title": "Import terminé",
+      "description": "L'import a été appliqué avec succès au registre des actifs.",
+      "created": "Créés",
+      "updated": "Mis à jour",
+      "skipped": "Ignorés",
+      "errored": "En erreur",
+      "newImport": "Nouvel import"
+    },
+    "warnings": {
+      "reclassification": "La reclassification d'un actif existant nécessite une vérification manuelle.",
+      "decommission": "Le passage au statut déclassé via l'import est interdit. Utilisez le cycle de vie."
+    }
+  },
+  "decommission": {
+    "title": "Déclasser l'équipement",
+    "description": "Vérifiez les dépendances avant de déclasser cet actif.",
+    "action": "Déclasser",
+    "confirm": "Confirmer le déclassement",
+    "cancel": "Annuler",
+    "success": "Équipement déclassé avec succès.",
+    "targetStatus": "Statut cible",
+    "reasonLabel": "Motif",
+    "reasonPlaceholder": "Expliquez la raison du déclassement…",
+    "blockerBanner": "Impossible de déclasser — {{count}} élément(s) de travail ouvert(s). Fermez-les d'abord.",
+    "blockerDetail": "bloque le déclassement",
+    "pmWarning": "seront suspendus",
+    "iotWarning": "seront déliés",
+    "docInfo": "restent archivés",
+    "statuses": {
+      "retired": "Retiré",
+      "scrapped": "Mis au rebut",
+      "transferred": "Transféré"
+    }
+  },
+  "health": {
+    "title": "Santé",
+    "good": "Bon",
+    "fair": "Moyen",
+    "poor": "Mauvais",
+    "noData": "Aucune donnée"
+  },
+  "photos": {
+    "title": "Photos",
+    "upload": "Téléverser",
+    "uploadFirst": "Téléverser une photo",
+    "uploaded": "Photo téléversée.",
+    "delete": "Supprimer",
+    "deleted": "Photo supprimée.",
+    "empty": "Aucune photo",
+    "lightboxLabel": "Visionneuse de photos",
+    "deleteConfirmTitle": "Supprimer la photo",
+    "deleteConfirmDescription": "Cette photo sera définitivement supprimée. Cette action est irréversible."
+  },
+  "asset": {
+    "qr_code": "QR Code",
+    "download_png": "Télécharger PNG",
+    "print": "Imprimer",
+    "qr_code_label": "Scanner pour voir l'actif",
+    "criticality": "Criticité",
+    "criticality_A": "Critique (A)",
+    "criticality_B": "Importante (B)",
+    "criticality_C": "Standard (C)",
+    "criticality_D": "Faible (D)",
+    "criticality_none": "—",
+    "create_asset": "Créer un actif",
+    "edit_asset": "Modifier l'actif",
+    "asset_code": "Code de l'actif",
+    "asset_name": "Nom de l'actif",
+    "asset_class": "Classe",
+    "asset_family": "Famille",
+    "asset_status": "Statut",
+    "asset_parent": "Actif parent",
+    "asset_organization": "Organisation",
+    "asset_location": "Emplacement",
+    "asset_description": "Description",
+    "asset_last_modified": "Dernière modification",
+    "asset_tree": "Arborescence des actifs",
+    "tree_search_placeholder": "Rechercher des actifs...",
+    "tree_toggle": "Arbre / Tableau",
+    "context_add_child": "Ajouter un sous-actif",
+    "context_edit": "Modifier",
+    "context_copy_code": "Copier le code",
+    "context_move_to": "Déplacer vers...",
+    "context_decommission": "Décommissionner..."
   }
 }

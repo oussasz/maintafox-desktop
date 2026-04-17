@@ -42,6 +42,8 @@ export interface UseUpdaterResult {
   available: boolean;
   version: string | null;
   notes: string | null;
+  forceRequired: boolean;
+  forceReason: string | null;
   isChecking: boolean;
   isInstalling: boolean;
   installComplete: boolean;

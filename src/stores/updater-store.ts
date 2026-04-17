@@ -7,7 +7,9 @@
 
 import { create } from "zustand";
 
+import { getProductLicenseOnboardingState } from "@/services/product-license-service";
 import { checkForUpdate, installPendingUpdate } from "@/services/updater-service";
+import { toErrorMessage } from "@/utils/errors";
 import type { UpdateCheckResult } from "@shared/ipc-types";
 
 // ── State shape ───────────────────────────────────────────────────────────────
@@ -21,6 +23,10 @@ interface UpdaterState {
   isInstalling: boolean;
   /** True after install completes (application will restart shortly). */
   installComplete: boolean;
+  /** Activation policy says this client must update now. */
+  forceRequired: boolean;
+  /** Optional operator-facing rationale for forced policy. */
+  forceReason: string | null;
   /** Non-null if the last check or install operation encountered an error. */
   error: string | null;
 
@@ -36,13 +42,29 @@ export const useUpdaterStore = create<UpdaterState>()((set) => ({
   isChecking: false,
   isInstalling: false,
   installComplete: false,
+  forceRequired: false,
+  forceReason: null,
   error: null,
 
   checkForUpdate: async () => {
     set({ isChecking: true, error: null });
     try {
-      const result = await checkForUpdate();
-      set({ lastCheckResult: result, isChecking: false });
+      const [result, onboarding] = await Promise.all([
+        checkForUpdate(),
+        getProductLicenseOnboardingState().catch(() => null),
+      ]);
+      const forceRequired = onboarding?.status === "denied_force_update_required";
+      const forceReason = onboarding?.deny_message ?? null;
+      set({
+        lastCheckResult: result,
+        isChecking: false,
+        forceRequired,
+        forceReason,
+        error:
+          forceRequired && !result.available
+            ? forceReason ?? "A forced update policy is active but no update package is currently available."
+            : null,
+      });
     } catch (err) {
       // Non-fatal — update check failure must never block the application.
       // The Rust layer already swallows manifest network errors and returns
@@ -50,7 +72,9 @@ export const useUpdaterStore = create<UpdaterState>()((set) => ({
       console.warn("updater-store: check failed (non-fatal)", err);
       set({
         isChecking: false,
-        error: err instanceof Error ? err.message : String(err),
+        forceRequired: false,
+        forceReason: null,
+        error: toErrorMessage(err),
       });
     }
   },
@@ -66,10 +90,11 @@ export const useUpdaterStore = create<UpdaterState>()((set) => ({
     } catch (err) {
       set({
         isInstalling: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: toErrorMessage(err),
       });
     }
   },
 
-  dismissNotification: () => set({ lastCheckResult: null, error: null, installComplete: false }),
+  dismissNotification: () =>
+    set({ lastCheckResult: null, error: null, installComplete: false, forceRequired: false, forceReason: null }),
 }));

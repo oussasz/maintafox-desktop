@@ -11,10 +11,17 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use tracing::warn;
 
-use crate::auth::{password, session_manager};
+use crate::auth::{lockout, password, password_policy, pin, session_manager};
 use crate::errors::{AppError, AppResult};
 use crate::require_session;
 use crate::state::AppState;
+
+fn tenant_mismatch_recovery_message(activated_tenant: &str) -> String {
+    format!(
+        "Ce compte n'est pas autorisé pour le tenant activé ({activated_tenant}). \
+        Connectez-vous avec un compte autorisé pour ce tenant ou réactivez l'appareil avec la clé correcte."
+    )
+}
 
 /// Input for the login command. Received from the React login form.
 #[derive(Debug, Deserialize)]
@@ -64,6 +71,12 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
         Some(r) => r,
     };
 
+    // ── Account lockout check (OWASP brute-force protection) ─────────────
+    lockout::check_lockout(&state.db, user_id).await?;
+
+    // Load lockout policy for recording failed attempts later
+    let lockout_policy = lockout::LockoutPolicy::load(&state.db).await;
+
     // Verify password
     let stored_hash = match pw_hash {
         None => {
@@ -85,7 +98,7 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
 
     let password_ok = password::verify_password(&payload.password, &stored_hash)?;
     if !password_ok {
-        session_manager::record_failed_login(&state.db, user_id).await?;
+        lockout::record_failed_attempt(&state.db, user_id, &lockout_policy).await?;
         warn!(username = %username, "login::wrong_password");
         crate::audit::emit(
             &state.db,
@@ -144,19 +157,109 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
             }
             // Online + revoked: allow login but do not re-register trust
         }
-        // Known device, offline: check grace window
+        // Known device, offline: apply strict activation/offline eligibility checks.
         (Some(_), false) => {
-            let (allowed, _) = crate::auth::device::check_offline_access(&state.db, user_id, &fingerprint).await?;
-            if !allowed {
+            let decision =
+                crate::activation::queries::evaluate_offline_activation_policy(&state.db, user_id, &fingerprint)
+                    .await?;
+            if !decision.allowed {
                 return Err(AppError::Auth(
-                    "Fen\u{00ea}tre de connexion hors ligne expir\u{00e9}e. Connexion en ligne requise.".into(),
+                    decision.denial_message.unwrap_or_else(|| {
+                        "Connexion hors ligne refus\u{00e9}e par la politique d'activation.".to_string()
+                    }),
                 ));
             }
             tracing::info!(username = %username, "login::offline_access_granted");
         }
-        // Known device, online: update last_seen_at
+        // Known device, online: apply reconnect revocation and refresh trust heartbeat.
         (Some(_), true) => {
+            if let Some(reason) = crate::activation::queries::process_reconnect_revocation(&state.db).await? {
+                return Err(AppError::Auth(format!(
+                    "Connexion refus\u{00e9}e: r\u{00e9}vocation d'activation appliqu\u{00e9}e \u{00e0} la reconnexion ({reason})."
+                )));
+            }
             crate::auth::device::register_device_trust(&state.db, user_id, &fingerprint, None).await?;
+        }
+    }
+
+    let activated_tenant_id = crate::commands::product_license::get_activation_claim_tenant_id(&state.db)
+        .await?
+        .ok_or_else(|| {
+            AppError::SessionClaimInvalid(
+                "Activation tenant claim is missing on this device. Re-enter the activation key to continue.".into(),
+            )
+        })?;
+
+    let tenant_scope = session_manager::resolve_tenant_scope_for_user(&state.db, user_id, &activated_tenant_id)
+        .await?
+        .ok_or_else(|| AppError::TenantScopeViolation(tenant_mismatch_recovery_message(&activated_tenant_id)))?;
+
+    // ── Password expiry enforcement ────────────────────────────────────
+    let policy = password_policy::PasswordPolicy::load(&state.db).await;
+    let mut effective_force_pw_change = force_pw_change;
+    let mut password_expires_in_days: Option<i64> = None;
+    let pin_configured = session_manager::get_pin_hash_for_user(&state.db, user_id)
+        .await?
+        .is_some();
+
+    match password_policy::check_password_expiry(&state.db, user_id, &policy).await? {
+        password_policy::PasswordExpiryStatus::Valid => {}
+        password_policy::PasswordExpiryStatus::ExpiringSoon { days_remaining } => {
+            password_expires_in_days = Some(days_remaining.max(0));
+        }
+        password_policy::PasswordExpiryStatus::Expired => {
+            effective_force_pw_change = true;
+            let now = chrono::Utc::now().to_rfc3339();
+            state
+                .db
+                .execute(sea_orm::Statement::from_sql_and_values(
+                    sea_orm::DbBackend::Sqlite,
+                    r"UPDATE user_accounts
+                       SET force_password_change = 1,
+                           updated_at = ?
+                       WHERE id = ?",
+                    [now.into(), user_id.into()],
+                ))
+                .await?;
+
+            crate::audit::emit(
+                &state.db,
+                crate::audit::AuditEvent {
+                    event_type: crate::audit::event_type::FORCE_CHANGE_SET,
+                    actor_id: Some(user_id),
+                    summary: "Force password change set due to password expiry",
+                    detail_json: Some(r#"{"reason":"expired"}"#.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await;
+        }
+        password_policy::PasswordExpiryStatus::NeverSet => {
+            effective_force_pw_change = true;
+            let now = chrono::Utc::now().to_rfc3339();
+            state
+                .db
+                .execute(sea_orm::Statement::from_sql_and_values(
+                    sea_orm::DbBackend::Sqlite,
+                    r"UPDATE user_accounts
+                       SET force_password_change = 1,
+                           updated_at = ?
+                       WHERE id = ?",
+                    [now.into(), user_id.into()],
+                ))
+                .await?;
+
+            crate::audit::emit(
+                &state.db,
+                crate::audit::AuditEvent {
+                    event_type: crate::audit::event_type::FORCE_CHANGE_SET,
+                    actor_id: Some(user_id),
+                    summary: "Force password change set due to missing password_changed_at",
+                    detail_json: Some(r#"{"reason":"never_set"}"#.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await;
         }
     }
 
@@ -167,15 +270,31 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
         username: db_username,
         display_name,
         is_admin,
-        force_password_change: force_pw_change,
+        force_password_change: effective_force_pw_change,
+        tenant_id: tenant_scope.tenant_id,
+        token_tenant_id: tenant_scope.token_tenant_id,
     };
 
     let mut session_guard = state.session.write().await;
-    let session = session_guard.create_session(auth_user);
+    session_guard.create_session(auth_user);
 
-    // Capture data before dropping the write lock
-    let session_id = session.session_db_id.clone();
-    let expires_rfc3339 = session.expires_at.to_rfc3339();
+    if let Some(current) = &mut session_guard.current {
+        current.password_expires_in_days = password_expires_in_days;
+        current.pin_configured = pin_configured;
+    }
+
+    // Capture data before further mutation
+    let (session_id, expires_rfc3339) = match session_guard.current.as_ref() {
+        Some(s) => (s.session_db_id.clone(), s.expires_at.to_rfc3339()),
+        None => {
+            return Err(AppError::Auth(
+                "Impossible de créer la session utilisateur.".into(),
+            ));
+        }
+    };
+
+    // A successful password login is equivalent to a step-up verification.
+    session_guard.record_step_up();
     drop(session_guard);
 
     // Record in DB for audit purposes
@@ -231,7 +350,58 @@ pub async fn logout(state: State<'_, AppState>) -> AppResult<()> {
 /// Called by the React shell to decide which screen to show on startup.
 #[tauri::command]
 pub async fn get_session_info(state: State<'_, AppState>) -> AppResult<session_manager::SessionInfo> {
+    let maybe_session = state.session.read().await.current.clone();
+    let Some(current_session) = maybe_session else {
+        return Ok(state.session.read().await.session_info());
+    };
+    if current_session.is_expired() {
+        return Ok(state.session.read().await.session_info());
+    }
+
+    let activated_tenant_id = crate::commands::product_license::get_activation_claim_tenant_id(&state.db)
+        .await?
+        .ok_or_else(|| {
+            AppError::SessionClaimInvalid(
+                "Activation tenant claim is missing on this device. Re-enter the activation key to continue.".into(),
+            )
+        })?;
+    if current_session.user.tenant_id != activated_tenant_id {
+        {
+            let mut session_guard = state.session.write().await;
+            session_guard.clear_session();
+        }
+        return Err(AppError::SessionClaimInvalid(
+            "Session tenant claim is stale. Please sign in again for the currently activated tenant.".into(),
+        ));
+    }
+
     Ok(state.session.read().await.session_info())
+}
+
+/// Heartbeat: update in-memory + DB `last_activity_at` for the current session.
+/// The frontend calls this periodically so the presence query sees fresh activity.
+#[tauri::command]
+pub async fn touch_session(state: State<'_, AppState>) -> AppResult<()> {
+    let session_db_id = {
+        let mut guard = state.session.write().await;
+        guard.touch();
+        match &guard.current {
+            Some(s) => s.session_db_id.clone(),
+            None => return Ok(()),
+        }
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let _ = state
+        .db
+        .execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            "UPDATE app_sessions SET last_activity_at = ? WHERE id = ?",
+            [now.into(), session_db_id.into()],
+        ))
+        .await;
+
+    Ok(())
 }
 
 // ── Device trust IPC commands ─────────────────────────────────────────────────
@@ -248,6 +418,8 @@ pub async fn get_device_trust_status(state: State<'_, AppState>) -> AppResult<de
 
     let trust = device::get_device_trust(&state.db, user.user_id, &fingerprint).await?;
     let (offline_allowed, offline_hours) = device::check_offline_access(&state.db, user.user_id, &fingerprint).await?;
+    let decision =
+        crate::activation::queries::evaluate_offline_activation_policy(&state.db, user.user_id, &fingerprint).await?;
 
     Ok(device::DeviceTrustStatus {
         device_fingerprint: fingerprint,
@@ -257,6 +429,8 @@ pub async fn get_device_trust_status(state: State<'_, AppState>) -> AppResult<de
         offline_hours_remaining: offline_hours,
         device_label: trust.as_ref().and_then(|t| t.device_label.clone()),
         trusted_at: trust.as_ref().map(|t| t.trusted_at.clone()),
+        offline_denial_code: decision.denial_code,
+        offline_denial_message: decision.denial_message,
     })
 }
 
@@ -364,6 +538,320 @@ pub async fn unlock_session(
     Ok(info)
 }
 
+// ── PIN Commands ─────────────────────────────────────────────────────────────
+
+/// Input for the `set_pin` command.
+#[derive(Debug, Deserialize)]
+pub struct SetPinInput {
+    pub current_password: String,
+    pub new_pin: String,
+}
+
+/// Input for the `clear_pin` command.
+#[derive(Debug, Deserialize)]
+pub struct ClearPinInput {
+    pub current_password: String,
+}
+
+/// Input for the `unlock_session_with_pin` command.
+#[derive(Debug, Deserialize)]
+pub struct PinUnlockInput {
+    pub pin: String,
+}
+
+/// Configure or update quick-unlock PIN.
+/// Requires current password verification.
+#[tauri::command]
+pub async fn set_pin(payload: SetPinInput, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+
+    let user_record = session_manager::find_active_user(&state.db, &user.username).await?;
+    let pw_hash = match user_record.and_then(|r| r.5) {
+        Some(h) => h,
+        None => {
+            return Err(AppError::Auth(
+                "Aucun mot de passe local configuré pour cet utilisateur.".into(),
+            ));
+        }
+    };
+
+    let password_ok = password::verify_password(&payload.current_password, &pw_hash)?;
+    if !password_ok {
+        return Err(AppError::Auth("Mot de passe incorrect.".into()));
+    }
+
+    pin::validate_pin_format(payload.new_pin.trim())?;
+    let pin_hash = pin::hash_pin(payload.new_pin.trim())?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    state
+        .db
+        .execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            r"UPDATE user_accounts
+               SET pin_hash = ?,
+                   updated_at = ?
+               WHERE id = ?",
+            [pin_hash.into(), now.into(), user.user_id.into()],
+        ))
+        .await?;
+
+    let mut sm = state.session.write().await;
+    if let Some(current) = &mut sm.current {
+        current.pin_configured = true;
+        current.pin_failed_attempts = 0;
+        current.pin_unlock_disabled = false;
+    }
+    drop(sm);
+
+    crate::audit::emit(
+        &state.db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::PIN_SET,
+            actor_id: Some(user.user_id),
+            summary: "Quick unlock PIN configured",
+            ..Default::default()
+        },
+    )
+    .await;
+
+    Ok(())
+}
+
+/// Clear quick-unlock PIN.
+/// Requires current password verification.
+#[tauri::command]
+pub async fn clear_pin(payload: ClearPinInput, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+
+    let user_record = session_manager::find_active_user(&state.db, &user.username).await?;
+    let pw_hash = match user_record.and_then(|r| r.5) {
+        Some(h) => h,
+        None => {
+            return Err(AppError::Auth(
+                "Aucun mot de passe local configuré pour cet utilisateur.".into(),
+            ));
+        }
+    };
+
+    let password_ok = password::verify_password(&payload.current_password, &pw_hash)?;
+    if !password_ok {
+        return Err(AppError::Auth("Mot de passe incorrect.".into()));
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    state
+        .db
+        .execute(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            r"UPDATE user_accounts
+               SET pin_hash = NULL,
+                   updated_at = ?
+               WHERE id = ?",
+            [now.into(), user.user_id.into()],
+        ))
+        .await?;
+
+    let mut sm = state.session.write().await;
+    if let Some(current) = &mut sm.current {
+        current.pin_configured = false;
+        current.pin_failed_attempts = 0;
+        current.pin_unlock_disabled = false;
+    }
+    drop(sm);
+
+    crate::audit::emit(
+        &state.db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::PIN_CLEARED,
+            actor_id: Some(user.user_id),
+            summary: "Quick unlock PIN removed",
+            ..Default::default()
+        },
+    )
+    .await;
+
+    Ok(())
+}
+
+/// Internal unlock routine shared by test code.
+#[cfg(test)]
+pub(crate) async fn unlock_session_with_pin_internal(
+    db: &sea_orm::DatabaseConnection,
+    sm: &mut session_manager::SessionManager,
+    pin_input: &str,
+) -> AppResult<session_manager::SessionInfo> {
+    let pin_value = pin_input.trim();
+    pin::validate_pin_format(pin_value)?;
+
+    let user_id = match &sm.current {
+        Some(s) if !s.is_expired() && s.is_idle_locked() => {
+            if s.pin_unlock_disabled {
+                return Err(AppError::Auth(
+                    "PIN désactivé, utilisez le mot de passe.".into(),
+                ));
+            }
+            s.user.user_id
+        }
+        Some(_) => {
+            return Err(AppError::Auth(
+                "La session n'est pas verrouillée. Utilisez le flux normal.".into(),
+            ));
+        }
+        None => {
+            return Err(AppError::Auth(
+                "Session expirée. Veuillez vous reconnecter.".into(),
+            ));
+        }
+    };
+
+    let pin_hash = session_manager::get_pin_hash_for_user(db, user_id)
+        .await?
+        .ok_or_else(|| AppError::Auth("Aucun PIN configuré pour cet utilisateur.".into()))?;
+
+    let valid = pin::verify_pin(pin_value, &pin_hash)?;
+    if !valid {
+        if let Some(s) = &mut sm.current {
+            s.pin_failed_attempts = s.pin_failed_attempts.saturating_add(1);
+            if s.pin_failed_attempts >= 3 {
+                s.pin_unlock_disabled = true;
+                return Err(AppError::Auth(
+                    "PIN désactivé, utilisez le mot de passe.".into(),
+                ));
+            }
+        }
+
+        return Err(AppError::Auth("PIN incorrect.".into()));
+    }
+
+    if let Some(s) = &mut sm.current {
+        s.pin_failed_attempts = 0;
+        s.pin_unlock_disabled = false;
+    }
+
+    if !sm.unlock_session() {
+        return Err(AppError::Auth(
+            "Session expirée. Veuillez vous reconnecter.".into(),
+        ));
+    }
+
+    crate::audit::emit(
+        db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::SESSION_UNLOCKED_WITH_PIN,
+            actor_id: Some(user_id),
+            summary: "Session unlocked with PIN",
+            ..Default::default()
+        },
+    )
+    .await;
+
+    Ok(sm.session_info())
+}
+
+/// Unlock an idle-locked session using a 4-6 digit PIN.
+#[tauri::command]
+pub async fn unlock_session_with_pin(
+    payload: PinUnlockInput,
+    state: State<'_, AppState>,
+) -> AppResult<session_manager::SessionInfo> {
+    let pin_value = payload.pin.trim().to_string();
+    pin::validate_pin_format(&pin_value)?;
+
+    let user_id = {
+        let sm = state.session.read().await;
+        match &sm.current {
+            Some(s) if !s.is_expired() && s.is_idle_locked() => {
+                if s.pin_unlock_disabled {
+                    return Err(AppError::Auth(
+                        "PIN désactivé, utilisez le mot de passe.".into(),
+                    ));
+                }
+                s.user.user_id
+            }
+            Some(_) => {
+                return Err(AppError::Auth(
+                    "La session n'est pas verrouillée. Utilisez le flux normal.".into(),
+                ));
+            }
+            None => {
+                return Err(AppError::Auth(
+                    "Session expirée. Veuillez vous reconnecter.".into(),
+                ));
+            }
+        }
+    };
+
+    let pin_hash = session_manager::get_pin_hash_for_user(&state.db, user_id)
+        .await?
+        .ok_or_else(|| AppError::Auth("Aucun PIN configuré pour cet utilisateur.".into()))?;
+
+    let valid = pin::verify_pin(&pin_value, &pin_hash)?;
+
+    let info = {
+        let mut sm = state.session.write().await;
+        match &sm.current {
+            Some(s) if !s.is_expired() && s.is_idle_locked() => {
+                if s.pin_unlock_disabled {
+                    return Err(AppError::Auth(
+                        "PIN désactivé, utilisez le mot de passe.".into(),
+                    ));
+                }
+            }
+            Some(_) => {
+                return Err(AppError::Auth(
+                    "La session n'est pas verrouillée. Utilisez le flux normal.".into(),
+                ));
+            }
+            None => {
+                return Err(AppError::Auth(
+                    "Session expirée. Veuillez vous reconnecter.".into(),
+                ));
+            }
+        }
+
+        if !valid {
+            if let Some(s) = &mut sm.current {
+                s.pin_failed_attempts = s.pin_failed_attempts.saturating_add(1);
+                if s.pin_failed_attempts >= 3 {
+                    s.pin_unlock_disabled = true;
+                    return Err(AppError::Auth(
+                        "PIN désactivé, utilisez le mot de passe.".into(),
+                    ));
+                }
+            }
+
+            return Err(AppError::Auth("PIN incorrect.".into()));
+        }
+
+        if let Some(s) = &mut sm.current {
+            s.pin_failed_attempts = 0;
+            s.pin_unlock_disabled = false;
+        }
+
+        if !sm.unlock_session() {
+            return Err(AppError::Auth(
+                "Session expirée. Veuillez vous reconnecter.".into(),
+            ));
+        }
+
+        sm.session_info()
+    };
+
+    crate::audit::emit(
+        &state.db,
+        crate::audit::AuditEvent {
+            event_type: crate::audit::event_type::SESSION_UNLOCKED_WITH_PIN,
+            actor_id: Some(user_id),
+            summary: "Session unlocked with PIN",
+            ..Default::default()
+        },
+    )
+    .await;
+
+    Ok(info)
+}
+
 // ── Force Change Password ─────────────────────────────────────────────────────
 
 /// Input for the `force_change_password` command.
@@ -404,11 +892,9 @@ pub async fn force_change_password(
 
     // Validate password strength (minimum 8 characters)
     let new_password = payload.new_password.trim();
-    if new_password.len() < 8 {
-        return Err(AppError::ValidationFailed(vec![
-            "Le mot de passe doit contenir au moins 8 caract\u{00e8}res.".into(),
-        ]));
-    }
+    let policy = password_policy::PasswordPolicy::load(&state.db).await;
+    password_policy::validate_password_strength(new_password, &policy)
+        .map_err(AppError::ValidationFailed)?;
 
     // Hash the new password with argon2id
     let new_hash = password::hash_password(new_password)?;
@@ -422,9 +908,15 @@ pub async fn force_change_password(
             r"UPDATE user_accounts
                SET password_hash = ?,
                    force_password_change = 0,
+                   password_changed_at = ?,
                    updated_at = ?
                WHERE id = ?",
-            [new_hash.into(), now.clone().into(), user.user_id.into()],
+            [
+                new_hash.into(),
+                now.clone().into(),
+                now.clone().into(),
+                user.user_id.into(),
+            ],
         ))
         .await?;
 
@@ -432,6 +924,7 @@ pub async fn force_change_password(
     let mut sm = state.session.write().await;
     if let Some(session) = &mut sm.current {
         session.user.force_password_change = false;
+        session.password_expires_in_days = None;
     }
 
     crate::audit::emit(

@@ -37,6 +37,8 @@ async fn t1_login_success_creates_session() {
         display_name,
         is_admin,
         force_password_change: force_pw,
+        tenant_id: "tenant-test".into(),
+        token_tenant_id: "tenant-test".into(),
     });
 
     session_manager::record_successful_login(&db, user_id)
@@ -112,6 +114,8 @@ async fn t4_logout_clears_session() {
         display_name,
         is_admin,
         force_password_change: force_pw,
+        tenant_id: "tenant-test".into(),
+        token_tenant_id: "tenant-test".into(),
     });
     assert!(mgr.is_authenticated(), "T4: should be authenticated after login");
 
@@ -146,20 +150,25 @@ async fn t5_audit_login_success_event() {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT event_type, actor_id, summary FROM audit_events WHERE event_type = ?",
+            "SELECT action_code, actor_id, details_json FROM audit_events WHERE action_code = ?",
             [audit::event_type::LOGIN_SUCCESS.into()],
         ))
         .await
         .expect("query")
         .expect("T5 FAIL: no login.success row in audit_events");
 
-    let et: String = row.try_get("", "event_type").unwrap();
-    let actor: String = row.try_get("", "actor_id").unwrap();
-    let summary: String = row.try_get("", "summary").unwrap();
+    let code: String = row.try_get("", "action_code").unwrap();
+    let actor: i64 = row.try_get("", "actor_id").unwrap();
+    let details_raw: String = row.try_get("", "details_json").unwrap();
+    let details: serde_json::Value = serde_json::from_str(&details_raw).expect("T5: details_json");
 
-    assert_eq!(et, "login.success", "T5 FAIL: event_type mismatch");
-    assert_eq!(actor, "1", "T5 FAIL: actor_id mismatch");
-    assert_eq!(summary, "Successful login", "T5 FAIL: summary mismatch");
+    assert_eq!(code, "login.success", "T5 FAIL: action_code mismatch");
+    assert_eq!(actor, 1, "T5 FAIL: actor_id mismatch");
+    assert_eq!(
+        details["summary"].as_str(),
+        Some("Successful login"),
+        "T5 FAIL: summary in details_json mismatch"
+    );
 }
 
 // ── T6 — Audit event for login.failure has summary + detail_json ───────
@@ -182,23 +191,30 @@ async fn t6_audit_login_failure_event() {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT event_type, summary, detail_json FROM audit_events WHERE event_type = ?",
+            "SELECT action_code, details_json FROM audit_events WHERE action_code = ?",
             [audit::event_type::LOGIN_FAILURE.into()],
         ))
         .await
         .expect("query")
         .expect("T6 FAIL: no login.failure row in audit_events");
 
-    let et: String = row.try_get("", "event_type").unwrap();
-    assert_eq!(et, "login.failure", "T6 FAIL: event_type mismatch");
+    let code: String = row.try_get("", "action_code").unwrap();
+    assert_eq!(code, "login.failure", "T6 FAIL: action_code mismatch");
 
-    let summary: String = row.try_get("", "summary").unwrap();
-    assert!(!summary.is_empty(), "T6 FAIL: summary should not be empty");
+    let details_raw: String = row.try_get("", "details_json").unwrap();
+    let details: serde_json::Value = serde_json::from_str(&details_raw).expect("T6: details_json");
+    assert_eq!(
+        details["summary"].as_str(),
+        Some("Failed login attempt — wrong password"),
+        "T6 FAIL: summary in details_json mismatch"
+    );
 
-    let detail: String = row.try_get("", "detail_json").unwrap();
+    let nested = details
+        .get("detail")
+        .expect("T6 FAIL: expected detail object in details_json");
     assert!(
-        detail.contains("username_provided"),
-        "T6 FAIL: detail_json missing username_provided"
+        nested.to_string().contains("username_provided"),
+        "T6 FAIL: nested detail missing username_provided"
     );
 }
 
@@ -221,6 +237,8 @@ async fn t7_session_expires_in_8_hours() {
         display_name,
         is_admin,
         force_password_change: force_pw,
+        tenant_id: "tenant-test".into(),
+        token_tenant_id: "tenant-test".into(),
     });
     let after = chrono::Utc::now();
 

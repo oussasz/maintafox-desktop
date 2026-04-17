@@ -1,1 +1,10 @@
-{}
+{
+  "page": {
+    "title": "Archivage",
+    "subtitle": "Consulter les archives, vérifier l'intégrité et gérer les politiques de rétention."
+  },
+  "tabs": {
+    "explorer": "Explorateur",
+    "retention": "Politiques de rétention"
+  }
+}

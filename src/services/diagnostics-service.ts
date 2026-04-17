@@ -43,6 +43,7 @@ const SupportBundleSchema = z.object({
   app_info: DiagnosticsAppInfoSchema,
   log_lines: z.array(z.string()),
   collection_warnings: z.array(z.string()),
+  runbook_links: z.array(z.string()).optional(),
 });
 
 // ── Service functions — Integrity ─────────────────────────────────────────

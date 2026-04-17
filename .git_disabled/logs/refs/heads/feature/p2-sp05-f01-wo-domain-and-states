@@ -1,0 +1,7 @@
+0000000000000000000000000000000000000000 99f572b222cc09aba303029d1e4864545cb9779c oussasz <brahimi.oussamaa@gmail.com> 1775837101 +0100	branch: Created from HEAD
+99f572b222cc09aba303029d1e4864545cb9779c 4bbc026000677118102194ff7628e0e0dd08e89f oussasz <brahimi.oussamaa@gmail.com> 1775837258 +0100	commit: feat: complete P2-SP05-F01 WO domain model & SP04 DI screening fix
+4bbc026000677118102194ff7628e0e0dd08e89f 0130aa4d22b848899e05798cfabd7b8edbb03c24 oussasz <brahimi.oussamaa@gmail.com> 1775849312 +0100	commit: feat: p2-sp05-f02 gap review — TS/Rust tests, WoDetailDialog tab fix, planning cleanup
+0130aa4d22b848899e05798cfabd7b8edbb03c24 571ba011a024c0423b916305599cda71ae136581 oussasz <brahimi.oussamaa@gmail.com> 1775907421 +0100	commit: feat(wo): Phase 2 SP05 Files 01-03 — WO domain, execution, closeout & analytics
+571ba011a024c0423b916305599cda71ae136581 d3f8a6e7ddf9e46fb1a8243f7574d27ff6860b6a oussasz <brahimi.oussamaa@gmail.com> 1775950000 +0100	commit: feat(wo): complete Sub-phase 05 Sprint S5 — 41 gap fixes, V1-V5 verification, i18n remediation
+d3f8a6e7ddf9e46fb1a8243f7574d27ff6860b6a d8302479c316bc029e3f108335330777684beda8 oussasz <brahimi.oussamaa@gmail.com> 1776016308 +0100	commit: feat(rbac): SP06-F02 professional review — gap fixes and hardening
+d8302479c316bc029e3f108335330777684beda8 eca899851cda28119d2e12992b3486dc3d3536c1 oussasz <brahimi.oussamaa@gmail.com> 1776032404 +0100	commit: feat(sp06): harden admin governance flows and close V1-V6 runtime gaps

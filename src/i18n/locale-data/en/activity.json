@@ -1,1 +1,10 @@
-{}
+{
+  "page": {
+    "title": "Activity & audit",
+    "subtitle": "Operational feed and immutable audit trail for security and compliance."
+  },
+  "tabs": {
+    "activity": "Activity feed",
+    "audit": "Audit log"
+  }
+}

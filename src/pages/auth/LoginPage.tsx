@@ -1,4 +1,4 @@
-import { ArrowRight, Eye, EyeOff, Lock, ShieldCheck, User } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Lock, ShieldAlert, ShieldCheck, User } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
@@ -17,6 +17,8 @@ export function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const tenantScopeDenied = session.errorCode === "TENANT_SCOPE_VIOLATION";
+  const staleSessionClaims = session.errorCode === "SESSION_CLAIM_INVALID";
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -112,14 +114,44 @@ export function LoginPage() {
           </div>
 
           {/* Error */}
-          {session.error && (
+          {session.error && session.errorCode === "ACCOUNT_LOCKED" ? (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700"
+            >
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{session.error}</span>
+            </div>
+          ) : session.error && tenantScopeDenied ? (
+            <div
+              role="alert"
+              className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+            >
+              <p className="font-medium">Compte non autorisé pour le tenant activé</p>
+              <p className="mt-1">{session.error}</p>
+              <p className="mt-1 text-xs">
+                Action: utilisez un compte autorisé pour ce tenant ou réactivez l'appareil avec la clé du bon tenant.
+              </p>
+            </div>
+          ) : session.error && staleSessionClaims ? (
+            <div
+              role="alert"
+              className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800"
+            >
+              <p className="font-medium">Contexte de session périmé</p>
+              <p className="mt-1">{session.error}</p>
+              <p className="mt-1 text-xs">
+                Action: reconnectez-vous pour rafraîchir les claims tenant après un changement d'activation.
+              </p>
+            </div>
+          ) : session.error ? (
             <div
               role="alert"
               className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600"
             >
               {session.error}
             </div>
-          )}
+          ) : null}
 
           {/* Submit */}
           <button

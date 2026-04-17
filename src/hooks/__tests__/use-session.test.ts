@@ -54,6 +54,30 @@ describe("useSession", () => {
     expect(result.current.error).toBeTruthy();
   });
 
+  it("captures typed tenant mismatch error code for actionable UX", async () => {
+    mockInvoke
+      .mockResolvedValueOnce(fixtures.noSession)
+      .mockRejectedValueOnce({
+        code: "TENANT_SCOPE_VIOLATION",
+        message: "Compte non autorisé pour le tenant activé.",
+      });
+
+    const { result } = renderHook(() => useSession());
+    await act(async () => {});
+
+    await act(async () => {
+      try {
+        await result.current.login({ username: "admin", password: "wrong-tenant" });
+      } catch {
+        // expected
+      }
+    });
+
+    expect(result.current.errorCode).toBe("TENANT_SCOPE_VIOLATION");
+    expect(result.current.error).toContain("tenant");
+    expect(result.current.info?.is_authenticated).toBe(false);
+  });
+
   it("logout clears session", async () => {
     mockInvoke
       .mockResolvedValueOnce(fixtures.authenticatedSession) // initial load
