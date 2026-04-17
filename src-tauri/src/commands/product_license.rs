@@ -8,6 +8,7 @@ use tauri::State;
 use crate::errors::{AppError, AppResult};
 use crate::settings;
 use crate::state::AppState;
+use crate::require_session;
 
 const PRODUCT_LICENSE_ONBOARDING_KEY: &str = "product.license_onboarding";
 const PRODUCT_LICENSE_SCOPE: &str = "device";
@@ -515,4 +516,19 @@ pub async fn get_product_license_diagnostics(state: State<'_, AppState>) -> AppR
         diagnostics: record.diagnostics,
         has_activation_claim: record.activation_claim.is_some(),
     }))
+}
+
+/// Bearer token from the last successful activation claim (`/api/v1/activation/claim`).
+/// Used by the control-plane sync transport; requires an authenticated desktop session.
+#[tauri::command]
+pub async fn get_control_plane_activation_bearer_token(state: State<'_, AppState>) -> AppResult<Option<String>> {
+    let _session = require_session!(state);
+    let record = load_state_record(&state).await?;
+    let Some(rec) = record else {
+        return Ok(None);
+    };
+    if rec.status != ProductLicenseActivationStatus::Active {
+        return Ok(None);
+    }
+    Ok(rec.activation_claim.map(|c| c.activation_token))
 }

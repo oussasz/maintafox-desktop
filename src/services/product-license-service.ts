@@ -80,9 +80,13 @@ export async function getProductLicenseOnboardingState(): Promise<ProductLicense
   return ProductLicenseOnboardingStateSchema.parse(raw);
 }
 
-function apiBase(): string {
+/** Control-plane API origin (activation, sync exchange). Matches VPS deployment URL. */
+export function controlPlaneApiBase(): string {
   const fromEnv = (import.meta.env["VITE_ADMIN_API_BASE_URL"] as string | undefined)?.trim();
-  return (fromEnv && fromEnv.length > 0 ? fromEnv : "http://api.maintafox.systems").replace(/\/$/, "");
+  return (fromEnv && fromEnv.length > 0 ? fromEnv : "http://api.maintafox.systems").replace(
+    /\/$/,
+    "",
+  );
 }
 
 export async function claimProductActivation(input: {
@@ -91,7 +95,7 @@ export async function claimProductActivation(input: {
   machine_label?: string;
   app_version?: string;
 }): Promise<ProductActivationClaim> {
-  const res = await fetch(`${apiBase()}/api/v1/activation/claim`, {
+  const res = await fetch(`${controlPlaneApiBase()}/api/v1/activation/claim`, {
     method: "POST",
     headers: {
       Accept: "application/json",

@@ -178,6 +178,82 @@ Returns array with:
 
 ---
 
+## 5a) Tenant runtime sync exchange (activation bearer)
+
+Pushes pending **local outbox** rows to the control plane and returns a batch the desktop applies via `apply_sync_batch` (`ApplySyncBatchInput`). **Auth:** JWT from `POST /api/v1/activation/claim` (`kind: "activation"` in payload — same signing secret as vendor user JWT, different claims shape). **Not** the vendor console operator token.
+
+**CORS:** Browser and Tauri `fetch` clients must send an `Origin` allowed by the API. Set env **`CORS_ORIGIN`** to a comma-separated list (no spaces required); the server **splits on comma, trims** each segment, and drops empty entries. Example: `https://console.maintafox.systems,http://localhost:1420,tauri://localhost`.
+
+### `POST /api/v1/sync/exchange` (activation Bearer required)
+
+**Method:** `POST`
+
+**Headers**
+- `Authorization: Bearer <activation_token>`
+- `Content-Type: application/json`
+- `Idempotency-Key: optional` (client-generated UUID recommended for safe retries)
+
+**Request**
+```json
+{
+  "protocol_version": "v1",
+  "checkpoint_token": "string | null",
+  "idempotency_key": "string(min 8, max 128)",
+  "outbox_batch": [
+    {
+      "idempotency_key": "string",
+      "entity_type": "string",
+      "entity_sync_id": "string",
+      "operation": "create | update | delete | upsert | archive",
+      "row_version": 0,
+      "payload_json": "string(JSON document)",
+      "payload_hash": "string"
+    }
+  ]
+}
+```
+
+`outbox_batch` may be empty (checkpoint / pull-only round-trip).
+
+**Response 200** — matches desktop `ApplySyncBatchInput`:
+```json
+{
+  "protocol_version": "v1",
+  "server_batch_id": "string",
+  "checkpoint_token": "string",
+  "acknowledged_items": [
+    {
+      "idempotency_key": "string",
+      "entity_sync_id": "string",
+      "operation": "create | update | delete | upsert | archive"
+    }
+  ],
+  "rejected_items": [],
+  "inbound_items": [
+    {
+      "entity_type": "string",
+      "entity_sync_id": "string",
+      "operation": "create | update | delete | upsert | archive",
+      "row_version": 0,
+      "payload_json": "string"
+    }
+  ],
+  "policy_metadata_json": null
+}
+```
+
+**Checkpoint token:** server issues monotonic tokens of the form `cp-<tenant_id>-<seq>`; desktop stores the latest via `sync_checkpoint` after a successful `apply_sync_batch`.
+
+**Errors**
+- `400 invalid_body` (Zod validation)
+- `401 missing_token` | `401 invalid_token`
+- `403 invalid_token` (wrong JWT kind / claims)
+- `403 activation_revoked` (machine or license no longer valid)
+
+**Inbound fan-out (additive evolution):** `inbound_items` may be populated when the mirror fans out changes from other machines or vendor workflows. Empty array is valid for v1 MVP.
+
+---
+
 ## 6) Desktop Integration Freeze (Local Command Boundary)
 
 Desktop `ProductLicenseGate` -> `claimProductActivation()` -> Tauri command:

@@ -2,13 +2,6 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import {
-  getSyncStateSummary,
-  listSyncConflicts,
-  listSyncReplayRuns,
-  replaySyncFailures,
-  resolveSyncConflict,
-} from "@/services/sync-service";
-import {
   computeRetryDelayMs,
   defaultRetryPolicy,
   defaultSyncPolicyControls,
@@ -20,9 +13,21 @@ import {
   type SyncRunMode,
   type SyncRuntimeState,
 } from "@/services/sync-orchestrator-core";
+import {
+  getSyncStateSummary,
+  listSyncConflicts,
+  listSyncReplayRuns,
+  replaySyncFailures,
+  resolveSyncConflict,
+} from "@/services/sync-service";
+import { exchangeControlPlaneSyncRound } from "@/services/sync-vps-transport-service";
 import { useAppStore } from "@/store/app-store";
 import { toErrorMessage } from "@/utils/errors";
-import type { ReplaySyncFailuresInput, ResolveSyncConflictInput, SyncConflictRecord } from "@shared/ipc-types";
+import type {
+  ReplaySyncFailuresInput,
+  ResolveSyncConflictInput,
+  SyncConflictRecord,
+} from "@shared/ipc-types";
 
 type TimelineSeverity = "info" | "warning" | "error";
 
@@ -225,7 +230,14 @@ async function executeSyncRun(mode: SyncRunMode) {
       event: "run_started",
       message: `Sync cycle started (${mode}).`,
     });
-    reflectAppSyncState("running", state.pendingBacklog, state.lastSuccessAt, null, null, state.retry.attempt);
+    reflectAppSyncState(
+      "running",
+      state.pendingBacklog,
+      state.lastSuccessAt,
+      null,
+      null,
+      state.retry.attempt,
+    );
     return {
       runtimeState: "running",
       activeMode: mode,
@@ -237,6 +249,7 @@ async function executeSyncRun(mode: SyncRunMode) {
   });
 
   try {
+    await exchangeControlPlaneSyncRound();
     const summary = await getSyncStateSummary();
     const conflicts = await listSyncConflicts({
       statuses: ["new", "triaged", "escalated"],
@@ -271,7 +284,14 @@ async function executeSyncRun(mode: SyncRunMode) {
         nextRetryAt: null,
         lastError: null,
       };
-      reflectAppSyncState(runtimeState, summary.pending_outbox_count, finishedAt, null, null, retry.attempt);
+      reflectAppSyncState(
+        runtimeState,
+        summary.pending_outbox_count,
+        finishedAt,
+        null,
+        null,
+        retry.attempt,
+      );
       return {
         runtimeState,
         blockerReason: null,
@@ -316,7 +336,14 @@ async function executeSyncRun(mode: SyncRunMode) {
           error: message,
         },
       });
-      reflectAppSyncState(runtimeState, state.pendingBacklog, state.lastSuccessAt, message, null, nextAttempt);
+      reflectAppSyncState(
+        runtimeState,
+        state.pendingBacklog,
+        state.lastSuccessAt,
+        message,
+        null,
+        nextAttempt,
+      );
       return {
         runtimeState,
         lastRunFinishedAt: nowIso(),
@@ -406,9 +433,12 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
           onlineHandlerBound = true;
         }
         clearHeartbeatTimer();
-        heartbeatTimer = setInterval(() => {
-          void get().runSyncNow("heartbeat_refresh");
-        }, Math.max(15, get().policy.heartbeatIntervalSeconds) * 1000);
+        heartbeatTimer = setInterval(
+          () => {
+            void get().runSyncNow("heartbeat_refresh");
+          },
+          Math.max(15, get().policy.heartbeatIntervalSeconds) * 1000,
+        );
         void get().runSyncNow("bootstrap_restore");
       },
 
@@ -517,7 +547,9 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
         const correlationId = newCorrelationId();
         const resolved = await resolveSyncConflict(input);
         set((state) => ({
-          conflictInbox: state.conflictInbox.map((item) => (item.id === resolved.id ? resolved : item)),
+          conflictInbox: state.conflictInbox.map((item) =>
+            item.id === resolved.id ? resolved : item,
+          ),
           timeline: pushTimeline(state.timeline, {
             correlationId,
             severity: "info",
@@ -607,16 +639,14 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
           state.telemetry.runsSucceeded > 0
             ? Math.round(state.telemetry.totalDurationMs / state.telemetry.runsSucceeded)
             : 0;
-        const timeline = state.timeline
-          .slice(-120)
-          .map((event) => ({
-            ...event,
-            message: redactSecrets(event.message),
-            details:
-              event.details === undefined
-                ? undefined
-                : JSON.parse(redactSecrets(JSON.stringify(event.details))),
-          }));
+        const timeline = state.timeline.slice(-120).map((event) => ({
+          ...event,
+          message: redactSecrets(event.message),
+          details:
+            event.details === undefined
+              ? undefined
+              : JSON.parse(redactSecrets(JSON.stringify(event.details))),
+        }));
         return {
           generatedAt: nowIso(),
           machineContext: {
