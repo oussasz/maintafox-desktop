@@ -14,77 +14,46 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-
-#### SP05 — Work Order Domain Model and Execution States (File 01, Sprints S1–S4)
-- Rust: migration 022 — full `work_orders` schema (replacing `work_order_stubs`),
-  `work_order_types` (7 system types), `work_order_statuses` (12-state machine),
-  `urgency_levels` (5 levels), `delay_reason_codes` (10 codes),
-  `wo_state_transition_log` (append-only audit)
-- Rust: `wo/domain.rs` — `WoStatus` 12-state enum with PRD §6.5 transition guards,
-  `WoMacroState`, `guard_wo_transition()`, `generate_wo_code()`, full `WorkOrder` struct
-- Rust: `wo/queries.rs` — `list_work_orders` (filtered, joined), `get_work_order`,
-  `get_wo_transition_log`, `create_work_order`, `update_wo_draft_fields`,
-  `cancel_work_order` with optimistic concurrency
-- Rust: `commands/wo.rs` — 5 IPC commands (`list_wo`, `get_wo`, `create_wo`,
-  `update_wo_draft`, `cancel_wo`) with permission-gated access (`ot.*` domain)
-- Frontend: `wo-service.ts` — typed Tauri invoke wrappers with Zod validation
-  for all WO commands
-- Frontend: `wo-store.ts` — Zustand store with list, pagination, filters, create/edit
-  form state, active WO detail, loading/saving/error pattern
-- Frontend: `WorkOrdersPage.tsx` — full WO workspace with 4 view tabs
-  (list, kanban, calendar, dashboard), multi-select filters, DI management panel
-- Frontend: `WoCreateForm.tsx` — create/edit-draft form with type, equipment,
-  urgency, planning fields
-- Frontend: `WoDiManagementPanel.tsx` — collapsible banner for unscheduled
-  DI-sourced work orders with quick-schedule action
-- Frontend: 8 WO component files updated for field rename alignment
-  (`WoDetailDialog`, `WoContextMenu`, `WoArchivePanel`, `WoPlanningPanel`,
-  `WoExecutionControls`, `WoPrintFiche`)
-- i18n: `ot.json` (FR/EN) — page, form, action, and DI panel labels including `edit` key
-- IPC types: `WorkOrder`, `WoListFilter`, `WoListPage`, `WoTransitionRow`,
-  `WoCreateInput`, `WoDraftUpdateInput`, `WoCancelInput`, `WoDetailPayload`
-
-#### SP04 — DI Review/Approval V2 Verification Fixes
-- Rust: `di/conversion.rs` — rewritten to insert into `work_orders` table (not
-  dropped `work_order_stubs`), uses `wo_state_transition_log`, generates `OT-NNNN` codes
-- Rust: `di/review.rs` — `classification_code_id` made optional in `DiScreenInput`;
-  validation skipped when `None`; UPDATE uses `COALESCE` for conditional persistence
-- Frontend: `StepUpDialog.tsx` — rewritten from plain div to shadcn Dialog (Radix-based)
-  with lockout after 3 failed attempts, 120-second window
-- Frontend: `DiApprovalDialog.tsx` — 2-step approval flow integrating StepUpDialog,
-  store error display
-- Frontend: `DiReviewPanel.tsx` — removed hard dependency on WORK.FAILURE_MODES
-  reference domain; classification forwarded from DI fields when available
-- Frontend: `di-review-store.ts` — added `awaiting_approval` to review queue filter;
-  screen action returns updated DI; approve chains `convertDiToWo()`
-- Frontend: `use-step-up.tsx` — fixed value import and error detection
-
-### Fixed
-- SP06 admin role management runtime gaps (Supervisor V1-V6 verification):
-  Role detail loading, deletion visibility, and step-up mutation flows now align with
-  backend command contracts and UI expectations.
-- Frontend IPC contract hardening in `rbac-service.ts`:
-  direct Tauri command argument payloads now use camelCase keys (`roleId`, `userId`,
-  `assignmentId`, `sessionId`, `policyId`, `roleIds`, `userIds`) to prevent runtime
-  "missing required key" command errors.
-- Role retirement behavior consistency:
-  retired roles are now excluded from active role list/detail/mutation paths so deleting
-  a custom role removes it from the visible role list after refresh.
-
-- DI review queue dead-end: `loadReviewQueue` only loaded `pending_review` and
-  `returned_for_clarification` but approve button required `awaiting_approval` —
-  added `awaiting_approval` to status filter
-- DI quick-screen button silently failed when `classification_code_id` was required
-  but WORK.FAILURE_MODES domain had no seeded data — made field optional in backend
-- WO conversion inserted into dropped `work_order_stubs` table — rewritten for
-  `work_orders`; transition log uses correct `wo_state_transition_log` table name
-- StepUpDialog trapped behind Radix focus lock of parent dialog — rewritten as
-  independent shadcn Dialog rendered before parent in JSX
-- Org/asset test files: added missing trailing newlines and test completions
-- Profile page infinite loading — 4 missing Rust IPC commands now implemented
-- `SessionHistoryEntry.id` type mismatch — `app_sessions.id` is TEXT (UUID), changed
-  Zod schema to `z.union([z.number(), z.string()])` and TS type to `number | string`
-
+- Org: Structure model service — versioned schema lifecycle (draft → active →
+  superseded → archived) with atomic publish transition (P2-SP01-F01-S1)
+- Org: Node type service — tenant-defined vocabulary with 5 capability flags
+  (`can_host_assets`, `can_own_work`, `can_carry_cost_center`, `can_aggregate_kpis`,
+  `can_receive_permits`), root-type uniqueness, draft-model guard (P2-SP01-F01-S2)
+- Org: Relationship rules service — parent-child type pairing rules with duplicate
+  prevention, draft-model guard, and JOINed label denormalization (P2-SP01-F01-S2)
+- Org: 11 IPC commands (`list_org_structure_models`, `get_active_org_structure_model`,
+  `create_org_structure_model`, `publish_org_structure_model`,
+  `archive_org_structure_model`, `list_org_node_types`, `create_org_node_type`,
+  `deactivate_org_node_type`, `list_org_relationship_rules`,
+  `create_org_relationship_rule`, `delete_org_relationship_rule`) with `org.view` /
+  `org.admin` permission gates (P2-SP01-F01-S3)
+- Org: `org-service.ts` — frontend IPC wrappers for all 11 org commands (P2-SP01-F01-S3)
+- Org: `org-store.ts` — Zustand store caching active model, node types, and relationship
+  rules with `loadActiveModelConfig()` action (P2-SP01-F01-S3)
+- Org: `org.view`, `org.manage`, `org.admin` permission seeds; `org.admin` marked
+  dangerous with step-up required (P2-SP01-F01-S3)
+- Org: 29 integration tests covering structure model lifecycle, node type CRUD,
+  capability flags, root-type uniqueness, relationship rules, and draft-model
+  guards (P2-SP01-F01)
+- Shared: `OrgStructureModel`, `OrgNodeType`, `OrgRelationshipRule`,
+  `CreateStructureModelPayload`, `CreateOrgNodeTypePayload`,
+  `CreateRelationshipRulePayload` types added to `shared/ipc-types.ts` (P2-SP01-F01-S3)
+- Shell: Role-scoped sidebar — nav items filtered by `usePermissions().can()` with
+  `requiredPermission` field on 24 of 27 items; 3 always-visible (dashboard,
+  notifications, profile); empty groups auto-hidden (P2-SP00-F03-S1)
+- Shell: Command palette (`⌘K` / `Ctrl+K`) — Dialog-based search over nav-registry
+  with bilingual matching, permission filtering, and keyboard navigation (P2-SP00-F03-S2)
+- Shell: `useNotificationCount` polling hook — queries `get_unread_notification_count`
+  IPC every 30 s with silent fallback to 0 when backend unavailable (P2-SP00-F03-S3)
+- Shell: `useDeviceTrustStatus` hook — fetches device trust status from Rust backend
+  with silent fallback to `unknown` (P2-SP00-F03-S3)
+- Shell: User menu enhancements — session time-remaining indicator and device trust
+  badge (`SessionTimeIndicator`, `DeviceTrustBadge`) in TopBar dropdown (P2-SP00-F03-S3)
+- Shell: Sidebar verification tests — 4 tests covering admin/non-admin/always-visible/
+  empty-group scenarios (P2-SP00-F03-S1)
+- i18n: Added `commandPalette.title`, `session.timeRemaining`, `session.expired`,
+  `session.active`, `device.trusted`, `device.untrusted` keys to FR and EN shell
+  namespaces (P2-SP00-F03)
 - Monorepo scaffold: Tauri 2.x + React 18 + TypeScript 5 workspace structure
 - Rust application core with `AppError` typed error system and `AppResult<T>` alias
 - `health_check` IPC command with typed `HealthCheckResponse` contract in `shared/ipc-types.ts`
@@ -136,29 +105,6 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Frontend: `src/vite-env.d.ts` — Vite client type reference for asset imports
 - Docs: `IPC_COMMAND_REGISTRY.md` updated to 3 commands with summary table and rules
 - Shared: `AppInfoResponse` and `TaskStatusEntry` types added to `shared/ipc-types.ts`
-- DI domain model: 11-state machine with guard_transition, code generation, and
-  immutability checks (`di/domain.rs`, migration 017)
-- DI review workflow: screen, return, reject, approve, defer, reactivate commands
-  with review events and state transition logging (`di/review.rs`, migration 018)
-- DI attachments: upload, list, delete with binary IPC transport and size validation
-  (`di/attachments.rs`, migration 019)
-- DI SLA engine: rule resolution by urgency+origin, breach detection, status computation
-  (`di/sla.rs`, migration 019)
-- DI WO conversion: approved DI to work_order_stubs with step-up guard and immutability
-  enforcement (`di/conversion.rs`, migration 019)
-- DI audit trail: append-only `di_change_events` ledger with fire-and-log writer;
-  records both successful and blocked dangerous actions (`di/audit.rs`, migration 020)
-- DI permission domain: 7 canonical `di.*` permissions seeded via migration 020
-  (di.view, di.create, di.create.own, di.review, di.approve, di.convert, di.admin)
-- DI test suite: 12 tests covering state machine, SLA, optimistic locking, full lifecycle,
-  return/resubmit, and rejection paths (`di/tests.rs`)
-- DI frontend services: di-service.ts, di-review-service.ts, di-attachment-service.ts,
-  di-conversion-service.ts, di-audit-service.ts — all Zod-validated IPC wrappers
-- DI frontend components: DiAttachmentPanel (drag-and-drop upload), WoConversionModal
-  (step-up guarded conversion), DiAuditTimeline (read-only vertical timeline with
-  action icons, apply_result badges, step-up badges), DiDetailPanel (tabbed detail
-  with Attachments and Audit Trail tabs)
-- 20 DI IPC commands registered in invoke_handler and IPC_COMMAND_REGISTRY.md
 
 ---
 
