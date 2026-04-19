@@ -22,6 +22,7 @@ import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { createDraftReferenceSet } from "@/services/reference-service";
 import {
@@ -145,11 +146,11 @@ export function ReferenceManagerPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      {/* ── Page header ────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border">
-        <div className="flex items-center gap-3 min-w-0">
-          <Database className="h-5 w-5 shrink-0 text-text-muted" />
+    <div className={mfLayout.moduleRoot}>
+      {/* ── Page header — DI/OT pattern ───────────────────────────────── */}
+      <div className={mfLayout.moduleHeader}>
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <Database className={mfLayout.moduleHeaderIcon} />
 
           {/* Breadcrumb */}
           <nav className="flex items-center gap-1.5 text-sm min-w-0">
@@ -186,7 +187,7 @@ export function ReferenceManagerPage() {
         </div>
 
         {/* Action buttons */}
-        <div className="flex items-center gap-2">
+        <div className={mfLayout.moduleHeaderActions}>
           <PermissionGate permission="ref.manage">
             <Button
               variant="outline"
@@ -196,10 +197,10 @@ export function ReferenceManagerPage() {
               disabled={
                 !selectedDomainId ||
                 !selectedSetId ||
-                ((selectedDomainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID &&
+                (selectedDomainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID &&
                   selectedSetId === INVENTORY_ARTICLE_FAMILY_SET_ID) ||
-                  (selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
-                    selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID))
+                (selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
+                  selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID)
               }
             >
               <Download className="h-3.5 w-3.5" />
@@ -222,9 +223,7 @@ export function ReferenceManagerPage() {
       {/* ── Two-pane workspace ─────────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0">
         {/* Left pane: domain browser */}
-        <DomainBrowserPanel
-          onCreateDraftSet={(domainId) => void handleCreateDraftSet(domainId)}
-        />
+        <DomainBrowserPanel onCreateDraftSet={(domainId) => void handleCreateDraftSet(domainId)} />
 
         {/* Right pane: value editor area */}
         <main className="flex-1 min-w-0">
@@ -258,13 +257,13 @@ export function ReferenceManagerPage() {
           selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
           selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID
         ) && (
-        <ReferenceImportWizard
-          domainId={selectedDomainId}
-          targetSetId={selectedSetId}
-          open={importOpen}
-          onOpenChange={setImportOpen}
-          onComplete={handleRefresh}
-        />
+          <ReferenceImportWizard
+            domainId={selectedDomainId}
+            targetSetId={selectedSetId}
+            open={importOpen}
+            onOpenChange={setImportOpen}
+            onComplete={handleRefresh}
+          />
         )}
     </div>
   );

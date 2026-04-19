@@ -5,12 +5,12 @@
  * All invoke() calls for SP02-F03 search operations are isolated here.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type { AssetSearchFilters, AssetSearchResult, AssetSuggestion } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const AssetSearchResultSchema = z.object({
   id: z.number(),
@@ -43,7 +43,7 @@ export const AssetSuggestionSchema = z.object({
   status_code: z.string(),
 });
 
-// ── Search command ────────────────────────────────────────────────────────────
+// â”€â”€ Search command â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function searchAssets(filters: AssetSearchFilters): Promise<AssetSearchResult[]> {
   const raw = await invoke<unknown>("search_assets", {
@@ -60,7 +60,7 @@ export async function searchAssets(filters: AssetSearchFilters): Promise<AssetSe
   return z.array(AssetSearchResultSchema).parse(raw) as AssetSearchResult[];
 }
 
-// ── Suggestion commands ───────────────────────────────────────────────────────
+// â”€â”€ Suggestion commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function suggestAssetCodes(
   prefix: string,

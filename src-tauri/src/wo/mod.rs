@@ -12,6 +12,7 @@ pub mod analytics;
 pub mod stats;
 pub mod audit;
 pub mod permissions;
+pub mod sync_stage;
 
 #[cfg(test)]
 mod audit_tests;
@@ -25,3 +26,5 @@ mod closeout_tests;
 mod analytics_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod gap06_regression_tests;

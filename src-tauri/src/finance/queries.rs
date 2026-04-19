@@ -1,6 +1,10 @@
+use hex;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, Value};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
+use crate::finance::sync_stage;
 use crate::finance::domain::{
     AcknowledgeBudgetAlertInput, BudgetActual, BudgetActualFilter, BudgetAlertConfig, BudgetAlertConfigFilter,
     BudgetAlertEvaluationResult, BudgetAlertEvent, BudgetAlertEventFilter, BudgetCommitment, BudgetCommitmentFilter,
@@ -10,10 +14,12 @@ use crate::finance::domain::{
     BudgetVersionFilter, CostCenter, CostCenterFilter, CreateBudgetActualInput, CreateBudgetAlertConfigInput,
     CreateBudgetCommitmentInput, CreateBudgetLineInput, CreateBudgetSuccessorInput, CreateBudgetVarianceReviewInput,
     CreateBudgetVersionInput, CreateCostCenterInput, ErpApprovedReforecastExportItem, ErpCostCenterMasterRecordInput,
-    ErpMasterImportResult, ErpPostedActualExportItem, EvaluateBudgetAlertsInput, ExportBudgetReportPackInput,
-    ForecastRun, GenerateBudgetForecastInput, ImportErpCostCenterMasterInput, PostBudgetActualInput,
-    ReverseBudgetActualInput, TransitionBudgetVarianceReviewInput, TransitionBudgetVersionLifecycleInput,
-    UpdateBudgetAlertConfigInput, UpdateBudgetLineInput, UpdateBudgetVersionInput, UpdateCostCenterInput,
+    ErpExportBatchResult, ErpMasterImportResult, ErpPostedActualExportItem, EvaluateBudgetAlertsInput,
+    ExportBudgetReportPackInput, ForecastRun, GenerateBudgetForecastInput, ImportErpCostCenterMasterInput,
+    IntegrationException, IntegrationExceptionFilter, PostBudgetActualInput, PostedExportBatch, PostedExportBatchFilter,
+    RecordErpExportBatchInput, ReverseBudgetActualInput, TransitionBudgetVarianceReviewInput,
+    TransitionBudgetVersionLifecycleInput, UpdateBudgetAlertConfigInput, UpdateBudgetLineInput,
+    UpdateBudgetVersionInput, UpdateCostCenterInput, UpdateIntegrationExceptionInput,
 };
 
 fn map_cost_center(row: &QueryResult) -> AppResult<CostCenter> {
@@ -37,6 +43,7 @@ fn map_cost_center(row: &QueryResult) -> AppResult<CostCenter> {
 fn map_budget_version(row: &QueryResult) -> AppResult<BudgetVersion> {
     Ok(BudgetVersion {
         id: row.try_get("", "id")?,
+        entity_sync_id: row.try_get("", "entity_sync_id")?,
         fiscal_year: row.try_get("", "fiscal_year")?,
         scenario_type: row.try_get("", "scenario_type")?,
         version_no: row.try_get("", "version_no")?,
@@ -63,6 +70,7 @@ fn map_budget_version(row: &QueryResult) -> AppResult<BudgetVersion> {
 fn map_budget_line(row: &QueryResult) -> AppResult<BudgetLine> {
     Ok(BudgetLine {
         id: row.try_get("", "id")?,
+        entity_sync_id: row.try_get("", "entity_sync_id")?,
         budget_version_id: row.try_get("", "budget_version_id")?,
         cost_center_id: row.try_get("", "cost_center_id")?,
         cost_center_code: row.try_get("", "cost_center_code")?,
@@ -261,6 +269,7 @@ fn map_budget_drilldown_row(row: &QueryResult) -> AppResult<BudgetDrilldownRow> 
 fn map_budget_alert_config(row: &QueryResult) -> AppResult<BudgetAlertConfig> {
     Ok(BudgetAlertConfig {
         id: row.try_get("", "id")?,
+        entity_sync_id: row.try_get("", "entity_sync_id")?,
         budget_version_id: row.try_get("", "budget_version_id")?,
         cost_center_id: row.try_get("", "cost_center_id")?,
         budget_bucket: row.try_get("", "budget_bucket")?,
@@ -282,6 +291,7 @@ fn map_budget_alert_config(row: &QueryResult) -> AppResult<BudgetAlertConfig> {
 fn map_budget_alert_event(row: &QueryResult) -> AppResult<BudgetAlertEvent> {
     Ok(BudgetAlertEvent {
         id: row.try_get("", "id")?,
+        entity_sync_id: row.try_get("", "entity_sync_id")?,
         alert_config_id: row.try_get("", "alert_config_id")?,
         budget_version_id: row.try_get("", "budget_version_id")?,
         cost_center_id: row.try_get("", "cost_center_id")?,
@@ -726,10 +736,12 @@ pub async fn create_budget_version(
     let scenario_type = required_trimmed("Scenario type", &input.scenario_type)?;
     let currency_code = required_trimmed("Currency code", &input.currency_code)?;
     let version_no = next_version_no(db, input.fiscal_year, &scenario_type).await?;
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO budget_versions (
+            entity_sync_id,
             fiscal_year,
             scenario_type,
             version_no,
@@ -742,8 +754,9 @@ pub async fn create_budget_version(
             baseline_reference,
             erp_external_ref,
             created_by_id
-         ) VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)",
+         ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)",
         [
+            entity_sync_id.into(),
             input.fiscal_year.into(),
             scenario_type.into(),
             version_no.into(),
@@ -759,7 +772,7 @@ pub async fn create_budget_version(
     ))
     .await?;
 
-    list_budget_versions(
+    let created = list_budget_versions(
         db,
         BudgetVersionFilter {
             fiscal_year: Some(input.fiscal_year),
@@ -770,7 +783,9 @@ pub async fn create_budget_version(
     .await?
     .into_iter()
     .find(|version| version.version_no == version_no)
-    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted budget version could not be reloaded.")))
+    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted budget version could not be reloaded.")))?;
+    sync_stage::stage_budget_version(db, &created).await?;
+    Ok(created)
 }
 
 pub async fn create_budget_successor_version(
@@ -794,10 +809,12 @@ pub async fn create_budget_successor_version(
         .transpose()?
         .unwrap_or(source.scenario_type.clone());
     let version_no = next_version_no(db, fiscal_year, &scenario_type).await?;
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO budget_versions (
+            entity_sync_id,
             fiscal_year,
             scenario_type,
             version_no,
@@ -811,8 +828,9 @@ pub async fn create_budget_successor_version(
             erp_external_ref,
             successor_of_version_id,
             created_by_id
-         ) VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
+            entity_sync_id.into(),
             fiscal_year.into(),
             scenario_type.clone().into(),
             version_no.into(),
@@ -857,15 +875,30 @@ pub async fn create_budget_successor_version(
             shutdown_package_ref,
             team_id,
             skill_pool_id,
-            labor_lane
+            labor_lane,
+            entity_sync_id
          )
          SELECT ?, cost_center_id, period_month, budget_bucket, planned_amount, source_basis, justification_note,
-                asset_family, work_category, shutdown_package_ref, team_id, skill_pool_id, labor_lane
+                asset_family, work_category, shutdown_package_ref, team_id, skill_pool_id, labor_lane,
+                lower(hex(randomblob(16)))
          FROM budget_lines
          WHERE budget_version_id = ?",
         [inserted.id.into(), input.source_version_id.into()],
     ))
     .await?;
+
+    sync_stage::stage_budget_version(db, &inserted).await?;
+    let copied_lines = list_budget_lines(
+        db,
+        BudgetLineFilter {
+            budget_version_id: Some(inserted.id),
+            ..BudgetLineFilter::default()
+        },
+    )
+    .await?;
+    for line in copied_lines {
+        sync_stage::stage_budget_line(db, &line).await?;
+    }
 
     Ok(inserted)
 }
@@ -927,7 +960,9 @@ pub async fn update_budget_version(
         ]));
     }
 
-    get_budget_version(db, version_id).await
+    let updated = get_budget_version(db, version_id).await?;
+    sync_stage::stage_budget_version(db, &updated).await?;
+    Ok(updated)
 }
 
 pub async fn transition_budget_version_lifecycle(
@@ -998,7 +1033,9 @@ pub async fn transition_budget_version_lifecycle(
         ]));
     }
 
-    get_budget_version(db, input.version_id).await
+    let updated = get_budget_version(db, input.version_id).await?;
+    sync_stage::stage_budget_version(db, &updated).await?;
+    Ok(updated)
 }
 
 pub async fn list_budget_lines(db: &DatabaseConnection, filter: BudgetLineFilter) -> AppResult<Vec<BudgetLine>> {
@@ -1033,6 +1070,7 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
             "Period month must be between 1 and 12.".to_string(),
         ]));
     }
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -1049,8 +1087,9 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
             shutdown_package_ref,
             team_id,
             skill_pool_id,
-            labor_lane
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            labor_lane,
+            entity_sync_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             input.budget_version_id.into(),
             input.cost_center_id.into(),
@@ -1065,6 +1104,7 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
             input.team_id.into(),
             input.skill_pool_id.into(),
             optional_trimmed(&input.labor_lane).into(),
+            entity_sync_id.into(),
         ],
     ))
     .await?;
@@ -1077,7 +1117,7 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted budget line id missing.")))?;
     let line_id: i64 = row.try_get("", "id")?;
-    list_budget_lines(
+    let created = list_budget_lines(
         db,
         BudgetLineFilter {
             budget_version_id: Some(input.budget_version_id),
@@ -1090,7 +1130,9 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
     .ok_or_else(|| AppError::NotFound {
         entity: "BudgetLine".to_string(),
         id: line_id.to_string(),
-    })
+    })?;
+    sync_stage::stage_budget_line(db, &created).await?;
+    Ok(created)
 }
 
 pub async fn update_budget_line(
@@ -1170,7 +1212,7 @@ pub async fn update_budget_line(
         ]));
     }
 
-    list_budget_lines(
+    let updated = list_budget_lines(
         db,
         BudgetLineFilter {
             budget_version_id: Some(budget_version_id),
@@ -1183,7 +1225,9 @@ pub async fn update_budget_line(
     .ok_or_else(|| AppError::NotFound {
         entity: "BudgetLine".to_string(),
         id: line_id.to_string(),
-    })
+    })?;
+    sync_stage::stage_budget_line(db, &updated).await?;
+    Ok(updated)
 }
 
 pub async fn list_budget_actuals(db: &DatabaseConnection, filter: BudgetActualFilter) -> AppResult<Vec<BudgetActual>> {
@@ -2765,6 +2809,365 @@ pub async fn export_approved_reforecasts_for_erp(
         .collect()
 }
 
+fn map_posted_export_batch(row: &QueryResult) -> AppResult<PostedExportBatch> {
+    Ok(PostedExportBatch {
+        id: row.try_get("", "id")?,
+        entity_sync_id: row.try_get("", "entity_sync_id")?,
+        batch_uuid: row.try_get("", "batch_uuid")?,
+        export_kind: row.try_get("", "export_kind")?,
+        tenant_id: row.try_get("", "tenant_id")?,
+        relay_payload_json: row.try_get("", "relay_payload_json")?,
+        total_posted: row.try_get("", "total_posted")?,
+        line_count: row.try_get("", "line_count")?,
+        status: row.try_get("", "status")?,
+        erp_ack_at: row.try_get("", "erp_ack_at")?,
+        erp_http_code: row.try_get("", "erp_http_code")?,
+        rejection_code: row.try_get("", "rejection_code")?,
+        row_version: row.try_get("", "row_version")?,
+        created_at: row.try_get("", "created_at")?,
+        updated_at: row.try_get("", "updated_at")?,
+    })
+}
+
+fn map_integration_exception(row: &QueryResult) -> AppResult<IntegrationException> {
+    Ok(IntegrationException {
+        id: row.try_get("", "id")?,
+        entity_sync_id: row.try_get("", "entity_sync_id")?,
+        posted_export_batch_id: row.try_get("", "posted_export_batch_id")?,
+        source_record_kind: row.try_get("", "source_record_kind")?,
+        source_record_id: row.try_get("", "source_record_id")?,
+        maintafox_value_snapshot: row.try_get("", "maintafox_value_snapshot")?,
+        external_value_snapshot: row.try_get("", "external_value_snapshot")?,
+        resolution_status: row.try_get("", "resolution_status")?,
+        rejection_code: row.try_get("", "rejection_code")?,
+        row_version: row.try_get("", "row_version")?,
+        created_at: row.try_get("", "created_at")?,
+        updated_at: row.try_get("", "updated_at")?,
+    })
+}
+
+pub async fn record_erp_export_batch(
+    db: &DatabaseConnection,
+    input: RecordErpExportBatchInput,
+) -> AppResult<ErpExportBatchResult> {
+    let kind = required_trimmed("export_kind", &input.export_kind)?;
+    let tenant_json: serde_json::Value = match &input.tenant_id {
+        Some(t) if !t.trim().is_empty() => serde_json::Value::String(t.trim().to_string()),
+        _ => serde_json::Value::Null,
+    };
+
+    let (lines_arr, total_posted, jsonl, exception_specs): (
+        Vec<serde_json::Value>,
+        f64,
+        String,
+        Vec<(String, i64, String)>,
+    ) = match kind.as_str() {
+        "posted_actuals" => {
+            let items = export_posted_actuals_for_erp(db).await?;
+            let total: f64 = items.iter().map(|i| i.amount_base).sum();
+            let mut jsonl_lines: Vec<String> = Vec::new();
+            let mut arr: Vec<serde_json::Value> = Vec::new();
+            let mut specs: Vec<(String, i64, String)> = Vec::new();
+            for item in &items {
+                let mut v = serde_json::to_value(item)?;
+                if let Some(o) = v.as_object_mut() {
+                    let status = if item.reconciliation_flags.is_empty() {
+                        "cleared"
+                    } else {
+                        "attention"
+                    };
+                    o.insert(
+                        "reconciliation_status".to_string(),
+                        serde_json::Value::String(status.to_string()),
+                    );
+                }
+                jsonl_lines.push(serde_json::to_string(&v)?);
+                if !item.reconciliation_flags.is_empty() {
+                    specs.push((
+                        "budget_actual".to_string(),
+                        item.actual_id,
+                        serde_json::to_string(&v)?,
+                    ));
+                }
+                arr.push(v);
+            }
+            let jsonl = jsonl_lines.join("\n");
+            let jsonl = if jsonl.is_empty() {
+                String::new()
+            } else {
+                format!("{jsonl}\n")
+            };
+            (arr, total, jsonl, specs)
+        }
+        "approved_reforecasts" => {
+            let items = export_approved_reforecasts_for_erp(db).await?;
+            let total: f64 = items.iter().map(|i| i.forecast_amount).sum();
+            let mut jsonl_lines: Vec<String> = Vec::new();
+            let mut arr: Vec<serde_json::Value> = Vec::new();
+            let mut specs: Vec<(String, i64, String)> = Vec::new();
+            for item in &items {
+                let mut v = serde_json::to_value(item)?;
+                if let Some(o) = v.as_object_mut() {
+                    let status = if item.reconciliation_flags.is_empty() {
+                        "cleared"
+                    } else {
+                        "attention"
+                    };
+                    o.insert(
+                        "reconciliation_status".to_string(),
+                        serde_json::Value::String(status.to_string()),
+                    );
+                }
+                jsonl_lines.push(serde_json::to_string(&v)?);
+                if !item.reconciliation_flags.is_empty() {
+                    specs.push((
+                        "budget_forecast".to_string(),
+                        item.forecast_id,
+                        serde_json::to_string(&v)?,
+                    ));
+                }
+                arr.push(v);
+            }
+            let jsonl = jsonl_lines.join("\n");
+            let jsonl = if jsonl.is_empty() {
+                String::new()
+            } else {
+                format!("{jsonl}\n")
+            };
+            (arr, total, jsonl, specs)
+        }
+        _ => {
+            return Err(AppError::ValidationFailed(vec![
+                "export_kind must be posted_actuals or approved_reforecasts.".to_string(),
+            ]));
+        }
+    };
+
+    if lines_arr.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "Nothing to export for the selected kind.".to_string(),
+        ]));
+    }
+
+    let line_count = lines_arr.len() as i64;
+    let batch_uuid = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
+    let lines_value = serde_json::Value::Array(lines_arr);
+    let sign_body = serde_json::json!({
+        "batch_id": &batch_uuid,
+        "tenant_id": tenant_json.clone(),
+        "lines": lines_value.clone(),
+    });
+    let sign_str = serde_json::to_string(&sign_body)?;
+    let mut hasher = Sha256::new();
+    hasher.update(sign_str.as_bytes());
+    let signature = hex::encode(hasher.finalize());
+    let relay = serde_json::json!({
+        "batch_id": batch_uuid,
+        "tenant_id": tenant_json,
+        "lines": lines_value,
+        "signature": signature,
+    });
+    let relay_payload_json = serde_json::to_string(&relay)?;
+    let tenant_store: Option<String> = match &input.tenant_id {
+        Some(t) if !t.trim().is_empty() => Some(t.trim().to_string()),
+        _ => None,
+    };
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO posted_export_batches (
+            entity_sync_id, batch_uuid, export_kind, tenant_id, relay_payload_json,
+            total_posted, line_count, status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
+        [
+            entity_sync_id.clone().into(),
+            batch_uuid.clone().into(),
+            kind.clone().into(),
+            tenant_store.into(),
+            relay_payload_json.into(),
+            total_posted.into(),
+            line_count.into(),
+        ],
+    ))
+    .await?;
+
+    let id_row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT last_insert_rowid() AS id".to_string(),
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("posted_export_batches id missing")))?;
+    let batch_id: i64 = id_row.try_get("", "id")?;
+
+    let mut exceptions_out: Vec<IntegrationException> = Vec::new();
+    for (src_kind, src_id, snap) in exception_specs {
+        let ex_sync = Uuid::new_v4().to_string();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO integration_exceptions (
+                entity_sync_id, posted_export_batch_id, source_record_kind, source_record_id,
+                maintafox_value_snapshot, resolution_status
+             ) VALUES (?, ?, ?, ?, ?, 'open')",
+            [
+                ex_sync.clone().into(),
+                batch_id.into(),
+                src_kind.into(),
+                src_id.into(),
+                snap.into(),
+            ],
+        ))
+        .await?;
+        let ex_id_row = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT last_insert_rowid() AS id".to_string(),
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration_exceptions id missing")))?;
+        let ex_id: i64 = ex_id_row.try_get("", "id")?;
+        let ex_row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT * FROM integration_exceptions WHERE id = ?",
+                [ex_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration exception row missing")))?;
+        let mapped = map_integration_exception(&ex_row)?;
+        sync_stage::stage_integration_exception(db, &mapped).await?;
+        exceptions_out.push(mapped);
+    }
+
+    let batch_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT * FROM posted_export_batches WHERE id = ?",
+            [batch_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("posted export batch row missing")))?;
+    let batch = map_posted_export_batch(&batch_row)?;
+    sync_stage::stage_posted_export_batch(db, &batch).await?;
+
+    Ok(ErpExportBatchResult {
+        batch,
+        jsonl,
+        integration_exceptions: exceptions_out,
+    })
+}
+
+pub async fn list_posted_export_batches(
+    db: &DatabaseConnection,
+    filter: PostedExportBatchFilter,
+) -> AppResult<Vec<PostedExportBatch>> {
+    let mut sql = String::from("SELECT * FROM posted_export_batches WHERE 1 = 1");
+    let mut values: Vec<Value> = Vec::new();
+    if let Some(k) = optional_trimmed(&filter.export_kind) {
+        sql.push_str(" AND export_kind = ?");
+        values.push(k.into());
+    }
+    sql.push_str(" ORDER BY created_at DESC, id DESC");
+    let limit = filter.limit.unwrap_or(50).clamp(1, 500);
+    sql.push_str(" LIMIT ?");
+    values.push(limit.into());
+    let rows = db
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+        .await?;
+    rows.iter().map(map_posted_export_batch).collect()
+}
+
+pub async fn list_integration_exceptions(
+    db: &DatabaseConnection,
+    filter: IntegrationExceptionFilter,
+) -> AppResult<Vec<IntegrationException>> {
+    let mut sql = String::from("SELECT * FROM integration_exceptions WHERE 1 = 1");
+    let mut values: Vec<Value> = Vec::new();
+    if let Some(bid) = filter.posted_export_batch_id {
+        sql.push_str(" AND posted_export_batch_id = ?");
+        values.push(bid.into());
+    }
+    if let Some(rs) = optional_trimmed(&filter.resolution_status) {
+        sql.push_str(" AND resolution_status = ?");
+        values.push(rs.into());
+    }
+    sql.push_str(" ORDER BY created_at DESC, id DESC");
+    let limit = filter.limit.unwrap_or(200).clamp(1, 1000);
+    sql.push_str(" LIMIT ?");
+    values.push(limit.into());
+    let rows = db
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+        .await?;
+    rows.iter().map(map_integration_exception).collect()
+}
+
+pub async fn update_integration_exception(
+    db: &DatabaseConnection,
+    exception_id: i64,
+    expected_row_version: i64,
+    input: UpdateIntegrationExceptionInput,
+) -> AppResult<IntegrationException> {
+    let resolution = required_trimmed("resolution_status", &input.resolution_status)?;
+    let current = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT row_version FROM integration_exceptions WHERE id = ?",
+            [exception_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "IntegrationException".to_string(),
+            id: exception_id.to_string(),
+        })?;
+    let rv: i64 = current.try_get("", "row_version")?;
+    if rv != expected_row_version {
+        return Err(AppError::ValidationFailed(vec![
+            "Integration exception was modified elsewhere (stale row_version).".to_string(),
+        ]));
+    }
+    let ext = optional_trimmed(&input.external_value_snapshot);
+    let rej = optional_trimmed(&input.rejection_code);
+    let result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE integration_exceptions
+             SET resolution_status = ?,
+                 external_value_snapshot = COALESCE(?, external_value_snapshot),
+                 rejection_code = COALESCE(?, rejection_code),
+                 row_version = row_version + 1,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             WHERE id = ? AND row_version = ?",
+            [
+                resolution.into(),
+                ext.into(),
+                rej.into(),
+                exception_id.into(),
+                expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "Integration exception update failed.".to_string(),
+        ]));
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT * FROM integration_exceptions WHERE id = ?",
+            [exception_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "IntegrationException".to_string(),
+            id: exception_id.to_string(),
+        })?;
+    let mapped = map_integration_exception(&row)?;
+    sync_stage::stage_integration_exception(db, &mapped).await?;
+    Ok(mapped)
+}
+
 pub async fn list_budget_alert_configs(
     db: &DatabaseConnection,
     filter: BudgetAlertConfigFilter,
@@ -2817,13 +3220,16 @@ pub async fn create_budget_alert_config(
         ]));
     }
 
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO budget_alert_configs (
+            entity_sync_id,
             budget_version_id, cost_center_id, budget_bucket, alert_type, threshold_pct, threshold_amount,
             recipient_user_id, recipient_role_id, labor_template, dedupe_window_minutes, requires_ack, is_active
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
+            entity_sync_id.into(),
             input.budget_version_id.into(),
             input.cost_center_id.into(),
             optional_trimmed(&input.budget_bucket).into(),
@@ -2858,7 +3264,9 @@ pub async fn create_budget_alert_config(
             entity: "BudgetAlertConfig".to_string(),
             id: config_id.to_string(),
         })?;
-    map_budget_alert_config(&row)
+    let mapped = map_budget_alert_config(&row)?;
+    sync_stage::stage_budget_alert_config(db, &mapped).await?;
+    Ok(mapped)
 }
 
 pub async fn update_budget_alert_config(
@@ -2964,7 +3372,9 @@ pub async fn update_budget_alert_config(
             entity: "BudgetAlertConfig".to_string(),
             id: config_id.to_string(),
         })?;
-    map_budget_alert_config(&row)
+    let mapped = map_budget_alert_config(&row)?;
+    sync_stage::stage_budget_alert_config(db, &mapped).await?;
+    Ok(mapped)
 }
 
 pub async fn list_budget_alert_events(
@@ -3044,6 +3454,7 @@ pub async fn evaluate_budget_alerts(
         ] {
             configs.push(BudgetAlertConfig {
                 id: 0,
+                entity_sync_id: String::new(),
                 budget_version_id: Some(input.budget_version_id),
                 cost_center_id: None,
                 budget_bucket: None,
@@ -3281,14 +3692,17 @@ pub async fn evaluate_budget_alerts(
                 notification_id = Some(notif_id_row.try_get("", "id")?);
             }
 
+            let event_entity_sync_id = Uuid::new_v4().to_string();
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO budget_alert_events (
+                    entity_sync_id,
                     alert_config_id, budget_version_id, cost_center_id, period_month, budget_bucket, alert_type,
                     severity, title, message, dedupe_key, current_value, threshold_value, variance_amount, currency_code,
                     payload_json, notification_event_id, notification_id
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
+                    event_entity_sync_id.into(),
                     if config.id == 0 { None } else { Some(config.id) }.into(),
                     row.budget_version_id.into(),
                     row.cost_center_id.into(),
@@ -3314,6 +3728,27 @@ pub async fn evaluate_budget_alerts(
                 ],
             ))
             .await?;
+            let inserted_event_id_row = db
+                .query_one(Statement::from_string(
+                    DbBackend::Sqlite,
+                    "SELECT last_insert_rowid() AS id".to_string(),
+                ))
+                .await?
+                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("budget alert event id missing")))?;
+            let inserted_event_id: i64 = inserted_event_id_row.try_get("", "id")?;
+            let inserted_event_row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT ae.*, cc.code AS cost_center_code, cc.name AS cost_center_name
+                     FROM budget_alert_events ae
+                     JOIN cost_centers cc ON cc.id = ae.cost_center_id
+                     WHERE ae.id = ?",
+                    [inserted_event_id.into()],
+                ))
+                .await?
+                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("budget alert event row missing")))?;
+            let staged_event = map_budget_alert_event(&inserted_event_row)?;
+            sync_stage::stage_budget_alert_event(db, &staged_event).await?;
             emitted_count += 1;
         }
     }
@@ -3388,7 +3823,7 @@ pub async fn acknowledge_budget_alert(
         ))
         .await?;
     }
-    list_budget_alert_events(
+    let found = list_budget_alert_events(
         db,
         BudgetAlertEventFilter {
             budget_version_id: None,
@@ -3403,7 +3838,9 @@ pub async fn acknowledge_budget_alert(
     .ok_or_else(|| AppError::NotFound {
         entity: "BudgetAlertEvent".to_string(),
         id: input.alert_event_id.to_string(),
-    })
+    })?;
+    sync_stage::stage_budget_alert_event(db, &found).await?;
+    Ok(found)
 }
 
 pub async fn build_budget_report_pack(

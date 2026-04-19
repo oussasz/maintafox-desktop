@@ -5,10 +5,10 @@
 use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
 use tauri::State;
 
-use crate::auth::rbac::PermissionScope;
+use crate::commands::pm::require_pm_delete_or_manage;
 use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
-use crate::{require_permission, require_session};
+use crate::require_session;
 
 #[tauri::command]
 pub async fn delete_pm_plan_version(
@@ -17,7 +17,7 @@ pub async fn delete_pm_plan_version(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.delete", PermissionScope::Global);
+    require_pm_delete_or_manage(&state, &user).await?;
 
     let row = state
         .db
@@ -96,7 +96,7 @@ pub async fn delete_pm_plan(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.delete", PermissionScope::Global);
+    require_pm_delete_or_manage(&state, &user).await?;
 
     let plan_row = state
         .db

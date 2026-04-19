@@ -5,12 +5,12 @@
  * and the append-only org change audit timeline (SP01-F04).
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type { OrgPublishValidationResult, OrgChangeEvent } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const OrgValidationIssueSchema = z.object({
   code: z.string(),
@@ -42,7 +42,7 @@ export const OrgChangeEventSchema = z.object({
   apply_result: z.string(),
 });
 
-// ── Service functions ─────────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function validateOrgModelForPublish(
   modelId: number,

@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { mfChip, mfPermissionDomainChip } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -86,33 +87,6 @@ const DOMAIN_LABELS: Record<string, string> = {
   cfg: "Configuration",
   adm: "Administration",
   cst: "Personnalisé",
-};
-
-/** Domain colour classes matching RoleEditorPanel. */
-const DOMAIN_COLOURS: Record<string, string> = {
-  eq: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
-  di: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-  ot: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
-  org: "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200",
-  per: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200",
-  ref: "bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-200",
-  inv: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
-  pm: "bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200",
-  ram: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200",
-  rep: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200",
-  arc: "bg-stone-100 text-stone-800 dark:bg-stone-900 dark:text-stone-200",
-  doc: "bg-lime-100 text-lime-800 dark:bg-lime-900 dark:text-lime-200",
-  plan: "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200",
-  log: "bg-neutral-100 text-neutral-800 dark:bg-neutral-900 dark:text-neutral-200",
-  trn: "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900 dark:text-fuchsia-200",
-  iot: "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200",
-  erp: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-  ptw: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-  fin: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-  ins: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-  cfg: "bg-zinc-100 text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200",
-  adm: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-  cst: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200",
 };
 
 const SYSTEM_PREFIXES = [
@@ -494,7 +468,7 @@ export function PermissionCatalogPanel() {
                 <span
                   className={cn(
                     "inline-flex h-5 items-center rounded px-1.5 text-[10px] font-semibold uppercase",
-                    DOMAIN_COLOURS[domain] ?? "bg-gray-100 text-gray-800",
+                    mfPermissionDomainChip[domain] ?? mfChip.neutral,
                   )}
                 >
                   {domain}
@@ -519,7 +493,7 @@ export function PermissionCatalogPanel() {
               <span
                 className={cn(
                   "inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold uppercase",
-                  DOMAIN_COLOURS[selectedDomain] ?? "bg-gray-100 text-gray-800",
+                  mfPermissionDomainChip[selectedDomain] ?? mfChip.neutral,
                 )}
               >
                 {selectedDomain}

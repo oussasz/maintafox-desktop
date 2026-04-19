@@ -8,7 +8,26 @@
     "viewKanban": "Kanban",
     "viewCalendar": "Calendrier",
     "viewDashboard": "Tableau de bord",
+    "viewIntegrity": "Intégrité des données",
     "filterSettings": "Paramètres des filtres"
+  },
+  "integrity": {
+    "title": "Constats d'intégrité des données",
+    "empty": "Aucun constat ouvert. Lancez les détecteurs pour analyser les OT et les lignes liées.",
+    "contractFrozen": "Contrôle analytique {{id}} v{{ver}} (sha256 {{hash}}…)",
+    "runDetectors": "Lancer les détecteurs",
+    "waiverDefaultReason": "Levé via la console opérateur",
+    "approverId": "ID utilisateur approbateur",
+    "approverPlaceholder": "Obligatoire pour les erreurs",
+    "waiverReason": "Motif du levée",
+    "waiverReasonPlaceholder": "Justification",
+    "waive": "Lever",
+    "repair": "Réparation",
+    "applyRepair": "Appliquer",
+    "repair.clearFailureMode": "Effacer le mode de défaillance invalide",
+    "repair.swapDowntime": "Swap début/fin de segment (durée négative)",
+    "repair.closeAtStart": "Clôturer le segment à l'heure de début",
+    "repair.trimOverlap": "Tronquer la fin du premier segment (chevauchement)"
   },
   "list": {
     "columns": {
@@ -275,6 +294,7 @@
     "narrative": "Description / Narrative",
     "narrativePlaceholder": "Décrire la défaillance observée…",
     "sectionFailure": "Analyse de défaillance",
+    "isoFailureTaxonomyHint": "Mode de défaillance : comment la défaillance se manifeste. Cause de défaillance : pourquoi elle s'est produite (données ISO 14224).",
     "causeNotDetermined": "Cause non déterminée",
     "failureMode": "Mode de défaillance",
     "failureModePlaceholder": "Mode…",
@@ -311,6 +331,9 @@
     "pinLabel": "Code PIN (authentification renforcée)",
     "pinPlaceholder": "Saisir le PIN…",
     "blockingConditions": "Conditions bloquantes :",
+    "noDowntimeProductionHint": "Impact production enregistré. Ajoutez un segment d'arrêt ou atteste l'absence d'arrêt production avec une justification (minimum 8 caractères).",
+    "noDowntimeAttestation": "Aucun arrêt production (attestation)",
+    "noDowntimeReason": "Justification (obligatoire si attestation)",
     "closeWo": "Fermer l'OT"
   },
   "audit": {
@@ -355,7 +378,10 @@
       "actualEnd": "Fin réelle",
       "estimatedHours": "Heures estimées",
       "actualHours": "Heures réelles",
-      "conclusion": "Rapport de clôture"
+      "conclusion": "Rapport de clôture",
+      "sourceRca": "RCA source",
+      "sourceRcaDiagram": "Diagramme Ishikawa n°{{id}}",
+      "sourceRcaCause": "Cause"
     }
   },
   "footer": {

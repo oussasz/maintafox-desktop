@@ -1,1 +1,174 @@
-{}
+{
+  "module": {
+    "title": "RAMS — pilotage fiabilité",
+    "subtitle": "Poste d’analyse fiabilité",
+    "selectEquipmentPrompt": "Sélectionnez un équipement dans la barre latérale pour lancer l’analyse.",
+    "selectEquipment": "Sélectionner l’équipement",
+    "primary": "Principal",
+    "multiSelected": "{{count}} équipements sélectionnés",
+    "sidebarEquip": "Équipement",
+    "searchAssets": "Rechercher…",
+    "assetsLoading": "Chargement des équipements…",
+    "assetsEmpty": "Aucun équipement ne correspond."
+  },
+  "nav": {
+    "dashboard": "Tableau de bord",
+    "foundation": "Socle données",
+    "lab": "Labo visuel",
+    "advanced": "Méthodes avancées",
+    "governance": "Gouvernance"
+  },
+  "health": {
+    "badge": "Santé données RAM",
+    "equip": "Équipement",
+    "equipNone": "Aucune sélection",
+    "score": "Score",
+    "openDq": "Qualité données",
+    "none": "—",
+    "isoBadge": "Exhaustivité ISO 14224",
+    "isoTitle": "Exhaustivité moyenne des enregistrements de défaillance",
+    "isoDimEquipment": "Lien équipement : {{pct}} %",
+    "isoDimInterval": "Intervalle défaillance : {{pct}} %",
+    "isoDimMode": "Mode de défaillance : {{pct}} %",
+    "isoDimClosure": "Clôture corrective : {{pct}} %",
+    "isoEmpty": "Aucun événement"
+  },
+  "dashboard": {
+    "title": "Tableau opérationnel",
+    "kpiTitle": "Dernier instantané fiabilité",
+    "mtbf": "MTBF (h)",
+    "mttr": "MTTR (h)",
+    "availability": "Disponibilité",
+    "failureRate": "Taux de défaillance",
+    "events": "Événements",
+    "noSnapshot": "Aucun instantané pour ce filtre. Lancez une analyse depuis le socle données ou actualisez.",
+    "weibullTitle": "Courbe de fiabilité Weibull R(t)",
+    "weibullHint": "R(t) = exp(−(t/η)^β) à partir du dernier ajustement Weibull stocké.",
+    "weibullRun": "Lancer l’ajustement",
+    "weibullEmpty": "Lancez un ajustement Weibull pour tracer la courbe.",
+    "weibullBlockedTitle": "Ajustement Weibull indisponible",
+    "markovTitle": "Régime permanent Markov",
+    "markovHint": "Masse stationnaire sur les états (dernier modèle évalué).",
+    "markovEmpty": "Évaluez un modèle Markov dans Méthodes avancées pour afficher les états.",
+    "filterEquip": "Id équipement",
+    "refresh": "Actualiser",
+    "rulTitle": "RUL prévue",
+    "rulHint": "Durée de vie résiduelle médiane (Weibull et heures d'exposition enregistrées — historique et profil d'utilisation).",
+    "rulEmpty": "Pas d’estimation RUL — lancez un ajustement Weibull et des données d’exposition ou de compteur."
+  },
+  "lab": {
+    "title": "Labo visuel FTA / RBD",
+    "modeFta": "Arbre de défaillance (FTA)",
+    "modeRbd": "Diagramme de blocs (RBD)",
+    "equip": "Id équipement",
+    "equipHint": "L’actif actif est choisi dans la barre latérale RAMS",
+    "model": "Modèle",
+    "newModel": "Nouveau",
+    "save": "Enregistrer le graphe",
+    "evaluate": "Évaluer",
+    "delete": "Supprimer",
+    "topRoot": "Id sommet / racine",
+    "addAnd": "Porte ET",
+    "addOr": "Porte OU",
+    "addBe": "Événement de base",
+    "addBlock": "Bloc",
+    "addSeries": "Série",
+    "addParallel": "Parallèle",
+    "result": "Résultat",
+    "loadError": "Chargement des modèles impossible",
+    "needModel": "Créez ou sélectionnez un modèle d’abord.",
+    "placeholderTitle": "Nouveau modèle",
+    "refresh": "Actualiser",
+    "palette": {
+      "toolbarLabel": "Palette de modélisation",
+      "and": {
+        "title": "Porte ET",
+        "desc": "La sortie est défaillante seulement si toutes les entrées le sont (intersection logique)."
+      },
+      "or": {
+        "title": "Porte OU",
+        "desc": "La sortie est défaillante si au moins une entrée l’est (union logique)."
+      },
+      "be": {
+        "title": "Événement de base",
+        "desc": "Événement initiateur ou défaillance élémentaire avec probabilité P (λ et U dérivés sur l’intervalle de référence τ)."
+      },
+      "block": {
+        "title": "Bloc de fiabilité",
+        "desc": "Élément avec fiabilité R ; indisponibilité U et taux λ affichés pour l’intervalle τ de référence."
+      },
+      "series": {
+        "title": "Structure série",
+        "desc": "Tous les sous-systèmes doivent fonctionner ; R globale = produit des Ri."
+      },
+      "parallel": {
+        "title": "Structure parallèle",
+        "desc": "Redondance ; le système fonctionne si au moins une voie fonctionne (1−Π(1−Ri))."
+      }
+    }
+  },
+  "advanced": {
+    "title": "Méthodes avancées",
+    "heatmapTitle": "Matrice gravité × occurrence (nombre de modes de défaillance)",
+    "heatmapHint": "Comptages agrégés pour l’équipement. Cliquez une cellule pour filtrer le tableau.",
+    "sAxis": "Gravité S",
+    "oAxis": "Occurrence O",
+    "selected": "Sélection",
+    "rpn": "NPR",
+    "equipFilter": "Id équipement",
+    "refresh": "Actualiser",
+    "clearFilter": "Effacer le filtre",
+    "loading": "Chargement…",
+    "filterHint": "Cliquez une cellule pour filtrer",
+    "tableTitle": "Modes de défaillance FMECA",
+    "noRows": "Aucune ligne pour ce filtre.",
+    "colAnalysis": "Analyse",
+    "colFailure": "Défaillance fonctionnelle",
+    "colInventory": "Pièces (NPR > {{threshold}})",
+    "invCritical": "Rupture critique fiabilité (stock 0)",
+    "invOk": "Stock {{qty}}",
+    "invNoWo": "Pas d’OT lié pour les pièces",
+    "invNoParts": "OT sans lignes pièces"
+  },
+  "governance": {
+    "title": "Gouvernance",
+    "body": "Diagrammes Ishikawa (arêtes de poisson) persistés par équipement. Ajoutez des causes sous chaque branche 6M, enregistrez, puis comparez plusieurs équipements si nécessaire.",
+    "equip": "Id équipement",
+    "comparisonTitle": "Mode comparatif ({{count}} équipements)",
+    "comparisonLoading": "Mise à jour de l’analyse combinée…",
+    "save": "Enregistrer",
+    "loadError": "Chargement du diagramme impossible",
+    "saved": "Enregistré",
+    "addCause": "Ajouter une cause",
+    "effect": "Effet",
+    "causePrompt": "Description de la cause",
+    "causeModalTitle": "Ajouter une cause",
+    "causeModalEditTitle": "Modifier le libellé",
+    "causeModalLabel": "Texte de la cause",
+    "causeModalSave": "Enregistrer",
+    "causeModalCancel": "Annuler",
+    "categories": {
+      "machine": "Machine",
+      "method": "Méthode",
+      "material": "Matière",
+      "manpower": "Main-d’œuvre",
+      "measurement": "Mesure",
+      "motherNature": "Milieu"
+    },
+    "promoteMenu": "Promouvoir en action corrective",
+    "promoteTitle": "Créer une action corrective à partir de la cause",
+    "promoteBody": "Crée un lien traçable vers ce diagramme Ishikawa. Enregistrez d'abord le diagramme si nécessaire.",
+    "promoteTargetWo": "Ordre de travail (correctif)",
+    "promoteTargetFmeca": "Ligne FMECA",
+    "promoteNeedSave": "Enregistrez le diagramme avant de promouvoir une cause.",
+    "promoteNeedUser": "Connexion requise pour créer un ordre de travail.",
+    "promoteNeedFmecaAnalysis": "Créez d'abord une analyse FMECA pour cet équipement.",
+    "promoteSubmit": "Créer",
+    "promoteSuccessWo": "Ordre de travail créé à partir de la cause RCA.",
+    "promoteSuccessFmeca": "Ligne FMECA créée à partir de la cause RCA."
+  },
+  "foundation": {
+    "title": "Socle données",
+    "hint": "Taxonomie, exposition, jobs KPI et drill-throughs qualité."
+  }
+}

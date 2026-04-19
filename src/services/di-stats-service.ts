@@ -2,15 +2,15 @@
  * di-stats-service.ts
  *
  * IPC wrapper for the DI statistics aggregation command.
- * Phase 2 – Sub-phase 04 – File 04 – Sprint S4.
+ * Phase 2 â€“ Sub-phase 04 â€“ File 04 â€“ Sprint S4.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type { DiStatsFilter, DiStatsPayload } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const DiStatusCountSchema = z.object({
   status: z.string(),
@@ -69,7 +69,7 @@ const DiStatsPayloadSchema = z.object({
   overdue_dis: z.array(DiOverdueDiSchema),
 });
 
-// ── Command ───────────────────────────────────────────────────────────────────
+// â”€â”€ Command â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getDiStats(filter: DiStatsFilter): Promise<DiStatsPayload> {
   const raw = await invoke<unknown>("get_di_stats", { filter });

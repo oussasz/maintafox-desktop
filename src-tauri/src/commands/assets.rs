@@ -7,20 +7,22 @@
 //!               record lifecycle events, create meters, record readings,
 //!               upsert/expire document links
 
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::assets::{
     bindings,
     documents::{self, UpsertDocumentLinkPayload},
+    health,
     hierarchy::{self, LinkAssetPayload},
     identity::{self, CreateAssetPayload, UpdateAssetIdentityPayload},
     import::{self, ApplyPolicy},
     lifecycle::{self, RecordLifecycleEventPayload},
     meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload},
+    photos,
     search::{self, AssetSearchFilters},
 };
 use crate::auth::rbac::PermissionScope;
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
 use crate::{require_permission, require_session};
 
@@ -111,6 +113,16 @@ pub async fn get_asset_binding_summary(
     let user = require_session!(state);
     require_permission!(state, &user, "eq.view", PermissionScope::Global);
     bindings::get_asset_binding_summary(&state.db, asset_id).await
+}
+
+#[tauri::command]
+pub async fn get_asset_health_score(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<health::AssetHealthScore> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    health::get_asset_health_score(&state.db, asset_id).await
 }
 
 // ─── Mutation commands (eq.manage) ────────────────────────────────────────────
@@ -287,6 +299,53 @@ pub async fn expire_asset_document_link(
     let user = require_session!(state);
     require_permission!(state, &user, "eq.manage", PermissionScope::Global);
     documents::expire_asset_document_link(&state.db, link_id, valid_to, user.user_id).await
+}
+
+// ─── Photos (eq.view / eq.manage) ──────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn list_asset_photos(
+    asset_id: i64,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<photos::AssetPhoto>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    photos::list_asset_photos(&state.db, &app_data_dir, asset_id).await
+}
+
+#[tauri::command]
+pub async fn upload_asset_photo(
+    app: AppHandle,
+    payload: photos::UploadAssetPhotoPayload,
+    state: State<'_, AppState>,
+) -> AppResult<photos::AssetPhoto> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    photos::upload_asset_photo(&state.db, &app_data_dir, payload, i64::from(user.user_id)).await
+}
+
+#[tauri::command]
+pub async fn delete_asset_photo(
+    photo_id: i64,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    photos::delete_asset_photo(&state.db, &app_data_dir, photo_id).await
 }
 
 // ─── Import commands (eq.import) ──────────────────────────────────────────────

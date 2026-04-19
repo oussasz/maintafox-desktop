@@ -1,21 +1,22 @@
-﻿import type { ColumnDef } from "@tanstack/react-table";
+import type { ColumnDef } from "@tanstack/react-table";
 import { Columns3, Filter, List, Package, Plus, RefreshCw, Search, X } from "lucide-react";
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PermissionGate } from "@/components/PermissionGate";
-import { ArticleEditorFields } from "@/components/inventory/ArticleEditorFields";
 import { DataTable } from "@/components/data/DataTable";
+import { ArticleEditorFields } from "@/components/inventory/ArticleEditorFields";
+import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
 import {
   ProcurementRepairablePanel,
   type ProcurementRepairablePanelHandle,
 } from "@/components/inventory/ProcurementRepairablePanel";
-import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
 import {
   WarehouseLocationPanel,
   type WarehouseLocationPanelHandle,
 } from "@/components/inventory/WarehouseLocationPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -24,7 +25,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -84,7 +84,9 @@ export function InventoryPage() {
   const [criticalityOptions, setCriticalityOptions] = useState<LookupValueOption[]>([]);
   const [stockingTypeOptions, setStockingTypeOptions] = useState<LookupValueOption[]>([]);
   const [taxCategoryOptions, setTaxCategoryOptions] = useState<LookupValueOption[]>([]);
-  const [procurementCategoryOptions, setProcurementCategoryOptions] = useState<LookupValueOption[]>([]);
+  const [procurementCategoryOptions, setProcurementCategoryOptions] = useState<LookupValueOption[]>(
+    [],
+  );
   const [articleForm, setArticleForm] = useState<InventoryArticleInput>(EMPTY_ARTICLE_FORM);
   const [selectedArticle, setSelectedArticle] = useState<InventoryArticle | null>(null);
   const [isDetailOpen, setDetailOpen] = useState(false);
@@ -161,7 +163,11 @@ export function InventoryPage() {
         accessorKey: "is_active",
         header: "Status",
         cell: ({ row }) =>
-          row.original.is_active === 1 ? <Badge variant="secondary">Active</Badge> : <Badge>Inactive</Badge>,
+          row.original.is_active === 1 ? (
+            <Badge variant="secondary">Active</Badge>
+          ) : (
+            <Badge>Inactive</Badge>
+          ),
       },
     ],
     [],
@@ -323,11 +329,13 @@ export function InventoryPage() {
     if (articleForm.reorder_point < articleForm.min_stock) return false;
     if (maxStock !== null && maxStock < articleForm.min_stock) return false;
     if (maxStock !== null && maxStock < articleForm.reorder_point) return false;
-    if (articleForm.preferred_warehouse_id === null && articleForm.preferred_location_id !== null) return false;
+    if (articleForm.preferred_warehouse_id === null && articleForm.preferred_location_id !== null)
+      return false;
     if (
       articleForm.preferred_warehouse_id !== null &&
       articleForm.preferred_location_id !== null &&
-      locations.find((l) => l.id === articleForm.preferred_location_id)?.warehouse_id !== articleForm.preferred_warehouse_id
+      locations.find((l) => l.id === articleForm.preferred_location_id)?.warehouse_id !==
+        articleForm.preferred_warehouse_id
     ) {
       return false;
     }
@@ -338,19 +346,23 @@ export function InventoryPage() {
     () =>
       articleForm.preferred_warehouse_id === null
         ? []
-        : locations.filter((location) => location.warehouse_id === articleForm.preferred_warehouse_id && location.is_active === 1),
+        : locations.filter(
+            (location) =>
+              location.warehouse_id === articleForm.preferred_warehouse_id &&
+              location.is_active === 1,
+          ),
     [articleForm.preferred_warehouse_id, locations],
   );
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-surface-border px-6 py-3">
-        <div className="flex items-center gap-3">
-          <Package className="h-5 w-5 text-text-muted" aria-hidden />
-          <h1 className="text-xl font-semibold text-text-primary">Inventory - Item Master & Stock</h1>
+    <div className={mfLayout.moduleRoot}>
+      <div className={mfLayout.moduleHeader}>
+        <div className={mfLayout.moduleTitleRow}>
+          <Package className={mfLayout.moduleHeaderIcon} aria-hidden />
+          <h1 className={mfLayout.moduleTitle}>Inventory - Item Master & Stock</h1>
           <Badge variant="secondary">{articles.length} articles</Badge>
         </div>
-        <div className="flex items-center gap-2">
+        <div className={mfLayout.moduleHeaderActions}>
           {invTab === "master" ? (
             <PermissionGate permission="inv.manage">
               <Button
@@ -418,12 +430,12 @@ export function InventoryPage() {
           ) : null}
 
           {invTab === "procurement" ? (
-            <div className="flex items-center gap-0.5 rounded-md border p-0.5">
+            <div className={mfLayout.viewToggleGroup}>
               <Button
                 type="button"
                 variant={procurementView === "list" ? "default" : "ghost"}
                 size="sm"
-                className="h-7 px-2"
+                className={mfLayout.viewToggleButton}
                 onClick={() => switchProcurementView("list")}
                 title="List view"
               >
@@ -433,7 +445,7 @@ export function InventoryPage() {
                 type="button"
                 variant={procurementView === "kanban" ? "default" : "ghost"}
                 size="sm"
-                className="h-7 px-2"
+                className={mfLayout.viewToggleButton}
                 onClick={() => switchProcurementView("kanban")}
                 title="Kanban view"
               >
@@ -466,7 +478,7 @@ export function InventoryPage() {
       </div>
 
       {showInvFilters ? (
-        <div className="flex flex-wrap items-center gap-2 border-b border-surface-border px-6 py-2">
+        <div className={mfLayout.moduleFilterBar}>
           {invTab === "master" ? (
             <div className="relative max-w-sm flex-1">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
@@ -575,7 +587,11 @@ export function InventoryPage() {
 
       {error ? <div className="px-6 py-2 text-sm text-destructive">{error}</div> : null}
 
-      <Tabs value={invTab} onValueChange={setInvTab} className="flex min-h-0 flex-1 flex-col px-6 py-4">
+      <Tabs
+        value={invTab}
+        onValueChange={setInvTab}
+        className="flex min-h-0 flex-1 flex-col px-6 py-4"
+      >
         <TabsList className="w-fit">
           <TabsTrigger value="master">Item master</TabsTrigger>
           <TabsTrigger value="topology">Warehouses & locations</TabsTrigger>
@@ -605,7 +621,10 @@ export function InventoryPage() {
             <div className="rounded-md border p-4">
               <h3 className="mb-3 text-sm font-semibold">Stock adjustment</h3>
               <div className="grid gap-2 md:grid-cols-4">
-                <Select value={String(stockArticleId)} onValueChange={(v) => setStockArticleId(Number(v))}>
+                <Select
+                  value={String(stockArticleId)}
+                  onValueChange={(v) => setStockArticleId(Number(v))}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Article" />
                   </SelectTrigger>
@@ -619,7 +638,10 @@ export function InventoryPage() {
                   </SelectContent>
                 </Select>
 
-                <Select value={String(stockLocationId)} onValueChange={(v) => setStockLocationId(Number(v))}>
+                <Select
+                  value={String(stockLocationId)}
+                  onValueChange={(v) => setStockLocationId(Number(v))}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Location" />
                   </SelectTrigger>
@@ -642,8 +664,16 @@ export function InventoryPage() {
                 />
 
                 <Button
-                  onClick={() => void adjustStock({ article_id: stockArticleId, location_id: stockLocationId, delta_qty: stockDelta })}
-                  disabled={saving || stockArticleId <= 0 || stockLocationId <= 0 || stockDelta === 0}
+                  onClick={() =>
+                    void adjustStock({
+                      article_id: stockArticleId,
+                      location_id: stockLocationId,
+                      delta_qty: stockDelta,
+                    })
+                  }
+                  disabled={
+                    saving || stockArticleId <= 0 || stockLocationId <= 0 || stockDelta === 0
+                  }
                 >
                   Post adjustment
                 </Button>
@@ -681,7 +711,9 @@ export function InventoryPage() {
         <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {selectedArticle ? `${selectedArticle.article_code} - ${selectedArticle.article_name}` : "Article details"}
+              {selectedArticle
+                ? `${selectedArticle.article_code} - ${selectedArticle.article_name}`
+                : "Article details"}
             </DialogTitle>
             <DialogDescription>
               Full article details and stock history across locations.
@@ -692,20 +724,60 @@ export function InventoryPage() {
             <div className="space-y-4">
               {!isEditingInDialog ? (
                 <div className="grid grid-cols-2 gap-3 rounded-md border p-3 text-sm">
-                  <div><span className="text-text-muted">Family:</span> {selectedArticle.family_name ?? "—"}</div>
-                  <div><span className="text-text-muted">Unit:</span> {selectedArticle.unit_label}</div>
-                  <div><span className="text-text-muted">Criticality:</span> {selectedArticle.criticality_label ?? "—"}</div>
-                  <div><span className="text-text-muted">Status:</span> {selectedArticle.is_active === 1 ? "Active" : "Inactive"}</div>
-                  <div><span className="text-text-muted">Stocking type:</span> {selectedArticle.stocking_type_label}</div>
-                  <div><span className="text-text-muted">Tax category:</span> {selectedArticle.tax_category_label}</div>
-                  <div><span className="text-text-muted">Procurement category:</span> {selectedArticle.procurement_category_label ?? "—"}</div>
-                  <div><span className="text-text-muted">Preferred warehouse:</span> {selectedArticle.preferred_warehouse_code ?? "—"}</div>
-                  <div><span className="text-text-muted">Preferred location:</span> {selectedArticle.preferred_location_code ?? "—"}</div>
-                  <div><span className="text-text-muted">Min stock:</span> {selectedArticle.min_stock}</div>
-                  <div><span className="text-text-muted">Reorder point:</span> {selectedArticle.reorder_point}</div>
-                  <div><span className="text-text-muted">Safety stock:</span> {selectedArticle.safety_stock}</div>
-                  <div><span className="text-text-muted">Created at:</span> {selectedArticle.created_at}</div>
-                  <div><span className="text-text-muted">Updated at:</span> {selectedArticle.updated_at}</div>
+                  <div>
+                    <span className="text-text-muted">Family:</span>{" "}
+                    {selectedArticle.family_name ?? "—"}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Unit:</span> {selectedArticle.unit_label}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Criticality:</span>{" "}
+                    {selectedArticle.criticality_label ?? "—"}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Status:</span>{" "}
+                    {selectedArticle.is_active === 1 ? "Active" : "Inactive"}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Stocking type:</span>{" "}
+                    {selectedArticle.stocking_type_label}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Tax category:</span>{" "}
+                    {selectedArticle.tax_category_label}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Procurement category:</span>{" "}
+                    {selectedArticle.procurement_category_label ?? "—"}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Preferred warehouse:</span>{" "}
+                    {selectedArticle.preferred_warehouse_code ?? "—"}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Preferred location:</span>{" "}
+                    {selectedArticle.preferred_location_code ?? "—"}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Min stock:</span> {selectedArticle.min_stock}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Reorder point:</span>{" "}
+                    {selectedArticle.reorder_point}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Safety stock:</span>{" "}
+                    {selectedArticle.safety_stock}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Created at:</span>{" "}
+                    {selectedArticle.created_at}
+                  </div>
+                  <div>
+                    <span className="text-text-muted">Updated at:</span>{" "}
+                    {selectedArticle.updated_at}
+                  </div>
                 </div>
               ) : (
                 <div className="rounded-md border p-3">
@@ -727,7 +799,9 @@ export function InventoryPage() {
               <div className="rounded-md border p-3">
                 <h4 className="mb-2 text-sm font-semibold">Historique</h4>
                 {articleHistory.length === 0 ? (
-                  <p className="text-sm text-text-muted">No stock history entries yet for this article.</p>
+                  <p className="text-sm text-text-muted">
+                    No stock history entries yet for this article.
+                  </p>
                 ) : (
                   <div className="space-y-2">
                     {articleHistory.map((entry) => (
@@ -736,7 +810,8 @@ export function InventoryPage() {
                           {entry.warehouse_code}/{entry.location_code}
                         </div>
                         <div className="text-text-muted">
-                          On-hand: {entry.on_hand_qty} | Reserved: {entry.reserved_qty} | Available: {entry.available_qty}
+                          On-hand: {entry.on_hand_qty} | Reserved: {entry.reserved_qty} | Available:{" "}
+                          {entry.available_qty}
                         </div>
                         <div className="text-xs text-text-muted">Updated: {entry.updated_at}</div>
                       </div>
@@ -757,7 +832,11 @@ export function InventoryPage() {
                   <Button variant="outline" onClick={beginEditSelectedArticle}>
                     Edit
                   </Button>
-                  <Button variant="destructive" onClick={() => void softDeleteSelectedArticle()} disabled={saving}>
+                  <Button
+                    variant="destructive"
+                    onClick={() => void softDeleteSelectedArticle()}
+                    disabled={saving}
+                  >
                     Delete
                   </Button>
                 </>
@@ -790,8 +869,8 @@ export function InventoryPage() {
           <DialogHeader>
             <DialogTitle>New article</DialogTitle>
             <DialogDescription>
-              Define catalog data and replenishment parameters. Reorder point triggers replenishment alerts; maximum
-              stock is optional.
+              Define catalog data and replenishment parameters. Reorder point triggers replenishment
+              alerts; maximum stock is optional.
             </DialogDescription>
           </DialogHeader>
           <PermissionGate permission="inv.manage">

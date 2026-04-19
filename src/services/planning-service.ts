@@ -1,6 +1,6 @@
-﻿import { invoke } from "@tauri-apps/api/core";
 import { z, ZodError } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   CapacityRule,
   CapacityRuleFilter,
@@ -262,11 +262,19 @@ async function invokeParsed<T>(
   }
 }
 
-export function refreshScheduleCandidates(input: RefreshScheduleCandidatesInput): Promise<RefreshScheduleCandidatesResult> {
-  return invokeParsed("refresh_schedule_candidates", { input }, RefreshScheduleCandidatesResultSchema);
+export function refreshScheduleCandidates(
+  input: RefreshScheduleCandidatesInput,
+): Promise<RefreshScheduleCandidatesResult> {
+  return invokeParsed(
+    "refresh_schedule_candidates",
+    { input },
+    RefreshScheduleCandidatesResultSchema,
+  );
 }
 
-export function getScheduleBacklogSnapshot(filter: ScheduleCandidateFilter): Promise<ScheduleBacklogSnapshot> {
+export function getScheduleBacklogSnapshot(
+  filter: ScheduleCandidateFilter,
+): Promise<ScheduleBacklogSnapshot> {
   return invokeParsed("get_schedule_backlog_snapshot", { filter }, ScheduleBacklogSnapshotSchema);
 }
 
@@ -294,7 +302,11 @@ export function updateCapacityRule(
   expectedRowVersion: number,
   input: UpdateCapacityRuleInput,
 ): Promise<CapacityRule> {
-  return invokeParsed("update_capacity_rule", { ruleId, expectedRowVersion, input }, CapacityRuleSchema);
+  return invokeParsed(
+    "update_capacity_rule",
+    { ruleId, expectedRowVersion, input },
+    CapacityRuleSchema,
+  );
 }
 
 export function listPlanningWindows(filter: PlanningWindowFilter): Promise<PlanningWindow[]> {
@@ -310,26 +322,42 @@ export function updatePlanningWindow(
   expectedRowVersion: number,
   input: UpdatePlanningWindowInput,
 ): Promise<PlanningWindow> {
-  return invokeParsed("update_planning_window", { windowId, expectedRowVersion, input }, PlanningWindowSchema);
+  return invokeParsed(
+    "update_planning_window",
+    { windowId, expectedRowVersion, input },
+    PlanningWindowSchema,
+  );
 }
 
-export function listScheduleCommitments(filter: ScheduleCommitmentFilter): Promise<ScheduleCommitment[]> {
+export function listScheduleCommitments(
+  filter: ScheduleCommitmentFilter,
+): Promise<ScheduleCommitment[]> {
   return invokeParsed("list_schedule_commitments", { filter }, z.array(ScheduleCommitmentSchema));
 }
 
-export function listScheduleChangeLog(commitmentId?: number | null): Promise<ScheduleChangeLogEntry[]> {
-  return invokeParsed("list_schedule_change_log", { commitmentId: commitmentId ?? null }, z.array(ScheduleChangeLogEntrySchema));
+export function listScheduleChangeLog(
+  commitmentId?: number | null,
+): Promise<ScheduleChangeLogEntry[]> {
+  return invokeParsed(
+    "list_schedule_change_log",
+    { commitmentId: commitmentId ?? null },
+    z.array(ScheduleChangeLogEntrySchema),
+  );
 }
 
 export function listScheduleBreakIns(filter: ScheduleBreakInFilter): Promise<ScheduleBreakIn[]> {
   return invokeParsed("list_schedule_break_ins", { filter }, z.array(ScheduleBreakInSchema));
 }
 
-export function createScheduleCommitment(input: CreateScheduleCommitmentInput): Promise<ScheduleCommitment> {
+export function createScheduleCommitment(
+  input: CreateScheduleCommitmentInput,
+): Promise<ScheduleCommitment> {
   return invokeParsed("create_schedule_commitment", { input }, ScheduleCommitmentSchema);
 }
 
-export function rescheduleScheduleCommitment(input: RescheduleCommitmentInput): Promise<ScheduleCommitment> {
+export function rescheduleScheduleCommitment(
+  input: RescheduleCommitmentInput,
+): Promise<ScheduleCommitment> {
   return invokeParsed("reschedule_schedule_commitment", { input }, ScheduleCommitmentSchema);
 }
 
@@ -341,7 +369,9 @@ export function freezeSchedulePeriod(input: FreezeSchedulePeriodInput): Promise<
   return invokeParsed("freeze_schedule_period", { input }, z.number());
 }
 
-export function getPlanningGanttSnapshot(filter: PlanningGanttFilter): Promise<PlanningGanttSnapshot> {
+export function getPlanningGanttSnapshot(
+  filter: PlanningGanttFilter,
+): Promise<PlanningGanttSnapshot> {
   return invokeParsed("get_planning_gantt_snapshot", { filter }, PlanningGanttSnapshotSchema);
 }
 
@@ -357,11 +387,12 @@ export function listTeamCapacityLoad(
   );
 }
 
-export function exportPlanningGanttPdf(input: ExportPlanningGanttPdfInput): Promise<ExportedBinaryDocument> {
+export function exportPlanningGanttPdf(
+  input: ExportPlanningGanttPdfInput,
+): Promise<ExportedBinaryDocument> {
   return invokeParsed("export_planning_gantt_pdf", { input }, ExportedBinaryDocumentSchema);
 }
 
 export function notifyScheduleTeams(input: NotifyTeamsInput): Promise<NotifyTeamsResult> {
   return invokeParsed("notify_schedule_teams", { input }, NotifyTeamsResultSchema);
 }
-

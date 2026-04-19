@@ -312,6 +312,7 @@ pub struct InterventionRequest {
     // Recurrence
     pub is_recurrence_flag: bool,
     pub recurrence_di_id: Option<i64>,
+    pub source_inspection_anomaly_id: Option<i64>,
     // Concurrency
     pub row_version: i64,
     // Metadata
@@ -455,6 +456,9 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         recurrence_di_id: row
             .try_get::<Option<i64>>("", "recurrence_di_id")
             .map_err(|e| decode_err("recurrence_di_id", e))?,
+        source_inspection_anomaly_id: row
+            .try_get::<Option<i64>>("", "source_inspection_anomaly_id")
+            .map_err(|e| decode_err("source_inspection_anomaly_id", e))?,
         row_version: row
             .try_get::<i64>("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,

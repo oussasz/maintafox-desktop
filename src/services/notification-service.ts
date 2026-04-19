@@ -1,5 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
+
+import { invoke } from "@/lib/ipc-invoke";
 
 const NotificationSummarySchema = z.object({
   id: z.number(),

@@ -18,12 +18,9 @@ import {
   Settings,
   User,
   GraduationCap,
-  Radio,
-  Link,
   ShieldCheck,
   DollarSign,
   CheckSquare,
-  Sliders,
   HeartPulse,
 } from "lucide-react";
 
@@ -108,7 +105,7 @@ export const defaultNavItems: NavItem[] = [
   {
     key: "training",
     labelKey: "nav.training",
-    path: "/training",
+    path: "/personnel?tab=training",
     icon: <GraduationCap className="h-4 w-4" />,
     requiredPermission: "trn.view",
   },
@@ -147,7 +144,7 @@ export const defaultNavItems: NavItem[] = [
   {
     key: "reliability",
     labelKey: "nav.reliability",
-    path: "/reliability",
+    path: "/reliability/dashboard",
     icon: <Activity className="h-4 w-4" />,
     requiredPermission: "ram.view",
   },
@@ -203,20 +200,6 @@ export const defaultNavItems: NavItem[] = [
     requiredPermission: "doc.view",
   },
   {
-    key: "iot",
-    labelKey: "nav.iot",
-    path: "/iot",
-    icon: <Radio className="h-4 w-4" />,
-    requiredPermission: "iot.view",
-  },
-  {
-    key: "erp",
-    labelKey: "nav.erp",
-    path: "/erp",
-    icon: <Link className="h-4 w-4" />,
-    requiredPermission: "erp.view",
-  },
-  {
     key: "archive",
     labelKey: "nav.archive",
     path: "/archive",
@@ -236,13 +219,6 @@ export const defaultNavItems: NavItem[] = [
     path: "/settings",
     icon: <Settings className="h-4 w-4" />,
     requiredPermission: "adm.settings",
-  },
-  {
-    key: "configuration",
-    labelKey: "nav.configuration",
-    path: "/configuration",
-    icon: <Sliders className="h-4 w-4" />,
-    requiredPermission: "cfg.view",
   },
   {
     key: "diagnostics",

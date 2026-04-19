@@ -1,5 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
+
+import { invoke } from "@/lib/ipc-invoke";
 
 const ActivityEventSummarySchema = z.object({
   id: z.number(),
@@ -128,9 +129,7 @@ export interface ExportAuditInput {
   export_reason: string;
 }
 
-export async function listActivityEvents(
-  filter?: ActivityFilter,
-): Promise<ActivityEventSummary[]> {
+export async function listActivityEvents(filter?: ActivityFilter): Promise<ActivityEventSummary[]> {
   const raw = await invoke<ActivityEventSummary[]>("list_activity_events", { filter });
   return z.array(ActivityEventSummarySchema).parse(raw);
 }

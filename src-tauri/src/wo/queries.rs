@@ -59,7 +59,9 @@ pub struct WoGetResponse {
 const WO_COLS: &str = "\
     wo.id, wo.code, wo.type_id, wo.status_id, \
     wo.equipment_id, wo.component_id, wo.location_id, \
-    wo.requester_id, wo.source_di_id, wo.entity_id, \
+    wo.requester_id, wo.source_di_id, wo.source_inspection_anomaly_id, \
+    wo.source_ram_ishikawa_diagram_id, wo.source_ishikawa_flow_node_id, wo.source_rca_cause_text, \
+    wo.entity_id, \
     wo.planner_id, wo.approver_id, wo.assigned_group_id, wo.primary_responsible_id, \
     wo.urgency_id, wo.title, wo.description, \
     wo.planned_start, wo.planned_end, wo.shift, wo.scheduled_at, \
@@ -73,6 +75,9 @@ const WO_COLS: &str = "\
     wo.root_cause_summary, wo.corrective_action_summary, wo.verification_method, \
     wo.notes, wo.cancel_reason, wo.parts_actuals_confirmed, \
     wo.service_cost_input, wo.reopen_count, wo.last_closed_at, \
+    wo.requires_permit, \
+    wo.entity_sync_id, wo.closeout_validation_profile_id, wo.closeout_validation_passed, \
+    wo.no_downtime_attestation, wo.no_downtime_attestation_reason, \
     wo.row_version, wo.created_at, wo.updated_at";
 
 /// Join columns appended when full joins are present.
@@ -305,6 +310,36 @@ pub async fn create_work_order(
         }
     }
 
+    if let Some(aid) = input.source_inspection_anomaly_id {
+        let a_exists = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM inspection_anomalies WHERE id = ?",
+                [aid.into()],
+            ))
+            .await?;
+        if a_exists.is_none() {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Anomalie d'inspection introuvable (source_inspection_anomaly_id={aid})."
+            )]));
+        }
+    }
+
+    if let Some(did) = input.source_ram_ishikawa_diagram_id {
+        let d_exists = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM ram_ishikawa_diagrams WHERE id = ?",
+                [did.into()],
+            ))
+            .await?;
+        if d_exists.is_none() {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Diagramme Ishikawa introuvable (source_ram_ishikawa_diagram_id={did})."
+            )]));
+        }
+    }
+
     // Resolve status_id for 'draft'
     let draft_row = db
         .query_one(Statement::from_sql_and_values(
@@ -329,11 +364,14 @@ pub async fn create_work_order(
         DbBackend::Sqlite,
         "INSERT INTO work_orders (\
             code, type_id, status_id, equipment_id, location_id, \
-            source_di_id, entity_id, planner_id, requester_id, urgency_id, \
+            source_di_id, source_inspection_anomaly_id, \
+            source_ram_ishikawa_diagram_id, source_ishikawa_flow_node_id, source_rca_cause_text, \
+            entity_id, planner_id, requester_id, urgency_id, \
             title, description, notes, \
             planned_start, planned_end, shift, expected_duration_hours, \
+            requires_permit, \
             row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             input.type_id.into(),
@@ -341,6 +379,24 @@ pub async fn create_work_order(
             input.equipment_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.location_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.source_di_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
+            input
+                .source_inspection_anomaly_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            input
+                .source_ram_ishikawa_diagram_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            input
+                .source_ishikawa_flow_node_id
+                .clone()
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            input
+                .source_rca_cause_text
+                .clone()
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
             input.entity_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.planner_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.creator_id.into(),
@@ -352,6 +408,7 @@ pub async fn create_work_order(
             input.planned_end.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
             input.shift.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
             input.expected_duration_hours.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<f64>)),
+            (if input.requires_permit.unwrap_or(false) { 1i64 } else { 0i64 }).into(),
             now.clone().into(),
             now.clone().into(),
         ],
@@ -371,8 +428,7 @@ pub async fn create_work_order(
         }
     })?;
 
-    // Fetch the inserted row by code (code is UNIQUE)
-    let wo = get_work_order(db, {
+    let new_id: i64 = {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -387,13 +443,25 @@ pub async fn create_work_order(
             })?;
         row.try_get::<i64>("", "id")
             .map_err(|e| AppError::Internal(anyhow::anyhow!("WO id decode: {e}")))?
-    })
-    .await?
-    .ok_or_else(|| {
-        AppError::Internal(anyhow::anyhow!(
-            "Failed to re-read WO after insert: code={code}"
-        ))
-    })?;
+    };
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET \
+         entity_sync_id = lower(hex(randomblob(16))), \
+         closeout_validation_profile_id = COALESCE(closeout_validation_profile_id, 1) \
+         WHERE id = ?",
+        [new_id.into()],
+    ))
+    .await?;
+
+    let wo = get_work_order(db, new_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "Failed to re-read WO after insert: code={code}"
+            ))
+        })?;
 
     // Write initial transition log entry
     db.execute(Statement::from_sql_and_values(
@@ -480,6 +548,10 @@ pub async fn update_wo_draft_fields(
     if let Some(urgency_id) = input.urgency_id {
         sets.push("urgency_id = ?".into());
         values.push(urgency_id.into());
+    }
+    if let Some(rp) = input.requires_permit {
+        sets.push("requires_permit = ?".into());
+        values.push((if rp { 1i64 } else { 0i64 }).into());
     }
 
     if sets.is_empty() {

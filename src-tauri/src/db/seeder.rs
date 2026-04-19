@@ -10,6 +10,7 @@ pub const SEED_SCHEMA_VERSION: i32 = 2;
 /// Baseline settings seeded on first startup after settings migration is applied.
 /// Tuple format: (`setting_key`, category, `setting_scope`, `setting_value_json`)
 const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
+    ("ram.fmeca_rpn_critical_threshold", "reliability", "tenant", r"150"),
     ("locale.primary_language", "localization", "tenant", r#""fr""#),
     ("locale.fallback_language", "localization", "tenant", r#""en""#),
     ("locale.date_format", "localization", "tenant", r#""DD/MM/YYYY""#),
@@ -1646,26 +1647,14 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     Ok(())
 }
 
-/// Seeds baseline rows in `app_settings` if the table is still empty.
+/// Ensures baseline rows exist in `app_settings` (idempotent).
+///
+/// Uses `INSERT OR IGNORE` per `(setting_key, setting_scope)` so missing defaults are
+/// restored after partial wipes — e.g. tenant-scoped rows removed while device-scoped
+/// rows remain, which previously caused the seeder to skip entirely and left Settings
+/// without localization / appearance / backup categories.
 /// Safe to call on every startup after migrations.
 pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
-    let count_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM app_settings;".to_string(),
-        ))
-        .await?;
-
-    let count = count_row.and_then(|r| r.try_get::<i64>("", "cnt").ok()).unwrap_or(0);
-
-    if count > 0 {
-        tracing::debug!(
-            count,
-            "seed_default_settings: existing settings detected, skipping defaults"
-        );
-        return Ok(());
-    }
-
     let now = Utc::now().to_rfc3339();
 
     for (setting_key, category, setting_scope, setting_value_json) in DEFAULT_SETTINGS {
@@ -1688,7 +1677,7 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
 
     tracing::info!(
         count = DEFAULT_SETTINGS.len(),
-        "seed_default_settings: baseline settings inserted"
+        "seed_default_settings: baseline settings ensured (idempotent)"
     );
 
     Ok(())
@@ -2285,6 +2274,7 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         "inv.manage",
         "pm.view",
         "ram.view",
+        "sync.view",
         "rep.view",
         "arc.view",
         "doc.view",
@@ -2367,6 +2357,7 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         "doc.view",
         "log.view",
         "ram.view",
+        "sync.view",
         "cfg.view",
     ];
     if let Some(rid) = get_role_id_by_name(db, "Planner/Scheduler").await? {
@@ -2575,7 +2566,7 @@ mod tests {
     fn default_settings_count_is_expected() {
         assert_eq!(
             DEFAULT_SETTINGS.len(),
-            14,
+            15,
             "Default settings count changed; update migration and verification checks"
         );
     }

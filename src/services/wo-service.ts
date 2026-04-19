@@ -2,12 +2,12 @@
  * wo-service.ts
  *
  * IPC wrappers for work order (WO/OT) commands.
- * Phase 2 – Sub-phase 05 – File 01 – Sprint S3 (updated from S4 scaffold).
+ * Phase 2 â€“ Sub-phase 05 â€“ File 01 â€“ Sprint S3 (updated from S4 scaffold).
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   WoAssignInput,
   WoCancelInput,
@@ -29,7 +29,7 @@ import type {
   WorkOrder,
 } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const WoStatusSchema = z.enum([
   "draft",
@@ -58,6 +58,10 @@ export const WorkOrderSchema = z.object({
   location_id: z.number().nullable(),
   requester_id: z.number().nullable(),
   source_di_id: z.number().nullable(),
+  source_inspection_anomaly_id: z.number().nullable().optional(),
+  source_ram_ishikawa_diagram_id: z.number().nullable().optional(),
+  source_ishikawa_flow_node_id: z.string().nullable().optional(),
+  source_rca_cause_text: z.string().nullable().optional(),
   entity_id: z.number().nullable(),
   planner_id: z.number().nullable(),
   approver_id: z.number().nullable(),
@@ -92,6 +96,16 @@ export const WorkOrderSchema = z.object({
   verification_method: z.string().nullable(),
   notes: z.string().nullable(),
   cancel_reason: z.string().nullable(),
+  parts_actuals_confirmed: z.boolean(),
+  service_cost_input: z.number().nullable(),
+  reopen_count: z.number(),
+  last_closed_at: z.string().nullable(),
+  requires_permit: z.boolean(),
+  entity_sync_id: z.string().nullable().optional(),
+  closeout_validation_profile_id: z.number().nullable().optional(),
+  closeout_validation_passed: z.boolean().optional(),
+  no_downtime_attestation: z.boolean().optional(),
+  no_downtime_attestation_reason: z.string().nullable().optional(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -132,7 +146,7 @@ const WoGetResponseSchema = z.object({
   transitions: z.array(WoTransitionRowSchema),
 });
 
-// ── Error helpers ─────────────────────────────────────────────────────────────
+// â”€â”€ Error helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface IpcError {
   code: string;
@@ -167,16 +181,16 @@ export class CompletionBlockedError extends Error {
 export function normalizePreflightCode(message: string): string {
   const lower = message.toLowerCase();
 
-  if (lower.includes("open labor") || lower.includes("main-d'œuvre ouvertes")) {
+  if (lower.includes("open labor") || lower.includes("main-d'Å“uvre ouvertes")) {
     return "OPEN_LABOR";
   }
-  if (lower.includes("mandatory tasks incomplete") || lower.includes("tâches obligatoires")) {
+  if (lower.includes("mandatory tasks incomplete") || lower.includes("tÃ¢ches obligatoires")) {
     return "INCOMPLETE_TASKS";
   }
-  if (lower.includes("parts actuals") || lower.includes("pièces")) {
+  if (lower.includes("parts actuals") || lower.includes("piÃ¨ces")) {
     return "MISSING_PARTS";
   }
-  if (lower.includes("open downtime") || lower.includes("temps d'arrêt ouverts")) {
+  if (lower.includes("open downtime") || lower.includes("temps d'arrÃªt ouverts")) {
     return "OPEN_DOWNTIME";
   }
 
@@ -206,7 +220,7 @@ function rethrowIfVersionConflict(err: unknown): never {
   throw err;
 }
 
-// ── Commands ──────────────────────────────────────────────────────────────────
+// â”€â”€ Commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listWos(filter: WoListFilter): Promise<WoListPage> {
   const raw = await invoke<unknown>("list_wo", { filter });
@@ -232,7 +246,7 @@ export async function updateWoDraft(input: WoDraftUpdateInput): Promise<WorkOrde
   }
 }
 
-// ── Planning & scheduling ─────────────────────────────────────────────────────
+// â”€â”€ Planning & scheduling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function planWo(input: WoPlanInput): Promise<WorkOrder> {
   try {
@@ -252,7 +266,7 @@ export async function assignWo(input: WoAssignInput): Promise<WorkOrder> {
   }
 }
 
-// ── Execution lifecycle ───────────────────────────────────────────────────────
+// â”€â”€ Execution lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function startWo(input: WoStartInput): Promise<WorkOrder> {
   try {
@@ -316,7 +330,7 @@ export async function cancelWo(input: WoCancelInput): Promise<WorkOrder> {
   }
 }
 
-// ── Cost summary ──────────────────────────────────────────────────────────────
+// â”€â”€ Cost summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const CostSummarySchema = z.object({
   labor_cost: z.number(),
@@ -332,7 +346,7 @@ export async function getCostSummary(woId: number): Promise<WoCostSummary> {
   return CostSummarySchema.parse(raw) as WoCostSummary;
 }
 
-// ── Stats / analytics ─────────────────────────────────────────────────────────
+// â”€â”€ Stats / analytics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const WoStatsSchema = z.object({
   total: z.number(),

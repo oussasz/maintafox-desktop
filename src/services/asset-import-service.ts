@@ -5,9 +5,9 @@
  * All invoke() calls for the import workflow are isolated here.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   ApplyPolicy,
   ApplyResult,
@@ -15,7 +15,7 @@ import type {
   ImportPreview,
 } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const ValidationMessageSchema = z.object({
   category: z.string(),
@@ -61,7 +61,7 @@ const ApplyResultSchema = z.object({
   errored: z.number(),
 });
 
-// ── Service functions ─────────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Upload a CSV file, create the import batch, parse and stage rows.

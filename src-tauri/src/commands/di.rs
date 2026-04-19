@@ -859,6 +859,7 @@ mod tests {
                 quality_flag: false,
                 reported_urgency: "medium".into(),
                 observed_at: None,
+                source_inspection_anomaly_id: None,
                 submitter_id: user_id,
             },
         )
@@ -1177,6 +1178,7 @@ mod tests {
                 environmental_flag: false,
                 quality_flag: false,
                 symptom_code_id: None,
+                source_inspection_anomaly_id: None,
             },
         )
         .await

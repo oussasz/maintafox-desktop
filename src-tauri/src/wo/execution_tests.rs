@@ -105,6 +105,10 @@ mod tests {
                 equipment_id: None,
                 location_id: None,
                 source_di_id: None,
+                source_inspection_anomaly_id: None,
+                source_ram_ishikawa_diagram_id: None,
+                source_ishikawa_flow_node_id: None,
+                source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
                 urgency_id: Some(3),
@@ -116,6 +120,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: None,
                 creator_id: actor,
+                requires_permit: None,
             },
         )
         .await
@@ -311,6 +316,10 @@ mod tests {
                 equipment_id: None,
                 location_id: None,
                 source_di_id: None,
+                source_inspection_anomaly_id: None,
+                source_ram_ishikawa_diagram_id: None,
+                source_ishikawa_flow_node_id: None,
+                source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
                 urgency_id: Some(3),
@@ -322,6 +331,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: None,
                 creator_id: actor,
+                requires_permit: None,
             },
         )
         .await
@@ -403,6 +413,10 @@ mod tests {
                 equipment_id: None,
                 location_id: None,
                 source_di_id: None,
+                source_inspection_anomaly_id: None,
+                source_ram_ishikawa_diagram_id: None,
+                source_ishikawa_flow_node_id: None,
+                source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
                 urgency_id: Some(3),
@@ -414,6 +428,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: None,
                 creator_id: actor,
+                requires_permit: None,
             },
         )
         .await
@@ -534,6 +549,10 @@ mod tests {
                 equipment_id: None,
                 location_id: None,
                 source_di_id: None,
+                source_inspection_anomaly_id: None,
+                source_ram_ishikawa_diagram_id: None,
+                source_ishikawa_flow_node_id: None,
+                source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
                 urgency_id: Some(3),
@@ -545,6 +564,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: None,
                 creator_id: actor,
+                requires_permit: None,
             },
         )
         .await
@@ -795,6 +815,10 @@ mod tests {
                 equipment_id: None,
                 location_id: None,
                 source_di_id: None,
+                source_inspection_anomaly_id: None,
+                source_ram_ishikawa_diagram_id: None,
+                source_ishikawa_flow_node_id: None,
+                source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
                 urgency_id: None,
@@ -806,6 +830,7 @@ mod tests {
                 shift: None,
                 expected_duration_hours: None,
                 creator_id: actor,
+                requires_permit: None,
             },
         )
         .await

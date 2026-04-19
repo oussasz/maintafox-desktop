@@ -185,6 +185,7 @@ fn di_create_input(submitter_id: i64) -> DiCreateInput {
         quality_flag: false,
         reported_urgency: "medium".to_string(),
         observed_at: None,
+        source_inspection_anomaly_id: None,
         submitter_id,
     }
 }
@@ -304,6 +305,10 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
             equipment_id: None,
             location_id: None,
             source_di_id: None,
+            source_inspection_anomaly_id: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+            source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
             urgency_id: Some(3),
@@ -315,6 +320,7 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
             shift: None,
             expected_duration_hours: Some(8.0),
             creator_id: actor,
+            requires_permit: None,
         },
     )
     .await
@@ -421,6 +427,7 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
             wo_id: wo.id,
             actor_id: actor,
             expected_row_version: wo.row_version,
+            ..Default::default()
         },
     )
     .await
@@ -465,6 +472,10 @@ async fn test_obs_01_emit_creates_notification() {
             equipment_id: None,
             location_id: None,
             source_di_id: None,
+            source_inspection_anomaly_id: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+            source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
             urgency_id: Some(3),
@@ -476,6 +487,7 @@ async fn test_obs_01_emit_creates_notification() {
             shift: None,
             expected_duration_hours: Some(1.0),
             creator_id: actor,
+            requires_permit: None,
         },
     )
     .await
@@ -527,6 +539,10 @@ async fn test_obs_02_dedupe_prevents_flood() {
             equipment_id: None,
             location_id: None,
             source_di_id: None,
+            source_inspection_anomaly_id: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+            source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
             urgency_id: Some(3),
@@ -538,6 +554,7 @@ async fn test_obs_02_dedupe_prevents_flood() {
             shift: None,
             expected_duration_hours: Some(1.0),
             creator_id: actor,
+            requires_permit: None,
         },
     )
     .await
@@ -607,6 +624,10 @@ async fn test_obs_03_snooze_wakes() {
             equipment_id: None,
             location_id: None,
             source_di_id: None,
+            source_inspection_anomaly_id: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+            source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
             urgency_id: Some(3),
@@ -618,6 +639,7 @@ async fn test_obs_03_snooze_wakes() {
             shift: None,
             expected_duration_hours: Some(1.0),
             creator_id: actor,
+            requires_permit: None,
         },
     )
     .await
@@ -715,6 +737,10 @@ async fn test_obs_04_acknowledge_closes_escalation_path() {
             equipment_id: None,
             location_id: None,
             source_di_id: None,
+            source_inspection_anomaly_id: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+            source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
             urgency_id: Some(3),
@@ -726,6 +752,7 @@ async fn test_obs_04_acknowledge_closes_escalation_path() {
             shift: None,
             expected_duration_hours: Some(1.0),
             creator_id: actor,
+            requires_permit: None,
         },
     )
     .await
@@ -1360,6 +1387,7 @@ async fn test_obs_12_full_observability_chain() {
             wo_id: wo_work.id,
             actor_id: actor,
             expected_row_version: wo_work.row_version,
+            ..Default::default()
         },
     )
     .await

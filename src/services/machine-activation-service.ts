@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { z, ZodError } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   ApplyMachineActivationInput,
   MachineActivationApplyResult,
@@ -124,9 +124,13 @@ export async function rotateActivationBindingSecret(
   }
 }
 
-export async function getMachineActivationDiagnostics(limit?: number): Promise<MachineActivationDiagnostics> {
+export async function getMachineActivationDiagnostics(
+  limit?: number,
+): Promise<MachineActivationDiagnostics> {
   try {
-    const raw = await invoke<unknown>("get_machine_activation_diagnostics", { limit: limit ?? null });
+    const raw = await invoke<unknown>("get_machine_activation_diagnostics", {
+      limit: limit ?? null,
+    });
     return MachineActivationDiagnosticsSchema.parse(raw) as MachineActivationDiagnostics;
   } catch (err) {
     throw normalizeDecodeError("get_machine_activation_diagnostics", err);

@@ -1,10 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 
+import { invoke } from "@/lib/ipc-invoke";
 import { getUserPresence } from "@/services/rbac-service";
 import type { UserPresence } from "@shared/ipc-types";
 
-// ── Presence cache (module-level, shared across all instances) ────────────
+// â”€â”€ Presence cache (module-level, shared across all instances) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const CACHE_TTL_MS = 30_000;
 const cachedPresence: Map<number, UserPresence> = new Map();
@@ -28,7 +28,7 @@ async function fetchPresence(userIds: number[]): Promise<void> {
       }
       cacheTimestamp = Date.now();
     } catch {
-      // IPC failure — leave cache stale, will retry on next interval
+      // IPC failure â€” leave cache stale, will retry on next interval
     } finally {
       pendingFetch = null;
     }
@@ -37,7 +37,7 @@ async function fetchPresence(userIds: number[]): Promise<void> {
   return pendingFetch;
 }
 
-// ── Component ─────────────────────────────────────────────────────────────
+// â”€â”€ Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface OnlinePresenceIndicatorProps {
   userId: number;
@@ -52,7 +52,7 @@ const SIZE_MAP = {
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-emerald-500",
   idle: "bg-amber-400",
-  offline: "bg-gray-300",
+  offline: "bg-surface-3",
 };
 
 /**

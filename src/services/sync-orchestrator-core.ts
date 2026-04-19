@@ -1,4 +1,11 @@
-export type SyncRuntimeState = "idle" | "scheduled" | "running" | "blocked" | "degraded" | "error" | "paused";
+export type SyncRuntimeState =
+  | "idle"
+  | "scheduled"
+  | "running"
+  | "blocked"
+  | "degraded"
+  | "error"
+  | "paused";
 
 export type SyncRunMode =
   | "background"
@@ -69,7 +76,10 @@ export function computeRetryDelayMs(
   return Math.max(policy.baseDelayMs, exp + jitter);
 }
 
-export function evaluateSchedulingGate(policy: SyncPolicyControls, context: SchedulingContext): SchedulingGate {
+export function evaluateSchedulingGate(
+  policy: SyncPolicyControls,
+  context: SchedulingContext,
+): SchedulingGate {
   const now = new Date(context.nowIso);
   if (policy.entitlementStatus === "suspended") {
     return {
@@ -121,6 +131,11 @@ export function shouldRetry(attempt: number, policy: RetryPolicy): boolean {
 export function normalizeRuntimeStateAfterRestart(state: SyncRuntimeState): SyncRuntimeState {
   if (state === "running") {
     return "scheduled";
+  }
+  // Persisted "error" is terminal for the last session; on cold start give a fresh retry cycle
+  // instead of showing the header error until the next successful round.
+  if (state === "error") {
+    return "idle";
   }
   return state;
 }

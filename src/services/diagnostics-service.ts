@@ -2,12 +2,12 @@
 // Components and hooks MUST NOT import from @tauri-apps/api/core directly
 // for diagnostics operations.
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type { DiagnosticsAppInfo, IntegrityReport, SupportBundle } from "@shared/ipc-types";
 
-// ── Zod schemas for runtime shape validation ──────────────────────────────
+// â”€â”€ Zod schemas for runtime shape validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const IntegrityIssueSchema = z.object({
   code: z.string(),
@@ -25,7 +25,7 @@ export const IntegrityReportSchema = z.object({
   value_count: z.number().int(),
 });
 
-// ── SP06-F03 Zod schemas ─────────────────────────────────────────────────
+// â”€â”€ SP06-F03 Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const DiagnosticsAppInfoSchema = z.object({
   app_version: z.string(),
@@ -46,7 +46,7 @@ const SupportBundleSchema = z.object({
   runbook_links: z.array(z.string()).optional(),
 });
 
-// ── Service functions — Integrity ─────────────────────────────────────────
+// â”€â”€ Service functions â€” Integrity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function runIntegrityCheck(): Promise<IntegrityReport> {
   const raw = await invoke<unknown>("run_integrity_check");
@@ -58,11 +58,11 @@ export async function repairSeedData(): Promise<IntegrityReport> {
   return IntegrityReportSchema.parse(raw) as IntegrityReport;
 }
 
-// ── Service functions — SP06-F03 Diagnostics & Support Bundle ─────────────
+// â”€â”€ Service functions â€” SP06-F03 Diagnostics & Support Bundle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Return rich application metadata (session-gated).
- * Richer than the pre-auth `get_app_info` — includes DB schema version,
+ * Richer than the pre-auth `get_app_info` â€” includes DB schema version,
  * locale from settings, and process uptime.
  */
 export async function getDiagnosticsInfo(): Promise<DiagnosticsAppInfo> {

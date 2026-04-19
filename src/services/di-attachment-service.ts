@@ -2,15 +2,15 @@
  * di-attachment-service.ts
  *
  * IPC wrappers for DI attachment commands.
- * Phase 2 – Sub-phase 04 – File 03 – Sprint S3.
+ * Phase 2 â€“ Sub-phase 04 â€“ File 03 â€“ Sprint S3.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type { DiAttachment, DiAttachmentUploadInput } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const DiAttachmentSchema = z.object({
   id: z.number(),
@@ -25,7 +25,7 @@ const DiAttachmentSchema = z.object({
   notes: z.string().nullable(),
 });
 
-// ── Commands ──────────────────────────────────────────────────────────────────
+// â”€â”€ Commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Upload an attachment to a DI.
@@ -54,7 +54,7 @@ export async function deleteDiAttachment(attachmentId: number): Promise<void> {
   await invoke<unknown>("delete_di_attachment", { attachmentId });
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Maximum file size accepted by the backend (20 MB). */
 export const MAX_ATTACHMENT_SIZE_BYTES = 20 * 1024 * 1024;

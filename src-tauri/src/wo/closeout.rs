@@ -15,7 +15,9 @@ use crate::activity::emitter;
 use crate::audit;
 use crate::errors::{AppError, AppResult};
 use crate::inventory::queries as inventory_queries;
+use crate::reliability::queries as reliability_queries;
 use crate::wo::queries;
+use crate::wo::sync_stage;
 use chrono::Utc;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait,
@@ -83,11 +85,15 @@ pub struct SaveVerificationInput {
 }
 
 /// Input for the closure quality gate.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct WoCloseInput {
     pub wo_id: i64,
     pub actor_id: i64,
     pub expected_row_version: i64,
+    #[serde(default)]
+    pub no_downtime_attestation: Option<bool>,
+    #[serde(default)]
+    pub no_downtime_attestation_reason: Option<String>,
 }
 
 /// Input for reopening a recently closed WO.
@@ -317,6 +323,57 @@ async fn load_wo_type_code(txn: &impl ConnectionTrait, wo_id: i64) -> AppResult<
         })?;
     row.try_get::<String>("", "type_code")
         .map_err(|e| decode_err("type_code", e))
+}
+
+struct CloseoutPolicyRow {
+    require_downtime_if_production_impact: bool,
+    allow_close_with_cause_not_determined: bool,
+    allow_close_with_cause_mode_only: bool,
+    require_verification_return_to_service: bool,
+    notes_min_length_when_cnd: i64,
+}
+
+async fn load_closeout_policy(
+    txn: &impl ConnectionTrait,
+    policy_id: i64,
+) -> AppResult<CloseoutPolicyRow> {
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, require_downtime_if_production_impact, \
+             allow_close_with_cause_not_determined, allow_close_with_cause_mode_only, \
+             require_verification_return_to_service, notes_min_length_when_cnd \
+             FROM closeout_validation_policies WHERE id = ?",
+            [policy_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "closeout_validation_policies missing id {policy_id}"
+            ))
+        })?;
+
+    Ok(CloseoutPolicyRow {
+        require_downtime_if_production_impact: row
+            .try_get::<i64>("", "require_downtime_if_production_impact")
+            .map_err(|e| decode_err("require_downtime_if_production_impact", e))?
+            != 0,
+        allow_close_with_cause_not_determined: row
+            .try_get::<i64>("", "allow_close_with_cause_not_determined")
+            .map_err(|e| decode_err("allow_close_with_cause_not_determined", e))?
+            != 0,
+        allow_close_with_cause_mode_only: row
+            .try_get::<i64>("", "allow_close_with_cause_mode_only")
+            .map_err(|e| decode_err("allow_close_with_cause_mode_only", e))?
+            != 0,
+        require_verification_return_to_service: row
+            .try_get::<i64>("", "require_verification_return_to_service")
+            .map_err(|e| decode_err("require_verification_return_to_service", e))?
+            != 0,
+        notes_min_length_when_cnd: row
+            .try_get::<i64>("", "notes_min_length_when_cnd")
+            .map_err(|e| decode_err("notes_min_length_when_cnd", e))?,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -660,6 +717,28 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     let type_code = load_wo_type_code(&txn, input.wo_id).await?;
     let is_failure_required = FAILURE_REQUIRED_TYPE_CODES.contains(&type_code.as_str());
 
+    let wo_scope = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT closeout_validation_profile_id, production_impact_id \
+             FROM work_orders WHERE id = ?",
+            [input.wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: input.wo_id.to_string(),
+        })?;
+    let profile_id: i64 = wo_scope
+        .try_get::<Option<i64>>("", "closeout_validation_profile_id")
+        .map_err(|e| decode_err("closeout_validation_profile_id", e))?
+        .unwrap_or(1);
+    let production_impact_id: Option<i64> = wo_scope
+        .try_get::<Option<i64>>("", "production_impact_id")
+        .map_err(|e| decode_err("production_impact_id", e))?;
+
+    let policy = load_closeout_policy(&txn, profile_id).await?;
+
     // ── Quality gate — collect ALL blocking errors ────────────────────────
     let mut preflight = PreflightResult::default();
 
@@ -713,25 +792,61 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         preflight.add("Consommation de pieces requise. (Parts actuals required.)");
     }
 
-    // (c) Failure coding for corrective/emergency
+    // (c) Failure coding + RCA for corrective/emergency (ISO 14224 close-out)
     if is_failure_required {
-        let failure_row = txn
+        let fd_row = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt \
-                 FROM work_order_failure_details \
-                 WHERE work_order_id = ? \
-                   AND (failure_mode_id IS NOT NULL OR cause_not_determined = 1)",
+                "SELECT failure_mode_id, failure_cause_id, cause_not_determined, notes \
+                 FROM work_order_failure_details WHERE work_order_id = ?",
                 [input.wo_id.into()],
             ))
-            .await?
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!("Failure coding count returned no row"))
-            })?;
-        let failure_cnt: i64 = failure_row
-            .try_get::<i64>("", "cnt")
-            .map_err(|e| decode_err("failure_cnt", e))?;
-        if failure_cnt == 0 {
+            .await?;
+
+        if let Some(r) = fd_row {
+            let failure_mode_id: Option<i64> = r
+                .try_get::<Option<i64>>("", "failure_mode_id")
+                .map_err(|e| decode_err("failure_mode_id", e))?;
+            let failure_cause_id: Option<i64> = r
+                .try_get::<Option<i64>>("", "failure_cause_id")
+                .map_err(|e| decode_err("failure_cause_id", e))?;
+            let cause_not_determined: bool = r
+                .try_get::<i64>("", "cause_not_determined")
+                .map_err(|e| decode_err("cause_not_determined", e))?
+                != 0;
+            let fd_notes: Option<String> = r
+                .try_get::<Option<String>>("", "notes")
+                .map_err(|e| decode_err("notes", e))?;
+
+            if cause_not_determined {
+                if !policy.allow_close_with_cause_not_determined {
+                    preflight.add(
+                        "La politique n'autorise pas la cloture avec cause non determinee. \
+                         (Policy disallows close with cause not determined.)",
+                    );
+                }
+                let nmin = policy.notes_min_length_when_cnd.max(1) as usize;
+                if fd_notes.as_deref().map_or(true, |s| s.trim().len() < nmin) {
+                    preflight.add(format!(
+                        "Notes obligatoires (cause non determinee), minimum {nmin} caracteres. \
+                         (Notes required when cause not determined.)"
+                    ));
+                }
+            } else {
+                if failure_mode_id.is_none() {
+                    preflight.add(
+                        "Mode de defaillance obligatoire (ISO 14224 — failure mode). \
+                         (Failure mode is required.)",
+                    );
+                }
+                if failure_cause_id.is_none() && !policy.allow_close_with_cause_mode_only {
+                    preflight.add(
+                        "Cause de defaillance obligatoire (ISO 14224 — failure cause), \
+                         sauf politique mode-seul. (Failure cause is required.)",
+                    );
+                }
+            }
+        } else {
             preflight.add(
                 "Codification de defaillance requise pour un OT correctif/urgence. \
                  (Failure coding required for corrective/emergency work.)",
@@ -760,26 +875,78 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         }
     }
 
-    // (e) Technical verification required
-    let ver_row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt \
-             FROM work_order_verifications \
-             WHERE work_order_id = ? AND result IN ('pass', 'monitor')",
-            [input.wo_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("Verification count returned no row"))
-        })?;
-    let ver_cnt: i64 = ver_row
-        .try_get::<i64>("", "cnt")
-        .map_err(|e| decode_err("ver_cnt", e))?;
-    if ver_cnt == 0 {
-        preflight.add(
-            "Verification technique requise. (Technical verification required.)",
-        );
+    // (c2) Downtime or attestation when production impact is recorded
+    if policy.require_downtime_if_production_impact && production_impact_id.is_some() {
+        let dt_row = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS cnt FROM work_order_downtime_segments \
+                 WHERE work_order_id = ?",
+                [input.wo_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("downtime count")))?;
+        let dt_cnt: i64 = dt_row
+            .try_get::<i64>("", "cnt")
+            .map_err(|e| decode_err("dt_cnt", e))?;
+        let attest = input.no_downtime_attestation == Some(true);
+        let reason_ok = input
+            .no_downtime_attestation_reason
+            .as_deref()
+            .map(|s| s.trim().len() >= 8)
+            .unwrap_or(false);
+        if dt_cnt == 0 && !(attest && reason_ok) {
+            preflight.add(
+                "Temps d'arret production : enregistrer un segment d'arret ou attester \
+                 explicitement l'absence d'arret avec justification. \
+                 (Downtime segment or explicit no-downtime attestation required.)",
+            );
+        }
+    }
+
+    // (e) Technical verification
+    if is_failure_required && policy.require_verification_return_to_service {
+        let rts_row = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS cnt FROM work_order_verifications \
+                 WHERE work_order_id = ? AND result = 'pass' AND return_to_service_confirmed = 1",
+                [input.wo_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!("Verification RTS count returned no row"))
+            })?;
+        let rts_cnt: i64 = rts_row
+            .try_get::<i64>("", "cnt")
+            .map_err(|e| decode_err("rts_cnt", e))?;
+        if rts_cnt == 0 {
+            preflight.add(
+                "Verification avec retour en service confirme requis. \
+                 (Verification with return-to-service confirmed is required.)",
+            );
+        }
+    } else {
+        let ver_row = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS cnt \
+                 FROM work_order_verifications \
+                 WHERE work_order_id = ? AND result IN ('pass', 'monitor')",
+                [input.wo_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!("Verification count returned no row"))
+            })?;
+        let ver_cnt: i64 = ver_row
+            .try_get::<i64>("", "cnt")
+            .map_err(|e| decode_err("ver_cnt", e))?;
+        if ver_cnt == 0 {
+            preflight.add(
+                "Verification technique requise. (Technical verification required.)",
+            );
+        }
     }
 
     // ── Return all blocking errors at once ────────────────────────────────
@@ -869,6 +1036,13 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // ── Final UPDATE ──────────────────────────────────────────────────────
     let closed_status_id = resolve_status_id(&txn, "closed").await?;
 
+    let no_dt = if input.no_downtime_attestation == Some(true) {
+        1i64
+    } else {
+        0i64
+    };
+    let no_dt_reason = input.no_downtime_attestation_reason.clone();
+
     let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -880,6 +1054,10 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 service_cost = ?, \
                 total_cost = ?, \
                 actual_duration_hours = COALESCE(?, actual_duration_hours), \
+                closeout_validation_passed = 1, \
+                closeout_validation_profile_id = ?, \
+                no_downtime_attestation = ?, \
+                no_downtime_attestation_reason = ?, \
                 row_version = row_version + 1, \
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
@@ -893,6 +1071,11 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 actual_duration_hours
                     .map(sea_orm::Value::from)
                     .unwrap_or(sea_orm::Value::from(None::<f64>)),
+                profile_id.into(),
+                no_dt.into(),
+                no_dt_reason
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
                 now.clone().into(),
                 input.wo_id.into(),
                 input.expected_row_version.into(),
@@ -915,6 +1098,30 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     .await?;
 
     txn.commit().await?;
+
+    if let Ok(Some(wo)) = queries::get_work_order(db, input.wo_id).await {
+        let status_code = wo.status_code.as_deref().unwrap_or("closed");
+        let type_code = wo.type_code.as_deref().unwrap_or("corrective");
+        if let Err(e) = sync_stage::stage_work_order_sync(
+            db,
+            &wo,
+            status_code,
+            type_code,
+            wo.closed_at.as_deref(),
+            wo.closeout_validation_profile_id.or(Some(profile_id)),
+            wo.closeout_validation_passed,
+        )
+        .await
+        {
+            tracing::warn!(target: "maintafox", "stage_work_order_sync after close: {e}");
+        }
+    }
+
+    if let Err(e) =
+        reliability_queries::ingest_failure_event_from_closed_wo(db, input.wo_id, input.actor_id).await
+    {
+        tracing::warn!(target: "maintafox", "ingest_failure_event_from_closed_wo: {e}");
+    }
 
     let wo_id_str = input.wo_id.to_string();
     let _ = emitter::emit_wo_event(
@@ -1053,6 +1260,14 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         &now,
     )
     .await?;
+
+    txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM failure_events WHERE source_type = 'work_order' AND source_id = ?",
+            [input.wo_id.into()],
+        ))
+        .await?;
 
     txn.commit().await?;
 

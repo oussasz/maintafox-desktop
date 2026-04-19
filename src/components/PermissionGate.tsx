@@ -15,19 +15,30 @@ import type { ReactNode, ReactElement } from "react";
 import { usePermissions } from "@/hooks/use-permissions";
 
 interface PermissionGateProps {
-  permission: string;
+  /** Single permission name (use this or `anyOf`, not both). */
+  permission?: string;
+  /** User must have at least one of these permissions. */
+  anyOf?: string[];
   children: ReactNode;
   fallback?: ReactNode;
 }
 
 export function PermissionGate({
   permission,
+  anyOf,
   children,
   fallback = null,
 }: PermissionGateProps): ReactElement | null {
-  const { can, isLoading } = usePermissions();
+  const { can, canAny, isLoading } = usePermissions();
 
   if (isLoading) return null;
 
-  return can(permission) ? <>{children}</> : <>{fallback}</>;
+  let allowed = false;
+  if (anyOf && anyOf.length > 0) {
+    allowed = canAny(...anyOf);
+  } else if (permission) {
+    allowed = can(permission);
+  }
+
+  return allowed ? <>{children}</> : <>{fallback}</>;
 }

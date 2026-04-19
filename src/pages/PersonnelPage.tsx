@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Personnel workspace — aligned with OT / DI page shell (PRD §6.6).
  */
 
@@ -7,8 +7,10 @@ import { ChevronDown, LayoutGrid, List, Plus, RefreshCw, Search, Users, X } from
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { PersonnelArchivePanel } from "@/components/personnel/PersonnelArchivePanel";
+import { PermissionGate } from "@/components/PermissionGate";
+import { DataTable } from "@/components/data/DataTable";
 import { AvailabilityCalendar } from "@/components/personnel/AvailabilityCalendar";
+import { PersonnelArchivePanel } from "@/components/personnel/PersonnelArchivePanel";
 import { PersonnelCard } from "@/components/personnel/PersonnelCard";
 import { PersonnelCreateDialog } from "@/components/personnel/PersonnelCreateDialog";
 import { PersonnelDetailDialog } from "@/components/personnel/PersonnelDetailDialog";
@@ -16,9 +18,8 @@ import { PersonnelExportMenu } from "@/components/personnel/PersonnelExportMenu"
 import { PersonnelImportWizard } from "@/components/personnel/PersonnelImportWizard";
 import { SkillsMatrixPanel } from "@/components/personnel/SkillsMatrixPanel";
 import { TeamCapacityBoard } from "@/components/personnel/TeamCapacityBoard";
+import { TrainingQualificationPanel } from "@/components/personnel/TrainingQualificationPanel";
 import { WorkforceReportPanel } from "@/components/personnel/WorkforceReportPanel";
-import { PermissionGate } from "@/components/PermissionGate";
-import { DataTable } from "@/components/data/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +39,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { mfInput, mfLayout } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import { listPositions } from "@/services/personnel-service";
@@ -95,10 +97,14 @@ export function PersonnelPage() {
   const loadLookups = useCallback(async () => {
     try {
       const [pos, snap] = await Promise.all([listPositions(), getOrgDesignerSnapshot()]);
-      setPositions(pos.filter((p) => p.is_active !== 0).map((p) => ({ id: p.id, code: p.code, name: p.name })));
+      setPositions(
+        pos.filter((p) => p.is_active !== 0).map((p) => ({ id: p.id, code: p.code, name: p.name })),
+      );
       const nodes = snap.nodes.filter((n) => n.status === "active");
       const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
-      setEntityNodes(entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work));
+      setEntityNodes(
+        entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
+      );
     } catch {
       setPositions([]);
       setEntityNodes([]);
@@ -198,7 +204,9 @@ export function PersonnelPage() {
       {
         accessorKey: "full_name",
         header: t("list.columns.fullName"),
-        cell: ({ row }) => <span className="max-w-[200px] truncate font-medium">{row.original.full_name}</span>,
+        cell: ({ row }) => (
+          <span className="max-w-[200px] truncate font-medium">{row.original.full_name}</span>
+        ),
       },
       {
         accessorKey: "position_name",
@@ -259,23 +267,27 @@ export function PersonnelPage() {
   );
 
   const entityValue =
-    filter.entity_id != null && filter.entity_id !== undefined ? String(filter.entity_id) : "__all__";
+    filter.entity_id != null && filter.entity_id !== undefined
+      ? String(filter.entity_id)
+      : "__all__";
   const positionValue =
-    filter.position_id != null && filter.position_id !== undefined ? String(filter.position_id) : "__all__";
+    filter.position_id != null && filter.position_id !== undefined
+      ? String(filter.position_id)
+      : "__all__";
 
   return (
-    <div className="flex h-full flex-col">
+    <div className={mfLayout.moduleRoot}>
       {/* ── Page header (same shell as DI / OT) ───────────────────────── */}
-      <div className="flex items-center justify-between border-b border-surface-border px-6 py-3">
-        <div className="flex items-center gap-3">
-          <Users className="h-5 w-5 text-text-muted" aria-hidden />
-          <h1 className="text-xl font-semibold text-text-primary">{t("page.title")}</h1>
+      <div className={mfLayout.moduleHeader}>
+        <div className={mfLayout.moduleTitleRow}>
+          <Users className={mfLayout.moduleHeaderIcon} aria-hidden />
+          <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
           <Badge variant="secondary" className="text-xs">
             {total}
           </Badge>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className={mfLayout.moduleHeaderActions}>
           <PermissionGate permission="per.manage">
             <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
               <Plus className="h-3.5 w-3.5" />
@@ -285,11 +297,11 @@ export function PersonnelPage() {
           <PersonnelImportWizard />
           <PersonnelExportMenu />
 
-          <div className="flex items-center gap-0.5 rounded-md border p-0.5">
+          <div className={mfLayout.viewToggleGroup}>
             <Button
               variant={view === "list" ? "default" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className={mfLayout.viewToggleButton}
               onClick={() => switchView("list")}
               title={t("view.list")}
             >
@@ -298,7 +310,7 @@ export function PersonnelPage() {
             <Button
               variant={view === "cards" ? "default" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className={mfLayout.viewToggleButton}
               onClick={() => switchView("cards")}
               title={t("view.cards")}
             >
@@ -320,11 +332,11 @@ export function PersonnelPage() {
       </div>
 
       {/* ── Filters ─────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-surface-border px-6 py-2">
+      <div className={mfLayout.moduleFilterBar}>
         <div className="relative max-w-sm flex-1">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
           <Input
-            className="h-8 pl-9 text-sm"
+            className={cn(mfInput.filterSearch, "max-w-sm")}
             placeholder={t("filters.searchPlaceholder")}
             value={searchInput}
             onChange={handleSearchChange}
@@ -341,7 +353,7 @@ export function PersonnelPage() {
         </div>
 
         <Select value={entityValue} onValueChange={handleEntityFilter}>
-          <SelectTrigger className="h-8 w-[200px] text-sm">
+          <SelectTrigger className={cn(mfInput.filterSelect, "w-[200px]")}>
             <SelectValue placeholder={t("filters.entity")} />
           </SelectTrigger>
           <SelectContent>
@@ -355,7 +367,7 @@ export function PersonnelPage() {
         </Select>
 
         <Select value={positionValue} onValueChange={handlePositionFilter}>
-          <SelectTrigger className="h-8 w-[200px] text-sm">
+          <SelectTrigger className={cn(mfInput.filterSelect, "w-[200px]")}>
             <SelectValue placeholder={t("filters.position")} />
           </SelectTrigger>
           <SelectContent>
@@ -424,7 +436,13 @@ export function PersonnelPage() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Button type="button" variant="ghost" size="sm" className="h-8 text-sm" onClick={clearAllFilters}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 text-sm"
+          onClick={clearAllFilters}
+        >
           {t("filters.clearAll")}
         </Button>
       </div>
@@ -436,62 +454,77 @@ export function PersonnelPage() {
       ) : null}
 
       {/* ── Main workspace ───────────────────────────────────────────── */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4">
-        <Tabs defaultValue="directory" className="w-full">
-          <TabsList className="grid w-full max-w-2xl grid-cols-4">
-            <TabsTrigger value="directory">{t("tabs.directory")}</TabsTrigger>
-            <TabsTrigger value="skills">{t("tabs.skillsMatrix")}</TabsTrigger>
-            <TabsTrigger value="availability">{t("tabs.availabilityCalendar")}</TabsTrigger>
-            <TabsTrigger value="capacity">{t("tabs.teamCapacity")}</TabsTrigger>
-          </TabsList>
+      <div className={mfLayout.moduleWorkspace}>
+        <div className={mfLayout.moduleWorkspaceInner}>
+          <div className={mfLayout.moduleWorkspaceBody}>
+            <Tabs defaultValue="directory" className="w-full">
+              <TabsList className="grid w-full max-w-4xl grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+                <TabsTrigger value="directory">{t("tabs.directory")}</TabsTrigger>
+                <TabsTrigger value="skills">{t("tabs.skillsMatrix")}</TabsTrigger>
+                <TabsTrigger value="availability">{t("tabs.availabilityCalendar")}</TabsTrigger>
+                <TabsTrigger value="capacity">{t("tabs.teamCapacity")}</TabsTrigger>
+                <TabsTrigger value="training">{t("tabs.training")}</TabsTrigger>
+              </TabsList>
 
-          <TabsContent value="directory" className="mt-4">
-            <div className="mb-4">
-              <WorkforceReportPanel />
-            </div>
-            {view === "list" && (
-              <DataTable
-                columns={columns}
-                data={items}
-                searchable={false}
-                pageSize={20}
-                isLoading={loading}
-                skeletonRows={8}
-                onRowClick={(row) => void openPersonnel(row.id)}
-              />
-            )}
-            {view === "cards" && (
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {loading
-                  ? Array.from({ length: 6 }, (_, i) => (
-                      <div
-                        key={i}
-                        className="h-48 animate-pulse rounded-lg border border-surface-border bg-muted/40"
-                      />
-                    ))
-                  : items.map((p) => (
-                      <PersonnelCard
-                        key={p.id}
-                        personnel={p}
-                        onViewDetails={() => void openPersonnel(p.id)}
-                      />
-                    ))}
-              </div>
-            )}
-          </TabsContent>
+              <TabsContent value="directory" className="mt-4">
+                <div className="mb-4">
+                  <WorkforceReportPanel />
+                </div>
+                {view === "list" && (
+                  <DataTable
+                    columns={columns}
+                    data={items}
+                    searchable={false}
+                    pageSize={20}
+                    isLoading={loading}
+                    skeletonRows={8}
+                    onRowClick={(row) => void openPersonnel(row.id)}
+                  />
+                )}
+                {view === "cards" && (
+                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                    {loading
+                      ? Array.from({ length: 6 }, (_, i) => (
+                          <div
+                            key={i}
+                            className="h-48 animate-pulse rounded-lg border border-surface-border bg-muted/40"
+                          />
+                        ))
+                      : items.map((p) => (
+                          <PersonnelCard
+                            key={p.id}
+                            personnel={p}
+                            onViewDetails={() => void openPersonnel(p.id)}
+                          />
+                        ))}
+                  </div>
+                )}
+              </TabsContent>
 
-          <TabsContent value="skills" className="mt-4">
-            <SkillsMatrixPanel entityId={filter.entity_id ?? null} teamId={filter.team_id ?? null} />
-          </TabsContent>
+              <TabsContent value="skills" className="mt-4">
+                <SkillsMatrixPanel
+                  entityId={filter.entity_id ?? null}
+                  teamId={filter.team_id ?? null}
+                />
+              </TabsContent>
 
-          <TabsContent value="availability" className="mt-4">
-            <AvailabilityCalendar entityId={filter.entity_id ?? null} teamId={filter.team_id ?? null} />
-          </TabsContent>
+              <TabsContent value="availability" className="mt-4">
+                <AvailabilityCalendar
+                  entityId={filter.entity_id ?? null}
+                  teamId={filter.team_id ?? null}
+                />
+              </TabsContent>
 
-          <TabsContent value="capacity" className="mt-4">
-            <TeamCapacityBoard entityId={filter.entity_id ?? null} />
-          </TabsContent>
-        </Tabs>
+              <TabsContent value="capacity" className="mt-4">
+                <TeamCapacityBoard entityId={filter.entity_id ?? null} />
+              </TabsContent>
+
+              <TabsContent value="training" className="mt-4">
+                <TrainingQualificationPanel />
+              </TabsContent>
+            </Tabs>
+          </div>
+        </div>
       </div>
 
       <PersonnelArchivePanel />

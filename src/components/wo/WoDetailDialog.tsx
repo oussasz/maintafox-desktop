@@ -210,6 +210,30 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                     value={<span className="font-mono">DI-{wo.source_di_id}</span>}
                   />
                 )}
+                {wo.source_ram_ishikawa_diagram_id != null && (
+                  <InfoRow
+                    label={t("detail.fields.sourceRca")}
+                    value={
+                      <span className="space-y-0.5">
+                        <span className="block font-mono">
+                          {t("detail.fields.sourceRcaDiagram", {
+                            id: wo.source_ram_ishikawa_diagram_id,
+                          })}
+                        </span>
+                        {wo.source_rca_cause_text ? (
+                          <span className="block text-text-secondary">
+                            {t("detail.fields.sourceRcaCause")}: {wo.source_rca_cause_text}
+                          </span>
+                        ) : null}
+                        {wo.source_ishikawa_flow_node_id ? (
+                          <span className="text-[10px] text-text-muted">
+                            node: {wo.source_ishikawa_flow_node_id}
+                          </span>
+                        ) : null}
+                      </span>
+                    }
+                  />
+                )}
               </CardContent>
             </Card>
 

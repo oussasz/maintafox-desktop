@@ -1,9 +1,10 @@
-import { Lock } from "lucide-react";
+import { Lock, Shield } from "lucide-react";
 import { Suspense, lazy, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 
 import { AdminMetricCards } from "@/components/admin/AdminMetricCards";
+import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 
 // Lazy-load each admin panel
@@ -165,53 +166,57 @@ export function AdminPage() {
   const PanelComponent = activeTabDef?.component;
 
   return (
-    <div className="flex h-full flex-col gap-6 p-6">
-      {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-semibold text-text-primary">
-          {t("admin:page.title", "Administration")}
-        </h1>
-        <p className="mt-1 text-sm text-text-secondary">
-          {t("admin:page.subtitle", "Gestion des utilisateurs, rôles et permissions")}
-        </p>
+    <div className={mfLayout.moduleRoot}>
+      <div className={mfLayout.moduleHeader}>
+        <div className={mfLayout.moduleTitleRow}>
+          <Shield className={mfLayout.moduleHeaderIcon} />
+          <div>
+            <h1 className={mfLayout.moduleTitle}>{t("admin:page.title", "Administration")}</h1>
+            <p className="text-sm text-text-secondary">
+              {t("admin:page.subtitle", "Gestion des utilisateurs, rôles et permissions")}
+            </p>
+          </div>
+        </div>
       </div>
 
-      {/* KPI metric cards */}
-      <AdminMetricCards />
+      <div className={mfLayout.moduleContent}>
+        {/* KPI metric cards */}
+        <AdminMetricCards />
 
-      {/* Tab bar */}
-      <div className="border-b border-surface-border">
-        <nav className="-mb-px flex gap-1 overflow-x-auto" role="tablist">
-          {visibleTabs.map((tab) => {
-            const isActive = tab.key === (activeTabDef?.key ?? "");
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                onClick={() => setActiveTab(tab.key)}
-                className={`whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors
+        {/* Tab bar */}
+        <div className="shrink-0 border-b border-surface-border">
+          <nav className="-mb-px flex gap-1 overflow-x-auto" role="tablist">
+            {visibleTabs.map((tab) => {
+              const isActive = tab.key === (activeTabDef?.key ?? "");
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors
                   ${
                     isActive
                       ? "border-primary text-primary"
                       : "border-transparent text-text-secondary hover:border-surface-border hover:text-text-primary"
                   }`}
-              >
-                {t(tab.labelKey)}
-              </button>
-            );
-          })}
-        </nav>
-      </div>
+                >
+                  {t(tab.labelKey)}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
 
-      {/* Active panel */}
-      <div className="min-h-0 flex-1">
-        {PanelComponent && (
-          <Suspense fallback={<PanelFallback />}>
-            <PanelComponent />
-          </Suspense>
-        )}
+        {/* Active panel */}
+        <div className="min-h-0 flex-1">
+          {PanelComponent && (
+            <Suspense fallback={<PanelFallback />}>
+              <PanelComponent />
+            </Suspense>
+          )}
+        </div>
       </div>
     </div>
   );

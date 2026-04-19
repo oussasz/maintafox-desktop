@@ -43,5 +43,21 @@
   "io": {
     "generic": "I/O error: {{message}}",
     "internalError": "An internal error occurred."
+  },
+  "appError": {
+    "DATABASE_ERROR": "Database error.",
+    "AUTH_ERROR": "Authentication error.",
+    "TENANT_SCOPE_VIOLATION": "Tenant scope violation.",
+    "SESSION_CLAIM_INVALID": "Session claim invalid.",
+    "NOT_FOUND": "Record not found.",
+    "VALIDATION_FAILED": "Validation failed.",
+    "SYNC_ERROR": "Synchronization error.",
+    "IO_ERROR": "I/O error.",
+    "SERIALIZATION_ERROR": "Serialization error.",
+    "PERMISSION_DENIED": "Permission denied.",
+    "LICENSE_DENIED": "License denied.",
+    "STEP_UP_REQUIRED": "Step-up verification required.",
+    "ACCOUNT_LOCKED": "Account locked.",
+    "INTERNAL_ERROR": "An internal error occurred."
   }
 }

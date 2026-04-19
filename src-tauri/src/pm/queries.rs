@@ -1647,6 +1647,10 @@ pub async fn transition_pm_occurrence(
                 equipment_id: None,
                 location_id: None,
                 source_di_id: None,
+                source_inspection_anomaly_id: None,
+                source_ram_ishikawa_diagram_id: None,
+                source_ishikawa_flow_node_id: None,
+                source_rca_cause_text: None,
                 entity_id: None,
                 planner_id: None,
                 urgency_id: None,
@@ -1658,6 +1662,7 @@ pub async fn transition_pm_occurrence(
                 shift: None,
                 expected_duration_hours: None,
                 creator_id: input.actor_id.unwrap_or(1),
+                requires_permit: None,
             },
         )
         .await?;
@@ -2066,6 +2071,7 @@ async fn create_follow_up_di_from_finding(
             quality_flag: false,
             reported_urgency: urgency.to_string(),
             observed_at: Some(now_rfc3339()),
+            source_inspection_anomaly_id: None,
             submitter_id: actor_id,
         },
     )
@@ -2105,6 +2111,10 @@ async fn create_follow_up_wo_from_finding(
             equipment_id: if asset_scope_type == "equipment" { asset_scope_id } else { None },
             location_id: None,
             source_di_id,
+            source_inspection_anomaly_id: None,
+            source_ram_ishikawa_diagram_id: None,
+            source_ishikawa_flow_node_id: None,
+            source_rca_cause_text: None,
             entity_id: None,
             planner_id: None,
             urgency_id: None,
@@ -2124,6 +2134,7 @@ async fn create_follow_up_wo_from_finding(
             shift: None,
             expected_duration_hours: None,
             creator_id: actor_id,
+            requires_permit: None,
         },
     )
     .await?;

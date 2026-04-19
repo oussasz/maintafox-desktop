@@ -9,8 +9,7 @@
  * org-node-service.ts (SP01-F02).
  */
 
-import { invoke } from "@tauri-apps/api/core";
-
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   CreateOrgNodeTypePayload,
   CreateRelationshipRulePayload,
@@ -21,7 +20,7 @@ import type {
   UpdateOrgNodeTypePayload,
 } from "@shared/ipc-types";
 
-// ─── Structure models ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Structure models â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function listOrgStructureModels(): Promise<OrgStructureModel[]> {
   return invoke<OrgStructureModel[]>("list_org_structure_models");
@@ -71,7 +70,7 @@ export function getOrgNodeTypeUsageCount(nodeTypeId: number): Promise<number> {
   return invoke<number>("get_org_node_type_usage_count", { nodeTypeId });
 }
 
-// ─── Relationship rules ───────────────────────────────────────────────────────
+// â”€â”€â”€ Relationship rules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function listOrgRelationshipRules(structureModelId: number): Promise<OrgRelationshipRule[]> {
   return invoke<OrgRelationshipRule[]>("list_org_relationship_rules", {

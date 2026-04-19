@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { z, ZodError } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   CreatePmPlanInput,
   CreatePmPlanVersionInput,
@@ -9,14 +9,10 @@ import type {
   GeneratePmOccurrencesInput,
   GeneratePmOccurrencesResult,
   PmDueMetrics,
-  PmEffortVarianceKpi,
   PmGovernanceKpiInput,
   PmGovernanceKpiReport,
-  PmPlanningReadinessBlocker,
-  PmPlanningCandidate,
   PmPlanningReadinessInput,
   PmPlanningReadinessProjection,
-  PmRateKpi,
   PmExecution,
   PmExecutionFilter,
   PmFinding,
@@ -105,7 +101,8 @@ const PmDueMetricsSchema = z.object({
   due_today_count: z.number(),
   due_next_7d_count: z.number(),
   ready_for_scheduling_count: z.number(),
-});const PmPlanningReadinessBlockerSchema = z.object({
+});
+const PmPlanningReadinessBlockerSchema = z.object({
   code: z.string(),
   message: z.string(),
   source: z.string(),
@@ -256,7 +253,11 @@ export function createPmPlan(input: CreatePmPlanInput): Promise<PmPlan> {
   return invokeParsed("create_pm_plan", { input }, PmPlanSchema);
 }
 
-export function updatePmPlan(planId: number, expectedRowVersion: number, input: UpdatePmPlanInput): Promise<PmPlan> {
+export function updatePmPlan(
+  planId: number,
+  expectedRowVersion: number,
+  input: UpdatePmPlanInput,
+): Promise<PmPlan> {
   return invokeParsed("update_pm_plan", { planId, expectedRowVersion, input }, PmPlanSchema);
 }
 
@@ -268,7 +269,10 @@ export function listPmPlanVersions(pmPlanId: number): Promise<PmPlanVersion[]> {
   return invokeParsed("list_pm_plan_versions", { pmPlanId }, z.array(PmPlanVersionSchema));
 }
 
-export function createPmPlanVersion(pmPlanId: number, input: CreatePmPlanVersionInput): Promise<PmPlanVersion> {
+export function createPmPlanVersion(
+  pmPlanId: number,
+  input: CreatePmPlanVersionInput,
+): Promise<PmPlanVersion> {
   return invokeParsed("create_pm_plan_version", { pmPlanId, input }, PmPlanVersionSchema);
 }
 
@@ -277,7 +281,11 @@ export function updatePmPlanVersion(
   expectedRowVersion: number,
   input: UpdatePmPlanVersionInput,
 ): Promise<PmPlanVersion> {
-  return invokeParsed("update_pm_plan_version", { versionId, expectedRowVersion, input }, PmPlanVersionSchema);
+  return invokeParsed(
+    "update_pm_plan_version",
+    { versionId, expectedRowVersion, input },
+    PmPlanVersionSchema,
+  );
 }
 
 export function publishPmPlanVersion(input: PublishPmPlanVersionInput): Promise<PmPlanVersion> {
@@ -288,7 +296,9 @@ export function listPmOccurrences(filter: PmOccurrenceFilter): Promise<PmOccurre
   return invokeParsed("list_pm_occurrences", { filter }, z.array(PmOccurrenceSchema));
 }
 
-export function generatePmOccurrences(input: GeneratePmOccurrencesInput): Promise<GeneratePmOccurrencesResult> {
+export function generatePmOccurrences(
+  input: GeneratePmOccurrencesInput,
+): Promise<GeneratePmOccurrencesResult> {
   return invokeParsed("generate_pm_occurrences", { input }, GeneratePmOccurrencesResultSchema);
 }
 
@@ -311,7 +321,9 @@ export function getPmDueMetrics(): Promise<PmDueMetrics> {
   return invokeParsed("get_pm_due_metrics", undefined, PmDueMetricsSchema);
 }
 
-export function executePmOccurrence(input: ExecutePmOccurrenceInput): Promise<ExecutePmOccurrenceResult> {
+export function executePmOccurrence(
+  input: ExecutePmOccurrenceInput,
+): Promise<ExecutePmOccurrenceResult> {
   return invokeParsed("execute_pm_occurrence", { input }, ExecutePmOccurrenceResultSchema);
 }
 
@@ -323,6 +335,8 @@ export function listPmFindings(executionId: number): Promise<PmFinding[]> {
   return invokeParsed("list_pm_findings", { executionId }, z.array(PmFindingSchema));
 }
 
-export function listPmRecurringFindings(input: PmRecurringFindingsInput): Promise<PmRecurringFinding[]> {
+export function listPmRecurringFindings(
+  input: PmRecurringFindingsInput,
+): Promise<PmRecurringFinding[]> {
   return invokeParsed("list_pm_recurring_findings", { input }, z.array(PmRecurringFindingSchema));
 }

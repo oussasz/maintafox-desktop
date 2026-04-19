@@ -1,4 +1,4 @@
-﻿/**
+/**
  * WorkOrdersPage.tsx
  *
  * Multi-view work order (OT) workspace.
@@ -16,6 +16,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Shield,
   Wrench,
   X,
 } from "lucide-react";
@@ -40,13 +41,16 @@ import { WoDashboardView } from "@/components/wo/WoDashboardView";
 import { WoDetailDialog } from "@/components/wo/WoDetailDialog";
 import { WoDiManagementPanel } from "@/components/wo/WoDiManagementPanel";
 import { WoFormDialog } from "@/components/wo/WoFormDialog";
+import { WoIntegrityWorkbench } from "@/components/wo/WoIntegrityWorkbench";
 import { WoKanbanView } from "@/components/wo/WoKanbanView";
+import { mfInput, mfLayout } from "@/design-system/tokens";
+import { cn } from "@/lib/utils";
 import { useWoStore } from "@/stores/wo-store";
 import { formatDate } from "@/utils/format-date";
 import { STATUS_STYLE, statusToI18nKey } from "@/utils/wo-status";
 import type { WorkOrder } from "@shared/ipc-types";
 
-type WoViewMode = "list" | "kanban" | "calendar" | "dashboard";
+type WoViewMode = "list" | "kanban" | "calendar" | "dashboard" | "integrity";
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -65,7 +69,9 @@ export function WorkOrdersPage() {
   const [view, setView] = useState<WoViewMode>(
     () => (localStorage.getItem("wo-view-mode") as WoViewMode) || "kanban",
   );
-  const [showFilters, setShowFilters] = useState(() => localStorage.getItem("wo-show-filters") !== "0");
+  const [showFilters, setShowFilters] = useState(
+    () => localStorage.getItem("wo-show-filters") !== "0",
+  );
 
   // ── Search with debounce ──────────────────────────────────────────────
 
@@ -245,18 +251,18 @@ export function WorkOrdersPage() {
   );
 
   return (
-    <div className="flex h-full flex-col">
+    <div className={mfLayout.moduleRoot}>
       {/* ── Page header ──────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-surface-border">
-        <div className="flex items-center gap-3">
-          <Wrench className="h-5 w-5 text-text-muted" />
-          <h1 className="text-xl font-semibold text-text-primary">{t("page.title")}</h1>
+      <div className={mfLayout.moduleHeader}>
+        <div className={mfLayout.moduleTitleRow}>
+          <Wrench className={mfLayout.moduleHeaderIcon} />
+          <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
           <Badge variant="secondary" className="text-xs">
             {total}
           </Badge>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className={mfLayout.moduleHeaderActions}>
           {/* New WO button */}
           <PermissionGate permission="ot.create">
             <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
@@ -266,11 +272,11 @@ export function WorkOrdersPage() {
           </PermissionGate>
 
           {/* View toggle */}
-          <div className="flex items-center rounded-md border p-0.5 gap-0.5">
+          <div className={mfLayout.viewToggleGroup}>
             <Button
               variant={view === "list" ? "default" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className={mfLayout.viewToggleButton}
               onClick={() => switchView("list")}
               title={t("page.viewList")}
             >
@@ -279,7 +285,7 @@ export function WorkOrdersPage() {
             <Button
               variant={view === "kanban" ? "default" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className={mfLayout.viewToggleButton}
               onClick={() => switchView("kanban")}
               title={t("page.viewKanban")}
             >
@@ -288,7 +294,7 @@ export function WorkOrdersPage() {
             <Button
               variant={view === "calendar" ? "default" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className={mfLayout.viewToggleButton}
               onClick={() => switchView("calendar")}
               title={t("page.viewCalendar")}
             >
@@ -297,11 +303,20 @@ export function WorkOrdersPage() {
             <Button
               variant={view === "dashboard" ? "default" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className={mfLayout.viewToggleButton}
               onClick={() => switchView("dashboard")}
               title={t("page.viewDashboard")}
             >
               <BarChart3 className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant={view === "integrity" ? "default" : "ghost"}
+              size="sm"
+              className={mfLayout.viewToggleButton}
+              onClick={() => switchView("integrity")}
+              title={t("page.viewIntegrity")}
+            >
+              <Shield className="h-3.5 w-3.5" />
             </Button>
           </div>
 
@@ -329,11 +344,11 @@ export function WorkOrdersPage() {
 
       {/* ── Filters ──────────────────────────────────────────────────── */}
       {showFilters && (
-        <div className="flex items-center gap-2 px-6 py-2 border-b border-surface-border">
+        <div className={mfLayout.moduleFilterBar}>
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
             <Input
-              className="pl-9 h-8 text-sm"
+              className={mfInput.filterSearch}
               placeholder={t("search.placeholder")}
               value={searchInput}
               onChange={handleSearchChange}
@@ -350,7 +365,7 @@ export function WorkOrdersPage() {
           </div>
 
           <Select value={statusFilter} onValueChange={handleStatusFilter}>
-            <SelectTrigger className="h-8 w-[160px] text-sm">
+            <SelectTrigger className={cn(mfInput.filterSelect, "w-[160px]")}>
               <SelectValue placeholder={t("list.filters.status")} />
             </SelectTrigger>
             <SelectContent>
@@ -364,7 +379,7 @@ export function WorkOrdersPage() {
           </Select>
 
           <Select value={typeFilter} onValueChange={handleTypeFilter}>
-            <SelectTrigger className="h-8 w-[160px] text-sm">
+            <SelectTrigger className={cn(mfInput.filterSelect, "w-[160px]")}>
               <SelectValue placeholder={t("list.filters.type")} />
             </SelectTrigger>
             <SelectContent>
@@ -378,7 +393,7 @@ export function WorkOrdersPage() {
           </Select>
 
           <Select value={priorityFilter} onValueChange={handlePriorityFilter}>
-            <SelectTrigger className="h-8 w-[130px] text-sm">
+            <SelectTrigger className={cn(mfInput.filterSelect, "w-[130px]")}>
               <SelectValue placeholder={t("list.filters.priority")} />
             </SelectTrigger>
             <SelectContent>
@@ -399,8 +414,9 @@ export function WorkOrdersPage() {
       </PermissionGate>
 
       {/* ── Main workspace ───────────────────────────────────────────── */}
-      <div className="flex flex-1 min-h-0">
-        <div className="flex flex-col w-full overflow-auto">
+      <div className={mfLayout.moduleWorkspace}>
+        <div className={mfLayout.moduleWorkspaceInner}>
+          {view === "integrity" && <WoIntegrityWorkbench />}
           {view === "list" && (
             <div className="p-4">
               <DataTable

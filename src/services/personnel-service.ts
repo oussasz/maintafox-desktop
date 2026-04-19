@@ -1,12 +1,12 @@
 /**
  * personnel-service.ts
  *
- * IPC wrappers for Personnel (PRD §6.6). All invoke names match Rust `#[tauri::command]` ids.
+ * IPC wrappers for Personnel (PRD Â§6.6). All invoke names match Rust `#[tauri::command]` ids.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z, ZodError } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   DeclareOwnSkillInput,
   AvailabilityBlockCreateInput,
@@ -40,15 +40,13 @@ import type {
   PersonnelImportCreateInput,
   PersonnelImportApplyResult,
   PersonnelImportBatchSummary,
-  PersonnelImportMessage,
   PersonnelImportPreview,
-  PersonnelImportPreviewRow,
   WorkforceKpiReport,
   WorkforceSkillsGapRow,
   WorkforceSummaryReport,
 } from "@shared/ipc-types";
 
-// ── Zod enums & shared types ─────────────────────────────────────────────────
+// â”€â”€ Zod enums & shared types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const EmploymentTypeSchema = z.enum(["employee", "contractor", "temp", "vendor"]);
 export type EmploymentType = z.infer<typeof EmploymentTypeSchema>;
@@ -75,7 +73,7 @@ export const PositionCategorySchema = z.enum([
 ]);
 export type PositionCategory = z.infer<typeof PositionCategorySchema>;
 
-// ── Row schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Row schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const PersonnelSchema = z.object({
   id: z.number(),
@@ -384,7 +382,7 @@ export const WorkforceKpiReportSchema = z.object({
   team_coverage_ratio: z.number(),
 });
 
-// ── IPC errors ────────────────────────────────────────────────────────────────
+// â”€â”€ IPC errors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface IpcErrorShape {
   code: string;
@@ -413,7 +411,11 @@ function mapInvokeError(err: unknown): never {
   throw new Error(String(err));
 }
 
-async function invokeParsed<T>(command: string, args: Record<string, unknown> | undefined, schema: z.ZodType<T>): Promise<T> {
+async function invokeParsed<T>(
+  command: string,
+  args: Record<string, unknown> | undefined,
+  schema: z.ZodType<T>,
+): Promise<T> {
   try {
     const raw = await invoke<unknown>(command, args);
     return schema.parse(raw);
@@ -425,7 +427,7 @@ async function invokeParsed<T>(command: string, args: Record<string, unknown> | 
   }
 }
 
-// ── Commands ──────────────────────────────────────────────────────────────────
+// â”€â”€ Commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listPersonnel(filter: PersonnelListFilter): Promise<PersonnelListPage> {
   const normalized: PersonnelListFilter = {
@@ -439,7 +441,11 @@ export async function listPersonnel(filter: PersonnelListFilter): Promise<Person
         ? filter.availability_status
         : null,
   };
-  const page = await invokeParsed("list_personnel", { filter: normalized }, PersonnelListPageSchema);
+  const page = await invokeParsed(
+    "list_personnel",
+    { filter: normalized },
+    PersonnelListPageSchema,
+  );
   return page as PersonnelListPage;
 }
 
@@ -458,12 +464,11 @@ export async function updatePersonnel(input: PersonnelUpdateInput): Promise<Pers
   return p as Personnel;
 }
 
-export async function deactivatePersonnel(id: number, expectedRowVersion: number): Promise<Personnel> {
-  const p = await invokeParsed(
-    "deactivate_personnel",
-    { id, expected_row_version: expectedRowVersion },
-    PersonnelSchema,
-  );
+export async function deactivatePersonnel(
+  id: number,
+  expectedRowVersion: number,
+): Promise<Personnel> {
+  const p = await invokeParsed("deactivate_personnel", { id, expectedRowVersion }, PersonnelSchema);
   return p as Personnel;
 }
 
@@ -472,18 +477,30 @@ export async function listPositions(): Promise<Position[]> {
   return rows as Position[];
 }
 
-export async function createPosition(code: string, name: string, category: string): Promise<Position> {
+export async function createPosition(
+  code: string,
+  name: string,
+  category: string,
+): Promise<Position> {
   const p = await invokeParsed("create_position", { code, name, category }, PositionSchema);
   return p as Position;
 }
 
 export async function listScheduleClasses(): Promise<ScheduleClassWithDetails[]> {
-  const rows = await invokeParsed("list_schedule_classes", undefined, z.array(ScheduleClassWithDetailsSchema));
+  const rows = await invokeParsed(
+    "list_schedule_classes",
+    undefined,
+    z.array(ScheduleClassWithDetailsSchema),
+  );
   return rows as ScheduleClassWithDetails[];
 }
 
 export async function listRateCards(personnelId: number): Promise<PersonnelRateCard[]> {
-  const rows = await invokeParsed("list_rate_cards", { personnel_id: personnelId }, z.array(PersonnelRateCardSchema));
+  const rows = await invokeParsed(
+    "list_rate_cards",
+    { personnelId },
+    z.array(PersonnelRateCardSchema),
+  );
   return rows as PersonnelRateCard[];
 }
 
@@ -497,11 +514,11 @@ export async function createRateCard(
   const rc = await invokeParsed(
     "create_rate_card",
     {
-      personnel_id: personnelId,
-      labor_rate: laborRate,
-      overtime_rate: overtimeRate,
-      cost_center_id: costCenterId,
-      source_type: sourceType,
+      personnelId,
+      laborRate,
+      overtimeRate,
+      costCenterId,
+      sourceType,
     },
     PersonnelRateCardSchema,
   );
@@ -511,7 +528,7 @@ export async function createRateCard(
 export async function listAuthorizations(personnelId: number): Promise<PersonnelAuthorization[]> {
   const rows = await invokeParsed(
     "list_authorizations",
-    { personnel_id: personnelId },
+    { personnelId },
     z.array(PersonnelAuthorizationSchema),
   );
   return rows as PersonnelAuthorization[];
@@ -527,18 +544,20 @@ export async function createAuthorization(
   const row = await invokeParsed(
     "create_authorization",
     {
-      personnel_id: personnelId,
-      authorization_type: authorizationType,
-      valid_from: validFrom,
-      valid_to: validTo,
-      source_certification_type_id: sourceCertificationTypeId,
+      personnelId,
+      authorizationType,
+      validFrom,
+      validTo,
+      sourceCertificationTypeId,
     },
     PersonnelAuthorizationSchema,
   );
   return row as PersonnelAuthorization;
 }
 
-export async function listExternalCompanies(filter?: CompanyListFilter): Promise<ExternalCompany[]> {
+export async function listExternalCompanies(
+  filter?: CompanyListFilter,
+): Promise<ExternalCompany[]> {
   const rows = await invokeParsed(
     "list_external_companies",
     { filter: filter ?? {} },
@@ -558,9 +577,9 @@ export async function createExternalCompany(
     "create_external_company",
     {
       name,
-      service_domain: serviceDomain ?? null,
-      contract_start: contractStart ?? null,
-      contract_end: contractEnd ?? null,
+      serviceDomain: serviceDomain ?? null,
+      contractStart: contractStart ?? null,
+      contractEnd: contractEnd ?? null,
       notes: notes ?? null,
     },
     ExternalCompanySchema,
@@ -571,18 +590,14 @@ export async function createExternalCompany(
 export async function listCompanyContacts(companyId: number): Promise<ExternalCompanyContact[]> {
   const rows = await invokeParsed(
     "list_company_contacts",
-    { company_id: companyId },
+    { companyId },
     z.array(ExternalCompanyContactSchema),
   );
   return rows as ExternalCompanyContact[];
 }
 
 export async function listSkillsMatrix(filter: SkillsMatrixFilter): Promise<SkillMatrixRow[]> {
-  const rows = await invokeParsed(
-    "list_skills_matrix",
-    { filter },
-    z.array(SkillMatrixRowSchema),
-  );
+  const rows = await invokeParsed("list_skills_matrix", { filter }, z.array(SkillMatrixRowSchema));
   return rows as SkillMatrixRow[];
 }
 
@@ -619,10 +634,12 @@ export async function createAvailabilityBlock(
   return row as PersonnelAvailabilityBlock;
 }
 
-export async function listPersonnelTeamAssignments(personnelId: number): Promise<PersonnelTeamAssignment[]> {
+export async function listPersonnelTeamAssignments(
+  personnelId: number,
+): Promise<PersonnelTeamAssignment[]> {
   const rows = await invokeParsed(
     "list_personnel_team_assignments",
-    { personnel_id: personnelId },
+    { personnelId },
     z.array(PersonnelTeamAssignmentSchema),
   );
   return rows as PersonnelTeamAssignment[];
@@ -634,7 +651,7 @@ export async function listPersonnelAvailabilityBlocks(
 ): Promise<PersonnelAvailabilityBlock[]> {
   const rows = await invokeParsed(
     "list_personnel_availability_blocks",
-    { personnel_id: personnelId, limit },
+    { personnelId, limit },
     z.array(PersonnelAvailabilityBlockSchema),
   );
   return rows as PersonnelAvailabilityBlock[];
@@ -646,16 +663,18 @@ export async function listPersonnelWorkHistory(
 ): Promise<PersonnelWorkHistoryEntry[]> {
   const rows = await invokeParsed(
     "list_personnel_work_history",
-    { personnel_id: personnelId, limit },
+    { personnelId, limit },
     z.array(PersonnelWorkHistoryEntrySchema),
   );
   return rows as PersonnelWorkHistoryEntry[];
 }
 
-export async function getPersonnelWorkloadSummary(personnelId: number): Promise<PersonnelWorkloadSummary> {
+export async function getPersonnelWorkloadSummary(
+  personnelId: number,
+): Promise<PersonnelWorkloadSummary> {
   const row = await invokeParsed(
     "get_personnel_workload_summary",
-    { personnel_id: personnelId },
+    { personnelId },
     PersonnelWorkloadSummarySchema,
   );
   return row as PersonnelWorkloadSummary;
@@ -667,7 +686,7 @@ export async function scanSuccessionRisk(
 ): Promise<SuccessionRiskRow[]> {
   const rows = await invokeParsed(
     "scan_succession_risk",
-    { entity_id: entityId ?? null, team_id: teamId ?? null },
+    { entityId: entityId ?? null, teamId: teamId ?? null },
     z.array(SuccessionRiskRowSchema),
   );
   return rows as SuccessionRiskRow[];
@@ -700,16 +719,18 @@ export async function createPersonnelImportBatch(
 export async function getPersonnelImportPreview(batchId: number): Promise<PersonnelImportPreview> {
   const preview = await invokeParsed(
     "get_personnel_import_preview",
-    { batch_id: batchId },
+    { batchId },
     PersonnelImportPreviewSchema,
   );
   return preview as PersonnelImportPreview;
 }
 
-export async function applyPersonnelImportBatch(batchId: number): Promise<PersonnelImportApplyResult> {
+export async function applyPersonnelImportBatch(
+  batchId: number,
+): Promise<PersonnelImportApplyResult> {
   const result = await invokeParsed(
     "apply_personnel_import_batch",
-    { batch_id: batchId },
+    { batchId },
     PersonnelImportApplyResultSchema,
   );
   return result as PersonnelImportApplyResult;
@@ -741,7 +762,7 @@ export async function getWorkforceKpiReport(): Promise<WorkforceKpiReport> {
 export async function exportWorkforceReportCsv(
   reportKind: "summary" | "skills_gap" | "kpi",
 ): Promise<string> {
-  const csvPayload = await invokeParsed("export_workforce_report_csv", { report_kind: reportKind }, z.string());
+  const csvPayload = await invokeParsed("export_workforce_report_csv", { reportKind }, z.string());
   return csvPayload;
 }
 

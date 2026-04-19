@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { Sidebar } from "@/components/layout/Sidebar";
 import { defaultNavItems, appRoutes } from "@/navigation/nav-registry";
+import { useAppStore } from "@/store/app-store";
 
 // ── Mock rbac-service (same pattern as use-permissions.test.ts) ───────────
 
@@ -45,6 +46,7 @@ function makePermissions(names: string[]) {
 
 /** Render Sidebar inside a MemoryRouter so useLocation / Link work. */
 function renderSidebar() {
+  useAppStore.setState({ sidebarCollapsed: false, sidebarHoverOpen: false });
   return render(
     <MemoryRouter initialEntries={["/"]}>
       <Sidebar items={defaultNavItems} />

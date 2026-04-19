@@ -5,9 +5,9 @@
  * All invoke() calls for SP02-F01 asset operations are isolated here.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   Asset,
   AssetHealthScore,
@@ -17,7 +17,7 @@ import type {
   UpdateAssetIdentityPayload,
 } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const AssetSchema = z.object({
   id: z.number(),
@@ -55,7 +55,7 @@ export const AssetHierarchyRowSchema = z.object({
   effective_to: z.string().nullable(),
 });
 
-// ── Error helpers ─────────────────────────────────────────────────────────────
+// â”€â”€ Error helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface IpcError {
   code: string;
@@ -80,7 +80,7 @@ function rethrowIfVersionConflict(err: unknown): never {
   throw err;
 }
 
-// ── Identity commands ─────────────────────────────────────────────────────────
+// â”€â”€ Identity commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listAssets(
   statusFilter?: string | null,
@@ -124,7 +124,7 @@ export async function updateAssetIdentity(
   }
 }
 
-// ── Hierarchy commands ────────────────────────────────────────────────────────
+// â”€â”€ Hierarchy commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listAssetChildren(parentAssetId: number): Promise<AssetHierarchyRow[]> {
   const raw = await invoke<unknown>("list_asset_children", { parentAssetId });
@@ -169,7 +169,7 @@ export async function moveAssetOrgNode(
   }
 }
 
-// ── Health score commands ─────────────────────────────────────────────────────
+// â”€â”€ Health score commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const AssetHealthScoreSchema = z.object({
   asset_id: z.number(),

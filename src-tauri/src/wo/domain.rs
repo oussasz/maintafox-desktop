@@ -211,6 +211,11 @@ pub struct WorkOrder {
     // People
     pub requester_id: Option<i64>,
     pub source_di_id: Option<i64>,
+    pub source_inspection_anomaly_id: Option<i64>,
+    /// Traceability: Ishikawa (fishbone) RCA diagram that originated this WO.
+    pub source_ram_ishikawa_diagram_id: Option<i64>,
+    pub source_ishikawa_flow_node_id: Option<String>,
+    pub source_rca_cause_text: Option<String>,
     pub entity_id: Option<i64>,
     pub planner_id: Option<i64>,
     pub approver_id: Option<i64>,
@@ -257,6 +262,12 @@ pub struct WorkOrder {
     pub service_cost_input: Option<f64>,
     pub reopen_count: i64,
     pub last_closed_at: Option<String>,
+    pub requires_permit: bool,
+    pub entity_sync_id: Option<String>,
+    pub closeout_validation_profile_id: Option<i64>,
+    pub closeout_validation_passed: bool,
+    pub no_downtime_attestation: bool,
+    pub no_downtime_attestation_reason: Option<String>,
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -315,6 +326,14 @@ pub struct WoCreateInput {
     pub equipment_id: Option<i64>,
     pub location_id: Option<i64>,
     pub source_di_id: Option<i64>,
+    #[serde(default)]
+    pub source_inspection_anomaly_id: Option<i64>,
+    #[serde(default)]
+    pub source_ram_ishikawa_diagram_id: Option<i64>,
+    #[serde(default)]
+    pub source_ishikawa_flow_node_id: Option<String>,
+    #[serde(default)]
+    pub source_rca_cause_text: Option<String>,
     pub entity_id: Option<i64>,
     pub planner_id: Option<i64>,
     pub urgency_id: Option<i64>,
@@ -326,6 +345,8 @@ pub struct WoCreateInput {
     pub shift: Option<String>,
     pub expected_duration_hours: Option<f64>,
     pub creator_id: i64,
+    #[serde(default)]
+    pub requires_permit: Option<bool>,
 }
 
 /// Input for updating a WO that is still in draft status.
@@ -344,6 +365,7 @@ pub struct WoDraftUpdateInput {
     pub expected_duration_hours: Option<f64>,
     pub notes: Option<String>,
     pub urgency_id: Option<i64>,
+    pub requires_permit: Option<bool>,
 }
 
 /// Input for cancelling a work order.
@@ -397,6 +419,18 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         source_di_id: row
             .try_get::<Option<i64>>("", "source_di_id")
             .map_err(|e| decode_err("source_di_id", e))?,
+        source_inspection_anomaly_id: row
+            .try_get::<Option<i64>>("", "source_inspection_anomaly_id")
+            .map_err(|e| decode_err("source_inspection_anomaly_id", e))?,
+        source_ram_ishikawa_diagram_id: row
+            .try_get::<Option<i64>>("", "source_ram_ishikawa_diagram_id")
+            .map_err(|e| decode_err("source_ram_ishikawa_diagram_id", e))?,
+        source_ishikawa_flow_node_id: row
+            .try_get::<Option<String>>("", "source_ishikawa_flow_node_id")
+            .map_err(|e| decode_err("source_ishikawa_flow_node_id", e))?,
+        source_rca_cause_text: row
+            .try_get::<Option<String>>("", "source_rca_cause_text")
+            .map_err(|e| decode_err("source_rca_cause_text", e))?,
         entity_id: row
             .try_get::<Option<i64>>("", "entity_id")
             .map_err(|e| decode_err("entity_id", e))?,
@@ -512,6 +546,27 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         last_closed_at: row
             .try_get::<Option<String>>("", "last_closed_at")
             .map_err(|e| decode_err("last_closed_at", e))?,
+        requires_permit: row
+            .try_get::<i64>("", "requires_permit")
+            .map_err(|e| decode_err("requires_permit", e))?
+            != 0,
+        entity_sync_id: row
+            .try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+        closeout_validation_profile_id: row
+            .try_get::<Option<i64>>("", "closeout_validation_profile_id")
+            .map_err(|e| decode_err("closeout_validation_profile_id", e))?,
+        closeout_validation_passed: row
+            .try_get::<i64>("", "closeout_validation_passed")
+            .map_err(|e| decode_err("closeout_validation_passed", e))?
+            != 0,
+        no_downtime_attestation: row
+            .try_get::<i64>("", "no_downtime_attestation")
+            .map_err(|e| decode_err("no_downtime_attestation", e))?
+            != 0,
+        no_downtime_attestation_reason: row
+            .try_get::<Option<String>>("", "no_downtime_attestation_reason")
+            .map_err(|e| decode_err("no_downtime_attestation_reason", e))?,
         row_version: row
             .try_get::<i64>("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,

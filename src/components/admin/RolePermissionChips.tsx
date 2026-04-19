@@ -1,23 +1,9 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { mfChip, mfPermissionDomainChip } from "@/design-system/tokens";
 import type { PermissionRecord } from "@shared/ipc-types";
 
-// ── Domain colour mapping ─────────────────────────────────────────────────
-
-const DOMAIN_COLORS: Record<string, string> = {
-  di: "bg-blue-100 text-blue-800",
-  ot: "bg-emerald-100 text-emerald-800",
-  eq: "bg-orange-100 text-orange-800",
-  pm: "bg-violet-100 text-violet-800",
-  inv: "bg-amber-100 text-amber-800",
-  per: "bg-cyan-100 text-cyan-800",
-  org: "bg-pink-100 text-pink-800",
-  ref: "bg-slate-100 text-slate-800",
-  adm: "bg-red-100 text-red-800",
-};
-
-const DEFAULT_COLOR = "bg-gray-100 text-gray-800";
 const MAX_VISIBLE_CHIPS = 5;
 
 interface RolePermissionChipsProps {
@@ -58,7 +44,9 @@ export function RolePermissionChips({
 
   if (isFullAccess) {
     return (
-      <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-amber-300/50">
+      <span
+        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs ${mfChip.fullAccess}`}
+      >
         {t("roles.fullAccess", "Accès complet")}
       </span>
     );
@@ -80,7 +68,7 @@ export function RolePermissionChips({
       {visible.map(([domain, count]) => (
         <span
           key={domain}
-          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${DOMAIN_COLORS[domain] ?? DEFAULT_COLOR}`}
+          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${mfPermissionDomainChip[domain] ?? mfChip.neutral}`}
         >
           {domain.toUpperCase()} ({count})
         </span>

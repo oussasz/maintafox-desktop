@@ -19,11 +19,13 @@
 pub mod bindings;
 pub mod documents;
 pub mod governance;
+pub mod health;
 pub mod hierarchy;
 pub mod identity;
 pub mod import;
 pub mod lifecycle;
 pub mod meters;
+pub mod photos;
 pub mod search;
 
 #[cfg(test)]

@@ -1,8 +1,8 @@
 // ADR-003: all invoke() calls live exclusively in src/services/.
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   LookupDomainSummary,
   LookupValueOption,
@@ -12,7 +12,7 @@ import type {
   PageRequest,
 } from "@shared/ipc-types";
 
-// ── Zod schemas ────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const LookupValueOptionSchema = z.object({
   id: z.number().int(),
@@ -33,7 +33,7 @@ export const LookupValueRecordSchema = LookupValueOptionSchema.extend({
   parent_value_id: z.number().int().nullable(),
 });
 
-// ── Service functions ──────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Returns all active values for a domain key.

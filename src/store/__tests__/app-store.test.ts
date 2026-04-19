@@ -22,6 +22,7 @@ describe("useAppStore", () => {
       hasActiveSession: false,
       currentUserDisplayName: null,
       sidebarCollapsed: false,
+      sidebarHoverOpen: false,
       activePath: "/",
     });
   });
@@ -38,6 +39,7 @@ describe("useAppStore", () => {
     expect(state.hasActiveSession).toBe(false);
     expect(state.currentUserDisplayName).toBeNull();
     expect(state.sidebarCollapsed).toBe(false);
+    expect(state.sidebarHoverOpen).toBe(false);
     expect(state.activePath).toBe("/");
   });
 
@@ -96,5 +98,12 @@ describe("useAppStore", () => {
   it("setActivePath updates path", () => {
     useAppStore.getState().setActivePath("/equipment");
     expect(useAppStore.getState().activePath).toBe("/equipment");
+  });
+
+  it("setSidebarHoverOpen updates hover-open state", () => {
+    useAppStore.getState().setSidebarHoverOpen(true);
+    expect(useAppStore.getState().sidebarHoverOpen).toBe(true);
+    useAppStore.getState().setSidebarHoverOpen(false);
+    expect(useAppStore.getState().sidebarHoverOpen).toBe(false);
   });
 });

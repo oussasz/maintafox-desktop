@@ -8,9 +8,9 @@
  * remain in org-service.ts (SP01-F01).
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   AssignEquipmentPayload,
   AssignResponsibilityPayload,
@@ -25,7 +25,7 @@ import type {
   UpsertOrgEntityBindingPayload,
 } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const OrgNodeSchema = z.object({
   id: z.number(),
@@ -88,7 +88,7 @@ export const OrgEntityBindingSchema = z.object({
   created_at: z.string(),
 });
 
-// ── Error helpers ─────────────────────────────────────────────────────────────
+// â”€â”€ Error helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Structured IPC error shape returned by AppError's Serialize impl.
@@ -126,7 +126,7 @@ function rethrowIfVersionConflict(err: unknown): never {
   throw err;
 }
 
-// ── Org node commands ─────────────────────────────────────────────────────────
+// â”€â”€ Org node commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listOrgTree(): Promise<OrgTreeRow[]> {
   const raw = await invoke<unknown>("list_org_tree");
@@ -171,7 +171,7 @@ export async function deactivateOrgNode(
   }
 }
 
-// ── Responsibility commands ───────────────────────────────────────────────────
+// â”€â”€ Responsibility commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listOrgNodeResponsibilities(
   nodeId: number,
@@ -199,7 +199,7 @@ export async function endOrgNodeResponsibility(
   return OrgNodeResponsibilitySchema.parse(raw) as OrgNodeResponsibility;
 }
 
-// ── Entity binding commands ───────────────────────────────────────────────────
+// â”€â”€ Entity binding commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listOrgEntityBindings(
   nodeId: number,
@@ -227,7 +227,7 @@ export async function expireOrgEntityBinding(
   return OrgEntityBindingSchema.parse(raw) as OrgEntityBinding;
 }
 
-// ── Equipment assignment commands (GAP ORG-02) ────────────────────────────────
+// â”€â”€ Equipment assignment commands (GAP ORG-02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function listOrgNodeEquipment(nodeId: number): Promise<OrgNodeEquipmentRow[]> {
   return invoke<OrgNodeEquipmentRow[]>("list_org_node_equipment", { nodeId });

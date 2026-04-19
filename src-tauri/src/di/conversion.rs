@@ -61,6 +61,7 @@ const IR_COLS: &str = "\
     ir.converted_to_wo_id, ir.converted_at, \
     ir.reviewer_note, ir.classification_code_id, \
     ir.is_recurrence_flag, ir.recurrence_di_id, \
+    ir.source_inspection_anomaly_id, \
     ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
 
 // ═══════════════════════════════════════════════════════════════════════════════

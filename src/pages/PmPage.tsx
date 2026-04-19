@@ -1,12 +1,11 @@
-﻿import { invoke } from "@tauri-apps/api/core";
 import { Filter, Play, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +24,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { invoke } from "@/lib/ipc-invoke";
+import { listInventoryArticles } from "@/services/inventory-service";
+import { listPersonnelSkillReferenceValues } from "@/services/personnel-service";
 import {
   createDraftReferenceSet,
   createReferenceDomain,
@@ -33,8 +35,6 @@ import {
   listReferenceSets,
   listReferenceValues,
 } from "@/services/reference-service";
-import { listInventoryArticles } from "@/services/inventory-service";
-import { listPersonnelSkillReferenceValues } from "@/services/personnel-service";
 import { usePmStore } from "@/stores/pm-store";
 import { toErrorMessage } from "@/utils/errors";
 import type {
@@ -45,7 +45,14 @@ import type {
   PmPlanVersion,
 } from "@shared/ipc-types";
 
-const PLAN_STATUS_OPTIONS = ["draft", "proposed", "approved", "active", "suspended", "retired"] as const;
+const PLAN_STATUS_OPTIONS = [
+  "draft",
+  "proposed",
+  "approved",
+  "active",
+  "suspended",
+  "retired",
+] as const;
 const STRATEGY_OPTIONS = ["fixed", "floating", "meter", "event", "condition"] as const;
 const SCOPE_OPTIONS = ["equipment", "family", "location", "criticality_group"] as const;
 const OCCURRENCE_STATUS_OPTIONS = [
@@ -148,10 +155,15 @@ function toRequiredCodeJson(values: string[]): string | null {
   return JSON.stringify(values);
 }
 
-function filterRequirementOptions(options: RequirementOption[], query: string): RequirementOption[] {
+function filterRequirementOptions(
+  options: RequirementOption[],
+  query: string,
+): RequirementOption[] {
   const q = query.trim().toLowerCase();
   if (!q) return options;
-  return options.filter((item) => item.label.toLowerCase().includes(q) || item.value.toLowerCase().includes(q));
+  return options.filter(
+    (item) => item.label.toLowerCase().includes(q) || item.value.toLowerCase().includes(q),
+  );
 }
 
 const EMPTY_PLAN_FORM: CreatePmPlanInput = {
@@ -287,7 +299,10 @@ function defaultTriggerFor(strategy: string): string {
   return JSON.stringify({ interval_unit: "day", interval_value: 30 });
 }
 
-function parseTriggerBuilderModel(strategy: string, triggerDefinitionJson: string): TriggerBuilderModel {
+function parseTriggerBuilderModel(
+  strategy: string,
+  triggerDefinitionJson: string,
+): TriggerBuilderModel {
   let obj: Record<string, unknown> = {};
   try {
     obj = JSON.parse(triggerDefinitionJson) as Record<string, unknown>;
@@ -296,7 +311,9 @@ function parseTriggerBuilderModel(strategy: string, triggerDefinitionJson: strin
   }
   const intervalUnitRaw = String(obj["interval_unit"] ?? "day").toLowerCase();
   const intervalUnit: TimeIntervalUnit =
-    intervalUnitRaw === "week" || intervalUnitRaw === "month" || intervalUnitRaw === "year" ? intervalUnitRaw : "day";
+    intervalUnitRaw === "week" || intervalUnitRaw === "month" || intervalUnitRaw === "year"
+      ? intervalUnitRaw
+      : "day";
   const timeInterval = Number(obj["interval_value"] ?? 30);
   const meterSourceRaw = String(obj["meter_source"] ?? "").toLowerCase();
   const meterSource: MeterSource = meterSourceRaw === "odometer" ? "odometer" : "operating_hours";
@@ -389,7 +406,9 @@ export function PmPage() {
   const [isVersionDialogOpen, setVersionDialogOpen] = useState(false);
   const [editingVersion, setEditingVersion] = useState<PmPlanVersion | null>(null);
   const [planForm, setPlanForm] = useState<CreatePmPlanInput>(EMPTY_PLAN_FORM);
-  const [versionForm, setVersionForm] = useState<CreatePmPlanVersionInput>(makeEmptyVersionForm("fixed"));
+  const [versionForm, setVersionForm] = useState<CreatePmPlanVersionInput>(
+    makeEmptyVersionForm("fixed"),
+  );
   const [triggerBuilder, setTriggerBuilder] = useState<TriggerBuilderModel>(
     parseTriggerBuilderModel("fixed", defaultTriggerFor("fixed")),
   );
@@ -406,7 +425,9 @@ export function PmPage() {
   const [findingDescription, setFindingDescription] = useState("");
   const [createFollowUpDi, setCreateFollowUpDi] = useState(false);
   const [createFollowUpWo, setCreateFollowUpWo] = useState(false);
-  const [showFilters, setShowFilters] = useState(() => localStorage.getItem("pm-show-filters") !== "0");
+  const [showFilters, setShowFilters] = useState(
+    () => localStorage.getItem("pm-show-filters") !== "0",
+  );
   const [searchInput, setSearchInput] = useState("");
   const [lifecycleFilter, setLifecycleFilter] = useState<string>("__all__");
   const [strategyFilter, setStrategyFilter] = useState<string>("__all__");
@@ -468,7 +489,11 @@ export function PmPage() {
         setSkillOptions(skillOpts);
 
         const toolDomainIds = domains
-          .filter((domain) => domain.code.toUpperCase().includes("TOOL") || domain.name.toUpperCase().includes("TOOL"))
+          .filter(
+            (domain) =>
+              domain.code.toUpperCase().includes("TOOL") ||
+              domain.name.toUpperCase().includes("TOOL"),
+          )
           .map((domain) => domain.id);
         const refTools: RequirementOption[] = [];
         for (const domainId of toolDomainIds) {
@@ -487,7 +512,9 @@ export function PmPage() {
         if (cancelled) return;
         const dedupedTools = Array.from(
           new Map(
-            (refTools.length > 0 ? refTools : articleOptions).map((item) => [item.value, item] as const),
+            (refTools.length > 0 ? refTools : articleOptions).map(
+              (item) => [item.value, item] as const,
+            ),
           ).values(),
         ).sort((a, b) => a.label.localeCompare(b.label));
         setToolOptions(dedupedTools);
@@ -519,12 +546,18 @@ export function PmPage() {
     });
   }, [plans, lifecycleFilter, strategyFilter, searchInput]);
 
-  const visiblePartOptions = useMemo(() => filterRequirementOptions(partOptions, partSearch), [partOptions, partSearch]);
+  const visiblePartOptions = useMemo(
+    () => filterRequirementOptions(partOptions, partSearch),
+    [partOptions, partSearch],
+  );
   const visibleSkillOptions = useMemo(
     () => filterRequirementOptions(skillOptions, skillSearch),
     [skillOptions, skillSearch],
   );
-  const visibleToolOptions = useMemo(() => filterRequirementOptions(toolOptions, toolSearch), [toolOptions, toolSearch]);
+  const visibleToolOptions = useMemo(
+    () => filterRequirementOptions(toolOptions, toolSearch),
+    [toolOptions, toolSearch],
+  );
 
   const canPublishForSelectedPlanLifecycle = useMemo(() => {
     if (!selectedPlan) return false;
@@ -537,7 +570,10 @@ export function PmPage() {
     return PLAN_STATUS_OPTIONS.filter((status) => allowed.has(status));
   }, [selectedPlan]);
 
-  const hasPublishedVersion = useMemo(() => versions.some((version) => version.status === "published"), [versions]);
+  const hasPublishedVersion = useMemo(
+    () => versions.some((version) => version.status === "published"),
+    [versions],
+  );
 
   const canGenerateForSelectedPlan = useMemo(() => {
     if (!selectedPlan) return false;
@@ -549,10 +585,14 @@ export function PmPage() {
 
   const generationReadinessHint = useMemo(() => {
     if (!selectedPlan) return t("hints.generationNeedPlan");
-    if (selectedPlan.is_active !== 1 || !["active", "suspended"].includes(selectedPlan.lifecycle_status)) {
+    if (
+      selectedPlan.is_active !== 1 ||
+      !["active", "suspended"].includes(selectedPlan.lifecycle_status)
+    ) {
       return t("hints.generationNeedLifecycle");
     }
-    if (!hasPublishedVersion && selectedPlan.current_version_id == null) return t("hints.generationNeedVersion");
+    if (!hasPublishedVersion && selectedPlan.current_version_id == null)
+      return t("hints.generationNeedVersion");
     return t("hints.generationReady");
   }, [hasPublishedVersion, selectedPlan, t]);
 
@@ -696,10 +736,12 @@ export function PmPage() {
     }
   };
 
-  const applyRequiredSelections = (form: Pick<
-    CreatePmPlanVersionInput,
-    "required_parts_json" | "required_skills_json" | "required_tools_json"
-  >) => {
+  const applyRequiredSelections = (
+    form: Pick<
+      CreatePmPlanVersionInput,
+      "required_parts_json" | "required_skills_json" | "required_tools_json"
+    >,
+  ) => {
     setSelectedPartCodes(parseRequiredCodeArray(form.required_parts_json));
     setSelectedSkillCodes(parseRequiredCodeArray(form.required_skills_json));
     setSelectedToolCodes(parseRequiredCodeArray(form.required_tools_json));
@@ -747,7 +789,9 @@ export function PmPage() {
     setSkillSearch("");
     setToolSearch("");
     applyRequiredSelections(emptyForm);
-    setTriggerBuilder(parseTriggerBuilderModel(selectedPlan.strategy_type, emptyForm.trigger_definition_json));
+    setTriggerBuilder(
+      parseTriggerBuilderModel(selectedPlan.strategy_type, emptyForm.trigger_definition_json),
+    );
     void loadMaintenanceTaskReferences();
     setVersionDialogOpen(true);
   };
@@ -777,7 +821,12 @@ export function PmPage() {
     setSkillSearch("");
     setToolSearch("");
     applyRequiredSelections(nextForm);
-    setTriggerBuilder(parseTriggerBuilderModel(selectedPlan?.strategy_type ?? "fixed", version.trigger_definition_json));
+    setTriggerBuilder(
+      parseTriggerBuilderModel(
+        selectedPlan?.strategy_type ?? "fixed",
+        version.trigger_definition_json,
+      ),
+    );
     void loadMaintenanceTaskReferences();
     setVersionDialogOpen(true);
   };
@@ -816,7 +865,10 @@ export function PmPage() {
 
   const submitVersion = async () => {
     if (!selectedPlan) return;
-    const triggerDefinitionJson = buildTriggerDefinitionJson(selectedPlan.strategy_type, triggerBuilder);
+    const triggerDefinitionJson = buildTriggerDefinitionJson(
+      selectedPlan.strategy_type,
+      triggerBuilder,
+    );
     const taskPackageJson = buildTaskPackageFromStepLines(taskStepsText);
     if (editingVersion) {
       await updateVersion(editingVersion.id, editingVersion.row_version, {
@@ -910,10 +962,15 @@ export function PmPage() {
         event_codes: ["INSPECTION_COMPLETED"],
         condition_codes: ["VIBRATION_HIGH"],
       });
-      const updatedOccurrences = usePmStore.getState().occurrences.filter((item) => item.pm_plan_id === selectedPlan.id);
+      const updatedOccurrences = usePmStore
+        .getState()
+        .occurrences.filter((item) => item.pm_plan_id === selectedPlan.id);
       const generatedCount = updatedOccurrences.filter((item) => !beforeIds.has(item.id)).length;
       if (generatedCount > 0) {
-        setInlineNotice({ variant: "success", message: t("messages.generationCreated", { count: generatedCount }) });
+        setInlineNotice({
+          variant: "success",
+          message: t("messages.generationCreated", { count: generatedCount }),
+        });
       } else {
         setInlineNotice({ variant: "warning", message: t("messages.generationNoNew") });
       }
@@ -944,8 +1001,11 @@ export function PmPage() {
       note: executionNote || null,
       actor_id: 1,
       defer_reason_code:
-        executionResult === "deferred" && executionReason !== "none" ? executionReason || null : null,
-      miss_reason_code: executionResult === "missed" && executionReason !== "none" ? executionReason || null : null,
+        executionResult === "deferred" && executionReason !== "none"
+          ? executionReason || null
+          : null,
+      miss_reason_code:
+        executionResult === "missed" && executionReason !== "none" ? executionReason || null : null,
       findings:
         executionResult === "completed_with_findings"
           ? [
@@ -995,13 +1055,13 @@ export function PmPage() {
           <Badge variant="secondary">{plans.length}</Badge>
         </div>
         <div className="flex items-center gap-2">
-          <PermissionGate permission="pm.create">
+          <PermissionGate anyOf={["pm.create", "pm.manage"]}>
             <Button size="sm" className="gap-1.5" onClick={openCreatePlan}>
               <Plus className="h-3.5 w-3.5" />
               {t("actions.newPlan")}
             </Button>
           </PermissionGate>
-          <PermissionGate permission="pm.create">
+          <PermissionGate anyOf={["pm.create", "pm.manage"]}>
             <Button
               size="sm"
               variant="outline"
@@ -1014,7 +1074,13 @@ export function PmPage() {
               {t("actions.generate")}
             </Button>
           </PermissionGate>
-          <Button variant="outline" size="sm" onClick={() => void loadPlans()} disabled={loading} className="gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void loadPlans()}
+            disabled={loading}
+            className="gap-1.5"
+          >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             {t("actions.refresh")}
           </Button>
@@ -1022,7 +1088,9 @@ export function PmPage() {
       </div>
 
       {error ? <div className="px-6 py-2 text-sm text-destructive">{error}</div> : null}
-      {taskRefError ? <div className="px-6 py-2 text-sm text-destructive">{taskRefError}</div> : null}
+      {taskRefError ? (
+        <div className="px-6 py-2 text-sm text-destructive">{taskRefError}</div>
+      ) : null}
       {inlineNotice ? (
         <div
           className={`mx-6 mb-2 rounded-md border px-3 py-2 text-sm ${
@@ -1059,7 +1127,12 @@ export function PmPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2 px-6 pb-3">
-        <Button size="sm" variant={showFilters ? "secondary" : "outline"} className="gap-1.5" onClick={toggleFilters}>
+        <Button
+          size="sm"
+          variant={showFilters ? "secondary" : "outline"}
+          className="gap-1.5"
+          onClick={toggleFilters}
+        >
           <Filter className="h-3.5 w-3.5" />
           {t("page.filters")}
         </Button>
@@ -1165,7 +1238,7 @@ export function PmPage() {
                 </div>
               </div>
 
-              <PermissionGate permission="pm.edit">
+              <PermissionGate anyOf={["pm.edit", "pm.manage"]}>
                 <div className="grid items-end gap-3 md:grid-cols-[1fr_auto_auto]">
                   <div className="space-y-1">
                     <Label>{t("fields.lifecycle")}</Label>
@@ -1182,7 +1255,11 @@ export function PmPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <Button variant="outline" onClick={() => void submitLifecycleTransition()} disabled={saving}>
+                  <Button
+                    variant="outline"
+                    onClick={() => void submitLifecycleTransition()}
+                    disabled={saving}
+                  >
                     {t("actions.transition")}
                   </Button>
                   <Button
@@ -1195,7 +1272,7 @@ export function PmPage() {
                   >
                     <RefreshCw className="h-4 w-4" />
                   </Button>
-                  <PermissionGate permission="pm.delete">
+                  <PermissionGate anyOf={["pm.delete", "pm.manage"]}>
                     <Button
                       variant="outline"
                       size="icon"
@@ -1217,8 +1294,13 @@ export function PmPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h3 className="font-medium">{t("sections.versions")}</h3>
-                  <PermissionGate permission="pm.create">
-                    <Button size="sm" variant="outline" onClick={openCreateVersion} className="gap-1.5">
+                  <PermissionGate anyOf={["pm.create", "pm.manage"]}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={openCreateVersion}
+                      className="gap-1.5"
+                    >
                       <Plus className="h-3.5 w-3.5" />
                       {t("actions.newVersion")}
                     </Button>
@@ -1239,12 +1321,14 @@ export function PmPage() {
                         <td className="px-3 py-2">v{version.version_no}</td>
                         <td className="px-3 py-2">
                           {formatIsoDateTime(version.effective_from)}
-                          {version.effective_to ? ` -> ${formatIsoDateTime(version.effective_to)}` : ""}
+                          {version.effective_to
+                            ? ` -> ${formatIsoDateTime(version.effective_to)}`
+                            : ""}
                         </td>
                         <td className="px-3 py-2">{formatEnumLabel(version.status)}</td>
                         <td className="px-3 py-2">
                           <div className="flex gap-2">
-                            <PermissionGate permission="pm.edit">
+                            <PermissionGate anyOf={["pm.edit", "pm.manage"]}>
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -1260,7 +1344,11 @@ export function PmPage() {
                               </Button>
                               <Button
                                 size="sm"
-                                disabled={saving || version.status !== "draft" || !canPublishForSelectedPlanLifecycle}
+                                disabled={
+                                  saving ||
+                                  version.status !== "draft" ||
+                                  !canPublishForSelectedPlanLifecycle
+                                }
                                 onClick={() => void publishVersion(version.id, version.row_version)}
                                 title={
                                   version.status !== "draft"
@@ -1273,7 +1361,7 @@ export function PmPage() {
                                 {t("actions.publish")}
                               </Button>
                             </PermissionGate>
-                            <PermissionGate permission="pm.delete">
+                            <PermissionGate anyOf={["pm.delete", "pm.manage"]}>
                               <Button
                                 size="sm"
                                 variant="destructive"
@@ -1290,7 +1378,9 @@ export function PmPage() {
                             </PermissionGate>
                           </div>
                           {version.status === "draft" && !canPublishForSelectedPlanLifecycle ? (
-                            <p className="mt-1 text-xs text-text-muted">{t("hints.publishBlockedByLifecycle")}</p>
+                            <p className="mt-1 text-xs text-text-muted">
+                              {t("hints.publishBlockedByLifecycle")}
+                            </p>
                           ) : null}
                         </td>
                       </tr>
@@ -1320,7 +1410,10 @@ export function PmPage() {
                         <td className="px-3 py-2">{occurrence.linked_work_order_code ?? "-"}</td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2">
-                            <Select value={nextOccurrenceStatus} onValueChange={setNextOccurrenceStatus}>
+                            <Select
+                              value={nextOccurrenceStatus}
+                              onValueChange={setNextOccurrenceStatus}
+                            >
                               <SelectTrigger className="h-8 w-[150px]">
                                 <SelectValue />
                               </SelectTrigger>
@@ -1332,7 +1425,10 @@ export function PmPage() {
                                 ))}
                               </SelectContent>
                             </Select>
-                            <Select value={occurrenceReason || "none"} onValueChange={setOccurrenceReason}>
+                            <Select
+                              value={occurrenceReason || "none"}
+                              onValueChange={setOccurrenceReason}
+                            >
                               <SelectTrigger className="h-8 w-[200px]">
                                 <SelectValue placeholder={t("fields.reason")} />
                               </SelectTrigger>
@@ -1344,19 +1440,25 @@ export function PmPage() {
                                 ))}
                               </SelectContent>
                             </Select>
-                            <PermissionGate permission="pm.edit">
+                            <PermissionGate anyOf={["pm.edit", "pm.manage"]}>
                               <Button
                                 size="sm"
                                 variant="outline"
                                 disabled={saving || nextOccurrenceStatus === occurrence.status}
                                 onClick={() => void submitOccurrenceTransition(occurrence)}
                                 title={
-                                  nextOccurrenceStatus === occurrence.status ? t("hints.occurrenceSameStatus") : undefined
+                                  nextOccurrenceStatus === occurrence.status
+                                    ? t("hints.occurrenceSameStatus")
+                                    : undefined
                                 }
                               >
                                 {t("actions.transitionOccurrence")}
                               </Button>
-                              <Button size="sm" onClick={() => openExecutionDialog(occurrence)} disabled={saving}>
+                              <Button
+                                size="sm"
+                                onClick={() => openExecutionDialog(occurrence)}
+                                disabled={saving}
+                              >
                                 {t("actions.logExecution")}
                               </Button>
                             </PermissionGate>
@@ -1388,7 +1490,11 @@ export function PmPage() {
                         <td className="px-3 py-2">{execution.work_order_code ?? "-"}</td>
                         <td className="px-3 py-2">{execution.actual_duration_hours ?? "-"}</td>
                         <td className="px-3 py-2">
-                          <Button size="sm" variant="outline" onClick={() => void loadFindings(execution.id)}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void loadFindings(execution.id)}
+                          >
                             {t("actions.viewFindings")}
                           </Button>
                         </td>
@@ -1405,10 +1511,17 @@ export function PmPage() {
                         {t("sections.findingsForExecution", { id: execution.id })}
                       </div>
                       {findings.map((finding) => (
-                        <div key={finding.id} className="mb-1 border-t pt-1 first:border-t-0 first:pt-0">
-                          <span className="font-medium">{formatEnumLabel(finding.finding_type)}</span> - {finding.description}
+                        <div
+                          key={finding.id}
+                          className="mb-1 border-t pt-1 first:border-t-0 first:pt-0"
+                        >
+                          <span className="font-medium">
+                            {formatEnumLabel(finding.finding_type)}
+                          </span>{" "}
+                          - {finding.description}
                           {" | "}
-                          DI: {finding.follow_up_di_code ?? "-"} | WO: {finding.follow_up_work_order_code ?? "-"}
+                          DI: {finding.follow_up_di_code ?? "-"} | WO:{" "}
+                          {finding.follow_up_work_order_code ?? "-"}
                         </div>
                       ))}
                     </div>
@@ -1460,8 +1573,12 @@ export function PmPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="completed_no_findings">{formatEnumLabel("completed_no_findings")}</SelectItem>
-                  <SelectItem value="completed_with_findings">{formatEnumLabel("completed_with_findings")}</SelectItem>
+                  <SelectItem value="completed_no_findings">
+                    {formatEnumLabel("completed_no_findings")}
+                  </SelectItem>
+                  <SelectItem value="completed_with_findings">
+                    {formatEnumLabel("completed_with_findings")}
+                  </SelectItem>
                   <SelectItem value="deferred">{formatEnumLabel("deferred")}</SelectItem>
                   <SelectItem value="missed">{formatEnumLabel("missed")}</SelectItem>
                   <SelectItem value="cancelled">{formatEnumLabel("cancelled")}</SelectItem>
@@ -1485,7 +1602,11 @@ export function PmPage() {
             </div>
             <div className="space-y-1 md:col-span-2">
               <Label>{t("fields.description")}</Label>
-              <Textarea rows={2} value={executionNote} onChange={(e) => setExecutionNote(e.target.value)} />
+              <Textarea
+                rows={2}
+                value={executionNote}
+                onChange={(e) => setExecutionNote(e.target.value)}
+              />
             </div>
             {executionResult === "completed_with_findings" ? (
               <>
@@ -1495,17 +1616,30 @@ export function PmPage() {
                 </div>
                 <div className="space-y-1">
                   <Label>{t("fields.severity")}</Label>
-                  <Input value={findingSeverity} onChange={(e) => setFindingSeverity(e.target.value)} />
+                  <Input
+                    value={findingSeverity}
+                    onChange={(e) => setFindingSeverity(e.target.value)}
+                  />
                 </div>
                 <div className="space-y-1 md:col-span-2">
                   <Label>{t("fields.findingDescription")}</Label>
-                  <Textarea rows={2} value={findingDescription} onChange={(e) => setFindingDescription(e.target.value)} />
+                  <Textarea
+                    rows={2}
+                    value={findingDescription}
+                    onChange={(e) => setFindingDescription(e.target.value)}
+                  />
                 </div>
                 <div className="flex items-center gap-2 md:col-span-2">
-                  <Button variant={createFollowUpDi ? "default" : "outline"} onClick={() => setCreateFollowUpDi((v) => !v)}>
+                  <Button
+                    variant={createFollowUpDi ? "default" : "outline"}
+                    onClick={() => setCreateFollowUpDi((v) => !v)}
+                  >
                     {t("actions.createFollowUpDi")}
                   </Button>
-                  <Button variant={createFollowUpWo ? "default" : "outline"} onClick={() => setCreateFollowUpWo((v) => !v)}>
+                  <Button
+                    variant={createFollowUpWo ? "default" : "outline"}
+                    onClick={() => setCreateFollowUpWo((v) => !v)}
+                  >
                     {t("actions.createFollowUpWo")}
                   </Button>
                 </div>
@@ -1532,11 +1666,17 @@ export function PmPage() {
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-1">
               <Label>{t("fields.code")}</Label>
-              <Input value={planForm.code} onChange={(e) => setPlanForm((p) => ({ ...p, code: e.target.value }))} />
+              <Input
+                value={planForm.code}
+                onChange={(e) => setPlanForm((p) => ({ ...p, code: e.target.value }))}
+              />
             </div>
             <div className="space-y-1">
               <Label>{t("fields.title")}</Label>
-              <Input value={planForm.title} onChange={(e) => setPlanForm((p) => ({ ...p, title: e.target.value }))} />
+              <Input
+                value={planForm.title}
+                onChange={(e) => setPlanForm((p) => ({ ...p, title: e.target.value }))}
+              />
             </div>
             <div className="space-y-1">
               <Label>{t("fields.strategy")}</Label>
@@ -1593,7 +1733,9 @@ export function PmPage() {
               {editingVersion ? t("dialogs.editVersion.title") : t("dialogs.newVersion.title")}
             </DialogTitle>
             <DialogDescription>
-              {editingVersion ? t("dialogs.editVersion.description") : t("dialogs.newVersion.description")}
+              {editingVersion
+                ? t("dialogs.editVersion.description")
+                : t("dialogs.newVersion.description")}
             </DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 overflow-y-auto pr-1">
@@ -1633,14 +1775,18 @@ export function PmPage() {
                   }}
                 />
               </div>
-              {(selectedPlan?.strategy_type === "fixed" || selectedPlan?.strategy_type === "floating") ? (
+              {selectedPlan?.strategy_type === "fixed" ||
+              selectedPlan?.strategy_type === "floating" ? (
                 <>
                   <div className="space-y-1">
                     <Label>{t("fields.intervalUnit")}</Label>
                     <Select
                       value={triggerBuilder.timeUnit}
                       onValueChange={(value) =>
-                        setTriggerBuilder((prev) => ({ ...prev, timeUnit: value as TimeIntervalUnit }))
+                        setTriggerBuilder((prev) => ({
+                          ...prev,
+                          timeUnit: value as TimeIntervalUnit,
+                        }))
                       }
                     >
                       <SelectTrigger>
@@ -1678,15 +1824,22 @@ export function PmPage() {
                     <Select
                       value={triggerBuilder.meterSource}
                       onValueChange={(value) =>
-                        setTriggerBuilder((prev) => ({ ...prev, meterSource: value as MeterSource }))
+                        setTriggerBuilder((prev) => ({
+                          ...prev,
+                          meterSource: value as MeterSource,
+                        }))
                       }
                     >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="odometer">{t("options.meterSource.odometer")}</SelectItem>
-                        <SelectItem value="operating_hours">{t("options.meterSource.operatingHours")}</SelectItem>
+                        <SelectItem value="odometer">
+                          {t("options.meterSource.odometer")}
+                        </SelectItem>
+                        <SelectItem value="operating_hours">
+                          {t("options.meterSource.operatingHours")}
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1712,7 +1865,9 @@ export function PmPage() {
                   <Label>{t("fields.eventCode")}</Label>
                   <Input
                     value={triggerBuilder.eventCode}
-                    onChange={(e) => setTriggerBuilder((prev) => ({ ...prev, eventCode: e.target.value }))}
+                    onChange={(e) =>
+                      setTriggerBuilder((prev) => ({ ...prev, eventCode: e.target.value }))
+                    }
                   />
                 </div>
               ) : null}
@@ -1722,66 +1877,80 @@ export function PmPage() {
                   <Label>{t("fields.conditionCode")}</Label>
                   <Input
                     value={triggerBuilder.conditionCode}
-                    onChange={(e) => setTriggerBuilder((prev) => ({ ...prev, conditionCode: e.target.value }))}
+                    onChange={(e) =>
+                      setTriggerBuilder((prev) => ({ ...prev, conditionCode: e.target.value }))
+                    }
                   />
                 </div>
               ) : null}
 
               <div className="space-y-2 rounded-md border p-3 md:col-span-2">
-              <div className="flex items-center justify-between gap-2">
-                <Label>{t("fields.taskContent")}</Label>
-                {taskRefsLoading ? <span className="text-xs text-text-muted">{t("labels.loading")}</span> : null}
-              </div>
-              <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-                <Select value={selectedTaskRefId} onValueChange={applyTaskReferenceToForm}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={t("fields.taskListReference")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">{t("labels.none")}</SelectItem>
-                    {taskRefItems.map((item) => (
-                      <SelectItem key={`${item.setId}-${item.id}`} value={item.id.toString()}>
-                        {item.label} ({item.setStatus})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void loadMaintenanceTaskReferences()}
-                  disabled={taskRefsLoading}
-                >
-                  {t("actions.refreshTaskLists")}
-                </Button>
-              </div>
-              <Textarea
-                rows={5}
-                placeholder={t("fields.taskContentPlaceholder")}
-                value={taskStepsText}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setTaskStepsText(next);
-                  setVersionForm((prev) => ({ ...prev, task_package_json: buildTaskPackageFromStepLines(next) }));
-                }}
-              />
-              <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-                <Input
-                  placeholder={t("fields.newTaskListName")}
-                  value={newTaskListName}
-                  onChange={(e) => setNewTaskListName(e.target.value)}
+                <div className="flex items-center justify-between gap-2">
+                  <Label>{t("fields.taskContent")}</Label>
+                  {taskRefsLoading ? (
+                    <span className="text-xs text-text-muted">{t("labels.loading")}</span>
+                  ) : null}
+                </div>
+                <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                  <Select value={selectedTaskRefId} onValueChange={applyTaskReferenceToForm}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={t("fields.taskListReference")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">{t("labels.none")}</SelectItem>
+                      {taskRefItems.map((item) => (
+                        <SelectItem key={`${item.setId}-${item.id}`} value={item.id.toString()}>
+                          {item.label} ({item.setStatus})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void loadMaintenanceTaskReferences()}
+                    disabled={taskRefsLoading}
+                  >
+                    {t("actions.refreshTaskLists")}
+                  </Button>
+                </div>
+                <Textarea
+                  rows={5}
+                  placeholder={t("fields.taskContentPlaceholder")}
+                  value={taskStepsText}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setTaskStepsText(next);
+                    setVersionForm((prev) => ({
+                      ...prev,
+                      task_package_json: buildTaskPackageFromStepLines(next),
+                    }));
+                  }}
                 />
-                <Button type="button" variant="outline" onClick={() => void saveTaskListToReferences()} disabled={taskRefsSaving}>
-                  {t("actions.saveTaskListToReferences")}
-                </Button>
-              </div>
+                <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                  <Input
+                    placeholder={t("fields.newTaskListName")}
+                    value={newTaskListName}
+                    onChange={(e) => setNewTaskListName(e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void saveTaskListToReferences()}
+                    disabled={taskRefsSaving}
+                  >
+                    {t("actions.saveTaskListToReferences")}
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-1 md:col-span-2">
                 <div className="space-y-2 rounded-md border p-3">
                   <div className="flex items-center justify-between gap-2">
                     <Label>{t("fields.requiredParts")}</Label>
-                    <span className="text-xs text-text-muted">{t("labels.selectedCount", { count: selectedPartCodes.length })}</span>
+                    <span className="text-xs text-text-muted">
+                      {t("labels.selectedCount", { count: selectedPartCodes.length })}
+                    </span>
                   </div>
                   <Input
                     value={partSearch}
@@ -1792,7 +1961,10 @@ export function PmPage() {
                     {visiblePartOptions.map((option) => {
                       const checked = selectedPartCodes.includes(option.value);
                       return (
-                        <label key={option.value} className="flex cursor-pointer items-start gap-2 text-sm">
+                        <label
+                          key={option.value}
+                          className="flex cursor-pointer items-start gap-2 text-sm"
+                        >
                           <Checkbox
                             checked={checked}
                             onCheckedChange={(isChecked) =>
@@ -1812,7 +1984,12 @@ export function PmPage() {
                     ) : null}
                   </div>
                   <div className="flex justify-end">
-                    <Button type="button" variant="ghost" size="sm" onClick={() => updateRequiredPartCodes([])}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => updateRequiredPartCodes([])}
+                    >
                       {t("actions.clearSelection")}
                     </Button>
                   </div>
@@ -1823,7 +2000,9 @@ export function PmPage() {
                 <div className="space-y-2 rounded-md border p-3">
                   <div className="flex items-center justify-between gap-2">
                     <Label>{t("fields.requiredSkills")}</Label>
-                    <span className="text-xs text-text-muted">{t("labels.selectedCount", { count: selectedSkillCodes.length })}</span>
+                    <span className="text-xs text-text-muted">
+                      {t("labels.selectedCount", { count: selectedSkillCodes.length })}
+                    </span>
                   </div>
                   <Input
                     value={skillSearch}
@@ -1834,7 +2013,10 @@ export function PmPage() {
                     {visibleSkillOptions.map((option) => {
                       const checked = selectedSkillCodes.includes(option.value);
                       return (
-                        <label key={option.value} className="flex cursor-pointer items-start gap-2 text-sm">
+                        <label
+                          key={option.value}
+                          className="flex cursor-pointer items-start gap-2 text-sm"
+                        >
                           <Checkbox
                             checked={checked}
                             onCheckedChange={(isChecked) =>
@@ -1854,7 +2036,12 @@ export function PmPage() {
                     ) : null}
                   </div>
                   <div className="flex justify-end">
-                    <Button type="button" variant="ghost" size="sm" onClick={() => updateRequiredSkillCodes([])}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => updateRequiredSkillCodes([])}
+                    >
                       {t("actions.clearSelection")}
                     </Button>
                   </div>
@@ -1865,7 +2052,9 @@ export function PmPage() {
                 <div className="space-y-2 rounded-md border p-3">
                   <div className="flex items-center justify-between gap-2">
                     <Label>{t("fields.requiredTools")}</Label>
-                    <span className="text-xs text-text-muted">{t("labels.selectedCount", { count: selectedToolCodes.length })}</span>
+                    <span className="text-xs text-text-muted">
+                      {t("labels.selectedCount", { count: selectedToolCodes.length })}
+                    </span>
                   </div>
                   <Input
                     value={toolSearch}
@@ -1876,7 +2065,10 @@ export function PmPage() {
                     {visibleToolOptions.map((option) => {
                       const checked = selectedToolCodes.includes(option.value);
                       return (
-                        <label key={option.value} className="flex cursor-pointer items-start gap-2 text-sm">
+                        <label
+                          key={option.value}
+                          className="flex cursor-pointer items-start gap-2 text-sm"
+                        >
                           <Checkbox
                             checked={checked}
                             onCheckedChange={(isChecked) =>
@@ -1896,7 +2088,12 @@ export function PmPage() {
                     ) : null}
                   </div>
                   <div className="flex justify-end">
-                    <Button type="button" variant="ghost" size="sm" onClick={() => updateRequiredToolCodes([])}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => updateRequiredToolCodes([])}
+                    >
                       {t("actions.clearSelection")}
                     </Button>
                   </div>
@@ -1905,7 +2102,9 @@ export function PmPage() {
               {requirementsLoading ? (
                 <p className="text-xs text-text-muted md:col-span-2">{t("labels.loading")}</p>
               ) : null}
-              {requirementsError ? <p className="text-xs text-danger md:col-span-2">{requirementsError}</p> : null}
+              {requirementsError ? (
+                <p className="text-xs text-danger md:col-span-2">{requirementsError}</p>
+              ) : null}
 
               <div className="space-y-1">
                 <Label>{t("fields.estimatedDurationHours")}</Label>
@@ -1917,7 +2116,8 @@ export function PmPage() {
                   onChange={(e) =>
                     setVersionForm((v) => ({
                       ...v,
-                      estimated_duration_hours: e.target.value === "" ? null : Number(e.target.value),
+                      estimated_duration_hours:
+                        e.target.value === "" ? null : Number(e.target.value),
                     }))
                   }
                 />
@@ -1972,7 +2172,9 @@ export function PmPage() {
                 <Label>{t("fields.changeReason")}</Label>
                 <Input
                   value={versionForm.change_reason ?? ""}
-                  onChange={(e) => setVersionForm((v) => ({ ...v, change_reason: e.target.value || null }))}
+                  onChange={(e) =>
+                    setVersionForm((v) => ({ ...v, change_reason: e.target.value || null }))
+                  }
                 />
               </div>
             </div>

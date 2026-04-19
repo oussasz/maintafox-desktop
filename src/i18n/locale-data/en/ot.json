@@ -8,7 +8,26 @@
     "viewKanban": "Kanban",
     "viewCalendar": "Calendar",
     "viewDashboard": "Dashboard",
+    "viewIntegrity": "Data integrity",
     "filterSettings": "Filter settings"
+  },
+  "integrity": {
+    "title": "Data integrity findings",
+    "empty": "No open findings. Run detectors to scan work orders and related rows.",
+    "contractFrozen": "Analytics contract {{id}} v{{ver}} (sha256 {{hash}}…)",
+    "runDetectors": "Run detectors",
+    "waiverDefaultReason": "Waived via operator workbench",
+    "approverId": "Approver user ID",
+    "approverPlaceholder": "Required for error findings",
+    "waiverReason": "Waiver reason",
+    "waiverReasonPlaceholder": "Justification",
+    "waive": "Waive",
+    "repair": "Repair",
+    "applyRepair": "Apply repair",
+    "repair.clearFailureMode": "Clear invalid failure mode",
+    "repair.swapDowntime": "Swap segment start/end (negative duration)",
+    "repair.closeAtStart": "Close segment at start time",
+    "repair.trimOverlap": "Trim first segment end to remove overlap"
   },
   "list": {
     "columns": {
@@ -275,6 +294,7 @@
     "narrative": "Description / Narrative",
     "narrativePlaceholder": "Describe the observed failure…",
     "sectionFailure": "Failure analysis",
+    "isoFailureTaxonomyHint": "Failure mode: how the failure manifests. Failure cause: why it occurred (ISO 14224 failure data).",
     "causeNotDetermined": "Cause not determined",
     "failureMode": "Failure mode",
     "failureModePlaceholder": "Mode…",
@@ -311,6 +331,9 @@
     "pinLabel": "PIN code (step-up auth)",
     "pinPlaceholder": "Enter PIN…",
     "blockingConditions": "Blocking conditions:",
+    "noDowntimeProductionHint": "Production impact is recorded. Add a downtime segment or attest no production downtime with a justification (minimum 8 characters).",
+    "noDowntimeAttestation": "No production downtime (attestation)",
+    "noDowntimeReason": "Justification (required when attesting)",
     "closeWo": "Close WO"
   },
   "audit": {
@@ -355,7 +378,10 @@
       "actualEnd": "Actual end",
       "estimatedHours": "Estimated hours",
       "actualHours": "Actual hours",
-      "conclusion": "Closeout report"
+      "conclusion": "Closeout report",
+      "sourceRca": "Source RCA",
+      "sourceRcaDiagram": "Ishikawa diagram #{{id}}",
+      "sourceRcaCause": "Cause"
     }
   },
   "footer": {

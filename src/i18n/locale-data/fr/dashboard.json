@@ -11,7 +11,12 @@
     "noChange": "aucun changement",
     "vsPrevious": "vs période précédente",
     "notAvailableYet": "Données non disponibles (module à venir)",
-    "comingSoon": "Module à venir"
+    "comingSoon": "Module à venir",
+    "openEvidence": "Voir les enregistrements sources",
+    "qualityBadge": {
+      "insufficient_baseline": "La tendance se compare à une période précédente vide — interpréter avec prudence.",
+      "sparse_workload": "Aucune activité DI/OT/MP sur cette plage — données peut-être incomplètes."
+    }
   },
   "chart": {
     "title": "Charge de travail — {{days}} derniers jours",
@@ -20,12 +25,46 @@
     "pmDue": "MP prévues",
     "loading": "Chargement…",
     "empty": "Pas encore assez de données",
-    "ariaLabel": "Graphique charge de travail"
+    "ariaLabel": "Graphique charge de travail",
+    "openRamEvidence": "Ouvrir la qualité des données RAM (preuves)"
   },
   "quickActions": {
     "title": "Actions rapides",
     "newDi": "+ Nouvelle DI",
     "newWo": "+ Nouvel OT",
     "newAsset": "+ Nouvel équipement"
+  },
+  "layout": {
+    "customize": "Personnaliser",
+    "customizeTitle": "Disposition du tableau de bord",
+    "save": "Enregistrer",
+    "reset": "Réinitialiser",
+    "labels": {
+      "kpis": "Cartes KPI",
+      "workload": "Graphique charge de travail",
+      "diStatus": "Répartition des DI par statut",
+      "reliability": "Instantanés KPI fiabilité (365 j)"
+    }
+  },
+  "dev": {
+    "kpiValidation": "Validation KPI (échantillons SQL)",
+    "kpiValidationHint": "Vérifier les totaux et les identifiants d’échantillon contre la base locale (développement uniquement)."
+  },
+  "widgets": {
+    "diStatus": {
+      "title": "DI par statut",
+      "empty": "Aucune demande d’intervention.",
+      "openList": "Ouvrir les demandes",
+      "aria": "Histogramme statuts DI"
+    },
+    "reliability": {
+      "title": "Instantanés fiabilité",
+      "subtitle": "Agrégats depuis reliability_kpi_snapshots (365 derniers jours).",
+      "openEvidence": "Qualité données RAM",
+      "snapshots": "Instantanés",
+      "dqScore": "Qualité données (moy.)",
+      "mtbf": "MTBF moy. (h)",
+      "events": "Événements défaillance"
+    }
   }
 }

@@ -159,6 +159,8 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const [closing, setClosing] = useState(false);
   const [blockingErrors, setBlockingErrors] = useState<string[]>([]);
   const [closeError, setCloseError] = useState<string | null>(null);
+  const [noDowntimeAttestation, setNoDowntimeAttestation] = useState(false);
+  const [noDowntimeReason, setNoDowntimeReason] = useState("");
 
   // ── Pre-populate from existing failure data (GA-049) ────────────────
   useEffect(() => {
@@ -311,6 +313,12 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         wo_id: currentWo.id,
         actor_id: actorId,
         expected_row_version: currentWo.row_version,
+        ...(currentWo.production_impact_id != null
+          ? {
+              no_downtime_attestation: noDowntimeAttestation,
+              no_downtime_attestation_reason: noDowntimeReason.trim() || null,
+            }
+          : {}),
       }),
     )
       .then(() => onClosed())
@@ -322,7 +330,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
         }
       })
       .finally(() => setClosing(false));
-  }, [canEdit, currentWo, info, withStepUp, onClosed]);
+  }, [canEdit, currentWo, info, withStepUp, onClosed, noDowntimeAttestation, noDowntimeReason]);
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -379,6 +387,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           icon={<WrenchIcon className="h-4 w-4" />}
           title={t("closeout.sectionFailure")}
         />
+        <p className="text-xs text-muted-foreground">{t("closeout.isoFailureTaxonomyHint")}</p>
 
         <div className="flex items-center gap-2">
           <Checkbox
@@ -657,6 +666,37 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
           <div className="space-y-4 rounded-md border border-surface-border p-4">
             <h4 className="text-sm font-medium text-text-primary">{t("closeout.closureTitle")}</h4>
             <p className="text-sm text-muted-foreground">{t("closeout.closureWarning")}</p>
+
+            {currentWo.production_impact_id != null && (
+              <div className="space-y-3 rounded-md border border-surface-border bg-muted/30 p-3">
+                <p className="text-sm text-muted-foreground">
+                  {t("closeout.noDowntimeProductionHint")}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="wo-no-dt-attest"
+                    checked={noDowntimeAttestation}
+                    onCheckedChange={(v) => setNoDowntimeAttestation(Boolean(v))}
+                    disabled={!canEdit || closing}
+                  />
+                  <Label htmlFor="wo-no-dt-attest" className="cursor-pointer text-sm">
+                    {t("closeout.noDowntimeAttestation")}
+                  </Label>
+                </div>
+                {noDowntimeAttestation && (
+                  <div className="space-y-1">
+                    <Label htmlFor="wo-no-dt-reason">{t("closeout.noDowntimeReason")}</Label>
+                    <Textarea
+                      id="wo-no-dt-reason"
+                      value={noDowntimeReason}
+                      onChange={(e) => setNoDowntimeReason(e.target.value)}
+                      disabled={!canEdit || closing}
+                      rows={2}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Step-up authentication handled by withStepUp hook */}
 

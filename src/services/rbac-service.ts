@@ -2,9 +2,9 @@
 // Components and hooks MUST NOT import from @tauri-apps/api/core directly
 // for permission operations.
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   AdminChangeEventDetail,
   AdminEventFilter,
@@ -46,7 +46,7 @@ import type {
   UserWithRoles,
 } from "@shared/ipc-types";
 
-// ── Zod schemas for runtime validation ────────────────────────────────────────
+// â”€â”€ Zod schemas for runtime validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const PermissionRecordSchema = z.object({
   name: z.string(),
@@ -61,7 +61,7 @@ export const StepUpResponseSchema = z.object({
   expires_at: z.string(),
 });
 
-// ── Service functions ─────────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Fetch the effective permission set for the currently authenticated user.
@@ -84,7 +84,7 @@ export async function verifyStepUp(password: string): Promise<StepUpResponse> {
   return StepUpResponseSchema.parse(raw);
 }
 
-// ── Admin stats ───────────────────────────────────────────────────────────
+// â”€â”€ Admin stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const AdminStatsSchema = z.object({
   active_users: z.number(),
@@ -102,7 +102,7 @@ export async function getAdminStats(): Promise<AdminStatsPayload> {
   return AdminStatsSchema.parse(raw);
 }
 
-// ── User presence ─────────────────────────────────────────────────────────
+// â”€â”€ User presence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const UserPresenceSchema = z.object({
   user_id: z.number(),
@@ -115,7 +115,7 @@ export async function getUserPresence(userIds: number[]): Promise<UserPresence[]
   return z.array(UserPresenceSchema).parse(raw);
 }
 
-// ── User management ───────────────────────────────────────────────────────
+// â”€â”€ User management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const IdPayloadSchema = z.object({ id: z.number() });
 
@@ -197,7 +197,7 @@ export async function revokeRoleScope(assignmentId: number): Promise<void> {
   await invoke<void>("revoke_role_scope", { assignmentId });
 }
 
-// ── Role management ───────────────────────────────────────────────────────
+// â”€â”€ Role management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const RoleWithPermissionsSchema = z.object({
   id: z.number(),
@@ -266,7 +266,7 @@ export async function unlockUserAccount(userId: number): Promise<void> {
   await invoke<void>("unlock_user_account", { userId });
 }
 
-// ── RBAC settings (password policy, lockout) ──────────────────────────────
+// â”€â”€ RBAC settings (password policy, lockout) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const RbacSettingSchema = z.object({
   key: z.string(),
@@ -298,7 +298,7 @@ export async function getPasswordPolicy(): Promise<PasswordPolicySettings> {
   return PasswordPolicySchema.parse(raw);
 }
 
-// ── Permission catalog (SP06-F02) ─────────────────────────────────────────
+// â”€â”€ Permission catalog (SP06-F02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const PermissionWithSystemSchema = z.object({
   id: z.number(),
@@ -362,7 +362,7 @@ export async function validateRolePermissions(
   return RoleValidationResultSchema.parse(raw);
 }
 
-// ── Emergency elevation (SP06-F02) ────────────────────────────────────────
+// â”€â”€ Emergency elevation (SP06-F02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function grantEmergencyElevation(
   input: GrantEmergencyElevationInput,
@@ -377,7 +377,7 @@ export async function revokeEmergencyElevation(
   await invoke<void>("revoke_emergency_elevation", { input });
 }
 
-// ── Admin Governance — Session Visibility (SP06-F03) ──────────────────────
+// â”€â”€ Admin Governance â€” Session Visibility (SP06-F03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SessionSummarySchema = z.object({
   session_id: z.string(),
@@ -401,7 +401,7 @@ export async function revokeSession(sessionId: string): Promise<void> {
   await invoke<void>("revoke_session", { sessionId });
 }
 
-// ── Admin Governance — Delegation (SP06-F03) ──────────────────────────────
+// â”€â”€ Admin Governance â€” Delegation (SP06-F03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const DelegationPolicyViewSchema = z.object({
   id: z.number(),
@@ -433,7 +433,7 @@ export async function deleteDelegationPolicy(policyId: number): Promise<void> {
   await invoke<void>("delete_delegation_policy", { policyId });
 }
 
-// ── Admin Governance — Emergency Grants (SP06-F03) ────────────────────────
+// â”€â”€ Admin Governance â€” Emergency Grants (SP06-F03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const EmergencyGrantViewSchema = z.object({
   assignment_id: z.number(),
@@ -455,7 +455,7 @@ export async function listEmergencyGrants(): Promise<EmergencyGrantView[]> {
   return z.array(EmergencyGrantViewSchema).parse(raw);
 }
 
-// ── Admin Governance — Role Import/Export (SP06-F03) ──────────────────────
+// â”€â”€ Admin Governance â€” Role Import/Export (SP06-F03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const RoleExportEntrySchema = z.object({
   id: z.number(),
@@ -491,7 +491,7 @@ export async function importRoleModel(payload: RoleImportPayload): Promise<Impor
   return ImportResultSchema.parse(raw);
 }
 
-// ── Admin Audit Events (SP06-F04) ────────────────────────────────────────
+// â”€â”€ Admin Audit Events (SP06-F04) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const AdminChangeEventDetailSchema = z.object({
   id: z.number(),
@@ -511,16 +511,12 @@ const AdminChangeEventDetailSchema = z.object({
   apply_result: z.string(),
 });
 
-export async function listAdminEvents(
-  filter: AdminEventFilter,
-): Promise<AdminChangeEventDetail[]> {
+export async function listAdminEvents(filter: AdminEventFilter): Promise<AdminChangeEventDetail[]> {
   const raw = await invoke<unknown[]>("list_admin_events", { filter });
   return z.array(AdminChangeEventDetailSchema).parse(raw);
 }
 
-export async function getAdminEvent(
-  eventId: number,
-): Promise<AdminChangeEventDetail> {
+export async function getAdminEvent(eventId: number): Promise<AdminChangeEventDetail> {
   const raw = await invoke<unknown>("get_admin_event", { eventId });
   return AdminChangeEventDetailSchema.parse(raw);
 }

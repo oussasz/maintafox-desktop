@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { z, ZodError } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   ApplyAdminLicenseActionInput,
   ApplyAdminLicenseActionResult,
@@ -102,7 +102,9 @@ export async function applyLicensingCompromiseResponse(
 ): Promise<ApplyLicensingCompromiseResponseResult> {
   try {
     const raw = await invoke<unknown>("apply_licensing_compromise_response", { input });
-    return ApplyLicensingCompromiseResponseResultSchema.parse(raw) as ApplyLicensingCompromiseResponseResult;
+    return ApplyLicensingCompromiseResponseResultSchema.parse(
+      raw,
+    ) as ApplyLicensingCompromiseResponseResult;
   } catch (err) {
     throw normalizeDecodeError("apply_licensing_compromise_response", err);
   }

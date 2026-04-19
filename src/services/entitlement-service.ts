@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { z, ZodError } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   EntitlementCapabilityCheck,
   EntitlementDiagnostics,
@@ -100,7 +100,9 @@ export async function getEntitlementSummary(): Promise<EntitlementSummary> {
   }
 }
 
-export async function checkEntitlementCapability(capability: string): Promise<EntitlementCapabilityCheck> {
+export async function checkEntitlementCapability(
+  capability: string,
+): Promise<EntitlementCapabilityCheck> {
   try {
     const result = await invoke<unknown>("check_entitlement_capability", { capability });
     return EntitlementCapabilityCheckSchema.parse(result) as EntitlementCapabilityCheck;

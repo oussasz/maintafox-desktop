@@ -1,4 +1,4 @@
-﻿/**
+/**
  * RequestsPage.tsx
  *
  * Multi-view intervention-request (DI) workspace inspired by the web version.
@@ -46,7 +46,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { mfInput, mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
+import { cn } from "@/lib/utils";
 import { useDiStore } from "@/stores/di-store";
 import type { InterventionRequest } from "@shared/ipc-types";
 
@@ -92,7 +94,9 @@ export function RequestsPage() {
   const [view, setView] = useState<ViewMode>(
     () => (localStorage.getItem("di-view-mode") as ViewMode) || "kanban",
   );
-  const [showFilters, setShowFilters] = useState(() => localStorage.getItem("di-show-filters") !== "0");
+  const [showFilters, setShowFilters] = useState(
+    () => localStorage.getItem("di-show-filters") !== "0",
+  );
   const [searchInput, setSearchInput] = useState("");
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("__all__");
@@ -238,18 +242,18 @@ export function RequestsPage() {
   );
 
   return (
-    <div className="flex h-full flex-col">
+    <div className={mfLayout.moduleRoot}>
       {/* ── Page header ──────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-surface-border">
-        <div className="flex items-center gap-3">
-          <ClipboardList className="h-5 w-5 text-text-muted" />
-          <h1 className="text-xl font-semibold text-text-primary">{t("page.title")}</h1>
+      <div className={mfLayout.moduleHeader}>
+        <div className={mfLayout.moduleTitleRow}>
+          <ClipboardList className={mfLayout.moduleHeaderIcon} />
+          <h1 className={mfLayout.moduleTitle}>{t("page.title")}</h1>
           <Badge variant="secondary" className="text-xs">
             {total}
           </Badge>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className={mfLayout.moduleHeaderActions}>
           {/* New DI button */}
           <PermissionGate permission="di.create">
             <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
@@ -259,11 +263,11 @@ export function RequestsPage() {
           </PermissionGate>
 
           {/* View toggle */}
-          <div className="flex items-center rounded-md border p-0.5 gap-0.5">
+          <div className={mfLayout.viewToggleGroup}>
             <Button
               variant={view === "list" ? "default" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className={mfLayout.viewToggleButton}
               onClick={() => switchView("list")}
               title={t("page.viewList")}
             >
@@ -272,7 +276,7 @@ export function RequestsPage() {
             <Button
               variant={view === "kanban" ? "default" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className={mfLayout.viewToggleButton}
               onClick={() => switchView("kanban")}
               title={t("page.viewKanban")}
             >
@@ -281,7 +285,7 @@ export function RequestsPage() {
             <Button
               variant={view === "calendar" ? "default" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className={mfLayout.viewToggleButton}
               onClick={() => switchView("calendar")}
               title={t("page.viewCalendar")}
             >
@@ -290,7 +294,7 @@ export function RequestsPage() {
             <Button
               variant={view === "dashboard" ? "default" : "ghost"}
               size="sm"
-              className="h-7 px-2"
+              className={mfLayout.viewToggleButton}
               onClick={() => switchView("dashboard")}
               title={t("page.viewDashboard")}
             >
@@ -333,11 +337,11 @@ export function RequestsPage() {
       </div>
 
       {showFilters && (
-        <div className="flex items-center gap-2 px-6 py-2 border-b border-surface-border">
+        <div className={mfLayout.moduleFilterBar}>
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
             <Input
-              className="pl-9 h-8 text-sm"
+              className={mfInput.filterSearch}
               placeholder={t("search.placeholder")}
               value={searchInput}
               onChange={handleSearchChange}
@@ -354,7 +358,7 @@ export function RequestsPage() {
           </div>
 
           <Select value={statusFilter} onValueChange={handleStatusFilter}>
-            <SelectTrigger className="h-8 w-[180px] text-sm">
+            <SelectTrigger className={cn(mfInput.filterSelect, "w-[180px]")}>
               <SelectValue placeholder={t("list.filters.status")} />
             </SelectTrigger>
             <SelectContent>
@@ -368,7 +372,7 @@ export function RequestsPage() {
           </Select>
 
           <Select value={priorityFilter} onValueChange={handlePriorityFilter}>
-            <SelectTrigger className="h-8 w-[140px] text-sm">
+            <SelectTrigger className={cn(mfInput.filterSelect, "w-[140px]")}>
               <SelectValue placeholder={t("list.filters.priority")} />
             </SelectTrigger>
             <SelectContent>
@@ -389,8 +393,8 @@ export function RequestsPage() {
       </PermissionGate>
 
       {/* ── Main workspace ───────────────────────────────────────────── */}
-      <div className="flex flex-1 min-h-0">
-        <div className="flex flex-col w-full overflow-auto">
+      <div className={mfLayout.moduleWorkspace}>
+        <div className={mfLayout.moduleWorkspaceInner}>
           {view === "list" && (
             <div className="p-4">
               <DataTable

@@ -60,8 +60,10 @@ describe("sync orchestrator core", () => {
     expect(shouldRetry(policy.maxAttempts, policy)).toBe(false);
   });
 
-  it("normalizes running state to scheduled on restart", () => {
+  it("normalizes runtime state after restart", () => {
     expect(normalizeRuntimeStateAfterRestart("running")).toBe("scheduled");
     expect(normalizeRuntimeStateAfterRestart("degraded")).toBe("degraded");
+    expect(normalizeRuntimeStateAfterRestart("error")).toBe("idle");
+    expect(normalizeRuntimeStateAfterRestart("idle")).toBe("idle");
   });
 });

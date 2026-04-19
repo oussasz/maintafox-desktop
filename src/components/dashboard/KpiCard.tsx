@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Minus } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Minus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -15,6 +15,9 @@ export interface KpiCardProps {
   trendDirection: "up-good" | "up-bad";
   /** If false, the KPI data source is not yet available (Phase 5). */
   available?: boolean;
+  /** Server-side quality hint (`kpi_definitions::quality_badge::*`). */
+  qualityBadge?: string | null | undefined;
+  onOpenEvidence?: () => void;
 }
 
 export function KpiCard({
@@ -25,6 +28,8 @@ export function KpiCard({
   color,
   trendDirection,
   available = true,
+  qualityBadge,
+  onOpenEvidence,
 }: KpiCardProps) {
   const { t } = useTranslation("dashboard");
 
@@ -79,6 +84,23 @@ export function KpiCard({
         )}
 
         {!available && <p className="mt-1 text-xs text-text-muted">{t("kpi.comingSoon")}</p>}
+
+        {available && qualityBadge ? (
+          <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-500">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>{t(`kpi.qualityBadge.${qualityBadge}`)}</span>
+          </div>
+        ) : null}
+
+        {available && onOpenEvidence ? (
+          <button
+            type="button"
+            className="mt-2 text-left text-xs font-medium text-primary underline-offset-2 hover:underline"
+            onClick={onOpenEvidence}
+          >
+            {t("kpi.openEvidence")}
+          </button>
+        ) : null}
       </CardContent>
     </Card>
   );

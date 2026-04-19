@@ -2,9 +2,9 @@
 // Components and stores MUST NOT import from @tauri-apps/api/core directly
 // for settings operations.
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   ActivatePolicyPayload,
   AppSetting,
@@ -15,7 +15,7 @@ import type {
   SettingsChangeEvent,
 } from "@shared/ipc-types";
 
-// ── Zod schemas for runtime validation ────────────────────────────────────────
+// â”€â”€ Zod schemas for runtime validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const AppSettingSchema = z.object({
   id: z.number(),
@@ -51,7 +51,7 @@ const SettingsChangeEventSchema = z.object({
   apply_result: z.string(),
 });
 
-// ── Service functions ─────────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * List all settings across all categories.
@@ -107,7 +107,7 @@ export async function setSetting(payload: SetSettingPayload): Promise<void> {
 
 /**
  * Return the resolved session policy (active snapshot or safe defaults).
- * Intentionally unauthenticated — called before login to load idle-timeout config.
+ * Intentionally unauthenticated â€” called before login to load idle-timeout config.
  */
 export async function getSessionPolicy(): Promise<SessionPolicy> {
   const raw = await invoke<SessionPolicy>("get_session_policy");
@@ -133,7 +133,7 @@ export async function listSettingChangeEvents(limit?: number): Promise<SettingsC
   return z.array(SettingsChangeEventSchema).parse(raw);
 }
 
-// ── Policy Draft / Test / Activate ────────────────────────────────────────────
+// â”€â”€ Policy Draft / Test / Activate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const PolicySnapshotSchema = z.object({
   id: z.number(),

@@ -1,6 +1,6 @@
-﻿import { invoke } from "@tauri-apps/api/core";
 import { z, ZodError } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   AcknowledgeBudgetAlertInput,
   BudgetActual,
@@ -36,6 +36,7 @@ import type {
   CreateBudgetVersionInput,
   CreateCostCenterInput,
   ErpApprovedReforecastExportItem,
+  ErpExportBatchResult,
   ErpMasterImportResult,
   ErpPostedActualExportItem,
   EvaluateBudgetAlertsInput,
@@ -43,7 +44,12 @@ import type {
   ForecastRun,
   GenerateBudgetForecastInput,
   ImportErpCostCenterMasterInput,
+  IntegrationException,
+  IntegrationExceptionFilter,
   PostBudgetActualInput,
+  PostedExportBatch,
+  PostedExportBatchFilter,
+  RecordErpExportBatchInput,
   ReverseBudgetActualInput,
   TransitionBudgetVarianceReviewInput,
   TransitionBudgetVersionLifecycleInput,
@@ -51,6 +57,7 @@ import type {
   UpdateBudgetLineInput,
   UpdateBudgetVersionInput,
   UpdateCostCenterInput,
+  UpdateIntegrationExceptionInput,
   BudgetVarianceReview,
   BudgetVarianceReviewFilter,
 } from "@shared/ipc-types";
@@ -73,6 +80,7 @@ const CostCenterSchema = z.object({
 
 const BudgetVersionSchema = z.object({
   id: z.number(),
+  entity_sync_id: z.string(),
   fiscal_year: z.number(),
   scenario_type: z.string(),
   version_no: z.number(),
@@ -97,6 +105,7 @@ const BudgetVersionSchema = z.object({
 
 const BudgetLineSchema = z.object({
   id: z.number(),
+  entity_sync_id: z.string(),
   budget_version_id: z.number(),
   cost_center_id: z.number(),
   cost_center_code: z.string(),
@@ -325,8 +334,48 @@ const ErpApprovedReforecastExportItemSchema = z.object({
   reconciliation_flags: z.array(z.string()),
 });
 
+const PostedExportBatchSchema = z.object({
+  id: z.number(),
+  entity_sync_id: z.string(),
+  batch_uuid: z.string(),
+  export_kind: z.string(),
+  tenant_id: z.string().nullable(),
+  relay_payload_json: z.string(),
+  total_posted: z.number(),
+  line_count: z.number(),
+  status: z.string(),
+  erp_ack_at: z.string().nullable(),
+  erp_http_code: z.number().nullable(),
+  rejection_code: z.string().nullable(),
+  row_version: z.number(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const IntegrationExceptionSchema = z.object({
+  id: z.number(),
+  entity_sync_id: z.string(),
+  posted_export_batch_id: z.number(),
+  source_record_kind: z.string(),
+  source_record_id: z.number(),
+  maintafox_value_snapshot: z.string(),
+  external_value_snapshot: z.string().nullable(),
+  resolution_status: z.string(),
+  rejection_code: z.string().nullable(),
+  row_version: z.number(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const ErpExportBatchResultSchema = z.object({
+  batch: PostedExportBatchSchema,
+  jsonl: z.string(),
+  integration_exceptions: z.array(IntegrationExceptionSchema),
+});
+
 const BudgetAlertConfigSchema = z.object({
   id: z.number(),
+  entity_sync_id: z.string(),
   budget_version_id: z.number().nullable(),
   cost_center_id: z.number().nullable(),
   budget_bucket: z.string().nullable(),
@@ -346,6 +395,7 @@ const BudgetAlertConfigSchema = z.object({
 
 const BudgetAlertEventSchema = z.object({
   id: z.number(),
+  entity_sync_id: z.string(),
   alert_config_id: z.number().nullable(),
   budget_version_id: z.number(),
   cost_center_id: z.number(),
@@ -520,7 +570,11 @@ export function updateBudgetLine(
   expectedRowVersion: number,
   input: UpdateBudgetLineInput,
 ): Promise<BudgetLine> {
-  return invokeParsed("update_budget_line", { lineId, expectedRowVersion, input }, BudgetLineSchema);
+  return invokeParsed(
+    "update_budget_line",
+    { lineId, expectedRowVersion, input },
+    BudgetLineSchema,
+  );
 }
 
 export function listBudgetActuals(filter: BudgetActualFilter = {}): Promise<BudgetActual[]> {
@@ -539,16 +593,24 @@ export function reverseBudgetActual(input: ReverseBudgetActualInput): Promise<Bu
   return invokeParsed("reverse_budget_actual", { input }, BudgetActualSchema);
 }
 
-export function listBudgetCommitments(filter: BudgetCommitmentFilter = {}): Promise<BudgetCommitment[]> {
+export function listBudgetCommitments(
+  filter: BudgetCommitmentFilter = {},
+): Promise<BudgetCommitment[]> {
   return invokeParsed("list_budget_commitments", { filter }, z.array(BudgetCommitmentSchema));
 }
 
-export function createBudgetCommitment(input: CreateBudgetCommitmentInput): Promise<BudgetCommitment> {
+export function createBudgetCommitment(
+  input: CreateBudgetCommitmentInput,
+): Promise<BudgetCommitment> {
   return invokeParsed("create_budget_commitment", { input }, BudgetCommitmentSchema);
 }
 
 export function listForecastRuns(budgetVersionId?: number): Promise<ForecastRun[]> {
-  return invokeParsed("list_forecast_runs", { budgetVersionId: budgetVersionId ?? null }, z.array(ForecastRunSchema));
+  return invokeParsed(
+    "list_forecast_runs",
+    { budgetVersionId: budgetVersionId ?? null },
+    z.array(ForecastRunSchema),
+  );
 }
 
 export function listBudgetForecasts(filter: BudgetForecastFilter = {}): Promise<BudgetForecast[]> {
@@ -564,7 +626,11 @@ export function generateBudgetForecasts(
 export function listBudgetVarianceReviews(
   filter: BudgetVarianceReviewFilter = {},
 ): Promise<BudgetVarianceReview[]> {
-  return invokeParsed("list_budget_variance_reviews", { filter }, z.array(BudgetVarianceReviewSchema));
+  return invokeParsed(
+    "list_budget_variance_reviews",
+    { filter },
+    z.array(BudgetVarianceReviewSchema),
+  );
 }
 
 export function createBudgetVarianceReview(
@@ -588,7 +654,11 @@ export function listBudgetDashboardRows(
 export function listBudgetDashboardDrilldown(
   filter: BudgetDashboardFilter = {},
 ): Promise<BudgetDrilldownRow[]> {
-  return invokeParsed("list_budget_dashboard_drilldown", { filter }, z.array(BudgetDrilldownRowSchema));
+  return invokeParsed(
+    "list_budget_dashboard_drilldown",
+    { filter },
+    z.array(BudgetDrilldownRowSchema),
+  );
 }
 
 export function importErpCostCenterMaster(
@@ -598,7 +668,11 @@ export function importErpCostCenterMaster(
 }
 
 export function exportPostedActualsForErp(): Promise<ErpPostedActualExportItem[]> {
-  return invokeParsed("export_posted_actuals_for_erp", undefined, z.array(ErpPostedActualExportItemSchema));
+  return invokeParsed(
+    "export_posted_actuals_for_erp",
+    undefined,
+    z.array(ErpPostedActualExportItemSchema),
+  );
 }
 
 export function exportApprovedReforecastsForErp(): Promise<ErpApprovedReforecastExportItem[]> {
@@ -606,6 +680,40 @@ export function exportApprovedReforecastsForErp(): Promise<ErpApprovedReforecast
     "export_approved_reforecasts_for_erp",
     undefined,
     z.array(ErpApprovedReforecastExportItemSchema),
+  );
+}
+
+export function recordErpExportBatch(
+  input: RecordErpExportBatchInput,
+): Promise<ErpExportBatchResult> {
+  return invokeParsed("record_erp_export_batch", { input }, ErpExportBatchResultSchema);
+}
+
+export function listPostedExportBatches(
+  filter: PostedExportBatchFilter = {},
+): Promise<PostedExportBatch[]> {
+  return invokeParsed("list_posted_export_batches", { filter }, z.array(PostedExportBatchSchema));
+}
+
+export function listIntegrationExceptions(
+  filter: IntegrationExceptionFilter = {},
+): Promise<IntegrationException[]> {
+  return invokeParsed(
+    "list_integration_exceptions",
+    { filter },
+    z.array(IntegrationExceptionSchema),
+  );
+}
+
+export function updateIntegrationException(
+  exceptionId: number,
+  expectedRowVersion: number,
+  input: UpdateIntegrationExceptionInput,
+): Promise<IntegrationException> {
+  return invokeParsed(
+    "update_integration_exception",
+    { exceptionId, expectedRowVersion, input },
+    IntegrationExceptionSchema,
   );
 }
 
@@ -651,9 +759,7 @@ export function acknowledgeBudgetAlert(
   return invokeParsed("acknowledge_budget_alert", { input }, BudgetAlertEventSchema);
 }
 
-export function buildBudgetReportPack(
-  filter: BudgetReportPackFilter,
-): Promise<BudgetReportPack> {
+export function buildBudgetReportPack(filter: BudgetReportPackFilter): Promise<BudgetReportPack> {
   return invokeParsed("build_budget_report_pack", { filter }, BudgetReportPackSchema);
 }
 

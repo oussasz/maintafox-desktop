@@ -2,9 +2,9 @@
 // Components and hooks MUST NOT import from @tauri-apps/api/core directly
 // for user profile operations.
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   ChangePasswordInput,
   SessionHistoryEntry,
@@ -13,7 +13,7 @@ import type {
   UserProfile,
 } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const UserProfileSchema = z.object({
   id: z.number(),
@@ -47,7 +47,7 @@ const TrustedDeviceSchema = z.object({
   is_revoked: z.boolean(),
 });
 
-// ── Service functions ─────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getMyProfile(): Promise<UserProfile> {
   const raw = await invoke<unknown>("get_my_profile");

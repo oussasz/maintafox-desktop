@@ -1,5 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useState, useEffect, useRef, useCallback } from "react";
+
+import { invoke } from "@/lib/ipc-invoke";
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -19,7 +20,7 @@ export function useNotificationCount(): number {
       const result = await invoke<number>("get_unread_count");
       setCount(result);
     } catch {
-      // Command not yet available — silent fallback to 0
+      // Command not yet available â€” silent fallback to 0
       setCount(0);
     }
   }, []);

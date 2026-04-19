@@ -114,7 +114,7 @@ mod tests {
         let expected_columns = [
             "id", "code", "type_id", "status_id",
             "equipment_id", "component_id", "location_id",
-            "requester_id", "source_di_id", "entity_id",
+            "requester_id", "source_di_id", "source_inspection_anomaly_id", "entity_id",
             "planner_id", "approver_id", "assigned_group_id", "primary_responsible_id",
             "urgency_id", "title", "description",
             "planned_start", "planned_end", "shift", "scheduled_at",
@@ -126,7 +126,11 @@ mod tests {
             "labor_cost", "parts_cost", "service_cost", "total_cost",
             "recurrence_risk_level", "production_impact_id",
             "root_cause_summary", "corrective_action_summary", "verification_method",
-            "notes", "cancel_reason", "row_version", "created_at", "updated_at",
+            "notes", "cancel_reason",
+            "parts_actuals_confirmed", "service_cost_input", "reopen_count", "last_closed_at",
+            "requires_permit", "row_version", "created_at", "updated_at",
+            "entity_sync_id", "closeout_validation_profile_id", "closeout_validation_passed",
+            "no_downtime_attestation", "no_downtime_attestation_reason",
         ];
 
         for col in &expected_columns {

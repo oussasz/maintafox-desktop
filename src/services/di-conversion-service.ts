@@ -2,12 +2,12 @@
  * di-conversion-service.ts
  *
  * IPC wrappers for DI-to-WO conversion and SLA commands.
- * Phase 2 – Sub-phase 04 – File 03 – Sprint S3.
+ * Phase 2 â€“ Sub-phase 04 â€“ File 03 â€“ Sprint S3.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   DiSlaRule,
   DiSlaStatus,
@@ -15,7 +15,7 @@ import type {
   WoConversionResult,
 } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const InterventionRequestSchema = z.object({
   id: z.number(),
@@ -87,7 +87,7 @@ const DiSlaRuleSchema = z.object({
   is_active: z.boolean(),
 });
 
-// ── Error helpers ─────────────────────────────────────────────────────────────
+// â”€â”€ Error helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface IpcError {
   code: string;
@@ -112,7 +112,7 @@ function rethrowIfVersionConflict(err: unknown): never {
   throw err;
 }
 
-// ── Conversion commands ───────────────────────────────────────────────────────
+// â”€â”€ Conversion commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Convert a DI in `approved_for_planning` to a work order shell.
@@ -141,7 +141,7 @@ export async function convertDiToWo(input: {
   }
 }
 
-// ── SLA commands ──────────────────────────────────────────────────────────────
+// â”€â”€ SLA commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getSlaStatus(diId: number): Promise<DiSlaStatus> {
   const raw = await invoke<unknown>("get_sla_status", { diId });

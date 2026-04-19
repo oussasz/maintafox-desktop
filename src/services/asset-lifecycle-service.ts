@@ -5,9 +5,9 @@
  * All invoke() calls for SP02-F02 operations are isolated here.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   Asset,
   AssetBindingSummary,
@@ -24,7 +24,7 @@ import type {
   UpsertDocumentLinkPayload,
 } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const AssetLifecycleEventSchema = z.object({
   id: z.number(),
@@ -88,7 +88,7 @@ export const AssetDocumentLinkSchema = z.object({
   created_at: z.string(),
 });
 
-// ── Lifecycle event commands ──────────────────────────────────────────────────
+// â”€â”€ Lifecycle event commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listAssetLifecycleEvents(
   assetId: number,
@@ -108,7 +108,7 @@ export async function recordLifecycleEvent(
   return AssetLifecycleEventSchema.parse(raw) as AssetLifecycleEvent;
 }
 
-// ── Meter commands ────────────────────────────────────────────────────────────
+// â”€â”€ Meter commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listAssetMeters(assetId: number): Promise<AssetMeter[]> {
   const raw = await invoke<unknown>("list_asset_meters", { assetId });
@@ -144,7 +144,7 @@ export async function listMeterReadings(
   return z.array(MeterReadingSchema).parse(raw) as MeterReading[];
 }
 
-// ── Document link commands ────────────────────────────────────────────────────
+// â”€â”€ Document link commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listAssetDocumentLinks(
   assetId: number,
@@ -175,7 +175,7 @@ export async function expireAssetDocumentLink(
   return AssetDocumentLinkSchema.parse(raw) as AssetDocumentLink;
 }
 
-// ── Binding summary commands ──────────────────────────────────────────────────
+// â”€â”€ Binding summary commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const DomainBindingEntrySchema = z.object({
   status: z.enum(["available", "not_implemented"]),
@@ -198,7 +198,7 @@ export async function getAssetBindingSummary(assetId: number): Promise<AssetBind
   return AssetBindingSummarySchema.parse(raw) as AssetBindingSummary;
 }
 
-// ── Decommission commands ─────────────────────────────────────────────────────
+// â”€â”€ Decommission commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const DecommissionResultSchema = z
   .object({
@@ -217,7 +217,7 @@ export async function decommissionAsset(payload: DecommissionAssetPayload): Prom
   return DecommissionResultSchema.parse(raw) as unknown as Asset;
 }
 
-// ── Photo commands ────────────────────────────────────────────────────────────
+// â”€â”€ Photo commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const AssetPhotoSchema = z.object({
   id: z.number(),

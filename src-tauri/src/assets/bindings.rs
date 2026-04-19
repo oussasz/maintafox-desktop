@@ -1,12 +1,6 @@
 //! Asset cross-module binding summary service.
 //!
-//! Phase 2 - Sub-phase 02 - File 03 - Sprint S3.
-//!
-//! Returns per-domain counts for modules that are already linked to an asset,
-//! and placeholder statuses for modules not yet implemented.
-//!
-//! In this initial phase only `linked_document_count` queries the database.
-//! All other domains return `status: "not_implemented"` with `count: null`.
+//! Returns per-domain counts for modules linked to an equipment (`asset_id` is the `equipment.id`).
 
 use crate::errors::AppResult;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
@@ -34,22 +28,18 @@ pub struct AssetBindingSummary {
     pub linked_erp_mapping_count: DomainBindingEntry,
 }
 
-fn not_implemented() -> DomainBindingEntry {
+fn available_count(n: i64) -> DomainBindingEntry {
     DomainBindingEntry {
-        status: "not_implemented".to_string(),
-        count: None,
+        status: "available".to_string(),
+        count: Some(n),
     }
 }
 
 /// Fetch cross-module binding summary for a given asset.
-///
-/// Only `linked_document_count` is live-queried in this phase.
-/// All other domains return placeholder entries.
 pub async fn get_asset_binding_summary(
     db: &DatabaseConnection,
     asset_id: i64,
 ) -> AppResult<AssetBindingSummary> {
-    // Live query: count active document links for this asset.
     let doc_count = {
         let row = db
             .query_one(Statement::from_sql_and_values(
@@ -63,17 +53,55 @@ pub async fn get_asset_binding_summary(
         row.try_get::<i64>("", "cnt").unwrap_or(0)
     };
 
+    // One round-trip: DI / WO / PM / failure events + integration fields on `equipment`.
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"SELECT
+                (SELECT COUNT(*) FROM intervention_requests WHERE asset_id = ?) AS di_cnt,
+                (SELECT COUNT(*) FROM work_orders WHERE equipment_id = ?) AS wo_cnt,
+                (SELECT COUNT(*) FROM pm_plans
+                 WHERE LOWER(asset_scope_type) = 'equipment' AND asset_scope_id = ?) AS pm_cnt,
+                (SELECT COUNT(*) FROM failure_events WHERE equipment_id = ?) AS fe_cnt,
+                COALESCE(
+                  (SELECT CASE WHEN iot_asset_id IS NOT NULL AND TRIM(iot_asset_id) != '' THEN 1 ELSE 0 END
+                   FROM equipment WHERE id = ?),
+                  0
+                ) AS iot_cnt,
+                COALESCE(
+                  (SELECT
+                      (CASE WHEN erp_asset_id IS NOT NULL AND TRIM(erp_asset_id) != '' THEN 1 ELSE 0 END) +
+                      (CASE WHEN erp_functional_location IS NOT NULL AND TRIM(erp_functional_location) != '' THEN 1 ELSE 0 END)
+                   FROM equipment WHERE id = ?),
+                  0
+                ) AS erp_cnt",
+            [
+                asset_id.into(),
+                asset_id.into(),
+                asset_id.into(),
+                asset_id.into(),
+                asset_id.into(),
+                asset_id.into(),
+            ],
+        ))
+        .await?
+        .expect("binding summary subqueries return a row");
+
+    let di_cnt = row.try_get::<i64>("", "di_cnt").unwrap_or(0);
+    let wo_cnt = row.try_get::<i64>("", "wo_cnt").unwrap_or(0);
+    let pm_cnt = row.try_get::<i64>("", "pm_cnt").unwrap_or(0);
+    let fe_cnt = row.try_get::<i64>("", "fe_cnt").unwrap_or(0);
+    let iot_cnt = row.try_get::<i64>("", "iot_cnt").unwrap_or(0);
+    let erp_cnt = row.try_get::<i64>("", "erp_cnt").unwrap_or(0);
+
     Ok(AssetBindingSummary {
         asset_id,
-        linked_di_count: not_implemented(),
-        linked_wo_count: not_implemented(),
-        linked_pm_plan_count: not_implemented(),
-        linked_failure_event_count: not_implemented(),
-        linked_document_count: DomainBindingEntry {
-            status: "available".to_string(),
-            count: Some(doc_count),
-        },
-        linked_iot_signal_count: not_implemented(),
-        linked_erp_mapping_count: not_implemented(),
+        linked_di_count: available_count(di_cnt),
+        linked_wo_count: available_count(wo_cnt),
+        linked_pm_plan_count: available_count(pm_cnt),
+        linked_failure_event_count: available_count(fe_cnt),
+        linked_document_count: available_count(doc_count),
+        linked_iot_signal_count: available_count(iot_cnt),
+        linked_erp_mapping_count: available_count(erp_cnt),
     })
 }

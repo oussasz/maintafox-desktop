@@ -1,6 +1,7 @@
 import * as d3 from "d3";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import {
   CHART_COLORS,
@@ -14,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { getDashboardWorkloadChart } from "@/services/dashboard-service";
 import type { WorkloadDay } from "@shared/ipc-types";
+import { RELIABILITY_RAM_EVIDENCE_HASH } from "@shared/kpi-definitions";
 
 type Period = 7 | 30;
 
@@ -31,8 +33,10 @@ const MARGIN = { ...DEFAULT_MARGIN, bottom: 40 };
 
 export function DashboardWorkloadChart() {
   const { t } = useTranslation("dashboard");
+  const navigate = useNavigate();
   const [period, setPeriod] = useState<Period>(7);
   const [days, setDays] = useState<WorkloadDay[]>([]);
+  const [qualityBadge, setQualityBadge] = useState<string | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
 
   const [containerRef, containerSize] = useContainerSize<HTMLDivElement>();
@@ -44,10 +48,16 @@ export function DashboardWorkloadChart() {
     setLoading(true);
     getDashboardWorkloadChart(period)
       .then((result) => {
-        if (!cancelled) setDays(result.days);
+        if (!cancelled) {
+          setDays(result.days);
+          setQualityBadge(result.quality_badge ?? null);
+        }
       })
       .catch(() => {
-        if (!cancelled) setDays([]);
+        if (!cancelled) {
+          setDays([]);
+          setQualityBadge(null);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -92,9 +102,16 @@ export function DashboardWorkloadChart() {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-base font-medium">
-          {t("chart.title", { days: period })}
-        </CardTitle>
+        <div className="flex flex-col gap-1">
+          <CardTitle className="text-base font-medium">
+            {t("chart.title", { days: period })}
+          </CardTitle>
+          {qualityBadge ? (
+            <p className="flex items-center gap-1 text-xs font-normal text-amber-700 dark:text-amber-500">
+              {t(`kpi.qualityBadge.${qualityBadge}`)}
+            </p>
+          ) : null}
+        </div>
         <div className="flex rounded-md border border-surface-border text-xs">
           <button
             type="button"
@@ -126,6 +143,15 @@ export function DashboardWorkloadChart() {
         ) : !hasData ? (
           <div className="flex h-[250px] flex-col items-center justify-center gap-2 text-text-muted">
             <p className="text-sm">{t("chart.empty")}</p>
+            {qualityBadge ? (
+              <button
+                type="button"
+                className="text-sm font-medium text-primary underline-offset-2 hover:underline"
+                onClick={() => navigate(`/reliability/foundation${RELIABILITY_RAM_EVIDENCE_HASH}`)}
+              >
+                {t("chart.openRamEvidence")}
+              </button>
+            ) : null}
           </div>
         ) : (
           <>

@@ -39,6 +39,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { mfLayout } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import { useAssetImportStore, type ImportStep } from "@/stores/asset-import-store";
 
@@ -432,19 +433,23 @@ export function AssetImportPage() {
   }, [resetFlow]);
 
   return (
-    <div className="flex h-full flex-col gap-4 p-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-text-primary">{t("import.page.title")}</h1>
-        <StepIndicator current={step} />
+    <div className={mfLayout.moduleRoot}>
+      <div className={mfLayout.moduleHeader}>
+        <div className={mfLayout.moduleTitleRow}>
+          <h1 className={mfLayout.moduleTitle}>{t("import.page.title")}</h1>
+        </div>
+        <div className={mfLayout.moduleHeaderActions}>
+          <StepIndicator current={step} />
+        </div>
       </div>
 
-      {/* Active step */}
-      <div className="flex-1">
-        {step === "upload" && <UploadStep />}
-        {step === "validate" && <ValidateStep />}
-        {(step === "preview" || step === "apply") && <PreviewStep />}
-        {step === "done" && <DoneStep />}
+      <div className={mfLayout.moduleWorkspace}>
+        <div className={cn(mfLayout.moduleWorkspaceInner, "flex flex-1 flex-col")}>
+          {step === "upload" && <UploadStep />}
+          {step === "validate" && <ValidateStep />}
+          {(step === "preview" || step === "apply") && <PreviewStep />}
+          {step === "done" && <DoneStep />}
+        </div>
       </div>
     </div>
   );

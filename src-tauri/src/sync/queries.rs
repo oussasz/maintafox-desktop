@@ -4,12 +4,14 @@ use sha2::{Digest, Sha256};
 
 use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{
-    ApplySyncBatchInput, ApplySyncBatchResult, ListOutboxFilter, ReplaySyncFailuresInput, ReplaySyncFailuresResult,
-    ResolveSyncConflictInput, StageOutboxItemInput, SyncCheckpoint, SyncConflictFilter, SyncConflictRecord, SyncHealthAlert,
-    SyncHealthMetrics, SyncInboxItem, SyncObservabilityReport, SyncOutboxItem, SyncPushPayload, SyncRecoveryProof,
-    SyncReplayRun, SyncRepairActionRecord, SyncRepairExecutionResult, SyncRepairPreview, SyncRepairPreviewInput,
-    SyncStateSummary, SyncTypedRejection, ExecuteSyncRepairInput, SYNC_PROTOCOL_VERSION_V1,
+    ApplySyncBatchInput, ApplySyncBatchResult, ExecuteSyncRepairInput, ListOutboxFilter, ReplaySyncFailuresInput,
+    ReplaySyncFailuresResult, ResolveSyncConflictInput, StageOutboxItemInput, SyncCheckpoint, SyncConflictFilter,
+    SyncConflictRecord, SyncHealthAlert, SyncHealthMetrics, SyncInboundItemInput, SyncInboxItem, SyncObservabilityReport,
+    SyncOutboxItem, SyncPushPayload, SyncRecoveryProof, SyncReplayRun, SyncRepairActionRecord, SyncRepairExecutionResult,
+    SyncRepairPreview, SyncRepairPreviewInput, SyncStateSummary, SyncTypedRejection, SYNC_ENTITY_BUDGET_LINES,
+    SYNC_ENTITY_BUDGET_VERSIONS, SYNC_PROTOCOL_VERSION_V1,
 };
+use crate::commands::product_license::tenant_config_sync_payload;
 use crate::audit::writer::{write_audit_event, AuditEventInput};
 
 fn hash_payload(payload: &str) -> String {
@@ -371,12 +373,13 @@ fn is_unique_constraint_error(err: &sea_orm::DbErr) -> bool {
     }
 }
 
-pub async fn stage_outbox_item(db: &DatabaseConnection, input: StageOutboxItemInput) -> AppResult<SyncOutboxItem> {
+pub async fn stage_outbox_item(db: &impl ConnectionTrait, input: StageOutboxItemInput) -> AppResult<SyncOutboxItem> {
     validate_outbox_input(&input)?;
     let payload_hash = hash_payload(&input.payload_json);
+    let backend = db.get_database_backend();
     let insert_result = db
         .execute(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
+            backend,
             "INSERT INTO sync_outbox (
                 idempotency_key, entity_type, entity_sync_id, operation,
                 row_version, payload_json, payload_hash, status, origin_machine_id
@@ -404,7 +407,7 @@ pub async fn stage_outbox_item(db: &DatabaseConnection, input: StageOutboxItemIn
 
     let row = db
         .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
+            backend,
             "SELECT id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
                     payload_json, payload_hash, status, acknowledged_at, rejection_code,
                     rejection_message, origin_machine_id, created_at, updated_at
@@ -482,10 +485,13 @@ pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) 
     )
     .await?;
 
+    let tenant_config = tenant_config_sync_payload(db).await?;
+
     Ok(SyncPushPayload {
         protocol_version: SYNC_PROTOCOL_VERSION_V1.to_string(),
         checkpoint_token,
         outbox_batch,
+        tenant_config,
     })
 }
 
@@ -742,7 +748,18 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
 
     let mut inbound_applied_count: i64 = 0;
     let mut inbound_duplicate_count: i64 = 0;
-    for inbound in &input.inbound_items {
+    let mut inbound_work: Vec<SyncInboundItemInput> = input.inbound_items.clone();
+    inbound_work.sort_by(|a, b| {
+        fn pri(t: &str) -> u8 {
+            match t {
+                x if x == SYNC_ENTITY_BUDGET_VERSIONS => 0,
+                x if x == SYNC_ENTITY_BUDGET_LINES => 1,
+                _ => 10,
+            }
+        }
+        pri(&a.entity_type).cmp(&pri(&b.entity_type))
+    });
+    for inbound in &inbound_work {
         let mut inbound_errors = Vec::new();
         validate_non_empty("entity_type", &inbound.entity_type, &mut inbound_errors);
         validate_non_empty("entity_sync_id", &inbound.entity_sync_id, &mut inbound_errors);

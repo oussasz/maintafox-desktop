@@ -2,12 +2,12 @@
  * di-review-service.ts
  *
  * IPC wrappers for DI triage / review commands.
- * Phase 2 – Sub-phase 04 – File 02 – Sprint S3.
+ * Phase 2 â€“ Sub-phase 04 â€“ File 02 â€“ Sprint S3.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   DiApproveInput,
   DiDeferInput,
@@ -19,7 +19,7 @@ import type {
   InterventionRequest,
 } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const InterventionRequestSchema = z.object({
   id: z.number(),
@@ -77,7 +77,7 @@ const DiReviewEventSchema = z.object({
   step_up_used: z.boolean(),
 });
 
-// ── Error helpers ─────────────────────────────────────────────────────────────
+// â”€â”€ Error helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface IpcError {
   code: string;
@@ -102,7 +102,7 @@ function rethrowIfVersionConflict(err: unknown): never {
   throw err;
 }
 
-// ── Commands ──────────────────────────────────────────────────────────────────
+// â”€â”€ Commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function screenDi(input: DiScreenInput): Promise<InterventionRequest> {
   try {

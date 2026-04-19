@@ -21,6 +21,8 @@ import { AssetTreeContextMenu } from "@/components/assets/AssetTreeContextMenu";
 import { AssetTreeNavigator } from "@/components/assets/AssetTreeNavigator";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { mfLayout } from "@/design-system/tokens";
+import { cn } from "@/lib/utils";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
 import { useAssetStore } from "@/stores/asset-store";
 import type { Asset } from "@shared/ipc-types";
@@ -60,32 +62,32 @@ export function AssetRegistryPage() {
   }, []);
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Page header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border">
-        <div className="flex items-center gap-3">
-          <Cog className="h-5 w-5 text-text-muted" />
-          <h1 className="text-xl font-semibold text-text-primary">{t("registry.title")}</h1>
+    <div className={mfLayout.moduleRoot}>
+      {/* Page header — DI/OT pattern */}
+      <div className={mfLayout.moduleHeader}>
+        <div className={mfLayout.moduleTitleRow}>
+          <Cog className={mfLayout.moduleHeaderIcon} />
+          <h1 className={mfLayout.moduleTitle}>{t("registry.title")}</h1>
           <Badge variant="secondary" className="text-xs">
             {t("registry.resultCount", { count: results.length })}
           </Badge>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Tree / Table toggle */}
-          <div className="flex rounded-md border border-surface-border">
+        <div className={mfLayout.moduleHeaderActions}>
+          {/* Tree / Table toggle — same control as DI/OT view switcher */}
+          <div className={mfLayout.viewToggleGroup}>
             <Button
-              variant={treeMode ? "ghost" : "secondary"}
+              variant={!treeMode ? "default" : "ghost"}
               size="sm"
-              className="rounded-r-none gap-1"
+              className={cn(mfLayout.viewToggleButton, "gap-1")}
               onClick={() => setTreeMode(false)}
             >
               <List className="h-3.5 w-3.5" />
               {t("registry.viewTable")}
             </Button>
             <Button
-              variant={treeMode ? "secondary" : "ghost"}
+              variant={treeMode ? "default" : "ghost"}
               size="sm"
-              className="rounded-l-none gap-1"
+              className={cn(mfLayout.viewToggleButton, "gap-1")}
               onClick={() => setTreeMode(true)}
             >
               <TreePine className="h-3.5 w-3.5" />
@@ -114,7 +116,7 @@ export function AssetRegistryPage() {
       </div>
 
       {/* Two-pane workspace */}
-      <div className="flex flex-1 min-h-0">
+      <div className={mfLayout.moduleWorkspaceSplit}>
         {/* Left pane */}
         <div className="flex flex-col w-[55%] min-w-[400px] border-r border-surface-border">
           {treeMode ? (

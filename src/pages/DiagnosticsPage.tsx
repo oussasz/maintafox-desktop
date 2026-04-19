@@ -2,6 +2,7 @@ import { ShieldCheck, RefreshCw, AlertTriangle, CheckCircle2, XCircle } from "lu
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { useIntegrityCheck } from "@/hooks/use-integrity-check";
 import { cn } from "@/lib/utils";
 
@@ -16,14 +17,12 @@ export function DiagnosticsPage() {
   const busy = status === "checking" || status === "repairing";
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <ShieldCheck className="h-6 w-6 text-primary" />
-        <h1 className="text-2xl font-semibold text-text-primary">{t("diagnostics.title")}</h1>
-      </div>
-      <p className="text-sm text-text-secondary">{t("diagnostics.subtitle")}</p>
-
+    <ModulePageShell
+      icon={ShieldCheck}
+      title={t("diagnostics.title")}
+      description={t("diagnostics.subtitle")}
+      bodyClassName="mx-auto max-w-3xl space-y-6 p-4"
+    >
       {/* Loading state */}
       {busy && (
         <div className="flex items-center gap-3 rounded-lg bg-surface-2 border border-surface-border p-4">
@@ -149,6 +148,6 @@ export function DiagnosticsPage() {
           </div>
         </>
       )}
-    </div>
+    </ModulePageShell>
   );
 }

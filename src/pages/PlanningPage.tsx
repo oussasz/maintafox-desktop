@@ -1,4 +1,4 @@
-﻿import { Bell, CalendarRange, Download, Lock, RefreshCw, Search, Siren, X } from "lucide-react";
+import { Bell, CalendarRange, Download, Lock, RefreshCw, Search, Siren, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -15,6 +15,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { mfInput, mfLayout } from "@/design-system/tokens";
+import { cn } from "@/lib/utils";
 import { listOrgTree } from "@/services/org-node-service";
 import { listPersonnel } from "@/services/personnel-service";
 import { usePlanningStore } from "@/stores/planning-store";
@@ -88,12 +90,18 @@ export function PlanningPage() {
   const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(null);
   const [selectedPersonnelId, setSelectedPersonnelId] = useState<number | null>(null);
   const [commitStart, setCommitStart] = useState(toDateTimeLocal(new Date().toISOString()));
-  const [commitEnd, setCommitEnd] = useState(toDateTimeLocal(new Date(Date.now() + 2 * 3600_000).toISOString()));
+  const [commitEnd, setCommitEnd] = useState(
+    toDateTimeLocal(new Date(Date.now() + 2 * 3600_000).toISOString()),
+  );
   const [budgetThreshold, setBudgetThreshold] = useState("0");
   const [periodStart, setPeriodStart] = useState(toDateTimeLocal(new Date().toISOString()));
-  const [periodEnd, setPeriodEnd] = useState(toDateTimeLocal(new Date(Date.now() + 6 * 24 * 3600_000).toISOString()));
+  const [periodEnd, setPeriodEnd] = useState(
+    toDateTimeLocal(new Date(Date.now() + 6 * 24 * 3600_000).toISOString()),
+  );
   const [windowStart, setWindowStart] = useState(toDateTimeLocal(new Date().toISOString()));
-  const [windowEnd, setWindowEnd] = useState(toDateTimeLocal(new Date(Date.now() + 24 * 3600_000).toISOString()));
+  const [windowEnd, setWindowEnd] = useState(
+    toDateTimeLocal(new Date(Date.now() + 24 * 3600_000).toISOString()),
+  );
   const [windowType, setWindowType] = useState("production");
   const [windowReason, setWindowReason] = useState("");
   const [breakInCommitmentId, setBreakInCommitmentId] = useState<number | null>(null);
@@ -153,7 +161,16 @@ export function PlanningPage() {
       period_end: endIso,
       team_id: teamId,
     });
-  }, [teamId, periodStart, periodEnd, loadCommitments, loadCapacityLoad, loadGantt, loadPlanningWindows, loadBreakIns]);
+  }, [
+    teamId,
+    periodStart,
+    periodEnd,
+    loadCommitments,
+    loadCapacityLoad,
+    loadGantt,
+    loadPlanningWindows,
+    loadBreakIns,
+  ]);
 
   const readyCandidates = useMemo(
     () =>
@@ -174,7 +191,9 @@ export function PlanningPage() {
     () =>
       readyCandidates.filter((candidate) => {
         if (!normalizedSearch) return true;
-        return `${candidate.source_type}:${candidate.source_id}`.toLowerCase().includes(normalizedSearch);
+        return `${candidate.source_type}:${candidate.source_id}`
+          .toLowerCase()
+          .includes(normalizedSearch);
       }),
     [readyCandidates, normalizedSearch],
   );
@@ -182,7 +201,9 @@ export function PlanningPage() {
     () =>
       blockedCandidates.filter((candidate) => {
         if (!normalizedSearch) return true;
-        return `${candidate.source_type}:${candidate.source_id}`.toLowerCase().includes(normalizedSearch);
+        return `${candidate.source_type}:${candidate.source_id}`
+          .toLowerCase()
+          .includes(normalizedSearch);
       }),
     [blockedCandidates, normalizedSearch],
   );
@@ -379,47 +400,76 @@ export function PlanningPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-surface-border px-6 py-3">
-        <div className="flex items-center gap-3">
-          <CalendarRange className="h-5 w-5 text-text-muted" aria-hidden />
-          <h1 className="text-xl font-semibold text-text-primary">{t("page.title", "Planning")}</h1>
+    <div className={mfLayout.moduleRoot}>
+      <div className={mfLayout.moduleHeader}>
+        <div className={mfLayout.moduleTitleRow}>
+          <CalendarRange className={mfLayout.moduleHeaderIcon} aria-hidden />
+          <h1 className={mfLayout.moduleTitle}>{t("page.title", "Planning")}</h1>
           <Badge variant="secondary" className="text-xs">
             {backlog?.candidate_count ?? commitments.length}
           </Badge>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className={mfLayout.moduleHeaderActions}>
           <PermissionGate permission="plan.edit">
-            <Button size="sm" variant="outline" onClick={() => void refreshBacklog()} disabled={saving} className="gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void refreshBacklog()}
+              disabled={saving}
+              className="gap-1.5"
+            >
               <RefreshCw className="h-3.5 w-3.5" />
               {t("actions.refreshBacklog")}
             </Button>
           </PermissionGate>
           <PermissionGate permission="plan.confirm">
-            <Button size="sm" variant="outline" onClick={() => void handleFreeze()} disabled={saving} className="gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handleFreeze()}
+              disabled={saving}
+              className="gap-1.5"
+            >
               <Lock className="h-3.5 w-3.5" />
               {t("actions.freezePeriod")}
             </Button>
           </PermissionGate>
           <PermissionGate permission="plan.confirm">
-            <Button size="sm" variant="outline" onClick={() => void handleNotifyTeams()} disabled={saving} className="gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handleNotifyTeams()}
+              disabled={saving}
+              className="gap-1.5"
+            >
               <Bell className="h-3.5 w-3.5" />
               {t("actions.notifyTeams")}
             </Button>
           </PermissionGate>
-          <Button size="sm" variant="outline" onClick={() => void exportGanttPdf(fromDateTimeLocal(periodStart), fromDateTimeLocal(periodEnd), teamId)} className="gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              void exportGanttPdf(
+                fromDateTimeLocal(periodStart),
+                fromDateTimeLocal(periodEnd),
+                teamId,
+              )
+            }
+            className="gap-1.5"
+          >
             <Download className="h-3.5 w-3.5" />
             {t("actions.exportPdf")}
           </Button>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-surface-border px-6 py-2">
+      <div className={mfLayout.moduleFilterBar}>
         <div className="relative max-w-sm flex-1">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
           <Input
-            className="h-8 pl-9 pr-8 text-sm"
+            className={cn(mfInput.filterSearch, "pr-8")}
             placeholder={t("filters.searchPlaceholder", "Search planning backlog")}
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
@@ -435,8 +485,11 @@ export function PlanningPage() {
           ) : null}
         </div>
 
-        <Select value={teamValue} onValueChange={(value) => setTeamId(value === "__none__" ? null : Number(value))}>
-          <SelectTrigger className="h-8 w-[220px] text-sm">
+        <Select
+          value={teamValue}
+          onValueChange={(value) => setTeamId(value === "__none__" ? null : Number(value))}
+        >
+          <SelectTrigger className={cn(mfInput.filterSelect, "w-[220px]")}>
             <SelectValue placeholder={t("filters.team")} />
           </SelectTrigger>
           <SelectContent>
@@ -448,294 +501,421 @@ export function PlanningPage() {
           </SelectContent>
         </Select>
 
-        <Input className="h-8 w-[200px] text-sm" type="datetime-local" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
-        <Input className="h-8 w-[200px] text-sm" type="datetime-local" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+        <Input
+          className="h-8 w-[200px] text-sm"
+          type="datetime-local"
+          value={periodStart}
+          onChange={(e) => setPeriodStart(e.target.value)}
+        />
+        <Input
+          className="h-8 w-[200px] text-sm"
+          type="datetime-local"
+          value={periodEnd}
+          onChange={(e) => setPeriodEnd(e.target.value)}
+        />
 
-        <Button type="button" variant="ghost" size="sm" className="h-8 text-sm" onClick={clearSearch}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 text-sm"
+          onClick={clearSearch}
+        >
           {t("filters.clearAll", "Clear")}
         </Button>
       </div>
 
       {(pageError || storeError) && (
-        <div className="border-b border-destructive/20 bg-destructive/5 px-6 py-2 text-sm text-destructive">{pageError ?? storeError}</div>
+        <div className="border-b border-destructive/20 bg-destructive/5 px-6 py-2 text-sm text-destructive">
+          {pageError ?? storeError}
+        </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4">
-        <div className="grid gap-4 xl:grid-cols-2">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm">{t("backlog.readyColumn")}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {filteredReadyCandidates.map((candidate: (typeof filteredReadyCandidates)[number]) => (
-              <button
-                key={candidate.id}
-                type="button"
-                className={`w-full rounded-lg border p-3 text-left text-sm transition-colors hover:bg-muted/40 ${selectedCandidateId === candidate.id ? "border-primary bg-muted/30" : "border-surface-border"}`}
-                onClick={() => {
-                  setSelectedCandidateId(candidate.id);
-                  setSelectedPersonnelId(candidate.assigned_personnel_id);
-                }}
-              >
-                <div className="font-medium text-text-primary">
-                  {candidate.source_type}:{candidate.source_id}
-                </div>
-                <div className="text-xs text-text-muted">
-                  {t("backlog.readinessScore")}: {candidate.readiness_score.toFixed(1)}
-                </div>
-              </button>
-              ))}
-              {filteredReadyCandidates.length === 0 && <p className="text-xs text-text-muted">{t("backlog.emptyReady")}</p>}
-            </CardContent>
-          </Card>
+      <div className={mfLayout.moduleWorkspace}>
+        <div className={mfLayout.moduleWorkspaceInner}>
+          <div className={mfLayout.moduleWorkspaceBody}>
+            <div className="grid gap-4 xl:grid-cols-2">
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm">{t("backlog.readyColumn")}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {filteredReadyCandidates.map(
+                    (candidate: (typeof filteredReadyCandidates)[number]) => (
+                      <button
+                        key={candidate.id}
+                        type="button"
+                        className={`w-full rounded-lg border p-3 text-left text-sm transition-colors hover:bg-muted/40 ${selectedCandidateId === candidate.id ? "border-primary bg-muted/30" : "border-surface-border"}`}
+                        onClick={() => {
+                          setSelectedCandidateId(candidate.id);
+                          setSelectedPersonnelId(candidate.assigned_personnel_id);
+                        }}
+                      >
+                        <div className="font-medium text-text-primary">
+                          {candidate.source_type}:{candidate.source_id}
+                        </div>
+                        <div className="text-xs text-text-muted">
+                          {t("backlog.readinessScore")}: {candidate.readiness_score.toFixed(1)}
+                        </div>
+                      </button>
+                    ),
+                  )}
+                  {filteredReadyCandidates.length === 0 && (
+                    <p className="text-xs text-text-muted">{t("backlog.emptyReady")}</p>
+                  )}
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm">{t("backlog.blockedColumn")}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {filteredBlockedCandidates.slice(0, 10).map((candidate: (typeof filteredBlockedCandidates)[number]) => (
-              <div key={candidate.id} className="rounded-lg border border-surface-border p-3 text-sm">
-                <div className="font-medium text-text-primary">
-                  {candidate.source_type}:{candidate.source_id}
-                </div>
-                <div className="text-xs text-text-muted">
-                  {t("backlog.readinessScore")}: {candidate.readiness_score.toFixed(1)}
-                </div>
-              </div>
-              ))}
-              {filteredBlockedCandidates.length === 0 && <p className="text-xs text-text-muted">{t("backlog.emptyBlocked")}</p>}
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="mt-4 grid gap-4 2xl:grid-cols-[1.1fr_1fr]">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm">{t("commitment.formTitle")}</CardTitle>
-            </CardHeader>
-            <CardContent>
-        <div className="grid gap-3 md:grid-cols-5">
-          <div>
-            <Label>{t("commitment.selectedCandidate")}</Label>
-            <Input className="h-8 text-sm" value={selectedCandidateId ?? ""} readOnly />
-          </div>
-          <div>
-            <Label>{t("commitment.start")}</Label>
-            <Input className="h-8 text-sm" type="datetime-local" value={commitStart} onChange={(e) => setCommitStart(e.target.value)} />
-          </div>
-          <div>
-            <Label>{t("commitment.end")}</Label>
-            <Input className="h-8 text-sm" type="datetime-local" value={commitEnd} onChange={(e) => setCommitEnd(e.target.value)} />
-          </div>
-          <div>
-            <Label>{t("commitment.assignee")}</Label>
-            <Select value={personnelValue} onValueChange={(value) => setSelectedPersonnelId(value === "__unassigned__" ? null : Number(value))}>
-              <SelectTrigger className="h-8 text-sm">
-                <SelectValue placeholder={t("commitment.assignee")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__unassigned__">{t("commitment.unassigned")}</SelectItem>
-                {personnel.map((person) => (
-                  <SelectItem key={person.id} value={String(person.id)}>
-                    {person.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>{t("commitment.budgetThreshold")}</Label>
-            <Input className="h-8 text-sm" value={budgetThreshold} onChange={(e) => setBudgetThreshold(e.target.value)} />
-          </div>
-        </div>
-        <PermissionGate permission="plan.confirm">
-          <Button className="mt-3" size="sm" onClick={() => void handleCreateCommitment()} disabled={!selectedCandidateId || !teamId || saving}>
-            {t("actions.commit")}
-          </Button>
-        </PermissionGate>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm">{t("windows.title")}</CardTitle>
-            </CardHeader>
-            <CardContent>
-        <div className="grid gap-3 md:grid-cols-5">
-          <div>
-            <Label>{t("windows.type")}</Label>
-            <Input className="h-8 text-sm" value={windowType} onChange={(e) => setWindowType(e.target.value)} />
-          </div>
-          <div>
-            <Label>{t("windows.start")}</Label>
-            <Input className="h-8 text-sm" type="datetime-local" value={windowStart} onChange={(e) => setWindowStart(e.target.value)} />
-          </div>
-          <div>
-            <Label>{t("windows.end")}</Label>
-            <Input className="h-8 text-sm" type="datetime-local" value={windowEnd} onChange={(e) => setWindowEnd(e.target.value)} />
-          </div>
-          <div className="md:col-span-2">
-            <Label>{t("windows.reason")}</Label>
-            <Input className="h-8 text-sm" value={windowReason} onChange={(e) => setWindowReason(e.target.value)} />
-          </div>
-        </div>
-        <PermissionGate permission="plan.windows">
-          <Button className="mt-3" size="sm" variant="outline" onClick={() => void handleCreateWindow()} disabled={saving}>
-            {t("windows.add")}
-          </Button>
-        </PermissionGate>
-        <div className="mt-3 space-y-1 text-xs">
-          {planningWindows.map((window) => (
-            <div key={window.id} className="rounded-lg border border-surface-border p-2">
-              <span className="font-medium">{window.window_type}</span> {window.start_datetime} - {window.end_datetime}
-              {window.is_locked === 1 && <Badge className="ml-2">{t("windows.locked")}</Badge>}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm">{t("backlog.blockedColumn")}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {filteredBlockedCandidates
+                    .slice(0, 10)
+                    .map((candidate: (typeof filteredBlockedCandidates)[number]) => (
+                      <div
+                        key={candidate.id}
+                        className="rounded-lg border border-surface-border p-3 text-sm"
+                      >
+                        <div className="font-medium text-text-primary">
+                          {candidate.source_type}:{candidate.source_id}
+                        </div>
+                        <div className="text-xs text-text-muted">
+                          {t("backlog.readinessScore")}: {candidate.readiness_score.toFixed(1)}
+                        </div>
+                      </div>
+                    ))}
+                  {filteredBlockedCandidates.length === 0 && (
+                    <p className="text-xs text-text-muted">{t("backlog.emptyBlocked")}</p>
+                  )}
+                </CardContent>
+              </Card>
             </div>
-          ))}
-        </div>
-            </CardContent>
-          </Card>
-        </div>
 
-        <Card className="mt-4">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">{t("gantt.capacityTitle")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-        <div className="grid gap-2 md:grid-cols-3">
-          {capacityLoad.map((row) => {
-            const tone = row.utilization_ratio > 1 ? "destructive" : row.utilization_ratio > 0.8 ? "secondary" : "default";
-            return (
-              <div key={`${row.team_id}-${row.work_date}`} className="rounded-lg border border-surface-border p-2 text-xs">
-                <div className="font-medium">{row.work_date}</div>
-                <div>
-                  {t("gantt.capacityLine", {
-                    committed: row.committed_hours.toFixed(1),
-                    available: (row.available_hours + row.overtime_hours).toFixed(1),
-                  })}
-                </div>
-                <Badge variant={tone as "default" | "secondary" | "destructive"}>
-                  {(row.utilization_ratio * 100).toFixed(0)}%
-                </Badge>
-              </div>
-            );
-          })}
-          {capacityLoad.length === 0 && <p className="text-xs text-text-muted">{t("gantt.emptyCapacity")}</p>}
-        </div>
-          </CardContent>
-        </Card>
-
-        <Card className="mt-4">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">{t("gantt.assignmentLaneTitle")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-        {(ganttSnapshot?.locked_windows ?? []).length > 0 && (
-          <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs">
-            <div className="mb-1 font-medium">{t("gantt.freezeOverlayTitle")}</div>
-            {(ganttSnapshot?.locked_windows ?? []).map((window) => (
-              <div key={window.id}>
-                {window.start_datetime} - {window.end_datetime} ({window.lock_reason ?? window.window_type})
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="overflow-x-auto">
-          <div className="min-w-[980px] space-y-2">
-            <div className="grid grid-cols-[220px_repeat(8,minmax(100px,1fr))] gap-1 text-xs font-semibold">
-              <div>{t("gantt.laneHeader")}</div>
-              {dayBuckets.slice(0, 8).map((day) => (
-                <div key={day}>{day}</div>
-              ))}
-            </div>
-            {(ganttSnapshot?.assignee_lanes ?? []).map((lane) => {
-              const laneCommitments = commitments.filter((entry) => entry.assigned_personnel_id === lane.personnel_id);
-              return (
-                <div key={lane.personnel_id} className="grid grid-cols-[220px_repeat(8,minmax(100px,1fr))] gap-1">
-                  <div className="rounded border px-2 py-1 text-xs">{lane.full_name}</div>
-                  {dayBuckets.slice(0, 8).map((day) => (
-                    <div
-                      key={`${lane.personnel_id}-${day}`}
-                      className="min-h-[64px] rounded-lg border border-surface-border p-1"
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={() => void handleDropCommitment(day, lane.personnel_id)}
+            <div className="mt-4 grid gap-4 2xl:grid-cols-[1.1fr_1fr]">
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm">{t("commitment.formTitle")}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-3 md:grid-cols-5">
+                    <div>
+                      <Label>{t("commitment.selectedCandidate")}</Label>
+                      <Input className="h-8 text-sm" value={selectedCandidateId ?? ""} readOnly />
+                    </div>
+                    <div>
+                      <Label>{t("commitment.start")}</Label>
+                      <Input
+                        className="h-8 text-sm"
+                        type="datetime-local"
+                        value={commitStart}
+                        onChange={(e) => setCommitStart(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>{t("commitment.end")}</Label>
+                      <Input
+                        className="h-8 text-sm"
+                        type="datetime-local"
+                        value={commitEnd}
+                        onChange={(e) => setCommitEnd(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>{t("commitment.assignee")}</Label>
+                      <Select
+                        value={personnelValue}
+                        onValueChange={(value) =>
+                          setSelectedPersonnelId(value === "__unassigned__" ? null : Number(value))
+                        }
+                      >
+                        <SelectTrigger className="h-8 text-sm">
+                          <SelectValue placeholder={t("commitment.assignee")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__unassigned__">
+                            {t("commitment.unassigned")}
+                          </SelectItem>
+                          {personnel.map((person) => (
+                            <SelectItem key={person.id} value={String(person.id)}>
+                              {person.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>{t("commitment.budgetThreshold")}</Label>
+                      <Input
+                        className="h-8 text-sm"
+                        value={budgetThreshold}
+                        onChange={(e) => setBudgetThreshold(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <PermissionGate permission="plan.confirm">
+                    <Button
+                      className="mt-3"
+                      size="sm"
+                      onClick={() => void handleCreateCommitment()}
+                      disabled={!selectedCandidateId || !teamId || saving}
                     >
-                      {laneCommitments
-                        .filter((entry) => entry.schedule_period_start === day)
-                        .map((entry) => (
-                          <div
-                            key={entry.id}
-                            draggable
-                            onDragStart={() => setDragCommitmentId(entry.id)}
-                            className="mb-1 cursor-move rounded-md bg-blue-100 px-1 py-0.5 text-[11px]"
-                          >
-                            #{entry.id} {entry.source_type}:{entry.source_id}
-                          </div>
+                      {t("actions.commit")}
+                    </Button>
+                  </PermissionGate>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm">{t("windows.title")}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-3 md:grid-cols-5">
+                    <div>
+                      <Label>{t("windows.type")}</Label>
+                      <Input
+                        className="h-8 text-sm"
+                        value={windowType}
+                        onChange={(e) => setWindowType(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>{t("windows.start")}</Label>
+                      <Input
+                        className="h-8 text-sm"
+                        type="datetime-local"
+                        value={windowStart}
+                        onChange={(e) => setWindowStart(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>{t("windows.end")}</Label>
+                      <Input
+                        className="h-8 text-sm"
+                        type="datetime-local"
+                        value={windowEnd}
+                        onChange={(e) => setWindowEnd(e.target.value)}
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <Label>{t("windows.reason")}</Label>
+                      <Input
+                        className="h-8 text-sm"
+                        value={windowReason}
+                        onChange={(e) => setWindowReason(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <PermissionGate permission="plan.windows">
+                    <Button
+                      className="mt-3"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void handleCreateWindow()}
+                      disabled={saving}
+                    >
+                      {t("windows.add")}
+                    </Button>
+                  </PermissionGate>
+                  <div className="mt-3 space-y-1 text-xs">
+                    {planningWindows.map((window) => (
+                      <div key={window.id} className="rounded-lg border border-surface-border p-2">
+                        <span className="font-medium">{window.window_type}</span>{" "}
+                        {window.start_datetime} - {window.end_datetime}
+                        {window.is_locked === 1 && (
+                          <Badge className="ml-2">{t("windows.locked")}</Badge>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card className="mt-4">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm">{t("gantt.capacityTitle")}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-2 md:grid-cols-3">
+                  {capacityLoad.map((row) => {
+                    const tone =
+                      row.utilization_ratio > 1
+                        ? "destructive"
+                        : row.utilization_ratio > 0.8
+                          ? "secondary"
+                          : "default";
+                    return (
+                      <div
+                        key={`${row.team_id}-${row.work_date}`}
+                        className="rounded-lg border border-surface-border p-2 text-xs"
+                      >
+                        <div className="font-medium">{row.work_date}</div>
+                        <div>
+                          {t("gantt.capacityLine", {
+                            committed: row.committed_hours.toFixed(1),
+                            available: (row.available_hours + row.overtime_hours).toFixed(1),
+                          })}
+                        </div>
+                        <Badge variant={tone as "default" | "secondary" | "destructive"}>
+                          {(row.utilization_ratio * 100).toFixed(0)}%
+                        </Badge>
+                      </div>
+                    );
+                  })}
+                  {capacityLoad.length === 0 && (
+                    <p className="text-xs text-text-muted">{t("gantt.emptyCapacity")}</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="mt-4">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm">{t("gantt.assignmentLaneTitle")}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {(ganttSnapshot?.locked_windows ?? []).length > 0 && (
+                  <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs">
+                    <div className="mb-1 font-medium">{t("gantt.freezeOverlayTitle")}</div>
+                    {(ganttSnapshot?.locked_windows ?? []).map((window) => (
+                      <div key={window.id}>
+                        {window.start_datetime} - {window.end_datetime} (
+                        {window.lock_reason ?? window.window_type})
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="overflow-x-auto">
+                  <div className="min-w-[980px] space-y-2">
+                    <div className="grid grid-cols-[220px_repeat(8,minmax(100px,1fr))] gap-1 text-xs font-semibold">
+                      <div>{t("gantt.laneHeader")}</div>
+                      {dayBuckets.slice(0, 8).map((day) => (
+                        <div key={day}>{day}</div>
+                      ))}
+                    </div>
+                    {(ganttSnapshot?.assignee_lanes ?? []).map((lane) => {
+                      const laneCommitments = commitments.filter(
+                        (entry) => entry.assigned_personnel_id === lane.personnel_id,
+                      );
+                      return (
+                        <div
+                          key={lane.personnel_id}
+                          className="grid grid-cols-[220px_repeat(8,minmax(100px,1fr))] gap-1"
+                        >
+                          <div className="rounded border px-2 py-1 text-xs">{lane.full_name}</div>
+                          {dayBuckets.slice(0, 8).map((day) => (
+                            <div
+                              key={`${lane.personnel_id}-${day}`}
+                              className="min-h-[64px] rounded-lg border border-surface-border p-1"
+                              onDragOver={(e) => e.preventDefault()}
+                              onDrop={() => void handleDropCommitment(day, lane.personnel_id)}
+                            >
+                              {laneCommitments
+                                .filter((entry) => entry.schedule_period_start === day)
+                                .map((entry) => (
+                                  <div
+                                    key={entry.id}
+                                    draggable
+                                    onDragStart={() => setDragCommitmentId(entry.id)}
+                                    className="mb-1 cursor-move rounded-md bg-blue-100 px-1 py-0.5 text-[11px]"
+                                  >
+                                    #{entry.id} {entry.source_type}:{entry.source_id}
+                                  </div>
+                                ))}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="mt-4">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm">{t("breakIns.title")}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 md:grid-cols-5">
+                  <div>
+                    <Label>{t("breakIns.commitment")}</Label>
+                    <Select
+                      value={breakInCommitmentValue}
+                      onValueChange={(value) =>
+                        setBreakInCommitmentId(value === "__none__" ? null : Number(value))
+                      }
+                    >
+                      <SelectTrigger className="h-8 text-sm">
+                        <SelectValue placeholder={t("breakIns.selectCommitment")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">{t("breakIns.selectCommitment")}</SelectItem>
+                        {commitments.map((commitment) => (
+                          <SelectItem key={commitment.id} value={String(commitment.id)}>
+                            #{commitment.id} {commitment.source_type}:{commitment.source_id}
+                          </SelectItem>
                         ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>{t("breakIns.reason")}</Label>
+                    <Input
+                      className="h-8 text-sm"
+                      value={breakInReason}
+                      onChange={(e) => setBreakInReason(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label>{t("breakIns.approver")}</Label>
+                    <Input
+                      className="h-8 text-sm"
+                      value={breakInApproverUserId}
+                      onChange={(e) => setBreakInApproverUserId(e.target.value)}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label>{t("breakIns.overrideReason")}</Label>
+                    <Input
+                      className="h-8 text-sm"
+                      value={breakInOverrideReason}
+                      onChange={(e) => setBreakInOverrideReason(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <PermissionGate permission="plan.confirm">
+                  <Button
+                    className="mt-3"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleCreateBreakIn()}
+                    disabled={!breakInCommitmentId || saving}
+                  >
+                    <Siren className="mr-2 h-3.5 w-3.5" />
+                    {t("breakIns.create")}
+                  </Button>
+                </PermissionGate>
+                <div className="mt-3 space-y-1 text-xs">
+                  {breakIns.map((entry) => (
+                    <div key={entry.id} className="rounded-lg border border-surface-border p-2">
+                      #{entry.id} {entry.break_in_reason} - {entry.old_slot_start} {"->"}{" "}
+                      {entry.new_slot_start} ({entry.cost_impact_delta?.toFixed(2) ?? "0.00"})
                     </div>
                   ))}
+                  {breakIns.length === 0 && (
+                    <p className="text-text-muted">{t("breakIns.empty")}</p>
+                  )}
                 </div>
-              );
-            })}
-          </div>
-        </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        <Card className="mt-4">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">{t("breakIns.title")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-        <div className="grid gap-3 md:grid-cols-5">
-          <div>
-            <Label>{t("breakIns.commitment")}</Label>
-            <Select value={breakInCommitmentValue} onValueChange={(value) => setBreakInCommitmentId(value === "__none__" ? null : Number(value))}>
-              <SelectTrigger className="h-8 text-sm">
-                <SelectValue placeholder={t("breakIns.selectCommitment")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">{t("breakIns.selectCommitment")}</SelectItem>
-                {commitments.map((commitment) => (
-                  <SelectItem key={commitment.id} value={String(commitment.id)}>
-                    #{commitment.id} {commitment.source_type}:{commitment.source_id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>{t("breakIns.reason")}</Label>
-            <Input className="h-8 text-sm" value={breakInReason} onChange={(e) => setBreakInReason(e.target.value)} />
-          </div>
-          <div>
-            <Label>{t("breakIns.approver")}</Label>
-            <Input className="h-8 text-sm" value={breakInApproverUserId} onChange={(e) => setBreakInApproverUserId(e.target.value)} />
-          </div>
-          <div className="md:col-span-2">
-            <Label>{t("breakIns.overrideReason")}</Label>
-            <Input className="h-8 text-sm" value={breakInOverrideReason} onChange={(e) => setBreakInOverrideReason(e.target.value)} />
+            {loading && <p className="mt-4 text-xs text-text-muted">{t("state.loading")}</p>}
           </div>
         </div>
-        <PermissionGate permission="plan.confirm">
-          <Button className="mt-3" size="sm" variant="outline" onClick={() => void handleCreateBreakIn()} disabled={!breakInCommitmentId || saving}>
-            <Siren className="mr-2 h-3.5 w-3.5" />
-            {t("breakIns.create")}
-          </Button>
-        </PermissionGate>
-        <div className="mt-3 space-y-1 text-xs">
-          {breakIns.map((entry) => (
-            <div key={entry.id} className="rounded-lg border border-surface-border p-2">
-              #{entry.id} {entry.break_in_reason} - {entry.old_slot_start} {"->"} {entry.new_slot_start} (
-              {entry.cost_impact_delta?.toFixed(2) ?? "0.00"})
-            </div>
-          ))}
-          {breakIns.length === 0 && <p className="text-text-muted">{t("breakIns.empty")}</p>}
-        </div>
-          </CardContent>
-        </Card>
-
-        {loading && <p className="mt-4 text-xs text-text-muted">{t("state.loading")}</p>}
       </div>
     </div>
   );

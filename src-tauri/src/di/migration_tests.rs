@@ -129,6 +129,7 @@ mod tests {
             "classification_code_id",
             "is_recurrence_flag",
             "recurrence_di_id",
+            "source_inspection_anomaly_id",
             "row_version",
             "submitter_id",
             "created_at",

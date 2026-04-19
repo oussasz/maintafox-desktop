@@ -12,11 +12,13 @@ use crate::finance::domain::{
     BudgetReportPackFilter, BudgetVarianceReview, BudgetVarianceReviewFilter, BudgetVersion, BudgetVersionFilter,
     CostCenter, CostCenterFilter, CreateBudgetActualInput, CreateBudgetAlertConfigInput, CreateBudgetCommitmentInput,
     CreateBudgetLineInput, CreateBudgetSuccessorInput, CreateBudgetVarianceReviewInput, CreateBudgetVersionInput,
-    CreateCostCenterInput, ErpApprovedReforecastExportItem, ErpMasterImportResult, ErpPostedActualExportItem,
-    EvaluateBudgetAlertsInput, ExportBudgetReportPackInput, ForecastRun, GenerateBudgetForecastInput,
-    ImportErpCostCenterMasterInput, PostBudgetActualInput, ReverseBudgetActualInput,
-    TransitionBudgetVarianceReviewInput, TransitionBudgetVersionLifecycleInput, UpdateBudgetAlertConfigInput,
-    UpdateBudgetLineInput, UpdateBudgetVersionInput, UpdateCostCenterInput,
+    CreateCostCenterInput, ErpApprovedReforecastExportItem, ErpExportBatchResult, ErpMasterImportResult,
+    ErpPostedActualExportItem, EvaluateBudgetAlertsInput, ExportBudgetReportPackInput, ForecastRun,
+    GenerateBudgetForecastInput, ImportErpCostCenterMasterInput, IntegrationException, IntegrationExceptionFilter,
+    PostBudgetActualInput, PostedExportBatch, PostedExportBatchFilter, RecordErpExportBatchInput,
+    ReverseBudgetActualInput, TransitionBudgetVarianceReviewInput, TransitionBudgetVersionLifecycleInput,
+    UpdateBudgetAlertConfigInput, UpdateBudgetLineInput, UpdateBudgetVersionInput, UpdateCostCenterInput,
+    UpdateIntegrationExceptionInput,
 };
 use crate::finance::queries;
 use crate::state::AppState;
@@ -335,6 +337,48 @@ pub async fn export_approved_reforecasts_for_erp(
     let user = require_session!(state);
     require_fin_report(&state, user.user_id).await?;
     queries::export_approved_reforecasts_for_erp(&state.db).await
+}
+
+#[tauri::command]
+pub async fn record_erp_export_batch(
+    input: RecordErpExportBatchInput,
+    state: State<'_, AppState>,
+) -> AppResult<ErpExportBatchResult> {
+    let user = require_session!(state);
+    require_fin_report(&state, user.user_id).await?;
+    queries::record_erp_export_batch(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn list_posted_export_batches(
+    filter: PostedExportBatchFilter,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<PostedExportBatch>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "fin.view", PermissionScope::Global);
+    queries::list_posted_export_batches(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn list_integration_exceptions(
+    filter: IntegrationExceptionFilter,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<IntegrationException>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "fin.view", PermissionScope::Global);
+    queries::list_integration_exceptions(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn update_integration_exception(
+    exception_id: i64,
+    expected_row_version: i64,
+    input: UpdateIntegrationExceptionInput,
+    state: State<'_, AppState>,
+) -> AppResult<IntegrationException> {
+    let user = require_session!(state);
+    require_fin_report(&state, user.user_id).await?;
+    queries::update_integration_exception(&state.db, exception_id, expected_row_version, input).await
 }
 
 #[tauri::command]

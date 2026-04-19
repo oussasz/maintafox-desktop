@@ -31,6 +31,7 @@ export interface AppStore {
 
   // UI: sidebar
   sidebarCollapsed: boolean;
+  sidebarHoverOpen: boolean;
   activePath: string;
 
   // Actions
@@ -41,6 +42,8 @@ export interface AppStore {
   setUnreadNotificationCount: (n: number) => void;
   setSessionStub: (hasSession: boolean, displayName: string | null) => void;
   toggleSidebar: () => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  setSidebarHoverOpen: (open: boolean) => void;
   setActivePath: (path: string) => void;
 }
 
@@ -62,7 +65,8 @@ export const useAppStore = create<AppStore>()(
       unreadNotificationCount: 0,
       hasActiveSession: false,
       currentUserDisplayName: null,
-      sidebarCollapsed: false,
+      sidebarCollapsed: true,
+      sidebarHoverOpen: false,
       activePath: "/",
 
       setAppStatus: (appStatus, startupMessage): void => {
@@ -88,6 +92,12 @@ export const useAppStore = create<AppStore>()(
       },
       toggleSidebar: (): void => {
         set((st) => ({ sidebarCollapsed: !st.sidebarCollapsed }));
+      },
+      setSidebarCollapsed: (sidebarCollapsed): void => {
+        set({ sidebarCollapsed });
+      },
+      setSidebarHoverOpen: (sidebarHoverOpen): void => {
+        set({ sidebarHoverOpen });
       },
       setActivePath: (activePath): void => {
         set({ activePath });

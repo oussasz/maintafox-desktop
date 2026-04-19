@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { z, ZodError } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   ApplySyncBatchInput,
   ApplySyncBatchResult,
@@ -88,10 +88,17 @@ const ApplySyncBatchResultSchema = z.object({
   typed_rejections: z.array(SyncTypedRejectionSchema),
 });
 
+const TenantConfigSyncPayloadSchema = z.object({
+  tenant_id: z.string(),
+  is_activated: z.boolean(),
+  company_display_name: z.string().nullable(),
+});
+
 const SyncPushPayloadSchema = z.object({
   protocol_version: z.string(),
   checkpoint_token: z.string().nullable(),
   outbox_batch: z.array(SyncOutboxItemSchema),
+  tenant_config: TenantConfigSyncPayloadSchema.nullable().optional(),
 });
 
 const SyncStateSummarySchema = z.object({
@@ -264,7 +271,10 @@ export async function applySyncBatch(input: ApplySyncBatchInput): Promise<ApplyS
   }
 }
 
-export async function listInboxItems(applyStatus?: string, limit?: number): Promise<SyncInboxItem[]> {
+export async function listInboxItems(
+  applyStatus?: string,
+  limit?: number,
+): Promise<SyncInboxItem[]> {
   try {
     const result = await invoke<unknown>("list_inbox_items", {
       applyStatus: applyStatus ?? null,
@@ -281,11 +291,30 @@ export async function getSyncStateSummary(): Promise<SyncStateSummary> {
     const result = await invoke<unknown>("get_sync_state_summary");
     return SyncStateSummarySchema.parse(result) as SyncStateSummary;
   } catch (err) {
-    throw formatDecodeError("get_sync_state_summary", err);
+    const decoded = formatDecodeError("get_sync_state_summary", err);
+    const message = decoded.message.toLowerCase();
+    // Roles with RAM visibility may not always have sync.view on upgraded tenants yet.
+    // Degrade gracefully to an empty summary instead of surfacing noisy permission toasts.
+    if (
+      message.includes("sync.view") ||
+      message.includes("permission refus") ||
+      message.includes("permission denied")
+    ) {
+      return {
+        protocol_version: "1.0.0",
+        checkpoint: null,
+        pending_outbox_count: 0,
+        rejected_outbox_count: 0,
+        inbox_error_count: 0,
+      };
+    }
+    throw decoded;
   }
 }
 
-export async function listSyncConflicts(filter: SyncConflictFilter = {}): Promise<SyncConflictRecord[]> {
+export async function listSyncConflicts(
+  filter: SyncConflictFilter = {},
+): Promise<SyncConflictRecord[]> {
   try {
     const result = await invoke<unknown>("list_sync_conflicts", { filter });
     return z.array(SyncConflictRecordSchema).parse(result) as SyncConflictRecord[];
@@ -294,7 +323,9 @@ export async function listSyncConflicts(filter: SyncConflictFilter = {}): Promis
   }
 }
 
-export async function resolveSyncConflict(input: ResolveSyncConflictInput): Promise<SyncConflictRecord> {
+export async function resolveSyncConflict(
+  input: ResolveSyncConflictInput,
+): Promise<SyncConflictRecord> {
   try {
     const result = await invoke<unknown>("resolve_sync_conflict", { input });
     return SyncConflictRecordSchema.parse(result) as SyncConflictRecord;
@@ -303,7 +334,9 @@ export async function resolveSyncConflict(input: ResolveSyncConflictInput): Prom
   }
 }
 
-export async function replaySyncFailures(input: ReplaySyncFailuresInput): Promise<ReplaySyncFailuresResult> {
+export async function replaySyncFailures(
+  input: ReplaySyncFailuresInput,
+): Promise<ReplaySyncFailuresResult> {
   try {
     const result = await invoke<unknown>("replay_sync_failures", { input });
     return ReplaySyncFailuresResultSchema.parse(result) as ReplaySyncFailuresResult;
@@ -330,7 +363,9 @@ export async function previewSyncRepair(input: SyncRepairPreviewInput): Promise<
   }
 }
 
-export async function executeSyncRepair(input: ExecuteSyncRepairInput): Promise<SyncRepairExecutionResult> {
+export async function executeSyncRepair(
+  input: ExecuteSyncRepairInput,
+): Promise<SyncRepairExecutionResult> {
   try {
     const result = await invoke<unknown>("execute_sync_repair", { input });
     return SyncRepairExecutionResultSchema.parse(result) as SyncRepairExecutionResult;

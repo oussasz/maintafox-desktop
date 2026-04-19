@@ -156,27 +156,12 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         warn!("startup: system seed returned error (non-fatal): {e}");
     }
 
-    // Phase 3b: seed demo data for development (idempotent — checks sentinel)
-    #[cfg(debug_assertions)]
-    {
-        info!("startup: seeding demo data (dev build)");
-        if let Err(e) = crate::db::demo_seeder::seed_demo_data(&app_state.db).await {
-            warn!("startup: demo seed returned error (non-fatal): {e}");
-        }
-        // Reference domain + test-user seeders have their own sentinels,
-        // so they run even when the main demo seeder was already applied.
-        if let Err(e) = crate::db::demo_seeder::seed_reference_demo_data(&app_state.db).await {
-            warn!("startup: reference demo seed returned error (non-fatal): {e}");
-        }
-        if let Err(e) = crate::db::demo_seeder::seed_test_viewer_user(&app_state.db).await {
-            warn!("startup: test viewer user seed returned error (non-fatal): {e}");
-        }
-        if let Err(e) = crate::db::demo_seeder::seed_technicien_user(&app_state.db).await {
-            warn!("startup: technicien user seed returned error (non-fatal): {e}");
-        }
-        if let Err(e) = crate::db::demo_seeder::seed_demo_work_orders(&app_state.db).await {
-            warn!("startup: work order demo seed returned error (non-fatal): {e}");
-        }
+    // Phase 3b: tenant bootstrap from activation claim.
+    // Clean-by-default policy:
+    // - always ensure a single root organization from activated tenant name
+    // - only seed neutral demo sandbox when claim.has_demo_data = true
+    if let Err(e) = crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&app_state.db, 0).await {
+        warn!("startup: tenant bootstrap returned error (non-fatal): {e}");
     }
 
     // Phase 4: entitlement cache and offline-safe fallback state.
@@ -197,6 +182,14 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
             crate::notifications::scheduler::start_notification_scheduler(scheduler_db).await;
         });
         info!("startup: notification scheduler started");
+    }
+
+    {
+        let report_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::reports::scheduler::start_report_scheduler(report_db).await;
+        });
+        info!("startup: report scheduler started");
     }
 
     // ── Budget check and ready ──────────────────────────────────────────

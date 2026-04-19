@@ -286,6 +286,54 @@ pub async fn set_setting(
     Ok(())
 }
 
+/// Remove a row from `app_settings` and append a settings change event (delete semantics).
+pub async fn delete_setting(
+    db: &DatabaseConnection,
+    key: &str,
+    scope: &str,
+    changed_by_id: i32,
+    change_summary: &str,
+) -> AppResult<bool> {
+    let old = get_setting(db, key, scope).await?;
+    let Some(old_row) = old else {
+        return Ok(false);
+    };
+    let old_hash = sha256_hex(&old_row.setting_value_json);
+    let now = chrono::Utc::now().to_rfc3339();
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM app_settings WHERE setting_key = ? AND setting_scope = ?",
+        [key.into(), scope.into()],
+    ))
+    .await?;
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r"INSERT INTO settings_change_events
+               (setting_key_or_domain, change_summary, old_value_hash, new_value_hash,
+                changed_by_id, changed_at, required_step_up, apply_result)
+           VALUES (?, ?, ?, NULL, ?, ?, 0, 'applied')",
+        [
+            key.into(),
+            change_summary.into(),
+            old_hash.into(),
+            i64::from(changed_by_id).into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+
+    tracing::info!(
+        setting_key = key,
+        scope = scope,
+        actor = changed_by_id,
+        "setting deleted"
+    );
+
+    Ok(true)
+}
+
 pub async fn list_change_events(db: &DatabaseConnection, limit: i64) -> AppResult<Vec<SettingsChangeEvent>> {
     let safe_limit = limit.clamp(1, 500);
     let rows = db

@@ -2,10 +2,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { PermissionGate } from "@/components/PermissionGate";
 import { PersonnelExportMenu } from "@/components/personnel/PersonnelExportMenu";
 import { PersonnelImportWizard } from "@/components/personnel/PersonnelImportWizard";
 import { WorkforceReportPanel } from "@/components/personnel/WorkforceReportPanel";
-import { PermissionGate } from "@/components/PermissionGate";
 import { PermissionProvider } from "@/contexts/PermissionContext";
 
 const mockGetMyPermissions = vi.fn();
@@ -58,6 +58,29 @@ describe("PermissionGate", () => {
       coverage_risk_ratio: 0.2,
     });
     mockGetWorkforceSkillsGapReport.mockResolvedValue([]);
+  });
+
+  it("renders children when user has any of the permissions (anyOf)", async () => {
+    mockGetMyPermissions.mockResolvedValue([
+      {
+        name: "pm.manage",
+        description: "",
+        category: "maintenance",
+        is_dangerous: false,
+        requires_step_up: false,
+      },
+    ]);
+
+    renderWithPermissionProvider(
+      <PermissionGate anyOf={["pm.create", "pm.manage"]} fallback={<span>no pm write</span>}>
+        <span data-testid="gate-pm">pm actions</span>
+      </PermissionGate>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("gate-pm")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("no pm write")).not.toBeInTheDocument();
   });
 
   it("renders children when user has the permission", async () => {

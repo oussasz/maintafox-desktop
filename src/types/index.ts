@@ -27,12 +27,9 @@ export type ModuleKey =
   | "settings"
   | "profile"
   | "training"
-  | "iot"
-  | "erp"
   | "permits"
   | "budget"
-  | "inspections"
-  | "configuration";
+  | "inspections";
 
 export type Theme = "dark" | "light";
 

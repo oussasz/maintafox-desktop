@@ -1,4 +1,5 @@
-use crate::db::{demo_seeder, integrity, seeder};
+use crate::commands::product_license;
+use crate::db::{integrity, seeder};
 use crate::errors::AppResult;
 use crate::state::AppState;
 use tauri::State;
@@ -20,12 +21,16 @@ pub async fn repair_seed_data(state: State<'_, AppState>) -> AppResult<integrity
     integrity::run_integrity_check(&state.db).await
 }
 
-/// Inserts demo organisation, equipment, and DI data for development.
-/// Idempotent — skips if demo data already exists.
+/// Runs tenant bootstrap from activation claim.
+/// - Always ensures root organization exists from activated tenant name.
+/// - Seeds generic demo sandbox only when claim.has_demo_data = true.
 #[tauri::command]
 pub async fn seed_demo_data(state: State<'_, AppState>) -> AppResult<String> {
-    demo_seeder::seed_demo_data(&state.db).await?;
-    Ok("Demo data seeded successfully.".into())
+    if !product_license::is_product_activation_complete(&state.db).await? {
+        return Ok("No active activation claim. Bootstrap skipped.".into());
+    }
+    crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, 0).await?;
+    Ok("Tenant bootstrap completed from activation claim.".into())
 }
 
 // ─── SP06-F03 commands ────────────────────────────────────────────────────────

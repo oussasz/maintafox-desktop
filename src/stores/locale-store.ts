@@ -3,10 +3,10 @@
 // Reads locale preference from the Rust backend via IPC and drives
 // i18next language switching.
 
-import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 
 import { i18n, DEFAULT_LOCALE } from "@/i18n";
+import { invoke } from "@/lib/ipc-invoke";
 import { toErrorMessage } from "@/utils/errors";
 import { getLocaleDirection } from "@/utils/formatters";
 import type { LocalePreference } from "@shared/ipc-types";

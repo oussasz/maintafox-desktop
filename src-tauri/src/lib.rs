@@ -11,6 +11,7 @@
 pub mod assets;
 pub mod activity;
 pub mod activation;
+pub mod analytics_contract;
 pub mod archive;
 pub mod audit;
 pub mod auth;
@@ -19,12 +20,17 @@ pub mod backup;
 pub mod commands;
 pub mod di;
 pub mod db;
+pub mod data_integrity;
 pub mod wo;
 pub mod diagnostics;
 pub mod entitlements;
 pub mod errors;
+pub mod inspection;
+pub mod jobs;
+pub mod kpi_definitions;
 pub mod finance;
 pub mod inventory;
+pub mod library_documents;
 pub mod license;
 pub mod locale;
 pub mod migrations;
@@ -33,9 +39,13 @@ pub mod notifications;
 pub mod org;
 pub mod personnel;
 pub mod planning;
+pub mod permit;
+pub mod qualification;
+pub mod reliability;
 pub mod pm;
 pub mod rbac;
 pub mod reference;
+pub mod reports;
 pub mod repository;
 pub mod security;
 pub mod services;
@@ -199,11 +209,22 @@ pub fn run() {
             commands::settings::get_policy_snapshot,
             commands::settings::get_session_policy,
             commands::settings::list_setting_change_events,
+            // ── Document library (PRD §6.15) ──
+            commands::library_documents::list_library_documents,
+            commands::library_documents::upload_library_document,
+            commands::library_documents::get_library_document_file,
+            commands::library_documents::delete_library_document,
+            commands::library_documents::update_library_document,
             commands::product_license::get_product_license_onboarding_state,
             commands::product_license::submit_product_license_key,
             commands::product_license::apply_product_license_reconciliation,
             commands::product_license::get_product_license_diagnostics,
             commands::product_license::get_control_plane_activation_bearer_token,
+            commands::product_license::get_activation_bootstrap_state,
+            commands::product_license::bootstrap_initial_tenant_admin,
+            commands::product_license::reset_product_license_activation,
+            commands::product_license::reset_local_tenant_runtime_data,
+            commands::product_license::get_activation_license_metadata,
             // Ã¢â€â‚¬Ã¢â€â‚¬ Notifications Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::notifications::list_notifications,
             commands::notifications::get_unread_count,
@@ -419,6 +440,10 @@ pub fn run() {
             commands::finance::import_erp_cost_center_master,
             commands::finance::export_posted_actuals_for_erp,
             commands::finance::export_approved_reforecasts_for_erp,
+            commands::finance::record_erp_export_batch,
+            commands::finance::list_posted_export_batches,
+            commands::finance::list_integration_exceptions,
+            commands::finance::update_integration_exception,
             commands::finance::list_budget_alert_configs,
             commands::finance::create_budget_alert_config,
             commands::finance::update_budget_alert_config,
@@ -528,6 +553,7 @@ pub fn run() {
             commands::assets::suggest_asset_codes,
             commands::assets::suggest_asset_names,
             commands::assets::get_asset_binding_summary,
+            commands::assets::get_asset_health_score,
             commands::assets::create_asset,
             commands::assets::update_asset_identity,
             commands::assets::link_asset_hierarchy,
@@ -541,6 +567,9 @@ pub fn run() {
             commands::assets::get_latest_meter_value,
             commands::assets::list_meter_readings,
             commands::assets::list_asset_document_links,
+            commands::assets::list_asset_photos,
+            commands::assets::upload_asset_photo,
+            commands::assets::delete_asset_photo,
             commands::assets::upsert_asset_document_link,
             commands::assets::expire_asset_document_link,
             commands::assets::create_asset_import_batch,
@@ -624,9 +653,165 @@ pub fn run() {
             // Ã¢â€â‚¬Ã¢â€â‚¬ WO Audit Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::wo::list_wo_change_events,
             commands::wo::list_all_wo_change_events,
+            commands::data_integrity::list_data_integrity_findings,
+            commands::data_integrity::run_data_integrity_detectors_cmd,
+            commands::data_integrity::waive_data_integrity_finding_cmd,
+            commands::data_integrity::apply_data_integrity_repair_cmd,
+            commands::analytics_contract::list_analytics_contract_versions,
+            commands::analytics_contract::register_analytics_contract_version,
+            commands::reports::list_report_templates,
+            commands::reports::list_my_report_schedules,
+            commands::reports::upsert_my_report_schedule,
+            commands::reports::delete_my_report_schedule,
+            commands::reports::list_my_report_runs,
+            commands::reports::export_report_now,
+            commands::permit::list_permit_types,
+            commands::permit::upsert_permit_type,
+            commands::permit::list_work_permits,
+            commands::permit::get_work_permit,
+            commands::permit::create_work_permit,
+            commands::permit::update_work_permit,
+            commands::permit::set_work_permit_status,
+            commands::permit::list_permit_isolations,
+            commands::permit::upsert_permit_isolation,
+            commands::permit::suspend_work_permit,
+            commands::permit::append_permit_handover_log,
+            commands::permit::list_permit_suspensions,
+            commands::permit::list_permit_handover_logs,
+            commands::permit::get_loto_card_view,
+            commands::permit::record_loto_card_print,
+            commands::permit::list_open_permits_report,
+            commands::permit::permit_compliance_kpi_30d,
+            commands::reliability::list_failure_hierarchies,
+            commands::reliability::upsert_failure_hierarchy,
+            commands::reliability::list_failure_codes,
+            commands::reliability::upsert_failure_code,
+            commands::reliability::deactivate_failure_code,
+            commands::reliability::list_failure_events,
+            commands::reliability::list_cost_of_failure,
+            commands::reliability::upsert_failure_event,
+            commands::reliability::upsert_runtime_exposure_log,
+            commands::reliability::list_runtime_exposure_logs,
+            commands::reliability::evaluate_reliability_analysis_input,
+            commands::reliability::refresh_reliability_kpi_snapshot,
+            commands::reliability::list_reliability_kpi_snapshots,
+            commands::reliability::get_reliability_kpi_snapshot,
+            commands::reliability::list_ram_data_quality_issues,
+            commands::reliability::list_wos_missing_failure_mode,
+            commands::reliability::list_equipment_missing_exposure_90d,
+            commands::reliability::get_ram_equipment_quality_badge,
+            commands::reliability::dismiss_ram_data_quality_issue,
+            commands::reliability::iso_14224_failure_dataset_completeness,
+            commands::advanced_rams::run_weibull_fit,
+            commands::advanced_rams::get_latest_weibull_fit_for_equipment,
+            commands::advanced_rams::get_ram_fmeca_rpn_critical_threshold,
+            commands::advanced_rams::list_fmeca_analyses,
+            commands::advanced_rams::create_fmeca_analysis,
+            commands::advanced_rams::update_fmeca_analysis,
+            commands::advanced_rams::delete_fmeca_analysis,
+            commands::advanced_rams::list_fmeca_items,
+            commands::advanced_rams::upsert_fmeca_item,
+            commands::advanced_rams::delete_fmeca_item,
+            commands::advanced_rams::list_rcm_studies,
+            commands::advanced_rams::create_rcm_study,
+            commands::advanced_rams::update_rcm_study,
+            commands::advanced_rams::delete_rcm_study,
+            commands::advanced_rams::list_rcm_decisions,
+            commands::advanced_rams::upsert_rcm_decision,
+            commands::advanced_rams::delete_rcm_decision,
+            commands::advanced_rams::get_fmeca_severity_occurrence_matrix,
+            commands::advanced_rams::list_fmeca_items_for_equipment,
+            commands::advanced_rams::get_reliability_rul_indicator,
+            commands::advanced_rams::list_ram_ishikawa_diagrams,
+            commands::advanced_rams::upsert_ram_ishikawa_diagram,
+            commands::advanced_rams::delete_ram_ishikawa_diagram,
+            commands::fta_rbd_eta::list_fta_models,
+            commands::fta_rbd_eta::create_fta_model,
+            commands::fta_rbd_eta::update_fta_model,
+            commands::fta_rbd_eta::delete_fta_model,
+            commands::fta_rbd_eta::evaluate_fta_model,
+            commands::fta_rbd_eta::list_rbd_models,
+            commands::fta_rbd_eta::create_rbd_model,
+            commands::fta_rbd_eta::update_rbd_model,
+            commands::fta_rbd_eta::delete_rbd_model,
+            commands::fta_rbd_eta::evaluate_rbd_model,
+            commands::fta_rbd_eta::list_event_tree_models,
+            commands::fta_rbd_eta::create_event_tree_model,
+            commands::fta_rbd_eta::update_event_tree_model,
+            commands::fta_rbd_eta::delete_event_tree_model,
+            commands::fta_rbd_eta::evaluate_event_tree_model,
+            commands::markov_mc::get_ram_advanced_guardrails,
+            commands::markov_mc::set_ram_advanced_guardrails,
+            commands::markov_mc::list_mc_models,
+            commands::markov_mc::create_mc_model,
+            commands::markov_mc::update_mc_model,
+            commands::markov_mc::delete_mc_model,
+            commands::markov_mc::evaluate_mc_model,
+            commands::markov_mc::list_markov_models,
+            commands::markov_mc::create_markov_model,
+            commands::markov_mc::update_markov_model,
+            commands::markov_mc::delete_markov_model,
+            commands::markov_mc::evaluate_markov_model,
+            commands::ram_review::list_ram_expert_sign_offs,
+            commands::ram_review::create_ram_expert_sign_off,
+            commands::ram_review::update_ram_expert_sign_off,
+            commands::ram_review::sign_ram_expert_review,
+            commands::ram_review::delete_ram_expert_sign_off,
+            commands::computation_jobs::submit_reliability_kpi_computation_job,
+            commands::computation_jobs::cancel_computation_job,
+            commands::computation_jobs::get_computation_job,
+            commands::computation_jobs::list_computation_jobs,
+            commands::qualification::list_certification_types,
+            commands::qualification::upsert_certification_type,
+            commands::qualification::list_qualification_requirement_profiles,
+            commands::qualification::upsert_qualification_requirement_profile,
+            commands::qualification::list_personnel_certifications,
+            commands::qualification::upsert_personnel_certification,
+            commands::qualification::list_training_sessions,
+            commands::qualification::upsert_training_session,
+            commands::qualification::list_training_attendance,
+            commands::qualification::upsert_training_attendance,
+            commands::qualification::list_document_acknowledgements,
+            commands::qualification::upsert_document_acknowledgement,
+            commands::qualification::list_my_training_sessions,
+            commands::qualification::list_my_personnel_certifications,
+            commands::qualification::list_personnel_readiness,
+            commands::qualification::evaluate_crew_permit_skill_gaps,
+            commands::qualification::list_personnel_readiness_snapshots,
+            commands::qualification::upsert_personnel_readiness_snapshot,
+            commands::qualification::refresh_personnel_readiness_snapshot,
+            commands::qualification::list_training_expiry_alert_events,
+            commands::qualification::scan_training_expiry_alerts,
+            commands::qualification::list_certification_expiry_drilldown,
+            commands::inspection::list_inspection_templates,
+            commands::inspection::list_inspection_template_versions,
+            commands::inspection::list_inspection_checkpoints,
+            commands::inspection::list_inspection_rounds,
+            commands::inspection::create_inspection_template,
+            commands::inspection::publish_inspection_template_version,
+            commands::inspection::schedule_inspection_round,
+            commands::inspection::list_inspection_results,
+            commands::inspection::list_inspection_evidence,
+            commands::inspection::list_inspection_anomalies,
+            commands::inspection::record_inspection_result,
+            commands::inspection::add_inspection_evidence,
+            commands::inspection::update_inspection_anomaly,
+            commands::inspection::enqueue_inspection_offline,
+            commands::inspection::list_inspection_offline_queue,
+            commands::inspection::mark_inspection_offline_synced,
+            commands::inspection::route_inspection_anomaly_to_di,
+            commands::inspection::route_inspection_anomaly_to_wo,
+            commands::inspection::defer_inspection_anomaly,
+            commands::inspection::list_inspection_reliability_signals,
+            commands::inspection::refresh_inspection_reliability_signals,
             // Ã¢â€â‚¬Ã¢â€â‚¬ Dashboard Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::dashboard::get_dashboard_kpis,
             commands::dashboard::get_dashboard_workload_chart,
+            commands::dashboard::get_dashboard_layout,
+            commands::dashboard::save_dashboard_layout,
+            commands::dashboard::get_dashboard_di_status_chart,
+            commands::dashboard::get_dashboard_reliability_snapshot_summary,
+            commands::dashboard::get_dashboard_kpi_validation,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

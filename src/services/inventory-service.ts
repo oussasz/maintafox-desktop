@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { z, ZodError } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   ApproveInventoryCountLineInput,
   CreateInventoryCountSessionInput,
@@ -504,7 +504,9 @@ export function listInventoryArticleFamilies(): Promise<ArticleFamily[]> {
   return invokeParsed("list_inventory_article_families", undefined, z.array(ArticleFamilySchema));
 }
 
-export function createInventoryArticleFamily(input: CreateArticleFamilyInput): Promise<ArticleFamily> {
+export function createInventoryArticleFamily(
+  input: CreateArticleFamilyInput,
+): Promise<ArticleFamily> {
   return invokeParsed("create_inventory_article_family", { input }, ArticleFamilySchema);
 }
 
@@ -520,10 +522,16 @@ export function deactivateInventoryArticleFamily(familyId: number): Promise<Arti
 }
 
 export function listInventoryTaxCategories(): Promise<InventoryTaxCategory[]> {
-  return invokeParsed("list_inventory_tax_categories", undefined, z.array(InventoryTaxCategorySchema));
+  return invokeParsed(
+    "list_inventory_tax_categories",
+    undefined,
+    z.array(InventoryTaxCategorySchema),
+  );
 }
 
-export function createInventoryTaxCategory(input: InventoryTaxCategoryInput): Promise<InventoryTaxCategory> {
+export function createInventoryTaxCategory(
+  input: InventoryTaxCategoryInput,
+): Promise<InventoryTaxCategory> {
   return invokeParsed(
     "create_inventory_tax_category",
     { input: InventoryTaxCategoryInputSchema.parse(input) },
@@ -559,18 +567,27 @@ export function listInventoryWarehouses(): Promise<Warehouse[]> {
 }
 
 export function listInventoryLocations(warehouseId?: number | null): Promise<StockLocation[]> {
-  return invokeParsed("list_inventory_locations", { warehouseId: warehouseId ?? null }, z.array(StockLocationSchema));
+  return invokeParsed(
+    "list_inventory_locations",
+    { warehouseId: warehouseId ?? null },
+    z.array(StockLocationSchema),
+  );
 }
 
 export function createInventoryWarehouse(input: CreateWarehouseInput): Promise<Warehouse> {
   return invokeParsed("create_inventory_warehouse", { input }, WarehouseSchema);
 }
 
-export function updateInventoryWarehouse(warehouseId: number, input: UpdateWarehouseInput): Promise<Warehouse> {
+export function updateInventoryWarehouse(
+  warehouseId: number,
+  input: UpdateWarehouseInput,
+): Promise<Warehouse> {
   return invokeParsed("update_inventory_warehouse", { warehouseId, input }, WarehouseSchema);
 }
 
-export function createInventoryStockLocation(input: CreateStockLocationInput): Promise<StockLocation> {
+export function createInventoryStockLocation(
+  input: CreateStockLocationInput,
+): Promise<StockLocation> {
   return invokeParsed("create_inventory_stock_location", { input }, StockLocationSchema);
 }
 
@@ -579,7 +596,11 @@ export function updateInventoryStockLocation(
   expectedRowVersion: number,
   input: UpdateStockLocationInput,
 ): Promise<StockLocation> {
-  return invokeParsed("update_inventory_stock_location", { locationId, expectedRowVersion, input }, StockLocationSchema);
+  return invokeParsed(
+    "update_inventory_stock_location",
+    { locationId, expectedRowVersion, input },
+    StockLocationSchema,
+  );
 }
 
 export function evaluateInventoryUnitCost(
@@ -599,7 +620,11 @@ export function listInventoryArticles(filter: InventoryArticleFilter): Promise<I
 }
 
 export function createInventoryArticle(input: InventoryArticleInput): Promise<InventoryArticle> {
-  return invokeParsed("create_inventory_article", { input: InventoryArticleInputSchema.parse(input) }, InventoryArticleSchema);
+  return invokeParsed(
+    "create_inventory_article",
+    { input: InventoryArticleInputSchema.parse(input) },
+    InventoryArticleSchema,
+  );
 }
 
 export function updateInventoryArticle(
@@ -614,11 +639,19 @@ export function updateInventoryArticle(
   );
 }
 
-export function listInventoryStockBalances(filter: InventoryStockFilter): Promise<InventoryStockBalance[]> {
-  return invokeParsed("list_inventory_stock_balances", { filter }, z.array(InventoryStockBalanceSchema));
+export function listInventoryStockBalances(
+  filter: InventoryStockFilter,
+): Promise<InventoryStockBalance[]> {
+  return invokeParsed(
+    "list_inventory_stock_balances",
+    { filter },
+    z.array(InventoryStockBalanceSchema),
+  );
 }
 
-export function adjustInventoryStock(input: InventoryStockAdjustInput): Promise<InventoryStockBalance> {
+export function adjustInventoryStock(
+  input: InventoryStockAdjustInput,
+): Promise<InventoryStockBalance> {
   return invokeParsed("adjust_inventory_stock", { input }, InventoryStockBalanceSchema);
 }
 
@@ -634,23 +667,37 @@ export function returnInventoryStock(input: InventoryReturnInput): Promise<Stock
   return invokeParsed("return_inventory_stock", { input }, StockReservationSchema);
 }
 
-export function transferInventoryStock(input: InventoryTransferInput): Promise<InventoryStockBalance[]> {
+export function transferInventoryStock(
+  input: InventoryTransferInput,
+): Promise<InventoryStockBalance[]> {
   return invokeParsed("transfer_inventory_stock", { input }, z.array(InventoryStockBalanceSchema));
 }
 
-export function releaseInventoryReservation(input: InventoryReleaseReservationInput): Promise<StockReservation> {
+export function releaseInventoryReservation(
+  input: InventoryReleaseReservationInput,
+): Promise<StockReservation> {
   return invokeParsed("release_inventory_reservation", { input }, StockReservationSchema);
 }
 
-export function listInventoryReservations(filter: StockReservationFilter): Promise<StockReservation[]> {
+export function listInventoryReservations(
+  filter: StockReservationFilter,
+): Promise<StockReservation[]> {
   return invokeParsed("list_inventory_reservations", { filter }, z.array(StockReservationSchema));
 }
 
-export function listInventoryTransactions(filter: InventoryTransactionFilter): Promise<InventoryTransaction[]> {
-  return invokeParsed("list_inventory_transactions", { filter }, z.array(InventoryTransactionSchema));
+export function listInventoryTransactions(
+  filter: InventoryTransactionFilter,
+): Promise<InventoryTransaction[]> {
+  return invokeParsed(
+    "list_inventory_transactions",
+    { filter },
+    z.array(InventoryTransactionSchema),
+  );
 }
 
-export function evaluateInventoryReorder(warehouseId?: number | null): Promise<InventoryReorderRecommendation[]> {
+export function evaluateInventoryReorder(
+  warehouseId?: number | null,
+): Promise<InventoryReorderRecommendation[]> {
   return invokeParsed(
     "evaluate_inventory_reorder",
     { warehouseId: warehouseId ?? null },
@@ -659,11 +706,19 @@ export function evaluateInventoryReorder(warehouseId?: number | null): Promise<I
 }
 
 export function listInventoryProcurementSuppliers(): Promise<ProcurementSupplier[]> {
-  return invokeParsed("list_inventory_procurement_suppliers", undefined, z.array(ProcurementSupplierSchema));
+  return invokeParsed(
+    "list_inventory_procurement_suppliers",
+    undefined,
+    z.array(ProcurementSupplierSchema),
+  );
 }
 
 export function listInventoryProcurementRequisitions(): Promise<ProcurementRequisition[]> {
-  return invokeParsed("list_inventory_procurement_requisitions", undefined, z.array(ProcurementRequisitionSchema));
+  return invokeParsed(
+    "list_inventory_procurement_requisitions",
+    undefined,
+    z.array(ProcurementRequisitionSchema),
+  );
 }
 
 export function listInventoryProcurementRequisitionLines(
@@ -679,22 +734,36 @@ export function listInventoryProcurementRequisitionLines(
 export function createInventoryProcurementRequisition(
   input: CreateProcurementRequisitionInput,
 ): Promise<ProcurementRequisition> {
-  return invokeParsed("create_inventory_procurement_requisition", { input }, ProcurementRequisitionSchema);
+  return invokeParsed(
+    "create_inventory_procurement_requisition",
+    { input },
+    ProcurementRequisitionSchema,
+  );
 }
 
 export function transitionInventoryProcurementRequisition(
   input: TransitionProcurementRequisitionInput,
 ): Promise<ProcurementRequisition> {
-  return invokeParsed("transition_inventory_procurement_requisition", { input }, ProcurementRequisitionSchema);
+  return invokeParsed(
+    "transition_inventory_procurement_requisition",
+    { input },
+    ProcurementRequisitionSchema,
+  );
 }
 
 export function createInventoryPurchaseOrderFromRequisition(
   input: CreatePurchaseOrderFromRequisitionInput,
 ): Promise<PurchaseOrder> {
-  return invokeParsed("create_inventory_purchase_order_from_requisition", { input }, PurchaseOrderSchema);
+  return invokeParsed(
+    "create_inventory_purchase_order_from_requisition",
+    { input },
+    PurchaseOrderSchema,
+  );
 }
 
-export function transitionInventoryPurchaseOrder(input: TransitionPurchaseOrderInput): Promise<PurchaseOrder> {
+export function transitionInventoryPurchaseOrder(
+  input: TransitionPurchaseOrderInput,
+): Promise<PurchaseOrder> {
   return invokeParsed("transition_inventory_purchase_order", { input }, PurchaseOrderSchema);
 }
 
@@ -702,11 +771,19 @@ export function listInventoryPurchaseOrders(): Promise<PurchaseOrder[]> {
   return invokeParsed("list_inventory_purchase_orders", undefined, z.array(PurchaseOrderSchema));
 }
 
-export function listInventoryPurchaseOrderLines(purchaseOrderId: number): Promise<PurchaseOrderLine[]> {
-  return invokeParsed("list_inventory_purchase_order_lines", { purchaseOrderId }, z.array(PurchaseOrderLineSchema));
+export function listInventoryPurchaseOrderLines(
+  purchaseOrderId: number,
+): Promise<PurchaseOrderLine[]> {
+  return invokeParsed(
+    "list_inventory_purchase_order_lines",
+    { purchaseOrderId },
+    z.array(PurchaseOrderLineSchema),
+  );
 }
 
-export function receiveInventoryPurchaseOrderGoods(input: ReceiveGoodsInput): Promise<GoodsReceipt> {
+export function receiveInventoryPurchaseOrderGoods(
+  input: ReceiveGoodsInput,
+): Promise<GoodsReceipt> {
   return invokeParsed("receive_inventory_purchase_order_goods", { input }, GoodsReceiptSchema);
 }
 
@@ -714,24 +791,42 @@ export function listInventoryGoodsReceipts(): Promise<GoodsReceipt[]> {
   return invokeParsed("list_inventory_goods_receipts", undefined, z.array(GoodsReceiptSchema));
 }
 
-export function listInventoryGoodsReceiptLines(goodsReceiptId: number): Promise<GoodsReceiptLine[]> {
-  return invokeParsed("list_inventory_goods_receipt_lines", { goodsReceiptId }, z.array(GoodsReceiptLineSchema));
+export function listInventoryGoodsReceiptLines(
+  goodsReceiptId: number,
+): Promise<GoodsReceiptLine[]> {
+  return invokeParsed(
+    "list_inventory_goods_receipt_lines",
+    { goodsReceiptId },
+    z.array(GoodsReceiptLineSchema),
+  );
 }
 
-export function updateInventoryProcurementPostingState(input: UpdatePostingStateInput): Promise<void> {
-  return invokeParsed("update_inventory_procurement_posting_state", { input }, z.unknown()).then(() => undefined);
+export function updateInventoryProcurementPostingState(
+  input: UpdatePostingStateInput,
+): Promise<void> {
+  return invokeParsed("update_inventory_procurement_posting_state", { input }, z.unknown()).then(
+    () => undefined,
+  );
 }
 
-export function createInventoryRepairableOrder(input: CreateRepairableOrderInput): Promise<RepairableOrder> {
+export function createInventoryRepairableOrder(
+  input: CreateRepairableOrderInput,
+): Promise<RepairableOrder> {
   return invokeParsed("create_inventory_repairable_order", { input }, RepairableOrderSchema);
 }
 
-export function transitionInventoryRepairableOrder(input: TransitionRepairableOrderInput): Promise<RepairableOrder> {
+export function transitionInventoryRepairableOrder(
+  input: TransitionRepairableOrderInput,
+): Promise<RepairableOrder> {
   return invokeParsed("transition_inventory_repairable_order", { input }, RepairableOrderSchema);
 }
 
 export function listInventoryRepairableOrders(): Promise<RepairableOrder[]> {
-  return invokeParsed("list_inventory_repairable_orders", undefined, z.array(RepairableOrderSchema));
+  return invokeParsed(
+    "list_inventory_repairable_orders",
+    undefined,
+    z.array(RepairableOrderSchema),
+  );
 }
 
 export function listInventoryStateEvents(
@@ -745,7 +840,9 @@ export function listInventoryStateEvents(
   );
 }
 
-export function createInventoryCountSession(input: CreateInventoryCountSessionInput): Promise<InventoryCountSession> {
+export function createInventoryCountSession(
+  input: CreateInventoryCountSessionInput,
+): Promise<InventoryCountSession> {
   return invokeParsed("create_inventory_count_session", { input }, InventoryCountSessionSchema);
 }
 
@@ -755,15 +852,21 @@ export function transitionInventoryCountSession(
   return invokeParsed("transition_inventory_count_session", { input }, InventoryCountSessionSchema);
 }
 
-export function upsertInventoryCountLine(input: UpsertInventoryCountLineInput): Promise<InventoryCountLine> {
+export function upsertInventoryCountLine(
+  input: UpsertInventoryCountLineInput,
+): Promise<InventoryCountLine> {
   return invokeParsed("upsert_inventory_count_line", { input }, InventoryCountLineSchema);
 }
 
-export function approveInventoryCountLine(input: ApproveInventoryCountLineInput): Promise<InventoryCountLine> {
+export function approveInventoryCountLine(
+  input: ApproveInventoryCountLineInput,
+): Promise<InventoryCountLine> {
   return invokeParsed("approve_inventory_count_line", { input }, InventoryCountLineSchema);
 }
 
-export function postInventoryCountSession(input: PostInventoryCountSessionInput): Promise<InventoryCountSession> {
+export function postInventoryCountSession(
+  input: PostInventoryCountSessionInput,
+): Promise<InventoryCountSession> {
   return invokeParsed("post_inventory_count_session", { input }, InventoryCountSessionSchema);
 }
 
@@ -774,11 +877,19 @@ export function reverseInventoryCountSession(
 }
 
 export function listInventoryCountSessions(): Promise<InventoryCountSession[]> {
-  return invokeParsed("list_inventory_count_sessions", undefined, z.array(InventoryCountSessionSchema));
+  return invokeParsed(
+    "list_inventory_count_sessions",
+    undefined,
+    z.array(InventoryCountSessionSchema),
+  );
 }
 
 export function listInventoryCountLines(sessionId: number): Promise<InventoryCountLine[]> {
-  return invokeParsed("list_inventory_count_lines", { sessionId }, z.array(InventoryCountLineSchema));
+  return invokeParsed(
+    "list_inventory_count_lines",
+    { sessionId },
+    z.array(InventoryCountLineSchema),
+  );
 }
 
 export function runInventoryReconciliation(
@@ -788,10 +899,16 @@ export function runInventoryReconciliation(
 }
 
 export function listInventoryReconciliationRuns(): Promise<InventoryReconciliationRun[]> {
-  return invokeParsed("list_inventory_reconciliation_runs", undefined, z.array(InventoryReconciliationRunSchema));
+  return invokeParsed(
+    "list_inventory_reconciliation_runs",
+    undefined,
+    z.array(InventoryReconciliationRunSchema),
+  );
 }
 
-export function listInventoryReconciliationFindings(runId: number): Promise<InventoryReconciliationFinding[]> {
+export function listInventoryReconciliationFindings(
+  runId: number,
+): Promise<InventoryReconciliationFinding[]> {
   return invokeParsed(
     "list_inventory_reconciliation_findings",
     { runId },

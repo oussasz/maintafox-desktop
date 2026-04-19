@@ -70,6 +70,11 @@
     "vitest": "^2.1.0"
   },
   "dependencies": {
+    "@antv/x6": "^2.19.2",
+    "@antv/x6-plugin-selection": "^2.2.2",
+    "@antv/x6-plugin-snapline": "^2.1.7",
+    "@antv/x6-plugin-stencil": "^2.1.5",
+    "@antv/x6-react-shape": "^2.2.3",
     "@hookform/resolvers": "^3.9.0",
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.0",
@@ -87,6 +92,7 @@
     "@tauri-apps/plugin-fs": "^2.0.0",
     "@tauri-apps/plugin-shell": "^2.0.0",
     "@types/d3": "^7.4.0",
+    "@xyflow/react": "^12.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.0",
     "d3": "^7.9.0",

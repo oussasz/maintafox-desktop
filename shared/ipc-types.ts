@@ -403,12 +403,7 @@ export interface VendorAdminMfaAuditEvent {
   detail_code: string;
 }
 
-export type EntitlementLifecycleState =
-  | "active"
-  | "grace"
-  | "expired"
-  | "suspended"
-  | "revoked";
+export type EntitlementLifecycleState = "active" | "grace" | "expired" | "suspended" | "revoked";
 
 export type EntitlementLifecycleAction =
   | "issue"
@@ -725,7 +720,10 @@ export type VpsMirrorQueueKind =
   | "conflict_review"
   | "dead_letter";
 
-export type VpsMirrorRecordClass = "append_only_event" | "governed_snapshot" | "mutable_operational";
+export type VpsMirrorRecordClass =
+  | "append_only_event"
+  | "governed_snapshot"
+  | "mutable_operational";
 
 export interface VpsTenantProvisioningPlan {
   tenant_id: string;
@@ -771,7 +769,11 @@ export type VpsDeploymentEnvironment = "dev" | "staging" | "pilot" | "prod";
 
 export type VpsObjectCategory = "updates" | "backups" | "restore-bundles" | "support";
 
-export type VpsStorageDataClass = "rollout_ephemeral" | "backup_operational" | "compliance_archive" | "support_export";
+export type VpsStorageDataClass =
+  | "rollout_ephemeral"
+  | "backup_operational"
+  | "compliance_archive"
+  | "support_export";
 
 export interface VpsObjectStorageObjectKey {
   full_key: string;
@@ -890,10 +892,7 @@ export interface VpsSecretHandlingContract {
   rotate_after_exposure: boolean;
 }
 
-export type VpsDeploymentSizingProfile =
-  | "pilot"
-  | "shared_production"
-  | "growth";
+export type VpsDeploymentSizingProfile = "pilot" | "shared_production" | "growth";
 
 export interface VpsResourceSizingHints {
   api_replicas: number;
@@ -980,7 +979,6 @@ export interface VpsDeploymentReadinessChecklist {
   cert_and_key_runbooks_acknowledged: boolean;
   all_items_ok: boolean;
 }
-
 
 // â”€â”€â”€ Locale â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -2066,6 +2064,37 @@ export interface UpsertDocumentLinkPayload {
   link_purpose: string;
   is_primary?: boolean;
   valid_from?: string | null;
+}
+
+/** Tenant document library — `library_documents.category` (PRD §6.15). */
+export type LibraryDocumentCategory =
+  | "technical_manuals"
+  | "sops"
+  | "safety_protocols"
+  | "compliance_certificates";
+
+/** Row from `library_documents` (+ equipment join). */
+export interface LibraryDocument {
+  id: number;
+  category: string;
+  equipmentId: number | null;
+  equipmentCode: string | null;
+  equipmentName: string | null;
+  title: string;
+  fileName: string;
+  relativePath: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedById: number | null;
+  uploadedAt: string;
+  notes: string | null;
+}
+
+export interface UpdateLibraryDocumentPayload {
+  id: number;
+  title?: string | null;
+  equipmentId?: number | null;
+  clearEquipmentLink: boolean;
 }
 
 export interface DomainBindingEntry {
@@ -3525,6 +3554,7 @@ export interface KpiValue {
   value: number;
   previous_value: number;
   available: boolean;
+  quality_badge?: string | null | undefined;
 }
 
 export interface DashboardKpis {
@@ -3532,6 +3562,18 @@ export interface DashboardKpis {
   open_wos: KpiValue;
   total_assets: KpiValue;
   overdue_items: KpiValue;
+}
+
+export interface KpiSqlSample {
+  key: string;
+  value: number;
+  sql: string;
+  sample_ids: number[];
+}
+
+export interface DashboardKpiValidation {
+  samples: KpiSqlSample[];
+  overdue_items_total: number;
 }
 
 export interface WorkloadDay {
@@ -3544,6 +3586,7 @@ export interface WorkloadDay {
 export interface DashboardWorkloadChart {
   days: WorkloadDay[];
   period_days: number;
+  quality_badge?: string | null | undefined;
 }
 
 // â”€â”€â”€ DI Statistics (File 04) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -3557,6 +3600,27 @@ export interface DiStatsFilter {
 export interface DiStatusCount {
   status: string;
   count: number;
+}
+
+export interface DashboardLayoutPayload {
+  layout_json: string;
+}
+
+export interface SaveDashboardLayoutInput {
+  layout_json: string;
+}
+
+export interface DashboardDiStatusChart {
+  segments: DiStatusCount[];
+  available: boolean;
+}
+
+export interface DashboardReliabilitySnapshotSummary {
+  available: boolean;
+  snapshot_count: number;
+  avg_data_quality_score?: number | null | undefined;
+  avg_mtbf_hours?: number | null | undefined;
+  total_failure_events: number;
 }
 
 export interface DiPriorityCount {
@@ -3642,6 +3706,10 @@ export interface WorkOrder {
   // People
   requester_id: number | null;
   source_di_id: number | null;
+  source_inspection_anomaly_id?: number | null;
+  source_ram_ishikawa_diagram_id?: number | null;
+  source_ishikawa_flow_node_id?: string | null;
+  source_rca_cause_text?: string | null;
   entity_id: number | null;
   planner_id: number | null;
   approver_id: number | null;
@@ -3683,6 +3751,16 @@ export interface WorkOrder {
   // Metadata
   notes: string | null;
   cancel_reason: string | null;
+  parts_actuals_confirmed: boolean;
+  service_cost_input: number | null;
+  reopen_count: number;
+  last_closed_at: string | null;
+  requires_permit: boolean;
+  entity_sync_id?: string | null;
+  closeout_validation_profile_id?: number | null;
+  closeout_validation_passed?: boolean;
+  no_downtime_attestation?: boolean;
+  no_downtime_attestation_reason?: string | null;
   row_version: number;
   created_at: string;
   updated_at: string;
@@ -3718,6 +3796,10 @@ export interface WoCreateInput {
   equipment_id?: number | null;
   location_id?: number | null;
   source_di_id?: number | null;
+  source_inspection_anomaly_id?: number | null;
+  source_ram_ishikawa_diagram_id?: number | null;
+  source_ishikawa_flow_node_id?: string | null;
+  source_rca_cause_text?: string | null;
   entity_id?: number | null;
   planner_id?: number | null;
   urgency_id?: number | null;
@@ -3729,6 +3811,7 @@ export interface WoCreateInput {
   shift?: WoShift | null;
   expected_duration_hours?: number | null;
   creator_id: number;
+  requires_permit?: boolean;
 }
 
 export interface WoDraftUpdateInput {
@@ -3745,6 +3828,7 @@ export interface WoDraftUpdateInput {
   expected_duration_hours?: number | null;
   notes?: string | null;
   urgency_id?: number | null;
+  requires_permit?: boolean;
 }
 
 export interface WoListFilter {
@@ -3856,6 +3940,8 @@ export interface WoCloseInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
+  no_downtime_attestation?: boolean | null;
+  no_downtime_attestation_reason?: string | null;
 }
 
 export interface WoLaborEntry {
@@ -4939,6 +5025,1200 @@ export interface WorkforceKpiReport {
   team_coverage_ratio: number;
 }
 
+export interface CertificationType {
+  id: number;
+  entity_sync_id: string;
+  code: string;
+  name: string;
+  default_validity_months: number | null;
+  renewal_lead_days: number | null;
+  row_version: number;
+}
+
+export interface QualificationRequirementProfile {
+  id: number;
+  entity_sync_id: string;
+  profile_name: string;
+  required_certification_type_ids_json: string;
+  applies_to_permit_type_codes_json: string;
+  row_version: number;
+}
+
+export interface PersonnelCertification {
+  id: number;
+  entity_sync_id: string;
+  personnel_id: number;
+  certification_type_id: number;
+  issued_at: string | null;
+  expires_at: string | null;
+  issuing_body: string | null;
+  certificate_ref: string | null;
+  verification_status: string;
+  row_version: number;
+  readiness_status: string;
+  certification_type_code: string | null;
+  certification_type_name: string | null;
+}
+
+export interface PersonnelCertificationListFilter {
+  personnel_id?: number | null;
+  limit?: number | null;
+}
+
+export interface CertificationTypeUpsertInput {
+  id?: number | null;
+  code: string;
+  name: string;
+  default_validity_months?: number | null;
+  renewal_lead_days?: number | null;
+}
+
+export interface QualificationRequirementProfileUpsertInput {
+  id?: number | null;
+  profile_name: string;
+  required_certification_type_ids_json: string;
+  applies_to_permit_type_codes_json: string;
+}
+
+export interface PersonnelCertificationUpsertInput {
+  id?: number | null;
+  personnel_id: number;
+  certification_type_id: number;
+  issued_at?: string | null;
+  expires_at?: string | null;
+  issuing_body?: string | null;
+  certificate_ref?: string | null;
+  verification_status: string;
+  expected_row_version?: number | null;
+}
+
+export interface TrainingSession {
+  id: number;
+  entity_sync_id: string;
+  course_code: string;
+  scheduled_start: string;
+  scheduled_end: string;
+  location: string | null;
+  instructor_id: number | null;
+  certification_type_id: number | null;
+  min_pass_score: number;
+  row_version: number;
+}
+
+export interface TrainingSessionUpsertInput {
+  id?: number | null;
+  course_code: string;
+  scheduled_start: string;
+  scheduled_end: string;
+  location?: string | null;
+  instructor_id?: number | null;
+  certification_type_id?: number | null;
+  min_pass_score?: number | null;
+  expected_row_version?: number | null;
+}
+
+export interface TrainingAttendance {
+  id: number;
+  entity_sync_id: string;
+  session_id: number;
+  personnel_id: number;
+  attendance_status: string;
+  completed_at: string | null;
+  score: number | null;
+  row_version: number;
+}
+
+export interface TrainingAttendanceListFilter {
+  session_id?: number | null;
+  personnel_id?: number | null;
+  limit?: number | null;
+}
+
+export interface TrainingAttendanceUpsertInput {
+  id?: number | null;
+  session_id: number;
+  personnel_id: number;
+  attendance_status: string;
+  completed_at?: string | null;
+  score?: number | null;
+  expected_row_version?: number | null;
+}
+
+export interface DocumentAcknowledgement {
+  id: number;
+  entity_sync_id: string;
+  personnel_id: number;
+  document_version_id: number;
+  acknowledged_at: string;
+  row_version: number;
+}
+
+export interface DocumentAcknowledgementListFilter {
+  personnel_id?: number | null;
+  limit?: number | null;
+}
+
+export interface DocumentAcknowledgementUpsertInput {
+  id?: number | null;
+  personnel_id: number;
+  document_version_id: number;
+  acknowledged_at: string;
+  expected_row_version?: number | null;
+}
+
+export interface FailureHierarchy {
+  id: number;
+  entity_sync_id: string;
+  name: string;
+  asset_scope_json: string;
+  version_no: number;
+  is_active: boolean;
+  row_version: number;
+}
+
+export interface FailureCode {
+  id: number;
+  entity_sync_id: string;
+  hierarchy_id: number;
+  parent_id: number | null;
+  code: string;
+  label: string;
+  code_type: string;
+  iso_14224_annex_ref: string | null;
+  is_active: boolean;
+  row_version: number;
+}
+
+export interface FailureHierarchyUpsertInput {
+  id?: number | null;
+  expected_row_version?: number | null;
+  name: string;
+  asset_scope_json: string;
+  version_no: number;
+  is_active: boolean;
+}
+
+export interface FailureCodeUpsertInput {
+  id?: number | null;
+  expected_row_version?: number | null;
+  hierarchy_id: number;
+  parent_id?: number | null;
+  code: string;
+  label: string;
+  code_type: string;
+  iso_14224_annex_ref?: string | null;
+  is_active: boolean;
+}
+
+export interface FailureCodesFilter {
+  hierarchy_id: number;
+  include_inactive?: boolean | null;
+}
+
+export interface DeactivateFailureCodeInput {
+  id: number;
+  expected_row_version: number;
+}
+
+export interface FailureEvent {
+  id: number;
+  entity_sync_id: string;
+  source_type: string;
+  source_id: number;
+  equipment_id: number;
+  component_id: number | null;
+  detected_at: string | null;
+  failed_at: string | null;
+  restored_at: string | null;
+  downtime_duration_hours: number;
+  active_repair_hours: number;
+  waiting_hours: number;
+  is_planned: boolean;
+  failure_class_id: number | null;
+  failure_mode_id: number | null;
+  failure_cause_id: number | null;
+  failure_effect_id: number | null;
+  failure_mechanism_id: number | null;
+  cause_not_determined: boolean;
+  production_impact_level: number | null;
+  safety_impact_level: number | null;
+  recorded_by_id: number | null;
+  verification_status: string;
+  eligible_flags_json: string;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CostOfFailureRow {
+  equipment_id: number;
+  period: string;
+  total_downtime_cost: number;
+  total_corrective_cost: number;
+  currency_code: string;
+}
+
+export interface CostOfFailureFilter {
+  equipment_id?: number | null;
+  period?: string | null;
+  limit?: number | null;
+}
+
+export interface FailureEventsFilter {
+  equipment_id?: number | null;
+  limit?: number | null;
+}
+
+export interface RuntimeExposureLog {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  exposure_type: string;
+  value: number;
+  recorded_at: string;
+  source_type: string;
+  row_version: number;
+}
+
+export interface UpsertRuntimeExposureLogInput {
+  id?: number | null;
+  expected_row_version?: number | null;
+  equipment_id: number;
+  exposure_type: string;
+  value: number;
+  recorded_at: string;
+  source_type: string;
+}
+
+export interface RuntimeExposureLogsFilter {
+  equipment_id?: number | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  limit?: number | null;
+}
+
+export interface ReliabilityKpiSnapshot {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number | null;
+  asset_group_id: number | null;
+  period_start: string;
+  period_end: string;
+  mtbf: number | null;
+  mttr: number | null;
+  availability: number | null;
+  failure_rate: number | null;
+  repeat_failure_rate: number | null;
+  event_count: number;
+  data_quality_score: number;
+  inspection_signal_json: string | null;
+  analysis_dataset_hash_sha256: string;
+  analysis_input_spec_json: string;
+  plot_payload_json: string;
+  row_version: number;
+}
+
+export interface ReliabilityAnalysisInputEvaluation {
+  equipment_id: number;
+  period_start: string;
+  period_end: string;
+  exposure_hours: number;
+  eligible_event_count: number;
+  min_sample_n: number;
+  analysis_dataset_hash_sha256: string;
+  analysis_input_spec_json: string;
+}
+
+export interface ComputationJob {
+  id: number;
+  entity_sync_id: string;
+  job_kind: string;
+  status: string;
+  progress_pct: number;
+  input_json: string;
+  result_json: string | null;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  row_version: number;
+}
+
+export interface ComputationJobProgressEvent {
+  job_id: number;
+  status: string;
+  progress_pct: number;
+}
+
+export interface RefreshReliabilityKpiSnapshotInput {
+  equipment_id: number;
+  period_start: string;
+  period_end: string;
+  min_sample_n?: number | null;
+  repeat_lookback_days?: number | null;
+}
+
+export interface ReliabilityKpiSnapshotsFilter {
+  equipment_id?: number | null;
+  limit?: number | null;
+}
+
+export interface WeibullFitRunInput {
+  equipment_id: number;
+  period_start?: string | null;
+  period_end?: string | null;
+}
+
+export interface WeibullFitRecord {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  period_start: string | null;
+  period_end: string | null;
+  n_points: number;
+  inter_arrival_hours_json: string;
+  beta: number | null;
+  eta: number | null;
+  beta_ci_low: number | null;
+  beta_ci_high: number | null;
+  eta_ci_low: number | null;
+  eta_ci_high: number | null;
+  adequate_sample: boolean;
+  message: string;
+  row_version: number;
+  created_at: string;
+  created_by_id: number | null;
+}
+
+export interface FmecaAnalysis {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  title: string;
+  boundary_definition: string;
+  status: string;
+  row_version: number;
+  created_at: string;
+  created_by_id: number | null;
+  updated_at: string;
+}
+
+export interface CreateFmecaAnalysisInput {
+  equipment_id: number;
+  title: string;
+  boundary_definition?: string | null;
+  status?: string | null;
+}
+
+export interface UpdateFmecaAnalysisInput {
+  id: number;
+  expected_row_version: number;
+  title?: string | null;
+  boundary_definition?: string | null;
+  status?: string | null;
+}
+
+export interface FmecaAnalysesFilter {
+  equipment_id?: number | null;
+  limit?: number | null;
+}
+
+export interface FmecaItem {
+  id: number;
+  entity_sync_id: string;
+  analysis_id: number;
+  component_id: number | null;
+  functional_failure: string;
+  failure_mode_id: number | null;
+  failure_effect: string;
+  severity: number;
+  occurrence: number;
+  detectability: number;
+  rpn: number;
+  recommended_action: string;
+  current_control: string;
+  linked_pm_plan_id: number | null;
+  linked_work_order_id: number | null;
+  revised_rpn: number | null;
+  source_ram_ishikawa_diagram_id: number | null;
+  source_ishikawa_flow_node_id: string | null;
+  row_version: number;
+  updated_at: string;
+}
+
+export interface UpsertFmecaItemInput {
+  id?: number | null;
+  analysis_id: number;
+  expected_row_version?: number | null;
+  component_id?: number | null;
+  functional_failure?: string | null;
+  failure_mode_id?: number | null;
+  failure_effect?: string | null;
+  severity: number;
+  occurrence: number;
+  detectability: number;
+  recommended_action?: string | null;
+  current_control?: string | null;
+  linked_pm_plan_id?: number | null;
+  linked_work_order_id?: number | null;
+  revised_rpn?: number | null;
+  source_ram_ishikawa_diagram_id?: number | null;
+  source_ishikawa_flow_node_id?: string | null;
+}
+
+/** Live FMECA row with analysis context + optional spare stock (IPC flatten). */
+export interface FmecaItemWithContext extends FmecaItem {
+  analysis_title: string;
+  equipment_id: number;
+  spare_stock_total: number | null;
+  inventory_status: string;
+}
+
+export interface FmecaSoCell {
+  severity: number;
+  occurrence: number;
+  count: number;
+}
+
+export interface FmecaSeverityOccurrenceMatrix {
+  equipment_id: number;
+  cells: FmecaSoCell[];
+}
+
+export interface FmecaItemsEquipmentFilter {
+  equipment_id: number;
+  severity?: number | null;
+  occurrence?: number | null;
+  limit?: number | null;
+}
+
+export interface Iso14224DatasetCompleteness {
+  equipment_id: number;
+  event_count: number;
+  completeness_percent: number;
+  dim_equipment_id_pct: number;
+  dim_failure_interval_pct: number;
+  dim_failure_mode_pct: number;
+  dim_corrective_closure_pct: number;
+}
+
+export interface ReliabilityRulIndicator {
+  equipment_id: number;
+  weibull_beta: number | null;
+  weibull_eta_hours: number | null;
+  reliability_at_t: number | null;
+  predicted_rul_hours: number | null;
+  t_hours: number | null;
+  message: string;
+}
+
+export interface RamIshikawaDiagram {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  title: string;
+  flow_json: string;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpsertRamIshikawaDiagramInput {
+  id?: number | null;
+  equipment_id: number;
+  expected_row_version?: number | null;
+  title?: string | null;
+  flow_json: string;
+}
+
+export interface RamIshikawaDiagramsFilter {
+  equipment_id?: number | null;
+  limit?: number | null;
+}
+
+export interface RcmStudy {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  title: string;
+  status: string;
+  row_version: number;
+  created_at: string;
+  created_by_id: number | null;
+  updated_at: string;
+}
+
+export interface CreateRcmStudyInput {
+  equipment_id: number;
+  title: string;
+  status?: string | null;
+}
+
+export interface UpdateRcmStudyInput {
+  id: number;
+  expected_row_version: number;
+  title?: string | null;
+  status?: string | null;
+}
+
+export interface RcmStudiesFilter {
+  equipment_id?: number | null;
+  limit?: number | null;
+}
+
+export interface RcmDecision {
+  id: number;
+  entity_sync_id: string;
+  study_id: number;
+  function_description: string;
+  functional_failure: string;
+  failure_mode_id: number | null;
+  consequence_category: string;
+  selected_tactic: string;
+  justification: string;
+  review_due_at: string | null;
+  linked_pm_plan_id: number | null;
+  row_version: number;
+  updated_at: string;
+}
+
+export interface UpsertRcmDecisionInput {
+  id?: number | null;
+  study_id: number;
+  expected_row_version?: number | null;
+  function_description?: string | null;
+  functional_failure?: string | null;
+  failure_mode_id?: number | null;
+  consequence_category?: string | null;
+  selected_tactic: string;
+  justification?: string | null;
+  review_due_at?: string | null;
+  linked_pm_plan_id?: number | null;
+}
+
+export interface FtaModel {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  title: string;
+  graph_json: string;
+  result_json: string;
+  status: string;
+  row_version: number;
+  created_at: string;
+  created_by_id: number | null;
+  updated_at: string;
+}
+
+export interface CreateFtaModelInput {
+  equipment_id: number;
+  title: string;
+  graph_json?: string | null;
+  status?: string | null;
+}
+
+export interface UpdateFtaModelInput {
+  id: number;
+  expected_row_version: number;
+  title?: string | null;
+  graph_json?: string | null;
+  status?: string | null;
+}
+
+export interface FtaModelsFilter {
+  equipment_id?: number | null;
+  limit?: number | null;
+}
+
+export interface RbdModel {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  title: string;
+  graph_json: string;
+  result_json: string;
+  status: string;
+  row_version: number;
+  created_at: string;
+  created_by_id: number | null;
+  updated_at: string;
+}
+
+export interface CreateRbdModelInput {
+  equipment_id: number;
+  title: string;
+  graph_json?: string | null;
+  status?: string | null;
+}
+
+export interface UpdateRbdModelInput {
+  id: number;
+  expected_row_version: number;
+  title?: string | null;
+  graph_json?: string | null;
+  status?: string | null;
+}
+
+export interface RbdModelsFilter {
+  equipment_id?: number | null;
+  limit?: number | null;
+}
+
+export interface EventTreeModel {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  title: string;
+  graph_json: string;
+  result_json: string;
+  status: string;
+  row_version: number;
+  created_at: string;
+  created_by_id: number | null;
+  updated_at: string;
+}
+
+export interface CreateEventTreeModelInput {
+  equipment_id: number;
+  title: string;
+  graph_json?: string | null;
+  status?: string | null;
+}
+
+export interface UpdateEventTreeModelInput {
+  id: number;
+  expected_row_version: number;
+  title?: string | null;
+  graph_json?: string | null;
+  status?: string | null;
+}
+
+export interface EventTreeModelsFilter {
+  equipment_id?: number | null;
+  limit?: number | null;
+}
+
+export interface RamAdvancedGuardrailFlags {
+  monte_carlo_enabled: boolean;
+  markov_enabled: boolean;
+  mc_max_trials: number;
+  markov_max_states: number;
+}
+
+export interface McModel {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  title: string;
+  graph_json: string;
+  trials: number;
+  seed: number | null;
+  result_json: string;
+  status: string;
+  row_version: number;
+  created_at: string;
+  created_by_id: number | null;
+  updated_at: string;
+}
+
+export interface CreateMcModelInput {
+  equipment_id: number;
+  title: string;
+  graph_json?: string | null;
+  trials?: number | null;
+  seed?: number | null;
+  status?: string | null;
+}
+
+export interface UpdateMcModelInput {
+  id: number;
+  expected_row_version: number;
+  title?: string | null;
+  graph_json?: string | null;
+  trials?: number | null;
+  seed?: number | null;
+  status?: string | null;
+}
+
+export interface McModelsFilter {
+  equipment_id?: number | null;
+  limit?: number | null;
+}
+
+export interface MarkovModel {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  title: string;
+  graph_json: string;
+  result_json: string;
+  status: string;
+  row_version: number;
+  created_at: string;
+  created_by_id: number | null;
+  updated_at: string;
+}
+
+export interface CreateMarkovModelInput {
+  equipment_id: number;
+  title: string;
+  graph_json?: string | null;
+  status?: string | null;
+}
+
+export interface UpdateMarkovModelInput {
+  id: number;
+  expected_row_version: number;
+  title?: string | null;
+  graph_json?: string | null;
+  status?: string | null;
+}
+
+export interface MarkovModelsFilter {
+  equipment_id?: number | null;
+  limit?: number | null;
+}
+
+export interface RamExpertSignOff {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  method_category: string;
+  target_ref: string | null;
+  title: string;
+  reviewer_name: string;
+  reviewer_role: string;
+  status: string;
+  signed_at: string | null;
+  notes: string;
+  row_version: number;
+  created_at: string;
+  created_by_id: number | null;
+  updated_at: string;
+}
+
+export interface CreateRamExpertSignOffInput {
+  equipment_id: number;
+  method_category: string;
+  target_ref?: string | null;
+  title: string;
+  reviewer_name?: string | null;
+  reviewer_role?: string | null;
+  notes?: string | null;
+}
+
+export interface UpdateRamExpertSignOffInput {
+  id: number;
+  expected_row_version: number;
+  title?: string | null;
+  reviewer_name?: string | null;
+  reviewer_role?: string | null;
+  notes?: string | null;
+  target_ref?: string | null;
+}
+
+export interface SignRamExpertReviewInput {
+  id: number;
+  expected_row_version: number;
+  reviewer_name: string;
+  notes?: string | null;
+}
+
+export interface RamExpertSignOffsFilter {
+  equipment_id?: number | null;
+  method_category?: string | null;
+  limit?: number | null;
+}
+
+export interface RamDataQualityIssue {
+  equipment_id: number;
+  issue_code: string;
+  severity: string;
+  remediation_url: string;
+}
+
+export interface RamDataQualityIssuesFilter {
+  equipment_id?: number | null;
+}
+
+export interface WoMissingFailureModeRow {
+  work_order_id: number;
+  equipment_id: number;
+  closed_at: string | null;
+  type_code: string;
+}
+
+export interface EquipmentMissingExposureRow {
+  equipment_id: number;
+  equipment_name: string;
+}
+
+export interface RamEquipmentQualityBadge {
+  equipment_id: number;
+  data_quality_score: number | null;
+  badge: string;
+  blocking_issue_codes: string[];
+}
+
+export interface DismissRamDataQualityIssueInput {
+  equipment_id: number;
+  issue_code: string;
+}
+
+export interface UserDismissal {
+  id: number;
+  entity_sync_id: string;
+  user_id: number;
+  equipment_id: number;
+  issue_code: string;
+  scope_key: string;
+  dismissed_at: string;
+  row_version: number;
+}
+
+export interface UpsertFailureEventInput {
+  id?: number | null;
+  expected_row_version?: number | null;
+  source_type: string;
+  source_id: number;
+  equipment_id: number;
+  component_id?: number | null;
+  detected_at?: string | null;
+  failed_at?: string | null;
+  restored_at?: string | null;
+  downtime_duration_hours: number;
+  active_repair_hours: number;
+  waiting_hours: number;
+  is_planned: boolean;
+  failure_class_id?: number | null;
+  failure_mode_id?: number | null;
+  failure_cause_id?: number | null;
+  failure_effect_id?: number | null;
+  failure_mechanism_id?: number | null;
+  cause_not_determined: boolean;
+  production_impact_level?: number | null;
+  safety_impact_level?: number | null;
+  recorded_by_id?: number | null;
+  verification_status: string;
+  eligible_flags_json: string;
+}
+
+export interface InspectionTemplate {
+  id: number;
+  entity_sync_id: string;
+  code: string;
+  name: string;
+  org_scope_id: number | null;
+  route_scope: string | null;
+  estimated_duration_minutes: number | null;
+  is_active: boolean;
+  current_version_id: number | null;
+  row_version: number;
+}
+
+export interface InspectionTemplateVersion {
+  id: number;
+  entity_sync_id: string;
+  template_id: number;
+  version_no: number;
+  effective_from: string | null;
+  checkpoint_package_json: string;
+  tolerance_rules_json: string | null;
+  escalation_rules_json: string | null;
+  requires_review: boolean;
+  row_version: number;
+}
+
+export interface InspectionCheckpoint {
+  id: number;
+  entity_sync_id: string;
+  template_version_id: number;
+  sequence_order: number;
+  asset_id: number | null;
+  component_id: number | null;
+  checkpoint_code: string;
+  check_type: string;
+  measurement_unit: string | null;
+  normal_min: number | null;
+  normal_max: number | null;
+  warning_min: number | null;
+  warning_max: number | null;
+  requires_photo: boolean;
+  requires_comment_on_exception: boolean;
+  row_version: number;
+}
+
+export interface InspectionRound {
+  id: number;
+  entity_sync_id: string;
+  template_id: number;
+  template_version_id: number;
+  scheduled_at: string | null;
+  assigned_to_id: number | null;
+  status: string;
+  row_version: number;
+}
+
+export interface InspectionCheckpointDraft {
+  sequence_order: number;
+  asset_id?: number | null;
+  component_id?: number | null;
+  checkpoint_code: string;
+  check_type: string;
+  measurement_unit?: string | null;
+  normal_min?: number | null;
+  normal_max?: number | null;
+  warning_min?: number | null;
+  warning_max?: number | null;
+  requires_photo?: boolean | null;
+  requires_comment_on_exception?: boolean | null;
+}
+
+export interface CreateInspectionTemplateInput {
+  code: string;
+  name: string;
+  org_scope_id?: number | null;
+  route_scope?: string | null;
+  estimated_duration_minutes?: number | null;
+  is_active?: boolean | null;
+  checkpoints: InspectionCheckpointDraft[];
+}
+
+export interface PublishInspectionTemplateVersionInput {
+  template_id: number;
+  expected_row_version: number;
+  effective_from?: string | null;
+  requires_review?: boolean | null;
+  tolerance_rules_json?: string | null;
+  escalation_rules_json?: string | null;
+  checkpoints: InspectionCheckpointDraft[];
+}
+
+export interface ScheduleInspectionRoundInput {
+  template_id: number;
+  scheduled_at?: string | null;
+  assigned_to_id?: number | null;
+  explicit_template_version_id?: number | null;
+}
+
+export interface InspectionTemplateVersionsFilter {
+  template_id?: number | null;
+}
+
+export interface InspectionCheckpointsFilter {
+  template_version_id?: number | null;
+}
+
+export interface InspectionResult {
+  id: number;
+  entity_sync_id: string;
+  round_id: number;
+  checkpoint_id: number;
+  result_status: string;
+  numeric_value: number | null;
+  text_value: string | null;
+  boolean_value: boolean | null;
+  comment: string | null;
+  recorded_at: string;
+  recorded_by_id: number;
+  row_version: number;
+}
+
+export interface InspectionEvidence {
+  id: number;
+  result_id: number;
+  evidence_type: string;
+  file_path_or_value: string;
+  captured_at: string;
+  entity_sync_id: string;
+  row_version: number;
+}
+
+export interface InspectionAnomaly {
+  id: number;
+  round_id: number;
+  result_id: number | null;
+  anomaly_type: string;
+  severity: number;
+  description: string;
+  linked_di_id: number | null;
+  linked_work_order_id: number | null;
+  requires_permit_review: boolean;
+  resolution_status: string;
+  routing_decision: string | null;
+  entity_sync_id: string;
+  row_version: number;
+}
+
+export interface RouteInspectionAnomalyToDiInput {
+  anomaly_id: number;
+  expected_row_version: number;
+  title?: string | null;
+  description?: string | null;
+}
+
+export interface RouteInspectionAnomalyToWoInput {
+  anomaly_id: number;
+  expected_row_version: number;
+  type_id: number;
+  title?: string | null;
+}
+
+export interface DeferInspectionAnomalyInput {
+  anomaly_id: number;
+  expected_row_version: number;
+}
+
+export interface InspectionOfflineQueueItem {
+  id: number;
+  payload_json: string;
+  local_temp_id: string;
+  sync_status: string;
+}
+
+export interface RecordInspectionResultInput {
+  round_id: number;
+  checkpoint_id: number;
+  result_status?: string | null;
+  numeric_value?: number | null;
+  text_value?: string | null;
+  boolean_value?: boolean | null;
+  comment?: string | null;
+  expected_row_version?: number | null;
+}
+
+export interface AddInspectionEvidenceInput {
+  result_id: number;
+  evidence_type: string;
+  file_path_or_value: string;
+  captured_at?: string | null;
+  expected_row_version?: number | null;
+}
+
+export interface UpdateInspectionAnomalyInput {
+  id: number;
+  resolution_status: string;
+  linked_di_id?: number | null;
+  linked_work_order_id?: number | null;
+  requires_permit_review?: boolean | null;
+  expected_row_version: number;
+}
+
+export interface InspectionResultsFilter {
+  round_id?: number | null;
+}
+
+export interface InspectionEvidenceFilter {
+  result_id?: number | null;
+}
+
+export interface InspectionAnomaliesFilter {
+  round_id?: number | null;
+}
+
+export interface EnqueueInspectionOfflineInput {
+  payload_json: string;
+  local_temp_id: string;
+}
+
+export interface InspectionReliabilitySignal {
+  id: number;
+  entity_sync_id: string;
+  equipment_id: number;
+  period_start: string;
+  period_end: string;
+  warning_count: number;
+  fail_count: number;
+  anomaly_open_count: number;
+  checkpoint_coverage_ratio: number;
+  row_version: number;
+}
+
+export interface InspectionReliabilitySignalsFilter {
+  equipment_id?: number | null;
+}
+
+export interface RefreshInspectionReliabilitySignalsInput {
+  window_days: number;
+}
+
+export interface PersonnelReadinessRow {
+  personnel_id: number;
+  permit_type_code: string;
+  is_qualified: boolean;
+  blocking_reason: string | null;
+  expires_at: string | null;
+}
+
+export interface PersonnelReadinessFilter {
+  personnel_id?: number | null;
+  permit_type_code?: string | null;
+}
+
+export interface CrewPermitSkillGapInput {
+  work_order_id: number;
+  personnel_ids: number[];
+  permit_type_code?: string | null;
+}
+
+export interface CrewPermitSkillGapRow {
+  personnel_id: number;
+  is_qualified: boolean;
+  blocking_reason: string | null;
+  missing_certification_type_ids: number[];
+  expires_at: string | null;
+}
+
+export interface CrewPermitSkillGapResult {
+  permit_type_code: string;
+  work_order_id: number;
+  rows: CrewPermitSkillGapRow[];
+}
+
+export interface PersonnelReadinessSnapshot {
+  id: number;
+  entity_sync_id: string;
+  period: string;
+  payload_json: string;
+  row_version: number;
+  created_at: string;
+}
+
+export interface PersonnelReadinessSnapshotUpsertInput {
+  id?: number | null;
+  period: string;
+  payload_json: string;
+  expected_row_version?: number | null;
+}
+
+export interface TrainingExpiryAlertEvent {
+  id: number;
+  entity_sync_id: string;
+  certification_id: number;
+  alert_dedupe_key: string;
+  fired_at: string;
+  severity: string;
+  row_version: number;
+}
+
+export interface TrainingExpiryAlertEventListFilter {
+  severity?: string | null;
+  limit?: number | null;
+}
+
+export interface CertificationExpiryDrilldownRow {
+  certification_id: number;
+  personnel_id: number;
+  employee_code: string;
+  full_name: string;
+  primary_entity_id: number | null;
+  certification_type_id: number;
+  certification_type_code: string;
+  expires_at: string | null;
+  verification_status: string;
+  readiness_status: string;
+}
+
 // -- Planning & Scheduling (PRD §6.16) --
 export interface ScheduleCandidate {
   id: number;
@@ -5256,6 +6536,54 @@ export interface NotifyTeamsResult {
   skipped_count: number;
 }
 
+export interface ReportTemplate {
+  id: number;
+  code: string;
+  title: string;
+  description: string;
+  default_format: string;
+  spec_json: string;
+  is_active: boolean;
+}
+
+export interface ReportSchedule {
+  id: number;
+  user_id: number;
+  template_id: number;
+  cron_expr: string;
+  export_format: string;
+  enabled: boolean;
+  next_run_at: string;
+  last_run_at: string | null;
+}
+
+export interface ReportRun {
+  id: number;
+  schedule_id: number | null;
+  template_id: number;
+  user_id: number;
+  status: string;
+  export_format: string;
+  artifact_path: string | null;
+  byte_size: number | null;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface UpsertReportScheduleInput {
+  id?: number | null;
+  template_id: number;
+  cron_expr: string;
+  export_format: string;
+  enabled: boolean;
+}
+
+export interface ExportReportInput {
+  template_code: string;
+  export_format: string;
+}
+
 export interface ExportPlanningGanttPdfInput {
   period_start: string;
   period_end: string;
@@ -5315,6 +6643,7 @@ export interface UpdateCostCenterInput {
 
 export interface BudgetVersion {
   id: number;
+  entity_sync_id: string;
   fiscal_year: number;
   scenario_type: string;
   version_no: number;
@@ -5381,6 +6710,7 @@ export interface TransitionBudgetVersionLifecycleInput {
 
 export interface BudgetLine {
   id: number;
+  entity_sync_id: string;
   budget_version_id: number;
   cost_center_id: number;
   cost_center_code: string;
@@ -5791,8 +7121,70 @@ export interface ErpApprovedReforecastExportItem {
   reconciliation_flags: string[];
 }
 
+export interface PostedExportBatch {
+  id: number;
+  entity_sync_id: string;
+  batch_uuid: string;
+  export_kind: string;
+  tenant_id: string | null;
+  relay_payload_json: string;
+  total_posted: number;
+  line_count: number;
+  status: string;
+  erp_ack_at: string | null;
+  erp_http_code: number | null;
+  rejection_code: string | null;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IntegrationException {
+  id: number;
+  entity_sync_id: string;
+  posted_export_batch_id: number;
+  source_record_kind: string;
+  source_record_id: number;
+  maintafox_value_snapshot: string;
+  external_value_snapshot: string | null;
+  resolution_status: string;
+  rejection_code: string | null;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecordErpExportBatchInput {
+  export_kind: string;
+  tenant_id?: string | null;
+}
+
+export interface ErpExportBatchResult {
+  batch: PostedExportBatch;
+  jsonl: string;
+  integration_exceptions: IntegrationException[];
+}
+
+export interface PostedExportBatchFilter {
+  export_kind?: string | null;
+  limit?: number | null;
+}
+
+export interface IntegrationExceptionFilter {
+  posted_export_batch_id?: number | null;
+  resolution_status?: string | null;
+  limit?: number | null;
+}
+
+export interface UpdateIntegrationExceptionInput {
+  resolution_status: string;
+  external_value_snapshot?: string | null;
+  rejection_code?: string | null;
+}
+
 export interface BudgetAlertConfig {
   id: number;
+  entity_sync_id: string;
   budget_version_id: number | null;
   cost_center_id: number | null;
   budget_bucket: string | null;
@@ -5846,6 +7238,7 @@ export interface UpdateBudgetAlertConfigInput {
 
 export interface BudgetAlertEvent {
   id: number;
+  entity_sync_id: string;
   alert_config_id: number | null;
   budget_version_id: number;
   cost_center_id: number;
@@ -6064,10 +7457,19 @@ export interface ApplySyncBatchResult {
   typed_rejections: SyncTypedRejection[];
 }
 
+/** Device tenant context echoed with sync exchange for isolation auditing (optional). */
+export interface TenantConfigSyncPayload {
+  tenant_id: string;
+  is_activated: boolean;
+  company_display_name: string | null;
+}
+
 export interface SyncPushPayload {
   protocol_version: string;
   checkpoint_token: string | null;
   outbox_batch: SyncOutboxItem[];
+  /** Optional tenant metadata on sync exchange (control-plane observability / policy); ignored by mirror apply when unused. */
+  tenant_config?: TenantConfigSyncPayload | null;
 }
 
 export interface SyncStateSummary {
@@ -6116,7 +7518,13 @@ export interface SyncConflictRecord {
 export interface ResolveSyncConflictInput {
   conflict_id: number;
   expected_row_version: number;
-  action: "accept_local" | "accept_remote" | "merge_fields" | "retry_later" | "escalate" | "dismiss";
+  action:
+    | "accept_local"
+    | "accept_remote"
+    | "merge_fields"
+    | "retry_later"
+    | "escalate"
+    | "dismiss";
   resolution_note?: string | null;
 }
 
@@ -6326,4 +7734,49 @@ export interface SyncObservabilityReport {
   diagnostics_links: string[];
 }
 
+/** Gap 06 sprint 02 — data integrity findings (local + sync payload shape). */
+export interface DataIntegrityFindingRow {
+  id: number;
+  entity_sync_id: string;
+  row_version: number;
+  severity: string;
+  domain: string;
+  record_class: string;
+  record_id: number;
+  finding_code: string;
+  details_json: string;
+  detected_at: string;
+  cleared_at: string | null;
+  status: string;
+  waiver_reason: string | null;
+  waiver_approver_id: number | null;
+}
 
+export interface WaiveDataIntegrityFindingInput {
+  finding_id: number;
+  expected_row_version: number;
+  reason: string;
+  approver_id?: number | null;
+}
+
+export interface ApplyDataIntegrityRepairInput {
+  finding_id: number;
+  expected_row_version: number;
+  repair_kind: string;
+}
+
+export interface AnalyticsContractVersionRow {
+  id: number;
+  entity_sync_id: string;
+  row_version: number;
+  contract_id: string;
+  version_semver: string;
+  content_sha256: string;
+  activated_at: string;
+}
+
+export interface RegisterAnalyticsContractVersionInput {
+  contract_id: string;
+  version_semver: string;
+  content_sha256: string;
+}

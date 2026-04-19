@@ -32,7 +32,15 @@
   "sync": {
     "offline": "Hors ligne",
     "syncing": "Synchronisation\u2026",
-    "error": "Erreur de sync"
+    "error": "Erreur de sync",
+    "offlineChangesSaved": "Mode hors ligne : vos modifications sont enregistr\u00e9es localement et seront synchronis\u00e9es lors du retour de la connexion.",
+    "syncCenter": "Centre de synchronisation",
+    "syncCenterTitle": "Centre de synchronisation",
+    "syncCenterConflicts": "Conflits non r\u00e9solus",
+    "syncCenterRejected": "\u00c9l\u00e9ments rejet\u00e9s (file d'attente)",
+    "resolveLocal": "Conserver la version locale",
+    "resolveRemote": "Conserver la version serveur",
+    "noConflicts": "Aucun \u00e9l\u00e9ment \u00e0 traiter."
   },
   "status": {
     "online": "En ligne",
@@ -118,13 +126,10 @@
     "lookups": "Donn\u00e9es de r\u00e9f\u00e9rence",
     "notifications": "Notifications",
     "documentation": "Documentation",
-    "iot": "Passerelle IoT",
-    "erp": "Connecteurs ERP",
     "activity": "Journal d'activit\u00e9",
     "settings": "Param\u00e8tres",
     "users": "Utilisateurs & r\u00f4les",
     "org": "Organisation",
-    "configuration": "Configuration",
     "diagnostics": "Diagnostics",
     "profile": "Mon profil",
     "help": "Aide & Documentation",

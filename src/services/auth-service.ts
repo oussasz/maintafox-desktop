@@ -2,9 +2,9 @@
 // Components and hooks MUST NOT import from @tauri-apps/api/core directly
 // for auth operations.
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   ClearPinInput,
   LoginRequest,
@@ -14,7 +14,7 @@ import type {
   SetPinInput,
 } from "@shared/ipc-types";
 
-// ── Zod schemas for runtime validation ────────────────────────────────────────
+// â”€â”€ Zod schemas for runtime validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const sessionInfoSchema = z.object({
   is_authenticated: z.boolean(),
   is_locked: z.boolean(),
@@ -35,7 +35,7 @@ const loginResponseSchema = z.object({
   session_info: sessionInfoSchema,
 });
 
-// ── Service functions ─────────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Attempt to log in with username and password.

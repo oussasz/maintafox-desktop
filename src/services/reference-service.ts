@@ -1,8 +1,8 @@
 // ADR-003: all invoke() calls live exclusively in src/services/.
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   ReferenceDomain,
   CreateReferenceDomainPayload,
@@ -24,7 +24,7 @@ import type {
   RefExportResult,
 } from "@shared/ipc-types";
 
-// ── Zod schemas ────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const ReferenceDomainSchema = z.object({
   id: z.number().int(),
@@ -83,7 +83,7 @@ export const ReferenceUsageMigrationResultSchema = z.object({
   source_deactivated: z.boolean(),
 });
 
-// ── Domain commands ────────────────────────────────────────────────────────
+// â”€â”€ Domain commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listReferenceDomains(): Promise<ReferenceDomain[]> {
   const raw = await invoke<unknown[]>("list_reference_domains");
@@ -110,7 +110,7 @@ export async function updateReferenceDomain(
   return ReferenceDomainSchema.parse(raw);
 }
 
-// ── Set commands ───────────────────────────────────────────────────────────
+// â”€â”€ Set commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listReferenceSets(domainId: number): Promise<ReferenceSet[]> {
   const raw = await invoke<unknown[]>("list_reference_sets", { domainId });
@@ -137,7 +137,7 @@ export async function publishReferenceSet(setId: number): Promise<ReferenceSet> 
   return ReferenceSetSchema.parse(raw);
 }
 
-// ── Value commands ─────────────────────────────────────────────────────────
+// â”€â”€ Value commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listReferenceValues(setId: number): Promise<ReferenceValue[]> {
   const raw = await invoke<unknown[]>("list_reference_values", { setId });
@@ -177,7 +177,7 @@ export async function moveReferenceValueParent(
   return ReferenceValueSchema.parse(raw);
 }
 
-// ── Migration commands ─────────────────────────────────────────────────────
+// â”€â”€ Migration commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function mergeReferenceValues(
   domainId: number,
@@ -213,7 +213,7 @@ export async function listReferenceMigrations(
   return z.array(ReferenceValueMigrationSchema).parse(raw);
 }
 
-// ── Alias commands (SP03-F03-S1) ───────────────────────────────────────────
+// â”€â”€ Alias commands (SP03-F03-S1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const ReferenceAliasSchema = z.object({
   id: z.number().int(),
@@ -254,7 +254,7 @@ export async function deleteReferenceAlias(aliasId: number): Promise<void> {
   await invoke<void>("delete_reference_alias", { aliasId });
 }
 
-// ─── Reference imports / exports (SP03-F03-S2) ──────────────────────────────
+// â”€â”€â”€ Reference imports / exports (SP03-F03-S2) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const ImportRowMessageSchema = z.object({
   category: z.string(),
@@ -369,7 +369,7 @@ export async function listRefImportBatches(
   return z.array(RefImportBatchSummarySchema).parse(raw);
 }
 
-// ─── Reference search (SP03-F03-S3) ─────────────────────────────────────────
+// â”€â”€â”€ Reference search (SP03-F03-S3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import type { ReferenceSearchHit } from "../../shared/ipc-types";
 import type {
@@ -403,7 +403,7 @@ export async function searchReferenceValues(
   return z.array(ReferenceSearchHitSchema).parse(raw);
 }
 
-// ── Publish governance (SP03-F04-S1) ─────────────────────────────────────────
+// â”€â”€ Publish governance (SP03-F04-S1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const ReferencePublishIssueSchema = z.object({
   check: z.string(),

@@ -1822,7 +1822,7 @@ async fn compute_simulation_warnings(
 }
 
 /// Validate password strength: min 8 chars, at least one uppercase, one lowercase, one digit.
-fn validate_password_strength(password: &str) -> AppResult<()> {
+pub(crate) fn validate_password_strength(password: &str) -> AppResult<()> {
     let mut errors = Vec::new();
 
     if password.len() < 8 {

@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { mfLayout } from "@/design-system/tokens";
 import { useOrgDesignerStore } from "@/stores/org-designer-store";
 
 export function OrganizationDesignerPage() {
@@ -83,12 +84,12 @@ export function OrganizationDesignerPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Page header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border">
-        <div className="flex items-center gap-3">
-          <Building2 className="h-5 w-5 text-text-muted" />
-          <h1 className="text-xl font-semibold text-text-primary">{t("designer.title")}</h1>
+    <div className={mfLayout.moduleRoot}>
+      {/* Page header — DI/OT pattern */}
+      <div className={mfLayout.moduleHeader}>
+        <div className={mfLayout.moduleTitleRow}>
+          <Building2 className={mfLayout.moduleHeaderIcon} />
+          <h1 className={mfLayout.moduleTitle}>{t("designer.title")}</h1>
           {hasActiveModel && (
             <Badge variant="default" className="text-xs">
               {t("designer.modelVersion", {
@@ -97,7 +98,7 @@ export function OrganizationDesignerPage() {
             </Badge>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className={mfLayout.moduleHeaderActions}>
           <Button
             variant="outline"
             size="sm"

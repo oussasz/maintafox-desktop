@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useState, useEffect, useCallback } from "react";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type { DeviceTrustStatus } from "@shared/ipc-types";
 
 /**
@@ -28,7 +28,7 @@ export function useDeviceTrustStatus(): DeviceTrustStatus {
       const result = await invoke<DeviceTrustStatus>("get_device_trust_status");
       setStatus(result);
     } catch {
-      // Command failed (no session, or not implemented yet) — silent fallback
+      // Command failed (no session, or not implemented yet) â€” silent fallback
       setStatus({
         device_fingerprint: "",
         is_trusted: false,

@@ -10,6 +10,7 @@ use tokio::sync::RwLock;
 
 use crate::auth::session_manager::SessionManager;
 use crate::background::BackgroundTaskSupervisor;
+use crate::jobs::ComputationJobRunner;
 use crate::rbac::cache::PermissionCache;
 
 /// Database connection pool managed by sea-orm.
@@ -50,6 +51,8 @@ pub struct AppState {
     pub session: Arc<RwLock<SessionManager>>,
     /// Background task supervisor. Clone is cheap (Arc inside).
     pub tasks: BackgroundTaskSupervisor,
+    /// Async computation jobs (progress + cooperative cancel).
+    pub computation_jobs: ComputationJobRunner,
     /// In-memory permission cache with TTL-based expiry.
     /// Invalidated by RBAC mutation commands (`assign_role_scope`, `update_role`, …).
     pub permission_cache: Arc<RwLock<PermissionCache>>,
@@ -63,6 +66,7 @@ impl AppState {
             config: Arc::new(RwLock::new(AppConfig::default())),
             session: Arc::new(RwLock::new(SessionManager::new())),
             tasks: BackgroundTaskSupervisor::new(),
+            computation_jobs: ComputationJobRunner::new(),
             permission_cache: Arc::new(RwLock::new(PermissionCache::default())),
         }
     }

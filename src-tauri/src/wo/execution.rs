@@ -17,6 +17,7 @@
 use crate::errors::{AppError, AppResult};
 use crate::wo::queries;
 use chrono::Utc;
+use uuid::Uuid;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait,
 };
@@ -400,6 +401,8 @@ pub async fn assign_wo(db: &DatabaseConnection, input: WoAssignInput) -> AppResu
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult<WorkOrder> {
+    crate::permit::wo_gate::assert_in_progress_permit_gate(db, input.wo_id).await?;
+
     let txn = db.begin().await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
@@ -454,12 +457,32 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
 
     txn.commit().await?;
 
-    queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(db, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })
+        })?;
+
+    if wo.requires_permit {
+        let permit = crate::permit::queries::get_work_permit_linked_to_work_order(db, input.wo_id)
+            .await?
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!(
+                    "PTW gate passed but no linked permit for WO {}",
+                    input.wo_id
+                ))
+            })?;
+        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(
+            db,
+            &wo,
+            &permit,
+            &Uuid::new_v4().to_string(),
+        )
+        .await?;
+    }
+
+    Ok(wo)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -563,6 +586,8 @@ pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResult<WorkOrder> {
+    crate::permit::wo_gate::assert_in_progress_permit_gate(db, input.wo_id).await?;
+
     let txn = db.begin().await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
@@ -635,12 +660,32 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
 
     txn.commit().await?;
 
-    queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(db, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })
+        })?;
+
+    if wo.requires_permit {
+        let permit = crate::permit::queries::get_work_permit_linked_to_work_order(db, input.wo_id)
+            .await?
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!(
+                    "PTW gate passed but no linked permit for WO {}",
+                    input.wo_id
+                ))
+            })?;
+        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(
+            db,
+            &wo,
+            &permit,
+            &Uuid::new_v4().to_string(),
+        )
+        .await?;
+    }
+
+    Ok(wo)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -80,6 +80,8 @@ pub struct DiCreateInput {
     pub reported_urgency: String,
     pub observed_at: Option<String>,
     pub submitter_id: i64,
+    #[serde(default)]
+    pub source_inspection_anomaly_id: Option<i64>,
 }
 
 /// Input for updating draft/editable fields on an existing DI.
@@ -115,6 +117,7 @@ const IR_COLS: &str = "\
     ir.converted_to_wo_id, ir.converted_at, \
     ir.reviewer_note, ir.classification_code_id, \
     ir.is_recurrence_flag, ir.recurrence_di_id, \
+    ir.source_inspection_anomaly_id, \
     ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -401,8 +404,8 @@ pub async fn create_intervention_request(
             code, asset_id, org_node_id, status, title, description, origin_type, \
             symptom_code_id, impact_level, production_impact, safety_flag, \
             environmental_flag, quality_flag, reported_urgency, observed_at, \
-            submitted_at, submitter_id, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            submitted_at, submitter_id, source_inspection_anomaly_id, row_version, created_at, updated_at\
+         ) VALUES (?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             input.asset_id.into(),
@@ -420,6 +423,10 @@ pub async fn create_intervention_request(
             input.observed_at.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
             now.clone().into(),
             input.submitter_id.into(),
+            input
+                .source_inspection_anomaly_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
             now.clone().into(),
             now.clone().into(),
         ],

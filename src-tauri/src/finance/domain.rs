@@ -49,6 +49,7 @@ pub struct UpdateCostCenterInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetVersion {
     pub id: i64,
+    pub entity_sync_id: String,
     pub fiscal_year: i64,
     pub scenario_type: String,
     pub version_no: i64,
@@ -121,6 +122,7 @@ pub struct TransitionBudgetVersionLifecycleInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetLine {
     pub id: i64,
+    pub entity_sync_id: String,
     pub budget_version_id: i64,
     pub cost_center_id: i64,
     pub cost_center_code: String,
@@ -560,8 +562,77 @@ pub struct ErpApprovedReforecastExportItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostedExportBatch {
+    pub id: i64,
+    pub entity_sync_id: String,
+    pub batch_uuid: String,
+    pub export_kind: String,
+    pub tenant_id: Option<String>,
+    pub relay_payload_json: String,
+    pub total_posted: f64,
+    pub line_count: i64,
+    pub status: String,
+    pub erp_ack_at: Option<String>,
+    pub erp_http_code: Option<i64>,
+    pub rejection_code: Option<String>,
+    pub row_version: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntegrationException {
+    pub id: i64,
+    pub entity_sync_id: String,
+    pub posted_export_batch_id: i64,
+    pub source_record_kind: String,
+    pub source_record_id: i64,
+    pub maintafox_value_snapshot: String,
+    pub external_value_snapshot: Option<String>,
+    pub resolution_status: String,
+    pub rejection_code: Option<String>,
+    pub row_version: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordErpExportBatchInput {
+    pub export_kind: String,
+    pub tenant_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErpExportBatchResult {
+    pub batch: PostedExportBatch,
+    pub jsonl: String,
+    pub integration_exceptions: Vec<IntegrationException>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PostedExportBatchFilter {
+    pub export_kind: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct IntegrationExceptionFilter {
+    pub posted_export_batch_id: Option<i64>,
+    pub resolution_status: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateIntegrationExceptionInput {
+    pub resolution_status: String,
+    pub external_value_snapshot: Option<String>,
+    pub rejection_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetAlertConfig {
     pub id: i64,
+    pub entity_sync_id: String,
     pub budget_version_id: Option<i64>,
     pub cost_center_id: Option<i64>,
     pub budget_bucket: Option<String>,
@@ -619,6 +690,7 @@ pub struct UpdateBudgetAlertConfigInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetAlertEvent {
     pub id: i64,
+    pub entity_sync_id: String,
     pub alert_config_id: Option<i64>,
     pub budget_version_id: i64,
     pub cost_center_id: i64,

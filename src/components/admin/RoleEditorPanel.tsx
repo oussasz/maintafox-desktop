@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { mfChip, mfPermissionDomainChip } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useStepUp } from "@/hooks/use-step-up";
 import { useToast } from "@/hooks/use-toast";
@@ -48,21 +49,6 @@ import type {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Domain → Tailwind colour classes for permission chips. */
-const DOMAIN_COLOURS: Record<string, string> = {
-  di: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-  ot: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
-  eq: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
-  pm: "bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200",
-  inv: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
-  per: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200",
-  org: "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200",
-  ref: "bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-200",
-  adm: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-};
-
-const DEFAULT_CHIP_COLOUR = "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200";
-
 /** Group permission names by domain prefix (e.g. "adm", "di", "eq"). */
 function groupByDomain(permissions: string[]): Record<string, string[]> {
   const groups: Record<string, string[]> = {};
@@ -86,7 +72,9 @@ function DomainChips({
   // Full access shortcut
   if (totalPermissions > 0 && permissions.length >= totalPermissions) {
     return (
-      <span className="inline-flex items-center rounded-full bg-amber-200 px-2 py-0.5 text-[9px] font-semibold text-amber-900 dark:bg-amber-800 dark:text-amber-100">
+      <span
+        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] ${mfChip.fullAccess}`}
+      >
         {t("roles.fullAccess", "Accès complet")}
       </span>
     );
@@ -107,14 +95,14 @@ function DomainChips({
       {visible.map(([domain, perms]) => (
         <span
           key={domain}
-          className={`inline-flex items-center rounded-full px-1.5 py-0 text-[9px] font-semibold leading-4 ${DOMAIN_COLOURS[domain] ?? DEFAULT_CHIP_COLOUR}`}
+          className={`inline-flex items-center rounded-full px-1.5 py-0 text-[9px] font-semibold leading-4 ${mfPermissionDomainChip[domain] ?? mfChip.neutral}`}
         >
           {domain.toUpperCase()} ({perms.length})
         </span>
       ))}
       {overflow > 0 && (
         <span
-          className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0 text-[9px] font-semibold leading-4 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+          className={`inline-flex items-center rounded-full px-1.5 py-0 text-[9px] font-semibold leading-4 ${mfChip.neutral}`}
           title={entries
             .slice(MAX_CHIPS)
             .map(([d, p]) => `${d.toUpperCase()} (${p.length})`)

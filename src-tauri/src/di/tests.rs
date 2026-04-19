@@ -153,6 +153,7 @@ mod tests {
             quality_flag: false,
             reported_urgency: "medium".to_string(),
             observed_at: None,
+            source_inspection_anomaly_id: None,
             submitter_id: user_id,
         }
     }

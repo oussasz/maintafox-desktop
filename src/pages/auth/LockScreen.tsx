@@ -1,6 +1,9 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
+import { mfAuth } from "@/design-system/tokens";
+
 interface LockScreenProps {
   displayName: string | null;
   onUnlock: (password: string) => Promise<void>;
@@ -80,7 +83,10 @@ export function LockScreen({
         const message =
           err instanceof Error ? err.message : t("session.pin.invalid", "PIN incorrect.");
 
-        if (message.toLowerCase().includes("pin désactivé") || message.toLowerCase().includes("pin disabled")) {
+        if (
+          message.toLowerCase().includes("pin désactivé") ||
+          message.toLowerCase().includes("pin disabled")
+        ) {
           setPinFailures(MAX_PIN_FAILURES);
         } else {
           setPinFailures((f) => f + 1);
@@ -126,14 +132,11 @@ export function LockScreen({
     };
   }, [mode, onUnlockWithPin, loading, pinDisabled, pinValue, submitPin]);
 
-  const handlePinInput = useCallback(
-    (value: string) => {
-      const digits = value.replace(/\D/g, "").slice(0, MAX_PIN_LENGTH);
-      setPinValue(digits);
-      setError(null);
-    },
-    [],
-  );
+  const handlePinInput = useCallback((value: string) => {
+    const digits = value.replace(/\D/g, "").slice(0, MAX_PIN_LENGTH);
+    setPinValue(digits);
+    setError(null);
+  }, []);
 
   // ── Password submit ─────────────────────────────────────────────────────
 
@@ -156,8 +159,11 @@ export function LockScreen({
   const canToggle = pinConfigured && onUnlockWithPin && !pinDisabled;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-0 px-4">
+    <div className={mfAuth.lockShell}>
       <div className="w-full max-w-sm text-center">
+        <div className="mb-8 flex justify-center">
+          <MaintafoxWordmark size="sm" align="center" />
+        </div>
         {/* User avatar */}
         <div
           className="mx-auto mb-4 flex h-16 w-16 items-center justify-center

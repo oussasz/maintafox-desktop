@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import { i18n } from "@/i18n/config";
 import {
   computeRetryDelayMs,
   defaultRetryPolicy,
@@ -22,6 +23,7 @@ import {
 } from "@/services/sync-service";
 import { exchangeControlPlaneSyncRound } from "@/services/sync-vps-transport-service";
 import { useAppStore } from "@/store/app-store";
+import { pushAppToast } from "@/store/app-toast-store";
 import { toErrorMessage } from "@/utils/errors";
 import type {
   ReplaySyncFailuresInput,
@@ -104,6 +106,7 @@ interface SyncOrchestratorState {
   telemetry: SyncTelemetryCounters;
   conflictInbox: SyncConflictRecord[];
   replayHistoryCount: number;
+  rejectedOutboxCount: number;
 
   initialize: () => void;
   shutdown: () => void;
@@ -300,6 +303,7 @@ async function executeSyncRun(mode: SyncRunMode) {
         unresolvedConflicts: conflicts.length,
         conflictInbox: conflicts,
         replayHistoryCount: replayRuns.length,
+        rejectedOutboxCount: summary.rejected_outbox_count,
         lastRunFinishedAt: finishedAt,
         lastSuccessAt: finishedAt,
         lastError: null,
@@ -316,6 +320,13 @@ async function executeSyncRun(mode: SyncRunMode) {
     useSyncOrchestratorStore.getState().scheduleNext();
   } catch (error) {
     const message = redactSecrets(toErrorMessage(error));
+    if (message.includes("SYNC_EXCHANGE_TIMEOUT")) {
+      pushAppToast({
+        title: String(i18n.t("errors:generic.timeout")),
+        description: String(i18n.t("shell:sync.offlineChangesSaved")),
+        variant: "default",
+      });
+    }
     useSyncOrchestratorStore.setState((state) => {
       const nextAttempt = state.retry.attempt + 1;
       const canRetry = shouldRetry(nextAttempt, state.retryPolicy);
@@ -404,20 +415,38 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
       },
       conflictInbox: [],
       replayHistoryCount: 0,
+      rejectedOutboxCount: 0,
 
       initialize: () => {
         if (get().initialized) return;
-        set((state) => ({
-          initialized: true,
-          runtimeState: normalizeRuntimeStateAfterRestart(state.runtimeState),
-          timeline: pushTimeline(state.timeline, {
-            correlationId: newCorrelationId(),
-            severity: "info",
-            mode: "bootstrap_restore",
-            event: "orchestrator_initialized",
-            message: "Sync orchestrator initialized from persisted state.",
-          }),
-        }));
+        set((state) => {
+          const runtimeState = normalizeRuntimeStateAfterRestart(state.runtimeState);
+          const clearedTerminalError = state.runtimeState === "error";
+          return {
+            initialized: true,
+            runtimeState,
+            retry: { attempt: 0, nextRetryAt: null, lastError: null },
+            lastError: clearedTerminalError ? null : state.lastError,
+            timeline: pushTimeline(state.timeline, {
+              correlationId: newCorrelationId(),
+              severity: "info",
+              mode: "bootstrap_restore",
+              event: "orchestrator_initialized",
+              message: "Sync orchestrator initialized from persisted state.",
+            }),
+          };
+        });
+        {
+          const s = get();
+          reflectAppSyncState(
+            s.runtimeState,
+            s.pendingBacklog,
+            s.lastSuccessAt,
+            s.lastError,
+            s.blockerReason,
+            s.retry.attempt,
+          );
+        }
         if (typeof window !== "undefined" && !onlineHandlerBound) {
           window.addEventListener("online", () => {
             useAppStore.getState().setOnline(true);
@@ -580,6 +609,7 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
           conflictInbox: conflicts,
           replayHistoryCount: replayRuns.length,
           unresolvedConflicts: conflicts.length,
+          rejectedOutboxCount: summary.rejected_outbox_count,
           pendingBacklog: summary.pending_outbox_count,
           checkpointToken: summary.checkpoint?.checkpoint_token ?? null,
           runtimeState:

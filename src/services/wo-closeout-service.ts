@@ -2,15 +2,14 @@
  * wo-closeout-service.ts
  *
  * IPC wrappers for WO close-out, verification, cost, attachment, and analytics commands.
- * Phase 2 – Sub-phase 05 – File 03 – Sprint S3.
+ * Phase 2 â€“ Sub-phase 05 â€“ File 03 â€“ Sprint S3.
  */
 
-import { invoke } from "@tauri-apps/api/core";
-
+import { invoke } from "@/lib/ipc-invoke";
 import { VersionConflictError, WorkOrderSchema } from "@/services/wo-service";
 import type { WorkOrder } from "@shared/ipc-types";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // -- Failure details --
 
@@ -68,6 +67,8 @@ export interface WoCloseInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
+  no_downtime_attestation?: boolean | null;
+  no_downtime_attestation_reason?: string | null;
 }
 
 export interface WoReopenInput {
@@ -181,7 +182,7 @@ export interface WoAnalyticsSnapshot {
   permit_ids: number[];
 }
 
-// ── Blocking error helper ─────────────────────────────────────────────────────
+// â”€â”€ Blocking error helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export class CloseoutBlockingError extends Error {
   blockingErrors: string[];
@@ -217,7 +218,7 @@ function maybeWrapBlockingError(error: unknown): never {
   throw error;
 }
 
-// ── Commands ──────────────────────────────────────────────────────────────────
+// â”€â”€ Commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // -- Failure detail --
 
@@ -288,7 +289,7 @@ export async function getWoAnalyticsSnapshot(woId: number): Promise<WoAnalyticsS
   return invoke<WoAnalyticsSnapshot>("get_wo_analytics_snapshot", { woId });
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Maximum file size for WO attachments (25 MB). */
 export const MAX_WO_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024;

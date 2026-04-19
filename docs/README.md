@@ -162,6 +162,38 @@
 
 ## Phase 5 - Advanced Reliability And Launch Hardening
 - phase-5-advanced-reliability-and-launch-hardening/
+  - gaps/ — **[Gaps integration program index](roadmap/phase-5-advanced-reliability-and-launch-hardening/gaps/README.md)** (deferred modules + RAMS foundation; copy-paste **Oussama Protocol** prompts)
+  - gaps/
+    - 01-loto-work-permit-system/
+      - 01-permit-domain-schema-types-and-isolation-points.md
+      - 02-permit-lifecycle-issuance-activation-suspension-handback.md
+      - 03-isolation-verification-and-work-order-gating.md
+      - 04-loto-card-generation-compliance-reporting-and-audit.md
+    - 02-training-certification-habilitation/
+      - 01-qualification-schema-certificates-and-renewal-rules.md
+      - 02-training-sessions-acknowledgements-and-self-service-visibility.md
+      - 03-planning-integration-permit-eligibility-and-skill-gaps.md
+      - 04-governance-alerts-audit-and-expiry-drilldowns.md
+    - 03-inspection-rounds-and-checklists/
+      - 01-templates-rounds-checkpoints-and-versioning.md
+      - 02-field-execution-results-evidence-and-offline-queue.md
+      - 03-anomaly-routing-follow-up-di-and-wo-generation.md
+      - 04-compliance-trends-coverage-and-reliability-handoff.md
+    - 04-budget-cost-center-closure/
+      - 01-prd-gap-review-and-ux-residuals-on-budget-surfaces.md
+      - 02-erp-export-reconciliation-and-posting-integrity.md
+      - 03-multi-machine-consistency-and-budget-aware-reliability-cost-views.md
+    - 05-reliability-data-foundation-iso-14224/
+      - 01-failure-taxonomy-hierarchies-and-stable-reference-binding.md
+      - 02-governed-failure-events-eligibility-and-wo-ingestion.md
+      - 03-runtime-exposure-denominators-and-reliability-kpi-snapshots.md
+      - 04-data-quality-workspace-badges-and-drill-through.md
+    - 06-work-order-closeout-and-data-integrity/
+      - 01-closeout-completeness-rules-and-validation-gates.md
+      - 02-data-integrity-detectors-repair-jobs-and-operator-workbench.md
+      - 03-regression-tests-and-analytics-contract-freeze.md
+    - 07-scientific-output-validation-and-research-benchmarks/
+      - 01-scientific-output-validation-golden-benchmarks-and-regression-harness.md
   - 01-reliability-engine-core-and-reproducible-snapshots/
     - 01-analysis-input-qualification-and-dataset-hashing.md
     - 02-rust-computation-runtime-and-job-orchestration.md
@@ -204,7 +236,9 @@
 
 Roadmap files under `docs/roadmap/` are **task lists** for Solo Lead implementation in `maintafox-desktop/`, not long AI prompt documents.
 
-- **No prompt blocks** in roadmap files; do not spend tokens generating future detailed prompts here.
+- **Exception:** `phase-5-advanced-reliability-and-launch-hardening/gaps/**` ends each sprint with **Oussama Protocol — Surgical — Dual-channel**: **Stage 1** 🌐 VPS dispatch (do not copy to codebase agent); **Stage 2** 🖥️ codebase execution (`[STATUS]`, **Read Only**, **Agent Rules**, **Actions**, **Sync JSON**) — see [gaps/README.md](roadmap/phase-5-advanced-reliability-and-launch-hardening/gaps/README.md) for execution order, **universal sync integration**, inspection→RAMS gates, and **scientific output validation** (track `07`).
+- **Exception (Phase 5 core):** Folders `01-reliability-engine-core…` through `07-pilot-rollout…` (excluding `gaps/`) use the same **dual-channel** layout; Stage 2 never references server DBs or Nginx.
+- **No prompt blocks** in roadmap files outside Phase 5 exceptions; do not spend tokens generating future detailed prompts there.
 - **Format:** each file has a **PRD** line, an **Execution** link to this section, and **Tasks** as a bullet list: **Task name** — one sentence naming affected code areas (e.g. `src-tauri/src/migrations/`, `src-tauri/src/commands/`, `src/pages/`, `shared/ipc-types.ts`).
 - **Workflow:** after you approve a task list, execution runs in Composer/Agent; prioritize code, tests, and validation over documentation volume.
 - **Quality gate:** `cargo check`, `pnpm typecheck`, and targeted tests implied by the task; add a one-line completion note in the file footer when done.

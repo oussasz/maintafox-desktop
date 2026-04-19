@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { z, ZodError } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import { controlPlaneApiBase } from "@/services/product-license-service";
 import { applySyncBatch, getSyncPushPayload } from "@/services/sync-service";
 import type { ApplySyncBatchInput } from "@shared/ipc-types";
@@ -47,6 +47,29 @@ function decodeError(scope: string, err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
+/** Control-plane JSON errors use `error` (+ optional `details`); some paths may send `message`. */
+function formatControlPlaneHttpErrorPayload(raw: unknown): string | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof o["error"] === "string" && o["error"].trim()) {
+    parts.push(o["error"].trim());
+  }
+  if (typeof o["message"] === "string" && o["message"].trim()) {
+    const m = o["message"].trim();
+    if (m !== o["error"]) parts.push(m);
+  }
+  if ("details" in o && o["details"] !== undefined && o["details"] !== null) {
+    try {
+      const s = typeof o["details"] === "string" ? o["details"] : JSON.stringify(o["details"]);
+      parts.push(s.length > 1200 ? `${s.slice(0, 1197)}...` : s);
+    } catch {
+      parts.push(String(o["details"]));
+    }
+  }
+  return parts.length ? parts.join(" — ") : null;
+}
+
 /**
  * One control-plane round-trip: push pending outbox via `/api/v1/sync/exchange`, then apply the batch locally.
  * Requires product license activation JWT and an authenticated desktop session (see Tauri command).
@@ -83,26 +106,44 @@ export async function exchangeControlPlaneSyncRound(): Promise<void> {
       payload_json: o.payload_json,
       payload_hash: o.payload_hash,
     })),
+    ...(push.tenant_config != null ? { tenant_config: push.tenant_config } : {}),
   };
 
-  const res = await fetch(`${controlPlaneApiBase()}/api/v1/sync/exchange`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${bearer}`,
-      "Idempotency-Key": idempotencyKey,
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const exchangeTimeoutMs = 45_000;
+  const timeoutId = window.setTimeout(() => controller.abort(), exchangeTimeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(`${controlPlaneApiBase()}/api/v1/sync/exchange`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bearer}`,
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error("SYNC_EXCHANGE_TIMEOUT");
+    }
+    throw e;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 
   if (!res.ok) {
     let message = `Sync exchange failed (${res.status})`;
     try {
-      const j = (await res.json()) as { error?: string; message?: string };
-      message = j.message ?? j.error ?? message;
+      const raw = await res.json();
+      const extra = formatControlPlaneHttpErrorPayload(raw);
+      if (extra) {
+        message = `${message}: ${extra}`;
+      }
     } catch {
-      // ignore
+      // ignore non-JSON error bodies
     }
     throw new Error(message);
   }

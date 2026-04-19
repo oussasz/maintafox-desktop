@@ -5,16 +5,33 @@
 //! without manual data entry.
 //!
 //! **Idempotent** — skips if demo data already exists (checks a sentinel row).
-//! Safe to call on every dev startup; has no effect in a production database
-//! that already has real tenant data.
+//!
+//! When a product license activation is complete, all entry points no-op so
+//! demo rows never mix with a licensed tenant. Dev startup only runs these
+//! seeders when `MAINTAFOX_SEED_DEMO=1` and activation is not complete.
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
 
+/// When true, no demo rows may be inserted — licensed activation means this DB is tenant-scoped.
+async fn skip_demo_seeding_for_license_isolation(db: &DatabaseConnection) -> AppResult<bool> {
+    if crate::commands::product_license::is_product_activation_complete(db).await? {
+        tracing::info!(
+            target: "demo_seeder",
+            "demo seed skipped: product license activation is active (tenant data isolation)"
+        );
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Entry point — call from a Tauri command or startup hook.
 pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
+    if skip_demo_seeding_for_license_isolation(db).await? {
+        return Ok(());
+    }
     // Guard: skip if demo data already seeded.
     let sentinel = db
         .query_one(Statement::from_string(
@@ -247,6 +264,9 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
 /// Uses its own sentinel so it can run even when org/equipment demo data
 /// was already present from a previous startup.
 pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> {
+    if skip_demo_seeding_for_license_isolation(db).await? {
+        return Ok(());
+    }
     let sentinel = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -465,6 +485,9 @@ async fn get_ref_value_id(db: &DatabaseConnection, set_id: i64, code: &str) -> A
 /// Creates a test user with no role assignment (no permissions at all).
 /// Used for V4 permission gate verification.
 pub async fn seed_test_viewer_user(db: &DatabaseConnection) -> AppResult<()> {
+    if skip_demo_seeding_for_license_isolation(db).await? {
+        return Ok(());
+    }
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -504,6 +527,9 @@ pub async fn seed_test_viewer_user(db: &DatabaseConnection) -> AppResult<()> {
 
 /// Creates a "technicien" demo user with a basic role for lockout testing.
 pub async fn seed_technicien_user(db: &DatabaseConnection) -> AppResult<()> {
+    if skip_demo_seeding_for_license_isolation(db).await? {
+        return Ok(());
+    }
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -558,6 +584,9 @@ pub async fn seed_technicien_user(db: &DatabaseConnection) -> AppResult<()> {
 ///
 /// Own sentinel → idempotent.
 pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
+    if skip_demo_seeding_for_license_isolation(db).await? {
+        return Ok(());
+    }
     let sentinel = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -1009,6 +1038,16 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             .await?;
         }
     }
+
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE work_orders SET \
+         entity_sync_id = lower(hex(randomblob(16))), \
+         closeout_validation_profile_id = COALESCE(closeout_validation_profile_id, 1) \
+         WHERE entity_sync_id IS NULL"
+            .to_string(),
+    ))
+    .await?;
 
     tracing::info!("demo_seeder: {} work orders seeded", wo_defs.len());
     Ok(())

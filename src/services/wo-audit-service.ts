@@ -2,13 +2,14 @@
  * wo-audit-service.ts
  *
  * IPC wrappers for WO audit change-event queries.
- * Phase 2 – Sub-phase 05 – File 04 – Sprint S3.
+ * Phase 2 â€“ Sub-phase 05 â€“ File 04 â€“ Sprint S3.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+import { invoke } from "@/lib/ipc-invoke";
+
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const WoChangeEventSchema = z.object({
   id: z.number(),
@@ -22,7 +23,7 @@ const WoChangeEventSchema = z.object({
   apply_result: z.string(),
 });
 
-// ── Exported types ────────────────────────────────────────────────────────────
+// â”€â”€ Exported types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type WoChangeEvent = z.infer<typeof WoChangeEventSchema>;
 
@@ -36,7 +37,7 @@ export interface WoAuditFilter {
   offset?: number;
 }
 
-// ── Commands ──────────────────────────────────────────────────────────────────
+// â”€â”€ Commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * List audit change events for a single WO, ordered chronologically.

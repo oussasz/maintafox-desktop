@@ -5,9 +5,9 @@
  * and impact-preview endpoints added in SP01-F03 S1.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type {
   OrgDesignerNodeRow,
   OrgDesignerSnapshot,
@@ -15,7 +15,7 @@ import type {
   PreviewOrgChangePayload,
 } from "@shared/ipc-types";
 
-// ── Zod schemas ───────────────────────────────────────────────────────────────
+// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const OrgDesignerNodeRowSchema = z.object({
   node_id: z.number(),
@@ -64,7 +64,7 @@ const OrgImpactPreviewSchema = z.object({
   dependencies: z.array(OrgImpactDependencySummarySchema),
 });
 
-// ── Service functions ─────────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getOrgDesignerSnapshot(): Promise<OrgDesignerSnapshot> {
   const raw = await invoke<unknown>("get_org_designer_snapshot");
