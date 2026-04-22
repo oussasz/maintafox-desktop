@@ -184,16 +184,46 @@ fn normalize_code(code: &str) -> String {
     code.trim().to_ascii_uppercase()
 }
 
-/// Validates that a parent_id belongs to the same set and exists.
+fn allows_cross_domain_parent(child_domain_code: &str, parent_domain_code: &str) -> bool {
+    matches!(
+        (child_domain_code, parent_domain_code),
+        ("EQUIPMENT.FAMILY", "EQUIPMENT.CLASS")
+            | ("EQUIPMENT.SUBFAMILY", "EQUIPMENT.FAMILY")
+    )
+}
+
+/// Validates that a parent_id exists and is valid for the target set/domain.
 async fn validate_parent(
     db: &DatabaseConnection,
     set_id: i64,
     parent_id: i64,
 ) -> AppResult<()> {
+    let child_set = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rs.id AS set_id, d.code AS domain_code \
+             FROM reference_sets rs \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE rs.id = ?",
+            [set_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "ReferenceSet".into(),
+            id: set_id.to_string(),
+        })?;
+    let child_domain_code: String = child_set
+        .try_get("", "domain_code")
+        .map_err(|e| decode_err("child.domain_code", e))?;
+
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT set_id FROM reference_values WHERE id = ?",
+            "SELECT rv.set_id, d.code AS domain_code \
+             FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE rv.id = ?",
             [parent_id.into()],
         ))
         .await?;
@@ -206,9 +236,14 @@ async fn validate_parent(
             let parent_set_id: i64 = r
                 .try_get("", "set_id")
                 .map_err(|e| decode_err("set_id", e))?;
-            if parent_set_id != set_id {
+            let parent_domain_code: String = r
+                .try_get("", "domain_code")
+                .map_err(|e| decode_err("parent.domain_code", e))?;
+            if parent_set_id != set_id
+                && !allows_cross_domain_parent(&child_domain_code, &parent_domain_code)
+            {
                 return Err(AppError::ValidationFailed(vec![
-                    "La valeur parente doit appartenir au même jeu de référence.".into(),
+                    "La valeur parente n'est pas autorisée pour ce domaine.".into(),
                 ]));
             }
             Ok(())

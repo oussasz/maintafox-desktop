@@ -156,6 +156,46 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         warn!("startup: system seed returned error (non-fatal): {e}");
     }
 
+    // Phase 3a: enforce mandatory WO type contract to prevent cross-environment drift.
+    info!("startup: enforcing work_order_types integrity");
+    if let Err(e) = crate::wo::types::ensure_required_work_order_types(&app_state.db).await {
+        let reason = format!("Work order type integrity check failed: {e}");
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
+        window.show().ok();
+        return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
+    }
+
+    info!("startup: enforcing urgency_levels (work order priorities) integrity");
+    if let Err(e) = crate::wo::priorities::ensure_required_urgency_levels(&app_state.db).await {
+        let reason = format!("Urgency levels integrity check failed: {e}");
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
+        window.show().ok();
+        return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
+    }
+
+    info!("startup: enforcing work_order_statuses (OT lifecycle) integrity");
+    if let Err(e) = crate::wo::statuses::ensure_required_work_order_statuses(&app_state.db).await {
+        let reason = format!("Work order statuses integrity check failed: {e}");
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
+        window.show().ok();
+        return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
+    }
+
+    info!("startup: enforcing equipment taxonomy reference integrity (EQUIPMENT.STATUS / CRITICALITY / CLASS)");
+    if let Err(e) =
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&app_state.db)
+            .await
+    {
+        let reason = format!("Equipment taxonomy reference integrity check failed: {e}");
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
+        window.show().ok();
+        return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
+    }
+
     // Phase 3b: tenant bootstrap from activation claim.
     // Clean-by-default policy:
     // - always ensure a single root organization from activated tenant name

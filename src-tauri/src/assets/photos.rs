@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use base64::{engine::general_purpose::STANDARD as B64_ENGINE, Engine as _};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -23,13 +24,20 @@ pub struct AssetPhoto {
     pub id: i64,
     pub asset_id: i64,
     pub file_name: String,
-    /// Absolute path for `convertFileSrc` in the webview.
+    /// Absolute path on disk (primary storage). UI may load via IPC instead of `convertFileSrc`.
     pub file_path: String,
     pub mime_type: String,
     pub file_size_bytes: i64,
     pub caption: Option<String>,
     pub created_by_id: Option<i64>,
     pub created_at: String,
+}
+
+/// Inline preview for the webview (`data:` URL) — avoids asset-protocol / `convertFileSrc` edge cases.
+#[derive(Debug, Clone, Serialize)]
+pub struct AssetPhotoPreview {
+    pub mime_type: String,
+    pub data_base64: String,
 }
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
@@ -41,7 +49,19 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 fn map_row(row: &QueryResult, app_data_dir: &Path) -> AppResult<AssetPhoto> {
     let relative_path: String = row.try_get("", "relative_path").map_err(|e| decode_err("relative_path", e))?;
     let abs: PathBuf = app_data_dir.join(&relative_path);
-    let file_path = abs.to_string_lossy().to_string();
+    if !abs.exists() {
+        tracing::warn!(
+            relative_path,
+            absolute_path = %abs.display(),
+            "asset photo file missing on disk"
+        );
+    }
+    let mut file_path = abs.to_string_lossy().to_string();
+    if cfg!(windows) {
+        if let Some(stripped) = file_path.strip_prefix(r"\\?\") {
+            file_path = stripped.to_string();
+        }
+    }
 
     Ok(AssetPhoto {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
@@ -104,6 +124,58 @@ pub async fn list_asset_photos(db: &DatabaseConnection, app_data_dir: &Path, ass
         ))
         .await?;
     rows.iter().map(|r| map_row(r, app_data_dir)).collect()
+}
+
+pub async fn read_asset_photo_preview(
+    db: &DatabaseConnection,
+    app_data_dir: &Path,
+    photo_id: i64,
+) -> AppResult<AssetPhotoPreview> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT relative_path, mime_type FROM asset_photos WHERE id = ?",
+            [photo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "asset_photo".into(),
+            id: photo_id.to_string(),
+        })?;
+
+    let relative_path: String = row.try_get("", "relative_path").map_err(|e| decode_err("relative_path", e))?;
+    let mime_type: String = row.try_get("", "mime_type").map_err(|e| decode_err("mime_type", e))?;
+    let abs: PathBuf = app_data_dir.join(&relative_path);
+
+    if !abs.exists() {
+        tracing::warn!(
+            photo_id,
+            path = %abs.display(),
+            "asset photo preview: file missing on disk"
+        );
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Photo file not found on disk: {}",
+            abs.display()
+        )]));
+    }
+
+    let abs_for_read = abs.clone();
+    let bytes = tokio::task::spawn_blocking(move || std::fs::read(abs_for_read))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("read task join: {e}")))?
+        .map_err(|e| {
+            tracing::warn!(path = %abs.display(), error = %e, "asset photo preview: read failed");
+            AppError::ValidationFailed(vec![format!("Cannot read photo file: {e}")])
+        })?;
+
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err(AppError::ValidationFailed(vec!["Photo exceeds size limit.".into()]));
+    }
+
+    Ok(AssetPhotoPreview {
+        mime_type,
+        data_base64: B64_ENGINE.encode(bytes),
+    })
 }
 
 pub async fn upload_asset_photo(
@@ -174,6 +246,13 @@ pub async fn upload_asset_photo(
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&absolute_path, &bytes)?;
+    tracing::info!(
+        source_path = %payload.source_path,
+        relative_path,
+        absolute_path = %absolute_path.display(),
+        bytes = size_bytes,
+        "asset photo copied to primary storage"
+    );
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let caption = payload

@@ -55,7 +55,10 @@ interface AssetStoreState {
     query?: string | null,
   ) => Promise<void>;
   selectAsset: (assetId: number | null) => Promise<void>;
-  createAsset: (payload: CreateAssetPayload) => Promise<Asset>;
+  createAsset: (
+    payload: CreateAssetPayload,
+    opts?: { parentAssetId?: number | null },
+  ) => Promise<Asset>;
   updateAsset: (
     assetId: number,
     payload: UpdateAssetIdentityPayload,
@@ -136,10 +139,18 @@ export const useAssetStore = create<AssetStoreState>()((set, get) => ({
     }
   },
 
-  createAsset: async (payload) => {
+  createAsset: async (payload, opts) => {
     set({ saving: true, error: null });
     try {
       const asset = await createAsset(payload);
+      const parentId = opts?.parentAssetId;
+      if (parentId != null && parentId > 0 && parentId !== asset.id) {
+        await linkAssetHierarchy({
+          parent_asset_id: parentId,
+          child_asset_id: asset.id,
+          relation_type: "PARENT_CHILD",
+        });
+      }
       // Reload list to include new asset
       const list = await listAssets();
       set({ list, selectedAsset: asset });

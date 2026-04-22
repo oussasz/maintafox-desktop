@@ -1,6 +1,11 @@
 import { AlertTriangle, Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
+import {
+  REF_TABLE_ACTIONS_GROUP_CLASS,
+  refTableIconButtonClass,
+} from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +35,7 @@ const EMPTY_DRAFT: InventoryTaxCategoryInput = {
 };
 
 export function InventoryTaxCategoryManagerPanel() {
+  const { t } = useTranslation("reference");
   const [taxCategories, setTaxCategories] = useState<InventoryTaxCategory[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -168,7 +174,9 @@ export function InventoryTaxCategoryManagerPanel() {
               <th className="px-3 py-2 text-left font-medium text-text-muted">FR</th>
               <th className="px-3 py-2 text-left font-medium text-text-muted">EN</th>
               <th className="px-3 py-2 text-left font-medium text-text-muted">Status</th>
-              <th className="px-3 py-2 text-right font-medium text-text-muted">Actions</th>
+              <th className="px-3 py-2 text-right align-middle font-medium text-text-muted">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -178,7 +186,9 @@ export function InventoryTaxCategoryManagerPanel() {
                   <Input
                     placeholder="TVA_20"
                     value={newDraft.code}
-                    onChange={(e) => setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), code: e.target.value }))}
+                    onChange={(e) =>
+                      setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), code: e.target.value }))
+                    }
                     className="h-7 text-sm"
                     autoFocus
                   />
@@ -187,7 +197,9 @@ export function InventoryTaxCategoryManagerPanel() {
                   <Input
                     placeholder="TVA 20%"
                     value={newDraft.label}
-                    onChange={(e) => setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), label: e.target.value }))}
+                    onChange={(e) =>
+                      setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), label: e.target.value }))
+                    }
                     className="h-7 text-sm"
                   />
                 </td>
@@ -195,7 +207,9 @@ export function InventoryTaxCategoryManagerPanel() {
                   <Input
                     placeholder="TVA 20%"
                     value={newDraft.fr_label ?? ""}
-                    onChange={(e) => setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), fr_label: e.target.value }))}
+                    onChange={(e) =>
+                      setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), fr_label: e.target.value }))
+                    }
                     className="h-7 text-sm"
                   />
                 </td>
@@ -203,27 +217,34 @@ export function InventoryTaxCategoryManagerPanel() {
                   <Input
                     placeholder="VAT 20%"
                     value={newDraft.en_label ?? ""}
-                    onChange={(e) => setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), en_label: e.target.value }))}
+                    onChange={(e) =>
+                      setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), en_label: e.target.value }))
+                    }
                     className="h-7 text-sm"
                   />
                 </td>
                 <td className="px-3 py-1.5">
                   <Badge variant="secondary" className="text-[10px]">
-                    new
+                    {t("editor.statusNew")}
                   </Badge>
                 </td>
-                <td className="px-3 py-1.5 text-right">
-                  <div className="flex items-center justify-end gap-1">
+                <td className="px-3 py-1.5 text-right align-middle">
+                  <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-6 w-6"
+                      className={refTableIconButtonClass()}
                       onClick={() => void submitCreate()}
                       disabled={saving || !newDraft.code?.trim() || !newDraft.label?.trim()}
                     >
                       <Check className="h-3.5 w-3.5 text-status-success" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setNewDraft(null)}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={refTableIconButtonClass()}
+                      onClick={() => setNewDraft(null)}
+                    >
                       <X className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -247,7 +268,10 @@ export function InventoryTaxCategoryManagerPanel() {
               taxCategories.map((row) => {
                 const isEditing = editingId === row.id;
                 return (
-                  <tr key={row.id} className={`border-b border-surface-border hover:bg-surface-1 ${isEditing ? "bg-primary/5" : ""}`}>
+                  <tr
+                    key={row.id}
+                    className={`border-b border-surface-border hover:bg-surface-1 ${isEditing ? "bg-primary/5" : ""}`}
+                  >
                     <td className="px-3 py-1.5">
                       {isEditing ? (
                         <Input
@@ -264,7 +288,9 @@ export function InventoryTaxCategoryManagerPanel() {
                         <Input
                           className="h-7 text-sm"
                           value={editingDraft.label}
-                          onChange={(e) => setEditingDraft((s) => ({ ...s, label: e.target.value }))}
+                          onChange={(e) =>
+                            setEditingDraft((s) => ({ ...s, label: e.target.value }))
+                          }
                         />
                       ) : (
                         row.label
@@ -275,7 +301,9 @@ export function InventoryTaxCategoryManagerPanel() {
                         <Input
                           className="h-7 text-sm"
                           value={editingDraft.fr_label ?? ""}
-                          onChange={(e) => setEditingDraft((s) => ({ ...s, fr_label: e.target.value }))}
+                          onChange={(e) =>
+                            setEditingDraft((s) => ({ ...s, fr_label: e.target.value }))
+                          }
                         />
                       ) : (
                         <span className="text-xs text-text-muted">{row.fr_label ?? "—"}</span>
@@ -286,53 +314,71 @@ export function InventoryTaxCategoryManagerPanel() {
                         <Input
                           className="h-7 text-sm"
                           value={editingDraft.en_label ?? ""}
-                          onChange={(e) => setEditingDraft((s) => ({ ...s, en_label: e.target.value }))}
+                          onChange={(e) =>
+                            setEditingDraft((s) => ({ ...s, en_label: e.target.value }))
+                          }
                         />
                       ) : (
                         <span className="text-xs text-text-muted">{row.en_label ?? "—"}</span>
                       )}
                     </td>
                     <td className="px-3 py-1.5">
-                      <Badge variant={row.is_active === 1 ? "default" : "secondary"} className="text-[10px]">
-                        {row.is_active === 1 ? "active" : "inactive"}
+                      <Badge
+                        variant={row.is_active === 1 ? "default" : "secondary"}
+                        className="text-[10px]"
+                      >
+                        {row.is_active === 1
+                          ? t("editor.statusActive")
+                          : t("editor.statusInactive")}
                       </Badge>
                     </td>
-                    <td className="px-3 py-1.5 text-right">
+                    <td className="px-3 py-1.5 text-right align-middle">
                       {isEditing ? (
-                        <div className="flex items-center justify-end gap-1">
+                        <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6"
+                            className={refTableIconButtonClass()}
                             onClick={() => void submitEdit(row)}
-                            disabled={saving || !editingDraft.code.trim() || !editingDraft.label.trim()}
+                            disabled={
+                              saving || !editingDraft.code.trim() || !editingDraft.label.trim()
+                            }
                           >
                             <Check className="h-3.5 w-3.5 text-status-success" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={cancelEdit}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={refTableIconButtonClass()}
+                            onClick={cancelEdit}
+                          >
                             <X className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                       ) : (
-                        <div className="flex items-center justify-end gap-1">
+                        <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6"
+                            className={refTableIconButtonClass()}
                             onClick={() => beginEdit(row)}
                             disabled={saving}
+                            aria-label={t("editor.edit")}
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => setDeleteTarget(row)}
-                            disabled={saving || row.is_active === 0}
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-status-danger" />
-                          </Button>
+                          {row.is_active === 1 ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={refTableIconButtonClass()}
+                              onClick={() => setDeleteTarget(row)}
+                              disabled={saving}
+                              aria-label={t("editor.deactivate")}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          ) : null}
                         </div>
                       )}
                     </td>

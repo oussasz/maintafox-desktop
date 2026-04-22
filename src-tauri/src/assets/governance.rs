@@ -17,6 +17,7 @@
 //!   - ReclassificationRequiresReview — class/family/criticality changed on
 //!     an existing asset; requires explicit policy acknowledgement
 
+use crate::assets::identity;
 use crate::errors::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
@@ -207,14 +208,14 @@ pub async fn validate_import_row(
         }
     }
 
-    // Criticality code
+    // Criticality code (published EQUIPMENT.CRITICALITY reference set; accepts A–D + legacy labels)
     if let Some(ref crit_code) = row.criticality_code {
-        if !lookup_code_exists(db, "equipment.criticality", crit_code).await? {
+        if identity::resolve_criticality_ref_id(db, crit_code).await.is_err() {
             messages.push(ValidationMessage {
                 category: ConflictCategory::UnknownCriticalityCode,
                 field: "criticality_code".into(),
                 message: format!(
-                    "Code criticite '{}' introuvable dans le domaine 'equipment.criticality'.",
+                    "Code criticite '{}' introuvable (reference EQUIPMENT.CRITICALITY).",
                     crit_code
                 ),
                 severity: ValidationSeverity::Error,
@@ -229,14 +230,18 @@ pub async fn validate_import_row(
         });
     }
 
-    // Status code
+    // Status code (published EQUIPMENT.STATUS reference set)
     if let Some(ref status_code) = row.status_code {
-        if !lookup_code_exists(db, "equipment.lifecycle_status", status_code).await? {
+        let ok = match identity::normalize_status_code_for_reference(status_code) {
+            Ok(norm) => identity::validate_status_code(db, &norm).await.is_ok(),
+            Err(_) => false,
+        };
+        if !ok {
             messages.push(ValidationMessage {
                 category: ConflictCategory::UnknownStatusCode,
                 field: "status_code".into(),
                 message: format!(
-                    "Code statut '{}' introuvable dans le domaine 'equipment.lifecycle_status'.",
+                    "Code statut '{}' introuvable (reference EQUIPMENT.STATUS).",
                     status_code
                 ),
                 severity: ValidationSeverity::Error,
@@ -428,12 +433,16 @@ async fn resolve_class_exists(
     db: &impl ConnectionTrait,
     class_code: &str,
 ) -> AppResult<Option<(i64, Option<i64>)>> {
+    let code = class_code.trim();
+    if code.is_empty() {
+        return Ok(None);
+    }
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, parent_id FROM equipment_classes \
-             WHERE code = ? AND is_active = 1 AND deleted_at IS NULL",
-            [class_code.into()],
+             WHERE UPPER(code) = UPPER(?) AND is_active = 1 AND deleted_at IS NULL",
+            [code.into()],
         ))
         .await?;
     match row {
@@ -469,32 +478,11 @@ async fn validate_family_exists(
         .await?;
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Family '{}' is not the parent of class '{}'.",
+            "The selected family ('{}') does not match class '{}'. Please choose a matching family or leave family empty.",
             family_code, class_code
         )]));
     }
     Ok(())
-}
-
-/// Check if a lookup code exists in the given domain.
-async fn lookup_code_exists(
-    db: &impl ConnectionTrait,
-    domain_key: &str,
-    code: &str,
-) -> AppResult<bool> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM lookup_values lv \
-             INNER JOIN lookup_domains ld ON ld.id = lv.domain_id \
-             WHERE ld.domain_key = ? \
-               AND lv.code = ? AND lv.is_active = 1 AND lv.deleted_at IS NULL",
-            [domain_key.into(), code.into()],
-        ))
-        .await?
-        .expect("COUNT always returns a row");
-    let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
-    Ok(cnt > 0)
 }
 
 enum OrgNodeCheck {

@@ -1,15 +1,19 @@
 /**
  * AssetEditForm.tsx
  *
- * Sheet dialog for editing an existing asset. Code field is read-only.
- * Parent select excludes self and own descendants to prevent cycles.
+ * Centered modal (DI/OT pattern) for editing an existing asset. Code is read-only.
+ * Reference fields use searchable selects. Parent linking is create-time only (API).
  * Dirty tracking with unsaved-changes confirmation on close.
  */
 
 import { Loader2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  EquipmentSearchSelect,
+  type EquipmentSearchOption,
+} from "@/components/assets/EquipmentSearchSelect";
 import { FormField } from "@/components/ui/FormField";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -23,41 +27,29 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
 import { useZodForm } from "@/lib/form-helpers";
 import { assetEditSchema } from "@/schemas/asset-edit.schema";
-import { listAssets, listAssetChildren } from "@/services/asset-service";
+import { getEquipmentTaxonomyCatalog } from "@/services/asset-service";
 import { listOrgTree } from "@/services/org-node-service";
 import { useAssetStore } from "@/stores/asset-store";
-import type { Asset, OrgTreeRow, UpdateAssetIdentityPayload } from "@shared/ipc-types";
+import type {
+  EquipmentTaxonomyCatalog,
+  OrgTreeRow,
+  UpdateAssetIdentityPayload,
+} from "@shared/ipc-types";
 
-const CRITICALITY_OPTIONS = [
-  { value: "A", label: "A — Critical" },
-  { value: "B", label: "B — Important" },
-  { value: "C", label: "C — Standard" },
-  { value: "D", label: "D — Low" },
-];
-
-const STATUS_OPTIONS = [
-  { value: "ACTIVE", label: "Active" },
-  { value: "OPERATIONAL", label: "Operational" },
-  { value: "STANDBY", label: "Standby" },
-  { value: "MAINTENANCE", label: "Maintenance" },
-];
+function taxonomyToOptions(
+  catalog: EquipmentTaxonomyCatalog | null,
+  key: "classes" | "families" | "subfamilies" | "criticalities" | "statuses",
+): EquipmentSearchOption[] {
+  if (!catalog) return [];
+  return catalog[key].map((o) => ({
+    value: o.code,
+    label: o.label,
+    description: o.code,
+  }));
+}
 
 export function AssetEditForm() {
   const { t } = useTranslation("equipment");
@@ -66,26 +58,26 @@ export function AssetEditForm() {
   const closeForm = useAssetStore((s) => s.closeEditForm);
   const submitUpdate = useAssetStore((s) => s.updateAsset);
   const saving = useAssetStore((s) => s.saving);
+  const storeError = useAssetStore((s) => s.error);
 
+  const [taxonomy, setTaxonomy] = useState<EquipmentTaxonomyCatalog | null>(null);
   const [orgNodes, setOrgNodes] = useState<OrgTreeRow[]>([]);
-  const [assetOptions, setAssetOptions] = useState<Asset[]>([]);
-  const [assetQuery, setAssetQuery] = useState("");
-  const [descendantIds, setDescendantIds] = useState<Set<number>>(new Set());
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   const form = useZodForm(assetEditSchema, {
     asset_name: asset?.asset_name ?? "",
     class_code: asset?.class_code ?? "",
     family_code: asset?.family_code ?? null,
+    subfamily_code: null,
     criticality_code: asset?.criticality_code ?? "",
-    status_code: asset?.status_code ?? "ACTIVE",
+    status_code: asset?.status_code ?? "",
     manufacturer: asset?.manufacturer ?? null,
     model: asset?.model ?? null,
     serial_number: asset?.serial_number ?? null,
     maintainable_boundary: asset?.maintainable_boundary ?? true,
     org_node_id: asset?.org_node_id ?? (0 as unknown as number),
-    parent_asset_id: null,
     commissioned_at: asset?.commissioned_at ?? null,
     decommissioned_at: asset?.decommissioned_at ?? null,
     description: null,
@@ -100,73 +92,135 @@ export function AssetEditForm() {
     formState: { errors, isDirty },
   } = form;
 
-  // Load org nodes and descendants
   useEffect(() => {
-    if (open && asset) {
-      void listOrgTree()
-        .then(setOrgNodes)
-        .catch(() => {});
-      // Load descendants to prevent cycle
-      void listAssetChildren(asset.id)
-        .then((children) => {
-          const ids = new Set(children.map((c) => c.child_asset_id));
-          setDescendantIds(ids);
-        })
-        .catch(() => {});
-      // Reset the form with asset data
-      reset({
-        asset_name: asset.asset_name,
-        class_code: asset.class_code ?? "",
-        family_code: asset.family_code ?? null,
-        criticality_code: asset.criticality_code ?? "",
-        status_code: asset.status_code,
-        manufacturer: asset.manufacturer ?? null,
-        model: asset.model ?? null,
-        serial_number: asset.serial_number ?? null,
-        maintainable_boundary: asset.maintainable_boundary,
-        org_node_id: asset.org_node_id ?? (0 as unknown as number),
-        parent_asset_id: null,
-        commissioned_at: asset.commissioned_at ?? null,
-        decommissioned_at: asset.decommissioned_at ?? null,
-        description: null,
-      });
-      setAssetQuery("");
-    }
-  }, [open, asset, reset]);
+    if (!open || !asset) return;
+    setSubmitError(null);
+    setCatalogError(null);
+    void listOrgTree()
+      .then(setOrgNodes)
+      .catch(() => setCatalogError(t("createForm.catalogLoadFailed")));
+    void getEquipmentTaxonomyCatalog()
+      .then(setTaxonomy)
+      .catch(() => setCatalogError(t("createForm.catalogLoadFailed")));
 
-  // Debounced parent asset search (exclude self + descendants)
-  const searchParentAssets = useCallback(
-    (query: string) => {
-      setAssetQuery(query);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        if (query.length >= 2) {
-          void listAssets(null, null, query)
-            .then((results) => {
-              const filtered = results.filter(
-                (a) => a.id !== asset?.id && !descendantIds.has(a.id),
-              );
-              setAssetOptions(filtered);
-            })
-            .catch(() => {});
-        } else {
-          setAssetOptions([]);
-        }
-      }, 300);
-    },
-    [asset?.id, descendantIds],
+    reset({
+      asset_name: asset.asset_name,
+      class_code: asset.class_code ?? "",
+      family_code: asset.family_code ?? null,
+      subfamily_code: null,
+      criticality_code: asset.criticality_code ?? "",
+      status_code: asset.status_code,
+      manufacturer: asset.manufacturer ?? null,
+      model: asset.model ?? null,
+      serial_number: asset.serial_number ?? null,
+      maintainable_boundary: asset.maintainable_boundary,
+      org_node_id: asset.org_node_id ?? (0 as unknown as number),
+      commissioned_at: asset.commissioned_at ?? null,
+      decommissioned_at: asset.decommissioned_at ?? null,
+      description: null,
+    });
+  }, [open, asset, reset, t]);
+
+  const classOptions = useMemo(() => taxonomyToOptions(taxonomy, "classes"), [taxonomy]);
+  const allFamilyOptions = useMemo(() => taxonomyToOptions(taxonomy, "families"), [taxonomy]);
+  const allSubfamilyOptions = useMemo(() => taxonomyToOptions(taxonomy, "subfamilies"), [taxonomy]);
+  const criticalityOptions = useMemo(
+    () => taxonomyToOptions(taxonomy, "criticalities"),
+    [taxonomy],
+  );
+  const statusOptions = useMemo(() => taxonomyToOptions(taxonomy, "statuses"), [taxonomy]);
+  const orgOptions: EquipmentSearchOption[] = useMemo(
+    () =>
+      orgNodes.map((n) => ({
+        value: String(n.node.id),
+        label: n.node.name,
+        description: n.node.code,
+      })),
+    [orgNodes],
   );
 
-  const handleClose = () => {
+  const watchedClassCode = watch("class_code");
+  const watchedFamilyCode = watch("family_code");
+  const watchedSubfamilyCode = watch("subfamily_code");
+
+  const selectedClassId = useMemo(() => {
+    if (!taxonomy || !watchedClassCode) return null;
+    return taxonomy.classes.find((c) => c.code === watchedClassCode)?.id ?? null;
+  }, [taxonomy, watchedClassCode]);
+
+  const selectedFamilyId = useMemo(() => {
+    if (!taxonomy || !watchedFamilyCode) return null;
+    return taxonomy.families.find((f) => f.code === watchedFamilyCode)?.id ?? null;
+  }, [taxonomy, watchedFamilyCode]);
+
+  const familyOptions = useMemo(() => {
+    if (selectedClassId == null || !taxonomy) return [];
+    return taxonomy.families
+      .filter((f) => f.parent_id === selectedClassId)
+      .map((o) => ({ value: o.code, label: o.label, description: o.code }));
+  }, [taxonomy, selectedClassId]);
+
+  const subfamilyOptions = useMemo(() => {
+    if (selectedFamilyId == null || !taxonomy) return [];
+    return taxonomy.subfamilies
+      .filter((s) => s.parent_id === selectedFamilyId)
+      .map((o) => ({ value: o.code, label: o.label, description: o.code }));
+  }, [taxonomy, selectedFamilyId]);
+
+  useEffect(() => {
+    if (!watchedClassCode || !watchedFamilyCode || !taxonomy) return;
+    const fam = taxonomy.families.find((f) => f.code === watchedFamilyCode);
+    if (!fam || fam.parent_id !== selectedClassId) {
+      setValue("family_code", null, { shouldValidate: true, shouldDirty: true });
+      setValue("subfamily_code", null, { shouldValidate: true, shouldDirty: true });
+    }
+  }, [watchedClassCode, watchedFamilyCode, taxonomy, selectedClassId, setValue]);
+
+  useEffect(() => {
+    if (!watchedSubfamilyCode || !watchedFamilyCode || !taxonomy) return;
+    const sf = taxonomy.subfamilies.find((s) => s.code === watchedSubfamilyCode);
+    if (!sf || sf.parent_id !== selectedFamilyId) {
+      setValue("subfamily_code", null, { shouldValidate: true, shouldDirty: true });
+    }
+  }, [watchedSubfamilyCode, watchedFamilyCode, selectedFamilyId, taxonomy, setValue]);
+
+  const handleCloseRequest = useCallback(() => {
     if (isDirty) {
       setShowUnsavedPrompt(true);
     } else {
       closeForm();
     }
-  };
+  }, [closeForm, isDirty]);
+
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (next) return;
+      if (saving) return;
+      if (isDirty) {
+        setShowUnsavedPrompt(true);
+        return;
+      }
+      closeForm();
+    },
+    [closeForm, isDirty, saving],
+  );
 
   const onSubmit: Parameters<typeof handleSubmit>[0] = async (values) => {
     if (!asset) return;
+    setSubmitError(null);
+    if (
+      !values.class_code?.trim() ||
+      !values.criticality_code?.trim() ||
+      !values.status_code?.trim()
+    ) {
+      setSubmitError(t("createForm.validation.referenceRequired"));
+      return;
+    }
+    if (!values.org_node_id || values.org_node_id === 0) {
+      setSubmitError(t("createForm.validation.orgRequired"));
+      return;
+    }
+
     const payload: UpdateAssetIdentityPayload = {
       asset_name: values.asset_name ?? asset.asset_name,
       class_code: values.class_code ?? asset.class_code ?? "",
@@ -174,6 +228,7 @@ export function AssetEditForm() {
       status_code: values.status_code ?? asset.status_code,
       maintainable_boundary: values.maintainable_boundary ?? true,
       ...(values.family_code !== undefined ? { family_code: values.family_code } : {}),
+      ...(values.subfamily_code !== undefined ? { subfamily_code: values.subfamily_code } : {}),
       ...(values.manufacturer !== undefined ? { manufacturer: values.manufacturer } : {}),
       ...(values.model !== undefined ? { model: values.model } : {}),
       ...(values.serial_number !== undefined ? { serial_number: values.serial_number } : {}),
@@ -183,224 +238,253 @@ export function AssetEditForm() {
         : {}),
     };
 
-    await submitUpdate(asset.id, payload, asset.row_version);
-    closeForm();
+    try {
+      const updated = await submitUpdate(asset.id, payload, asset.row_version);
+      if (values.org_node_id && values.org_node_id !== asset.org_node_id) {
+        await useAssetStore
+          .getState()
+          .moveAssetOrgNode(asset.id, values.org_node_id, updated.row_version);
+      }
+      closeForm();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSubmitError(msg);
+    }
   };
 
   const watchedOrgNode = watch("org_node_id");
-  const watchedParent = watch("parent_asset_id");
+
+  if (!asset) {
+    return null;
+  }
 
   return (
     <>
-      <Sheet open={open} onOpenChange={(o) => !o && handleClose()}>
-        <SheetContent className="w-[480px] overflow-auto sm:max-w-lg">
-          <SheetHeader>
-            <SheetTitle>{t("editForm.title")}</SheetTitle>
-            <SheetDescription>{t("editForm.description")}</SheetDescription>
-          </SheetHeader>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent
+          className="max-w-2xl max-h-[90vh] flex flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl"
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          <DialogHeader className="shrink-0 space-y-1.5 px-6 pt-6 pb-2">
+            <DialogTitle className="text-lg font-semibold tracking-tight">
+              {t("editForm.title")}
+            </DialogTitle>
+            <DialogDescription className="text-sm text-text-muted">
+              {t("editForm.description")}
+            </DialogDescription>
+          </DialogHeader>
 
-          <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-4 py-4">
-            {/* Code — read-only */}
-            <FormField name="asset_code" label={t("form.identity.code.label")}>
-              <Input
-                id="asset_code"
-                value={asset?.asset_code ?? ""}
-                readOnly
-                className="bg-muted"
-              />
-            </FormField>
-
-            {/* Name */}
-            <FormField
-              name="asset_name"
-              label={t("form.identity.name.label")}
-              error={errors.asset_name?.message}
-              required
-            >
-              <Input
-                id="asset_name"
-                placeholder={t("form.identity.name.placeholder")}
-                {...register("asset_name")}
-              />
-            </FormField>
-
-            {/* Class */}
-            <FormField
-              name="class_code"
-              label={t("detail.fields.class")}
-              error={errors.class_code?.message}
-              required
-            >
-              <Input id="class_code" {...register("class_code")} />
-            </FormField>
-
-            {/* Family */}
-            <FormField name="family_code" label={t("detail.fields.family")}>
-              <Input id="family_code" {...register("family_code")} />
-            </FormField>
-
-            {/* Criticality */}
-            <FormField
-              name="criticality_code"
-              label={t("detail.fields.criticality")}
-              error={errors.criticality_code?.message}
-              required
-            >
-              <Select
-                value={watch("criticality_code") ?? ""}
-                onValueChange={(v) => setValue("criticality_code", v, { shouldValidate: true })}
-              >
-                <SelectTrigger id="criticality_code">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CRITICALITY_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FormField>
-
-            {/* Status */}
-            <FormField name="status_code" label={t("detail.fields.status")}>
-              <Select
-                value={watch("status_code") ?? ""}
-                onValueChange={(v) => setValue("status_code", v, { shouldValidate: true })}
-              >
-                <SelectTrigger id="status_code">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STATUS_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FormField>
-
-            {/* Organization node */}
-            <FormField
-              name="org_node_id"
-              label={t("detail.fields.site")}
-              error={errors.org_node_id?.message}
-              required
-            >
-              <Select
-                value={watchedOrgNode ? String(watchedOrgNode) : ""}
-                onValueChange={(v) => setValue("org_node_id", Number(v), { shouldValidate: true })}
-              >
-                <SelectTrigger id="org_node_id">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {orgNodes.map((n) => (
-                    <SelectItem key={n.node.id} value={String(n.node.id)}>
-                      {n.node.code} — {n.node.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FormField>
-
-            {/* Parent asset search */}
-            <FormField name="parent_asset_id" label={t("createForm.parentAsset")}>
-              <div className="space-y-1">
-                <Input
-                  placeholder={t("createForm.searchParent")}
-                  value={assetQuery}
-                  onChange={(e) => searchParentAssets(e.target.value)}
-                />
-                {assetOptions.length > 0 && (
-                  <div className="max-h-32 overflow-auto rounded border border-surface-border bg-surface text-sm">
-                    {assetOptions.map((a) => (
-                      <button
-                        key={a.id}
-                        type="button"
-                        className="w-full px-3 py-1.5 text-left hover:bg-muted text-xs"
-                        onClick={() => {
-                          setValue("parent_asset_id", a.id, { shouldValidate: true });
-                          setAssetQuery(`${a.asset_code} — ${a.asset_name}`);
-                          setAssetOptions([]);
-                        }}
-                      >
-                        <span className="font-mono">{a.asset_code}</span>{" "}
-                        <span className="text-text-muted">{a.asset_name}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {watchedParent && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs"
-                    onClick={() => {
-                      setValue("parent_asset_id", null);
-                      setAssetQuery("");
-                    }}
-                  >
-                    {t("createForm.clearParent")}
-                  </Button>
-                )}
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-2">
+            {catalogError && (
+              <div className="mb-3 rounded-md border border-status-warning/30 bg-status-warning/10 px-3 py-2 text-sm text-status-warning">
+                {catalogError}
               </div>
-            </FormField>
-
-            {/* Manufacturer / Model / Serial */}
-            <FormField name="manufacturer" label={t("detail.fields.manufacturer")}>
-              <Input id="manufacturer" {...register("manufacturer")} />
-            </FormField>
-            <FormField name="model" label={t("detail.fields.model")}>
-              <Input id="model" {...register("model")} />
-            </FormField>
-            <FormField name="serial_number" label={t("detail.fields.serialNumber")}>
-              <Input id="serial_number" {...register("serial_number")} />
-            </FormField>
-
-            {/* Commissioning date */}
-            <FormField name="commissioned_at" label={t("detail.fields.commissioningDate")}>
-              <Input id="commissioned_at" type="date" {...register("commissioned_at")} />
-            </FormField>
-
-            {/* Maintainable boundary */}
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="maintainable_boundary"
-                checked={watch("maintainable_boundary")}
-                onCheckedChange={(c) => setValue("maintainable_boundary", c === true)}
-              />
-              <Label htmlFor="maintainable_boundary" className="text-sm">
-                {t("createForm.maintainableBoundary")}
-              </Label>
-            </div>
-
-            {/* Last modified info */}
-            {asset?.updated_at && (
-              <p className="text-xs text-text-muted pt-2">
-                {t("editForm.lastModified", {
-                  date: new Date(asset.updated_at).toLocaleString(),
-                })}
-              </p>
             )}
 
-            <SheetFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={handleClose}>
-                {t("decommission.cancel")}
-              </Button>
-              <Button type="submit" disabled={saving}>
-                {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-                {t("editForm.submit")}
-              </Button>
-            </SheetFooter>
-          </form>
-        </SheetContent>
-      </Sheet>
+            <form
+              id="asset-edit-form"
+              onSubmit={(e) => void handleSubmit(onSubmit)(e)}
+              className="space-y-4"
+            >
+              <FormField name="asset_code" label={t("form.identity.code.label")}>
+                <Input id="asset_code" value={asset.asset_code} readOnly className="bg-muted" />
+              </FormField>
 
-      {/* Unsaved changes confirmation */}
+              <FormField
+                name="asset_name"
+                label={t("form.identity.name.label")}
+                error={errors.asset_name?.message}
+                required
+              >
+                <Input
+                  id="asset_name"
+                  placeholder={t("form.identity.name.placeholder")}
+                  {...register("asset_name")}
+                />
+              </FormField>
+
+              <FormField
+                name="class_code"
+                label={t("detail.fields.class")}
+                error={errors.class_code?.message}
+                required
+              >
+                <EquipmentSearchSelect
+                  id="class_code"
+                  options={classOptions}
+                  value={watch("class_code") ?? ""}
+                  onChange={(v) =>
+                    setValue("class_code", v, { shouldValidate: true, shouldDirty: true })
+                  }
+                  placeholder={t("createForm.selectClass")}
+                  disabled={!taxonomy || classOptions.length === 0}
+                  aria-invalid={!!errors.class_code}
+                />
+              </FormField>
+
+              <FormField name="family_code" label={t("detail.fields.family")}>
+                <EquipmentSearchSelect
+                  id="family_code"
+                  options={[
+                    { value: "__none__", label: t("createForm.familyNone"), description: "" },
+                    ...(selectedClassId == null ? allFamilyOptions : familyOptions),
+                  ]}
+                  value={watch("family_code") ? (watch("family_code") as string) : "__none__"}
+                  onChange={(v) =>
+                    setValue("family_code", v === "__none__" ? null : v, {
+                      shouldValidate: true,
+                      shouldDirty: true,
+                    })
+                  }
+                  placeholder={t("createForm.selectFamilyOptional")}
+                  disabled={!taxonomy || selectedClassId == null}
+                />
+              </FormField>
+
+              <FormField name="subfamily_code" label={t("detail.fields.subfamily")}>
+                <EquipmentSearchSelect
+                  id="subfamily_code"
+                  options={[
+                    { value: "__none__", label: t("createForm.familyNone"), description: "" },
+                    ...(selectedFamilyId == null ? allSubfamilyOptions : subfamilyOptions),
+                  ]}
+                  value={watch("subfamily_code") ? (watch("subfamily_code") as string) : "__none__"}
+                  onChange={(v) =>
+                    setValue("subfamily_code", v === "__none__" ? null : v, {
+                      shouldValidate: true,
+                      shouldDirty: true,
+                    })
+                  }
+                  placeholder={t("createForm.selectSubfamilyOptional")}
+                  disabled={!taxonomy || selectedFamilyId == null}
+                />
+              </FormField>
+
+              <FormField
+                name="criticality_code"
+                label={t("detail.fields.criticality")}
+                error={errors.criticality_code?.message}
+                required
+              >
+                <EquipmentSearchSelect
+                  id="criticality_code"
+                  options={criticalityOptions}
+                  value={watch("criticality_code") ?? ""}
+                  onChange={(v) =>
+                    setValue("criticality_code", v, { shouldValidate: true, shouldDirty: true })
+                  }
+                  placeholder={t("createForm.selectCriticality")}
+                  disabled={!taxonomy || criticalityOptions.length === 0}
+                  aria-invalid={!!errors.criticality_code}
+                />
+              </FormField>
+
+              <FormField
+                name="status_code"
+                label={t("detail.fields.status")}
+                error={errors.status_code?.message}
+                required
+              >
+                <EquipmentSearchSelect
+                  id="status_code"
+                  options={statusOptions}
+                  value={watch("status_code") ?? ""}
+                  onChange={(v) =>
+                    setValue("status_code", v, { shouldValidate: true, shouldDirty: true })
+                  }
+                  placeholder={t("createForm.selectStatus")}
+                  disabled={!taxonomy || statusOptions.length === 0}
+                  aria-invalid={!!errors.status_code}
+                />
+              </FormField>
+
+              <FormField
+                name="org_node_id"
+                label={t("detail.fields.site")}
+                error={errors.org_node_id?.message}
+                required
+              >
+                <EquipmentSearchSelect
+                  id="org_node_id"
+                  options={orgOptions}
+                  value={watchedOrgNode ? String(watchedOrgNode) : ""}
+                  onChange={(v) =>
+                    setValue("org_node_id", Number(v), { shouldValidate: true, shouldDirty: true })
+                  }
+                  placeholder={t("createForm.selectOrg")}
+                  disabled={orgOptions.length === 0}
+                  aria-invalid={!!errors.org_node_id}
+                />
+              </FormField>
+
+              <FormField name="manufacturer" label={t("detail.fields.manufacturer")}>
+                <Input id="manufacturer" {...register("manufacturer")} />
+              </FormField>
+              <FormField name="model" label={t("detail.fields.model")}>
+                <Input id="model" {...register("model")} />
+              </FormField>
+              <FormField name="serial_number" label={t("detail.fields.serialNumber")}>
+                <Input id="serial_number" {...register("serial_number")} />
+              </FormField>
+
+              <FormField name="commissioned_at" label={t("detail.fields.commissioningDate")}>
+                <Input id="commissioned_at" type="date" {...register("commissioned_at")} />
+              </FormField>
+
+              <FormField name="decommissioned_at" label={t("detail.fields.endOfLifeDate")}>
+                <Input id="decommissioned_at" type="date" {...register("decommissioned_at")} />
+              </FormField>
+
+              <FormField name="description" label={t("createForm.descriptionLabel")}>
+                <Textarea id="description" rows={3} maxLength={2000} {...register("description")} />
+              </FormField>
+
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="maintainable_boundary"
+                  checked={watch("maintainable_boundary")}
+                  onCheckedChange={(c) =>
+                    setValue("maintainable_boundary", c === true, { shouldDirty: true })
+                  }
+                />
+                <Label htmlFor="maintainable_boundary" className="text-sm">
+                  {t("createForm.maintainableBoundary")}
+                </Label>
+              </div>
+
+              {asset.updated_at && (
+                <p className="text-xs text-text-muted pt-1">
+                  {t("editForm.lastModified", {
+                    date: new Date(asset.updated_at).toLocaleString(),
+                  })}
+                </p>
+              )}
+
+              {(submitError || storeError) && (
+                <div className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger">
+                  {submitError || storeError}
+                </div>
+              )}
+            </form>
+          </div>
+
+          <DialogFooter className="shrink-0 border-t border-surface-border bg-surface-0 px-6 py-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => handleCloseRequest()}
+              disabled={saving}
+            >
+              {t("decommission.cancel")}
+            </Button>
+            <Button type="submit" form="asset-edit-form" disabled={saving || !taxonomy}>
+              {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              {t("editForm.submit")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showUnsavedPrompt} onOpenChange={setShowUnsavedPrompt}>
         <DialogContent>
           <DialogHeader>

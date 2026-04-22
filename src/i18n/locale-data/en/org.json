@@ -28,6 +28,7 @@
     "bindingCount": "Active bindings",
     "bindings": "bindings",
     "manageTypes": "Manage Types",
+    "manageTypesNoDraftHint": "Create a draft structure model before managing node types.",
     "inspector": {
       "noSelection": "Select a node in the tree to view its details",
       "details": "Details",

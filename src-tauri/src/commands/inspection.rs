@@ -34,7 +34,7 @@ pub struct RouteInspectionAnomalyToDiInput {
 pub struct RouteInspectionAnomalyToWoInput {
     pub anomaly_id: i64,
     pub expected_row_version: i64,
-    pub type_id: i64,
+    pub type_code: String,
     pub title: Option<String>,
 }
 
@@ -251,7 +251,7 @@ pub async fn route_inspection_anomaly_to_wo(
         input.anomaly_id,
         input.expected_row_version,
         i64::from(user.user_id),
-        input.type_id,
+        input.type_code,
         input.title,
     )
     .await?;

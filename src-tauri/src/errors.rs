@@ -78,9 +78,19 @@ impl serde::Serialize for AppError {
         };
         state.serialize_field("code", code)?;
 
-        // Security: Internal errors must never leak raw details to the frontend.
+        // Desktop app: surface actionable detail for Internal (DB mapping, FK chains, etc.).
+        // Cap length to avoid huge payloads; other variants already use self.to_string().
+        const INTERNAL_MSG_MAX: usize = 800;
         let message = match self {
-            Self::Internal(_) => "Une erreur interne s'est produite.".to_string(),
+            Self::Internal(err) => {
+                let detail = format!("{err:#}");
+                let mut s = format!("Erreur interne : {detail}");
+                if s.len() > INTERNAL_MSG_MAX {
+                    s.truncate(INTERNAL_MSG_MAX);
+                    s.push('…');
+                }
+                s
+            }
             _ => self.to_string(),
         };
         state.serialize_field("message", &message)?;

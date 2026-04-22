@@ -27,6 +27,7 @@ pub mod lifecycle;
 pub mod meters;
 pub mod photos;
 pub mod search;
+pub mod taxonomy_reference;
 
 #[cfg(test)]
 mod documents_tests;
@@ -50,3 +51,4 @@ pub use identity::{Asset, CreateAssetPayload, UpdateAssetIdentityPayload};
 pub use import::{ApplyPolicy, ApplyResult, ImportBatchSummary, ImportEvent, ImportPreview, ImportPreviewRow};
 pub use lifecycle::{AssetLifecycleEvent, RecordLifecycleEventPayload};
 pub use meters::{AssetMeter, CreateAssetMeterPayload, MeterReading, RecordMeterReadingPayload};
+pub use taxonomy_reference::{EquipmentTaxonomyCatalog, EquipmentTaxonomyOption};

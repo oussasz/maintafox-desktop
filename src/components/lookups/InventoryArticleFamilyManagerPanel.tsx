@@ -1,6 +1,11 @@
 import { AlertTriangle, Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
+import {
+  REF_TABLE_ACTIONS_GROUP_CLASS,
+  refTableIconButtonClass,
+} from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,6 +39,7 @@ const EMPTY_DRAFT: FamilyDraft = {
 };
 
 export function InventoryArticleFamilyManagerPanel() {
+  const { t } = useTranslation("reference");
   const [families, setFamilies] = useState<ArticleFamily[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -173,7 +179,9 @@ export function InventoryArticleFamilyManagerPanel() {
               <th className="px-3 py-2 text-left font-medium text-text-muted">Name</th>
               <th className="px-3 py-2 text-left font-medium text-text-muted">Description</th>
               <th className="px-3 py-2 text-left font-medium text-text-muted">Status</th>
-              <th className="px-3 py-2 text-right font-medium text-text-muted">Actions</th>
+              <th className="px-3 py-2 text-right align-middle font-medium text-text-muted">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -183,7 +191,9 @@ export function InventoryArticleFamilyManagerPanel() {
                   <Input
                     placeholder="Code"
                     value={newDraft.code}
-                    onChange={(e) => setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), code: e.target.value }))}
+                    onChange={(e) =>
+                      setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), code: e.target.value }))
+                    }
                     className="h-7 text-sm"
                     autoFocus
                   />
@@ -192,7 +202,9 @@ export function InventoryArticleFamilyManagerPanel() {
                   <Input
                     placeholder="Name"
                     value={newDraft.name}
-                    onChange={(e) => setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), name: e.target.value }))}
+                    onChange={(e) =>
+                      setNewDraft((s) => ({ ...(s ?? EMPTY_DRAFT), name: e.target.value }))
+                    }
                     className="h-7 text-sm"
                   />
                 </td>
@@ -208,21 +220,26 @@ export function InventoryArticleFamilyManagerPanel() {
                 </td>
                 <td className="px-3 py-1.5">
                   <Badge variant="secondary" className="text-[10px]">
-                    new
+                    {t("editor.statusNew")}
                   </Badge>
                 </td>
-                <td className="px-3 py-1.5 text-right">
-                  <div className="flex items-center justify-end gap-1">
+                <td className="px-3 py-1.5 text-right align-middle">
+                  <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-6 w-6"
+                      className={refTableIconButtonClass()}
                       onClick={() => void submitCreate()}
                       disabled={saving || !newDraft.code.trim() || !newDraft.name.trim()}
                     >
                       <Check className="h-3.5 w-3.5 text-status-success" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={cancelNewRow}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={refTableIconButtonClass()}
+                      onClick={cancelNewRow}
+                    >
                       <X className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -293,45 +310,58 @@ export function InventoryArticleFamilyManagerPanel() {
                         variant={family.is_active === 1 ? "default" : "secondary"}
                         className="text-[10px]"
                       >
-                        {family.is_active === 1 ? "active" : "inactive"}
+                        {family.is_active === 1
+                          ? t("editor.statusActive")
+                          : t("editor.statusInactive")}
                       </Badge>
                     </td>
-                    <td className="px-3 py-1.5 text-right">
+                    <td className="px-3 py-1.5 text-right align-middle">
                       {isEditing ? (
-                        <div className="flex items-center justify-end gap-1">
+                        <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6"
+                            className={refTableIconButtonClass()}
                             onClick={() => void submitEdit(family.id)}
-                            disabled={saving || !editingDraft.code.trim() || !editingDraft.name.trim()}
+                            disabled={
+                              saving || !editingDraft.code.trim() || !editingDraft.name.trim()
+                            }
                           >
                             <Check className="h-3.5 w-3.5 text-status-success" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={cancelEdit}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={refTableIconButtonClass()}
+                            onClick={cancelEdit}
+                          >
                             <X className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                       ) : (
-                        <div className="flex items-center justify-end gap-1">
+                        <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6"
+                            className={refTableIconButtonClass()}
                             onClick={() => beginEdit(family)}
                             disabled={saving}
+                            aria-label={t("editor.edit")}
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => setDeleteTarget(family)}
-                            disabled={saving || family.is_active === 0}
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-status-danger" />
-                          </Button>
+                          {family.is_active === 1 ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={refTableIconButtonClass()}
+                              onClick={() => setDeleteTarget(family)}
+                              disabled={saving}
+                              aria-label={t("editor.deactivate")}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          ) : null}
                         </div>
                       )}
                     </td>

@@ -19,7 +19,11 @@ use tauri::State;
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
-use crate::wo::{analytics, attachments, audit, closeout, costs, delay, execution, labor, parts, queries, stats, tasks};
+use crate::wo::{
+    analytics, attachments, audit, closeout, costs, delay, execution, labor, parts, priorities, queries,
+    stats, statuses, tasks,
+};
+use crate::wo::types;
 use crate::{require_permission, require_session};
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
@@ -82,20 +86,11 @@ pub async fn create_wo(
         errors.push("Le titre est obligatoire.".into());
     }
 
-    // Validate type_id resolves
-    let type_exists = state
-        .db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id FROM work_order_types WHERE id = ?",
-            [input.type_id.into()],
-        ))
-        .await?;
-    if type_exists.is_none() {
-        errors.push(format!(
-            "Type d'OT introuvable (type_id={}).",
-            input.type_id
-        ));
+    // Validate type_code resolves
+    match types::resolve_work_order_type_id_by_code(&state.db, &input.type_code).await {
+        Ok(_) => {}
+        Err(AppError::ValidationFailed(mut errs)) => errors.append(&mut errs),
+        Err(e) => return Err(e),
     }
 
     // Validate source_di_id resolves if provided
@@ -130,6 +125,131 @@ pub async fn create_wo(
         apply_result: "applied".into(),
     }).await;
     Ok(wo)
+}
+
+#[tauri::command]
+pub async fn list_work_order_types(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<types::WorkOrderTypeOption>> {
+    let user = require_session!(state);
+    let has_ref_view = crate::auth::rbac::check_permission(
+        &state.db,
+        user.user_id,
+        "ref.view",
+        &PermissionScope::Global,
+    )
+    .await?;
+    let has_ot_view = crate::auth::rbac::check_permission(
+        &state.db,
+        user.user_id,
+        "ot.view",
+        &PermissionScope::Global,
+    )
+    .await?;
+    if !has_ref_view && !has_ot_view {
+        require_permission!(state, &user, "ot.create", PermissionScope::Global);
+    }
+    types::list_work_order_types(&state.db).await
+}
+
+#[tauri::command]
+pub async fn create_work_order_type(
+    input: types::CreateWorkOrderTypeInput,
+    state: State<'_, AppState>,
+) -> AppResult<types::WorkOrderTypeOption> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.manage", PermissionScope::Global);
+    types::create_work_order_type(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn update_work_order_type(
+    id: i64,
+    input: types::UpdateWorkOrderTypeInput,
+    state: State<'_, AppState>,
+) -> AppResult<types::WorkOrderTypeOption> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.manage", PermissionScope::Global);
+    types::update_work_order_type(&state.db, id, input).await
+}
+
+#[tauri::command]
+pub async fn delete_work_order_type(id: i64, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.manage", PermissionScope::Global);
+    types::delete_work_order_type(&state.db, id).await
+}
+
+#[tauri::command]
+pub async fn list_work_order_priorities(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<priorities::WorkOrderPriorityOption>> {
+    let user = require_session!(state);
+    let has_ref_view = crate::auth::rbac::check_permission(
+        &state.db,
+        user.user_id,
+        "ref.view",
+        &PermissionScope::Global,
+    )
+    .await?;
+    let has_ot_view = crate::auth::rbac::check_permission(
+        &state.db,
+        user.user_id,
+        "ot.view",
+        &PermissionScope::Global,
+    )
+    .await?;
+    if !has_ref_view && !has_ot_view {
+        require_permission!(state, &user, "ot.create", PermissionScope::Global);
+    }
+    priorities::list_work_order_priorities(&state.db).await
+}
+
+#[tauri::command]
+pub async fn update_work_order_priority(
+    id: i64,
+    input: priorities::UpdateWorkOrderPriorityInput,
+    state: State<'_, AppState>,
+) -> AppResult<priorities::WorkOrderPriorityOption> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.manage", PermissionScope::Global);
+    priorities::update_work_order_priority(&state.db, id, input).await
+}
+
+#[tauri::command]
+pub async fn list_work_order_statuses(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<statuses::WorkOrderStatusOption>> {
+    let user = require_session!(state);
+    let has_ref_view = crate::auth::rbac::check_permission(
+        &state.db,
+        user.user_id,
+        "ref.view",
+        &PermissionScope::Global,
+    )
+    .await?;
+    let has_ot_view = crate::auth::rbac::check_permission(
+        &state.db,
+        user.user_id,
+        "ot.view",
+        &PermissionScope::Global,
+    )
+    .await?;
+    if !has_ref_view && !has_ot_view {
+        require_permission!(state, &user, "ot.create", PermissionScope::Global);
+    }
+    statuses::list_work_order_statuses(&state.db).await
+}
+
+#[tauri::command]
+pub async fn update_work_order_status(
+    id: i64,
+    input: statuses::UpdateWorkOrderStatusInput,
+    state: State<'_, AppState>,
+) -> AppResult<statuses::WorkOrderStatusOption> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.manage", PermissionScope::Global);
+    statuses::update_work_order_status(&state.db, id, input).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

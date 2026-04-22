@@ -13,6 +13,7 @@ import type {
   AssetHealthScore,
   AssetHierarchyRow,
   CreateAssetPayload,
+  EquipmentTaxonomyCatalog,
   LinkAssetPayload,
   UpdateAssetIdentityPayload,
 } from "@shared/ipc-types";
@@ -81,6 +82,64 @@ function rethrowIfVersionConflict(err: unknown): never {
 }
 
 // â”€â”€ Identity commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+const EquipmentTaxonomyCatalogSchema = z.object({
+  statuses: z.array(
+    z.object({
+      id: z.number(),
+      code: z.string(),
+      label: z.string(),
+      parent_id: z.number().nullable(),
+      color_hex: z.string().nullable(),
+      is_system: z.boolean(),
+    }),
+  ),
+  criticalities: z.array(
+    z.object({
+      id: z.number(),
+      code: z.string(),
+      label: z.string(),
+      parent_id: z.number().nullable(),
+      color_hex: z.string().nullable(),
+      is_system: z.boolean(),
+    }),
+  ),
+  classes: z.array(
+    z.object({
+      id: z.number(),
+      code: z.string(),
+      label: z.string(),
+      parent_id: z.number().nullable(),
+      color_hex: z.string().nullable(),
+      is_system: z.boolean(),
+    }),
+  ),
+  families: z.array(
+    z.object({
+      id: z.number(),
+      code: z.string(),
+      label: z.string(),
+      parent_id: z.number().nullable(),
+      color_hex: z.string().nullable(),
+      is_system: z.boolean(),
+    }),
+  ),
+  subfamilies: z.array(
+    z.object({
+      id: z.number(),
+      code: z.string(),
+      label: z.string(),
+      parent_id: z.number().nullable(),
+      color_hex: z.string().nullable(),
+      is_system: z.boolean(),
+    }),
+  ),
+});
+
+export async function getEquipmentTaxonomyCatalog(): Promise<EquipmentTaxonomyCatalog> {
+  const raw = await invoke<unknown>("get_equipment_taxonomy_catalog", {});
+  return EquipmentTaxonomyCatalogSchema.parse(raw) as EquipmentTaxonomyCatalog;
+}
 
 export async function listAssets(
   statusFilter?: string | null,

@@ -143,6 +143,7 @@ mod tests {
                 asset_name: format!("Test asset {code}"),
                 class_code: "PUMP".to_string(),
                 family_code: None,
+                subfamily_code: None,
                 criticality_code: "STANDARD".to_string(),
                 status_code: "ACTIVE_IN_SERVICE".to_string(),
                 manufacturer: None,

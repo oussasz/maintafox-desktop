@@ -17,6 +17,7 @@ use crate::di::queries::{create_intervention_request, DiCreateInput};
 use crate::notifications::emitter::{emit_event as emit_notification_event, NotificationEventInput};
 use crate::wo::domain::WoCreateInput;
 use crate::wo::queries as wo_queries;
+use crate::wo::types::resolve_work_order_type_code_by_id;
 
 const STRATEGY_TYPES: &[&str] = &["fixed", "floating", "meter", "event", "condition"];
 const ASSET_SCOPE_TYPES: &[&str] = &["equipment", "family", "location", "criticality_group"];
@@ -1630,6 +1631,7 @@ pub async fn transition_pm_occurrence(
     let mut linked_work_order_id = current.linked_work_order_id;
     if input.generate_work_order == Some(true) && linked_work_order_id.is_none() {
         let wo_type_id = resolve_preventive_work_order_type_id(db, input.work_order_type_id).await?;
+        let wo_type_code = resolve_work_order_type_code_by_id(db, wo_type_id).await?;
         let wo_title = format!(
             "PM {} occurrence #{}",
             current.plan_code.clone().unwrap_or_else(|| current.pm_plan_id.to_string()),
@@ -1643,7 +1645,7 @@ pub async fn transition_pm_occurrence(
         let wo = wo_queries::create_work_order(
             db,
             WoCreateInput {
-                type_id: wo_type_id,
+                type_code: wo_type_code,
                 equipment_id: None,
                 location_id: None,
                 source_di_id: None,
@@ -2103,11 +2105,12 @@ async fn create_follow_up_wo_from_finding(
     let asset_scope_type: String = plan_row.try_get("", "asset_scope_type")?;
     let asset_scope_id: Option<i64> = plan_row.try_get("", "asset_scope_id")?;
     let wo_type_id = resolve_preventive_work_order_type_id(db, finding.follow_up_work_order_type_id).await?;
+    let wo_type_code = resolve_work_order_type_code_by_id(db, wo_type_id).await?;
 
     let wo = wo_queries::create_work_order(
         db,
         WoCreateInput {
-            type_id: wo_type_id,
+            type_code: wo_type_code,
             equipment_id: if asset_scope_type == "equipment" { asset_scope_id } else { None },
             location_id: None,
             source_di_id,

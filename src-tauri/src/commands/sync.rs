@@ -10,7 +10,7 @@ use crate::sync::domain::{
     SyncRepairExecutionResult, SyncRepairPreview, SyncRepairPreviewInput, SyncStateSummary,
 };
 use crate::sync::queries;
-use crate::{require_permission, require_session, require_step_up};
+use crate::{require_permission_allowing_system_admin, require_session, require_step_up};
 
 #[tauri::command]
 pub async fn stage_outbox_item(
@@ -18,7 +18,7 @@ pub async fn stage_outbox_item(
     state: State<'_, AppState>,
 ) -> AppResult<SyncOutboxItem> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.manage", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.manage", PermissionScope::Global);
     let result = queries::stage_outbox_item(&state.db, input).await?;
     tracing::info!(
         event = "desktop_sync_stage_outbox",
@@ -36,7 +36,7 @@ pub async fn list_outbox_items(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SyncOutboxItem>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.view", PermissionScope::Global);
     queries::list_outbox_items(&state.db, filter).await
 }
 
@@ -46,7 +46,7 @@ pub async fn get_sync_push_payload(
     state: State<'_, AppState>,
 ) -> AppResult<SyncPushPayload> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.view", PermissionScope::Global);
     queries::get_sync_push_payload(&state.db, limit).await
 }
 
@@ -56,7 +56,7 @@ pub async fn apply_sync_batch(
     state: State<'_, AppState>,
 ) -> AppResult<ApplySyncBatchResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.manage", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.manage", PermissionScope::Global);
     let result = queries::apply_sync_batch(&state.db, input).await?;
     tracing::info!(
         event = "desktop_sync_apply_batch",
@@ -77,14 +77,14 @@ pub async fn list_inbox_items(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SyncInboxItem>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.view", PermissionScope::Global);
     queries::list_inbox_items(&state.db, apply_status, limit).await
 }
 
 #[tauri::command]
 pub async fn get_sync_state_summary(state: State<'_, AppState>) -> AppResult<SyncStateSummary> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.view", PermissionScope::Global);
     queries::get_sync_state_summary(&state.db).await
 }
 
@@ -94,7 +94,7 @@ pub async fn list_sync_conflicts(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SyncConflictRecord>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.view", PermissionScope::Global);
     queries::list_sync_conflicts(&state.db, filter).await
 }
 
@@ -104,7 +104,7 @@ pub async fn resolve_sync_conflict(
     state: State<'_, AppState>,
 ) -> AppResult<SyncConflictRecord> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.resolve", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.resolve", PermissionScope::Global);
     queries::resolve_sync_conflict(&state.db, i64::from(user.user_id), input).await
 }
 
@@ -114,7 +114,7 @@ pub async fn replay_sync_failures(
     state: State<'_, AppState>,
 ) -> AppResult<ReplaySyncFailuresResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.replay", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.replay", PermissionScope::Global);
     let result = queries::replay_sync_failures(&state.db, i64::from(user.user_id), input).await?;
     tracing::info!(
         event = "desktop_sync_replay_failures",
@@ -132,7 +132,7 @@ pub async fn list_sync_replay_runs(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SyncReplayRun>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.view", PermissionScope::Global);
     queries::list_sync_replay_runs(&state.db, limit).await
 }
 
@@ -142,7 +142,7 @@ pub async fn preview_sync_repair(
     state: State<'_, AppState>,
 ) -> AppResult<SyncRepairPreview> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.repair", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.repair", PermissionScope::Global);
     require_step_up!(state);
     queries::preview_sync_repair(&state.db, i64::from(user.user_id), input).await
 }
@@ -153,7 +153,7 @@ pub async fn execute_sync_repair(
     state: State<'_, AppState>,
 ) -> AppResult<SyncRepairExecutionResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.repair", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.repair", PermissionScope::Global);
     require_step_up!(state);
     let result = queries::execute_sync_repair(&state.db, i64::from(user.user_id), input).await?;
     tracing::info!(
@@ -175,7 +175,7 @@ pub async fn list_sync_repair_actions(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SyncRepairActionRecord>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.view", PermissionScope::Global);
     queries::list_sync_repair_actions(&state.db, limit).await
 }
 
@@ -184,7 +184,7 @@ pub async fn get_sync_observability_report(
     state: State<'_, AppState>,
 ) -> AppResult<SyncObservabilityReport> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "sync.view", PermissionScope::Global);
     let result = queries::get_sync_observability_report(&state.db).await?;
     tracing::info!(
         event = "desktop_sync_observability_report",

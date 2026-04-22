@@ -42,6 +42,7 @@ const OrgDesignerNodeRowSchema = z.object({
 const OrgDesignerSnapshotSchema = z.object({
   active_model_id: z.number().nullable(),
   active_model_version: z.number().nullable(),
+  draft_model_id: z.number().nullable(),
   nodes: z.array(OrgDesignerNodeRowSchema),
 });
 

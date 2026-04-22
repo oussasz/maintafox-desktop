@@ -59,10 +59,13 @@ export function defaultRetryPolicy(): RetryPolicy {
   return {
     baseDelayMs: 1_500,
     maxDelayMs: 120_000,
-    maxAttempts: 5,
+    maxAttempts: 8,
     jitterRatio: 0.25,
   };
 }
+
+/** After this many ms since the last failed sync run, automatic modes may refresh an exhausted retry budget. */
+export const SYNC_EXHAUSTED_RETRY_COOLDOWN_MS = 120_000;
 
 export function computeRetryDelayMs(
   attempt: number,

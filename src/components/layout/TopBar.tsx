@@ -1,4 +1,5 @@
 import {
+  Menu,
   RefreshCw,
   AlertCircle,
   User,
@@ -27,6 +28,7 @@ import type { DeviceTrustStatus } from "@shared/ipc-types";
 
 export function TopBar() {
   const { t } = useTranslation("shell");
+  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const syncStatus = useAppStore((s) => s.syncStatus);
   const syncErrorMessage = syncStatus.errorMessage;
   const isOnline = useAppStore((s) => s.isOnline);
@@ -83,6 +85,15 @@ export function TopBar() {
                  border-b border-surface-border bg-surface-1 px-3 gap-2"
       data-tauri-drag-region
     >
+      {/* Sidebar toggle */}
+      <button
+        onClick={toggleSidebar}
+        aria-label={t("sidebar.toggle")}
+        className="btn-ghost px-2 py-1.5"
+      >
+        <Menu className="h-4 w-4" />
+      </button>
+
       {/* Logo + wordmark (desktop shell) */}
       <MaintafoxWordmark size="sm" className="mr-4 shrink-0" />
 

@@ -2,10 +2,10 @@
  * AssetPhotoGallery.tsx
  *
  * GAP EQ-05: Photo gallery with thumbnail grid, lightbox, upload, and delete.
- * Uses Tauri plugin-dialog for file picking, convertFileSrc for local images.
+ * Uses Tauri plugin-dialog for file picking; images load via IPC (`read_asset_photo_preview`) as data URLs
+ * so rendering does not depend on `convertFileSrc` / asset-protocol (WebView2 + dev server edge cases).
  */
 
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { Camera, ChevronLeft, ChevronRight, Loader2, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -24,10 +24,80 @@ import {
 import {
   deleteAssetPhoto,
   listAssetPhotos,
+  readAssetPhotoPreview,
   uploadAssetPhoto,
 } from "@/services/asset-lifecycle-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { AssetPhoto } from "@shared/ipc-types";
+
+function photoDataUrl(preview: { mime_type: string; data_base64: string }): string {
+  return `data:${preview.mime_type};base64,${preview.data_base64}`;
+}
+
+interface AssetPhotoImageProps {
+  photo: AssetPhoto;
+  variant: "grid" | "lightbox";
+}
+
+/**
+ * Loads bytes from the Rust side (same permission as listing photos) and displays a `data:` URL.
+ */
+function AssetPhotoImage({ photo, variant }: AssetPhotoImageProps) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSrc(null);
+    setFailed(false);
+    void readAssetPhotoPreview(photo.id)
+      .then((preview) => {
+        const dataUrl = photoDataUrl(preview);
+        if (!cancelled) setSrc(dataUrl);
+      })
+      .catch((err) => {
+        if (import.meta.env.DEV) {
+          console.error("[AssetPhotoGallery] read_asset_photo_preview failed", {
+            photoId: photo.id,
+            expectedDiskPath: photo.file_path,
+            error: toErrorMessage(err),
+          });
+        }
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [photo.file_name, photo.file_path, photo.id]);
+
+  if (failed) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-surface-2 p-2 text-center text-xs text-text-muted">
+        <span className="line-clamp-3 break-all">{photo.file_name}</span>
+      </div>
+    );
+  }
+  if (!src) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
+      </div>
+    );
+  }
+  const imgClass =
+    variant === "grid"
+      ? "h-full w-full object-cover transition-transform group-hover:scale-105"
+      : "max-h-[85vh] max-w-[85vw] rounded-md object-contain";
+
+  return (
+    <img
+      src={src}
+      alt={photo.caption ?? photo.file_name}
+      loading={variant === "grid" ? "lazy" : "eager"}
+      className={imgClass}
+    />
+  );
+}
 
 interface AssetPhotoGalleryProps {
   assetId: number;
@@ -182,12 +252,7 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
                 className="group relative aspect-square overflow-hidden rounded-md border bg-surface-2 focus:outline-none focus:ring-2 focus:ring-ring"
                 onClick={() => setLightboxIndex(idx)}
               >
-                <img
-                  src={convertFileSrc(photo.file_path)}
-                  alt={photo.caption ?? photo.file_name}
-                  loading="lazy"
-                  className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                />
+                <AssetPhotoImage photo={photo} variant="grid" />
               </button>
             ))}
           </div>
@@ -211,11 +276,7 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
             onKeyDown={() => {}}
             role="presentation"
           >
-            <img
-              src={convertFileSrc(lightboxPhoto.file_path)}
-              alt={lightboxPhoto.caption ?? lightboxPhoto.file_name}
-              className="max-h-[85vh] max-w-[85vw] rounded-md object-contain"
-            />
+            <AssetPhotoImage photo={lightboxPhoto} variant="lightbox" />
 
             {/* Navigation arrows */}
             {lightboxIndex !== null && lightboxIndex > 0 && (

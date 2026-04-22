@@ -9,6 +9,7 @@ import {
   evaluateSchedulingGate,
   normalizeRuntimeStateAfterRestart,
   shouldRetry,
+  SYNC_EXHAUSTED_RETRY_COOLDOWN_MS,
   type RetryPolicy,
   type SyncPolicyControls,
   type SyncRunMode,
@@ -188,7 +189,44 @@ function reflectAppSyncState(
 async function executeSyncRun(mode: SyncRunMode) {
   const startedAtMs = Date.now();
   const correlationId = newCorrelationId();
-  const orchestrator = useSyncOrchestratorStore.getState();
+  let orchestrator = useSyncOrchestratorStore.getState();
+
+  // Automatic recovery: after retry budget is exhausted, heartbeat/background used to fail instantly
+  // forever. Skip duplicate runs for a cooldown, then grant a fresh budget without user action.
+  const autoModes: SyncRunMode[] = ["heartbeat_refresh", "background", "bootstrap_restore"];
+  if (
+    autoModes.includes(mode) &&
+    orchestrator.retry.attempt >= orchestrator.retryPolicy.maxAttempts
+  ) {
+    const lastEnd = orchestrator.lastRunFinishedAt;
+    const elapsed = lastEnd
+      ? Date.now() - new Date(lastEnd).getTime()
+      : SYNC_EXHAUSTED_RETRY_COOLDOWN_MS;
+    if (elapsed < SYNC_EXHAUSTED_RETRY_COOLDOWN_MS) {
+      return;
+    }
+    useSyncOrchestratorStore.setState((state) => ({
+      retry: { attempt: 0, nextRetryAt: null, lastError: null },
+      lastError: null,
+      timeline: pushTimeline(state.timeline, {
+        correlationId: newCorrelationId(),
+        severity: "info",
+        mode,
+        event: "retry_budget_refreshed",
+        message: "Automatic retry budget refresh after cooldown.",
+      }),
+    }));
+    orchestrator = useSyncOrchestratorStore.getState();
+    reflectAppSyncState(
+      orchestrator.runtimeState === "error" ? "scheduled" : orchestrator.runtimeState,
+      orchestrator.pendingBacklog,
+      orchestrator.lastSuccessAt,
+      null,
+      orchestrator.blockerReason,
+      0,
+    );
+  }
+
   const gate = evaluateSchedulingGate(orchestrator.policy, {
     nowIso: nowIso(),
     isOnline: typeof navigator === "undefined" ? true : navigator.onLine,
@@ -516,6 +554,26 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
       runSyncNow: async (mode = "manual") => {
         if (!get().initialized && mode !== "bootstrap_restore") {
           get().initialize();
+        }
+        // Operator explicitly asked for a sync run: give a fresh retry budget and cancel any
+        // pending auto-retry timer. Otherwise after maxAttempts the next run would compute
+        // nextAttempt > maxAttempts and fail immediately ("retry budget exhausted" loop).
+        if (mode === "manual") {
+          clearSchedulerTimer();
+          set({
+            retry: { attempt: 0, nextRetryAt: null, lastError: null },
+            lastError: null,
+            nextScheduledAt: null,
+          });
+          const s = get();
+          reflectAppSyncState(
+            "scheduled",
+            s.pendingBacklog,
+            s.lastSuccessAt,
+            null,
+            s.blockerReason,
+            0,
+          );
         }
         await executeSyncRun(mode);
       },

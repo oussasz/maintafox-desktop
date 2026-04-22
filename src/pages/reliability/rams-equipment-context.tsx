@@ -26,6 +26,12 @@ function readStoredId(): number | null {
   }
 }
 
+/** Last selected RAMS equipment id (localStorage); safe outside `RamsEquipmentProvider`. */
+export function getStoredRamsEquipmentId(): number | null {
+  const n = readStoredId();
+  return n != null && n > 0 ? n : null;
+}
+
 function readStoredIds(): number[] {
   try {
     const raw = localStorage.getItem(STORAGE_MULTI_KEY);

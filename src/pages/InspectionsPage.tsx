@@ -1,5 +1,5 @@
 import { ClipboardCheck } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import {
@@ -20,6 +20,7 @@ import {
   routeInspectionAnomalyToWo,
   scheduleInspectionRound,
 } from "@/services/inspection-service";
+import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import type {
   InspectionAnomaly,
   InspectionCheckpoint,
@@ -50,7 +51,10 @@ export function InspectionsPage() {
   const [resComment, setResComment] = useState("");
   const [offlinePayload, setOfflinePayload] = useState('{"op":"record_inspection_result"}');
   const [offlineTempId, setOfflineTempId] = useState("");
-  const [woTypeIdStr, setWoTypeIdStr] = useState("1");
+  const woTypesCatalog = useWorkOrderTypesCatalog((s) => s.types);
+  const loadWoTypes = useWorkOrderTypesCatalog((s) => s.load);
+  const woTypes = useMemo(() => woTypesCatalog.filter((row) => row.is_active), [woTypesCatalog]);
+  const [woTypeCode, setWoTypeCode] = useState("");
   const [reliabilitySignals, setReliabilitySignals] = useState<InspectionReliabilitySignal[]>([]);
   const [signalWindowDays, setSignalWindowDays] = useState("30");
 
@@ -68,6 +72,18 @@ export function InspectionsPage() {
   useEffect(() => {
     void loadLists();
   }, [loadLists]);
+
+  useEffect(() => {
+    void loadWoTypes();
+  }, [loadWoTypes]);
+
+  useEffect(() => {
+    const firstActiveCode = woTypes.at(0)?.code ?? "";
+    setWoTypeCode((prev) => {
+      if (woTypes.length === 0) return "";
+      return woTypes.some((row) => row.code === prev) ? prev : firstActiveCode;
+    });
+  }, [woTypes]);
 
   const loadReliabilitySignals = useCallback(async () => {
     setError(null);
@@ -249,9 +265,9 @@ export function InspectionsPage() {
   };
 
   const onRouteAnomalyWo = async (a: InspectionAnomaly) => {
-    const typeId = Number.parseInt(woTypeIdStr, 10);
-    if (!Number.isFinite(typeId)) {
-      setError("type_id OT invalide.");
+    const normalized = woTypeCode.trim();
+    if (normalized === "") {
+      setError("type_code OT invalide.");
       return;
     }
     setError(null);
@@ -259,7 +275,7 @@ export function InspectionsPage() {
       await routeInspectionAnomalyToWo({
         anomaly_id: a.id,
         expected_row_version: a.row_version,
-        type_id: typeId,
+        type_code: normalized,
         title: null,
       });
       await loadExecution();
@@ -600,12 +616,19 @@ export function InspectionsPage() {
             <h2 className="mb-3 text-sm font-medium text-fg-1">Anomalies</h2>
             <div className="mb-3 flex flex-wrap items-end gap-3">
               <label className="flex flex-col gap-1 text-xs text-fg-2">
-                type_id (OT depuis anomalie)
-                <input
+                type_code (OT depuis anomalie)
+                <select
                   className="rounded border border-surface-3 bg-surface-0 px-2 py-1.5 text-sm text-fg-0"
-                  value={woTypeIdStr}
-                  onChange={(e) => setWoTypeIdStr(e.target.value)}
-                />
+                  value={woTypeCode}
+                  onChange={(e) => setWoTypeCode(e.target.value)}
+                >
+                  <option value="">Sélectionner un type</option>
+                  {woTypes.map((type) => (
+                    <option key={type.id} value={type.code}>
+                      {type.code}
+                    </option>
+                  ))}
+                </select>
               </label>
             </div>
             <div className="overflow-x-auto">

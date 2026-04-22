@@ -95,7 +95,10 @@
     "submit": "Create work order",
     "update": "Save changes",
     "validation": {
-      "titleRequired": "Title is required"
+      "titleRequired": "Title is required",
+      "typeRequired": "Work order type is required.",
+      "urgencyRequired": "Priority is required.",
+      "urgencyInvalid": "The selected priority is no longer valid."
     }
   },
   "status": {

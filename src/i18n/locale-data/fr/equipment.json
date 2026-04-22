@@ -38,6 +38,7 @@
       "name": "Désignation",
       "class": "Classe",
       "family": "Famille",
+      "subfamily": "Sous-famille",
       "parentEquipment": "Équipement parent",
       "criticality": "Criticité",
       "status": "Statut",
@@ -73,7 +74,9 @@
     "maintenance": "En maintenance",
     "decommissioned": "Déclassé",
     "standby": "En veille",
-    "scrapped": "Mis au rebut"
+    "scrapped": "Mis au rebut",
+    "inStock": "En stock",
+    "outOfService": "Hors service"
   },
   "action": {
     "addMeter": "Ajouter un compteur",
@@ -106,6 +109,8 @@
       "noSelection": "Sélectionnez un actif pour afficher ses détails.",
       "loadError": "Échec du chargement des détails.",
       "hierarchy": "Hiérarchie",
+      "noParent": "Aucun équipement parent lié.",
+      "childAssets": "Équipements enfants",
       "noChildren": "Aucun actif enfant lié.",
       "noEvents": "Aucun événement de cycle de vie enregistré.",
       "primary": "Principal",
@@ -116,9 +121,24 @@
     "button": "Créer un actif",
     "title": "Créer un actif",
     "description": "Créer un nouvel actif et l'affecter à un nœud d'organisation.",
+    "catalogLoadFailed": "Impossible de charger le référentiel ou l'arborescence d'organisation. Vérifiez la connexion et réessayez.",
+    "validation": {
+      "referenceRequired": "Sélectionnez la classe, la criticité et le statut dans le référentiel.",
+      "orgRequired": "Sélectionnez un nœud d'organisation."
+    },
     "selectCriticality": "Sélectionner la criticité",
+    "selectClass": "Sélectionner la classe d'équipement",
+    "selectFamilyOptional": "Famille (optionnel)",
+    "selectSubfamilyOptional": "Sous-famille (optionnel)",
+    "selectStatus": "Sélectionner le statut de cycle de vie",
     "selectOrg": "Sélectionner le nœud d'organisation",
+    "familyNone": "— Aucune —",
     "parentAsset": "Actif parent",
+    "parentPlaceholder": "Rechercher un équipement parent…",
+    "parentSearching": "Recherche…",
+    "parentMinChars": "Saisissez au moins 2 caractères.",
+    "parentNoResults": "Aucun équipement correspondant.",
+    "parentTreeSuggestions": "Branche courante",
     "searchParent": "Rechercher un actif parent",
     "clearParent": "Effacer le parent",
     "descriptionLabel": "Description",
@@ -251,7 +271,8 @@
     "good": "Bon",
     "fair": "Moyen",
     "poor": "Mauvais",
-    "noData": "Aucune donnée"
+    "noData": "Aucun score de santé",
+    "unavailable": "Données de santé indisponibles"
   },
   "photos": {
     "title": "Photos",

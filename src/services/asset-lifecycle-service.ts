@@ -15,6 +15,7 @@ import type {
   AssetLifecycleEvent,
   AssetMeter,
   AssetPhoto,
+  AssetPhotoPreview,
   CreateAssetMeterPayload,
   DecommissionAssetPayload,
   MeterReading,
@@ -231,6 +232,11 @@ export const AssetPhotoSchema = z.object({
   created_at: z.string(),
 });
 
+export const AssetPhotoPreviewSchema = z.object({
+  mime_type: z.string(),
+  data_base64: z.string(),
+});
+
 export async function listAssetPhotos(assetId: number): Promise<AssetPhoto[]> {
   const raw = await invoke<unknown>("list_asset_photos", { assetId });
   return z.array(AssetPhotoSchema).parse(raw) as AssetPhoto[];
@@ -239,6 +245,11 @@ export async function listAssetPhotos(assetId: number): Promise<AssetPhoto[]> {
 export async function uploadAssetPhoto(payload: UploadAssetPhotoPayload): Promise<AssetPhoto> {
   const raw = await invoke<unknown>("upload_asset_photo", { payload });
   return AssetPhotoSchema.parse(raw) as AssetPhoto;
+}
+
+export async function readAssetPhotoPreview(photoId: number): Promise<AssetPhotoPreview> {
+  const raw = await invoke<unknown>("read_asset_photo_preview", { photoId });
+  return AssetPhotoPreviewSchema.parse(raw) as AssetPhotoPreview;
 }
 
 export async function deleteAssetPhoto(photoId: number): Promise<void> {

@@ -20,6 +20,8 @@ use crate::assets::{
     meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload},
     photos,
     search::{self, AssetSearchFilters},
+    taxonomy_reference,
+    EquipmentTaxonomyCatalog,
 };
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
@@ -27,6 +29,15 @@ use crate::state::AppState;
 use crate::{require_permission, require_session};
 
 // ─── Read commands (eq.view) ──────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_equipment_taxonomy_catalog(
+    state: State<'_, AppState>,
+) -> AppResult<EquipmentTaxonomyCatalog> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    taxonomy_reference::list_equipment_taxonomy_catalog(&state.db).await
+}
 
 #[tauri::command]
 pub async fn list_assets(
@@ -316,6 +327,21 @@ pub async fn list_asset_photos(
         .app_data_dir()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
     photos::list_asset_photos(&state.db, &app_data_dir, asset_id).await
+}
+
+#[tauri::command]
+pub async fn read_asset_photo_preview(
+    photo_id: i64,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<photos::AssetPhotoPreview> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    photos::read_asset_photo_preview(&state.db, &app_data_dir, photo_id).await
 }
 
 #[tauri::command]

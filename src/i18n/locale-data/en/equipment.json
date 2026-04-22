@@ -38,6 +38,7 @@
       "name": "Name",
       "class": "Class",
       "family": "Family",
+      "subfamily": "Subfamily",
       "parentEquipment": "Parent equipment",
       "criticality": "Criticality",
       "status": "Status",
@@ -73,7 +74,9 @@
     "maintenance": "Under maintenance",
     "decommissioned": "Decommissioned",
     "standby": "Standby",
-    "scrapped": "Scrapped"
+    "scrapped": "Scrapped",
+    "inStock": "In stock",
+    "outOfService": "Out of service"
   },
   "action": {
     "addMeter": "Add meter",
@@ -106,6 +109,8 @@
       "noSelection": "Select an asset to view its details.",
       "loadError": "Failed to load asset details.",
       "hierarchy": "Hierarchy",
+      "noParent": "No parent equipment linked.",
+      "childAssets": "Child equipment",
       "noChildren": "No child assets linked.",
       "noEvents": "No lifecycle events recorded.",
       "primary": "Primary",
@@ -116,9 +121,24 @@
     "button": "Create asset",
     "title": "Create asset",
     "description": "Create a new asset and assign it to an organization node.",
+    "catalogLoadFailed": "Could not load reference catalog or organization tree. Check your connection and try again.",
+    "validation": {
+      "referenceRequired": "Select class, criticality, and status from the catalog.",
+      "orgRequired": "Select an organization node."
+    },
     "selectCriticality": "Select criticality",
+    "selectClass": "Select equipment class",
+    "selectFamilyOptional": "Family (optional)",
+    "selectSubfamilyOptional": "Subfamily (optional)",
+    "selectStatus": "Select lifecycle status",
     "selectOrg": "Select organization node",
+    "familyNone": "— None —",
     "parentAsset": "Parent asset",
+    "parentPlaceholder": "Search parent equipment…",
+    "parentSearching": "Searching…",
+    "parentMinChars": "Type at least 2 characters to search.",
+    "parentNoResults": "No matching equipment.",
+    "parentTreeSuggestions": "Current branch",
     "searchParent": "Search parent asset",
     "clearParent": "Clear parent",
     "descriptionLabel": "Description",
@@ -251,7 +271,8 @@
     "good": "Good",
     "fair": "Fair",
     "poor": "Poor",
-    "noData": "No data"
+    "noData": "No health score",
+    "unavailable": "Health data unavailable"
   },
   "photos": {
     "title": "Photos",

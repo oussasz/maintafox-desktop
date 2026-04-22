@@ -72,13 +72,20 @@ export function AssetHealthBadge({ assetId, compact }: AssetHealthBadgeProps) {
   if (!health) {
     return (
       <Badge variant="secondary" className="text-[10px]">
-        {t("health.noData")}
+        {t("health.unavailable")}
       </Badge>
     );
   }
 
   const config = LABEL_VARIANT[health.label];
-  const labelText = t(`health.${health.label}` as never);
+  const labelText =
+    health.label === "good"
+      ? t("health.good")
+      : health.label === "fair"
+        ? t("health.fair")
+        : health.label === "poor"
+          ? t("health.poor")
+          : t("health.noData");
   const scoreText = health.score !== null ? `${health.score}` : "";
 
   return (

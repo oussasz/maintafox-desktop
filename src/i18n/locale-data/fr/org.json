@@ -28,6 +28,7 @@
     "bindingCount": "Liaisons actives",
     "bindings": "liaisons",
     "manageTypes": "Gérer les types",
+    "manageTypesNoDraftHint": "Créez un modèle de structure en brouillon avant de gérer les types de nœuds.",
     "inspector": {
       "noSelection": "Sélectionnez un nœud dans l'arborescence pour afficher ses détails",
       "details": "Détails",

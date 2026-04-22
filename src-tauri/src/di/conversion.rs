@@ -99,6 +99,8 @@ pub async fn convert_di_to_work_order(
     db: &DatabaseConnection,
     input: WoConversionInput,
 ) -> AppResult<WoConversionResult> {
+    crate::wo::statuses::ensure_work_order_statuses_if_needed(db).await?;
+
     let txn = db.begin().await?;
 
     // ── 1. Load DI and validate state transition ──────────────────────────

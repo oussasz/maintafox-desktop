@@ -167,6 +167,7 @@ mod tests {
             asset_name: "Pompe centrifuge P-101".to_string(),
             class_code: "PUMP".to_string(),
             family_code: None,
+            subfamily_code: None,
             criticality_code: "STANDARD".to_string(),
             status_code: "ACTIVE_IN_SERVICE".to_string(),
             manufacturer: Some("KSB".to_string()),
@@ -303,7 +304,7 @@ mod tests {
             AppError::ValidationFailed(msgs) => {
                 let joined = msgs.join(" ");
                 assert!(
-                    joined.contains("DOES_NOT_EXIST"),
+                    joined.contains("DOES_NOT_EXIST") || joined.contains("non reconnu"),
                     "error should name the bad code, got: {joined}"
                 );
             }
@@ -366,12 +367,12 @@ mod tests {
         let org_node_id = setup_org_node(&db).await;
         setup_equipment_class(&db).await;
 
-        // All seeded codes: STANDARD criticality, ACTIVE_IN_SERVICE status, PUMP class
+        // Canonical codes: C criticality (legacy STANDARD), ACTIVE_IN_SERVICE status, PUMP class
         let asset = identity::create_asset(&db, valid_payload(org_node_id), 1)
             .await
             .expect("valid lookup codes should succeed");
 
-        assert!(asset.criticality_code.as_deref() == Some("STANDARD"));
+        assert!(asset.criticality_code.as_deref() == Some("C"));
         assert_eq!(asset.status_code, "ACTIVE_IN_SERVICE");
         assert!(asset.class_code.as_deref() == Some("PUMP"));
     }

@@ -31,9 +31,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { usePermissions } from "@/hooks/use-permissions";
+import { isReferenceDomainProtected } from "@/lib/reference-domain-ui";
 import {
   INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
   INVENTORY_TAX_CATEGORY_DOMAIN_ID,
+  WORK_ORDER_PRIORITIES_DOMAIN_ID,
+  WORK_ORDER_STATUSES_DOMAIN_ID,
+  WORK_ORDER_TYPES_DOMAIN_ID,
   useReferenceManagerStore,
 } from "@/stores/reference-manager-store";
 import type { ReferenceDomain, ReferenceSet } from "@shared/ipc-types";
@@ -65,6 +69,10 @@ type SetStatus = keyof typeof STATUS_LABEL_KEY;
 function statusLabelKey(status: string) {
   return STATUS_LABEL_KEY[status as SetStatus] ?? "browser.status.draft";
 }
+
+/** Fixed slot so lock + overflow menu align on one vertical axis (no jagged shifts by label length). */
+const DOMAIN_ROW_ICON_SLOT =
+  "flex h-7 w-7 shrink-0 items-center justify-center [&_button]:shrink-0";
 
 // ── Domain Browser Panel ──────────────────────────────────────────────────────
 
@@ -193,7 +201,7 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
 
   // ── Render helpers ──────────────────────────────────────────────────────
 
-  const isProtected = (d: ReferenceDomain) => d.governance_level === "protected_analytical";
+  const isProtected = (d: ReferenceDomain) => isReferenceDomainProtected(d);
 
   return (
     <aside className="flex h-full flex-col w-[300px] shrink-0 border-r border-surface-border">
@@ -227,6 +235,9 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
         {filteredDomains.map((domain) => {
           const isInventoryFamilyDomain = domain.id === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID;
           const isInventoryTaxDomain = domain.id === INVENTORY_TAX_CATEGORY_DOMAIN_ID;
+          const isWorkOrderTypesDomain = domain.id === WORK_ORDER_TYPES_DOMAIN_ID;
+          const isWorkOrderPrioritiesDomain = domain.id === WORK_ORDER_PRIORITIES_DOMAIN_ID;
+          const isWorkOrderStatusesDomain = domain.id === WORK_ORDER_STATUSES_DOMAIN_ID;
           const isExpanded = expandedDomainIds.includes(domain.id);
           const isSelected = selectedDomainId === domain.id && selectedSetId === null;
           const sets = setsMap[domain.id] ?? [];
@@ -239,7 +250,7 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
             <div key={domain.id} role="treeitem" aria-expanded={isExpanded}>
               {/* Domain row */}
               <div
-                className={`group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer text-sm hover:bg-surface-1 ${
+                className={`group flex min-w-0 items-center gap-1.5 px-3 py-1.5 cursor-pointer text-sm hover:bg-surface-1 ${
                   isSelected ? "bg-surface-2 text-text-primary font-medium" : "text-text-secondary"
                 } ${focusedIndex === flatIdx ? "ring-1 ring-inset ring-primary/40" : ""}`}
                 onClick={() => selectDomain(domain.id)}
@@ -267,45 +278,54 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
                   )}
                 </button>
 
-                {/* Folder icon */}
-                {isExpanded ? (
-                  <FolderOpen className="h-4 w-4 shrink-0 text-text-muted" />
-                ) : (
-                  <FolderClosed className="h-4 w-4 shrink-0 text-text-muted" />
-                )}
+                {/* Folder + label: stable gap between icon and title */}
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  {isExpanded ? (
+                    <FolderOpen className="h-4 w-4 shrink-0 text-text-muted" />
+                  ) : (
+                    <FolderClosed className="h-4 w-4 shrink-0 text-text-muted" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{domain.name}</span>
+                </div>
 
-                {/* Domain name */}
-                <span className="truncate flex-1">{domain.name}</span>
-
-                {/* Protected badge */}
-                {isProtected(domain) && (
-                  <Lock
-                    className="h-3.5 w-3.5 shrink-0 text-status-warning"
-                    aria-label={t("browser.protectedDomain")}
-                  />
-                )}
-
-                {/* Context menu */}
-                {can("ref.manage") && !isInventoryFamilyDomain && !isInventoryTaxDomain && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <MoreVertical className="h-3.5 w-3.5" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-44">
-                      <DropdownMenuItem onClick={() => onCreateDraftSet?.(domain.id)}>
-                        <Plus className="mr-2 h-3.5 w-3.5" />
-                        {t("browser.newSet")}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
+                {/* Trailing rail: fixed slots so lock + menu share one vertical axis */}
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <div className={DOMAIN_ROW_ICON_SLOT} aria-hidden={!isProtected(domain)}>
+                    {isProtected(domain) ? (
+                      <Lock
+                        className="h-3.5 w-3.5 text-status-warning"
+                        aria-label={t("browser.protectedDomain")}
+                      />
+                    ) : null}
+                  </div>
+                  <div className={DOMAIN_ROW_ICON_SLOT}>
+                    {can("ref.manage") &&
+                    !isInventoryFamilyDomain &&
+                    !isInventoryTaxDomain &&
+                    !isWorkOrderTypesDomain &&
+                    !isWorkOrderPrioritiesDomain &&
+                    !isWorkOrderStatusesDomain ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <MoreVertical className="h-3.5 w-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem onClick={() => onCreateDraftSet?.(domain.id)}>
+                            <Plus className="mr-2 h-3.5 w-3.5" />
+                            {t("browser.newSet")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : null}
+                  </div>
+                </div>
               </div>
 
               {/* Child sets */}

@@ -58,6 +58,7 @@ export function OrganizationDesignerPage() {
   }, [snapshot]);
 
   const hasActiveModel = snapshot?.active_model_id != null;
+  const hasDraftModel = snapshot?.draft_model_id != null;
 
   // Loading state
   if (loading && !snapshot) {
@@ -102,7 +103,9 @@ export function OrganizationDesignerPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setTypesPanelOpen(true)}
+            onClick={() => hasDraftModel && setTypesPanelOpen(true)}
+            disabled={!hasDraftModel}
+            title={!hasDraftModel ? t("designer.manageTypesNoDraftHint") : undefined}
             className="gap-1.5"
           >
             <Settings2 className="h-3.5 w-3.5" />
@@ -236,7 +239,7 @@ export function OrganizationDesignerPage() {
       <NodeTypeManagerPanel
         open={typesPanelOpen}
         onOpenChange={setTypesPanelOpen}
-        structureModelId={snapshot?.active_model_id ?? null}
+        structureModelId={snapshot?.draft_model_id ?? null}
         onTypesChanged={() => void loadSnapshot()}
       />
 

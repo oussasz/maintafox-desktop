@@ -19,6 +19,9 @@ import { InventoryArticleFamilyManagerPanel } from "@/components/lookups/Invento
 import { InventoryTaxCategoryManagerPanel } from "@/components/lookups/InventoryTaxCategoryManagerPanel";
 import { ReferenceImportWizard } from "@/components/lookups/ReferenceImportWizard";
 import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor";
+import { WorkOrderPrioritiesManagerPanel } from "@/components/lookups/WorkOrderPrioritiesManagerPanel";
+import { WorkOrderStatusesManagerPanel } from "@/components/lookups/WorkOrderStatusesManagerPanel";
+import { WorkOrderTypesManagerPanel } from "@/components/lookups/WorkOrderTypesManagerPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -30,8 +33,16 @@ import {
   INVENTORY_ARTICLE_FAMILY_SET_ID,
   INVENTORY_TAX_CATEGORY_DOMAIN_ID,
   INVENTORY_TAX_CATEGORY_SET_ID,
+  WORK_ORDER_PRIORITIES_DOMAIN_ID,
+  WORK_ORDER_PRIORITIES_SET_ID,
+  WORK_ORDER_STATUSES_DOMAIN_ID,
+  WORK_ORDER_STATUSES_SET_ID,
+  WORK_ORDER_TYPES_DOMAIN_ID,
+  WORK_ORDER_TYPES_SET_ID,
   useReferenceManagerStore,
 } from "@/stores/reference-manager-store";
+import { refreshWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
+import { refreshWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 
 // ── Status label key mapping (shared with DomainBrowserPanel) ─────────────
 
@@ -81,6 +92,8 @@ export function ReferenceManagerPage() {
 
   const handleRefresh = useCallback(() => {
     void loadDomains();
+    void refreshWorkOrderTypesCatalog();
+    void refreshWorkOrderPrioritiesCatalog();
     if (selectedDomainId) {
       void loadSetsForDomain(selectedDomainId);
     }
@@ -200,7 +213,13 @@ export function ReferenceManagerPage() {
                 (selectedDomainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID &&
                   selectedSetId === INVENTORY_ARTICLE_FAMILY_SET_ID) ||
                 (selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
-                  selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID)
+                  selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID) ||
+                (selectedDomainId === WORK_ORDER_TYPES_DOMAIN_ID &&
+                  selectedSetId === WORK_ORDER_TYPES_SET_ID) ||
+                (selectedDomainId === WORK_ORDER_PRIORITIES_DOMAIN_ID &&
+                  selectedSetId === WORK_ORDER_PRIORITIES_SET_ID) ||
+                (selectedDomainId === WORK_ORDER_STATUSES_DOMAIN_ID &&
+                  selectedSetId === WORK_ORDER_STATUSES_SET_ID)
               }
             >
               <Download className="h-3.5 w-3.5" />
@@ -233,6 +252,15 @@ export function ReferenceManagerPage() {
           ) : selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
             selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID ? (
             <InventoryTaxCategoryManagerPanel />
+          ) : selectedDomainId === WORK_ORDER_TYPES_DOMAIN_ID &&
+            selectedSetId === WORK_ORDER_TYPES_SET_ID ? (
+            <WorkOrderTypesManagerPanel />
+          ) : selectedDomainId === WORK_ORDER_PRIORITIES_DOMAIN_ID &&
+            selectedSetId === WORK_ORDER_PRIORITIES_SET_ID ? (
+            <WorkOrderPrioritiesManagerPanel />
+          ) : selectedDomainId === WORK_ORDER_STATUSES_DOMAIN_ID &&
+            selectedSetId === WORK_ORDER_STATUSES_SET_ID ? (
+            <WorkOrderStatusesManagerPanel />
           ) : selectedSetId && selectedDomainId ? (
             <ReferenceValueEditor setId={selectedSetId} domainId={selectedDomainId} />
           ) : (
@@ -256,6 +284,18 @@ export function ReferenceManagerPage() {
         !(
           selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
           selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID
+        ) &&
+        !(
+          selectedDomainId === WORK_ORDER_TYPES_DOMAIN_ID &&
+          selectedSetId === WORK_ORDER_TYPES_SET_ID
+        ) &&
+        !(
+          selectedDomainId === WORK_ORDER_PRIORITIES_DOMAIN_ID &&
+          selectedSetId === WORK_ORDER_PRIORITIES_SET_ID
+        ) &&
+        !(
+          selectedDomainId === WORK_ORDER_STATUSES_DOMAIN_ID &&
+          selectedSetId === WORK_ORDER_STATUSES_SET_ID
         ) && (
           <ReferenceImportWizard
             domainId={selectedDomainId}

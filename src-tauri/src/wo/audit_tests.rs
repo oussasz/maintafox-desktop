@@ -98,7 +98,7 @@ mod tests {
         let wo = queries::create_work_order(
             db,
             WoCreateInput {
-                type_id: 1,
+                type_code: "corrective".into(),
                 equipment_id: None,
                 location_id: None,
                 source_di_id: None,

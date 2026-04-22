@@ -46,6 +46,8 @@ import { WoKanbanView } from "@/components/wo/WoKanbanView";
 import { mfInput, mfLayout } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import { useWoStore } from "@/stores/wo-store";
+import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
+import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { formatDate } from "@/utils/format-date";
 import { STATUS_STYLE, statusToI18nKey } from "@/utils/wo-status";
 import type { WorkOrder } from "@shared/ipc-types";
@@ -72,6 +74,10 @@ export function WorkOrdersPage() {
   const [showFilters, setShowFilters] = useState(
     () => localStorage.getItem("wo-show-filters") !== "0",
   );
+  const woTypes = useWorkOrderTypesCatalog((s) => s.types);
+  const loadWoTypes = useWorkOrderTypesCatalog((s) => s.load);
+  const woPriorities = useWorkOrderPrioritiesCatalog((s) => s.priorities);
+  const loadWoPriorities = useWorkOrderPrioritiesCatalog((s) => s.load);
 
   // ── Search with debounce ──────────────────────────────────────────────
 
@@ -110,29 +116,26 @@ export function WorkOrdersPage() {
 
   const TYPE_OPTIONS = useMemo(
     () =>
-      [
-        "corrective",
-        "preventive",
-        "predictive",
-        "improvement",
-        "inspection",
-        "overhaul",
-        "condition_based",
-        "permit",
-      ].map((code) => ({
-        code,
-        label: t(`type.${code === "condition_based" ? "conditionBased" : code}`),
-      })),
-    [t],
+      woTypes
+        .filter((type) => type.is_active)
+        .map((type) => ({
+          code: type.code,
+          label: t(`type.${type.code === "condition_based" ? "conditionBased" : type.code}`, {
+            defaultValue: type.label,
+          }),
+        })),
+    [woTypes, t],
   );
 
   const PRIORITY_OPTIONS = useMemo(
     () =>
-      [1, 2, 3, 4, 5].map((n) => ({
-        value: n,
-        label: `${n}`,
-      })),
-    [],
+      woPriorities
+        .filter((p) => p.is_active)
+        .map((p) => ({
+          value: p.level,
+          label: i18n.language.toLowerCase().startsWith("fr") ? p.label_fr : p.label,
+        })),
+    [woPriorities, i18n.language],
   );
 
   const [statusFilter, setStatusFilter] = useState<string>("__all__");
@@ -171,6 +174,14 @@ export function WorkOrdersPage() {
   useEffect(() => {
     void loadWos();
   }, [loadWos]);
+
+  useEffect(() => {
+    void loadWoTypes();
+  }, [loadWoTypes]);
+
+  useEffect(() => {
+    void loadWoPriorities();
+  }, [loadWoPriorities]);
 
   const switchView = useCallback((v: WoViewMode) => {
     setView(v);

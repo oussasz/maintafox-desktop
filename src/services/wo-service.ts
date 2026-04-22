@@ -26,6 +26,13 @@ import type {
   WoResumeInput,
   WoStartInput,
   WoStatsPayload,
+  CreateWorkOrderTypeInput,
+  UpdateWorkOrderPriorityInput,
+  UpdateWorkOrderStatusInput,
+  UpdateWorkOrderTypeInput,
+  WorkOrderPriorityOption,
+  WorkOrderStatusOption,
+  WorkOrderTypeOption,
   WorkOrder,
 } from "@shared/ipc-types";
 
@@ -146,6 +153,36 @@ const WoGetResponseSchema = z.object({
   transitions: z.array(WoTransitionRowSchema),
 });
 
+const WorkOrderTypeOptionSchema = z.object({
+  id: z.number(),
+  code: z.string(),
+  label: z.string(),
+  is_system: z.boolean(),
+  is_active: z.boolean(),
+});
+
+const WorkOrderPriorityOptionSchema = z.object({
+  id: z.number(),
+  level: z.number(),
+  code: z.string(),
+  label: z.string(),
+  label_fr: z.string(),
+  hex_color: z.string(),
+  is_system: z.boolean(),
+  is_active: z.boolean(),
+});
+
+const WorkOrderStatusOptionSchema = z.object({
+  id: z.number(),
+  code: z.string(),
+  label: z.string(),
+  color: z.string(),
+  macro_state: z.string(),
+  is_terminal: z.boolean(),
+  is_system: z.boolean(),
+  sequence: z.number(),
+});
+
 // â”€â”€ Error helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface IpcError {
@@ -230,6 +267,56 @@ export async function listWos(filter: WoListFilter): Promise<WoListPage> {
 export async function getWo(id: number): Promise<WoGetResponse> {
   const raw = await invoke<unknown>("get_wo", { id });
   return WoGetResponseSchema.parse(raw) as WoGetResponse;
+}
+
+export async function listWorkOrderTypes(): Promise<WorkOrderTypeOption[]> {
+  const raw = await invoke<unknown>("list_work_order_types");
+  return z.array(WorkOrderTypeOptionSchema).parse(raw) as WorkOrderTypeOption[];
+}
+
+export async function createWorkOrderType(
+  input: CreateWorkOrderTypeInput,
+): Promise<WorkOrderTypeOption> {
+  const raw = await invoke<unknown>("create_work_order_type", { input });
+  return WorkOrderTypeOptionSchema.parse(raw) as WorkOrderTypeOption;
+}
+
+export async function updateWorkOrderType(
+  id: number,
+  input: UpdateWorkOrderTypeInput,
+): Promise<WorkOrderTypeOption> {
+  const raw = await invoke<unknown>("update_work_order_type", { id, input });
+  return WorkOrderTypeOptionSchema.parse(raw) as WorkOrderTypeOption;
+}
+
+export async function deleteWorkOrderType(id: number): Promise<void> {
+  await invoke("delete_work_order_type", { id });
+}
+
+export async function listWorkOrderPriorities(): Promise<WorkOrderPriorityOption[]> {
+  const raw = await invoke<unknown>("list_work_order_priorities");
+  return z.array(WorkOrderPriorityOptionSchema).parse(raw) as WorkOrderPriorityOption[];
+}
+
+export async function updateWorkOrderPriority(
+  id: number,
+  input: UpdateWorkOrderPriorityInput,
+): Promise<WorkOrderPriorityOption> {
+  const raw = await invoke<unknown>("update_work_order_priority", { id, input });
+  return WorkOrderPriorityOptionSchema.parse(raw) as WorkOrderPriorityOption;
+}
+
+export async function listWorkOrderStatuses(): Promise<WorkOrderStatusOption[]> {
+  const raw = await invoke<unknown>("list_work_order_statuses");
+  return z.array(WorkOrderStatusOptionSchema).parse(raw) as WorkOrderStatusOption[];
+}
+
+export async function updateWorkOrderStatus(
+  id: number,
+  input: UpdateWorkOrderStatusInput,
+): Promise<WorkOrderStatusOption> {
+  const raw = await invoke<unknown>("update_work_order_status", { id, input });
+  return WorkOrderStatusOptionSchema.parse(raw) as WorkOrderStatusOption;
 }
 
 export async function createWo(input: WoCreateInput): Promise<WorkOrder> {

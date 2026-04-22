@@ -34,6 +34,7 @@ export function WoFormDialog() {
           <DialogTitle>{isEdit ? t("page.titleEdit") : t("page.titleNew")}</DialogTitle>
         </DialogHeader>
         <WoCreateForm
+          key={showCreateForm ? (editingWo ? `e-${editingWo.id}` : "new") : "closed"}
           initial={editingWo}
           onSubmitted={() => closeCreateForm()}
           onCancel={() => closeCreateForm()}

@@ -1959,6 +1959,42 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
             false,
             false,
         ),
+        // ── Sync (sync) — mirror migrations 060/061; kept here so the catalogue matches RBAC
+        (
+            "sync.view",
+            "View sync health, conflicts, and replay history",
+            "sync",
+            false,
+            false,
+        ),
+        (
+            "sync.manage",
+            "Apply sync batches and stage sync envelopes",
+            "sync",
+            true,
+            false,
+        ),
+        (
+            "sync.resolve",
+            "Resolve sync conflicts and change conflict lifecycle states",
+            "sync",
+            true,
+            false,
+        ),
+        (
+            "sync.replay",
+            "Run sync replay and checkpoint rollback workflows",
+            "sync",
+            true,
+            true,
+        ),
+        (
+            "sync.repair",
+            "Preview and execute scoped sync repair actions",
+            "sync",
+            true,
+            true,
+        ),
         // ── Reports & Analytics (rep) ─────────────────────────────────────
         ("rep.view", "View standard reports", "reporting", false, false),
         ("rep.export", "Export report data", "reporting", false, false),

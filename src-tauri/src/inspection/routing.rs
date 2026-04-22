@@ -190,7 +190,7 @@ pub async fn route_inspection_anomaly_to_wo(
     anomaly_id: i64,
     expected_row_version: i64,
     creator_user_id: i64,
-    type_id: i64,
+    type_code: String,
     title_override: Option<String>,
 ) -> AppResult<(crate::wo::domain::WorkOrder, InspectionAnomaly)> {
     let a = load_anomaly(db, anomaly_id).await?;
@@ -242,7 +242,7 @@ pub async fn route_inspection_anomaly_to_wo(
         .unwrap_or_else(|| format!("Inspection — {}", a.anomaly_type));
 
     let wo_in = WoCreateInput {
-        type_id,
+        type_code,
         equipment_id,
         location_id: None,
         source_di_id: None,

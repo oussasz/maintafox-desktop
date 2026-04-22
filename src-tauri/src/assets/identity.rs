@@ -11,9 +11,10 @@
 //!   asset_code           → equipment.asset_id_code
 //!   asset_name           → equipment.name
 //!   class_code           → resolved via equipment_classes (equipment.class_id FK)
-//!   family_code          → resolved via parent of equipment_classes
-//!   criticality_code     → resolved via lookup_values (equipment.criticality_value_id FK)
-//!   status_code          → equipment.lifecycle_status
+//!   family_code          → validated against EQUIPMENT.FAMILY parent links to class
+//!   subfamily_code       → validated against EQUIPMENT.SUBFAMILY parent links to family
+//!   criticality_code     → COALESCE(reference EQUIPMENT.CRITICALITY, lookup_values via legacy FK)
+//!   status_code          → COALESCE(reference EQUIPMENT.STATUS, equipment.lifecycle_status)
 //!   org_node_id          → equipment.installed_at_node_id
 //!   commissioned_at      → equipment.commissioning_date
 //!   decommissioned_at    → equipment.decommissioned_at (added in migration 010)
@@ -66,6 +67,7 @@ pub struct CreateAssetPayload {
     pub asset_name: String,
     pub class_code: String,
     pub family_code: Option<String>,
+    pub subfamily_code: Option<String>,
     pub criticality_code: String,
     pub status_code: String,
     pub manufacturer: Option<String>,
@@ -82,6 +84,7 @@ pub struct UpdateAssetIdentityPayload {
     pub asset_name: Option<String>,
     pub class_code: Option<String>,
     pub family_code: Option<Option<String>>,
+    pub subfamily_code: Option<Option<String>>,
     pub criticality_code: Option<String>,
     pub status_code: Option<String>,
     pub manufacturer: Option<Option<String>>,
@@ -119,8 +122,8 @@ pub(crate) const ASSET_SELECT: &str = r"
     ef.code            AS family_code,
     ef.name            AS family_name,
     e.criticality_value_id,
-    lv.code            AS criticality_code,
-    e.lifecycle_status AS status_code,
+    COALESCE(rs_crit.code, lv.code) AS criticality_code,
+    COALESCE(rs_stat.code, e.lifecycle_status) AS status_code,
     e.manufacturer,
     e.model,
     e.serial_number,
@@ -141,6 +144,8 @@ pub(crate) const ASSET_FROM: &str = r"
     LEFT JOIN equipment_classes ec ON ec.id = e.class_id
     LEFT JOIN equipment_classes ef ON ef.id = ec.parent_id
     LEFT JOIN lookup_values lv     ON lv.id = e.criticality_value_id
+    LEFT JOIN reference_values rs_crit ON rs_crit.id = e.equipment_criticality_ref_id
+    LEFT JOIN reference_values rs_stat ON rs_stat.id = e.equipment_status_ref_id
     LEFT JOIN org_nodes n          ON n.id  = e.installed_at_node_id
 ";
 
@@ -230,17 +235,23 @@ pub(crate) async fn resolve_class_code(
     db: &impl ConnectionTrait,
     class_code: &str,
 ) -> AppResult<(i64, Option<i64>)> {
+    let code = class_code.trim();
+    if code.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "Code de classe d'équipement obligatoire.".into(),
+        ]));
+    }
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, parent_id FROM equipment_classes \
-             WHERE code = ? AND is_active = 1 AND deleted_at IS NULL",
-            [class_code.into()],
+             WHERE UPPER(code) = UPPER(?) AND is_active = 1 AND deleted_at IS NULL",
+            [code.into()],
         ))
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![format!(
-                "Classe d'équipement '{class_code}' introuvable ou inactive."
+                "Classe d'équipement '{code}' introuvable ou inactive."
             )])
         })?;
     let id: i64 = row
@@ -278,8 +289,8 @@ pub(crate) async fn validate_family_code(
                 .map_err(|e| decode_err("code", e))?;
             if code != family_code {
                 return Err(AppError::ValidationFailed(vec![format!(
-                    "La classe '{code}' est de niveau racine; \
-                     le code famille '{family_code}' ne correspond pas."
+                    "La classe '{code}' n'est liée à aucune famille. \
+                     Supprimez la famille sélectionnée ('{family_code}') ou choisissez une classe qui appartient à cette famille."
                 )]));
             }
             return Ok(());
@@ -305,19 +316,63 @@ pub(crate) async fn validate_family_code(
         .map_err(|e| decode_err("parent.code", e))?;
     if parent_code != family_code {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Le code famille '{family_code}' ne correspond pas à la famille \
-             '{parent_code}' de la classe sélectionnée."
+            "La famille choisie ('{family_code}') ne correspond pas à la classe sélectionnée. \
+             Famille attendue: '{parent_code}'."
         )]));
     }
     Ok(())
 }
 
-/// Resolve a criticality code to its lookup_values.id within the
-/// `equipment.criticality` domain.
+fn canon_to_legacy_criticality_lookup(canon: &str) -> &'static str {
+    match canon {
+        "A" => "CRITIQUE",
+        "B" => "IMPORTANT",
+        "C" => "STANDARD",
+        "D" => "NON_CRITIQUE",
+        _ => "STANDARD",
+    }
+}
+
+/// Normalize user/API input to canonical A/B/C/D (accepts legacy lookup labels).
+pub(crate) fn normalize_criticality_to_canon(raw: &str) -> AppResult<String> {
+    let u = raw.trim().to_ascii_uppercase();
+    let canon = match u.as_str() {
+        "A" | "CRITIQUE" => "A",
+        "B" | "IMPORTANT" => "B",
+        "C" | "STANDARD" => "C",
+        "D" | "NON_CRITIQUE" | "NON-CRITIQUE" => "D",
+        _ => {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Code criticité '{raw}' non reconnu (attendu A–D ou code historique CRITIQUE / IMPORTANT / STANDARD / NON_CRITIQUE)."
+            )]));
+        }
+    };
+    Ok(canon.to_string())
+}
+
+/// Primary lifecycle status string for `equipment.lifecycle_status` (aligned with EQUIPMENT.STATUS).
+pub(crate) fn normalize_status_code_for_reference(raw: &str) -> AppResult<String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Err(AppError::ValidationFailed(vec!["Statut obligatoire.".into()]));
+    }
+    let u = t.replace(' ', "_").to_ascii_uppercase();
+    let mapped = match u.as_str() {
+        "ACTIVE" | "OPERATIONAL" | "IN_SERVICE" => "ACTIVE_IN_SERVICE",
+        "MAINTENANCE" => "UNDER_MAINTENANCE",
+        "STOCK" => "IN_STOCK",
+        other => other,
+    };
+    Ok(mapped.to_string())
+}
+
+/// Resolve a criticality code to its lookup_values.id (legacy column) via A–D → lookup mapping.
 pub(crate) async fn resolve_criticality_code(
     db: &impl ConnectionTrait,
     code: &str,
 ) -> AppResult<i64> {
+    let canon = normalize_criticality_to_canon(code)?;
+    let legacy = canon_to_legacy_criticality_lookup(&canon);
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -325,7 +380,7 @@ pub(crate) async fn resolve_criticality_code(
              INNER JOIN lookup_domains ld ON ld.id = lv.domain_id \
              WHERE ld.domain_key = 'equipment.criticality' \
                AND lv.code = ? AND lv.is_active = 1 AND lv.deleted_at IS NULL",
-            [code.into()],
+            [legacy.into()],
         ))
         .await?
         .ok_or_else(|| {
@@ -337,26 +392,190 @@ pub(crate) async fn resolve_criticality_code(
         .map_err(|e| decode_err("criticality.id", e))
 }
 
-/// Validate that a status code exists in the `equipment.lifecycle_status` domain.
-pub(crate) async fn validate_status_code(
+/// FK to `reference_values` for published `EQUIPMENT.CRITICALITY` catalog.
+pub(crate) async fn resolve_criticality_ref_id(
     db: &impl ConnectionTrait,
     code: &str,
+) -> AppResult<i64> {
+    let canon = normalize_criticality_to_canon(code)?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = 'EQUIPMENT.CRITICALITY' AND rs.status = 'published' \
+               AND rv.code = ? AND rv.is_active = 1",
+            [canon.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "Code criticité '{code}' introuvable dans le domaine de référence EQUIPMENT.CRITICALITY."
+            )])
+        })?;
+    row.try_get::<i64>("", "id")
+        .map_err(|e| decode_err("criticality_ref.id", e))
+}
+
+/// FK to `reference_values` for published `EQUIPMENT.STATUS` catalog.
+pub(crate) async fn resolve_status_ref_id(
+    db: &impl ConnectionTrait,
+    normalized_code: &str,
+) -> AppResult<i64> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = 'EQUIPMENT.STATUS' AND rs.status = 'published' \
+               AND rv.code = ? AND rv.is_active = 1",
+            [normalized_code.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "Statut '{normalized_code}' introuvable dans le domaine de référence EQUIPMENT.STATUS."
+            )])
+        })?;
+    row.try_get::<i64>("", "id")
+        .map_err(|e| decode_err("status_ref.id", e))
+}
+
+/// Required FK to `reference_values` for published `EQUIPMENT.CLASS`.
+pub(crate) async fn resolve_class_ref_id(
+    db: &impl ConnectionTrait,
+    class_code: &str,
+) -> AppResult<i64> {
+    let code = class_code.trim();
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = 'EQUIPMENT.CLASS' AND rs.status = 'published' \
+               AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)) AND rv.is_active = 1",
+            [code.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "Classe '{code}' introuvable dans le référentiel EQUIPMENT.CLASS."
+            )])
+        })?;
+    row.try_get::<i64>("", "id")
+        .map_err(|e| decode_err("class_ref.id", e))
+}
+
+async fn resolve_family_ref_id_and_parent(
+    db: &impl ConnectionTrait,
+    family_code: &str,
+) -> AppResult<(i64, Option<i64>)> {
+    let code = family_code.trim();
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id, rv.parent_id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = 'EQUIPMENT.FAMILY' AND rs.status = 'published' \
+               AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)) AND rv.is_active = 1",
+            [code.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "Famille '{code}' introuvable dans le référentiel EQUIPMENT.FAMILY."
+            )])
+        })?;
+    let id: i64 = row
+        .try_get("", "id")
+        .map_err(|e| decode_err("family_ref.id", e))?;
+    let parent_id: Option<i64> = row
+        .try_get("", "parent_id")
+        .map_err(|e| decode_err("family_ref.parent_id", e))?;
+    Ok((id, parent_id))
+}
+
+async fn resolve_subfamily_ref_id_and_parent(
+    db: &impl ConnectionTrait,
+    subfamily_code: &str,
+) -> AppResult<(i64, Option<i64>)> {
+    let code = subfamily_code.trim();
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id, rv.parent_id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = 'EQUIPMENT.SUBFAMILY' AND rs.status = 'published' \
+               AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)) AND rv.is_active = 1",
+            [code.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "Sous-famille '{code}' introuvable dans le référentiel EQUIPMENT.SUBFAMILY."
+            )])
+        })?;
+    let id: i64 = row
+        .try_get("", "id")
+        .map_err(|e| decode_err("subfamily_ref.id", e))?;
+    let parent_id: Option<i64> = row
+        .try_get("", "parent_id")
+        .map_err(|e| decode_err("subfamily_ref.parent_id", e))?;
+    Ok((id, parent_id))
+}
+
+pub(crate) async fn validate_family_for_class_ref(
+    db: &impl ConnectionTrait,
+    family_code: &str,
+    class_ref_id: i64,
+) -> AppResult<i64> {
+    let (family_id, parent_id) = resolve_family_ref_id_and_parent(db, family_code).await?;
+    match parent_id {
+        Some(pid) if pid == class_ref_id => Ok(family_id),
+        _ => Err(AppError::ValidationFailed(vec![
+            "La famille sélectionnée ne correspond pas à la classe choisie.".into(),
+        ])),
+    }
+}
+
+pub(crate) async fn validate_subfamily_for_family_ref(
+    db: &impl ConnectionTrait,
+    subfamily_code: &str,
+    family_ref_id: i64,
+) -> AppResult<i64> {
+    let (subfamily_id, parent_id) = resolve_subfamily_ref_id_and_parent(db, subfamily_code).await?;
+    match parent_id {
+        Some(pid) if pid == family_ref_id => Ok(subfamily_id),
+        _ => Err(AppError::ValidationFailed(vec![
+            "La sous-famille sélectionnée ne correspond pas à la famille choisie.".into(),
+        ])),
+    }
+}
+
+/// Validate that a (normalized) status code exists in the published `EQUIPMENT.STATUS` reference set.
+pub(crate) async fn validate_status_code(
+    db: &impl ConnectionTrait,
+    normalized_code: &str,
 ) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM lookup_values lv \
-             INNER JOIN lookup_domains ld ON ld.id = lv.domain_id \
-             WHERE ld.domain_key = 'equipment.lifecycle_status' \
-               AND lv.code = ? AND lv.is_active = 1 AND lv.deleted_at IS NULL",
-            [code.into()],
+            "SELECT rv.id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = 'EQUIPMENT.STATUS' AND rs.status = 'published' \
+               AND rv.code = ? AND rv.is_active = 1",
+            [normalized_code.into()],
         ))
-        .await?
-        .expect("COUNT always returns a row");
-    let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
-    if cnt == 0 {
+        .await?;
+    if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Code statut '{code}' introuvable dans le domaine 'equipment.lifecycle_status'."
+            "Code statut '{normalized_code}' introuvable dans le domaine de référence EQUIPMENT.STATUS."
         )]));
     }
     Ok(())
@@ -436,8 +655,12 @@ pub(crate) async fn assert_asset_code_unique(
     let row = db
         .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, binds))
         .await?
-        .expect("COUNT always returns a row");
-    let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "COUNT query returned no row while validating asset code uniqueness"
+            ))
+        })?;
+    let cnt: i64 = row.try_get("", "cnt").map_err(|e| decode_err("cnt", e))?;
     if cnt > 0 {
         return Err(AppError::ValidationFailed(vec![format!(
             "Le code équipement '{code}' existe déjà."
@@ -532,7 +755,8 @@ pub async fn get_asset_by_id(
 /// Validation:
 ///   - `asset_code` must be uppercase, unique among non-deleted
 ///   - `class_code` must reference an active equipment class
-///   - `family_code` (if provided) must match the parent of the resolved class
+///   - `family_code` (if provided) must belong to selected class in EQUIPMENT.FAMILY
+///   - `subfamily_code` (if provided) must belong to selected family in EQUIPMENT.SUBFAMILY
 ///   - `criticality_code` must exist in `equipment.criticality` domain
 ///   - `status_code` must exist in `equipment.lifecycle_status` domain
 ///   - `org_node_id` must reference an active org node
@@ -561,21 +785,39 @@ pub async fn create_asset(
     assert_org_node_active(&txn, payload.org_node_id).await?;
 
     // ── Classification resolution ────────────────────────────────────────
-    let (class_id, class_parent_id) = resolve_class_code(&txn, &payload.class_code).await?;
-
+    let (class_id, _class_parent_id) = resolve_class_code(&txn, &payload.class_code).await?;
+    let class_ref_id = resolve_class_ref_id(&txn, &payload.class_code).await?;
+    let mut family_ref_id: Option<i64> = None;
     if let Some(ref family_code) = payload.family_code {
-        validate_family_code(&txn, family_code, class_id, class_parent_id).await?;
+        if !family_code.trim().is_empty() {
+            family_ref_id = Some(validate_family_for_class_ref(&txn, family_code, class_ref_id).await?);
+        }
+    }
+    if let Some(ref subfamily_code) = payload.subfamily_code {
+        if !subfamily_code.trim().is_empty() {
+            let family_id = family_ref_id.ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "Sélectionnez d'abord une famille valide avant de choisir une sous-famille."
+                        .into(),
+                ])
+            })?;
+            let _ = validate_subfamily_for_family_ref(&txn, subfamily_code, family_id).await?;
+        }
     }
 
-    // ── Criticality resolution ───────────────────────────────────────────
+    // ── Criticality resolution (legacy lookup FK + reference FK) ──────────
     let criticality_value_id =
         resolve_criticality_code(&txn, &payload.criticality_code).await?;
+    let criticality_ref_id =
+        resolve_criticality_ref_id(&txn, &payload.criticality_code).await?;
 
-    // ── Status validation ────────────────────────────────────────────────
-    validate_status_code(&txn, &payload.status_code).await?;
+    // ── Status validation (normalized string + reference FK) ──────────────
+    let status_code = normalize_status_code_for_reference(&payload.status_code)?;
+    validate_status_code(&txn, &status_code).await?;
+    let status_ref_id = resolve_status_ref_id(&txn, &status_code).await?;
 
     // ── Decommission date guard ──────────────────────────────────────────
-    let decommissioned_at: Option<String> = if payload.status_code == "DECOMMISSIONED" {
+    let decommissioned_at: Option<String> = if status_code == "DECOMMISSIONED" {
         Some(Utc::now().to_rfc3339())
     } else {
         None
@@ -594,17 +836,21 @@ pub async fn create_asset(
         r"INSERT INTO equipment
           (sync_id, asset_id_code, name, class_id,
            lifecycle_status, criticality_value_id,
+           equipment_status_ref_id, equipment_criticality_ref_id, equipment_class_ref_id,
            installed_at_node_id, manufacturer, model, serial_number,
            maintainable_boundary, commissioning_date, decommissioned_at,
            created_at, updated_at, row_version)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             sync_id.clone().into(),
             asset_code.into(),
             asset_name.into(),
             class_id.into(),
-            payload.status_code.into(),
+            status_code.into(),
             criticality_value_id.into(),
+            status_ref_id.into(),
+            criticality_ref_id.into(),
+            class_ref_id.into(),
             payload.org_node_id.into(),
             payload.manufacturer.into(),
             payload.model.into(),
@@ -676,8 +922,10 @@ pub async fn update_asset_identity(
     let current = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT row_version, lifecycle_status, asset_id_code FROM equipment \
-             WHERE id = ? AND deleted_at IS NULL",
+            "SELECT e.row_version, e.lifecycle_status, e.asset_id_code, ec.code AS class_code \
+             FROM equipment e \
+             LEFT JOIN equipment_classes ec ON ec.id = e.class_id \
+             WHERE e.id = ? AND e.deleted_at IS NULL",
             [asset_id.into()],
         ))
         .await?
@@ -689,6 +937,9 @@ pub async fn update_asset_identity(
     let current_version: i64 = current
         .try_get("", "row_version")
         .map_err(|e| decode_err("row_version", e))?;
+    let current_class_code: Option<String> = current
+        .try_get("", "class_code")
+        .map_err(|e| decode_err("class_code", e))?;
     if current_version != expected_row_version {
         return Err(AppError::ValidationFailed(vec![format!(
             "Conflit de version : version attendue {expected_row_version}, \
@@ -711,28 +962,75 @@ pub async fn update_asset_identity(
         binds.push(t.into());
     }
 
-    if let Some(ref class_code) = payload.class_code {
-        let (cid, parent_id) = resolve_class_code(&txn, class_code).await?;
-        if let Some(Some(ref family_code)) = payload.family_code {
-            validate_family_code(&txn, family_code, cid, parent_id).await?;
+    let effective_class_code = payload
+        .class_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| current_class_code.clone());
+    let mut effective_class_ref_id: Option<i64> = None;
+    if let Some(ref class_code) = effective_class_code {
+        effective_class_ref_id = Some(resolve_class_ref_id(&txn, class_code).await?);
+        if payload.class_code.is_some() {
+            let (cid, _parent_id) = resolve_class_code(&txn, class_code).await?;
+            sets.push("class_id = ?".to_string());
+            binds.push(cid.into());
+            sets.push("equipment_class_ref_id = ?".to_string());
+            let class_ref_id = effective_class_ref_id.ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!(
+                    "class reference id unexpectedly missing after class resolution"
+                ))
+            })?;
+            binds.push(class_ref_id.into());
         }
-        sets.push("class_id = ?".to_string());
-        binds.push(cid.into());
+    }
+
+    let mut effective_family_ref_id: Option<i64> = None;
+    if let Some(ref family_change) = payload.family_code {
+        if let Some(ref family_code) = family_change {
+            let class_ref_id = effective_class_ref_id.ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "Sélectionnez une classe valide avant de choisir une famille.".into(),
+                ])
+            })?;
+            effective_family_ref_id =
+                Some(validate_family_for_class_ref(&txn, family_code, class_ref_id).await?);
+        }
+    }
+
+    if let Some(ref subfamily_change) = payload.subfamily_code {
+        if let Some(ref subfamily_code) = subfamily_change {
+            let family_ref_id = effective_family_ref_id.ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "Sélectionnez une famille valide avant de choisir une sous-famille."
+                        .into(),
+                ])
+            })?;
+            let _ = validate_subfamily_for_family_ref(&txn, subfamily_code, family_ref_id).await?;
+        }
     }
 
     if let Some(ref crit_code) = payload.criticality_code {
         let crit_id = resolve_criticality_code(&txn, crit_code).await?;
+        let crit_ref = resolve_criticality_ref_id(&txn, crit_code).await?;
         sets.push("criticality_value_id = ?".to_string());
         binds.push(crit_id.into());
+        sets.push("equipment_criticality_ref_id = ?".to_string());
+        binds.push(crit_ref.into());
     }
 
-    if let Some(ref status_code) = payload.status_code {
-        validate_status_code(&txn, status_code).await?;
+    if let Some(ref raw_status) = payload.status_code {
+        let normalized = normalize_status_code_for_reference(raw_status)?;
+        validate_status_code(&txn, &normalized).await?;
+        let status_ref = resolve_status_ref_id(&txn, &normalized).await?;
         sets.push("lifecycle_status = ?".to_string());
-        binds.push(status_code.clone().into());
+        binds.push(normalized.clone().into());
+        sets.push("equipment_status_ref_id = ?".to_string());
+        binds.push(status_ref.into());
 
         // Auto-set decommissioned_at if transitioning to DECOMMISSIONED
-        if status_code == "DECOMMISSIONED" {
+        if normalized == "DECOMMISSIONED" {
             let has_explicit_decom = matches!(payload.decommissioned_at, Some(Some(_)));
             if !has_explicit_decom {
                 sets.push("decommissioned_at = ?".to_string());

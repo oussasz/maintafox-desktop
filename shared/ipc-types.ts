@@ -1912,6 +1912,24 @@ export interface Asset {
   row_version: number;
 }
 
+/** Published reference rows for equipment forms (EQUIPMENT.* domains). */
+export interface EquipmentTaxonomyOption {
+  id: number;
+  code: string;
+  label: string;
+  parent_id: number | null;
+  color_hex: string | null;
+  is_system: boolean;
+}
+
+export interface EquipmentTaxonomyCatalog {
+  statuses: EquipmentTaxonomyOption[];
+  criticalities: EquipmentTaxonomyOption[];
+  classes: EquipmentTaxonomyOption[];
+  families: EquipmentTaxonomyOption[];
+  subfamilies: EquipmentTaxonomyOption[];
+}
+
 export interface AssetHierarchyRow {
   relation_id: number;
   parent_asset_id: number;
@@ -1926,6 +1944,7 @@ export interface CreateAssetPayload {
   asset_name: string;
   class_code: string;
   family_code?: string | null;
+  subfamily_code?: string | null;
   criticality_code: string;
   status_code: string;
   manufacturer?: string | null;
@@ -1940,6 +1959,7 @@ export interface UpdateAssetIdentityPayload {
   asset_name?: string;
   class_code?: string;
   family_code?: string | null;
+  subfamily_code?: string | null;
   criticality_code?: string;
   status_code?: string;
   manufacturer?: string | null;
@@ -3532,6 +3552,12 @@ export interface AssetPhoto {
   created_at: string;
 }
 
+/** Inline image payload for the gallery (avoids `convertFileSrc` / asset-protocol in the webview). */
+export interface AssetPhotoPreview {
+  mime_type: string;
+  data_base64: string;
+}
+
 export interface UploadAssetPhotoPayload {
   asset_id: number;
   source_path: string;
@@ -3791,8 +3817,64 @@ export interface WoTransitionRow {
   acted_at: string;
 }
 
+export interface WorkOrderTypeOption {
+  id: number;
+  code: string;
+  label: string;
+  is_system: boolean;
+  is_active: boolean;
+}
+
+/** Tenant-defined work order type (inserted with `is_system = 0`). */
+export interface CreateWorkOrderTypeInput {
+  code: string;
+  label: string;
+}
+
+/** Partial update; omitted fields are left unchanged on the server. */
+export interface UpdateWorkOrderTypeInput {
+  label?: string | null;
+  code?: string | null;
+  is_active?: boolean | null;
+}
+
+/** Urgency / priority row (`urgency_levels`). */
+export interface WorkOrderPriorityOption {
+  id: number;
+  level: number;
+  code: string;
+  label: string;
+  label_fr: string;
+  hex_color: string;
+  is_system: boolean;
+  is_active: boolean;
+}
+
+export interface UpdateWorkOrderPriorityInput {
+  label?: string | null;
+  label_fr?: string | null;
+  is_active?: boolean | null;
+}
+
+/** Lifecycle status row (`work_order_statuses`) — codes & sequence are engine-managed. */
+export interface WorkOrderStatusOption {
+  id: number;
+  code: string;
+  label: string;
+  color: string;
+  macro_state: string;
+  is_terminal: boolean;
+  is_system: boolean;
+  sequence: number;
+}
+
+export interface UpdateWorkOrderStatusInput {
+  label?: string | null;
+  color?: string | null;
+}
+
 export interface WoCreateInput {
-  type_id: number;
+  type_code: string;
   equipment_id?: number | null;
   location_id?: number | null;
   source_di_id?: number | null;
@@ -3818,7 +3900,7 @@ export interface WoDraftUpdateInput {
   id: number;
   expected_row_version: number;
   title?: string | null;
-  type_id?: number | null;
+  type_code?: string | null;
   equipment_id?: number | null;
   location_id?: number | null;
   description?: string | null;
@@ -6060,7 +6142,7 @@ export interface RouteInspectionAnomalyToDiInput {
 export interface RouteInspectionAnomalyToWoInput {
   anomaly_id: number;
   expected_row_version: number;
-  type_id: number;
+  type_code: string;
   title?: string | null;
 }
 

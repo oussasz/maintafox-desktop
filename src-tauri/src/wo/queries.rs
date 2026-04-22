@@ -9,11 +9,58 @@ use crate::errors::{AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use super::domain::{
     generate_wo_code, guard_wo_transition, map_wo_transition_row, map_work_order, WoCreateInput,
     WoStatus, WoTransitionRow, WorkOrder,
 };
+use super::statuses::ensure_work_order_statuses_if_needed;
+use super::types::resolve_work_order_type_id_by_code;
+
+/// Ensures at least one closeout policy row exists and returns its id (for COALESCE on new WOs).
+async fn ensure_default_closeout_validation_policy_id(db: &DatabaseConnection) -> AppResult<i64> {
+    let existing = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM closeout_validation_policies ORDER BY id LIMIT 1".to_string(),
+        ))
+        .await?;
+    if let Some(row) = existing {
+        let id: i64 = row
+            .try_get::<i64>("", "id")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("closeout policy id decode: {e}")))?;
+        return Ok(id);
+    }
+
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO closeout_validation_policies \
+         (entity_id, policy_name, applies_when, require_failure_mode_if_unplanned, \
+          require_downtime_if_production_impact, allow_close_with_cause_not_determined, \
+          allow_close_with_cause_mode_only, require_verification_return_to_service, \
+          notes_min_length_when_cnd, entity_sync_id, row_version) \
+         VALUES (NULL, 'default_corrective', \
+          '{\"maintenance_type\":[\"corrective\",\"emergency\"]}', 1, 1, 1, 0, 1, 10, \
+          'closeout_policy:runtime_seed', 1)"
+            .to_string(),
+    ))
+    .await?;
+
+    let row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM closeout_validation_policies ORDER BY id LIMIT 1".to_string(),
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "closeout_validation_policies insert did not yield a row"
+            ))
+        })?;
+    row.try_get::<i64>("", "id")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("closeout policy id decode: {e}")))
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Input / output types
@@ -294,6 +341,58 @@ pub async fn create_work_order(
     db: &DatabaseConnection,
     input: WoCreateInput,
 ) -> AppResult<WorkOrder> {
+    ensure_work_order_statuses_if_needed(db).await?;
+    let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(db).await?;
+
+    let equipment_id = input.equipment_id.filter(|&e| e > 0);
+    let urgency_id = input.urgency_id.filter(|&u| u > 0);
+
+    let creator_ok = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM user_accounts WHERE id = ?",
+            [input.creator_id.into()],
+        ))
+        .await?;
+    if creator_ok.is_none() {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Utilisateur introuvable (creator_id={}).",
+            input.creator_id
+        )]));
+    }
+
+    if let Some(eid) = equipment_id {
+        let ex = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS ok FROM equipment WHERE id = ?",
+                [eid.into()],
+            ))
+            .await?;
+        if ex.is_none() {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Équipement introuvable (equipment_id={eid})."
+            )]));
+        }
+    }
+
+    if let Some(uid) = urgency_id {
+        let ex = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT 1 AS ok FROM urgency_levels WHERE id = ?",
+                [uid.into()],
+            ))
+            .await?;
+        if ex.is_none() {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Priorité / urgence introuvable (urgency_id={uid})."
+            )]));
+        }
+    }
+
+    let type_id = resolve_work_order_type_id_by_code(db, &input.type_code).await?;
+
     // If source_di_id is provided, verify the DI exists
     if let Some(di_id) = input.source_di_id {
         let di_exists = db
@@ -357,6 +456,20 @@ pub async fn create_work_order(
         .try_get::<i64>("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("draft status_id decode: {e}")))?;
 
+    info!(
+        target: "maintafox",
+        type_code = %input.type_code,
+        type_id = type_id,
+        status_id_draft = status_id,
+        equipment_id = ?equipment_id,
+        urgency_id = ?urgency_id,
+        creator_id = input.creator_id,
+        default_closeout_policy_id = default_closeout_policy_id,
+        source_di_id = ?input.source_di_id,
+        entity_id = ?input.entity_id,
+        "create_work_order: resolved FK targets before INSERT"
+    );
+
     let code = generate_wo_code(db).await?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
@@ -374,9 +487,9 @@ pub async fn create_work_order(
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
-            input.type_id.into(),
+            type_id.into(),
             status_id.into(),
-            input.equipment_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
+            equipment_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.location_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.source_di_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input
@@ -400,7 +513,7 @@ pub async fn create_work_order(
             input.entity_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.planner_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.creator_id.into(),
-            input.urgency_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
+            urgency_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.title.into(),
             input.description.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
             input.notes.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
@@ -420,9 +533,9 @@ pub async fn create_work_order(
                 "Un code OT en doublon a été généré. Veuillez réessayer.".into(),
             ])
         } else if e.to_string().contains("FOREIGN KEY") {
-            AppError::ValidationFailed(vec![
-                "Référence invalide (type_id, equipment_id, entity_id, ou source_di_id).".into(),
-            ])
+            AppError::ValidationFailed(vec![format!(
+                "Référence invalide (contrainte FK). Détail SQLite: {e}"
+            )])
         } else {
             AppError::Database(e)
         }
@@ -449,11 +562,20 @@ pub async fn create_work_order(
         DbBackend::Sqlite,
         "UPDATE work_orders SET \
          entity_sync_id = lower(hex(randomblob(16))), \
-         closeout_validation_profile_id = COALESCE(closeout_validation_profile_id, 1) \
+         closeout_validation_profile_id = COALESCE(closeout_validation_profile_id, ?) \
          WHERE id = ?",
-        [new_id.into()],
+        [default_closeout_policy_id.into(), new_id.into()],
     ))
-    .await?;
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("FOREIGN KEY") {
+            AppError::ValidationFailed(vec![format!(
+                "Profil de clôture invalide (closeout_validation_profile_id). Détail: {e}"
+            )])
+        } else {
+            AppError::Database(e)
+        }
+    })?;
 
     let wo = get_work_order(db, new_id)
         .await?
@@ -509,7 +631,8 @@ pub async fn update_wo_draft_fields(
         sets.push("title = ?".into());
         values.push(title.clone().into());
     }
-    if let Some(type_id) = input.type_id {
+    if let Some(type_code) = input.type_code.as_ref() {
+        let type_id = resolve_work_order_type_id_by_code(db, type_code).await?;
         sets.push("type_id = ?".into());
         values.push(type_id.into());
     }

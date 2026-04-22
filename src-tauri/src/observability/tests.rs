@@ -301,7 +301,7 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
     let wo = queries::create_work_order(
         db,
         WoCreateInput {
-            type_id: 1,
+            type_code: "corrective".into(),
             equipment_id: None,
             location_id: None,
             source_di_id: None,
@@ -468,7 +468,7 @@ async fn test_obs_01_emit_creates_notification() {
     let wo = queries::create_work_order(
         &db,
         WoCreateInput {
-            type_id: 1,
+            type_code: "corrective".into(),
             equipment_id: None,
             location_id: None,
             source_di_id: None,
@@ -535,7 +535,7 @@ async fn test_obs_02_dedupe_prevents_flood() {
     let wo = queries::create_work_order(
         &db,
         WoCreateInput {
-            type_id: 1,
+            type_code: "corrective".into(),
             equipment_id: None,
             location_id: None,
             source_di_id: None,
@@ -620,7 +620,7 @@ async fn test_obs_03_snooze_wakes() {
     let wo = queries::create_work_order(
         &db,
         WoCreateInput {
-            type_id: 1,
+            type_code: "corrective".into(),
             equipment_id: None,
             location_id: None,
             source_di_id: None,
@@ -733,7 +733,7 @@ async fn test_obs_04_acknowledge_closes_escalation_path() {
     let wo = queries::create_work_order(
         &db,
         WoCreateInput {
-            type_id: 1,
+            type_code: "corrective".into(),
             equipment_id: None,
             location_id: None,
             source_di_id: None,

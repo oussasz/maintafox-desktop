@@ -15,7 +15,6 @@ import {
   ChevronRight,
   Pencil,
   Plus,
-  Tags,
   Trash2,
   X,
 } from "lucide-react";
@@ -25,6 +24,11 @@ import { useTranslation } from "react-i18next";
 import { PermissionGate } from "@/components/PermissionGate";
 import { PublishReadinessPanel } from "@/components/lookups/PublishReadinessPanel";
 import { ReferenceAliasPanel } from "@/components/lookups/ReferenceAliasPanel";
+import { ReferenceColorSwatchHex } from "@/components/lookups/ReferenceColorSwatchHex";
+import {
+  REF_TABLE_ACTIONS_GROUP_CLASS,
+  refTableIconButtonClass,
+} from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +41,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { usePermissions } from "@/hooks/use-permissions";
+import { isReferenceDomainProtected } from "@/lib/reference-domain-ui";
+import { listReferenceValues } from "@/services/reference-service";
 import { useReferenceGovernanceStore } from "@/stores/reference-governance-store";
 import { useReferenceManagerStore } from "@/stores/reference-manager-store";
 import type { CreateReferenceValuePayload, ReferenceValue } from "@shared/ipc-types";
@@ -45,12 +51,23 @@ import type { CreateReferenceValuePayload, ReferenceValue } from "@shared/ipc-ty
 
 const PAGE_SIZE = 50;
 
+function isSystemReferenceRow(metadataJson: string | null): boolean {
+  if (!metadataJson) return false;
+  try {
+    const o = JSON.parse(metadataJson) as { origin?: string };
+    return o.origin === "system";
+  } catch {
+    return metadataJson.includes('"origin":"system"');
+  }
+}
+
 // ── Inline edit row state ─────────────────────────────────────────────────────
 
 interface EditRowState {
   code: string;
   label: string;
   description: string;
+  parentId: number | null;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -81,21 +98,46 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
 
   const domains = useReferenceManagerStore((s) => s.domains);
   const setsMap = useReferenceManagerStore((s) => s.setsMap);
+  const loadSetsForDomain = useReferenceManagerStore((s) => s.loadSetsForDomain);
 
   const domain = domains.find((d) => d.id === domainId);
   const refSet = setsMap[domainId]?.find((s) => s.id === setId);
   const isDraft = refSet?.status === "draft";
-  const isProtected = domain?.governance_level === "protected_analytical";
+  const isProtected = domain ? isReferenceDomainProtected(domain) : false;
+  /** System-locked domains (is_extendable = false): catalog is view-only in the UI. */
+  const domainLocked = domain ? !domain.is_extendable : false;
 
   // ── Local state ──────────────────────────────────────────────────────────
 
   const [page, setPage] = useState(0);
-  const [editRow, setEditRow] = useState<EditRowState>({ code: "", label: "", description: "" });
-  const [newRow, setNewRow] = useState<EditRowState>({ code: "", label: "", description: "" });
+  const [editRow, setEditRow] = useState<EditRowState>({
+    code: "",
+    label: "",
+    description: "",
+    parentId: null,
+  });
+  const [newRow, setNewRow] = useState<EditRowState>({
+    code: "",
+    label: "",
+    description: "",
+    parentId: null,
+  });
   const [deleteTarget, setDeleteTarget] = useState<ReferenceValue | null>(null);
   const [aliasValueId, setAliasValueId] = useState<number | null>(null);
   const [sortField, setSortField] = useState<"code" | "label" | "is_active">("code");
   const [sortAsc, setSortAsc] = useState(true);
+  const [parentCandidates, setParentCandidates] = useState<ReferenceValue[]>([]);
+  const parentDomainCodeByChild: Record<string, string> = {
+    "EQUIPMENT.FAMILY": "EQUIPMENT.CLASS",
+    "EQUIPMENT.SUBFAMILY": "EQUIPMENT.FAMILY",
+  };
+  const parentDomainCode = domain ? parentDomainCodeByChild[domain.code] : undefined;
+  const parentDomain = parentDomainCode
+    ? (domains.find((d) => d.code === parentDomainCode) ?? null)
+    : null;
+  const parentSetId = parentDomain
+    ? (setsMap[parentDomain.id]?.find((s) => s.status === "published")?.id ?? null)
+    : null;
 
   // ── Load values on set selection ─────────────────────────────────────────
 
@@ -103,6 +145,38 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     void loadValues(setId);
     setPage(0);
   }, [setId, loadValues]);
+
+  useEffect(() => {
+    if (!parentDomain) {
+      setParentCandidates([]);
+      return;
+    }
+    if (!setsMap[parentDomain.id]?.length) {
+      void loadSetsForDomain(parentDomain.id);
+    }
+  }, [parentDomain, setsMap, loadSetsForDomain]);
+
+  useEffect(() => {
+    if (!parentSetId) {
+      setParentCandidates([]);
+      return;
+    }
+    let cancelled = false;
+    void listReferenceValues(parentSetId)
+      .then((rows) => {
+        if (!cancelled) {
+          setParentCandidates(rows.filter((r) => r.is_active));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setParentCandidates([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [parentSetId]);
 
   // ── Sorted + paginated values ────────────────────────────────────────────
 
@@ -117,6 +191,16 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     return sorted;
   }, [values, sortField, sortAsc]);
 
+  const showColorColumn = useMemo(
+    () => values.some((v) => v.color_hex != null && String(v.color_hex).trim() !== ""),
+    [values],
+  );
+
+  const parentValuesById = useMemo(
+    () => new Map(parentCandidates.map((v) => [v.id, v])),
+    [parentCandidates],
+  );
+
   const totalPages = Math.max(1, Math.ceil(sortedValues.length / PAGE_SIZE));
   const pagedValues = sortedValues.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
@@ -125,7 +209,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   const startEdit = useCallback(
     (v: ReferenceValue) => {
       setEditingValueId(v.id);
-      setEditRow({ code: v.code, label: v.label, description: v.description ?? "" });
+      setEditRow({
+        code: v.code,
+        label: v.label,
+        description: v.description ?? "",
+        parentId: v.parent_id ?? null,
+      });
     },
     [setEditingValueId],
   );
@@ -148,7 +237,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
 
   const startNewRow = useCallback(() => {
     setNewValueDraft({});
-    setNewRow({ code: "", label: "", description: "" });
+    setNewRow({ code: "", label: "", description: "", parentId: null });
   }, [setNewValueDraft]);
 
   const cancelNewRow = useCallback(() => {
@@ -159,6 +248,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     if (!newRow.code.trim() || !newRow.label.trim()) return;
     const payload: CreateReferenceValuePayload = {
       set_id: setId,
+      ...(newRow.parentId != null ? { parent_id: newRow.parentId } : {}),
       code: newRow.code.trim(),
       label: newRow.label.trim(),
       description: newRow.description.trim() || null,
@@ -256,7 +346,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
               size="sm"
               className="gap-1.5"
               onClick={startNewRow}
-              disabled={!!newValueDraft || savingValue}
+              disabled={!!newValueDraft || savingValue || domainLocked}
             >
               <Plus className="h-3.5 w-3.5" />
               {t("editor.addValue")}
@@ -305,6 +395,11 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                 <th className="px-3 py-2 text-left font-medium text-text-muted">
                   {t("editor.colParent")}
                 </th>
+                {showColorColumn ? (
+                  <th className="px-3 py-2 text-left align-middle font-medium text-text-muted">
+                    {t("editor.colColor")}
+                  </th>
+                ) : null}
                 <th
                   className="px-3 py-2 text-left font-medium text-text-muted cursor-pointer select-none"
                   onClick={() => toggleSort("is_active")}
@@ -312,7 +407,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                 >
                   {t("editor.colStatus")} {sortField === "is_active" && (sortAsc ? "↑" : "↓")}
                 </th>
-                <th className="px-3 py-2 text-right font-medium text-text-muted">
+                <th className="px-3 py-2 text-right align-middle font-medium text-text-muted">
                   {t("editor.colActions")}
                 </th>
               </tr>
@@ -349,18 +444,43 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                       className="h-7 text-sm"
                     />
                   </td>
-                  <td className="px-3 py-1.5 text-text-muted">—</td>
+                  <td className="px-3 py-1.5">
+                    {parentSetId ? (
+                      <select
+                        value={newRow.parentId == null ? "" : String(newRow.parentId)}
+                        onChange={(e) =>
+                          setNewRow({
+                            ...newRow,
+                            parentId: e.target.value ? Number(e.target.value) : null,
+                          })
+                        }
+                        className="h-7 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
+                      >
+                        <option value="">{t("editor.none")}</option>
+                        {parentCandidates.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.code} — {p.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-text-muted">—</span>
+                    )}
+                  </td>
+                  {showColorColumn ? (
+                    <td className="px-3 py-1.5 align-middle text-text-muted text-sm">—</td>
+                  ) : null}
                   <td className="px-3 py-1.5">
                     <Badge variant="secondary" className="text-[10px]">
                       {t("editor.statusNew")}
                     </Badge>
                   </td>
-                  <td className="px-3 py-1.5 text-right">
-                    <div className="flex items-center justify-end gap-1">
+                  <td className="px-3 py-1.5 text-right align-middle">
+                    <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6"
+                        className={refTableIconButtonClass()}
                         onClick={() => void commitNewRow()}
                         disabled={savingValue || !newRow.code.trim() || !newRow.label.trim()}
                       >
@@ -369,7 +489,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6"
+                        className={refTableIconButtonClass()}
                         onClick={cancelNewRow}
                       >
                         <X className="h-3.5 w-3.5" />
@@ -382,7 +502,14 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
               {/* ── Value rows ─────────────────────────────────────────── */}
               {pagedValues.map((v) => {
                 const isEditing = editingValueId === v.id;
-                const parentValue = v.parent_id ? values.find((p) => p.id === v.parent_id) : null;
+                const parentValue = v.parent_id
+                  ? (values.find((p) => p.id === v.parent_id) ??
+                    parentValuesById.get(v.parent_id) ??
+                    null)
+                  : null;
+                const isSystemRow = isSystemReferenceRow(v.metadata_json);
+                const showPencil = can("ref.manage") && !domainLocked;
+                const showTrash = can("ref.manage") && !domainLocked && !isSystemRow;
 
                 return (
                   <tr
@@ -408,7 +535,18 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                           autoFocus
                         />
                       ) : (
-                        <span>{v.label}</span>
+                        <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-2">
+                          <span className="min-w-0">{v.label}</span>
+                          {can("ref.manage") ? (
+                            <button
+                              type="button"
+                              className="shrink-0 text-left text-xs font-medium text-primary underline-offset-2 hover:underline"
+                              onClick={() => setAliasValueId(aliasValueId === v.id ? null : v.id)}
+                            >
+                              {t("editor.aliases")}
+                            </button>
+                          ) : null}
+                        </div>
                       )}
                     </td>
                     <td className="px-3 py-1.5">
@@ -428,7 +566,12 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                     <td className="px-3 py-1.5 text-text-muted text-xs">
                       {parentValue ? parentValue.code : "—"}
                     </td>
-                    <td className="px-3 py-1.5">
+                    {showColorColumn ? (
+                      <td className="px-3 py-1.5 align-middle">
+                        <ReferenceColorSwatchHex color={v.color_hex} />
+                      </td>
+                    ) : null}
+                    <td className="px-3 py-1.5 align-middle">
                       <Badge
                         variant={v.is_active ? "default" : "secondary"}
                         className="text-[10px]"
@@ -436,13 +579,13 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         {v.is_active ? t("editor.statusActive") : t("editor.statusInactive")}
                       </Badge>
                     </td>
-                    <td className="px-3 py-1.5 text-right">
+                    <td className="px-3 py-1.5 text-right align-middle">
                       {isEditing ? (
-                        <div className="flex items-center justify-end gap-1">
+                        <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6"
+                            className={refTableIconButtonClass()}
                             onClick={() => void commitEdit(v.id)}
                             disabled={savingValue}
                           >
@@ -451,42 +594,38 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6"
+                            className={refTableIconButtonClass()}
                             onClick={cancelEdit}
                           >
                             <X className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                       ) : (
-                        <div className="flex items-center justify-end gap-1">
-                          {can("ref.manage") && (
+                        <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
+                          {showPencil ? (
                             <Button
+                              type="button"
                               variant="ghost"
                               size="icon"
-                              className="h-6 w-6"
+                              className={refTableIconButtonClass()}
+                              aria-label={t("editor.edit")}
                               onClick={() => startEdit(v)}
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => setAliasValueId(aliasValueId === v.id ? null : v.id)}
-                          >
-                            <Tags className="h-3.5 w-3.5" />
-                          </Button>
-                          {can("ref.manage") && (
+                          ) : null}
+                          {showTrash ? (
                             <Button
+                              type="button"
                               variant="ghost"
                               size="icon"
-                              className="h-6 w-6"
+                              className={refTableIconButtonClass()}
+                              aria-label={t("editor.deactivate")}
                               onClick={() => setDeleteTarget(v)}
                             >
-                              <Trash2 className="h-3.5 w-3.5 text-status-danger" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
-                          )}
+                          ) : null}
                         </div>
                       )}
                     </td>

@@ -172,8 +172,8 @@ const SEARCH_SELECT: &str = r"
     ec.name                 AS class_name,
     ef.code                 AS family_code,
     ef.name                 AS family_name,
-    lv.code                 AS criticality_code,
-    e.lifecycle_status      AS status_code,
+    COALESCE(rs_crit.code, lv.code) AS criticality_code,
+    COALESCE(rs_stat.code, e.lifecycle_status) AS status_code,
     e.installed_at_node_id  AS org_node_id,
     n.name                  AS org_node_name,
     -- Parent asset (first active parent from hierarchy)
@@ -195,6 +195,8 @@ const SEARCH_FROM: &str = r"
     LEFT JOIN equipment_classes ec ON ec.id = e.class_id
     LEFT JOIN equipment_classes ef ON ef.id = ec.parent_id
     LEFT JOIN lookup_values lv     ON lv.id = e.criticality_value_id
+    LEFT JOIN reference_values rs_crit ON rs_crit.id = e.equipment_criticality_ref_id
+    LEFT JOIN reference_values rs_stat ON rs_stat.id = e.equipment_status_ref_id
     LEFT JOIN org_nodes n          ON n.id  = e.installed_at_node_id
     -- First active parent (effective_to IS NULL means currently active)
     LEFT JOIN equipment_hierarchy ph

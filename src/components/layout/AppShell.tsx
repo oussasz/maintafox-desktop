@@ -21,10 +21,6 @@ export function AppShell({ children }: AppShellProps) {
   const appStatus = useAppStore((s) => s.appStatus);
   const startupMsg = useAppStore((s) => s.startupMessage);
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
-  const hoverOpen = useAppStore((s) => s.sidebarHoverOpen);
-  const setSidebarCollapsed = useAppStore((s) => s.setSidebarCollapsed);
-  const setSidebarHoverOpen = useAppStore((s) => s.setSidebarHoverOpen);
-  const isCompactSidebar = collapsed && !hoverOpen;
   const initializeSync = useSyncOrchestratorStore((s) => s.initialize);
   const shutdownSync = useSyncOrchestratorStore((s) => s.shutdown);
 
@@ -35,11 +31,6 @@ export function AppShell({ children }: AppShellProps) {
     initializeSync();
     return () => shutdownSync();
   }, [initializeSync, shutdownSync]);
-
-  useEffect(() => {
-    setSidebarCollapsed(true);
-    setSidebarHoverOpen(false);
-  }, [setSidebarCollapsed, setSidebarHoverOpen]);
 
   if (appStatus === "loading") {
     return (
@@ -79,7 +70,7 @@ export function AppShell({ children }: AppShellProps) {
         <main
           className={cn(
             "flex-1 overflow-auto transition-all duration-normal",
-            isCompactSidebar ? "ml-sidebar-sm" : "ml-sidebar",
+            collapsed ? "ml-sidebar-sm" : "ml-sidebar",
           )}
         >
           {children}

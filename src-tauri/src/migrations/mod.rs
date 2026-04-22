@@ -99,6 +99,9 @@ mod m20260716_000098_ram_rca_links;
 mod m20260717_000099_library_documents;
 mod m20260718_000100_asset_photos;
 mod m20260719_000101_grant_sync_view_for_ram_roles;
+mod m20260720_000102_urgency_levels_reference_metadata;
+mod m20260721_000103_equipment_taxonomy_reference_domains;
+mod m20260722_000104_grant_sync_permissions_admin_roles;
 mod m_test;
 
 pub struct Migrator;
@@ -206,6 +209,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260717_000099_library_documents::Migration),
             Box::new(m20260718_000100_asset_photos::Migration),
             Box::new(m20260719_000101_grant_sync_view_for_ram_roles::Migration),
+            Box::new(m20260720_000102_urgency_levels_reference_metadata::Migration),
+            Box::new(m20260721_000103_equipment_taxonomy_reference_domains::Migration),
+            Box::new(m20260722_000104_grant_sync_permissions_admin_roles::Migration),
             Box::new(m_test::Migration),
         ]
     }

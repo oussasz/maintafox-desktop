@@ -322,7 +322,7 @@ pub struct WoTransitionRow {
 /// Input for creating a new work order (always starts as draft).
 #[derive(Debug, Clone, Deserialize)]
 pub struct WoCreateInput {
-    pub type_id: i64,
+    pub type_code: String,
     pub equipment_id: Option<i64>,
     pub location_id: Option<i64>,
     pub source_di_id: Option<i64>,
@@ -355,7 +355,7 @@ pub struct WoDraftUpdateInput {
     pub id: i64,
     pub expected_row_version: i64,
     pub title: Option<String>,
-    pub type_id: Option<i64>,
+    pub type_code: Option<String>,
     pub equipment_id: Option<i64>,
     pub location_id: Option<i64>,
     pub description: Option<String>,

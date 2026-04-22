@@ -144,7 +144,10 @@ pub async fn get_weibull_fit(db: &DatabaseConnection, id: i64) -> AppResult<Opti
             [id.into()],
         ))
         .await?;
-    row.map(|r| map_weibull(&r)).transpose()
+    match row {
+        None => Ok(None),
+        Some(r) => map_weibull(&r).map(Some),
+    }
 }
 
 pub async fn get_latest_weibull_fit_for_equipment(
@@ -161,7 +164,10 @@ pub async fn get_latest_weibull_fit_for_equipment(
             [equipment_id.into()],
         ))
         .await?;
-    row.map(|r| map_weibull(&r)).transpose()
+    match row {
+        None => Ok(None),
+        Some(r) => map_weibull(&r).map(Some),
+    }
 }
 
 fn map_weibull(row: &sea_orm::QueryResult) -> AppResult<WeibullFitRecord> {

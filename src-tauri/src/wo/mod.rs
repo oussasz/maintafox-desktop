@@ -1,4 +1,7 @@
 pub mod domain;
+pub mod types;
+pub mod priorities;
+pub mod statuses;
 pub mod queries;
 pub mod execution;
 pub mod labor;

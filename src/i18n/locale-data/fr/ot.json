@@ -95,7 +95,10 @@
     "submit": "Créer l'ordre de travail",
     "update": "Enregistrer les modifications",
     "validation": {
-      "titleRequired": "Le titre est requis"
+      "titleRequired": "Le titre est requis",
+      "typeRequired": "Le type d'ordre de travail est obligatoire.",
+      "urgencyRequired": "La priorité est obligatoire.",
+      "urgencyInvalid": "La priorité sélectionnée n'est plus valide."
     }
   },
   "status": {

@@ -35,6 +35,7 @@ import {
 } from "@/services/reliability-service";
 import { createWo } from "@/services/wo-service";
 import { pushAppToast } from "@/store/app-toast-store";
+import { toErrorMessage } from "@/utils/errors";
 import type { RamIshikawaDiagram } from "@shared/ipc-types";
 
 type FlowPersist = {
@@ -236,7 +237,7 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
       await load();
       pushAppToast({ title: t("governance.saved"), variant: "success" });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = toErrorMessage(e);
       setErr(msg);
       pushAppToast({ title: msg, variant: "destructive" });
     } finally {
@@ -285,7 +286,7 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
       setMeta(saved);
       pushAppToast({ title: t("governance.saved"), variant: "success" });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = toErrorMessage(e);
       setErr(msg);
       pushAppToast({ title: msg, variant: "destructive" });
     } finally {
@@ -321,7 +322,7 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
       setMeta(saved);
       if (promoteTarget === "wo" && info?.user_id != null) {
         await createWo({
-          type_id: 1,
+          type_code: "corrective",
           equipment_id: equipmentId,
           title: `RCA: ${cause}`,
           description: cause,
@@ -354,7 +355,7 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
       setPromoteOpen(false);
       setPromoteNodeId(null);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(toErrorMessage(e));
     } finally {
       setPromoteBusy(false);
     }

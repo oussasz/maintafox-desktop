@@ -12,6 +12,10 @@ import { Check, Pencil, Plus, Star, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  REF_TABLE_ACTIONS_GROUP_CLASS,
+  refTableIconButtonClass,
+} from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -217,7 +221,7 @@ export function ReferenceAliasPanel({ value, onClose }: ReferenceAliasPanelProps
               <th className="px-2 py-1 text-left font-medium text-text-muted">
                 {t("alias.colPreferred")}
               </th>
-              <th className="px-2 py-1 text-right font-medium text-text-muted">
+              <th className="px-2 py-1 text-right align-middle font-medium text-text-muted">
                 {t("alias.colActions")}
               </th>
             </tr>
@@ -285,19 +289,24 @@ export function ReferenceAliasPanel({ value, onClose }: ReferenceAliasPanelProps
                     />
                   </Button>
                 </td>
-                <td className="px-2 py-1 text-right">
-                  <div className="flex items-center justify-end gap-1">
+                <td className="px-2 py-1 text-right align-middle">
+                  <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-5 w-5"
+                      className={refTableIconButtonClass()}
                       onClick={() => void commitAdd()}
                       disabled={saving || !newRow.alias_label.trim()}
                     >
-                      <Check className="h-3 w-3 text-status-success" />
+                      <Check className="h-3.5 w-3.5 text-status-success" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-5 w-5" onClick={cancelAdd}>
-                      <X className="h-3 w-3" />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={refTableIconButtonClass()}
+                      onClick={cancelAdd}
+                    >
+                      <X className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                 </td>
@@ -390,47 +399,49 @@ export function ReferenceAliasPanel({ value, onClose }: ReferenceAliasPanelProps
                       <Star className="h-3 w-3 fill-yellow-400 text-yellow-500" />
                     ) : null}
                   </td>
-                  <td className="px-2 py-1 text-right">
+                  <td className="px-2 py-1 text-right align-middle">
                     {isEditing ? (
-                      <div className="flex items-center justify-end gap-1">
+                      <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-5 w-5"
+                          className={refTableIconButtonClass()}
                           onClick={() => void commitEdit(a.id)}
                           disabled={saving}
                         >
-                          <Check className="h-3 w-3 text-status-success" />
+                          <Check className="h-3.5 w-3.5 text-status-success" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-5 w-5"
+                          className={refTableIconButtonClass()}
                           onClick={cancelEdit}
                         >
-                          <X className="h-3 w-3" />
+                          <X className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     ) : (
-                      <div className="flex items-center justify-end gap-1">
+                      <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                         {can("ref.manage") && (
                           <>
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-5 w-5"
+                              className={refTableIconButtonClass()}
                               onClick={() => startEdit(a)}
+                              aria-label={t("alias.edit")}
                             >
-                              <Pencil className="h-3 w-3" />
+                              <Pencil className="h-3.5 w-3.5" />
                             </Button>
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-5 w-5"
+                              className={refTableIconButtonClass()}
                               onClick={() => void handleDelete(a.id)}
                               disabled={saving}
+                              aria-label={t("alias.delete")}
                             >
-                              <Trash2 className="h-3 w-3 text-status-danger" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </>
                         )}

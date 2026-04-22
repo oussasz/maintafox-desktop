@@ -1,0 +1,137 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage[a4paper,margin=1.1cm]{geometry}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage[table]{xcolor}
+\usepackage{setspace}
+\usepackage{tcolorbox}
+\usepackage{enumitem}
+\usepackage{lastpage}
+\usepackage{fancyhdr}
+\usepackage{ragged2e}
+\usepackage{graphicx}
+
+% Maintafox brand palette (aligned with app design tokens).
+\definecolor{MFXPrimary}{HTML}{003D8F}
+\definecolor{MFXPrimaryDark}{HTML}{002B6A}
+\definecolor{MFXPrimaryLight}{HTML}{4D7BC5}
+\definecolor{MFXAccent}{HTML}{F0A500}
+\definecolor{MFXSurface}{HTML}{E8EEF8}
+\definecolor{MFXText}{HTML}{0D1B2E}
+\definecolor{MFXMuted}{HTML}{455778}
+\newcommand{\MFXLogoPath}{C:/Dev/Maintafox/frontend/assets/logo-white.png}
+
+\renewcommand{\arraystretch}{1.2}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{2pt}
+\pagestyle{fancy}
+\fancyhf{}
+\lfoot{\textcolor{MFXMuted}{Maintafox -- Programme Partenaire Fondateur}}
+\rfoot{\textcolor{MFXMuted}{Page \thepage/\pageref{LastPage}}}
+\renewcommand{\headrulewidth}{0pt}
+
+\begin{document}
+\color{MFXText}
+
+% Top band
+\begin{tcolorbox}[
+  colback=MFXPrimaryDark,
+  colframe=MFXPrimaryDark,
+  boxrule=0pt,
+  sharp corners,
+  left=6pt,right=6pt,top=5pt,bottom=5pt
+]
+\begin{tabularx}{\textwidth}{@{}m{1.35cm}@{\hspace{3pt}}X@{}}
+\IfFileExists{\MFXLogoPath}{\includegraphics[height=1.1cm]{\MFXLogoPath}}{\textcolor{white}{\rule{1.8cm}{1.1cm}}} &
+\begin{minipage}[c]{\linewidth}
+\raggedright
+{\Large\bfseries\textcolor{white}{Programme Partenaire Fondateur -- Maintafox Early Adopters}}\\[-1pt]
+{\normalsize\textcolor{MFXSurface}{Liste d'émargement / Registre d'intérêt -- ICT Africa Summit}}
+\end{minipage}
+\end{tabularx}
+\end{tcolorbox}
+
+\vspace{1mm}
+\begin{tabularx}{\textwidth}{@{}p{0.24\textwidth}X@{}}
+\textbf{Événement :} & ICT Africa Summit \\
+\textbf{Cadre de l'offre :} & Offre exclusive réservée aux participants du ICT \\
+\textbf{Sélection :} & \textbf{5 entreprises maximum} (principe \textit{first-come, first-served}, sous réserve de conformité technique) \\
+\end{tabularx}
+
+\vspace{1mm}
+\begin{tcolorbox}[
+  colback=MFXSurface,
+  colframe=MFXPrimaryLight,
+  boxrule=0.6pt,
+  sharp corners,
+  left=6pt,right=6pt,top=5pt,bottom=5pt
+]
+\normalsize
+\justifying
+\textbf{Pourquoi rejoindre le pilote maintenant ?}
+Maintafox ouvre un programme \textit{Beta Test} réservé à cinq industriels pour accélérer la digitalisation de la maintenance, la fiabilité des opérations et la traçabilité terrain.
+Les entreprises retenues bénéficient d'un \textbf{essai gratuit de 1 mois} avec \textbf{accès intégral à la plateforme logicielle}, incluant le \textbf{paramétrage applicatif} et la \textbf{formation complète des équipes}.
+À l'issue du pilote, chaque entreprise sélectionnée accède au statut \textbf{Partenaire Fondateur} avec l'un des avantages suivants :
+\begin{itemize}[leftmargin=1.2em,itemsep=1pt,topsep=2pt]
+  \item \textbf{Abonnement annuel : 70\% de remise} ;
+  \item \textbf{Licence perpétuelle : 40\% de remise}.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{1mm}
+{\normalsize\textcolor{MFXMuted}{\textbf{Instruction :} merci de renseigner lisiblement les informations ci-dessous. Le cachet ou la signature engagent l'intérêt formel de l'entreprise pour évaluation prioritaire.}}
+
+\vspace{1mm}
+\setlength{\tabcolsep}{5pt}
+\begin{tabularx}{\textwidth}{|
+  >{\centering\arraybackslash}p{0.35cm}|
+  >{\RaggedRight\arraybackslash}p{3.2cm}|
+  >{\RaggedRight\arraybackslash}p{4.4cm}|
+  >{\RaggedRight\arraybackslash}p{3.5cm}|
+  >{\RaggedRight\arraybackslash}X|}
+\hline
+\rowcolor{MFXPrimary}
+\textcolor{white}{\textbf{\#}} &
+\textcolor{white}{\textbf{Entreprise}} &
+\textcolor{white}{\textbf{Nom du Responsable \& Fonction}} &
+\textcolor{white}{\textbf{Cachet et Signature}} &
+\textcolor{white}{\textbf{Contact Direct (Email/Tél)}} \\
+\hline
+\rule{0pt}{1.18cm}1 & & & & \\
+\hline
+\rule{0pt}{1.18cm}2 & & & & \\
+\hline
+\rule{0pt}{1.18cm}3 & & & & \\
+\hline
+\rule{0pt}{1.18cm}4 & & & & \\
+\hline
+\rule{0pt}{1.18cm}5 & & & & \\
+\hline
+\end{tabularx}
+
+\vspace{1mm}
+\begin{tcolorbox}[
+  colback=white,
+  colframe=MFXAccent,
+  boxrule=0.8pt,
+  sharp corners,
+  left=6pt,right=6pt,top=4pt,bottom=4pt
+]
+\small
+\textbf{Note de confidentialité et de priorisation :}
+les données collectées dans ce registre sont strictement confidentielles et traitées par Maintafox uniquement dans le cadre de l'évaluation du programme pilote, conformément à la réglementation applicable en matière de protection des données professionnelles.
+L'attribution des places suit l'ordre d'inscription et de validation des informations (\textit{first-come, first-served}), sous réserve de conformité du dossier technique.
+Au-delà des cinq premiers dossiers éligibles, les demandes seront positionnées sur liste d'attente.
+\end{tcolorbox}
+
+\vspace{1mm}
+{\normalsize
+\textbf{Signature Maintafox} : \underline{\hspace{6.5cm}}
+}
+
+\end{document}

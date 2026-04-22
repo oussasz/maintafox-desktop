@@ -78,6 +78,24 @@ macro_rules! require_permission {
     }};
 }
 
+/// Like [`require_permission!`], but allows accounts with `user_accounts.is_admin = 1` (bootstrap /
+/// full admin) to pass the RBAC matrix check. Entitlement and license enforcement still apply.
+///
+/// Use for operator-facing surfaces where the Administrator role matrix can drift after new
+/// permissions are added (e.g. sync.*).
+#[macro_export]
+macro_rules! require_permission_allowing_system_admin {
+    ($state:expr, $user:expr, $perm:expr, $scope:expr) => {{
+        if !$user.is_admin {
+            $crate::require_permission!($state, $user, $perm, $scope);
+        } else {
+            $crate::entitlements::queries::enforce_capability_for_permission(&$state.db, $perm).await?;
+            $crate::license::queries::enforce_permission_matrix(&$state.db, $user.user_id, $perm)
+                .await?;
+        }
+    }};
+}
+
 /// Short-circuit an IPC command if no valid step-up verification exists.
 ///
 /// Usage inside an `async` Tauri command:

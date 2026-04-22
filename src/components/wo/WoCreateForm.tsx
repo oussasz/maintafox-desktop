@@ -24,44 +24,66 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
+import { getStoredRamsEquipmentId } from "@/pages/reliability/rams-equipment-context";
 import { searchAssets } from "@/services/asset-search-service";
+import { getAssetById } from "@/services/asset-service";
 import { useWoStore } from "@/stores/wo-store";
-import type { AssetSearchResult, WoCreateInput, WorkOrder } from "@shared/ipc-types";
+import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
+import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
+import { toErrorMessage } from "@/utils/errors";
+import type {
+  Asset,
+  AssetSearchResult,
+  WoCreateInput,
+  WorkOrder,
+  WorkOrderPriorityOption,
+} from "@shared/ipc-types";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const WO_TYPES = [
-  { id: 1, key: "corrective" },
-  { id: 2, key: "preventive" },
-  { id: 3, key: "predictive" },
-  { id: 4, key: "improvement" },
-  { id: 5, key: "inspection" },
-  { id: 6, key: "overhaul" },
-  { id: 7, key: "conditionBased" },
-] as const;
-
-const URGENCY_LEVELS = [
-  { id: 1, key: "veryLow" },
-  { id: 2, key: "low" },
-  { id: 3, key: "medium" },
-  { id: 4, key: "high" },
-  { id: 5, key: "critical" },
-] as const;
-
-const URGENCY_COLOR: Record<number, string> = {
-  1: "text-gray-500",
-  2: "text-green-600",
-  3: "text-yellow-600",
-  4: "text-orange-600",
-  5: "text-red-600",
-};
+function assetToSearchResult(a: Asset): AssetSearchResult {
+  return {
+    id: a.id,
+    sync_id: a.sync_id,
+    asset_code: a.asset_code,
+    asset_name: a.asset_name,
+    class_code: a.class_code,
+    class_name: a.class_name,
+    family_code: a.family_code,
+    family_name: a.family_name,
+    criticality_code: a.criticality_code,
+    status_code: a.status_code,
+    org_node_id: a.org_node_id,
+    org_node_name: a.org_node_name,
+    parent_asset_id: null,
+    parent_asset_code: null,
+    parent_asset_name: null,
+    primary_meter_name: null,
+    primary_meter_reading: null,
+    primary_meter_unit: null,
+    primary_meter_last_read_at: null,
+    external_id_count: 0,
+    row_version: a.row_version,
+  };
+}
 
 const TITLE_MAX = 200;
+
+function priorityDisplayLabel(p: WorkOrderPriorityOption, lang: string): string {
+  return lang.toLowerCase().startsWith("fr") ? p.label_fr : p.label;
+}
+
+function parseOptionalIdString(raw: string): number | null {
+  const s = raw.trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface WoCreateFormProps {
   initial: WorkOrder | null;
+  /** When set (e.g. from URL), pre-select this equipment for new WOs. */
+  prefillEquipmentId?: number | null;
   onSubmitted: (wo: WorkOrder) => void;
   onCancel: () => void;
 }
@@ -70,18 +92,36 @@ interface WoCreateFormProps {
 
 interface FormErrors {
   title?: string;
+  typeCode?: string;
+  urgencyId?: string;
 }
 
-function validate(fields: { title: string }, t: (key: string) => string): FormErrors {
+function validate(
+  fields: { title: string; typeCode: string; urgencyId: string; urgencyIdValid: boolean },
+  opts: { requireType: boolean; requireUrgency: boolean },
+  t: (key: string) => string,
+): FormErrors {
   const errors: FormErrors = {};
   if (!fields.title.trim()) errors.title = t("form.validation.titleRequired");
+  if (opts.requireType && !fields.typeCode.trim())
+    errors.typeCode = t("form.validation.typeRequired");
+  if (opts.requireUrgency) {
+    const raw = fields.urgencyId.trim();
+    if (!raw) errors.urgencyId = t("form.validation.urgencyRequired");
+    else if (!fields.urgencyIdValid) errors.urgencyId = t("form.validation.urgencyInvalid");
+  }
   return errors;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormProps) {
-  const { t } = useTranslation("ot");
+export function WoCreateForm({
+  initial,
+  prefillEquipmentId,
+  onSubmitted,
+  onCancel,
+}: WoCreateFormProps) {
+  const { t, i18n } = useTranslation("ot");
   const { info } = useSession();
   const saving = useWoStore((s) => s.saving);
   const storeError = useWoStore((s) => s.error);
@@ -96,7 +136,22 @@ export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormPro
 
   const [title, setTitle] = useState(initial?.title ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
-  const [typeId, setTypeId] = useState<string>(initial?.type_id?.toString() ?? "");
+  const woTypesCatalog = useWorkOrderTypesCatalog((s) => s.types);
+  const typesLoading = useWorkOrderTypesCatalog((s) => s.loading);
+  const catalogError = useWorkOrderTypesCatalog((s) => s.error);
+  const loadWoTypes = useWorkOrderTypesCatalog((s) => s.load);
+  const woTypes = useMemo(() => woTypesCatalog.filter((item) => item.is_active), [woTypesCatalog]);
+
+  const prioritiesCatalog = useWorkOrderPrioritiesCatalog((s) => s.priorities);
+  const prioritiesLoading = useWorkOrderPrioritiesCatalog((s) => s.loading);
+  const prioritiesError = useWorkOrderPrioritiesCatalog((s) => s.error);
+  const loadPriorities = useWorkOrderPrioritiesCatalog((s) => s.load);
+  const activePriorities = useMemo(
+    () => prioritiesCatalog.filter((p) => p.is_active),
+    [prioritiesCatalog],
+  );
+
+  const [typeCode, setTypeCode] = useState<string>(initial?.type_code ?? "");
   const [urgencyId, setUrgencyId] = useState<string>(initial?.urgency_id?.toString() ?? "");
   const [plannedStart, setPlannedStart] = useState(initial?.planned_start ?? "");
   const [plannedEnd, setPlannedEnd] = useState(initial?.planned_end ?? "");
@@ -113,20 +168,82 @@ export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormPro
   const [showAssetDropdown, setShowAssetDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** RAMS prefill runs once per form mount; do not re-apply after the user clears or picks another asset. */
+  const ramsEquipmentPrefillConsumedRef = useRef(false);
+  /** Edit-mode equipment hydrate once per `initial` WO. */
+  const editEquipmentHydrateKeyRef = useRef<string | null>(null);
 
   // Validation
   const [touched, setTouched] = useState<Set<string>>(new Set());
 
-  // ── Equipment pre-fill for edit mode ──────────────────────────────────
+  useEffect(() => {
+    void loadWoTypes();
+  }, [loadWoTypes]);
 
   useEffect(() => {
-    if (initial?.equipment_id && !selectedAsset) {
-      void searchAssets({ query: initial.asset_code ?? null, limit: 20 }).then((results) => {
-        const match = results.find((a) => a.id === initial.equipment_id);
-        if (match) setSelectedAsset(match);
-      });
+    void loadPriorities();
+  }, [loadPriorities]);
+
+  useEffect(() => {
+    if (isEdit) return;
+    if (woTypes.length === 0) return;
+    const codes = new Set(woTypes.map((w) => w.code));
+    if (typeCode && codes.has(typeCode)) return;
+    const firstType = woTypes.at(0);
+    setTypeCode(firstType?.code ?? "");
+  }, [isEdit, woTypes, typeCode]);
+
+  useEffect(() => {
+    if (isEdit) return;
+    if (activePriorities.length === 0) return;
+    const ids = new Set(activePriorities.map((p) => String(p.id)));
+    if (urgencyId && ids.has(urgencyId)) return;
+    const firstPri = activePriorities.at(0);
+    if (!firstPri) return;
+    setUrgencyId(String(firstPri.id));
+  }, [isEdit, activePriorities, urgencyId]);
+
+  // ── Equipment pre-fill for edit mode (once per opened WO; no loop after user clears) ──
+
+  useEffect(() => {
+    if (!initial?.equipment_id) return;
+    const key = `${initial.id}-${initial.equipment_id}`;
+    if (editEquipmentHydrateKeyRef.current === key) return;
+    editEquipmentHydrateKeyRef.current = key;
+    let cancelled = false;
+    void searchAssets({ query: initial.asset_code ?? null, limit: 20 }).then((results) => {
+      if (cancelled) return;
+      const match = results.find((a) => a.id === initial.equipment_id);
+      if (match) setSelectedAsset(match);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [initial?.id, initial?.equipment_id, initial?.asset_code]);
+
+  // ── New WO: one-shot pre-fill from RAMS (localStorage) or prop ─────────────
+
+  useEffect(() => {
+    if (isEdit) return;
+    if (ramsEquipmentPrefillConsumedRef.current) return;
+    const hint = prefillEquipmentId ?? getStoredRamsEquipmentId();
+    if (hint == null || hint <= 0) {
+      ramsEquipmentPrefillConsumedRef.current = true;
+      return;
     }
-  }, [initial, selectedAsset]);
+    ramsEquipmentPrefillConsumedRef.current = true;
+    let cancelled = false;
+    void getAssetById(hint)
+      .then((asset) => {
+        if (!cancelled) setSelectedAsset(assetToSearchResult(asset));
+      })
+      .catch(() => {
+        /* Missing asset or IPC error — user can search manually */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isEdit, prefillEquipmentId]);
 
   // ── Equipment search with debounce ────────────────────────────────────
 
@@ -179,8 +296,19 @@ export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormPro
 
   // ── Validation ────────────────────────────────────────────────────────
 
-  const currentErrors = useMemo(() => validate({ title }, t), [title, t]);
+  /** Create flow always requires an explicit type; edit only when the catalog has rows. */
+  const requireType = !isEdit || woTypes.length > 0;
+  const requireUrgency = activePriorities.length > 0;
+  const urgencyIdValid =
+    !requireUrgency || activePriorities.some((p) => String(p.id) === urgencyId.trim());
+
+  const currentErrors = useMemo(
+    () =>
+      validate({ title, typeCode, urgencyId, urgencyIdValid }, { requireType, requireUrgency }, t),
+    [title, typeCode, urgencyId, urgencyIdValid, requireType, requireUrgency, t],
+  );
   const isValid = Object.keys(currentErrors).length === 0;
+  const catalogsReady = !typesLoading && !prioritiesLoading;
 
   const markTouched = useCallback((field: string) => {
     setTouched((prev) => new Set(prev).add(field));
@@ -194,54 +322,62 @@ export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormPro
   // ── Submit ────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
-    setTouched(new Set(["title"]));
+    setTouched(new Set(["title", "typeCode", "urgencyId"]));
     setSubmitError(null);
-    if (!isValid || !info?.user_id) return;
+    if (!isValid || !catalogsReady || !info?.user_id) return;
+
+    const resolvedEquipmentId =
+      selectedAsset != null && selectedAsset.id > 0 ? selectedAsset.id : null;
 
     try {
       if (isEdit && initial) {
-        await updateDraft({
+        const draftPayload = {
           id: initial.id,
           expected_row_version: initial.row_version,
           title: title.trim(),
           description: description.trim() || null,
-          type_id: typeId ? Number(typeId) : null,
-          equipment_id: selectedAsset?.id ?? null,
-          urgency_id: urgencyId ? Number(urgencyId) : null,
+          type_code: typeCode || null,
+          equipment_id: resolvedEquipmentId,
+          urgency_id: parseOptionalIdString(urgencyId),
           planned_start: plannedStart || null,
           planned_end: plannedEnd || null,
           expected_duration_hours: expectedDuration ? Number(expectedDuration) : null,
           notes: notes.trim() || null,
-        });
+        };
+        // eslint-disable-next-line no-console -- debug: OT payload to IPC
+        console.log("OT Payload:", draftPayload);
+        await updateDraft(draftPayload);
         onSubmitted({ ...initial, title, description });
       } else {
         const input: WoCreateInput = {
           title: title.trim(),
           description: description.trim() || null,
-          type_id: typeId ? Number(typeId) : 1,
-          equipment_id: selectedAsset?.id ?? null,
-          urgency_id: urgencyId ? Number(urgencyId) : null,
+          type_code: typeCode.trim(),
+          equipment_id: resolvedEquipmentId,
+          urgency_id: parseOptionalIdString(urgencyId),
           planned_start: plannedStart || null,
           planned_end: plannedEnd || null,
           expected_duration_hours: expectedDuration ? Number(expectedDuration) : null,
           notes: notes.trim() || null,
           creator_id: info.user_id,
         };
+        // eslint-disable-next-line no-console -- debug: OT payload to IPC
+        console.log("OT Payload:", input);
         const wo = await submitNewWo(input);
         onSubmitted(wo);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setSubmitError(msg);
+      setSubmitError(toErrorMessage(err));
     }
   }, [
     isValid,
+    catalogsReady,
     info,
     isEdit,
     initial,
     title,
     description,
-    typeId,
+    typeCode,
     selectedAsset,
     urgencyId,
     plannedStart,
@@ -262,15 +398,28 @@ export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormPro
         <h3 className="text-sm font-semibold text-text-primary">{t("detail.sections.general")}</h3>
 
         {/* Type */}
-        <FormField name="type" label={t("form.type.label")}>
-          <Select value={typeId} onValueChange={setTypeId}>
+        <FormField
+          name="type"
+          label={t("form.type.label")}
+          error={fieldError("typeCode")}
+          required={requireType}
+        >
+          <Select
+            {...(typeCode ? { value: typeCode } : {})}
+            onValueChange={(v) => {
+              setTypeCode(v);
+              markTouched("typeCode");
+            }}
+          >
             <SelectTrigger className="w-full">
-              <SelectValue placeholder={t("form.type.label")} />
+              <SelectValue placeholder={typesLoading ? "Chargement..." : t("form.type.label")} />
             </SelectTrigger>
             <SelectContent>
-              {WO_TYPES.map((wt) => (
-                <SelectItem key={wt.id} value={wt.id.toString()}>
-                  {t(`type.${wt.key}`)}
+              {woTypes.map((wt) => (
+                <SelectItem key={wt.id} value={wt.code}>
+                  {t(`type.${wt.code === "condition_based" ? "conditionBased" : wt.code}`, {
+                    defaultValue: wt.label,
+                  })}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -349,15 +498,28 @@ export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormPro
         </FormField>
 
         {/* Urgency */}
-        <FormField name="urgency" label={t("form.urgency.label")}>
-          <Select value={urgencyId} onValueChange={setUrgencyId}>
+        <FormField
+          name="urgency"
+          label={t("form.urgency.label")}
+          error={fieldError("urgencyId")}
+          required={requireUrgency}
+        >
+          <Select
+            {...(urgencyId ? { value: urgencyId } : {})}
+            onValueChange={(v) => {
+              setUrgencyId(v);
+              markTouched("urgencyId");
+            }}
+          >
             <SelectTrigger className="w-full">
-              <SelectValue placeholder={t("form.urgency.label")} />
+              <SelectValue placeholder={prioritiesLoading ? "…" : t("form.urgency.label")} />
             </SelectTrigger>
             <SelectContent>
-              {URGENCY_LEVELS.map((u) => (
-                <SelectItem key={u.id} value={u.id.toString()}>
-                  <span className={URGENCY_COLOR[u.id]}>{t(`form.urgency.${u.key}`)}</span>
+              {activePriorities.map((p) => (
+                <SelectItem key={p.id} value={String(p.id)}>
+                  <span style={{ color: p.hex_color }}>
+                    {priorityDisplayLabel(p, i18n.language)}
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -448,9 +610,12 @@ export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormPro
       <Separator />
 
       {/* ── Error banner ────────────────────────────────────────────── */}
-      {(submitError || storeError) && (
+      {(submitError || storeError || catalogError || prioritiesError) && (
         <div className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger">
-          {submitError || storeError}
+          {[submitError, storeError, catalogError, prioritiesError]
+            .filter(Boolean)
+            .map((e) => toErrorMessage(e))
+            .join(" ")}
         </div>
       )}
 
@@ -459,7 +624,11 @@ export function WoCreateForm({ initial, onSubmitted, onCancel }: WoCreateFormPro
         <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
           {t("form.cancel")}
         </Button>
-        <Button size="sm" onClick={() => void handleSubmit()} disabled={saving || !isValid}>
+        <Button
+          size="sm"
+          onClick={() => void handleSubmit()}
+          disabled={saving || !isValid || !catalogsReady}
+        >
           {saving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
           {isEdit ? t("form.update") : t("form.submit")}
         </Button>

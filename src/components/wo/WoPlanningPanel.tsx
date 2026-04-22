@@ -12,12 +12,26 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSession } from "@/hooks/use-session";
-import { evaluateInventoryUnitCost, listInventoryArticles, listInventoryLocations } from "@/services/inventory-service";
+import {
+  evaluateInventoryUnitCost,
+  listInventoryArticles,
+  listInventoryLocations,
+} from "@/services/inventory-service";
 import { listOrgTree } from "@/services/org-node-service";
 import { addPart, addTask, listParts, listTasks } from "@/services/wo-execution-service";
 import { assignWo, planWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
-import type { InventoryArticle, StockLocation, WoExecPart, WoExecTask, WorkOrder, WoShift } from "@shared/ipc-types";
+import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
+import { toErrorMessage } from "@/utils/errors";
+import type {
+  InventoryArticle,
+  StockLocation,
+  WoExecPart,
+  WoExecTask,
+  WorkOrder,
+  WorkOrderPriorityOption,
+  WoShift,
+} from "@shared/ipc-types";
 
 interface WoPlanningPanelProps {
   wo: WorkOrder;
@@ -59,13 +73,9 @@ const PLAN_EDITABLE_STATUSES = new Set([
   "ready_to_schedule",
 ]);
 
-const URGENCY_LEVELS = [
-  { id: 1, i18nKey: "form.urgency.veryLow", swatch: "bg-emerald-500" },
-  { id: 2, i18nKey: "form.urgency.low", swatch: "bg-lime-500" },
-  { id: 3, i18nKey: "form.urgency.medium", swatch: "bg-amber-500" },
-  { id: 4, i18nKey: "form.urgency.high", swatch: "bg-orange-500" },
-  { id: 5, i18nKey: "form.urgency.critical", swatch: "bg-red-500" },
-] as const;
+function planningPriorityLabel(p: WorkOrderPriorityOption, lang: string): string {
+  return lang.toLowerCase().startsWith("fr") ? p.label_fr : p.label;
+}
 
 const SHIFT_OPTIONS: Array<{ value: WoShift; label: string }> = [
   { value: "morning", label: "morning" },
@@ -122,7 +132,13 @@ function toPartDraft(part: WoExecPart): PartDraft {
 }
 
 export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
-  const { t } = useTranslation("ot");
+  const { t, i18n } = useTranslation("ot");
+  const prioritiesCatalog = useWorkOrderPrioritiesCatalog((s) => s.priorities);
+  const loadPriorities = useWorkOrderPrioritiesCatalog((s) => s.load);
+  const activePriorities = useMemo(
+    () => prioritiesCatalog.filter((p) => p.is_active).sort((a, b) => a.level - b.level),
+    [prioritiesCatalog],
+  );
   const { info } = useSession();
   const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
   const woItems = useWoStore((s) => s.items);
@@ -180,6 +196,10 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       setPlannerId(String(info.user_id));
     }
   }, [plannerId, info?.user_id]);
+
+  useEffect(() => {
+    void loadPriorities();
+  }, [loadPriorities]);
 
   useEffect(() => {
     let cancelled = false;
@@ -301,12 +321,18 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
         const key = `${part.article_id}:${part.stock_location_id}`;
         if (lastValuationKeyByPart.current[part.localId] === key) continue;
         try {
-          const r = await evaluateInventoryUnitCost(part.article_id, loc.warehouse_id, part.stock_location_id);
+          const r = await evaluateInventoryUnitCost(
+            part.article_id,
+            loc.warehouse_id,
+            part.stock_location_id,
+          );
           if (cancelled) return;
           lastValuationKeyByPart.current[part.localId] = key;
           setParts((prev) =>
             prev.map((p) =>
-              p.localId === part.localId && !p.persisted ? { ...p, unit_cost: String(r.unit_cost) } : p,
+              p.localId === part.localId && !p.persisted
+                ? { ...p, unit_cost: String(r.unit_cost) }
+                : p,
             ),
           );
         } catch {
@@ -364,7 +390,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       setStatusCode(next.status_code ?? statusCode);
       await refreshActiveWo();
     } catch (e) {
-      setError(e instanceof Error ? e.message : t("planning.error.plan"));
+      setError(toErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -381,7 +407,6 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
     urgencyId,
     refreshActiveWo,
     statusCode,
-    t,
   ]);
 
   const handleAssign = useCallback(async () => {
@@ -405,7 +430,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       setStatusCode(next.status_code ?? statusCode);
       await refreshActiveWo();
     } catch (e) {
-      setError(e instanceof Error ? e.message : t("planning.error.assign"));
+      setError(toErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -419,7 +444,6 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
     scheduledAt,
     refreshActiveWo,
     statusCode,
-    t,
   ]);
 
   const addTaskRow = useCallback(() => {
@@ -465,12 +489,12 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
           prev.map((task) => (task.localId === row.localId ? toTaskDraft(created) : task)),
         );
       } catch (e) {
-        setError(e instanceof Error ? e.message : t("planning.error.addTask"));
+        setError(toErrorMessage(e));
       } finally {
         setBusy(false);
       }
     },
-    [allFieldsDisabled, wo.id, t],
+    [allFieldsDisabled, wo.id],
   );
 
   const addPartRow = useCallback(() => {
@@ -536,7 +560,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
           prev.map((part) => (part.localId === row.localId ? toPartDraft(created) : part)),
         );
       } catch (e) {
-        setError(e instanceof Error ? e.message : t("planning.error.addPart"));
+        setError(toErrorMessage(e));
       } finally {
         setBusy(false);
       }
@@ -617,16 +641,23 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
 
       <section className="space-y-3">
         <h3 className="text-sm font-semibold">2. {t("planning.urgency")}</h3>
-        <Select value={urgencyId} onValueChange={setUrgencyId} disabled={allFieldsDisabled}>
+        <Select
+          {...(urgencyId ? { value: urgencyId } : {})}
+          onValueChange={setUrgencyId}
+          disabled={allFieldsDisabled}
+        >
           <SelectTrigger className="max-w-sm">
             <SelectValue placeholder={t("planning.selectUrgency")} />
           </SelectTrigger>
           <SelectContent>
-            {URGENCY_LEVELS.map((level) => (
-              <SelectItem key={level.id} value={String(level.id)}>
+            {activePriorities.map((p) => (
+              <SelectItem key={p.id} value={String(p.id)}>
                 <span className="inline-flex items-center gap-2">
-                  <span className={`h-2.5 w-2.5 rounded-full ${level.swatch}`} />
-                  {t(level.i18nKey)}
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: p.hex_color }}
+                  />
+                  {planningPriorityLabel(p, i18n.language)}
                 </span>
               </SelectItem>
             ))}
@@ -689,8 +720,8 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
         </div>
         {groupOptions.length === 0 ? (
           <p className="text-xs text-muted-foreground">
-            No organizational groups are loaded. Define and publish at least one org node (team / site) in the
-            Organization structure designer so you can assign this work order.
+            No organizational groups are loaded. Define and publish at least one org node (team /
+            site) in the Organization structure designer so you can assign this work order.
           </p>
         ) : null}
       </section>
@@ -785,7 +816,9 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
               .filter((article) => {
                 const term = part.article_query.trim().toLowerCase();
                 if (!term) return true;
-                return `${article.article_code} ${article.article_name}`.toLowerCase().includes(term);
+                return `${article.article_code} ${article.article_name}`
+                  .toLowerCase()
+                  .includes(term);
               })
               .slice(0, 60);
 
@@ -802,7 +835,9 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                     onFocus={() => setActiveArticleField(part.localId)}
                     onBlur={() => {
                       setTimeout(() => {
-                        setActiveArticleField((current) => (current === part.localId ? null : current));
+                        setActiveArticleField((current) =>
+                          current === part.localId ? null : current,
+                        );
                       }, 100);
                     }}
                     onChange={(e) =>
@@ -817,7 +852,9 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                   {activeArticleField === part.localId && !allFieldsDisabled && !part.persisted && (
                     <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
                       {filteredArticles.length === 0 ? (
-                        <div className="px-2 py-1.5 text-sm text-muted-foreground">No matching article</div>
+                        <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                          No matching article
+                        </div>
                       ) : (
                         filteredArticles.map((article) => (
                           <button
@@ -845,7 +882,9 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                 <div className="space-y-1">
                   <Label>Stock location</Label>
                   <Select
-                    value={part.stock_location_id != null ? String(part.stock_location_id) : "__none"}
+                    value={
+                      part.stock_location_id != null ? String(part.stock_location_id) : "__none"
+                    }
                     onValueChange={(value) =>
                       updatePartRow(part.localId, {
                         stock_location_id: value === "__none" ? null : Number(value),
@@ -873,7 +912,9 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                     min="0"
                     step="0.01"
                     value={part.quantity_planned}
-                    onChange={(e) => updatePartRow(part.localId, { quantity_planned: e.target.value })}
+                    onChange={(e) =>
+                      updatePartRow(part.localId, { quantity_planned: e.target.value })
+                    }
                     disabled={allFieldsDisabled || part.persisted}
                   />
                 </div>
@@ -888,14 +929,18 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                     disabled={allFieldsDisabled || part.persisted}
                   />
                   {part.persisted && part.reservation_id != null ? (
-                    <p className="text-xs text-muted-foreground">Stock reservation ID: {part.reservation_id}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Stock reservation ID: {part.reservation_id}
+                    </p>
                   ) : null}
                   {part.persisted && part.reservation_id == null ? (
                     <p className="text-xs text-amber-800">No stock reservation on this line.</p>
                   ) : null}
                 </div>
                 <div className="flex items-end text-sm font-medium">
-                  {((parseNumber(part.quantity_planned) ?? 0) * (parseNumber(part.unit_cost) ?? 0)).toFixed(2)}
+                  {(
+                    (parseNumber(part.quantity_planned) ?? 0) * (parseNumber(part.unit_cost) ?? 0)
+                  ).toFixed(2)}
                 </div>
                 <div className="flex items-end gap-2">
                   {!part.persisted && (
