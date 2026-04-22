@@ -47,9 +47,12 @@ cargo-check-admin.txt
 *.log
 npm-debug.log*
 pnpm-debug.log*
+*.aux
 
 # Tauri
 WixTools/
+src-tauri/target-codex-check/
+target-agent-*/
 
 
 /PFE
