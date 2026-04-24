@@ -14,7 +14,7 @@
 use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 use crate::org::{
     audit::{self, OrgAuditEventInput, OrgChangeEvent},
     entity_bindings::{self, UpsertOrgEntityBindingPayload},
@@ -56,7 +56,40 @@ pub async fn create_org_structure_model(
 ) -> AppResult<OrgStructureModel> {
     let user = require_session!(state);
     require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    if structure_model::get_active_model(&state.db).await?.is_some() {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "A published (active) structure model already exists. Use fork_org_draft_from_published to start a new draft that copies the current published node types and rules."
+        )]));
+    }
     structure_model::create_model(&state.db, payload, user.user_id).await
+}
+
+/// Create a new draft from the current **published** model (copy node types + relationship rules).
+/// Does not run when a draft already exists, or when there is no active model.
+#[tauri::command]
+pub async fn fork_org_draft_from_published(
+    payload: CreateStructureModelPayload,
+    state: State<'_, AppState>,
+) -> AppResult<OrgStructureModel> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    let result = structure_model::fork_draft_from_published(&state.db, &payload, user.user_id).await?;
+    audit::record_org_change(
+        &state.db,
+        OrgAuditEventInput {
+            entity_kind: "structure_model".to_string(),
+            entity_id: Some(result.id as i64),
+            change_type: "fork_draft_from_published".to_string(),
+            before_json: None,
+            after_json: Some(serde_json::to_string(&result).unwrap_or_default()),
+            preview_summary_json: None,
+            changed_by_id: Some(user.user_id as i64),
+            requires_step_up: false,
+            apply_result: "applied".to_string(),
+        },
+    )
+    .await?;
+    Ok(result)
 }
 
 #[tauri::command]

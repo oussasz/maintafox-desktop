@@ -9,6 +9,7 @@ import type {
   AdminChangeEventDetail,
   AdminEventFilter,
   AdminStatsPayload,
+  AssignableRoleSummary,
   AssignRoleScopeInput,
   CreateCustomPermissionInput,
   CreateDelegationInput,
@@ -19,6 +20,7 @@ import type {
   GrantEmergencyElevationInput,
   IdPayload,
   ImportResult,
+  MissingTenantScopeUser,
   PasswordPolicySettings,
   PermissionDependencyRow,
   PermissionListFilter,
@@ -37,6 +39,7 @@ import type {
   SimulateAccessResult,
   StepUpRequest,
   StepUpResponse,
+  TenantScopeBackfillResult,
   UpdateDelegationInput,
   UpdateRoleInput,
   UpdateUserInput,
@@ -134,6 +137,9 @@ const UserWithRolesSchema = z.object({
   id: z.number(),
   username: z.string(),
   display_name: z.string().nullable(),
+  personnel_id: z.number().nullable().default(null),
+  email: z.string().nullable().default(null),
+  phone: z.string().nullable().default(null),
   identity_mode: z.string(),
   is_active: z.boolean(),
   force_password_change: z.boolean(),
@@ -165,9 +171,37 @@ const UserDetailSchema = z.object({
   effective_permissions: z.array(z.string()),
 });
 
+const MissingTenantScopeUserSchema = z.object({
+  user_id: z.number(),
+  username: z.string(),
+  identity_mode: z.string(),
+  has_any_role_assignment: z.boolean(),
+});
+
+const TenantScopeBackfillResultSchema = z.object({
+  tenant_id: z.string().nullable(),
+  updated_count: z.number(),
+  updated_user_ids: z.array(z.number()),
+});
+
 export async function listUsers(filter: UserListFilter): Promise<UserWithRoles[]> {
   const raw = await invoke<unknown[]>("list_users", { filter });
   return z.array(UserWithRolesSchema).parse(raw);
+}
+
+const AssignableRoleSummarySchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  description: z.string().nullable(),
+  role_type: z.string(),
+  status: z.string(),
+  is_system: z.boolean(),
+});
+
+/** Roles that may be selected when creating a user (requires adm.users). */
+export async function listAssignableRoles(): Promise<AssignableRoleSummary[]> {
+  const raw = await invoke<unknown[]>("list_assignable_roles");
+  return z.array(AssignableRoleSummarySchema).parse(raw);
 }
 
 export async function getUser(userId: number): Promise<UserDetail> {
@@ -178,6 +212,16 @@ export async function getUser(userId: number): Promise<UserDetail> {
 export async function createUser(input: CreateUserInput): Promise<IdPayload> {
   const raw = await invoke<unknown>("create_user", { input });
   return IdPayloadSchema.parse(raw);
+}
+
+export async function listUsersMissingTenantScope(): Promise<MissingTenantScopeUser[]> {
+  const raw = await invoke<unknown[]>("list_users_missing_tenant_scope");
+  return z.array(MissingTenantScopeUserSchema).parse(raw);
+}
+
+export async function backfillUsersMissingTenantScope(): Promise<TenantScopeBackfillResult> {
+  const raw = await invoke<unknown>("backfill_users_missing_tenant_scope");
+  return TenantScopeBackfillResultSchema.parse(raw);
 }
 
 export async function updateUser(input: UpdateUserInput): Promise<void> {

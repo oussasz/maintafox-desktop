@@ -17,6 +17,8 @@ vi.mock("@/services/org-designer-service", () => ({
   getOrgDesignerSnapshot: vi.fn().mockResolvedValue({
     active_model_id: null,
     active_model_version: null,
+    draft_model_id: null,
+    draft_model_version: null,
     nodes: [],
   }),
   searchOrgDesignerNodes: vi.fn().mockResolvedValue([]),
@@ -106,6 +108,7 @@ const cleanPreview: OrgImpactPreview = {
 function resetStore() {
   useOrgDesignerStore.setState({
     snapshot: null,
+    workspaceMode: "published",
     filterText: "",
     statusFilter: null,
     typeFilter: null,

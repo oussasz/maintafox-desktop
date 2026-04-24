@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 
-import { invoke } from "@/lib/ipc-invoke";
+import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
   ClearPinInput,
   LoginRequest,
@@ -58,7 +58,8 @@ export async function logout(): Promise<void> {
  * Safe to call on every app startup to determine initial route.
  */
 export async function getSessionInfo(): Promise<SessionInfo> {
-  const raw = await invoke<unknown>("get_session_info");
+  // Session polling should not create global toast side effects; UI layers decide how to surface.
+  const raw = await invokeSilent<unknown>("get_session_info");
   return sessionInfoSchema.parse(raw);
 }
 

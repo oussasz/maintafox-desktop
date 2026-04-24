@@ -102,6 +102,9 @@ mod m20260719_000101_grant_sync_view_for_ram_roles;
 mod m20260720_000102_urgency_levels_reference_metadata;
 mod m20260721_000103_equipment_taxonomy_reference_domains;
 mod m20260722_000104_grant_sync_permissions_admin_roles;
+mod m20260723_000105_user_account_contact_fields;
+mod m20260724_000106_user_account_email_uniqueness;
+mod m20260725_000107_user_scope_assignments_unique_active_only;
 mod m_test;
 
 pub struct Migrator;
@@ -212,6 +215,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260720_000102_urgency_levels_reference_metadata::Migration),
             Box::new(m20260721_000103_equipment_taxonomy_reference_domains::Migration),
             Box::new(m20260722_000104_grant_sync_permissions_admin_roles::Migration),
+            Box::new(m20260723_000105_user_account_contact_fields::Migration),
+            Box::new(m20260724_000106_user_account_email_uniqueness::Migration),
+            Box::new(m20260725_000107_user_scope_assignments_unique_active_only::Migration),
             Box::new(m_test::Migration),
         ]
     }

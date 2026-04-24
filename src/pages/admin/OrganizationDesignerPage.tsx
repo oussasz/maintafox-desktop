@@ -2,18 +2,22 @@
  * OrganizationDesignerPage.tsx
  *
  * Admin workspace for designing and reviewing the org model.
- * Three-pane layout: filters/model info | tree panel | node inspector.
+ * Governed lifecycle: explicit “published (read-only)” vs “draft (editing)” modes.
  */
 
 import { AlertTriangle, Building2, RefreshCw, Settings2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PermissionGate } from "@/components/PermissionGate";
 import { AuditTimeline } from "@/components/org/AuditTimeline";
 import { ImpactPreviewDrawer } from "@/components/org/ImpactPreviewDrawer";
 import { NodeInspectorPanel } from "@/components/org/NodeInspectorPanel";
 import { NodeTypeManagerPanel } from "@/components/org/NodeTypeManagerPanel";
+import { OrgDesignerLifecycleBar } from "@/components/org/OrgDesignerLifecycleBar";
 import { OrgExportMenu } from "@/components/org/OrgExportMenu";
+import { OrgNodeCreateDialog } from "@/components/org/OrgNodeCreateDialog";
+import { OrgRelationshipRulesPanel } from "@/components/org/OrgRelationshipRulesPanel";
 import { OrganizationTreePanel } from "@/components/org/OrganizationTreePanel";
 import { PublishReadinessBanner } from "@/components/org/PublishReadinessBanner";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +32,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
-import { useOrgDesignerStore } from "@/stores/org-designer-store";
+import { isOrgStructureDesignMode, useOrgDesignerStore } from "@/stores/org-designer-store";
 
 export function OrganizationDesignerPage() {
   const { t } = useTranslation("org");
@@ -38,6 +42,7 @@ export function OrganizationDesignerPage() {
   const error = useOrgDesignerStore((s) => s.error);
   const statusFilter = useOrgDesignerStore((s) => s.statusFilter);
   const typeFilter = useOrgDesignerStore((s) => s.typeFilter);
+  const workspaceMode = useOrgDesignerStore((s) => s.workspaceMode);
   const loadSnapshot = useOrgDesignerStore((s) => s.loadSnapshot);
   const setStatusFilter = useOrgDesignerStore((s) => s.setStatusFilter);
   const setTypeFilter = useOrgDesignerStore((s) => s.setTypeFilter);
@@ -59,6 +64,30 @@ export function OrganizationDesignerPage() {
 
   const hasActiveModel = snapshot?.active_model_id != null;
   const hasDraftModel = snapshot?.draft_model_id != null;
+  const hasWorkspace = hasActiveModel || hasDraftModel;
+
+  const isDesign = isOrgStructureDesignMode(snapshot, workspaceMode);
+  const canOpenTypeManager = hasDraftModel && isDesign;
+  const activeModelId = snapshot?.active_model_id ?? null;
+  const canAddLiveNodes = isDesign && activeModelId != null;
+
+  const [createNodeOpen, setCreateNodeOpen] = useState(false);
+  const [createNodeMode, setCreateNodeMode] = useState<"root" | "child">("root");
+  const selectedNodeId = useOrgDesignerStore((s) => s.selectedNodeId);
+  const setSelectedNodeId = useOrgDesignerStore((s) => s.setSelectedNodeId);
+
+  const selectedNodeRow = useMemo(() => {
+    if (!snapshot || selectedNodeId == null) return null;
+    return snapshot.nodes.find((n) => n.node_id === selectedNodeId) ?? null;
+  }, [snapshot, selectedNodeId]);
+
+  const onNodeCreated = useCallback(
+    async (nodeId: number) => {
+      await loadSnapshot();
+      setSelectedNodeId(nodeId);
+    },
+    [loadSnapshot, setSelectedNodeId],
+  );
 
   // Loading state
   if (loading && !snapshot) {
@@ -86,7 +115,6 @@ export function OrganizationDesignerPage() {
 
   return (
     <div className={mfLayout.moduleRoot}>
-      {/* Page header — DI/OT pattern */}
       <div className={mfLayout.moduleHeader}>
         <div className={mfLayout.moduleTitleRow}>
           <Building2 className={mfLayout.moduleHeaderIcon} />
@@ -98,19 +126,32 @@ export function OrganizationDesignerPage() {
               })}
             </Badge>
           )}
+          {hasDraftModel && (
+            <Badge variant="secondary" className="text-xs">
+              {t("lifecycle.draftVersionBadge", { version: snapshot?.draft_model_version ?? "—" })}
+            </Badge>
+          )}
         </div>
         <div className={mfLayout.moduleHeaderActions}>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => hasDraftModel && setTypesPanelOpen(true)}
-            disabled={!hasDraftModel}
-            title={!hasDraftModel ? t("designer.manageTypesNoDraftHint") : undefined}
-            className="gap-1.5"
-          >
-            <Settings2 className="h-3.5 w-3.5" />
-            {t("designer.manageTypes")}
-          </Button>
+          <PermissionGate permission="org.admin">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => canOpenTypeManager && setTypesPanelOpen(true)}
+              disabled={!canOpenTypeManager}
+              title={
+                !hasDraftModel
+                  ? t("designer.manageTypesNoDraftHint")
+                  : !isDesign
+                    ? t("designer.manageTypesReadOnlyHint")
+                    : undefined
+              }
+              className="gap-1.5"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              {t("designer.manageTypes")}
+            </Button>
+          </PermissionGate>
           <OrgExportMenu treeContainerId="org-tree-container" />
           <Button
             variant="outline"
@@ -125,31 +166,30 @@ export function OrganizationDesignerPage() {
         </div>
       </div>
 
-      {/* No active model banner */}
-      {!hasActiveModel && (
-        <div className="mx-6 mt-4 rounded-lg border border-status-warning/30 bg-status-warning/10 p-4 flex items-center gap-3">
-          <AlertTriangle className="h-5 w-5 text-status-warning shrink-0" />
-          <div>
-            <p className="text-sm font-medium text-text-primary">{t("designer.noActiveModel")}</p>
-            <p className="text-xs text-text-muted mt-0.5">{t("designer.noActiveModelHint")}</p>
-          </div>
-        </div>
+      <OrgDesignerLifecycleBar />
+
+      {isDesign && snapshot?.draft_model_id != null && (
+        <OrgRelationshipRulesPanel
+          structureModelId={snapshot.draft_model_id}
+          onChanged={() => void loadSnapshot()}
+        />
       )}
 
-      {/* Publish-readiness banner — shown when a draft model exists */}
-      <PublishReadinessBanner draftModelId={snapshot?.draft_model_id ?? null} />
+      <div className="shrink-0">
+        <PublishReadinessBanner
+          draftModelId={snapshot?.draft_model_id ?? null}
+          visible={isDesign}
+        />
+      </div>
 
-      {/* Three-pane workspace */}
-      {hasActiveModel && (
-        <div className="flex flex-1 min-h-0">
-          {/* Left sidebar: filters */}
-          <aside className="w-56 shrink-0 border-r border-surface-border flex flex-col">
+      {hasWorkspace && (
+        <div className={mfLayout.moduleWorkspaceSplit}>
+          <aside className="w-56 shrink-0 border-r border-surface-border flex min-h-0 flex-col">
             <div className="p-4 space-y-4">
               <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider">
                 {t("designer.filters")}
               </h2>
 
-              {/* Status filter */}
               <div className="space-y-1.5">
                 <label className="text-xs text-text-muted">{t("designer.statusFilter")}</label>
                 <Select
@@ -168,7 +208,6 @@ export function OrganizationDesignerPage() {
                 </Select>
               </div>
 
-              {/* Type filter */}
               <div className="space-y-1.5">
                 <label className="text-xs text-text-muted">{t("designer.typeFilter")}</label>
                 <Select
@@ -192,7 +231,6 @@ export function OrganizationDesignerPage() {
 
             <Separator />
 
-            {/* Model summary */}
             <div className="p-4 space-y-2">
               <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider">
                 {t("designer.modelSummary")}
@@ -212,22 +250,44 @@ export function OrganizationDesignerPage() {
             </div>
           </aside>
 
-          {/* Center: tree */}
-          <main id="org-tree-container" className="flex-1 min-w-0 border-r border-surface-border">
-            <OrganizationTreePanel />
+          <main
+            id="org-tree-container"
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-surface-border"
+          >
+            <OrganizationTreePanel
+              readOnly={!isDesign}
+              canAddLiveNodes={canAddLiveNodes}
+              showNoActiveModelHint={isDesign && hasDraftModel && activeModelId == null}
+              onAddRoot={() => {
+                setCreateNodeMode("root");
+                setCreateNodeOpen(true);
+              }}
+              onAddChild={() => {
+                setCreateNodeMode("child");
+                setCreateNodeOpen(true);
+              }}
+            />
           </main>
 
-          {/* Right: inspector + audit tabs */}
-          <aside className="w-80 shrink-0 flex flex-col">
-            <Tabs defaultValue="inspector" className="flex flex-col h-full">
-              <TabsList className="mx-2 mt-2">
+          <aside className="flex w-80 min-h-0 shrink-0 flex-col self-stretch overflow-hidden">
+            <Tabs
+              defaultValue="inspector"
+              className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+            >
+              <TabsList className="mx-2 mt-2 shrink-0">
                 <TabsTrigger value="inspector">{t("designer.inspectorTab")}</TabsTrigger>
                 <TabsTrigger value="audit">{t("designer.auditTab")}</TabsTrigger>
               </TabsList>
-              <TabsContent value="inspector" className="flex-1 min-h-0 overflow-y-auto">
-                <NodeInspectorPanel />
+              <TabsContent
+                value="inspector"
+                className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden p-0 data-[state=inactive]:hidden"
+              >
+                <NodeInspectorPanel readOnly={!isDesign} />
               </TabsContent>
-              <TabsContent value="audit" className="flex-1 min-h-0 overflow-y-auto">
+              <TabsContent
+                value="audit"
+                className="mt-0 min-h-0 flex-1 overflow-y-auto p-0 data-[state=inactive]:hidden"
+              >
                 <AuditTimeline />
               </TabsContent>
             </Tabs>
@@ -235,7 +295,17 @@ export function OrganizationDesignerPage() {
         </div>
       )}
 
-      {/* Node type manager sheet */}
+      {activeModelId != null && canAddLiveNodes && (
+        <OrgNodeCreateDialog
+          open={createNodeOpen}
+          onOpenChange={setCreateNodeOpen}
+          mode={createNodeMode}
+          parentNode={createNodeMode === "child" ? selectedNodeRow : null}
+          activeModelId={activeModelId}
+          onCreated={onNodeCreated}
+        />
+      )}
+
       <NodeTypeManagerPanel
         open={typesPanelOpen}
         onOpenChange={setTypesPanelOpen}
@@ -243,7 +313,6 @@ export function OrganizationDesignerPage() {
         onTypesChanged={() => void loadSnapshot()}
       />
 
-      {/* Impact preview drawer — always mounted, visibility controlled by store */}
       <ImpactPreviewDrawer />
     </div>
   );

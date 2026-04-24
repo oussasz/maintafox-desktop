@@ -21,6 +21,7 @@ use crate::di::domain::DiOriginType;
 use crate::di::queries;
 use crate::di::review;
 use crate::di::sla;
+use crate::di::stats;
 use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
 use crate::{require_permission, require_session};
@@ -604,6 +605,20 @@ pub async fn list_all_di_change_events(
     let user = require_session!(state);
     require_permission!(state, &user, "di.admin", PermissionScope::Global);
     audit::list_all_change_events(&state.db, filter).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// U) get_di_stats — requires di.view
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn get_di_stats(
+    filter: stats::DiStatsFilter,
+    state: State<'_, AppState>,
+) -> AppResult<stats::DiStatsPayload> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "di.view", PermissionScope::Global);
+    stats::get_di_stats(&state.db, filter).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

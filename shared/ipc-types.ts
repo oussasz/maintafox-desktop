@@ -1564,6 +1564,8 @@ export interface OrgDesignerSnapshot {
   active_model_id: number | null;
   active_model_version: number | null;
   draft_model_id: number | null;
+  /** Present when a draft model exists. */
+  draft_model_version: number | null;
   nodes: OrgDesignerNodeRow[];
 }
 
@@ -4232,9 +4234,21 @@ export interface UserPresence {
 export interface CreateUserInput {
   username: string;
   identity_mode: string;
+  /** Tenant-scoped role assigned at creation (required). */
+  role_id: number;
   personnel_id?: number | null;
   initial_password?: string | null;
   force_password_change?: boolean;
+}
+
+/** Role row for create-user dropdown (adm.users; no permission matrix). */
+export interface AssignableRoleSummary {
+  id: number;
+  name: string;
+  description: string | null;
+  role_type: string;
+  status: string;
+  is_system: boolean;
 }
 
 export interface SetPinInput {
@@ -4283,6 +4297,9 @@ export interface UserWithRoles {
   id: number;
   username: string;
   display_name: string | null;
+  personnel_id: number | null;
+  email: string | null;
+  phone: string | null;
   identity_mode: string;
   is_active: boolean;
   force_password_change: boolean;
@@ -4323,6 +4340,9 @@ export interface UserListFilter {
 export interface UpdateUserInput {
   user_id: number;
   username?: string;
+  display_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
   personnel_id?: number | null;
   force_password_change?: boolean;
   is_active?: boolean;
@@ -4388,6 +4408,19 @@ export interface SimulateAccessResult {
 
 export interface IdPayload {
   id: number;
+}
+
+export interface MissingTenantScopeUser {
+  user_id: number;
+  username: string;
+  identity_mode: string;
+  has_any_role_assignment: boolean;
+}
+
+export interface TenantScopeBackfillResult {
+  tenant_id: string | null;
+  updated_count: number;
+  updated_user_ids: number[];
 }
 
 // â”€â”€â”€ Permission Catalog (SP06-F02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

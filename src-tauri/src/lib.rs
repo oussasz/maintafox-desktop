@@ -164,6 +164,7 @@ pub fn run() {
             commands::admin_users::list_users,
             commands::admin_users::get_user,
             commands::admin_users::create_user,
+            commands::admin_users::list_assignable_roles,
             commands::admin_users::update_user,
             commands::admin_users::deactivate_user,
             commands::admin_users::assign_role_scope,
@@ -179,6 +180,8 @@ pub fn run() {
             commands::admin_users::revoke_emergency_elevation,
             commands::admin_users::unlock_user_account,
             commands::admin_users::get_user_presence,
+            commands::admin_users::list_users_missing_tenant_scope,
+            commands::admin_users::backfill_users_missing_tenant_scope,
             // Ã¢â€â‚¬Ã¢â€â‚¬ Admin Governance (SP06-F03) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::admin_governance::list_active_sessions,
             commands::admin_governance::revoke_session,
@@ -303,6 +306,7 @@ pub fn run() {
             commands::org::list_org_structure_models,
             commands::org::get_active_org_structure_model,
             commands::org::create_org_structure_model,
+            commands::org::fork_org_draft_from_published,
             commands::org::publish_org_structure_model,
             commands::org::archive_org_structure_model,
             commands::org::list_org_node_types,
@@ -602,6 +606,7 @@ pub fn run() {
             // Ã¢â€â‚¬Ã¢â€â‚¬ DI File 04 Ã¢â‚¬â€ Audit Trail Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::di::list_di_change_events,
             commands::di::list_all_di_change_events,
+            commands::di::get_di_stats,
             // Ã¢â€â‚¬Ã¢â€â‚¬ WO (Work Orders) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::wo::list_work_order_types,
             commands::wo::create_work_order_type,

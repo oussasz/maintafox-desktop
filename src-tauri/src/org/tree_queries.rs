@@ -38,7 +38,9 @@ pub struct OrgDesignerNodeRow {
 pub struct OrgDesignerSnapshot {
     pub active_model_id: Option<i64>,
     pub active_model_version: Option<i64>,
+    /// Present when a draft model exists; enables UI to label the draft (e.g. "Draft v4").
     pub draft_model_id: Option<i64>,
+    pub draft_model_version: Option<i64>,
     pub nodes: Vec<OrgDesignerNodeRow>,
 }
 
@@ -164,13 +166,13 @@ const DESIGNER_SNAPSHOT_SQL: &str = r"
 
 // ─── Service functions ────────────────────────────────────────────────────────
 
-/// Return the complete designer snapshot: active model metadata plus the full
-/// flattened tree. When no active model exists the snapshot returns
-/// `active_model_id = None` and an empty node list.
+/// Return the complete designer snapshot: model metadata (active, draft) and the
+/// full flattened org tree. When **no** active and **no** draft model exist, the
+/// snapshot has empty nodes. When only a draft exists (not yet first-published),
+/// node rows still project through `org_nodes` and draft-scoped `org_node_types`.
 pub async fn get_org_designer_snapshot(
     db: &DatabaseConnection,
 ) -> AppResult<OrgDesignerSnapshot> {
-    // Step 1 — resolve the active model (if any).
     let model_row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -189,28 +191,41 @@ pub async fn get_org_designer_snapshot(
                 .map_err(|e| decode_err("version_number", e))?;
             (Some(mid), Some(mver))
         }
-        None => {
-            // No active model — return empty snapshot.
-            return Ok(OrgDesignerSnapshot {
-                active_model_id: None,
-                active_model_version: None,
-                draft_model_id: None,
-                nodes: Vec::new(),
-            });
-        }
+        None => (None, None),
     };
 
-    // Step 1b — check for a draft model (separate from the active one).
-    let draft_model_id: Option<i64> = db
+    let draft_row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id FROM org_structure_models WHERE status = 'draft' LIMIT 1"
+            "SELECT id, version_number FROM org_structure_models WHERE status = 'draft' LIMIT 1"
                 .to_string(),
         ))
-        .await?
-        .and_then(|row| row.try_get::<i64>("", "id").ok());
+        .await?;
 
-    // Step 2 — fetch flattened tree.
+    let (draft_model_id, draft_model_version) = match draft_row {
+        Some(row) => {
+            let id: i64 = row
+                .try_get("", "id")
+                .map_err(|e| decode_err("id", e))?;
+            let v: i64 = row
+                .try_get("", "version_number")
+                .map_err(|e| decode_err("version_number", e))?;
+            (Some(id), Some(v))
+        }
+        None => (None, None),
+    };
+
+    if active_model_id.is_none() && draft_model_id.is_none() {
+        return Ok(OrgDesignerSnapshot {
+            active_model_id: None,
+            active_model_version: None,
+            draft_model_id: None,
+            draft_model_version: None,
+            nodes: Vec::new(),
+        });
+    }
+
+    // Flattened tree: operational nodes, joined to their node type row (any model).
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -225,6 +240,7 @@ pub async fn get_org_designer_snapshot(
         active_model_id,
         active_model_version,
         draft_model_id,
+        draft_model_version,
         nodes,
     })
 }

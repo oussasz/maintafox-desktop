@@ -160,118 +160,183 @@ fn kpi_quality_badge(previous_value: i64, value: i64) -> Option<String> {
 /// so the frontend can compute the trend delta.
 #[tauri::command]
 pub async fn get_dashboard_kpis(state: State<'_, AppState>) -> AppResult<DashboardKpis> {
+    let user = require_session!(state);
     let db = &state.db;
 
+    let can_di = check_permission(db, user.user_id, "di.view", &PermissionScope::Global).await?;
+    let can_ot = check_permission(db, user.user_id, "ot.view", &PermissionScope::Global).await?;
+    let can_eq = check_permission(db, user.user_id, "eq.view", &PermissionScope::Global).await?;
+    let can_pm = check_permission(db, user.user_id, "pm.view", &PermissionScope::Global).await?;
+
     // ── Open DIs (current) ────────────────────────────────────────────
-    let open_di_count = count_scalar(
-        db,
-        "SELECT COUNT(*) AS cnt FROM intervention_requests \
+    let open_di_count = if can_di {
+        count_scalar(
+            db,
+            "SELECT COUNT(*) AS cnt FROM intervention_requests \
          WHERE status NOT IN ('rejected','converted_to_work_order',\
          'closed_as_non_executable','archived')",
-    )
-    .await;
+        )
+        .await
+    } else {
+        0
+    };
 
     // ── Previous-period open DIs (snapshot: created before 7 days ago) ──
-    let prev_di_count = count_scalar(
-        db,
-        "SELECT COUNT(*) AS cnt FROM intervention_requests \
+    let prev_di_count = if can_di {
+        count_scalar(
+            db,
+            "SELECT COUNT(*) AS cnt FROM intervention_requests \
          WHERE status NOT IN ('rejected','converted_to_work_order',\
          'closed_as_non_executable','archived') \
          AND created_at <= datetime('now', '-7 days')",
-    )
-    .await;
+        )
+        .await
+    } else {
+        0
+    };
 
     // ── Total assets (current) ────────────────────────────────────────
-    let asset_count = count_scalar(db, "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL").await;
-    let prev_asset_count = count_scalar(
-        db,
-        "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL \
+    let asset_count = if can_eq {
+        count_scalar(db, "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL").await
+    } else {
+        0
+    };
+    let prev_asset_count = if can_eq {
+        count_scalar(
+            db,
+            "SELECT COUNT(*) AS cnt FROM equipment WHERE deleted_at IS NULL \
          AND created_at <= datetime('now', '-7 days')",
-    )
-    .await;
+        )
+        .await
+    } else {
+        0
+    };
 
     // ── Overdue DIs: in non-terminal state for > 7 days ───────────────
-    let overdue_count = count_scalar(
-        db,
-        "SELECT COUNT(*) AS cnt FROM intervention_requests \
+    let overdue_count = if can_di {
+        count_scalar(
+            db,
+            "SELECT COUNT(*) AS cnt FROM intervention_requests \
          WHERE status NOT IN ('rejected','converted_to_work_order',\
          'closed_as_non_executable','archived') \
          AND created_at <= datetime('now', '-7 days')",
-    )
-    .await;
+        )
+        .await
+    } else {
+        0
+    };
 
-    let prev_overdue = count_scalar(
-        db,
-        "SELECT COUNT(*) AS cnt FROM intervention_requests \
+    let prev_overdue = if can_di {
+        count_scalar(
+            db,
+            "SELECT COUNT(*) AS cnt FROM intervention_requests \
          WHERE status NOT IN ('rejected','converted_to_work_order',\
          'closed_as_non_executable','archived') \
          AND created_at <= datetime('now', '-14 days')",
-    )
-    .await;
+        )
+        .await
+    } else {
+        0
+    };
 
-    let open_wos_val = count_scalar(
-        db,
-        "SELECT COUNT(*) AS cnt FROM work_orders wo \
+    let open_wos_val = if can_ot {
+        count_scalar(
+            db,
+            "SELECT COUNT(*) AS cnt FROM work_orders wo \
          JOIN work_order_statuses s ON s.id = wo.status_id \
          WHERE s.code NOT IN ('closed','cancelled')",
-    )
-    .await;
-    let open_wos_prev = count_scalar(
-        db,
-        "SELECT COUNT(*) AS cnt FROM work_orders wo \
+        )
+        .await
+    } else {
+        0
+    };
+    let open_wos_prev = if can_ot {
+        count_scalar(
+            db,
+            "SELECT COUNT(*) AS cnt FROM work_orders wo \
          JOIN work_order_statuses s ON s.id = wo.status_id \
          WHERE s.code NOT IN ('closed','cancelled') \
          AND wo.created_at <= datetime('now', '-7 days')",
-    )
-    .await;
+        )
+        .await
+    } else {
+        0
+    };
 
-    let overdue_val = overdue_count
-        + count_scalar(
+    let overdue_pm_now = if can_pm {
+        count_scalar(
             db,
             "SELECT COUNT(*) AS cnt FROM pm_occurrences \
              WHERE status NOT IN ('completed','cancelled','missed') \
              AND due_at IS NOT NULL \
              AND due_at < datetime('now')",
         )
-        .await;
-    let overdue_prev = prev_overdue
-        + count_scalar(
+        .await
+    } else {
+        0
+    };
+    let overdue_pm_prev = if can_pm {
+        count_scalar(
             db,
             "SELECT COUNT(*) AS cnt FROM pm_occurrences \
              WHERE status NOT IN ('completed','cancelled','missed') \
              AND due_at IS NOT NULL \
              AND due_at < datetime('now', '-7 days')",
         )
-        .await;
+        .await
+    } else {
+        0
+    };
+
+    let overdue_val = overdue_count + overdue_pm_now;
+    let overdue_prev = prev_overdue + overdue_pm_prev;
+
+    let overdue_items_available = can_di || can_pm;
 
     Ok(DashboardKpis {
         open_dis: KpiValue {
             key: kpi_definitions::dashboard::OPEN_DIS.into(),
             value: open_di_count,
             previous_value: prev_di_count,
-            available: true,
-            quality_badge: kpi_quality_badge(prev_di_count, open_di_count),
+            available: can_di,
+            quality_badge: if can_di {
+                kpi_quality_badge(prev_di_count, open_di_count)
+            } else {
+                None
+            },
         },
         open_wos: KpiValue {
             key: kpi_definitions::dashboard::OPEN_WOS.into(),
             value: open_wos_val,
             previous_value: open_wos_prev,
-            available: true,
-            quality_badge: kpi_quality_badge(open_wos_prev, open_wos_val),
+            available: can_ot,
+            quality_badge: if can_ot {
+                kpi_quality_badge(open_wos_prev, open_wos_val)
+            } else {
+                None
+            },
         },
         total_assets: KpiValue {
             key: kpi_definitions::dashboard::TOTAL_ASSETS.into(),
             value: asset_count,
             previous_value: prev_asset_count,
-            available: true,
-            quality_badge: kpi_quality_badge(prev_asset_count, asset_count),
+            available: can_eq,
+            quality_badge: if can_eq {
+                kpi_quality_badge(prev_asset_count, asset_count)
+            } else {
+                None
+            },
         },
         overdue_items: KpiValue {
             key: kpi_definitions::dashboard::OVERDUE_ITEMS.into(),
             value: overdue_val,
             previous_value: overdue_prev,
-            available: true,
-            quality_badge: kpi_quality_badge(overdue_prev, overdue_val),
+            available: overdue_items_available,
+            quality_badge: if overdue_items_available {
+                kpi_quality_badge(overdue_prev, overdue_val)
+            } else {
+                None
+            },
         },
     })
 }
@@ -289,8 +354,14 @@ pub async fn get_dashboard_workload_chart(
     period_days: i64,
     state: State<'_, AppState>,
 ) -> AppResult<DashboardWorkloadChart> {
+    let user = require_session!(state);
     let db = &state.db;
     let period = if period_days == 30 { 30 } else { 7 };
+
+    let can_di = check_permission(db, user.user_id, "di.view", &PermissionScope::Global).await?;
+    let can_ot = check_permission(db, user.user_id, "ot.view", &PermissionScope::Global).await?;
+    let can_pm = check_permission(db, user.user_id, "pm.view", &PermissionScope::Global).await?;
+    let any_series = can_di || can_ot || can_pm;
 
     let mut days = Vec::with_capacity(period as usize);
 
@@ -312,35 +383,47 @@ pub async fn get_dashboard_workload_chart(
             .unwrap_or_default();
 
         // DI created on this date
-        let di_created = count_scalar(
-            db,
-            &format!(
-                "SELECT COUNT(*) AS cnt FROM intervention_requests \
+        let di_created = if can_di {
+            count_scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) AS cnt FROM intervention_requests \
                  WHERE date(created_at) = '{date_str}'"
-            ),
-        )
-        .await;
+                ),
+            )
+            .await
+        } else {
+            0
+        };
 
-        let wo_completed = count_scalar(
-            db,
-            &format!(
-                "SELECT COUNT(*) AS cnt FROM work_orders wo \
+        let wo_completed = if can_ot {
+            count_scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) AS cnt FROM work_orders wo \
                  JOIN work_order_statuses s ON s.id = wo.status_id \
                  WHERE s.code = 'closed' AND date(wo.closed_at) = '{date_str}'"
-            ),
-        )
-        .await;
+                ),
+            )
+            .await
+        } else {
+            0
+        };
 
-        let pm_due = count_scalar(
-            db,
-            &format!(
-                "SELECT COUNT(*) AS cnt FROM pm_occurrences \
+        let pm_due = if can_pm {
+            count_scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) AS cnt FROM pm_occurrences \
                  WHERE due_at IS NOT NULL \
                  AND date(due_at) = '{date_str}' \
                  AND status NOT IN ('completed','cancelled','missed')"
-            ),
-        )
-        .await;
+                ),
+            )
+            .await
+        } else {
+            0
+        };
 
         days.push(WorkloadDay {
             date: date_str,
@@ -350,9 +433,10 @@ pub async fn get_dashboard_workload_chart(
         });
     }
 
-    let sparse = days
-        .iter()
-        .all(|d| d.di_created == 0 && d.wo_completed == 0 && d.pm_due == 0);
+    let sparse = any_series
+        && days
+            .iter()
+            .all(|d| d.di_created == 0 && d.wo_completed == 0 && d.pm_due == 0);
     let quality_badge = if sparse {
         Some(kpi_definitions::quality_badge::SPARSE_WORKLOAD.to_string())
     } else {
@@ -498,7 +582,13 @@ pub async fn get_dashboard_reliability_snapshot_summary(
 /// Same KPI counts as [`get_dashboard_kpis`], plus the exact count SQL and a few row ids per slice for cross-checking in SQLite.
 #[tauri::command]
 pub async fn get_dashboard_kpi_validation(state: State<'_, AppState>) -> AppResult<DashboardKpiValidation> {
+    let user = require_session!(state);
     let db = &state.db;
+
+    let can_di = check_permission(db, user.user_id, "di.view", &PermissionScope::Global).await?;
+    let can_ot = check_permission(db, user.user_id, "ot.view", &PermissionScope::Global).await?;
+    let can_eq = check_permission(db, user.user_id, "eq.view", &PermissionScope::Global).await?;
+    let can_pm = check_permission(db, user.user_id, "pm.view", &PermissionScope::Global).await?;
 
     const SQL_OPEN_DIS: &str = "SELECT COUNT(*) AS cnt FROM intervention_requests \
          WHERE status NOT IN ('rejected','converted_to_work_order',\
@@ -535,11 +625,31 @@ pub async fn get_dashboard_kpi_validation(state: State<'_, AppState>) -> AppResu
          AND due_at IS NOT NULL \
          AND due_at < datetime('now') ORDER BY id LIMIT 5";
 
-    let open_dis = count_scalar(db, SQL_OPEN_DIS).await;
-    let open_wos = count_scalar(db, SQL_OPEN_WOS).await;
-    let total_assets = count_scalar(db, SQL_ASSETS).await;
-    let overdue_di = count_scalar(db, SQL_OVERDUE_DI).await;
-    let overdue_pm = count_scalar(db, SQL_OVERDUE_PM).await;
+    let open_dis = if can_di {
+        count_scalar(db, SQL_OPEN_DIS).await
+    } else {
+        0
+    };
+    let open_wos = if can_ot {
+        count_scalar(db, SQL_OPEN_WOS).await
+    } else {
+        0
+    };
+    let total_assets = if can_eq {
+        count_scalar(db, SQL_ASSETS).await
+    } else {
+        0
+    };
+    let overdue_di = if can_di {
+        count_scalar(db, SQL_OVERDUE_DI).await
+    } else {
+        0
+    };
+    let overdue_pm = if can_pm {
+        count_scalar(db, SQL_OVERDUE_PM).await
+    } else {
+        0
+    };
     let overdue_items_total = overdue_di + overdue_pm;
 
     let mut samples = vec![
@@ -547,31 +657,51 @@ pub async fn get_dashboard_kpi_validation(state: State<'_, AppState>) -> AppResu
             key: kpi_definitions::dashboard::OPEN_DIS.into(),
             value: open_dis,
             sql: SQL_OPEN_DIS.into(),
-            sample_ids: sample_ids(db, SAMPLE_OPEN_DIS).await,
+            sample_ids: if can_di {
+                sample_ids(db, SAMPLE_OPEN_DIS).await
+            } else {
+                vec![]
+            },
         },
         KpiSqlSample {
             key: kpi_definitions::dashboard::OPEN_WOS.into(),
             value: open_wos,
             sql: SQL_OPEN_WOS.into(),
-            sample_ids: sample_ids(db, SAMPLE_OPEN_WOS).await,
+            sample_ids: if can_ot {
+                sample_ids(db, SAMPLE_OPEN_WOS).await
+            } else {
+                vec![]
+            },
         },
         KpiSqlSample {
             key: kpi_definitions::dashboard::TOTAL_ASSETS.into(),
             value: total_assets,
             sql: SQL_ASSETS.into(),
-            sample_ids: sample_ids(db, SAMPLE_ASSETS).await,
+            sample_ids: if can_eq {
+                sample_ids(db, SAMPLE_ASSETS).await
+            } else {
+                vec![]
+            },
         },
         KpiSqlSample {
             key: format!("{}.di_stale_window", kpi_definitions::dashboard::OVERDUE_ITEMS),
             value: overdue_di,
             sql: SQL_OVERDUE_DI.into(),
-            sample_ids: sample_ids(db, SAMPLE_OVERDUE_DI).await,
+            sample_ids: if can_di {
+                sample_ids(db, SAMPLE_OVERDUE_DI).await
+            } else {
+                vec![]
+            },
         },
         KpiSqlSample {
             key: format!("{}.pm_past_due", kpi_definitions::dashboard::OVERDUE_ITEMS),
             value: overdue_pm,
             sql: SQL_OVERDUE_PM.into(),
-            sample_ids: sample_ids(db, SAMPLE_OVERDUE_PM).await,
+            sample_ids: if can_pm {
+                sample_ids(db, SAMPLE_OVERDUE_PM).await
+            } else {
+                vec![]
+            },
         },
     ];
 

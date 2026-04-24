@@ -7,11 +7,13 @@
  */
 
 import type { TFunction } from "i18next";
-import { Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PermissionGate } from "@/components/PermissionGate";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useOrgDesignerStore } from "@/stores/org-designer-store";
@@ -29,7 +31,24 @@ function capabilityBadges(node: OrgDesignerNodeRow, t: TFunction<"org">) {
   return caps;
 }
 
-export function OrganizationTreePanel() {
+interface OrganizationTreePanelProps {
+  /** When true, the tree is for browsing only (no structural editing in the inspector). */
+  readOnly?: boolean;
+  /** When true, user is in draft design mode and an active model exists (live node creation is allowed by the backend). */
+  canAddLiveNodes?: boolean;
+  onAddRoot?: () => void;
+  onAddChild?: () => void;
+  /** In draft design mode, explain why add-node is unavailable when there is no active (published) model. */
+  showNoActiveModelHint?: boolean;
+}
+
+export function OrganizationTreePanel({
+  readOnly = false,
+  canAddLiveNodes = false,
+  onAddRoot,
+  onAddChild,
+  showNoActiveModelHint = false,
+}: OrganizationTreePanelProps) {
   const { t } = useTranslation("org");
   const snapshot = useOrgDesignerStore((s) => s.snapshot);
   const filterText = useOrgDesignerStore((s) => s.filterText);
@@ -76,20 +95,69 @@ export function OrganizationTreePanel() {
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="flex h-full flex-col"
+      data-readonly={readOnly ? "true" : undefined}
+      aria-readonly={readOnly || undefined}
+    >
       {/* Search bar */}
-      <div className="relative p-3 border-b border-surface-border">
-        <Search className="absolute left-5 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
-        <Input
-          value={filterText}
-          onChange={(e) => setFilterText(e.target.value)}
-          placeholder={t("designer.searchPlaceholder")}
-          className="pl-8"
-        />
+      <div className="border-b border-surface-border p-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
+          <Input
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            placeholder={t("designer.searchPlaceholder")}
+            className="pl-8"
+          />
+        </div>
+        {canAddLiveNodes && !readOnly && (onAddRoot || onAddChild) && (
+          <PermissionGate permission="org.manage">
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {onAddRoot && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 gap-1 text-xs"
+                  onClick={onAddRoot}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t("designer.addRootNode")}
+                </Button>
+              )}
+              {onAddChild && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 gap-1 text-xs"
+                  onClick={onAddChild}
+                  disabled={selectedNodeId == null}
+                  title={
+                    selectedNodeId == null ? t("designer.addChildNodeNeedSelection") : undefined
+                  }
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t("designer.addChildNode")}
+                </Button>
+              )}
+            </div>
+          </PermissionGate>
+        )}
+        {showNoActiveModelHint && !readOnly && (
+          <p className="text-xs text-text-muted mt-2 border-t border-surface-border/60 pt-2">
+            {t("designer.noActiveModelForNodes")}
+          </p>
+        )}
       </div>
 
       {/* Tree rows */}
-      <div className="flex-1 overflow-y-auto" role="treegrid" aria-label={t("designer.treeLabel")}>
+      <div
+        className="min-h-0 flex-1 overflow-y-auto"
+        role="treegrid"
+        aria-label={t("designer.treeLabel")}
+      >
         {filteredNodes.length === 0 ? (
           <div className="flex items-center justify-center p-8 text-text-muted text-sm">
             {filterText.trim() ? t("designer.noResults") : t("designer.emptyTree")}

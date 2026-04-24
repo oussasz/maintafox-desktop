@@ -7,6 +7,7 @@ import {
   unlockSession as authUnlock,
   forceChangePassword as authForceChange,
 } from "@/services/auth-service";
+import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 import type { SessionInfo, LoginRequest } from "@shared/ipc-types";
 
 /** Extract message and code from a Tauri IPC error object or standard Error. */
@@ -68,6 +69,12 @@ export function useSession(): SessionState & SessionActions {
     setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const info = await getSessionInfo();
+      if (info.is_authenticated) {
+        useAuthInterceptorStore.getState().rememberPreInterrupt(info);
+        if (useAuthInterceptorStore.getState().isLockOpen) {
+          useAuthInterceptorStore.getState().clear();
+        }
+      }
       setState({ info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
       const { message, code } = extractTauriError(e, "Erreur de session.");
@@ -88,6 +95,12 @@ export function useSession(): SessionState & SessionActions {
     setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const response = await authLogin(req);
+      if (response.session_info.is_authenticated) {
+        useAuthInterceptorStore.getState().rememberPreInterrupt(response.session_info);
+        if (useAuthInterceptorStore.getState().isLockOpen) {
+          useAuthInterceptorStore.getState().clear();
+        }
+      }
       setState({ info: response.session_info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
       const { message, code } = extractTauriError(e, "Identifiant ou mot de passe invalide.");
@@ -121,6 +134,12 @@ export function useSession(): SessionState & SessionActions {
     setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const info = await authUnlock(password);
+      if (info.is_authenticated) {
+        useAuthInterceptorStore.getState().rememberPreInterrupt(info);
+        if (useAuthInterceptorStore.getState().isLockOpen) {
+          useAuthInterceptorStore.getState().clear();
+        }
+      }
       setState({ info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
       const { message } = extractTauriError(e, "\u00c9chec du d\u00e9verrouillage.");
@@ -138,6 +157,12 @@ export function useSession(): SessionState & SessionActions {
     setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const info = await authForceChange(newPassword);
+      if (info.is_authenticated) {
+        useAuthInterceptorStore.getState().rememberPreInterrupt(info);
+        if (useAuthInterceptorStore.getState().isLockOpen) {
+          useAuthInterceptorStore.getState().clear();
+        }
+      }
       setState({ info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
       const { message } = extractTauriError(e, "\u00c9chec du changement de mot de passe.");

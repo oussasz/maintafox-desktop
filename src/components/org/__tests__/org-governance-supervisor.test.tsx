@@ -8,7 +8,8 @@
  * V3 - Audit timeline renders rows from listOrgChangeEvents
  */
 
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // ── Service mocks ─────────────────────────────────────────────────────────────
@@ -58,6 +59,10 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+vi.mock("@/components/PermissionGate", () => ({
+  PermissionGate: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
 // ── Import after mocks ───────────────────────────────────────────────────────
 
 import { AuditTimeline } from "@/components/org/AuditTimeline";
@@ -75,7 +80,8 @@ import type {
 const activeSnapshot: OrgDesignerSnapshot = {
   active_model_id: 1,
   active_model_version: 3,
-  draft_model_id: null,
+  draft_model_id: 2,
+  draft_model_version: 1,
   nodes: [
     {
       node_id: 1,
@@ -179,6 +185,7 @@ const sampleAuditEvents: OrgChangeEvent[] = [
 function resetStores() {
   useOrgDesignerStore.setState({
     snapshot: null,
+    workspaceMode: "published",
     filterText: "",
     statusFilter: null,
     typeFilter: null,
@@ -217,6 +224,13 @@ describe("Supervisor Verification — Sprint S3 Governance UI", () => {
       render(<OrganizationDesignerPage />);
 
       await waitFor(() => {
+        expect(screen.getByText("designer.title")).toBeInTheDocument();
+      });
+      await act(async () => {
+        useOrgDesignerStore.setState({ workspaceMode: "draft" });
+      });
+
+      await waitFor(() => {
         expect(screen.getByTestId("publish-blockers-banner")).toBeInTheDocument();
       });
 
@@ -242,6 +256,13 @@ describe("Supervisor Verification — Sprint S3 Governance UI", () => {
       render(<OrganizationDesignerPage />);
 
       await waitFor(() => {
+        expect(screen.getByText("designer.title")).toBeInTheDocument();
+      });
+      await act(async () => {
+        useOrgDesignerStore.setState({ workspaceMode: "draft" });
+      });
+
+      await waitFor(() => {
         expect(screen.getByTestId("publish-ready-banner")).toBeInTheDocument();
       });
 
@@ -261,6 +282,13 @@ describe("Supervisor Verification — Sprint S3 Governance UI", () => {
 
       render(<OrganizationDesignerPage />);
 
+      await waitFor(() => {
+        expect(screen.getByText("designer.title")).toBeInTheDocument();
+      });
+      await act(async () => {
+        useOrgDesignerStore.setState({ workspaceMode: "draft" });
+      });
+
       // Wait for ready state
       await waitFor(() => {
         expect(screen.getByTestId("publish-button")).not.toBeDisabled();
@@ -271,7 +299,7 @@ describe("Supervisor Verification — Sprint S3 Governance UI", () => {
 
       // publishOrgModel must have been called
       await waitFor(() => {
-        expect(mockPublishOrgModel).toHaveBeenCalledWith(1);
+        expect(mockPublishOrgModel).toHaveBeenCalledWith(2);
       });
 
       // Snapshot should be reloaded (getOrgDesignerSnapshot called again)

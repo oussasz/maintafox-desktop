@@ -64,6 +64,58 @@ pub struct ChangePasswordPayload {
     pub new_password: String,
 }
 
+fn normalize_email(raw: &str) -> AppResult<Option<String>> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+    let at_idx = normalized.find('@');
+    let is_valid = at_idx.is_some()
+        && !normalized.contains(' ')
+        && !normalized.starts_with('@')
+        && !normalized.ends_with('@')
+        && normalized.rfind('.').is_some_and(|dot| dot > at_idx.unwrap_or(0) + 1);
+    if !is_valid {
+        return Err(AppError::ValidationFailed(vec![
+            "Adresse e-mail invalide.".into(),
+        ]));
+    }
+    Ok(Some(normalized))
+}
+
+fn normalize_phone_e164(raw: &str) -> AppResult<Option<String>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let mut out = String::with_capacity(trimmed.len());
+    for (idx, ch) in trimmed.chars().enumerate() {
+        if ch == '+' {
+            if idx == 0 {
+                out.push(ch);
+            } else {
+                return Err(AppError::ValidationFailed(vec![
+                    "Numéro de téléphone invalide.".into(),
+                ]));
+            }
+        } else if ch.is_ascii_digit() {
+            out.push(ch);
+        }
+    }
+    if out.starts_with("00") {
+        out = format!("+{}", &out[2..]);
+    } else if !out.starts_with('+') {
+        out = format!("+{out}");
+    }
+    let digits = out.chars().filter(|c| c.is_ascii_digit()).count();
+    if !(8..=15).contains(&digits) {
+        return Err(AppError::ValidationFailed(vec![
+            "Numéro de téléphone invalide (format E.164 attendu).".into(),
+        ]));
+    }
+    Ok(Some(out))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) get_my_profile
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -76,7 +128,7 @@ pub async fn get_my_profile(state: State<'_, AppState>) -> AppResult<UserProfile
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            r"SELECT u.id, u.username, u.personnel_id, u.display_name,
+            r"SELECT u.id, u.username, u.personnel_id, u.display_name, u.email, u.phone,
                      u.identity_mode, u.created_at,
                      u.password_changed_at,
                      CASE WHEN u.pin_hash IS NOT NULL THEN 1 ELSE 0 END AS pin_configured,
@@ -104,9 +156,12 @@ pub async fn get_my_profile(state: State<'_, AppState>) -> AppResult<UserProfile
         display_name: row
             .try_get::<Option<String>>("", "display_name")
             .unwrap_or(None),
-        // email, phone, language not yet in user_accounts schema — return null
-        email: None,
-        phone: None,
+        email: row
+            .try_get::<Option<String>>("", "email")
+            .unwrap_or(None),
+        phone: row
+            .try_get::<Option<String>>("", "phone")
+            .unwrap_or(None),
         language: None,
         identity_mode: row
             .try_get::<String>("", "identity_mode")
@@ -151,8 +206,33 @@ pub async fn update_my_profile(
         binds.push(trimmed.to_string().into());
     }
 
-    // Note: email, phone, and language columns do not yet exist in
-    // user_accounts. When migration adds them, uncomment below.
+    if let Some(ref email) = payload.email {
+        let normalized = normalize_email(email)?;
+        if let Some(ref candidate) = normalized {
+            let dup = state
+                .db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT id FROM user_accounts \
+                     WHERE LOWER(email) = LOWER(?) AND id != ? AND deleted_at IS NULL",
+                    [candidate.clone().into(), user.user_id.into()],
+                ))
+                .await?;
+            if dup.is_some() {
+                return Err(AppError::ValidationFailed(vec![
+                    "Adresse e-mail déjà utilisée par un autre compte.".into(),
+                ]));
+            }
+        }
+        set_parts.push("email = ?".into());
+        binds.push(normalized.map_or(sea_orm::Value::String(None), |s| s.into()));
+    }
+
+    if let Some(ref phone) = payload.phone {
+        let normalized = normalize_phone_e164(phone)?;
+        set_parts.push("phone = ?".into());
+        binds.push(normalized.map_or(sea_orm::Value::String(None), |s| s.into()));
+    }
 
     if set_parts.is_empty() {
         // Nothing to update — just return current profile

@@ -41,7 +41,7 @@ const KPI_REFRESH_MS = 5 * 60 * 1000;
 
 export function DashboardPage() {
   const { t } = useTranslation("dashboard");
-  const { can } = usePermissions();
+  const { can, canAny } = usePermissions();
   const displayName = useAppStore((s) => s.currentUserDisplayName);
   const navigate = useNavigate();
 
@@ -104,10 +104,13 @@ export function DashboardPage() {
 
   const canShowWidget = useCallback(
     (id: string) => {
+      if (id === DASHBOARD_WIDGET_IDS.KPIS || id === DASHBOARD_WIDGET_IDS.WORKLOAD) {
+        return canAny("di.view", "ot.view", "eq.view", "pm.view");
+      }
       const p = DASHBOARD_WIDGET_PERMISSION[id];
       return !p || can(p);
     },
-    [can],
+    [can, canAny],
   );
 
   const visibleWidgets = useMemo(() => {

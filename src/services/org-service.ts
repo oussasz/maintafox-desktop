@@ -30,8 +30,15 @@ export function getActiveOrgStructureModel(): Promise<OrgStructureModel | null> 
   return invoke<OrgStructureModel | null>("get_active_org_structure_model");
 }
 
-export function createOrgStructureModel(description?: string): Promise<OrgStructureModel> {
+export function createOrgStructureModel(description?: string | null): Promise<OrgStructureModel> {
   return invoke<OrgStructureModel>("create_org_structure_model", {
+    payload: { description: description ?? null } satisfies CreateStructureModelPayload,
+  });
+}
+
+/** New draft: copy published node types and rules from the active model (org.admin). */
+export function forkOrgDraftFromPublished(description?: string | null): Promise<OrgStructureModel> {
+  return invoke<OrgStructureModel>("fork_org_draft_from_published", {
     payload: { description: description ?? null } satisfies CreateStructureModelPayload,
   });
 }

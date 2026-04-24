@@ -146,8 +146,12 @@ export async function createOrgNode(payload: CreateOrgNodePayload): Promise<OrgN
 export async function updateOrgNodeMetadata(
   payload: UpdateOrgNodeMetadataPayload,
 ): Promise<OrgNode> {
-  const raw = await invoke<unknown>("update_org_node_metadata", { payload });
-  return OrgNodeSchema.parse(raw) as OrgNode;
+  try {
+    const raw = await invoke<unknown>("update_org_node_metadata", { payload });
+    return OrgNodeSchema.parse(raw) as OrgNode;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
 }
 
 export async function moveOrgNode(payload: MoveOrgNodePayload): Promise<OrgNode> {

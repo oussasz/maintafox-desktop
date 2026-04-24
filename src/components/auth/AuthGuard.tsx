@@ -6,6 +6,7 @@ import { useSession } from "@/hooks/use-session";
 import { ForcePasswordChangePage } from "@/pages/auth/ForcePasswordChangePage";
 import { LockScreen } from "@/pages/auth/LockScreen";
 import { logout as authLogout, unlockSessionWithPin } from "@/services/auth-service";
+import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 
 /**
  * AuthGuard: session-state router.
@@ -23,6 +24,7 @@ import { logout as authLogout, unlockSessionWithPin } from "@/services/auth-serv
 export function AuthGuard() {
   const session = useSession();
   const isBootstrapping = session.isLoading && session.info === null;
+  const isAuthLockOpen = useAuthInterceptorStore((s) => s.isLockOpen);
 
   const handleUnlock = useCallback(
     async (password: string) => {
@@ -83,6 +85,11 @@ export function AuthGuard() {
 
   // 3. Not authenticated — redirect to login
   if (!info?.is_authenticated) {
+    // If the centralized auth interceptor is open, keep the current route mounted so in-memory
+    // form state isn't destroyed by an automatic redirect to /login.
+    if (isAuthLockOpen) {
+      return <Outlet />;
+    }
     return <Navigate to="/login" replace />;
   }
 

@@ -16,8 +16,20 @@ import type {
   PreviewOrgChangePayload,
 } from "@shared/ipc-types";
 
+export type OrgDesignerWorkspaceMode = "published" | "draft";
+
+/** Editable “design the draft” session: a draft must exist and the user must have switched to Draft. */
+export function isOrgStructureDesignMode(
+  snapshot: OrgDesignerSnapshot | null,
+  mode: OrgDesignerWorkspaceMode,
+): boolean {
+  return snapshot?.draft_model_id != null && mode === "draft";
+}
+
 interface OrgDesignerStoreState {
   snapshot: OrgDesignerSnapshot | null;
+  /** published = viewing live org; draft = working on a draft (when a draft model exists). */
+  workspaceMode: OrgDesignerWorkspaceMode;
   filterText: string;
   statusFilter: string | null;
   typeFilter: string | null;
@@ -29,6 +41,7 @@ interface OrgDesignerStoreState {
   error: string | null;
 
   loadSnapshot: () => Promise<void>;
+  setWorkspaceMode: (value: OrgDesignerWorkspaceMode) => void;
   setFilterText: (value: string) => void;
   setStatusFilter: (value: string | null) => void;
   setTypeFilter: (value: string | null) => void;
@@ -39,6 +52,7 @@ interface OrgDesignerStoreState {
 
 export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set) => ({
   snapshot: null,
+  workspaceMode: "published",
   filterText: "",
   statusFilter: null,
   typeFilter: null,
@@ -53,13 +67,32 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set) => ({
     set({ loading: true, error: null });
     try {
       const snapshot = await getOrgDesignerSnapshot();
-      set({ snapshot });
+      set((st) => {
+        const prev = st.snapshot;
+        let workspaceMode = st.workspaceMode;
+        if (snapshot.draft_model_id == null) {
+          workspaceMode = "published";
+        } else if (snapshot.active_model_id == null) {
+          workspaceMode = "draft";
+        } else {
+          if (prev == null) {
+            workspaceMode = "published";
+          } else if (prev.draft_model_id == null && snapshot.draft_model_id != null) {
+            workspaceMode = "draft";
+          } else {
+            workspaceMode = st.workspaceMode;
+          }
+        }
+        return { snapshot, workspaceMode, error: null };
+      });
     } catch (err) {
       set({ error: toErrorMessage(err) });
     } finally {
       set({ loading: false });
     }
   },
+
+  setWorkspaceMode: (value) => set({ workspaceMode: value }),
 
   setFilterText: (value) => set({ filterText: value }),
 

@@ -35,7 +35,17 @@ const COMMON_TOP_KEYS = [
   "table",
   "time",
 ];
-const AUTH_TOP_KEYS = ["login", "logout", "session", "stepUp", "device"];
+const AUTH_TOP_KEYS = [
+  "device",
+  "interceptor",
+  "lockout",
+  "login",
+  "logout",
+  "passwordExpiry",
+  "session",
+  "stepUp",
+  "unauthorized",
+];
 
 describe("json-valid: common namespace", () => {
   it("fr/common.json has the expected top-level keys", () => {

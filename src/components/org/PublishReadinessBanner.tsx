@@ -18,9 +18,14 @@ import { useOrgGovernanceStore } from "@/stores/org-governance-store";
 
 interface PublishReadinessBannerProps {
   draftModelId: number | null;
+  /** When false, the banner is hidden and validation is not loaded (e.g. read-only “published” mode). */
+  visible?: boolean;
 }
 
-export function PublishReadinessBanner({ draftModelId }: PublishReadinessBannerProps) {
+export function PublishReadinessBanner({
+  draftModelId,
+  visible = true,
+}: PublishReadinessBannerProps) {
   const { t } = useTranslation("org");
   const validation = useOrgGovernanceStore((s) => s.publishValidation);
   const validationLoading = useOrgGovernanceStore((s) => s.validationLoading);
@@ -31,12 +36,12 @@ export function PublishReadinessBanner({ draftModelId }: PublishReadinessBannerP
   const loadSnapshot = useOrgDesignerStore((s) => s.loadSnapshot);
 
   useEffect(() => {
-    if (draftModelId != null) {
+    if (draftModelId != null && visible) {
       void loadPublishValidation(draftModelId);
     }
-  }, [draftModelId, loadPublishValidation]);
+  }, [draftModelId, loadPublishValidation, visible]);
 
-  if (draftModelId == null) return null;
+  if (!visible || draftModelId == null) return null;
 
   const canPublish = validation?.can_publish === true;
   const blockingCount = validation?.blocking_count ?? 0;

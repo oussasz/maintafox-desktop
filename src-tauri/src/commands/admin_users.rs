@@ -1,14 +1,14 @@
 //! User and Role administration IPC commands — Phase 2 SP06-F01.
 //!
 //! Permission gates:
-//!   adm.users  — list_users, get_user, create_user, update_user, deactivate_user,
+//!   adm.users  — list_users, get_user, list_assignable_roles, create_user, update_user, deactivate_user,
 //!                assign_role_scope, revoke_role_scope, simulate_access
 //!   adm.roles  — list_roles, get_role, create_role, update_role, delete_role,
 //!                list_role_templates
 
 use std::collections::{HashMap, HashSet};
 
-use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
@@ -44,6 +44,9 @@ pub struct UserWithRoles {
     pub id: i64,
     pub username: String,
     pub display_name: Option<String>,
+    pub personnel_id: Option<i64>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
     pub identity_mode: String,
     pub is_active: bool,
     pub force_password_change: bool,
@@ -70,6 +73,8 @@ pub struct UserListFilter {
 pub struct CreateUserInput {
     pub username: String,
     pub identity_mode: String,
+    /// Tenant-scoped role assigned at creation (required — no implicit default).
+    pub role_id: i64,
     pub personnel_id: Option<i64>,
     pub initial_password: Option<String>,
     pub force_password_change: Option<bool>,
@@ -79,6 +84,9 @@ pub struct CreateUserInput {
 pub struct UpdateUserInput {
     pub user_id: i64,
     pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
     pub personnel_id: Option<i64>,
     pub force_password_change: Option<bool>,
     pub is_active: Option<bool>,
@@ -105,6 +113,17 @@ pub struct RoleWithPermissions {
     pub status: String,
     pub is_system: bool,
     pub permissions: Vec<String>,
+}
+
+/// Lightweight role row for **adm.users** flows (e.g. create user) — no permission matrix.
+#[derive(Debug, Serialize)]
+pub struct AssignableRoleSummary {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub role_type: String,
+    pub status: String,
+    pub is_system: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -167,6 +186,78 @@ pub struct SimulateAccessResult {
 #[derive(Debug, Serialize)]
 pub struct IdPayload {
     pub id: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MissingTenantScopeUser {
+    pub user_id: i64,
+    pub username: String,
+    pub identity_mode: String,
+    pub has_any_role_assignment: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TenantScopeBackfillResult {
+    pub tenant_id: Option<String>,
+    pub updated_count: i64,
+    pub updated_user_ids: Vec<i64>,
+}
+
+fn normalize_email(raw: &str) -> AppResult<Option<String>> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+    let at_idx = normalized.find('@');
+    let is_valid = at_idx.is_some()
+        && !normalized.contains(' ')
+        && !normalized.starts_with('@')
+        && !normalized.ends_with('@')
+        && normalized.rfind('.').is_some_and(|dot| dot > at_idx.unwrap_or(0) + 1);
+    if !is_valid {
+        return Err(AppError::ValidationFailed(vec![
+            "Email format is invalid.".into(),
+        ]));
+    }
+    Ok(Some(normalized))
+}
+
+fn normalize_phone_e164(raw: &str) -> AppResult<Option<String>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    // Keep only digits and an optional leading '+'.
+    let mut out = String::with_capacity(trimmed.len());
+    for (idx, ch) in trimmed.chars().enumerate() {
+        if ch == '+' {
+            if idx == 0 {
+                out.push(ch);
+            } else {
+                return Err(AppError::ValidationFailed(vec![
+                    "Phone number format is invalid.".into(),
+                ]));
+            }
+        } else if ch.is_ascii_digit() {
+            out.push(ch);
+        }
+    }
+
+    if out.starts_with("00") {
+        out = format!("+{}", &out[2..]);
+    } else if !out.starts_with('+') {
+        out = format!("+{out}");
+    }
+
+    let digits = out.chars().filter(|c| c.is_ascii_digit()).count();
+    if !(8..=15).contains(&digits) {
+        return Err(AppError::ValidationFailed(vec![
+            "Phone number must be a valid E.164 number (8-15 digits).".into(),
+        ]));
+    }
+
+    Ok(Some(out))
 }
 
 // ── Presence DTO ─────────────────────────────────────────────────────────────
@@ -246,7 +337,7 @@ pub async fn list_users(
 
     let where_clause = conditions.join(" AND ");
     let sql = format!(
-        "SELECT ua.id, ua.username, ua.display_name, ua.identity_mode, \
+        "SELECT ua.id, ua.username, ua.display_name, ua.personnel_id, ua.email, ua.phone, ua.identity_mode, \
                 ua.is_active, ua.force_password_change, ua.last_seen_at, ua.locked_until \
          FROM user_accounts ua \
          WHERE {where_clause} \
@@ -266,6 +357,9 @@ pub async fn list_users(
             id: uid,
             username: r.try_get("", "username")?,
             display_name: r.try_get("", "display_name").ok(),
+            personnel_id: r.try_get::<Option<i64>>("", "personnel_id").ok().flatten(),
+            email: r.try_get::<Option<String>>("", "email").ok().flatten(),
+            phone: r.try_get::<Option<String>>("", "phone").ok().flatten(),
             identity_mode: r.try_get("", "identity_mode")?,
             is_active: r.try_get::<i32>("", "is_active")? == 1,
             force_password_change: r.try_get::<i32>("", "force_password_change")? == 1,
@@ -291,7 +385,7 @@ pub async fn get_user(
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, username, display_name, identity_mode, is_active, \
+            "SELECT id, username, display_name, personnel_id, email, phone, identity_mode, is_active, \
                     force_password_change, last_seen_at, locked_until \
              FROM user_accounts WHERE id = ? AND deleted_at IS NULL",
             [user_id.into()],
@@ -313,6 +407,9 @@ pub async fn get_user(
             id: user_id,
             username: row.try_get("", "username")?,
             display_name: row.try_get("", "display_name").ok(),
+            personnel_id: row.try_get::<Option<i64>>("", "personnel_id").ok().flatten(),
+            email: row.try_get::<Option<String>>("", "email").ok().flatten(),
+            phone: row.try_get::<Option<String>>("", "phone").ok().flatten(),
             identity_mode: row.try_get("", "identity_mode")?,
             is_active: row.try_get::<i32>("", "is_active")? == 1,
             force_password_change: row.try_get::<i32>("", "force_password_change")? == 1,
@@ -325,10 +422,73 @@ pub async fn get_user(
     })
 }
 
+/// List roles that may be selected when creating a user (**adm.users**).
+///
+/// Callers without **adm.roles** can still populate the create-user role dropdown.
+/// Excludes deleted and retired roles. Does not load per-role permission names.
+#[tauri::command]
+pub async fn list_assignable_roles(state: State<'_, AppState>) -> AppResult<Vec<AssignableRoleSummary>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "adm.users", PermissionScope::Global);
+
+    let rows = state
+        .db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, name, description, role_type, status, is_system \
+             FROM roles WHERE deleted_at IS NULL AND status != 'retired' \
+             ORDER BY is_system DESC, name ASC",
+            [],
+        ))
+        .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(AssignableRoleSummary {
+            id: r.try_get("", "id")?,
+            name: r.try_get("", "name")?,
+            description: r.try_get("", "description").ok(),
+            role_type: r.try_get("", "role_type")?,
+            status: r.try_get("", "status")?,
+            is_system: r.try_get::<i32>("", "is_system")? == 1,
+        });
+    }
+    Ok(out)
+}
+
+/// Verify `role_id` refers to a non-deleted, non-retired role (for inserts under a transaction).
+async fn ensure_assignable_role_id<C>(conn: &C, role_id: i64) -> AppResult<()>
+where
+    C: ConnectionTrait,
+{
+    if role_id <= 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "role_id must be a positive integer.".into(),
+        ]));
+    }
+    let ok = conn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT 1 AS ok FROM roles \
+             WHERE id = ? AND deleted_at IS NULL AND status != 'retired' \
+             LIMIT 1",
+            [role_id.into()],
+        ))
+        .await?
+        .is_some();
+    if !ok {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "The selected role (id {role_id}) is not available. It may have been deleted or retired."
+        )]));
+    }
+    Ok(())
+}
+
 /// Create a new user account.
 #[tauri::command]
 pub async fn create_user(
     input: CreateUserInput,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<IdPayload> {
     let caller = require_session!(state);
@@ -423,13 +583,20 @@ pub async fn create_user(
 
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let sync_id = Uuid::new_v4().to_string();
+    let assignment_sync_id = Uuid::new_v4().to_string();
     // Capture before move into SQL params
     let username_for_audit = input.username.clone();
     let identity_mode_for_audit = input.identity_mode.clone();
+    let role_id = input.role_id;
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
+    let activated_tenant_id =
+        crate::commands::product_license::get_activation_claim_tenant_id(&state.db).await?;
+
+    let tx = state.db.begin().await?;
+
+    ensure_assignable_role_id(&tx, role_id).await?;
+
+    tx.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO user_accounts \
                 (sync_id, username, identity_mode, password_hash, personnel_id, \
@@ -444,14 +611,13 @@ pub async fn create_user(
                 input.personnel_id.map_or(sea_orm::Value::Int(None), |pid| (pid as i32).into()),
                 i32::from(force_pw).into(),
                 now.clone().into(),
-                now.into(),
+                now.clone().into(),
             ],
         ))
         .await?;
 
     // Get the inserted ID
-    let id_row = state
-        .db
+    let id_row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() as id",
@@ -462,11 +628,40 @@ pub async fn create_user(
 
     let new_id: i64 = id_row.try_get("", "id")?;
 
+    // Tenant-scoped assignment: explicit role chosen by the administrator (no implicit default).
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO user_scope_assignments \
+            (sync_id, user_id, role_id, scope_type, scope_reference, \
+             valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version) \
+         VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, ?, ?, ?, ?, 1)",
+        vec![
+            assignment_sync_id.into(),
+            new_id.into(),
+            role_id.into(),
+            activated_tenant_id
+                .clone()
+                .map_or(sea_orm::Value::String(None), |tid| tid.into()),
+            i64::from(caller.user_id).into(),
+            "Initial tenant-scoped role assignment (selected at user creation).".into(),
+            now.clone().into(),
+            now.clone().into(),
+        ],
+    ))
+    .await?;
+
+    tx.commit().await?;
+
+    notify_rbac_user_change(&app, &state, new_id, "user_created");
+
     {
         let new_id_str = new_id.to_string();
         let detail = format!(
-            r#"{{"username":"{}","identity_mode":"{}"}}"#,
-            username_for_audit, identity_mode_for_audit
+            r#"{{"username":"{}","identity_mode":"{}","tenant_id":"{}","role_id":{}}}"#,
+            username_for_audit,
+            identity_mode_for_audit,
+            activated_tenant_id.unwrap_or_default(),
+            role_id
         );
         crate::audit::emit(
             &state.db,
@@ -484,6 +679,80 @@ pub async fn create_user(
     }
 
     Ok(IdPayload { id: new_id })
+}
+
+/// List active users that cannot log in under the activated tenant due to missing tenant scope.
+#[tauri::command]
+pub async fn list_users_missing_tenant_scope(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<MissingTenantScopeUser>> {
+    let caller = require_session!(state);
+    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    list_missing_tenant_scope_users(&state.db).await
+}
+
+/// Backfill tenant scope for users missing it, using the currently activated tenant claim.
+#[tauri::command]
+pub async fn backfill_users_missing_tenant_scope(
+    state: State<'_, AppState>,
+) -> AppResult<TenantScopeBackfillResult> {
+    let caller = require_session!(state);
+    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_step_up!(state);
+
+    let activated_tenant_id =
+        crate::commands::product_license::get_activation_claim_tenant_id(&state.db).await?;
+    let missing = list_missing_tenant_scope_users(&state.db).await?;
+    if missing.is_empty() {
+        return Ok(TenantScopeBackfillResult {
+            tenant_id: activated_tenant_id,
+            updated_count: 0,
+            updated_user_ids: Vec::new(),
+        });
+    }
+
+    let role_id = resolve_default_tenant_membership_role_id(&state.db).await?;
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let tx = state.db.begin().await?;
+    let mut updated_count = 0_i64;
+    let mut updated_user_ids: Vec<i64> = Vec::with_capacity(missing.len());
+
+    for user in &missing {
+        let assignment_sync_id = Uuid::new_v4().to_string();
+        let exec = tx
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT OR IGNORE INTO user_scope_assignments \
+                    (sync_id, user_id, role_id, scope_type, scope_reference, \
+                     valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version) \
+                 VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, ?, ?, ?, ?, 1)",
+                vec![
+                    assignment_sync_id.into(),
+                    user.user_id.into(),
+                    role_id.into(),
+                    activated_tenant_id
+                        .clone()
+                        .map_or(sea_orm::Value::String(None), |tid| tid.into()),
+                    i64::from(caller.user_id).into(),
+                    "Tenant scope backfill for existing user".into(),
+                    now.clone().into(),
+                    now.clone().into(),
+                ],
+            ))
+            .await?;
+        if exec.rows_affected() > 0 {
+            updated_count += 1;
+            updated_user_ids.push(user.user_id);
+        }
+    }
+
+    tx.commit().await?;
+
+    Ok(TenantScopeBackfillResult {
+        tenant_id: activated_tenant_id,
+        updated_count,
+        updated_user_ids,
+    })
 }
 
 /// Update an existing user account.
@@ -527,6 +796,42 @@ pub async fn update_user(
         }
         sets.push("username = ?");
         values.push(username.clone().into());
+    }
+    if let Some(ref display_name) = input.display_name {
+        let normalized = display_name.trim();
+        sets.push("display_name = ?");
+        if normalized.is_empty() {
+            values.push(sea_orm::Value::String(None));
+        } else {
+            values.push(normalized.to_string().into());
+        }
+    }
+    if let Some(ref email) = input.email {
+        let normalized = normalize_email(email)?;
+
+        if let Some(ref candidate) = normalized {
+            let dup = state
+                .db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT id FROM user_accounts \
+                     WHERE LOWER(email) = LOWER(?) AND id != ? AND deleted_at IS NULL",
+                    [candidate.clone().into(), input.user_id.into()],
+                ))
+                .await?;
+            if dup.is_some() {
+                return Err(AppError::ValidationFailed(vec![
+                    "Email is already used by another account.".into(),
+                ]));
+            }
+        }
+        sets.push("email = ?");
+        values.push(normalized.map_or(sea_orm::Value::String(None), |s| s.into()));
+    }
+    if let Some(ref phone) = input.phone {
+        let normalized = normalize_phone_e164(phone)?;
+        sets.push("phone = ?");
+        values.push(normalized.map_or(sea_orm::Value::String(None), |s| s.into()));
     }
     if let Some(pid) = input.personnel_id {
         sets.push("personnel_id = ?");
@@ -669,7 +974,35 @@ pub(crate) async fn assign_role_scope_impl(
     let scope_type_for_audit = input.scope_type.clone();
     let scope_reference_for_audit = input.scope_reference.clone();
 
-    // INSERT — the UNIQUE index (uidx_usa_user_role_scope) prevents duplicates
+    // Replace-at-scope: at most one assignment per (user_id, scope_type,
+    // scope_reference) before insert. Supersedes prior rows including
+    // emergency elevations so admins can assign without duplicate-key errors.
+    let scope_ref_key = input
+        .scope_reference
+        .as_deref()
+        .unwrap_or("");
+    state
+        .db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_scope_assignments \
+             SET deleted_at = ?, updated_at = ? \
+             WHERE user_id = ? \
+               AND scope_type = ? \
+               AND COALESCE(scope_reference, '') = ? \
+               AND deleted_at IS NULL",
+            vec![
+                now.clone().into(),
+                now.clone().into(),
+                input.user_id.into(),
+                input.scope_type.clone().into(),
+                scope_ref_key.into(),
+            ],
+        ))
+        .await?;
+
+    // INSERT — partial unique index `uidx_usa_user_role_scope` (deleted_at IS NULL)
+    // prevents duplicate *active* rows for the same role + scope.
     state
         .db
         .execute(Statement::from_sql_and_values(
@@ -1628,6 +1961,84 @@ async fn load_role_assignments(
         .collect();
 
     Ok(assignments)
+}
+
+async fn resolve_default_tenant_membership_role_id<C>(conn: &C) -> AppResult<i64>
+where
+    C: ConnectionTrait,
+{
+    let bootstrap_role_row = conn
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            r#"SELECT id
+               FROM roles
+               WHERE deleted_at IS NULL
+                 AND status != 'retired'
+               ORDER BY CASE name
+                 WHEN 'Readonly' THEN 0
+                 WHEN 'Operator' THEN 1
+                 WHEN 'Maintenance Technician' THEN 2
+                 WHEN 'Supervisor' THEN 3
+                 WHEN 'Administrator' THEN 4
+                 ELSE 99
+               END, id
+               LIMIT 1"#
+                .to_string(),
+        ))
+        .await?;
+    let bootstrap_role_id: i64 = bootstrap_role_row
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "Cannot create user: no active role is available for tenant membership.".into(),
+            ])
+        })?
+        .try_get("", "id")?;
+    Ok(bootstrap_role_id)
+}
+
+async fn list_missing_tenant_scope_users(
+    db: &sea_orm::DatabaseConnection,
+) -> AppResult<Vec<MissingTenantScopeUser>> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT ua.id AS user_id, ua.username, ua.identity_mode, \
+                    CASE \
+                      WHEN EXISTS ( \
+                        SELECT 1 FROM user_scope_assignments usa_any \
+                        WHERE usa_any.user_id = ua.id \
+                          AND usa_any.deleted_at IS NULL \
+                      ) THEN 1 ELSE 0 \
+                    END AS has_any_role_assignment \
+             FROM user_accounts ua \
+             WHERE ua.is_active = 1 \
+               AND ua.deleted_at IS NULL \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM user_scope_assignments usa \
+                 WHERE usa.user_id = ua.id \
+                   AND usa.scope_type = 'tenant' \
+                   AND usa.deleted_at IS NULL \
+                   AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
+                   AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?) \
+               ) \
+             ORDER BY ua.username ASC",
+            vec![now.clone().into(), now.into()],
+        ))
+        .await?;
+
+    let users = rows
+        .iter()
+        .filter_map(|r| {
+            Some(MissingTenantScopeUser {
+                user_id: r.try_get("", "user_id").ok()?,
+                username: r.try_get("", "username").ok()?,
+                identity_mode: r.try_get("", "identity_mode").ok()?,
+                has_any_role_assignment: r.try_get::<i32>("", "has_any_role_assignment").ok()? == 1,
+            })
+        })
+        .collect();
+    Ok(users)
 }
 
 /// Load all scope assignments for a user (full detail view).

@@ -9,6 +9,7 @@
  */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // ── Service mocks ─────────────────────────────────────────────────────────────
@@ -47,6 +48,10 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+vi.mock("@/components/PermissionGate", () => ({
+  PermissionGate: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
 // ── Import after mocks (hoisted by vitest) ────────────────────────────────────
 
 import { OrganizationDesignerPage } from "@/pages/admin/OrganizationDesignerPage";
@@ -59,6 +64,7 @@ const emptySnapshot: OrgDesignerSnapshot = {
   active_model_id: null,
   active_model_version: null,
   draft_model_id: null,
+  draft_model_version: null,
   nodes: [],
 };
 
@@ -66,6 +72,7 @@ const threeNodeSnapshot: OrgDesignerSnapshot = {
   active_model_id: 1,
   active_model_version: 3,
   draft_model_id: null,
+  draft_model_version: null,
   nodes: [
     {
       node_id: 1,
@@ -138,6 +145,7 @@ const threeNodeSnapshot: OrgDesignerSnapshot = {
 function resetDesignerStore() {
   useOrgDesignerStore.setState({
     snapshot: null,
+    workspaceMode: "published",
     filterText: "",
     statusFilter: null,
     typeFilter: null,
@@ -161,20 +169,15 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
   // ── V1 — Empty-state rendering ────────────────────────────────────────────
 
   describe("V1 - Empty-state rendering", () => {
-    it("renders a warning banner when no active model exists", async () => {
+    it("renders a governed empty state when no structure model exists", async () => {
       mockGetOrgDesignerSnapshot.mockResolvedValueOnce(emptySnapshot);
 
       render(<OrganizationDesignerPage />);
 
-      // Wait for the async loadSnapshot to resolve
       await waitFor(() => {
-        expect(screen.getByText("designer.noActiveModel")).toBeInTheDocument();
+        expect(screen.getByText("lifecycle.noModelYet")).toBeInTheDocument();
       });
 
-      // The hint text must also appear
-      expect(screen.getByText("designer.noActiveModelHint")).toBeInTheDocument();
-
-      // The page title must render (not crash)
       expect(screen.getByText("designer.title")).toBeInTheDocument();
     });
 
@@ -184,7 +187,7 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
       render(<OrganizationDesignerPage />);
 
       await waitFor(() => {
-        expect(screen.getByText("designer.noActiveModel")).toBeInTheDocument();
+        expect(screen.getByText("lifecycle.noModelYet")).toBeInTheDocument();
       });
 
       // Filters sidebar should not appear

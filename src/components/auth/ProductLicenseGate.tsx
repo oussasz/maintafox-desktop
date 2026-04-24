@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
+import { AuthLockLayer } from "@/components/auth/AuthLockLayer";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -545,7 +546,10 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       </div>
     </div>
   ) : (
-    <>{children}</>
+    <>
+      {children}
+      <AuthLockLayer />
+    </>
   );
 
   return (

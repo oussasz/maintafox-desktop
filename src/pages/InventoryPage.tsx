@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { mfLayout } from "@/design-system/tokens";
 import { getLookupValues } from "@/services/lookup-service";
 import { useInventoryStore } from "@/stores/inventory-store";
 import type {

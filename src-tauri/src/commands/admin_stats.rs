@@ -49,9 +49,9 @@ pub async fn get_admin_stats(state: State<'_, AppState>) -> AppResult<AdminStats
         ),
         session_counts AS (
             SELECT COUNT(*) AS active_sessions
-            FROM sessions
-            WHERE expired_at IS NULL
-              AND (expires_at IS NULL OR expires_at > datetime('now'))
+            FROM app_sessions
+            WHERE is_revoked = 0
+              AND expires_at > datetime('now')
         ),
         unassigned AS (
             SELECT COUNT(*) AS unassigned_users

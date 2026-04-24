@@ -19,6 +19,7 @@ pub mod permissions;
 pub mod queries;
 pub mod review;
 pub mod sla;
+pub mod stats;
 
 #[cfg(test)]
 mod conversion_tests;
