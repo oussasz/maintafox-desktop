@@ -1,6 +1,10 @@
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
+import { Button } from "@/components/ui/button";
+import { mfAuth } from "@/design-system/tokens";
+
 interface ForcePasswordChangePageProps {
   onComplete: (newPassword: string) => Promise<void>;
 }
@@ -37,10 +41,10 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-0 px-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold text-primary">Maintafox</h1>
+    <div className={mfAuth.shell}>
+      <div className={mfAuth.cardCompact}>
+        <div className="mb-8 flex justify-center">
+          <MaintafoxWordmark size="lg" align="center" tone="auth" />
         </div>
 
         <div className="mb-6">
@@ -68,10 +72,7 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
               required
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full rounded-md border border-surface-border bg-surface-1
-                         px-3 py-2 text-sm text-text-primary
-                         focus:border-primary focus:outline-none focus:ring-1
-                         focus:ring-primary"
+              className="field-input"
               disabled={loading}
             />
           </div>
@@ -90,10 +91,7 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
               required
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full rounded-md border border-surface-border bg-surface-1
-                         px-3 py-2 text-sm text-text-primary
-                         focus:border-primary focus:outline-none focus:ring-1
-                         focus:ring-primary"
+              className="field-input"
               disabled={loading}
             />
           </div>
@@ -108,13 +106,9 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn-primary w-full py-2 text-sm font-medium"
-          >
+          <Button type="submit" className="w-full font-medium" disabled={loading}>
             {loading ? t("login.form.submitting") : t("session.forcePasswordChange.submit")}
-          </button>
+          </Button>
         </form>
       </div>
     </div>

@@ -28,6 +28,7 @@ pub struct OrgNodeType {
     pub code: String,
     pub label: String,
     pub icon_key: Option<String>,
+    pub color: Option<String>,
     pub depth_hint: Option<i32>,
     pub can_host_assets: bool,
     pub can_own_work: bool,
@@ -47,6 +48,7 @@ pub struct CreateNodeTypePayload {
     pub code: String,
     pub label: String,
     pub icon_key: Option<String>,
+    pub color: Option<String>,
     pub depth_hint: Option<i32>,
     pub can_host_assets: bool,
     pub can_own_work: bool,
@@ -58,8 +60,10 @@ pub struct CreateNodeTypePayload {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateNodeTypePayload {
+    pub id: i32,
     pub label: Option<String>,
     pub icon_key: Option<Option<String>>,
+    pub color: Option<Option<String>>,
     pub depth_hint: Option<Option<i32>>,
     pub can_host_assets: Option<bool>,
     pub can_own_work: Option<bool>,
@@ -87,7 +91,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
 const SELECT_COLS: &str = r"
-    id, sync_id, structure_model_id, code, label, icon_key, depth_hint,
+    id, sync_id, structure_model_id, code, label, icon_key, color, depth_hint,
     can_host_assets, can_own_work, can_carry_cost_center,
     can_aggregate_kpis, can_receive_permits, is_root_type,
     is_active, created_at, updated_at
@@ -107,6 +111,9 @@ fn map_node_type(row: QueryResult) -> AppResult<OrgNodeType> {
         icon_key: row
             .try_get::<Option<String>>("", "icon_key")
             .map_err(|e| decode_err("icon_key", e))?,
+        color: row
+            .try_get::<Option<String>>("", "color")
+            .map_err(|e| decode_err("color", e))?,
         depth_hint: row
             .try_get::<Option<i32>>("", "depth_hint")
             .map_err(|e| decode_err("depth_hint", e))?,
@@ -244,17 +251,18 @@ pub async fn create_node_type(db: &DatabaseConnection, payload: CreateNodeTypePa
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_node_types
-          (sync_id, structure_model_id, code, label, icon_key, depth_hint,
+          (sync_id, structure_model_id, code, label, icon_key, color, depth_hint,
            can_host_assets, can_own_work, can_carry_cost_center,
            can_aggregate_kpis, can_receive_permits, is_root_type,
            is_active, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             sync_id.clone().into(),
             payload.structure_model_id.into(),
             payload.code.clone().into(),
             payload.label.into(),
             payload.icon_key.into(),
+            payload.color.into(),
             payload.depth_hint.into(),
             bool_to_i32(payload.can_host_assets).into(),
             bool_to_i32(payload.can_own_work).into(),
@@ -317,4 +325,84 @@ pub async fn deactivate_node_type(db: &DatabaseConnection, id: i32) -> AppResult
 
     tracing::info!(node_type_id = id, "org node type deactivated");
     get_node_type_by_id(db, id).await
+}
+
+/// Update mutable fields of a node type. Only fields with `Some` values are updated.
+pub async fn update_node_type(
+    db: &DatabaseConnection,
+    payload: UpdateNodeTypePayload,
+) -> AppResult<OrgNodeType> {
+    let _existing = get_node_type_by_id(db, payload.id).await?;
+
+    let mut sets: Vec<String> = Vec::new();
+    let mut values: Vec<sea_orm::Value> = Vec::new();
+
+    if let Some(ref label) = payload.label {
+        sets.push("label = ?".to_string());
+        values.push(label.clone().into());
+    }
+    if let Some(ref icon_key) = payload.icon_key {
+        sets.push("icon_key = ?".to_string());
+        values.push(icon_key.clone().into());
+    }
+    if let Some(ref color) = payload.color {
+        sets.push("color = ?".to_string());
+        values.push(color.clone().into());
+    }
+    if let Some(ref depth_hint) = payload.depth_hint {
+        sets.push("depth_hint = ?".to_string());
+        values.push((*depth_hint).into());
+    }
+    if let Some(v) = payload.can_host_assets {
+        sets.push("can_host_assets = ?".to_string());
+        values.push(bool_to_i32(v).into());
+    }
+    if let Some(v) = payload.can_own_work {
+        sets.push("can_own_work = ?".to_string());
+        values.push(bool_to_i32(v).into());
+    }
+    if let Some(v) = payload.can_carry_cost_center {
+        sets.push("can_carry_cost_center = ?".to_string());
+        values.push(bool_to_i32(v).into());
+    }
+    if let Some(v) = payload.can_aggregate_kpis {
+        sets.push("can_aggregate_kpis = ?".to_string());
+        values.push(bool_to_i32(v).into());
+    }
+    if let Some(v) = payload.can_receive_permits {
+        sets.push("can_receive_permits = ?".to_string());
+        values.push(bool_to_i32(v).into());
+    }
+
+    if sets.is_empty() {
+        return get_node_type_by_id(db, payload.id).await;
+    }
+
+    let now = Utc::now().to_rfc3339();
+    sets.push("updated_at = ?".to_string());
+    values.push(now.into());
+    values.push(payload.id.into());
+
+    let sql = format!(
+        "UPDATE org_node_types SET {} WHERE id = ?",
+        sets.join(", ")
+    );
+    db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+        .await?;
+
+    tracing::info!(node_type_id = payload.id, "org node type updated");
+    get_node_type_by_id(db, payload.id).await
+}
+
+/// Count how many live nodes reference this type (for delete-blocking).
+pub async fn count_nodes_using_type(db: &DatabaseConnection, node_type_id: i32) -> AppResult<i32> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS cnt FROM org_nodes WHERE node_type_id = ? AND deleted_at IS NULL",
+            [node_type_id.into()],
+        ))
+        .await?
+        .expect("COUNT always returns a row");
+    Ok(row.try_get::<i32>("", "cnt").unwrap_or(0))
 }

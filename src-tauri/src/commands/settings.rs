@@ -12,6 +12,33 @@ use crate::settings::{self, AppSetting, PolicySnapshot, SessionPolicy, SettingsC
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
 
+/// List all settings. Requires `adm.settings`.
+#[tauri::command]
+pub async fn list_all_settings(state: State<'_, AppState>) -> AppResult<Vec<AppSetting>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    settings::list_all_settings(&state.db).await
+}
+
+/// List settings for a given category. Requires `adm.settings`.
+#[tauri::command]
+pub async fn list_settings_by_category(
+    category: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<AppSetting>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    settings::list_settings_by_category(&state.db, &category).await
+}
+
+/// List distinct setting categories. Requires `adm.settings`.
+#[tauri::command]
+pub async fn list_settings_categories(state: State<'_, AppState>) -> AppResult<Vec<String>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    settings::list_settings_categories(&state.db).await
+}
+
 /// Read a single setting by key and optional scope.
 #[tauri::command]
 pub async fn get_setting(

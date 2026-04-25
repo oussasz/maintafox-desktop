@@ -32,6 +32,14 @@ export function StatusBar() {
             {t("status.pendingSync", { count: syncStatus.pendingCount })}
           </span>
         )}
+        {syncStatus.state !== "idle" && (
+          <span className="text-text-muted">Sync: {syncStatus.state}</span>
+        )}
+        {syncStatus.blockerReason && (
+          <span className="text-status-warning max-w-72 truncate" title={syncStatus.blockerReason}>
+            {syncStatus.blockerReason}
+          </span>
+        )}
       </div>
 
       {/* Right: db health + version */}

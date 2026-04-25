@@ -1,9 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type { AppInfoResponse, HealthCheckResponse, TaskStatusEntry } from "@shared/ipc-types";
 
-// ── Zod schemas for runtime shape validation ──────────────────────────────
+// â”€â”€ Zod schemas for runtime shape validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const HealthCheckResponseSchema = z.object({
   status: z.enum(["ok", "degraded"]),
@@ -28,10 +28,10 @@ export const TaskStatusEntrySchema = z.object({
 
 export const TaskStatusArraySchema = z.array(TaskStatusEntrySchema);
 
-// ── Service functions ─────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
- * Health check — confirms the IPC bridge and DB are live.
+ * Health check â€” confirms the IPC bridge and DB are live.
  * Called once during startup sequence listening.
  */
 export async function healthCheck(): Promise<HealthCheckResponse> {

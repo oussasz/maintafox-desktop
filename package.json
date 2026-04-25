@@ -1,6 +1,6 @@
 {
   "name": "maintafox-desktop",
-  "version": "0.1.0-dev",
+  "version": "0.4.0-dev",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.0",
@@ -31,7 +31,7 @@
     "db:reset:ci": "pnpm tsx scripts/dev-db-reset.ts --yes",
     "migrate:check": "tsx scripts/check-migrations.ts",
     "audit:tauri-conf": "pnpm tsx scripts/audit-tauri-conf.ts",
-    "i18n:check": "tsx scripts/check-i18n-parity.ts"
+    "guard:phase4:fixtures": "pnpm tsx scripts/check-control-plane-fixture-imports.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
@@ -42,6 +42,7 @@
     "@testing-library/react": "^16.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
@@ -69,7 +70,13 @@
     "vitest": "^2.1.0"
   },
   "dependencies": {
+    "@antv/x6": "^2.19.2",
+    "@antv/x6-plugin-selection": "^2.2.2",
+    "@antv/x6-plugin-snapline": "^2.1.7",
+    "@antv/x6-plugin-stencil": "^2.1.5",
+    "@antv/x6-react-shape": "^2.2.3",
     "@hookform/resolvers": "^3.9.0",
+    "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.0",
     "@radix-ui/react-dropdown-menu": "^2.1.0",
     "@radix-ui/react-label": "^2.1.8",
@@ -85,17 +92,21 @@
     "@tauri-apps/plugin-fs": "^2.0.0",
     "@tauri-apps/plugin-shell": "^2.0.0",
     "@types/d3": "^7.4.0",
+    "@xyflow/react": "^12.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.0",
     "d3": "^7.9.0",
+    "html-to-image": "^1.11.13",
     "i18next": "^24.0.0",
     "i18next-resources-to-backend": "^1.2.1",
     "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-hook-form": "^7.54.0",
     "react-i18next": "^15.0.0",
     "react-router-dom": "^6.28.0",
+    "recharts": "^3.8.1",
     "tailwind-merge": "^2.5.0",
     "zod": "^3.24.0",
     "zustand": "^5.0.0"

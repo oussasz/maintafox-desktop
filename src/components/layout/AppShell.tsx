@@ -1,10 +1,12 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AppToastHost } from "@/components/shell/AppToastHost";
 import { useStartupBridge } from "@/hooks/use-startup-bridge";
 import { cn } from "@/lib/utils";
 import { defaultNavItems } from "@/navigation/nav-registry";
 import { useAppStore } from "@/store/app-store";
+import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 
 import { Sidebar } from "./Sidebar";
 import { StatusBar } from "./StatusBar";
@@ -19,9 +21,16 @@ export function AppShell({ children }: AppShellProps) {
   const appStatus = useAppStore((s) => s.appStatus);
   const startupMsg = useAppStore((s) => s.startupMessage);
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
+  const initializeSync = useSyncOrchestratorStore((s) => s.initialize);
+  const shutdownSync = useSyncOrchestratorStore((s) => s.shutdown);
 
   // Bridge Tauri startup events → app store
   useStartupBridge();
+
+  useEffect(() => {
+    initializeSync();
+    return () => shutdownSync();
+  }, [initializeSync, shutdownSync]);
 
   if (appStatus === "loading") {
     return (
@@ -68,6 +77,7 @@ export function AppShell({ children }: AppShellProps) {
         </main>
       </div>
       <StatusBar />
+      <AppToastHost />
     </div>
   );
 }

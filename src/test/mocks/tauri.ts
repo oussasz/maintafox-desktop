@@ -1,10 +1,11 @@
 /**
  * Typed reference to the globally mocked invoke function.
- * The mock itself is created in src/test/setup.ts — this module provides
+ * The mock itself is created in src/test/setup.ts â€” this module provides
  * typed access and pre-built fixtures for test convenience.
  */
-import { invoke } from "@tauri-apps/api/core";
 import { vi } from "vitest";
+
+import { invoke } from "@/lib/ipc-invoke";
 
 export const mockInvoke = vi.mocked(invoke);
 
@@ -62,6 +63,8 @@ export const fixtures = {
     force_password_change: true,
     expires_at: new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
     last_activity_at: new Date().toISOString(),
+    tenant_id: "ten_demo",
+    token_tenant_id: "ten_demo",
   },
   noSession: {
     is_authenticated: false,
@@ -73,8 +76,10 @@ export const fixtures = {
     force_password_change: null,
     expires_at: null,
     last_activity_at: null,
+    tenant_id: null,
+    token_tenant_id: null,
   },
-  // ── Updater ──────────────────────────────────────────────────────────────
+  // â”€â”€ Updater â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   updateCheckNoUpdate: {
     available: false,
     version: null,
@@ -84,7 +89,7 @@ export const fixtures = {
   updateCheckAvailable: {
     available: true,
     version: "1.2.0",
-    notes: "Corrections de bugs et améliorations de stabilité.",
+    notes: "Corrections de bugs et amÃ©liorations de stabilitÃ©.",
     pub_date: "2026-04-15T00:00:00Z",
   },
 } as const;

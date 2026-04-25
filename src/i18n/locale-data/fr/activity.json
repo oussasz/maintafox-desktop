@@ -1,1 +1,10 @@
-{}
+{
+  "page": {
+    "title": "Journal d'activité",
+    "subtitle": "Fil opérationnel et piste d'audit immuable pour la sécurité et la conformité."
+  },
+  "tabs": {
+    "activity": "Fil d'activité",
+    "audit": "Journal d'audit"
+  }
+}

@@ -7,12 +7,26 @@ import {
   unlockSession as authUnlock,
   forceChangePassword as authForceChange,
 } from "@/services/auth-service";
+import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 import type { SessionInfo, LoginRequest } from "@shared/ipc-types";
+
+/** Extract message and code from a Tauri IPC error object or standard Error. */
+function extractTauriError(e: unknown, fallback: string): { message: string; code: string | null } {
+  if (e instanceof Error) {
+    return { message: e.message, code: null };
+  }
+  if (typeof e === "object" && e !== null && "message" in e && "code" in e) {
+    const obj = e as { code: string; message: string };
+    return { message: obj.message, code: obj.code };
+  }
+  return { message: fallback, code: null };
+}
 
 interface SessionState {
   info: SessionInfo | null;
   isLoading: boolean;
   error: string | null;
+  errorCode: string | null;
 }
 
 interface SessionActions {
@@ -33,6 +47,10 @@ const UNAUTHENTICATED: SessionInfo = {
   force_password_change: null,
   expires_at: null,
   last_activity_at: null,
+  password_expires_in_days: null,
+  pin_configured: null,
+  tenant_id: null,
+  token_tenant_id: null,
 };
 
 /**
@@ -44,18 +62,27 @@ export function useSession(): SessionState & SessionActions {
     info: null,
     isLoading: true,
     error: null,
+    errorCode: null,
   });
 
   const refresh = useCallback(async () => {
-    setState((s) => ({ ...s, isLoading: true, error: null }));
+    setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const info = await getSessionInfo();
-      setState({ info, isLoading: false, error: null });
+      if (info.is_authenticated) {
+        useAuthInterceptorStore.getState().rememberPreInterrupt(info);
+        if (useAuthInterceptorStore.getState().isLockOpen) {
+          useAuthInterceptorStore.getState().clear();
+        }
+      }
+      setState({ info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
+      const { message, code } = extractTauriError(e, "Erreur de session.");
       setState({
         info: UNAUTHENTICATED,
         isLoading: false,
-        error: e instanceof Error ? e.message : "Erreur de session.",
+        error: message,
+        errorCode: code,
       });
     }
   }, []);
@@ -65,15 +92,23 @@ export function useSession(): SessionState & SessionActions {
   }, [refresh]);
 
   const login = useCallback(async (req: LoginRequest) => {
-    setState((s) => ({ ...s, isLoading: true, error: null }));
+    setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const response = await authLogin(req);
-      setState({ info: response.session_info, isLoading: false, error: null });
+      if (response.session_info.is_authenticated) {
+        useAuthInterceptorStore.getState().rememberPreInterrupt(response.session_info);
+        if (useAuthInterceptorStore.getState().isLockOpen) {
+          useAuthInterceptorStore.getState().clear();
+        }
+      }
+      setState({ info: response.session_info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
+      const { message, code } = extractTauriError(e, "Identifiant ou mot de passe invalide.");
       setState((s) => ({
         ...s,
         isLoading: false,
-        error: e instanceof Error ? e.message : "Identifiant ou mot de passe invalide.",
+        error: message,
+        errorCode: code,
       }));
       throw e; // re-throw so the login form can react
     }
@@ -83,43 +118,61 @@ export function useSession(): SessionState & SessionActions {
     setState((s) => ({ ...s, isLoading: true }));
     try {
       await authLogout();
-      setState({ info: UNAUTHENTICATED, isLoading: false, error: null });
+      setState({ info: UNAUTHENTICATED, isLoading: false, error: null, errorCode: null });
     } catch (e) {
+      const { message } = extractTauriError(e, "Erreur lors de la d\u00e9connexion.");
       setState((s) => ({
         ...s,
         isLoading: false,
-        error: e instanceof Error ? e.message : "Erreur lors de la déconnexion.",
+        error: message,
+        errorCode: null,
       }));
     }
   }, []);
 
   const unlock = useCallback(async (password: string) => {
-    setState((s) => ({ ...s, isLoading: true, error: null }));
+    setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const info = await authUnlock(password);
-      setState({ info, isLoading: false, error: null });
+      if (info.is_authenticated) {
+        useAuthInterceptorStore.getState().rememberPreInterrupt(info);
+        if (useAuthInterceptorStore.getState().isLockOpen) {
+          useAuthInterceptorStore.getState().clear();
+        }
+      }
+      setState({ info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
+      const { message } = extractTauriError(e, "\u00c9chec du d\u00e9verrouillage.");
       setState((s) => ({
         ...s,
         isLoading: false,
-        error: e instanceof Error ? e.message : "Échec du déverrouillage.",
+        error: message,
+        errorCode: null,
       }));
-      throw e;
+      throw new Error(message);
     }
   }, []);
 
   const changePassword = useCallback(async (newPassword: string) => {
-    setState((s) => ({ ...s, isLoading: true, error: null }));
+    setState((s) => ({ ...s, isLoading: true, error: null, errorCode: null }));
     try {
       const info = await authForceChange(newPassword);
-      setState({ info, isLoading: false, error: null });
+      if (info.is_authenticated) {
+        useAuthInterceptorStore.getState().rememberPreInterrupt(info);
+        if (useAuthInterceptorStore.getState().isLockOpen) {
+          useAuthInterceptorStore.getState().clear();
+        }
+      }
+      setState({ info, isLoading: false, error: null, errorCode: null });
     } catch (e) {
+      const { message } = extractTauriError(e, "\u00c9chec du changement de mot de passe.");
       setState((s) => ({
         ...s,
         isLoading: false,
-        error: e instanceof Error ? e.message : "Échec du changement de mot de passe.",
+        error: message,
+        errorCode: null,
       }));
-      throw e;
+      throw new Error(message);
     }
   }, []);
 

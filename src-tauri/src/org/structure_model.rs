@@ -13,9 +13,11 @@
 //! The publish step validates that existing nodes conform to the new rules
 //! before committing the transition (validation logic is in F04).
 
+use std::collections::HashMap;
+
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -121,15 +123,26 @@ pub async fn get_model_by_id(db: &DatabaseConnection, id: i32) -> AppResult<OrgS
 
 /// Create a new structure model in draft status.
 /// The version number is set to max(existing) + 1.
+///
+/// **Bootstrap only:** the IPC layer must reject this when a published (active) model
+/// already exists so tenants start a new version via [`fork_draft_from_published`].
 pub async fn create_model(
     db: &DatabaseConnection,
     payload: CreateStructureModelPayload,
     created_by_id: i32,
 ) -> AppResult<OrgStructureModel> {
+    create_model_in_conn(db, &payload, created_by_id).await
+}
+
+/// Same as [`create_model`] but against any `ConnectionTrait` (used inside transactions).
+pub async fn create_model_in_conn(
+    db: &impl ConnectionTrait,
+    payload: &CreateStructureModelPayload,
+    created_by_id: i32,
+) -> AppResult<OrgStructureModel> {
     let now = Utc::now().to_rfc3339();
     let sync_id = Uuid::new_v4().to_string();
 
-    // Calculate next version number
     let max_row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -156,7 +169,6 @@ pub async fn create_model(
     ))
     .await?;
 
-    // Retrieve the inserted row via sync_id (stable across DB backends)
     let sql = format!("SELECT {SELECT_COLS} FROM org_structure_models WHERE sync_id = ?");
     let row = db
         .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [sync_id.into()]))
@@ -172,6 +184,222 @@ pub async fn create_model(
     );
 
     Ok(model)
+}
+
+/// Returns `true` if at least one draft structure model already exists.
+async fn has_any_draft(db: &impl ConnectionTrait) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM org_structure_models WHERE status = 'draft'".to_string(),
+        ))
+        .await?
+        .expect("COUNT");
+    let c: i32 = row.try_get::<i64>("", "c").map_err(|e| decode_err("c", e))? as i32;
+    Ok(c > 0)
+}
+
+/// Start a new draft from the current **published (active)** structure model: copies all
+/// node types and relationship rules (same codes) so that publish-time remap
+/// (see `validation::build_type_remap_plan`) applies cleanly.
+///
+/// Fails if there is no active model, or if a draft already exists, or (defensively) if
+/// the active model has no node types (the published org cannot be described without a schema).
+pub async fn fork_draft_from_published(
+    db: &DatabaseConnection,
+    payload: &CreateStructureModelPayload,
+    created_by_id: i32,
+) -> AppResult<OrgStructureModel> {
+    let Some(active) = get_active_model(db).await? else {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "no published (active) structure model exists — use create_model when bootstrapping the first structure draft"
+        )]));
+    };
+
+    if has_any_draft(db).await? {
+        return Err(AppError::ValidationFailed(vec!["a draft structure model already exists — publish, archive, or abandon it first".to_string()]));
+    }
+
+    let type_rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, code, label, icon_key, color, depth_hint, \
+                    can_host_assets, can_own_work, can_carry_cost_center, can_aggregate_kpis, can_receive_permits, \
+                    is_root_type, is_active \
+             FROM org_node_types \
+             WHERE structure_model_id = ? \
+             ORDER BY id ASC",
+            [active.id.into()],
+        ))
+        .await?;
+
+    if type_rows.is_empty() {
+        return Err(AppError::ValidationFailed(vec!["the published model has no node types — add types to the active model before forking, or use an empty first draft (bootstrap) instead".to_string()]));
+    }
+
+    let txn: DatabaseTransaction = db.begin().await?;
+
+    if has_any_draft(&txn).await? {
+        return Err(AppError::ValidationFailed(vec!["a draft structure model already exists — publish, archive, or abandon it first".to_string()]));
+    }
+
+    let draft = create_model_in_conn(&txn, payload, created_by_id).await?;
+    let draft_id = draft.id;
+    let now = Utc::now().to_rfc3339();
+
+    let mut old_to_new: HashMap<i32, i32> = HashMap::new();
+
+    for row in &type_rows {
+        let old_id: i32 = row
+            .try_get::<i64>("", "id")
+            .map_err(|e| decode_err("id", e))?
+            .try_into()
+            .map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("org_node_types id does not fit i32"))
+            })?;
+        let code: String = row
+            .try_get::<String>("", "code")
+            .map_err(|e| decode_err("code", e))?;
+        let label: String = row
+            .try_get::<String>("", "label")
+            .map_err(|e| decode_err("label", e))?;
+        let icon_key: Option<String> = row
+            .try_get::<Option<String>>("", "icon_key")
+            .map_err(|e| decode_err("icon_key", e))?;
+        let color: Option<String> = row
+            .try_get::<Option<String>>("", "color")
+            .map_err(|e| decode_err("color", e))?;
+        let depth_hint: Option<i32> = row
+            .try_get::<Option<i64>>("", "depth_hint")
+            .map_err(|e| decode_err("depth_hint", e))?
+            .map(|d| d as i32);
+        let can_host_assets: i64 = row
+            .try_get::<i64>("", "can_host_assets")
+            .map_err(|e| decode_err("can_host_assets", e))?;
+        let can_own_work: i64 = row
+            .try_get::<i64>("", "can_own_work")
+            .map_err(|e| decode_err("can_own_work", e))?;
+        let can_carry_cost_center: i64 = row
+            .try_get::<i64>("", "can_carry_cost_center")
+            .map_err(|e| decode_err("can_carry_cost_center", e))?;
+        let can_aggregate_kpis: i64 = row
+            .try_get::<i64>("", "can_aggregate_kpis")
+            .map_err(|e| decode_err("can_aggregate_kpis", e))?;
+        let can_receive_permits: i64 = row
+            .try_get::<i64>("", "can_receive_permits")
+            .map_err(|e| decode_err("can_receive_permits", e))?;
+        let is_root_type: i64 = row
+            .try_get::<i64>("", "is_root_type")
+            .map_err(|e| decode_err("is_root_type", e))?;
+        let is_active: i64 = row
+            .try_get::<i64>("", "is_active")
+            .map_err(|e| decode_err("is_active", e))?;
+
+        let sync_id = Uuid::new_v4().to_string();
+        txn
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                r"INSERT INTO org_node_types
+            (sync_id, structure_model_id, code, label, icon_key, color, depth_hint,
+             can_host_assets, can_own_work, can_carry_cost_center, can_aggregate_kpis, can_receive_permits,
+             is_root_type, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    sync_id.clone().into(),
+                    draft_id.into(),
+                    code.into(),
+                    label.into(),
+                    icon_key.into(),
+                    color.into(),
+                    depth_hint.into(),
+                    (can_host_assets as i32).into(),
+                    (can_own_work as i32).into(),
+                    (can_carry_cost_center as i32).into(),
+                    (can_aggregate_kpis as i32).into(),
+                    (can_receive_permits as i32).into(),
+                    (is_root_type as i32).into(),
+                    (is_active as i32).into(),
+                    now.clone().into(),
+                    now.clone().into(),
+                ],
+            ))
+            .await?;
+
+        let new_id_row = txn
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT last_insert_rowid() AS new_id".to_string(),
+            ))
+            .await?
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!("node type insert did not return row id"))
+            })?;
+        let new_id: i32 = new_id_row
+            .try_get::<i64>("", "new_id")
+            .map_err(|e| decode_err("new_id", e))?
+            .try_into()
+            .map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("new node type id does not fit i32"))
+            })?;
+        old_to_new.insert(old_id, new_id);
+    }
+
+    let rules = txn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT parent_type_id, child_type_id, min_children, max_children \
+             FROM org_type_relationship_rules WHERE structure_model_id = ?",
+            [active.id.into()],
+        ))
+        .await?;
+
+    for rule in &rules {
+        let p_old: i32 = rule
+            .try_get::<i64>("", "parent_type_id")
+            .map_err(|e| decode_err("parent_type_id", e))?
+            as i32;
+        let c_old: i32 = rule
+            .try_get::<i64>("", "child_type_id")
+            .map_err(|e| decode_err("child_type_id", e))?
+            as i32;
+        let p_new = *old_to_new.get(&p_old).ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "parent_type_id {p_old} missing from fork map — data integrity"
+            ))
+        })?;
+        let c_new = *old_to_new.get(&c_old).ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "child_type_id {c_old} missing from fork map — data integrity"
+            ))
+        })?;
+        let min_c: Option<i32> = rule
+            .try_get::<Option<i64>>("", "min_children")
+            .map_err(|e| decode_err("min_children", e))?
+            .map(|v| v as i32);
+        let max_c: Option<i32> = rule
+            .try_get::<Option<i64>>("", "max_children")
+            .map_err(|e| decode_err("max_children", e))?
+            .map(|v| v as i32);
+        let rule_now = Utc::now().to_rfc3339();
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO org_type_relationship_rules
+         (structure_model_id, parent_type_id, child_type_id, min_children, max_children, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                draft_id.into(),
+                p_new.into(),
+                c_new.into(),
+                min_c.into(),
+                max_c.into(),
+                rule_now.into(),
+            ],
+        ))
+        .await?;
+    }
+
+    txn.commit().await?;
+    get_model_by_id(db, draft_id).await
 }
 
 /// Publish a draft model as the new active model.

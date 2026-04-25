@@ -1,5 +1,5 @@
-﻿import { ModulePlaceholder } from "./placeholder/ModulePlaceholder";
+﻿import { AssetRegistryPage } from "./assets/AssetRegistryPage";
 
 export function EquipmentPage() {
-  return <ModulePlaceholder moduleName="Équipements" prdSection="6.3" phase="Phase 2" />;
+  return <AssetRegistryPage />;
 }

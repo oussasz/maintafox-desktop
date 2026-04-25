@@ -1,6 +1,6 @@
 {
   "productName": "Maintafox",
-  "version": "0.1.0-dev",
+  "version": "0.4.0-dev",
   "identifier": "systems.maintafox.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -10,7 +10,15 @@
   },
   "app": {
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420; img-src 'self' data: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/**",
+          "$APPLOCALDATA/**",
+          "$HOME/**"
+        ]
+      },
+      "csp": "default-src 'self'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420 https://api.maintafox.systems; img-src 'self' data: asset: blob: https://asset.localhost http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
     },
     "windows": [
       {

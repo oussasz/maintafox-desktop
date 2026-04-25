@@ -40,13 +40,12 @@ export const MODULE_NAMESPACES = {
   archive: "archive", // §6.12 Archive Explorer
   notifications: "notifications", // §6.14 Notification System
   documentation: "documentation", // §6.15 Documentation & Support Center
-  iot: "iot", // §6.21 IoT Gateway
-  erp: "erp", // §6.22 ERP Connector
   activity: "activity", // §6.17 Activity Feed & Audit Log
   users: "users", // §6.7 Users & Roles Admin UI
+  admin: "admin", // §6.7 Administration panels, metrics, and role management
   settings: "settings", // §6.18 Application Settings
   diagnostics: "diagnostics", // §6.20 Diagnostics & Support Bundle
-  configuration: "configuration", // §6.26 Configuration Engine
+  vendorConsole: "vendorConsole", // Phase 4 vendor control-plane console
 } as const;
 
 export type EagerNamespace = (typeof EAGER_NAMESPACES)[number];

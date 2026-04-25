@@ -1,4 +1,6 @@
 /* Self-hosted Inter variable font — no CDN; offline-safe */
+@import "./org-print.css";
+
 @font-face {
   font-family: "Inter";
   font-style: normal;

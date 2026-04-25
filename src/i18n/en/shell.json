@@ -32,7 +32,15 @@
   "sync": {
     "offline": "Offline",
     "syncing": "Syncing\u2026",
-    "error": "Sync error"
+    "error": "Sync error",
+    "offlineChangesSaved": "Offline mode active—your changes are saved locally and will sync when the connection is restored.",
+    "syncCenter": "Sync center",
+    "syncCenterTitle": "Sync center",
+    "syncCenterConflicts": "Unresolved conflicts",
+    "syncCenterRejected": "Rejected outbox items",
+    "resolveLocal": "Keep local version",
+    "resolveRemote": "Keep server version",
+    "noConflicts": "No items need review."
   },
   "status": {
     "online": "Online",
@@ -100,6 +108,7 @@
       "admin": "Administration"
     },
     "dashboard": "Dashboard",
+    "vendorConsole": "Vendor console",
     "equipment": "Equipment",
     "requests": "Intervention Requests",
     "workOrders": "Work Orders",
@@ -117,13 +126,10 @@
     "lookups": "Reference Data",
     "notifications": "Notifications",
     "documentation": "Documentation",
-    "iot": "IoT Gateway",
-    "erp": "ERP Connectors",
     "activity": "Activity Log",
     "settings": "Settings",
     "users": "Users & Roles",
     "org": "Organization",
-    "configuration": "Configuration",
     "diagnostics": "Diagnostics",
     "profile": "My Profile",
     "help": "Help & Documentation",

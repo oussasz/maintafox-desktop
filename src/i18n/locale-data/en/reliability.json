@@ -1,1 +1,174 @@
-{}
+{
+  "module": {
+    "title": "RAMS Mission Control",
+    "subtitle": "Reliability analytics workstation",
+    "selectEquipmentPrompt": "Please select an equipment from the sidebar to begin analysis.",
+    "selectEquipment": "Select equipment",
+    "primary": "Primary",
+    "multiSelected": "{{count}} equipments selected",
+    "sidebarEquip": "Equipment",
+    "searchAssets": "Search…",
+    "assetsLoading": "Loading assets…",
+    "assetsEmpty": "No assets match your search."
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "foundation": "Asset foundation",
+    "lab": "Visual lab",
+    "advanced": "Advanced methods",
+    "governance": "Governance"
+  },
+  "health": {
+    "badge": "RAM data health",
+    "equip": "Asset",
+    "equipNone": "None selected",
+    "score": "Score",
+    "openDq": "Data quality",
+    "none": "—",
+    "isoBadge": "ISO 14224 data completeness",
+    "isoTitle": "Average completeness of failure records (equipment, interval, mode, corrective closure)",
+    "isoDimEquipment": "Equipment linkage: {{pct}}%",
+    "isoDimInterval": "Failure interval: {{pct}}%",
+    "isoDimMode": "Failure mode: {{pct}}%",
+    "isoDimClosure": "Corrective closure: {{pct}}%",
+    "isoEmpty": "No events"
+  },
+  "dashboard": {
+    "title": "Operations dashboard",
+    "kpiTitle": "Latest reliability snapshot",
+    "mtbf": "MTBF (h)",
+    "mttr": "MTTR (h)",
+    "availability": "Availability",
+    "failureRate": "Failure rate",
+    "events": "Events",
+    "noSnapshot": "No KPI snapshot for this filter. Run an analysis from Asset foundation or refresh snapshots.",
+    "weibullTitle": "Weibull reliability curve R(t)",
+    "weibullHint": "Curve R(t) = exp(−(t/η)^β) from the latest stored Weibull fit.",
+    "weibullRun": "Run fit",
+    "weibullEmpty": "Run a Weibull fit to plot the curve.",
+    "weibullBlockedTitle": "Weibull fit unavailable",
+    "markovTitle": "Markov steady-state",
+    "markovHint": "Steady-state mass on discrete states (last evaluated model).",
+    "markovEmpty": "Evaluate a Markov model in Advanced methods to see states here.",
+    "filterEquip": "Equipment id",
+    "refresh": "Refresh",
+    "rulTitle": "Predicted RUL",
+    "rulHint": "Median remaining life from the Weibull fit and recorded exposure hours (maintenance history and operating profile).",
+    "rulEmpty": "No RUL estimate. Run a Weibull fit and ensure exposure or meter data exists."
+  },
+  "lab": {
+    "title": "FTA / RBD visual lab",
+    "modeFta": "Fault tree (FTA)",
+    "modeRbd": "Block diagram (RBD)",
+    "equip": "Equipment id",
+    "equipHint": "Active asset is selected in the RAMS sidebar",
+    "model": "Model",
+    "newModel": "New",
+    "save": "Save graph",
+    "evaluate": "Evaluate",
+    "delete": "Delete",
+    "topRoot": "Top / root id",
+    "addAnd": "AND gate",
+    "addOr": "OR gate",
+    "addBe": "Basic event",
+    "addBlock": "Block",
+    "addSeries": "Series",
+    "addParallel": "Parallel",
+    "result": "Result",
+    "loadError": "Failed to load models",
+    "needModel": "Create or select a model first.",
+    "placeholderTitle": "New model",
+    "refresh": "Refresh",
+    "palette": {
+      "toolbarLabel": "Modeling palette",
+      "and": {
+        "title": "AND gate",
+        "desc": "Output fault occurs only if all input faults occur (logical intersection)."
+      },
+      "or": {
+        "title": "OR gate",
+        "desc": "Output fault occurs if any input fault occurs (logical union)."
+      },
+      "be": {
+        "title": "Basic event",
+        "desc": "Primary initiating event or component failure with probability P (and derived λ, U over reference interval τ)."
+      },
+      "block": {
+        "title": "Reliability block",
+        "desc": "Element with reliability R; unavailability U and failure rate λ are shown for the reference interval τ."
+      },
+      "series": {
+        "title": "Series structure",
+        "desc": "All subsystems must work; combined reliability is the product of component reliabilities."
+      },
+      "parallel": {
+        "title": "Parallel structure",
+        "desc": "Redundant paths; system works if at least one path works (1−Π(1−Ri))."
+      }
+    }
+  },
+  "advanced": {
+    "title": "Advanced methods",
+    "heatmapTitle": "FMECA severity × occurrence matrix (failure mode counts)",
+    "heatmapHint": "Counts are aggregated from all FMECA analyses for the selected asset. Click a cell to filter the table to that (S, O) pair.",
+    "sAxis": "Severity S",
+    "oAxis": "Occurrence O",
+    "selected": "Selected",
+    "rpn": "RPN",
+    "equipFilter": "Equipment id",
+    "refresh": "Refresh",
+    "clearFilter": "Clear cell filter",
+    "loading": "Loading…",
+    "filterHint": "Click a cell to filter rows",
+    "tableTitle": "FMECA failure modes",
+    "noRows": "No FMECA rows for this filter. Create analyses and items in Asset foundation, or adjust the equipment id.",
+    "colAnalysis": "Analysis",
+    "colFailure": "Functional failure",
+    "colInventory": "Spares (RPN > {{threshold}})",
+    "invCritical": "Reliability critical shortage (stock 0)",
+    "invOk": "Stock {{qty}}",
+    "invNoWo": "No linked work order for spare check",
+    "invNoParts": "WO has no part lines"
+  },
+  "governance": {
+    "title": "Governance",
+    "body": "Ishikawa (fishbone) RCA diagrams are persisted per asset. Add causes under each 6M branch, save, and compare multiple assets when needed.",
+    "equip": "Equipment id",
+    "comparisonTitle": "Comparative mode ({{count}} equipments)",
+    "comparisonLoading": "Updating combined analysis…",
+    "save": "Save diagram",
+    "loadError": "Could not load diagram",
+    "saved": "Saved",
+    "addCause": "Add cause",
+    "effect": "Effect",
+    "causePrompt": "Cause description",
+    "causeModalTitle": "Add cause",
+    "causeModalEditTitle": "Edit label",
+    "causeModalLabel": "Cause text",
+    "causeModalSave": "Save",
+    "causeModalCancel": "Cancel",
+    "categories": {
+      "machine": "Machine",
+      "method": "Method",
+      "material": "Material",
+      "manpower": "Manpower",
+      "measurement": "Measurement",
+      "motherNature": "Mother nature"
+    },
+    "promoteMenu": "Promote to corrective action",
+    "promoteTitle": "Create corrective action from cause",
+    "promoteBody": "Creates a traceable link to this Ishikawa diagram. Save the diagram first if you have not already.",
+    "promoteTargetWo": "Work order (corrective)",
+    "promoteTargetFmeca": "FMECA row",
+    "promoteNeedSave": "Save the diagram before promoting a cause.",
+    "promoteNeedUser": "You must be signed in to create a work order.",
+    "promoteNeedFmecaAnalysis": "Create an FMECA analysis for this equipment first.",
+    "promoteSubmit": "Create",
+    "promoteSuccessWo": "Work order created from RCA cause.",
+    "promoteSuccessFmeca": "FMECA row created from RCA cause."
+  },
+  "foundation": {
+    "title": "Asset foundation",
+    "hint": "Taxonomy, exposure, KPI jobs, and data quality drill-throughs."
+  }
+}

@@ -1,1 +1,275 @@
-{}
+{
+  "page": {
+    "title": "Personnel",
+    "titleNew": "Nouveau personnel",
+    "titleEdit": "Modifier personnel"
+  },
+  "action": {
+    "create": "Nouveau",
+    "deactivate": "Désactiver",
+    "refresh": "Actualiser",
+    "viewDetails": "Voir le détail",
+    "view": "Voir"
+  },
+  "view": {
+    "list": "Liste",
+    "cards": "Cartes"
+  },
+  "tabs": {
+    "directory": "Annuaire",
+    "skillsMatrix": "Matrice des competences",
+    "availabilityCalendar": "Calendrier de disponibilite",
+    "teamCapacity": "Capacite des equipes",
+    "training": "Formation et certifications"
+  },
+  "training": {
+    "heading": "Formation et qualifications",
+    "selfService": "Espace personnel",
+    "myCerts": "Vos certifications",
+    "mySessions": "Vos sessions",
+    "sessions": "Sessions planifiees",
+    "attendance": "Presence (locataire)",
+    "registryCerts": "Registre des certifications",
+    "expiryGovernance": "Alertes d'expiration et detail",
+    "expiryAlerts": "Alertes emises",
+    "expiryDrilldown": "Certifications expirant dans l'horizon",
+    "lookaheadDays": "Horizon (jours)",
+    "entityFilterOptional": "Id entite (optionnel)",
+    "alertSeverity": "Filtre gravite",
+    "runScan": "Lancer le balayage d'expiration",
+    "permitGaps": "Permis vs equipe (planification)",
+    "woId": "Id ordre de travail",
+    "crewIds": "Ids personnel",
+    "checkGaps": "Evaluer les ecarts",
+    "permitType": "Type de permis",
+    "qualified": "Qualifie",
+    "blocked": "Bloque",
+    "missingTypes": "Types de certif. manquants",
+    "noPermitRequired": "Aucun permis requis pour cet ordre de travail.",
+    "sessionId": "Session",
+    "col": {
+      "course": "Code cours",
+      "start": "Debut",
+      "end": "Fin",
+      "minPass": "Note min.",
+      "session": "Session",
+      "personnel": "Personnel",
+      "status": "Statut",
+      "score": "Note",
+      "type": "Type",
+      "expires": "Expiration",
+      "readiness": "Pret",
+      "severity": "Gravite",
+      "firedAt": "Emise le",
+      "certId": "Cert.",
+      "dedupe": "Cle dedup.",
+      "empCode": "Code",
+      "name": "Nom",
+      "entity": "Entite"
+    }
+  },
+  "list": {
+    "columns": {
+      "code": "Matricule",
+      "fullName": "Nom complet",
+      "position": "Poste",
+      "entity": "Entité",
+      "team": "Équipe",
+      "status": "Statut",
+      "employmentType": "Type d'emploi",
+      "schedule": "Horaire",
+      "actions": "Actions"
+    }
+  },
+  "filters": {
+    "searchPlaceholder": "Recherche code, nom, e-mail, téléphone…",
+    "entity": "Entité",
+    "position": "Poste",
+    "status": "Statut",
+    "employmentType": "Type d'emploi",
+    "all": "Tous",
+    "clearAll": "Tout effacer"
+  },
+  "totalBadge": "{{count}} personnes",
+  "card": {
+    "statusLabel": "Statut",
+    "teamLabel": "Équipe",
+    "scheduleLabel": "Horaire",
+    "companyLabel": "Société externe",
+    "phoneLabel": "Téléphone",
+    "viewDetails": "Voir le détail"
+  },
+  "detail": {
+    "title": "Détail personnel",
+    "placeholder": "Le panneau détaillé sera disponible dans une version ultérieure.",
+    "contractorBanner": "Profil externe lie a {{company}}.",
+    "available": "disponibles",
+    "blocked": "bloquees",
+    "tabs": {
+      "identity": "Identite",
+      "skills": "Competences",
+      "availability": "Disponibilite",
+      "teams": "Equipes",
+      "rates": "Tarifs",
+      "authorizations": "Autorisations",
+      "history": "Historique",
+      "workload": "Charge"
+    },
+    "workload": {
+      "openWo": "OT ouverts",
+      "inProgressWo": "OT en cours",
+      "pendingDi": "DI en attente",
+      "di30d": "DI sur 30 jours"
+    }
+  },
+  "create": {
+    "title": "Nouveau personnel",
+    "submit": "Créer",
+    "cancel": "Annuler"
+  },
+  "field": {
+    "employeeCode": "Matricule",
+    "fullName": "Nom complet",
+    "employmentType": "Type d'emploi",
+    "position": "Poste",
+    "entity": "Entité",
+    "team": "Équipe",
+    "supervisor": "Supérieur hiérarchique",
+    "schedule": "Horaire",
+    "status": "Statut",
+    "hireDate": "Date d'embauche",
+    "email": "Email",
+    "phone": "Téléphone",
+    "company": "Société externe",
+    "notes": "Notes"
+  },
+  "status": {
+    "available": "Disponible",
+    "assigned": "Affecté",
+    "in_training": "En formation",
+    "on_leave": "En congé",
+    "blocked": "Bloqué",
+    "inactive": "Inactif"
+  },
+  "employmentType": {
+    "employee": "Employé",
+    "contractor": "Sous-traitant",
+    "temp": "Intérimaire",
+    "vendor": "Fournisseur"
+  },
+  "validation": {
+    "nameRequired": "Le nom est requis",
+    "employmentTypeRequired": "Le type d'emploi est requis"
+  },
+  "archive": {
+    "title": "Personnel inactif"
+  },
+  "common": {
+    "loading": "Chargement...",
+    "noData": "Aucune donnee disponible."
+  },
+  "skills": {
+    "searchPlaceholder": "Rechercher personnel ou competence...",
+    "columns": {
+      "personnel": "Personnel",
+      "team": "Equipe",
+      "skill": "Competence",
+      "level": "Niveau",
+      "coverage": "Couverture"
+    },
+    "coverage": {
+      "active": "Active",
+      "expired": "Expiree",
+      "missing": "Manquante"
+    }
+  },
+  "availability": {
+    "from": "Du",
+    "to": "Au",
+    "form": {
+      "title": "Creer un bloc de disponibilite",
+      "personnel": "Personnel",
+      "blockType": "Type de bloc",
+      "startAt": "Debut",
+      "endAt": "Fin",
+      "reason": "Raison",
+      "isCritical": "Critique (declenche une notification)",
+      "submit": "Creer le bloc",
+      "types": {
+        "medical": "Medical",
+        "restriction": "Restriction",
+        "leave": "Conge",
+        "training": "Formation"
+      },
+      "errors": {
+        "personnelRequired": "Selectionnez un personnel.",
+        "timeRequired": "Debut et fin sont obligatoires.",
+        "invalidRange": "La fin doit etre apres le debut."
+      }
+    }
+  },
+  "capacity": {
+    "memberCount": "Membres : {{count}}",
+    "leadCount": "Leads : {{count}}",
+    "availableMinutes": "Minutes disponibles : {{count}}",
+    "blockedMinutes": "Minutes bloquees : {{count}}",
+    "ratio": "Taux de disponibilite : {{value}}",
+    "successionRisk": "Risque de succession"
+  },
+  "import": {
+    "title": "Assistant d'import du personnel",
+    "description": "Chargez un CSV/XLSX, verifiez les validations de lignes, puis appliquez le lot de facon controlee.",
+    "action": {
+      "openWizard": "Importer",
+      "close": "Fermer",
+      "apply": "Appliquer le lot"
+    },
+    "mode": {
+      "label": "Mode d'import",
+      "createAndUpdate": "Creer et mettre a jour",
+      "createOnly": "Creer uniquement"
+    },
+    "badges": {
+      "total": "Total : {{count}}",
+      "valid": "Valides : {{count}}",
+      "warning": "Avertissements : {{count}}",
+      "error": "Erreurs : {{count}}"
+    },
+    "table": {
+      "employeeCode": "Matricule",
+      "externalId": "ID externe",
+      "status": "Statut de validation",
+      "action": "Action proposee",
+      "messages": "Messages"
+    },
+    "applyResult": {
+      "title": "Lot applique",
+      "values": "Crees : {{created}} · Maj : {{updated}} · Ignores : {{skipped}} · Champs proteges ignores : {{protected}}"
+    }
+  },
+  "reports": {
+    "action": {
+      "export": "Exporter les rapports"
+    },
+    "export": {
+      "summary": "Exporter le CSV synthese",
+      "skillsGap": "Exporter le CSV ecarts de competences",
+      "kpi": "Exporter le CSV KPI"
+    },
+    "panel": {
+      "title": "Rapports effectifs",
+      "description": "Synthese operationnelle, ecarts de competences et KPI de readiness.",
+      "refresh": "Actualiser les rapports"
+    },
+    "kpis": {
+      "totalPersonnel": "Total personnel : {{count}}",
+      "avgSkills": "Moy. competences/personne : {{value}}",
+      "blockedRatio": "Taux bloques : {{value}}"
+    },
+    "skillsGap": {
+      "title": "Ecarts de competences prioritaires",
+      "empty": "Aucune donnee d'ecart disponible.",
+      "score": "Score d'ecart : {{score}}"
+    }
+  }
+}

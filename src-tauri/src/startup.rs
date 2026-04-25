@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use std::time::Instant;
+use std::path::PathBuf;
 
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::{error, info, warn};
@@ -38,41 +38,51 @@ pub fn format_startup_message(elapsed_ms: u64, within_budget: bool, budget_ms: u
     if within_budget {
         format!("Startup complete in {elapsed_ms}ms (within {budget_ms}ms budget)")
     } else {
-        format!("WARNING: Startup took {elapsed_ms}ms which exceeds the {budget_ms}ms cold-start budget")
+        format!(
+            "WARNING: Startup took {elapsed_ms}ms which exceeds the {budget_ms}ms cold-start budget"
+        )
     }
 }
 
-/// Forces a WAL checkpoint on the local `SQLite` database.
+/// Forces a WAL checkpoint on the local SQLite database.
 /// Must be called before any destructive migration is applied.
 /// Returns Ok(()) on success or an error if the checkpoint fails.
 pub async fn force_wal_checkpoint(db: &sea_orm::DatabaseConnection) -> crate::errors::AppResult<()> {
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use sea_orm::{ConnectionTrait, Statement, DbBackend};
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "PRAGMA wal_checkpoint(FULL);".to_string(),
     ))
     .await
     .map(|_| ())
-    .map_err(|e| crate::errors::AppError::Database(sea_orm::DbErr::Custom(format!("WAL checkpoint failed: {e}"))))
+    .map_err(|e| crate::errors::AppError::Database(
+        sea_orm::DbErr::Custom(format!("WAL checkpoint failed: {}", e))
+    ))
 }
 
 /// Creates a pre-migration backup of the database file.
 /// Called when detecting that a pending migration is classified as destructive.
-pub fn backup_database(db_path: &PathBuf, backup_dir: &PathBuf) -> crate::errors::AppResult<PathBuf> {
-    use chrono::{DateTime, Utc};
+pub fn backup_database(
+    db_path: &PathBuf,
+    backup_dir: &PathBuf,
+) -> crate::errors::AppResult<PathBuf> {
     use std::time::SystemTime;
+    use chrono::{DateTime, Utc};
 
     let timestamp = DateTime::<Utc>::from(SystemTime::now())
         .format("%Y%m%d_%H%M%S")
         .to_string();
 
-    let backup_filename = format!("pre_migration_{timestamp}.db");
+    let backup_filename = format!("pre_migration_{}.db", timestamp);
     let backup_path = backup_dir.join(&backup_filename);
 
-    std::fs::create_dir_all(backup_dir).map_err(crate::errors::AppError::Io)?;
+    std::fs::create_dir_all(backup_dir)
+        .map_err(crate::errors::AppError::Io)?;
 
     std::fs::copy(db_path, &backup_path)
-        .map_err(|e| crate::errors::AppError::Io(std::io::Error::other(format!("Pre-migration backup failed: {e}"))))?;
+        .map_err(|e| crate::errors::AppError::Io(
+            std::io::Error::new(std::io::ErrorKind::Other, format!("Pre-migration backup failed: {}", e))
+        ))?;
 
     tracing::info!(
         backup_path = %backup_path.display(),
@@ -94,7 +104,9 @@ pub fn backup_database(db_path: &PathBuf, backup_dir: &PathBuf) -> crate::errors
 pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     let startup_start = Instant::now();
 
-    let window = app.get_webview_window("main").expect("main window must exist");
+    let window = app
+        .get_webview_window("main")
+        .expect("main window must exist");
 
     // Phase 1: database integrity and connection
     info!("startup: initialising database");
@@ -138,117 +150,91 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         }
     }
 
-    // Phase 3: seed system data (idempotent — safe on every startup)
+    // Phase 3: seed system data (idempotent — INSERT OR IGNORE)
     info!("startup: seeding system data");
-    match crate::db::seeder::seed_system_data(&app_state.db).await {
-        Ok(()) => {
-            info!(
-                elapsed_ms = startup_start.elapsed().as_millis() as u64,
-                "startup::seed_complete"
-            );
-        }
-        Err(e) => {
-            let reason = format!("System seed data failed: {e}");
-            error!("{reason}");
-            emit_event(&app, StartupEvent::Failed { reason });
-            window.show().ok();
-            return Err(e);
-        }
+    if let Err(e) = crate::db::seeder::seed_system_data(&app_state.db).await {
+        warn!("startup: system seed returned error (non-fatal): {e}");
     }
 
-    // Phase 3b: seed default app settings (idempotent)
-    info!("startup: seeding default settings");
-    match crate::db::seeder::seed_default_settings(&app_state.db).await {
-        Ok(()) => {
-            info!(
-                elapsed_ms = startup_start.elapsed().as_millis() as u64,
-                "startup::settings_seed_complete"
-            );
-        }
-        Err(e) => {
-            let reason = format!("Default settings seed failed: {e}");
-            error!("{reason}");
-            emit_event(&app, StartupEvent::Failed { reason });
-            window.show().ok();
-            return Err(e);
-        }
+    // Phase 3a: enforce mandatory WO type contract to prevent cross-environment drift.
+    info!("startup: enforcing work_order_types integrity");
+    if let Err(e) = crate::wo::types::ensure_required_work_order_types(&app_state.db).await {
+        let reason = format!("Work order type integrity check failed: {e}");
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
+        window.show().ok();
+        return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
     }
 
-    // Phase 3c: initialize device secret on first launch (non-fatal)
-    match crate::auth::device::get_device_secret() {
-        Ok(None) => {
-            // First launch: generate and store the device secret
-            crate::auth::device::initialize_device_secret()
-                .inspect_err(|e| tracing::warn!("device_secret_init_failed: {}", e))
-                .ok();
-        }
-        Ok(Some(_)) => {
-            tracing::debug!("startup::device_secret already exists");
-        }
-        Err(e) => {
-            tracing::warn!(
-                "startup::keyring_unavailable: {} \u{2014} offline trust material will not persist",
-                e
-            );
-        }
+    info!("startup: enforcing urgency_levels (work order priorities) integrity");
+    if let Err(e) = crate::wo::priorities::ensure_required_urgency_levels(&app_state.db).await {
+        let reason = format!("Urgency levels integrity check failed: {e}");
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
+        window.show().ok();
+        return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
     }
 
-    // Phase 4: integrity check
-    info!("startup: running integrity check");
-    match crate::db::integrity::run_integrity_check(&app_state.db).await {
-        Ok(report) => {
-            if report.is_healthy {
-                info!(
-                    elapsed_ms = startup_start.elapsed().as_millis() as u64,
-                    domains = report.domain_count,
-                    values = report.value_count,
-                    "startup::integrity_check_passed"
-                );
-            } else if report.is_recoverable {
-                warn!(
-                    issues = report.issues.len(),
-                    "startup::integrity_warning \u{2014} recoverable issues found, proceeding"
-                );
-            } else {
-                let reason = report
-                    .issues
-                    .first()
-                    .map_or_else(|| "Unknown integrity failure".to_string(), |i| i.description.clone());
-                error!(
-                    issues = report.issues.len(),
-                    "startup::integrity_fatal \u{2014} unrecoverable integrity issues"
-                );
-                emit_event(
-                    &app,
-                    StartupEvent::Failed {
-                        reason: format!("Erreur d'int\u{00e9}grit\u{00e9} : {reason}"),
-                    },
-                );
-                window.show().ok();
-                return Err(crate::errors::AppError::Internal(anyhow::anyhow!(
-                    "Startup integrity check failed with unrecoverable issues"
-                )));
-            }
-        }
-        Err(e) => {
-            let reason = format!("Integrity check failed: {e}");
-            error!("{reason}");
-            emit_event(&app, StartupEvent::Failed { reason });
-            window.show().ok();
-            return Err(e);
-        }
+    info!("startup: enforcing work_order_statuses (OT lifecycle) integrity");
+    if let Err(e) = crate::wo::statuses::ensure_required_work_order_statuses(&app_state.db).await {
+        let reason = format!("Work order statuses integrity check failed: {e}");
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
+        window.show().ok();
+        return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
     }
 
-    // Phase 5: entitlement cache (stub for roadmap Phase 4 \u{2014} always succeeds here)
+    info!("startup: enforcing equipment taxonomy reference integrity (EQUIPMENT.STATUS / CRITICALITY / CLASS)");
+    if let Err(e) =
+        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&app_state.db)
+            .await
+    {
+        let reason = format!("Equipment taxonomy reference integrity check failed: {e}");
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
+        window.show().ok();
+        return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
+    }
+
+    // Phase 3b: tenant bootstrap from activation claim.
+    // Clean-by-default policy:
+    // - always ensure a single root organization from activated tenant name
+    // - only seed neutral demo sandbox when claim.has_demo_data = true
+    if let Err(e) = crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&app_state.db, 0).await {
+        warn!("startup: tenant bootstrap returned error (non-fatal): {e}");
+    }
+
+    // Phase 4: entitlement cache and offline-safe fallback state.
     info!("startup: loading entitlement cache");
+    if let Err(err) = crate::entitlements::queries::get_entitlement_summary(&app_state.db).await {
+        warn!("startup: entitlement cache warmup failed (non-fatal): {err}");
+    }
     info!(
         elapsed_ms = startup_start.elapsed().as_millis() as u64,
         "startup::entitlement_cache_loaded"
     );
     emit_event(&app, StartupEvent::EntitlementCacheLoaded);
 
+    // Phase 5: notification scheduler background loop (non-fatal)
+    {
+        let scheduler_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::notifications::scheduler::start_notification_scheduler(scheduler_db).await;
+        });
+        info!("startup: notification scheduler started");
+    }
+
+    {
+        let report_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::reports::scheduler::start_report_scheduler(report_db).await;
+        });
+        info!("startup: report scheduler started");
+    }
+
     // ── Budget check and ready ──────────────────────────────────────────
-    let (total_ms, within_budget) = validate_startup_duration(startup_start, COLD_START_BUDGET_MS);
+    let (total_ms, within_budget) =
+        validate_startup_duration(startup_start, COLD_START_BUDGET_MS);
 
     if within_budget {
         info!(elapsed_ms = total_ms, "startup::complete");

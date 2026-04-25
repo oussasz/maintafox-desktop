@@ -1,6 +1,5 @@
 import {
   Menu,
-  Bell,
   RefreshCw,
   AlertCircle,
   User,
@@ -10,32 +9,40 @@ import {
   Shield,
   ShieldAlert,
   Clock,
+  Cloud,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, Link } from "react-router-dom";
 
+import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { CommandPalette } from "@/components/shell/CommandPalette";
+import { SyncCenterModal } from "@/components/sync/SyncCenterModal";
 import { useDeviceTrustStatus } from "@/hooks/use-device-trust-status";
-import { useNotificationCount } from "@/hooks/use-notification-count";
 import { useSession } from "@/hooks/use-session";
 import { logout as authLogout } from "@/services/auth-service";
 import { useAppStore } from "@/store/app-store";
+import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type { DeviceTrustStatus } from "@shared/ipc-types";
 
 export function TopBar() {
   const { t } = useTranslation("shell");
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const syncStatus = useAppStore((s) => s.syncStatus);
+  const syncErrorMessage = syncStatus.errorMessage;
   const isOnline = useAppStore((s) => s.isOnline);
   const displayName = useAppStore((s) => s.currentUserDisplayName);
-  const unreadCount = useNotificationCount();
   const { info: sessionInfo } = useSession();
   const deviceTrust = useDeviceTrustStatus();
 
   const navigate = useNavigate();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [syncCenterOpen, setSyncCenterOpen] = useState(false);
+  const syncConflicts = useSyncOrchestratorStore((s) => s.conflictInbox.length);
+  const rejectedOutbox = useSyncOrchestratorStore((s) => s.rejectedOutboxCount);
+  const syncNeedsAttention = syncConflicts > 0 || rejectedOutbox > 0;
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   // Ctrl+K / ⌘K global shortcut for command palette
@@ -87,8 +94,8 @@ export function TopBar() {
         <Menu className="h-4 w-4" />
       </button>
 
-      {/* Logo / product name */}
-      <span className="text-sm font-semibold text-text-primary select-none mr-4">Maintafox</span>
+      {/* Logo + wordmark (desktop shell) */}
+      <MaintafoxWordmark size="sm" className="mr-4 shrink-0" />
 
       {/* Search — opens command palette */}
       <div className="flex-1 hidden md:flex items-center">
@@ -112,24 +119,30 @@ export function TopBar() {
       {/* Right controls */}
       <div className="ml-auto flex items-center gap-1">
         {/* Sync status indicator */}
-        <SyncIndicator state={syncStatus.state} isOnline={isOnline} />
+        <SyncIndicator
+          state={syncStatus.state}
+          isOnline={isOnline}
+          errorMessage={syncErrorMessage}
+        />
+
+        <button
+          type="button"
+          onClick={() => setSyncCenterOpen(true)}
+          title={t("sync.syncCenter")}
+          className={`btn-ghost relative px-2 py-1.5 ${syncNeedsAttention ? "text-status-danger" : ""}`}
+          aria-label={t("sync.syncCenter")}
+        >
+          <Cloud
+            className={`h-4 w-4 ${syncNeedsAttention ? "animate-pulse drop-shadow-[0_0_6px_rgba(239,68,68,0.85)]" : ""}`}
+          />
+          {syncNeedsAttention ? (
+            <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-status-danger ring-2 ring-surface-1" />
+          ) : null}
+        </button>
+        <SyncCenterModal open={syncCenterOpen} onOpenChange={setSyncCenterOpen} />
 
         {/* Notification bell */}
-        <button
-          aria-label={t("notifications.label", { count: unreadCount })}
-          className="relative btn-ghost px-2 py-1.5"
-        >
-          <Bell className="h-4 w-4" />
-          {unreadCount > 0 && (
-            <span
-              className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center
-                         justify-center rounded-full bg-status-danger
-                         text-2xs font-bold text-white"
-            >
-              {unreadCount > 99 ? "99+" : unreadCount}
-            </span>
-          )}
-        </button>
+        <NotificationBell />
 
         {/* User menu */}
         <div ref={userMenuRef} className="relative">
@@ -211,8 +224,21 @@ export function TopBar() {
   );
 }
 
-function SyncIndicator({ state, isOnline }: { state: string; isOnline: boolean }) {
+function SyncIndicator({
+  state,
+  isOnline,
+  errorMessage,
+}: {
+  state: string;
+  isOnline: boolean;
+  errorMessage: string | null;
+}) {
   const { t } = useTranslation("shell");
+
+  const errorDetailTitle =
+    state === "error" && errorMessage?.trim()
+      ? `${t("sync.error")}: ${errorMessage}`
+      : t("sync.error");
 
   if (!isOnline) {
     return (
@@ -227,7 +253,7 @@ function SyncIndicator({ state, isOnline }: { state: string; isOnline: boolean }
     );
   }
 
-  if (state === "syncing") {
+  if (state === "running") {
     return (
       <span
         className="flex items-center gap-1 rounded px-2 py-1 text-xs
@@ -240,15 +266,53 @@ function SyncIndicator({ state, isOnline }: { state: string; isOnline: boolean }
     );
   }
 
+  if (state === "degraded") {
+    return (
+      <span
+        className="flex items-center gap-1 rounded px-2 py-1 text-xs
+                   bg-status-warning/10 text-status-warning"
+        title={t("sync.error")}
+      >
+        <AlertCircle className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">Degraded</span>
+      </span>
+    );
+  }
+
+  if (state === "blocked" || state === "paused") {
+    return (
+      <span
+        className="flex items-center gap-1 rounded px-2 py-1 text-xs
+                   bg-status-warning/10 text-status-warning"
+        title={state === "paused" ? "Sync paused by operator policy" : "Sync blocked by policy"}
+      >
+        <AlertCircle className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">{state === "paused" ? "Paused" : "Blocked"}</span>
+      </span>
+    );
+  }
+
   if (state === "error") {
     return (
       <span
         className="flex items-center gap-1 rounded px-2 py-1 text-xs
-                   bg-status-danger/10 text-status-danger"
-        title={t("sync.error")}
+                   bg-status-danger/10 text-status-danger max-w-[min(28rem,55vw)]"
+        title={errorDetailTitle}
       >
-        <AlertCircle className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">{t("sync.error")}</span>
+        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+        <span className="hidden sm:inline truncate">{t("sync.error")}</span>
+      </span>
+    );
+  }
+
+  if (state === "scheduled") {
+    return (
+      <span
+        className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-muted"
+        title="Sync scheduled"
+      >
+        <Clock className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">Scheduled</span>
       </span>
     );
   }

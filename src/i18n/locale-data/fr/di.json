@@ -3,7 +3,12 @@
     "title": "Demandes d'intervention",
     "titleDetail": "Détail de la demande",
     "titleNew": "Nouvelle demande",
-    "titleEdit": "Modifier la demande"
+    "titleEdit": "Modifier la demande",
+    "viewList": "Liste",
+    "viewKanban": "Kanban",
+    "viewCalendar": "Calendrier",
+    "viewDashboard": "Tableau de bord",
+    "filterSettings": "Paramètres des filtres"
   },
   "list": {
     "columns": {
@@ -19,12 +24,16 @@
     },
     "filters": {
       "status": "Statut",
+      "reviewQueue": "File de validation",
+      "triageInbox": "DIs à trier / flux d'entrée",
       "priority": "Priorité",
       "assignedTo": "Assigné à",
       "dateRange": "Période"
     }
   },
   "detail": {
+    "close": "Fermer",
+    "safety": "Sécurité",
     "sections": {
       "request": "Demande",
       "analysis": "Analyse",
@@ -43,10 +52,25 @@
       "assignedTo": "Assigné à",
       "dueDate": "Échéance",
       "closedAt": "Date de clôture",
-      "conclusion": "Conclusion"
+      "conclusion": "Conclusion",
+      "origin": "Origine",
+      "asset": "Équipement",
+      "orgNode": "Nœud org.",
+      "impact": "Impact",
+      "production": "Production"
+    },
+    "tabs": {
+      "attachments": "Pièces jointes",
+      "stateLog": "Historique des statuts",
+      "activity": "Journal d'activité"
     }
   },
   "form": {
+    "section": {
+      "requester": "Déclarant",
+      "equipment": "Équipement",
+      "general": "Informations générales"
+    },
     "subject": {
       "label": "Objet",
       "placeholder": "Décrivez brièvement le problème"
@@ -59,9 +83,67 @@
       "label": "Équipement concerné",
       "placeholder": "Sélectionnez un équipement"
     },
+    "equipmentSearch": "Rechercher un équipement...",
     "priority": {
       "label": "Priorité"
-    }
+    },
+    "observedAt": {
+      "label": "Date de constatation"
+    },
+    "originType": {
+      "label": "Origine"
+    },
+    "symptom": {
+      "label": "Symptôme",
+      "placeholder": "Sélectionnez un symptôme",
+      "searchPlaceholder": "Rechercher un symptôme..."
+    },
+    "impactLevel": {
+      "label": "Niveau d'impact"
+    },
+    "safetyFlag": {
+      "label": "Enjeu sécurité"
+    },
+    "environmentalFlag": {
+      "label": "Enjeu environnemental"
+    },
+    "qualityFlag": {
+      "label": "Enjeu qualité"
+    },
+    "productionImpact": {
+      "label": "Impact production"
+    },
+    "origin": {
+      "operator": "Opérateur",
+      "technician": "Technicien",
+      "inspection": "Inspection",
+      "pm": "Maintenance préventive",
+      "iot": "IoT / Capteur",
+      "quality": "Qualité",
+      "hse": "HSE",
+      "production": "Production",
+      "external": "Externe"
+    },
+    "impact": {
+      "unknown": "Inconnu",
+      "none": "Aucun",
+      "minor": "Mineur",
+      "major": "Majeur",
+      "critical": "Critique"
+    },
+    "validation": {
+      "titleRequired": "Le titre est requis",
+      "descriptionRequired": "La description est requise",
+      "equipmentRequired": "L'équipement est requis",
+      "originRequired": "L'origine est requise",
+      "symptomRequired": "Le symptôme est requis",
+      "urgencyRequired": "La priorité est requise",
+      "impactRequired": "Le niveau d'impact est requis",
+      "assetMissingOrgNode": "L'équipement sélectionné n'a pas d'unité organisationnelle. Veuillez en attribuer une d'abord."
+    },
+    "cancel": "Annuler",
+    "submit": "Créer la demande",
+    "update": "Enregistrer les modifications"
   },
   "status": {
     "new": "Nouvelle",
@@ -80,6 +162,7 @@
     "critical": "Critique"
   },
   "action": {
+    "create": "Nouvelle DI",
     "approve": "Approuver",
     "reject": "Rejeter",
     "assignTo": "Assigner à",
@@ -91,5 +174,254 @@
     "list": "Aucune demande d'intervention.",
     "listHint": "Créez une nouvelle demande ou ajustez les filtres.",
     "noComments": "Aucun commentaire pour cette demande."
+  },
+  "lookup": {
+    "existingValues": "Valeurs existantes",
+    "loading": "Chargement…",
+    "empty": "Aucune valeur. Créez-en une à droite.",
+    "editTitle": "Modifier la valeur",
+    "createTitle": "Nouvelle valeur",
+    "newEntry": "Nouveau",
+    "name": "Nom",
+    "namePlaceholder": "Nom de la valeur",
+    "description": "Description",
+    "descriptionPlaceholder": "Description optionnelle…",
+    "suggestions": "Suggestions",
+    "create": "Créer",
+    "update": "Mettre à jour",
+    "saving": "Enregistrement…",
+    "cancel": "Annuler",
+    "close": "Fermer",
+    "manage": "Gérer"
+  },
+  "sla": {
+    "title": "Règles SLA",
+    "description": "Configurez les délais de réponse et de résolution pour chaque niveau d'urgence.",
+    "loading": "Chargement des règles…",
+    "empty": "Aucune règle SLA configurée.",
+    "columns": {
+      "name": "Règle",
+      "urgency": "Urgence",
+      "response": "Réponse (h)",
+      "resolution": "Résolution (h)",
+      "escalation": "Escalade (h)",
+      "active": "Actif"
+    },
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "close": "Fermer"
+  },
+  "stateLog": {
+    "empty": "Aucun changement d'état enregistré.",
+    "from": "De",
+    "to": "Vers",
+    "action": "Événement",
+    "at": "Date / heure",
+    "actor": "Par",
+    "actionLabel": {
+      "intake_submitted": "Soumission d'entrée (déclarant)",
+      "submit": "Soumission d'entrée (déclarant)",
+      "triage_accept": "Tri d'entrée : admis en file de revue",
+      "screen": "Tri technique",
+      "advance_to_approval": "Transmis pour approbation",
+      "return_for_clarification": "Renvoyé pour clarification",
+      "reject": "Rejet",
+      "approve": "Approbation",
+      "defer": "Report",
+      "reactivate": "Réactivation",
+      "convert": "Conversion en ordre de travail",
+      "screened": "Tri validé",
+      "returned": "Renvoyé",
+      "rejected": "Rejeté",
+      "approved": "Approuvé",
+      "deferred": "Reporté",
+      "none": "—"
+    },
+    "unknownAction": "Événement : {{action}}"
+  },
+  "auditTimeline": {
+    "loadError": "Impossible de charger le journal d'activité.",
+    "empty": "Aucun événement d'activité pour cette demande.",
+    "rawAction": "Code événement",
+    "resultApplied": "Appliqué",
+    "resultBlocked": "Bloqué",
+    "resultPartial": "Partiel",
+    "stepUp": "Rehaussement",
+    "actorUser": "Utilisateur n°{{id}}",
+    "actorSystem": "Système",
+    "actionLabel": {
+      "submit": "Prise en compte (déclarant)",
+      "intake_submitted": "Prise en compte (déclarant)",
+      "triage_submitted": "Tri d'entrée : admis en file de revue",
+      "triage_accept": "Tri d'entrée : admis en file de revue",
+      "screened": "Tri effectué",
+      "returned": "Renvoyé pour clarification",
+      "rejected": "Rejeté",
+      "approved": "Approuvé",
+      "converted": "Conversion",
+      "blocked": "Bloqué"
+    }
+  },
+  "attachments": {
+    "heading": "Pièces jointes",
+    "uploading": "Téléversement en cours…",
+    "dropHint": "Glisser-déposer ou cliquer pour ajouter un fichier",
+    "maxSize": "Max {{mb}} Mo",
+    "fileTooBig": "Le fichier « {{name}} » dépasse la taille maximale de {{mb}} Mo.",
+    "empty": "Aucune pièce jointe.",
+    "confirmDelete": "Confirmer",
+    "cancelDelete": "Annuler",
+    "deleteTitle": "Supprimer la pièce jointe"
+  },
+  "kanban": {
+    "colSubmitted": "Soumises / entrée",
+    "colReview": "En revue",
+    "colApproved": "Approuvées / planifiées",
+    "colWork": "En travaux",
+    "colClosed": "Clôturées"
+  },
+  "woConversion": {
+    "checkAsset": "Actif confirmé",
+    "checkClassif": "Classification définie",
+    "checkUrgency": "Urgence validée"
+  },
+  "print": {
+    "htmlLang": "fr",
+    "docTitle": "Fiche DI — {{code}}",
+    "ficheTitle": "Fiche de Demande d'Intervention",
+    "headerSubtitle": "Document confidentiel",
+    "refStrip": "Réf. : {{code}} | Date d'émission : {{date}}",
+    "identification": "IDENTIFICATION",
+    "equipment": "ÉQUIPEMENT CONCERNÉ",
+    "flags": "DRAPEAUX",
+    "description": "DESCRIPTION",
+    "reviewNotes": "NOTES DE REVUE",
+    "conversion": "CONVERSION",
+    "signatures": "Signatures",
+    "codeDi": "Code DI",
+    "title": "Titre",
+    "status": "Statut",
+    "urgencyReported": "Urgence déclarée",
+    "urgencyValidated": "Urgence validée",
+    "origin": "Origine",
+    "impactLevel": "Niveau d'impact",
+    "createdAt": "Créée le",
+    "submittedAt": "Soumise le",
+    "asset": "Équipement",
+    "subAsset": "Sous-ensemble",
+    "orgNode": "Nœud organisationnel",
+    "observedOn": "Observée le",
+    "declarant": "Déclarant",
+    "convertedToWo": "Convertie en OT",
+    "convertedAt": "Date de conversion",
+    "flagSafety": "Sécurité",
+    "flagEnv": "Environnement",
+    "flagQuality": "Qualité",
+    "flagProd": "Impact production",
+    "sigReporter": "Déclarant",
+    "sigChecker": "Vérificateur",
+    "sigMaint": "Resp. Maintenance",
+    "signatureLine": "Signature : _______________",
+    "dateLine": "Date : __/__/____",
+    "footer": "Réf. : {{code}} | {{product}} | {{date}} — Document confidentiel"
+  },
+  "approvalPrint": {
+    "title": "Fiche de validation — Demande d'intervention",
+    "subtitle": "Réf. : {{code}} — Date d'émission : {{date}}",
+    "thCode": "Code DI",
+    "thTitle": "Titre",
+    "thStatus": "Statut",
+    "thPriority": "Priorité",
+    "thOrigin": "Origine",
+    "thImpact": "Niveau d'impact",
+    "thAsset": "Équipement",
+    "thOrg": "Nœud org.",
+    "thSubmitted": "Date soumission",
+    "thDescription": "Description",
+    "thReviewerNote": "Note de revue",
+    "thApprovalNote": "Note d'approbation",
+    "conversion": "Transférée vers l'OT : {{from}} → {{to}}",
+    "sigDeclarant": "Déclarant",
+    "sigApprover": "Approbateur",
+    "sigResp": "Responsable maintenance",
+    "footer": "Document : {{code}}-APPROBATION — Confidentiel"
+  },
+  "triage": {
+    "panelTitle": "DIs à trier / Flux d'entrée",
+    "loading": "Chargement…",
+    "seeAllInList": "Voir la liste complète ({{more}} de plus)",
+    "acceptForReview": "Accepter pour revue"
+  },
+  "permissions": {
+    "diScreen": "Trier les demandes d'intervention en entrée (soumission → file de revue)"
+  },
+  "review": {
+    "panelTitle": "DI en attente de validation",
+    "seeAllInList": "Voir la liste complète ({{more}} de plus)",
+    "modified": "Modifiée",
+    "view": "Voir le détail",
+    "returnAction": "Renvoyer",
+    "approvalTitle": "Approuver & Convertir en OT",
+    "approvalNote": "Note d'approbation",
+    "approvalNotePlaceholder": "Note optionnelle pour le dossier d'approbation…",
+    "approver": "Approbateur",
+    "print": "Imprimer",
+    "approveAndConvert": "Approuver & Convertir",
+    "reviewerNote": "Note du valideur",
+    "rejectionTitle": "Rejeter la demande d'intervention",
+    "reasonCode": "Motif de rejet",
+    "reasonCodePlaceholder": "Saisissez le motif du rejet",
+    "reasonCodeRequired": "Le motif de rejet est requis",
+    "rejectionNotes": "Notes complémentaires",
+    "rejectionNotesPlaceholder": "Contexte additionnel optionnel…",
+    "irreversibleWarning": "Cette action est irréversible.",
+    "rejectAndConfirm": "Rejeter & Confirmer",
+    "returnTitle": "Renvoyer pour clarification",
+    "clarificationNote": "Note de clarification",
+    "clarificationNotePlaceholder": "Décrivez les informations nécessaires…",
+    "clarificationRequired": "La note de clarification est requise",
+    "returnInfo": "La DI sera renvoyée au déclarant.",
+    "screenAction": "Valider le tri"
+  },
+  "dashboard": {
+    "total": "Total",
+    "pending": "En attente",
+    "inProgress": "En cours",
+    "slaCompliance": "SLA respecté",
+    "closedThisMonth": "Clôturées (mois)",
+    "overdue": "En retard",
+    "safetyIssues": "Enjeux sécurité",
+    "avgAge": "Âge moyen",
+    "statusDistribution": "Répartition par statut",
+    "priorityDistribution": "Répartition par priorité",
+    "trend": "Tendance",
+    "allTime": "Tout",
+    "created": "Créées",
+    "closed": "Clôturées",
+    "topEquipment": "Top 10 Équipements",
+    "overdueDis": "DI en retard",
+    "daysOverdue": "Jours de retard"
+  },
+  "calendar": {
+    "today": "Aujourd'hui",
+    "mode": {
+      "month": "Mois",
+      "week": "Semaine",
+      "day": "Jour"
+    }
+  },
+  "archive": {
+    "title": "Archive"
+  },
+  "search": {
+    "placeholder": "Rechercher par code, objet, description…"
+  },
+  "contextMenu": {
+    "viewDetail": "Voir le détail",
+    "edit": "Modifier",
+    "delete": "Supprimer",
+    "approve": "Approuver",
+    "reject": "Rejeter",
+    "return": "Renvoyer pour clarification"
   }
 }

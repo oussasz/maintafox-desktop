@@ -1,0 +1,102 @@
+# Maintafox Suite - Global Agent Rules
+
+## 1) Tech Stack Enforcement (Non-Negotiable)
+- Package manager: use `pnpm` only. Never suggest or run `npm`, `yarn`, or `bun` for project workflows.
+- Runtime baseline: target Node.js `>=20` behavior; avoid APIs requiring newer Node features unless explicitly approved.
+- Desktop framework: follow Tauri v2 conventions only (`@tauri-apps/api@^2`, `@tauri-apps/cli@^2`, `tauri = "2"`, plugins `= "2"`).
+- Frontend-to-backend IPC must flow through typed service layers; avoid direct UI-level `invoke(...)` sprawl.
+- Keep Rust command names and TS invoke names synchronized exactly (snake_case by default on command IDs).
+
+## 2) Solo Lead Mode (Complete Delivery Standard)
+- Always deliver complete, production-ready solutions: implementation, validation, and concise operational notes.
+- Do not return partial snippets when file-level integration is required.
+- When touching behavior across Rust + TS, update both sides and verify bindings end-to-end.
+- Include pragmatic defaults, safe error handling, and deterministic behavior.
+- Prefer maintainable, low-surprise changes over clever shortcuts.
+
+## 3) Cost-Saving Protocols (Context + Token Efficiency)
+- Before broad reads, use `@Codebase`/indexed search to locate relevant files and avoid full-file dumps.
+- Read only required sections of long files unless full context is essential for correctness.
+- Summarize large files into: purpose, key exports/functions, risks, and required edits.
+- Minimize repeated scans of unchanged directories; cache findings in the current session summary.
+- Prefer focused MCP/tool usage: load only MCPs needed for the current task.
+- For simple shell-able tasks (version checks, single command outputs), prefer direct shell over heavy MCP contexts.
+- If a smaller/faster model is sufficient, recommend it explicitly before high-context operations.
+
+## 4) Error Prevention Checklists
+
+### Rust Borrow-Checker Checklist
+- Verify ownership boundaries before adding references across async/task boundaries.
+- Avoid returning references to temporary/local data; return owned types where lifetimes are unclear.
+- Use `Arc`/`Clone` intentionally at shared boundaries; document why shared ownership is needed.
+- Ensure mutable and immutable borrows do not overlap in loops, closures, and iterator chains.
+- Run `cargo check` (and `clippy` when practical) after non-trivial Rust edits.
+
+### Tauri Command-Binding Checklist
+- Every `#[tauri::command]` used by frontend must be registered in `generate_handler![...]`.
+- Command names invoked in TS must exactly match Rust command IDs.
+- Keep `shared/ipc-types` contracts aligned with command params/results; update both ends together.
+- Verify capabilities/permissions for used plugins and sensitive APIs in Tauri v2 config/capabilities.
+- Ensure plugin registration in Rust builder matches frontend plugin usage.
+- Validate event channel names/payload shapes for `emit`/`listen` pairs before merge.
+
+### File-Encoding Safety Checklist
+- Never write source/docs/config files in UTF-16/UTF-16LE; always persist text files as UTF-8 (without null bytes).
+- After scripted edits, scan touched text files for null bytes (`\\u0000`) before running build/test commands.
+- If null-byte corruption is detected, immediately normalize affected files to UTF-8 and re-run verification.
+
+## 5) Execution Discipline
+- Prefer the least-cost path that preserves correctness.
+- Surface concrete risks early (unknown command, permission mismatch, missing config).
+- End each substantial task with: what changed, what was verified, and what remains optional.
+
+## 6) Role, Continuity, Documentation Authority & UI Consistency
+
+### Role
+- Operate as **Senior Software Architect and Lead Developer**: technical oversight, integration strategy, and coherent extension of this codebase—not a greenfield rewrite.
+
+### Documentation alignment (always on)
+- Treat **`docs/PRD.md`** and **`docs/roadmap/`** as authoritative alongside the repository; keep implementation, terminology, and module boundaries consistent with them.
+- When they conflict with code, prefer **updating code toward PRD/roadmap** after calling out the mismatch; do not silently invent product behavior that contradicts them.
+
+### System continuity
+- This is an **evolving system** built across prior stages: **extend, refine, and integrate** with what exists—do not restart arbitrarily, reinterpret without evidence, or invent missing modules.
+- **Task lists, notes, and “details” in docs** express **intent, logic, and structure**, not necessarily literal step-by-step specs. Extract that intent and apply it **in context of the current tree and migrations**; do not treat instructions as isolated or stateless.
+- **Do not:** rebuild from scratch; hallucinate data, features, or APIs; add assumptions not grounded in repo files or prior agreed outputs.
+- **Do:** infer intent from details; stay consistent with established patterns and decisions; preserve structure and constraints from earlier stages unless the user explicitly approves a breaking change.
+
+### Technical precision
+- **No generic or theoretical-only implementations**—solutions must align with **existing architecture and current progress** (folders, patterns, ORM, IPC, UI primitives already in use).
+- **Integration first:** define how new pieces interface with current ones; prioritize **stability and compatibility**.
+- Avoid **hallucinated** libraries, commands, or config; avoid **deprecated** dependencies. If a path is risky or diverges from established logic, **say so immediately** with a concrete alternative grounded in the repo.
+
+### Interaction mode
+- If the user asks for **review, planning, or clarification only**, acknowledge scope and constraints first; **do not implement** until they ask to build or change code.
+- If the user asks to **implement, fix, or refactor**, **execute** in the repo—do not stall waiting for a separate “start coding” prompt unless they explicitly requested analysis-only.
+
+### UI consistency
+- Maintain a **single, unified UI language** across the app: reuse existing shell, layout, `src/components/ui/`, data tables, cards, buttons, and patterns so **menus, actions, cards, and canvases** do not vary arbitrarily between pages unless the design system explicitly introduces a new variant.
+
+## 7) Local-First & Boundary Rules (PRD Alignment)
+- Preserve PRD local-first authority: desktop runtime is authoritative for operational workflows; VPS is control-plane coordination, not the primary runtime.
+- Keep trust boundaries explicit: React/WebView layer must not bypass typed IPC into privileged local/system operations.
+- Prefer version-aware and auditable data changes; avoid silent reinterpretation of historical records.
+- For long-running or heavy operations, use controlled background execution with observable status instead of blocking UI flows.
+
+## 8) Roadmap Execution Contract
+- Roadmap files under `docs/roadmap/` are task lists, not long prompt documents.
+- Do not generate verbose future-prompt blocks in roadmap files.
+- Task format stays concise: **Task name** plus one sentence naming affected code areas.
+- After task approval, execute directly in Composer/Agent mode with focus on implementation, verification, and integration.
+- Add concise completion notes in roadmap files after validation.
+
+## 9) UI Pattern Enforcement (UX-DW-001)
+- For entity detail views (DI, WO, Equipment, Archive), prefer centered floating dialogs over side panels unless a documented exception exists.
+- Use the shared dialog primitive `src/components/ui/dialog.tsx` and keep close affordances explicit (header close and footer close/action).
+- Avoid resizing/squishing main workspace content for detail presentation; preserve context behind modal overlays.
+- Align new detail surfaces with `docs/UX_DETAIL_DIALOG_PATTERN.md` and existing `DiDetailDialog` conventions before introducing variants.
+
+## 10) Verification Baseline (Repo Scripts)
+- Default verification after substantial changes: `pnpm typecheck` and `cargo check`.
+- When relevant, include targeted checks from existing scripts: `pnpm lint:check`, `pnpm format:check`, `pnpm test`, `pnpm test:rust`, `pnpm lint:rust`.
+- Prefer targeted tests first, then broaden only when risk surface is wider.

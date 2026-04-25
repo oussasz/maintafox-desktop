@@ -1,10 +1,12 @@
 import { useCallback } from "react";
-import { Navigate, Outlet } from "react-router-dom";
+import { Link, Navigate, Outlet } from "react-router-dom";
 
+import { PermissionProvider } from "@/contexts/PermissionContext";
 import { useSession } from "@/hooks/use-session";
 import { ForcePasswordChangePage } from "@/pages/auth/ForcePasswordChangePage";
 import { LockScreen } from "@/pages/auth/LockScreen";
-import { logout as authLogout } from "@/services/auth-service";
+import { logout as authLogout, unlockSessionWithPin } from "@/services/auth-service";
+import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 
 /**
  * AuthGuard: session-state router.
@@ -21,10 +23,21 @@ import { logout as authLogout } from "@/services/auth-service";
  */
 export function AuthGuard() {
   const session = useSession();
+  const isBootstrapping = session.isLoading && session.info === null;
+  const isAuthLockOpen = useAuthInterceptorStore((s) => s.isLockOpen);
 
   const handleUnlock = useCallback(
     async (password: string) => {
       await session.unlock(password);
+    },
+    [session],
+  );
+
+  const handleUnlockWithPin = useCallback(
+    async (pin: string) => {
+      await unlockSessionWithPin({ pin });
+      // Force session refresh to pick up the new state
+      void session.refresh();
     },
     [session],
   );
@@ -43,7 +56,7 @@ export function AuthGuard() {
   }, [session]);
 
   // 1. Loading
-  if (session.isLoading) {
+  if (isBootstrapping) {
     return (
       <div className="flex h-screen items-center justify-center bg-surface-0">
         <div
@@ -63,13 +76,20 @@ export function AuthGuard() {
       <LockScreen
         displayName={info.display_name ?? info.username}
         onUnlock={handleUnlock}
+        onUnlockWithPin={handleUnlockWithPin}
         onLogout={handleLogout}
+        pinConfigured={info.pin_configured ?? false}
       />
     );
   }
 
   // 3. Not authenticated — redirect to login
   if (!info?.is_authenticated) {
+    // If the centralized auth interceptor is open, keep the current route mounted so in-memory
+    // form state isn't destroyed by an automatic redirect to /login.
+    if (isAuthLockOpen) {
+      return <Outlet />;
+    }
     return <Navigate to="/login" replace />;
   }
 
@@ -78,6 +98,30 @@ export function AuthGuard() {
     return <ForcePasswordChangePage onComplete={handleForceChange} />;
   }
 
-  // 5. Normal authenticated state
-  return <Outlet />;
+  const warnDays = info.password_expires_in_days;
+  const showPasswordWarning = typeof warnDays === "number" && warnDays <= 14;
+
+  // 5. Normal authenticated state — wrap with PermissionProvider
+  return (
+    <PermissionProvider>
+      <>
+        {showPasswordWarning && (
+          <div className="sticky top-0 z-40 border-b border-amber-300 bg-amber-50 px-4 py-2 text-amber-900">
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 text-sm">
+              <p>
+                Votre mot de passe expire dans {warnDays} {warnDays <= 1 ? "jour" : "jours"}.
+              </p>
+              <Link
+                to="/profile"
+                className="font-semibold underline decoration-amber-700 underline-offset-2"
+              >
+                Changer maintenant
+              </Link>
+            </div>
+          </div>
+        )}
+        <Outlet />
+      </>
+    </PermissionProvider>
+  );
 }

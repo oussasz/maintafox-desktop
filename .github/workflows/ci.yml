@@ -124,6 +124,10 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      - name: RAMS golden benchmarks (rams_golden)
+        working-directory: src-tauri
+        run: cargo test rams_golden
+
       - name: Rust schema integration tests
         working-directory: src-tauri
         run: cargo test db::schema_integration_test -- --nocapture

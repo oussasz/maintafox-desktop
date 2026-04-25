@@ -102,6 +102,30 @@ pub async fn get_setting(db: &DatabaseConnection, key: &str, scope: &str) -> App
     row.map(map_app_setting).transpose()
 }
 
+pub async fn list_all_settings(db: &DatabaseConnection) -> AppResult<Vec<AppSetting>> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            r"SELECT
+                   id,
+                   setting_key,
+                   setting_scope,
+                   setting_value_json,
+                   category,
+                   setting_risk,
+                   validation_status,
+                   secret_ref_id,
+                   last_modified_by_id,
+                   COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', last_modified_at), last_modified_at) AS last_modified_at
+               FROM app_settings
+               ORDER BY category, setting_key"
+                .to_string(),
+        ))
+        .await?;
+
+    rows.into_iter().map(map_app_setting).collect()
+}
+
 pub async fn list_settings_by_category(db: &DatabaseConnection, category: &str) -> AppResult<Vec<AppSetting>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -125,6 +149,22 @@ pub async fn list_settings_by_category(db: &DatabaseConnection, category: &str) 
         .await?;
 
     rows.into_iter().map(map_app_setting).collect()
+}
+
+pub async fn list_settings_categories(db: &DatabaseConnection) -> AppResult<Vec<String>> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT DISTINCT category FROM app_settings ORDER BY category".to_string(),
+        ))
+        .await?;
+
+    rows.into_iter()
+        .map(|r| {
+            r.try_get::<String>("", "category")
+                .map_err(|e| decode_err("category", e))
+        })
+        .collect()
 }
 
 pub async fn get_active_policy(db: &DatabaseConnection, domain: &str) -> AppResult<Option<PolicySnapshot>> {
@@ -244,6 +284,54 @@ pub async fn set_setting(
     );
 
     Ok(())
+}
+
+/// Remove a row from `app_settings` and append a settings change event (delete semantics).
+pub async fn delete_setting(
+    db: &DatabaseConnection,
+    key: &str,
+    scope: &str,
+    changed_by_id: i32,
+    change_summary: &str,
+) -> AppResult<bool> {
+    let old = get_setting(db, key, scope).await?;
+    let Some(old_row) = old else {
+        return Ok(false);
+    };
+    let old_hash = sha256_hex(&old_row.setting_value_json);
+    let now = chrono::Utc::now().to_rfc3339();
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM app_settings WHERE setting_key = ? AND setting_scope = ?",
+        [key.into(), scope.into()],
+    ))
+    .await?;
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        r"INSERT INTO settings_change_events
+               (setting_key_or_domain, change_summary, old_value_hash, new_value_hash,
+                changed_by_id, changed_at, required_step_up, apply_result)
+           VALUES (?, ?, ?, NULL, ?, ?, 0, 'applied')",
+        [
+            key.into(),
+            change_summary.into(),
+            old_hash.into(),
+            i64::from(changed_by_id).into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+
+    tracing::info!(
+        setting_key = key,
+        scope = scope,
+        actor = changed_by_id,
+        "setting deleted"
+    );
+
+    Ok(true)
 }
 
 pub async fn list_change_events(db: &DatabaseConnection, limit: i64) -> AppResult<Vec<SettingsChangeEvent>> {

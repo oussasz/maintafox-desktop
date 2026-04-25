@@ -72,10 +72,20 @@ export function Sidebar({ items }: SidebarProps) {
             )}
             {/* Nav items */}
             {group.children.map((item) => {
+              const tab = new URLSearchParams(location.search).get("tab");
               const isActive =
                 item.path === "/"
                   ? location.pathname === "/"
-                  : location.pathname.startsWith(item.path);
+                  : item.key === "training"
+                    ? location.pathname === "/personnel" && tab === "training"
+                    : item.key === "personnel"
+                      ? location.pathname === "/personnel" && tab !== "training"
+                      : item.key === "documentation"
+                        ? location.pathname.startsWith("/documentation")
+                        : item.path.includes("?")
+                          ? `${location.pathname}${location.search}` === item.path
+                          : location.pathname === item.path ||
+                            location.pathname.startsWith(`${item.path}/`);
               return (
                 <Link
                   key={item.key}

@@ -60,6 +60,10 @@ mod tests {
             "connection_profiles",
             "policy_snapshots",
             "settings_change_events",
+            // Migration 009 — org audit
+            "org_change_events",
+            // Migration 010 — asset identity
+            "asset_external_ids",
         ];
 
         for table in &expected_tables {
@@ -194,6 +198,79 @@ mod tests {
         assert_eq!(
             events_count, 0,
             "settings_change_events must remain empty during read-only seeding"
+        );
+    }
+
+    /// When only device-scoped rows remain (e.g. after `DELETE ... WHERE setting_scope = 'tenant'`),
+    /// baseline tenant settings must still be re-inserted — otherwise the Settings UI loses categories.
+    #[tokio::test]
+    async fn default_settings_seed_fills_missing_tenant_rows_when_table_not_empty() {
+        let db = sea_orm::Database::connect("sqlite::memory:")
+            .await
+            .expect("In-memory DB");
+
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        use sea_orm_migration::MigratorTrait;
+        crate::migrations::Migrator::up(&db, None).await.expect("Migrations");
+
+        let now = chrono::Utc::now().to_rfc3339();
+        for (key, cat, scope, val) in [
+            ("updater.release_channel", "system", "device", r#""stable""#),
+            ("updater.auto_check", "system", "device", r"true"),
+            ("diagnostics.log_retention_days", "system", "device", r"30"),
+        ] {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                r"INSERT INTO app_settings
+                       (setting_key, category, setting_scope, setting_value_json,
+                        setting_risk, validation_status, last_modified_at)
+                   VALUES (?, ?, ?, ?, 'low', 'valid', ?)",
+                [
+                    key.into(),
+                    cat.into(),
+                    scope.into(),
+                    val.into(),
+                    now.clone().into(),
+                ],
+            ))
+            .await
+            .expect("device-only seed insert");
+        }
+
+        crate::db::seeder::seed_default_settings(&db)
+            .await
+            .expect("Default settings seeding should succeed");
+
+        let settings_count = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS cnt FROM app_settings;".to_string(),
+            ))
+            .await
+            .expect("count")
+            .expect("row")
+            .try_get::<i64>("", "cnt")
+            .expect("cnt");
+
+        assert_eq!(settings_count, 14, "all baseline rows should exist");
+
+        let cat_rows = db
+            .query_all(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT DISTINCT category FROM app_settings ORDER BY category".to_string(),
+            ))
+            .await
+            .expect("categories");
+
+        let cats: Vec<String> = cat_rows
+            .into_iter()
+            .map(|r| r.try_get::<String>("", "category").expect("category"))
+            .collect();
+
+        assert_eq!(
+            cats,
+            vec!["appearance", "backup", "localization", "system"],
+            "tenant categories must be present alongside system"
         );
     }
 }

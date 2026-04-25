@@ -2,12 +2,19 @@
 // Components and hooks MUST NOT import from @tauri-apps/api/core directly
 // for auth operations.
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
-import type { LoginRequest, LoginResponse, SessionInfo } from "@shared/ipc-types";
+import { invoke, invokeSilent } from "@/lib/ipc-invoke";
+import type {
+  ClearPinInput,
+  LoginRequest,
+  LoginResponse,
+  PinUnlockInput,
+  SessionInfo,
+  SetPinInput,
+} from "@shared/ipc-types";
 
-// ── Zod schemas for runtime validation ────────────────────────────────────────
+// â”€â”€ Zod schemas for runtime validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const sessionInfoSchema = z.object({
   is_authenticated: z.boolean(),
   is_locked: z.boolean(),
@@ -18,13 +25,17 @@ const sessionInfoSchema = z.object({
   force_password_change: z.boolean().nullable(),
   expires_at: z.string().nullable(),
   last_activity_at: z.string().nullable(),
+  password_expires_in_days: z.number().nullable().default(null),
+  pin_configured: z.boolean().nullable().default(null),
+  tenant_id: z.string().nullable().default(null),
+  token_tenant_id: z.string().nullable().default(null),
 });
 
 const loginResponseSchema = z.object({
   session_info: sessionInfoSchema,
 });
 
-// ── Service functions ─────────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Attempt to log in with username and password.
@@ -47,7 +58,8 @@ export async function logout(): Promise<void> {
  * Safe to call on every app startup to determine initial route.
  */
 export async function getSessionInfo(): Promise<SessionInfo> {
-  const raw = await invoke<unknown>("get_session_info");
+  // Session polling should not create global toast side effects; UI layers decide how to surface.
+  const raw = await invokeSilent<unknown>("get_session_info");
   return sessionInfoSchema.parse(raw);
 }
 
@@ -73,4 +85,29 @@ export async function forceChangePassword(newPassword: string): Promise<SessionI
   // The response wraps session_info
   const parsed = z.object({ session_info: sessionInfoSchema }).parse(raw);
   return parsed.session_info;
+}
+
+/**
+ * Set or change the user's quick-unlock PIN.
+ * Requires the current password for verification.
+ */
+export async function setPin(input: SetPinInput): Promise<void> {
+  await invoke<void>("set_pin", { payload: input });
+}
+
+/**
+ * Clear the user's PIN (disable PIN unlock).
+ * Requires the current password for verification.
+ */
+export async function clearPin(input: ClearPinInput): Promise<void> {
+  await invoke<void>("clear_pin", { payload: input });
+}
+
+/**
+ * Unlock an idle-locked session using a PIN instead of the full password.
+ * Only valid when the session is locked and the user has a PIN configured.
+ */
+export async function unlockSessionWithPin(input: PinUnlockInput): Promise<SessionInfo> {
+  const raw = await invoke<unknown>("unlock_session_with_pin", { payload: input });
+  return sessionInfoSchema.parse(raw);
 }
