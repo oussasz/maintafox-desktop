@@ -90,6 +90,29 @@ export async function listReferenceDomains(): Promise<ReferenceDomain[]> {
   return z.array(ReferenceDomainSchema).parse(raw);
 }
 
+/**
+ * Resolve active values from the latest published set of a domain code.
+ * Returns an empty array if the domain or published set does not exist.
+ */
+export async function listPublishedReferenceValuesByDomainCode(
+  domainCode: string,
+): Promise<ReferenceValue[]> {
+  const code = domainCode.trim().toUpperCase();
+  if (!code) return [];
+  const domains = await listReferenceDomains();
+  const domain = domains.find((d) => d.code.trim().toUpperCase() === code);
+  if (!domain) return [];
+  const sets = await listReferenceSets(domain.id);
+  const published =
+    sets.filter((s) => s.status === "published").sort((a, b) => b.version_no - a.version_no)[0] ??
+    null;
+  if (!published) return [];
+  const values = await listReferenceValues(published.id);
+  return values
+    .filter((v) => v.is_active)
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+}
+
 export async function getReferenceDomain(domainId: number): Promise<ReferenceDomain> {
   const raw = await invoke<unknown>("get_reference_domain", { domainId });
   return ReferenceDomainSchema.parse(raw);

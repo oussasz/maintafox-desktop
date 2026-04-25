@@ -7,6 +7,7 @@
 
 import { CheckCircle2, XCircle, Loader2, AlertCircle } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   Button,
@@ -42,6 +43,7 @@ interface ChecklistItem {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function WoConversionModal({ di, onConverted, onClose }: WoConversionModalProps) {
+  const { t } = useTranslation("di");
   const [stepUpPin, setStepUpPin] = useState("");
   const [conversionNotes, setConversionNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -52,19 +54,19 @@ export function WoConversionModal({ di, onConverted, onClose }: WoConversionModa
   const checklist = useMemo<ChecklistItem[]>(
     () => [
       {
-        label: "Actif confirmé",
+        label: t("woConversion.checkAsset"),
         passed: di.asset_id != null && di.asset_id > 0,
       },
       {
-        label: "Classification définie",
+        label: t("woConversion.checkClassif"),
         passed: di.classification_code_id != null,
       },
       {
-        label: "Urgence validée",
+        label: t("woConversion.checkUrgency"),
         passed: di.validated_urgency != null,
       },
     ],
-    [di.asset_id, di.classification_code_id, di.validated_urgency],
+    [di.asset_id, di.classification_code_id, di.validated_urgency, t],
   );
 
   const allPassed = useMemo(() => checklist.every((item) => item.passed), [checklist]);

@@ -105,6 +105,11 @@ mod m20260722_000104_grant_sync_permissions_admin_roles;
 mod m20260723_000105_user_account_contact_fields;
 mod m20260724_000106_user_account_email_uniqueness;
 mod m20260725_000107_user_scope_assignments_unique_active_only;
+mod m20260726_000108_trusted_devices_user_fingerprint_unique;
+mod m20260727_000109_unlock_operator_supervisor_roles;
+mod m20260728_000110_di_reference_domains;
+mod m20260729_000111_di_intake_submit_permissions;
+mod m20260730_000112_di_screen_triage_refactor;
 mod m_test;
 
 pub struct Migrator;
@@ -218,6 +223,11 @@ impl MigratorTrait for Migrator {
             Box::new(m20260723_000105_user_account_contact_fields::Migration),
             Box::new(m20260724_000106_user_account_email_uniqueness::Migration),
             Box::new(m20260725_000107_user_scope_assignments_unique_active_only::Migration),
+            Box::new(m20260726_000108_trusted_devices_user_fingerprint_unique::Migration),
+            Box::new(m20260727_000109_unlock_operator_supervisor_roles::Migration),
+            Box::new(m20260728_000110_di_reference_domains::Migration),
+            Box::new(m20260729_000111_di_intake_submit_permissions::Migration),
+            Box::new(m20260730_000112_di_screen_triage_refactor::Migration),
             Box::new(m_test::Migration),
         ]
     }

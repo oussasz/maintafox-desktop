@@ -35,8 +35,11 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useSession } from "@/hooks/use-session";
 import { useDiReviewStore } from "@/stores/di-review-store";
-import type { InterventionRequest } from "@shared/ipc-types";
+import { useDiStore } from "@/stores/di-store";
+import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
+import type { DiTransitionRow, InterventionRequest } from "@shared/ipc-types";
 
 // ── Status → badge style mapping ────────────────────────────────────────────
 
@@ -88,22 +91,12 @@ function statusToI18nKey(s: string): DiStatusKey {
   return map[s] ?? "new";
 }
 
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  } catch {
-    return iso;
-  }
-}
-
 // ── Props ───────────────────────────────────────────────────────────────────
 
 interface DiDetailDialogProps {
   di: InterventionRequest | null;
+  /** State transition log from `get_di` (formal audit). */
+  transitions: DiTransitionRow[];
   open: boolean;
   onClose: () => void;
 }
@@ -122,14 +115,19 @@ const REVIEWABLE = new Set([
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export function DiDetailDialog({ di, open, onClose }: DiDetailDialogProps) {
-  const { t } = useTranslation("di");
+export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialogProps) {
+  const { t, i18n } = useTranslation("di");
+  const dateLocale = intlLocaleForLanguage(i18n.language);
   const { can } = usePermissions();
+  const { info } = useSession();
+  const triageSubmittedDi = useDiStore((s) => s.triageSubmittedDi);
+  const triageSaving = useDiStore((s) => s.saving);
   const openApproval = useDiReviewStore((s) => s.openApproval);
   const openRejection = useDiReviewStore((s) => s.openRejection);
   const openReturn = useDiReviewStore((s) => s.openReturn);
   const screen = useDiReviewStore((s) => s.screen);
   const [screenError, setScreenError] = useState<string | null>(null);
+  const [triageError, setTriageError] = useState<string | null>(null);
 
   const handleScreen = useCallback(async () => {
     if (!di) return;
@@ -170,10 +168,32 @@ export function DiDetailDialog({ di, open, onClose }: DiDetailDialogProps) {
     openReturn(di);
   }, [di, onClose, openReturn]);
 
+  const handleTriageAccept = useCallback(async () => {
+    if (!di) return;
+    setTriageError(null);
+    try {
+      await triageSubmittedDi({ di_id: di.id, expected_row_version: di.row_version });
+      window.dispatchEvent(new Event("mf:di-triage-refresh"));
+      window.dispatchEvent(new Event("mf:dashboard-kpis-refresh"));
+    } catch (e) {
+      setTriageError(e instanceof Error ? e.message : String(e));
+    }
+  }, [di, triageSubmittedDi]);
+
   if (!di) return null;
 
   const statusKey = statusToI18nKey(di.status);
-  const canReview = can("di.review") && REVIEWABLE.has(di.status);
+  const canUseReviewQueueActions = can("di.review") && REVIEWABLE.has(di.status);
+  const canRunScreen = (can("di.screen") || can("di.review")) && SCREENABLE.has(di.status);
+  const canTriageToReviewQueue =
+    di.status === "submitted" &&
+    (can("di.screen") || can("di.review")) &&
+    info?.user_id != null &&
+    info.user_id !== di.submitter_id;
+  const canUploadAttachment =
+    info != null &&
+    ((info.user_id === di.submitter_id && can("di.create.own")) || can("di.review"));
+  const canDeleteAttachment = can("di.admin");
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -225,7 +245,11 @@ export function DiDetailDialog({ di, open, onClose }: DiDetailDialogProps) {
               <InfoRow
                 icon={<Calendar className="h-3 w-3" />}
                 label={t("detail.fields.reportedAt")}
-                value={formatDate(di.submitted_at)}
+                value={formatDiDate(di.submitted_at, dateLocale, {
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                })}
               />
               <InfoRow
                 icon={<User className="h-3 w-3" />}
@@ -253,7 +277,12 @@ export function DiDetailDialog({ di, open, onClose }: DiDetailDialogProps) {
           </Card>
 
           {/* Tabs: attachments + audit */}
-          <DiDetailPanel di={di} canUploadAttachment={true} canDeleteAttachment={true} />
+          <DiDetailPanel
+            di={di}
+            transitions={transitions}
+            canUploadAttachment={canUploadAttachment}
+            canDeleteAttachment={canDeleteAttachment}
+          />
         </div>
 
         {/* ── Footer ──────────────────────────────────────────────────── */}
@@ -270,21 +299,31 @@ export function DiDetailDialog({ di, open, onClose }: DiDetailDialogProps) {
               {t("review.print")}
             </Button>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Review action buttons — only for users with di.review, on reviewable statuses */}
-            {canReview && SCREENABLE.has(di.status) && (
+          <div className="flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
+            {canTriageToReviewQueue && (
+              <Button
+                size="sm"
+                className="gap-1.5"
+                disabled={triageSaving}
+                onClick={() => void handleTriageAccept()}
+              >
+                <ClipboardCheck className="h-3.5 w-3.5" />
+                {t("triage.acceptForReview")}
+              </Button>
+            )}
+            {canRunScreen && (
               <Button
                 variant="outline"
                 size="sm"
                 className="gap-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                 onClick={handleScreen}
-                title={t("review.screenAction", "Valider le tri")}
+                title={t("review.screenAction")}
               >
                 <ClipboardCheck className="h-3.5 w-3.5" />
-                {t("review.screenAction", "Valider")}
+                {t("review.screenAction")}
               </Button>
             )}
-            {canReview && APPROVABLE.has(di.status) && (
+            {canUseReviewQueueActions && APPROVABLE.has(di.status) && (
               <Button
                 size="sm"
                 className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
@@ -295,7 +334,7 @@ export function DiDetailDialog({ di, open, onClose }: DiDetailDialogProps) {
                 {t("action.approve")}
               </Button>
             )}
-            {canReview && (
+            {canUseReviewQueueActions && di.status !== "submitted" && (
               <>
                 <Button
                   variant="outline"
@@ -305,7 +344,7 @@ export function DiDetailDialog({ di, open, onClose }: DiDetailDialogProps) {
                   title={t("review.returnAction")}
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
-                  {t("review.returnAction", "Retourner")}
+                  {t("review.returnAction")}
                 </Button>
                 <Button
                   variant="outline"
@@ -325,14 +364,14 @@ export function DiDetailDialog({ di, open, onClose }: DiDetailDialogProps) {
           </div>
         </div>
 
-        {/* Screen error */}
-        {screenError && (
+        {/* Screen / triage error */}
+        {(triageError ?? screenError) && (
           <div className="px-6 pb-3">
             <div
               role="alert"
               className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
             >
-              {screenError}
+              {triageError ?? screenError}
             </div>
           </div>
         )}

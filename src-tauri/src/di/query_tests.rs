@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(log.len(), 1, "exactly one transition log row on create");
         assert_eq!(log[0].from_status, "none");
         assert_eq!(log[0].to_status, "submitted");
-        assert_eq!(log[0].action, "submit");
+        assert_eq!(log[0].action, "intake_submitted");
         assert_eq!(log[0].actor_id, Some(user_id));
     }
 

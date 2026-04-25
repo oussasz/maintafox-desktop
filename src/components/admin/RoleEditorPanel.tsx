@@ -1,4 +1,4 @@
-import { AlertTriangle, Lock, Plus, Shield, Trash2, Wand2 } from "lucide-react";
+import { AlertTriangle, Circle, Lock, Plus, Shield, Trash2, Wand2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -654,7 +654,7 @@ export function RoleEditorPanel() {
                 {role.is_system ? (
                   <Lock className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
                 ) : (
-                  <Shield className="h-3.5 w-3.5 shrink-0 text-primary" />
+                  <Circle className="h-3.5 w-3.5 shrink-0 text-text-muted" />
                 )}
                 <span className="truncate">{role.name}</span>
                 <Badge variant="secondary" className="ml-auto text-[10px]">

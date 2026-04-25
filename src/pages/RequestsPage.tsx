@@ -20,8 +20,17 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
@@ -77,10 +86,21 @@ const URGENCY_STYLE: Record<string, string> = {
 
 type ViewMode = "list" | "kanban" | "calendar" | "dashboard";
 
+/** Same cohort as `loadReviewQueue` in `di-review-store` (pending triage + approval). */
+const DI_REVIEW_QUEUE_STATUSES = [
+  "pending_review",
+  "returned_for_clarification",
+  "awaiting_approval",
+] as const;
+
+const STATUS_FILTER_REVIEW_QUEUE = "__review_queue__";
+const STATUS_FILTER_TRIAGE_INBOX = "__triage_inbox__";
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function RequestsPage() {
   const { t } = useTranslation("di");
+  const [searchParams, setSearchParams] = useSearchParams();
   const items = useDiStore((s) => s.items);
   const total = useDiStore((s) => s.total);
   const loading = useDiStore((s) => s.loading);
@@ -105,9 +125,57 @@ export function RequestsPage() {
   const { can } = usePermissions();
   const [slaOpen, setSlaOpen] = useState(false);
 
+  useLayoutEffect(() => {
+    if (searchParams.get("review") !== "1") {
+      return;
+    }
+    setView("list");
+    localStorage.setItem("di-view-mode", "list");
+    setStatusFilter(STATUS_FILTER_REVIEW_QUEUE);
+    setFilter({
+      status: [...DI_REVIEW_QUEUE_STATUSES],
+      submitter_id: null,
+      limit: 200,
+      offset: 0,
+    });
+  }, [searchParams, setFilter, setView]);
+
+  useLayoutEffect(() => {
+    if (searchParams.get("triage") !== "1") {
+      return;
+    }
+    setView("list");
+    localStorage.setItem("di-view-mode", "list");
+    setStatusFilter(STATUS_FILTER_TRIAGE_INBOX);
+    setFilter({
+      status: ["submitted"],
+      submitter_id: null,
+      limit: 200,
+      offset: 0,
+    });
+  }, [searchParams, setFilter, setView]);
+
+  useEffect(() => {
+    const raw = searchParams.get("openDi");
+    if (raw) {
+      const id = Number.parseInt(raw, 10);
+      if (!Number.isNaN(id)) {
+        void openDi(id);
+        setSearchParams(
+          (prev) => {
+            const p = new URLSearchParams(prev);
+            p.delete("openDi");
+            return p;
+          },
+          { replace: true },
+        );
+      }
+    }
+  }, [searchParams, openDi, setSearchParams]);
+
   useEffect(() => {
     void loadDis();
-  }, [loadDis]);
+  }, [loadDis, searchParams]);
 
   const switchView = useCallback((v: ViewMode) => {
     setView(v);
@@ -156,10 +224,68 @@ export function RequestsPage() {
   const handleStatusFilter = useCallback(
     (val: string) => {
       setStatusFilter(val);
-      setFilter({ status: val === "__all__" ? null : [val] });
+      if (val === STATUS_FILTER_REVIEW_QUEUE) {
+        setFilter({
+          status: [...DI_REVIEW_QUEUE_STATUSES],
+          submitter_id: null,
+          limit: 200,
+          offset: 0,
+        });
+        setSearchParams(
+          (prev) => {
+            const p = new URLSearchParams(prev);
+            p.set("review", "1");
+            p.delete("triage");
+            return p;
+          },
+          { replace: true },
+        );
+      } else if (val === STATUS_FILTER_TRIAGE_INBOX) {
+        setFilter({
+          status: ["submitted"],
+          submitter_id: null,
+          limit: 200,
+          offset: 0,
+        });
+        setSearchParams(
+          (prev) => {
+            const p = new URLSearchParams(prev);
+            p.delete("review");
+            p.set("triage", "1");
+            return p;
+          },
+          { replace: true },
+        );
+      } else {
+        if (searchParams.get("review")) {
+          setSearchParams(
+            (prev) => {
+              const p = new URLSearchParams(prev);
+              p.delete("review");
+              return p;
+            },
+            { replace: true },
+          );
+        }
+        if (searchParams.get("triage")) {
+          setSearchParams(
+            (prev) => {
+              const p = new URLSearchParams(prev);
+              p.delete("triage");
+              return p;
+            },
+            { replace: true },
+          );
+        }
+        if (val === "__all__") {
+          setFilter({ status: null, submitter_id: null, limit: 50, offset: 0 });
+        } else {
+          setFilter({ status: [val], submitter_id: null, limit: 50, offset: 0 });
+        }
+      }
       void loadDis();
     },
-    [loadDis, setFilter],
+    [loadDis, setFilter, searchParams, setSearchParams],
   );
 
   const handlePriorityFilter = useCallback(
@@ -363,6 +489,14 @@ export function RequestsPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">{t("list.filters.status")}</SelectItem>
+              <SelectItem value={STATUS_FILTER_REVIEW_QUEUE}>
+                {t("list.filters.reviewQueue")}
+              </SelectItem>
+              {(can("di.screen") || can("di.review")) && (
+                <SelectItem value={STATUS_FILTER_TRIAGE_INBOX}>
+                  {t("list.filters.triageInbox")}
+                </SelectItem>
+              )}
               {STATUS_OPTIONS.map((opt) => (
                 <SelectItem key={opt.code} value={opt.code}>
                   {opt.label}
@@ -388,7 +522,7 @@ export function RequestsPage() {
       )}
 
       {/* ── Review panel (approvers only) ────────────────────────── */}
-      <PermissionGate permission="di.review">
+      <PermissionGate anyOf={["di.screen", "di.review"]}>
         <DiReviewPanel />
       </PermissionGate>
 
@@ -420,7 +554,12 @@ export function RequestsPage() {
       <DiArchivePanel />
 
       {/* ── Floating detail dialog ───────────────────────────────────── */}
-      <DiDetailDialog di={activeDi?.di ?? null} open={activeDi !== null} onClose={closeDi} />
+      <DiDetailDialog
+        di={activeDi?.di ?? null}
+        transitions={activeDi?.transitions ?? []}
+        open={activeDi !== null}
+        onClose={closeDi}
+      />
 
       <DiFormDialog />
 

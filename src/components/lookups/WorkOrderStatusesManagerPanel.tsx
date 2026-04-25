@@ -1,10 +1,11 @@
-import { AlertTriangle, Check, Lock, Pencil, X } from "lucide-react";
+import { AlertTriangle, Check, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ReferenceColorSwatchHex } from "@/components/lookups/ReferenceColorSwatchHex";
 import {
   REF_TABLE_ACTIONS_GROUP_CLASS,
+  refTableHeaderAddButtonClass,
   refTableIconButtonClass,
 } from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +46,7 @@ export function WorkOrderStatusesManagerPanel() {
   }, [loadRows]);
 
   const beginEdit = (row: WorkOrderStatusOption) => {
+    if (row.is_system) return;
     setEditingId(row.id);
     setEditingDraft({ label: row.label, color: row.color });
   };
@@ -74,13 +76,25 @@ export function WorkOrderStatusesManagerPanel() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-col gap-1 border-b border-surface-border px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-semibold text-text-primary">
-            {t("woStatuses.panelTitle")}
-          </span>
-          <Badge variant="default" className="text-[10px]">
-            v1 — {t("browser.status.published")}
-          </Badge>
+        <div className="flex items-center justify-between">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-semibold text-text-primary">
+              {t("woStatuses.panelTitle")}
+            </span>
+            <Badge variant="default" className="text-[10px]">
+              v1 — {t("browser.status.published")}
+            </Badge>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className={refTableHeaderAddButtonClass()}
+            disabled
+            aria-label={t("editor.addValue")}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t("editor.addValue")}
+          </Button>
         </div>
         <p className="text-xs text-text-muted">{t("woStatuses.lifecycleHint")}</p>
       </div>
@@ -232,10 +246,19 @@ export function WorkOrderStatusesManagerPanel() {
                               size="icon"
                               className={refTableIconButtonClass()}
                               onClick={() => beginEdit(row)}
-                              disabled={saving}
+                              disabled={saving || row.is_system}
                               aria-label={t("editor.edit")}
                             >
                               <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={refTableIconButtonClass()}
+                              disabled
+                              aria-label={t("editor.deactivate")}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         )

@@ -56,7 +56,10 @@ pub async fn apply_sync_batch(
     state: State<'_, AppState>,
 ) -> AppResult<ApplySyncBatchResult> {
     let user = require_session!(state);
-    require_permission_allowing_system_admin!(state, &user, "sync.manage", PermissionScope::Global);
+    // Runtime sync exchange is a normal operator flow. Keep it aligned with
+    // `get_sync_push_payload` (`sync.view`) so users with sync visibility can
+    // complete the pull/apply cycle without admin-only `sync.manage`.
+    require_permission_allowing_system_admin!(state, &user, "sync.view", PermissionScope::Global);
     let result = queries::apply_sync_batch(&state.db, input).await?;
     tracing::info!(
         event = "desktop_sync_apply_batch",

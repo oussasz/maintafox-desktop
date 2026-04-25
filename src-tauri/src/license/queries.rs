@@ -68,8 +68,8 @@ pub async fn evaluate_permission_matrix(
     let entitlement = entitlements::queries::get_entitlement_summary(db).await?;
     let activation = activation::queries::get_machine_activation_status(db).await?;
     let fingerprint = crate::auth::device::derive_device_fingerprint().unwrap_or_else(|_| "unknown".to_string());
-    let trust = crate::auth::device::get_device_trust(db, user_id, &fingerprint).await?;
-    let trust_state = if trust.as_ref().is_some_and(|t| t.is_revoked) {
+    let mut trust = crate::auth::device::get_device_trust(db, user_id, &fingerprint).await?;
+    let mut trust_state = if trust.as_ref().is_some_and(|t| t.is_revoked) {
         "revoked"
     } else if trust.is_some() {
         "trusted"
@@ -99,6 +99,20 @@ pub async fn evaluate_permission_matrix(
                 source: "license_matrix".to_string(),
             });
             return Ok(decision);
+        }
+        // Self-heal for trusted-device bootstrap:
+        // if online and no trust exists for this user+device, register now.
+        if trust.is_none() && crate::auth::device::is_network_available() {
+            crate::auth::device::register_device_trust(db, user_id, &fingerprint, None).await?;
+            trust = crate::auth::device::get_device_trust(db, user_id, &fingerprint).await?;
+            trust_state = if trust.as_ref().is_some_and(|t| t.is_revoked) {
+                "revoked"
+            } else if trust.is_some() {
+                "trusted"
+            } else {
+                "untrusted"
+            };
+            decision.trust_state = trust_state.to_string();
         }
         if trust_state != "trusted" {
             decision.allowed = false;

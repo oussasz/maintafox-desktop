@@ -11,7 +11,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, State
 use serde::{Deserialize, Serialize};
 
 use super::domain::{
-    generate_di_code, map_intervention_request, DiOriginType, DiStatus, InterventionRequest,
+    generate_di_code, guard_transition, map_intervention_request, DiStatus, InterventionRequest,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -82,6 +82,13 @@ pub struct DiCreateInput {
     pub submitter_id: i64,
     #[serde(default)]
     pub source_inspection_anomaly_id: Option<i64>,
+}
+
+/// Supervisor triage: move a `submitted` DI into the review queue (`pending_review`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct DiTriageSubmittedInput {
+    pub di_id: i64,
+    pub expected_row_version: i64,
 }
 
 /// Input for updating draft/editable fields on an existing DI.
@@ -390,10 +397,11 @@ pub async fn create_intervention_request(
     db: &DatabaseConnection,
     input: DiCreateInput,
 ) -> AppResult<InterventionRequest> {
-    // Validate origin_type is a legal enum value
-    DiOriginType::try_from_str(&input.origin_type).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
+    if input.origin_type.trim().is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "Le type d'origine est obligatoire.".into(),
+        ]));
+    }
 
     let code = generate_di_code(db).await?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -405,7 +413,7 @@ pub async fn create_intervention_request(
             symptom_code_id, impact_level, production_impact, safety_flag, \
             environmental_flag, quality_flag, reported_urgency, observed_at, \
             submitted_at, submitter_id, source_inspection_anomaly_id, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             input.asset_id.into(),
@@ -466,7 +474,7 @@ pub async fn create_intervention_request(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_state_transition_log (di_id, from_status, to_status, action, actor_id, acted_at) \
-         VALUES (?, 'none', 'submitted', 'submit', ?, ?)",
+         VALUES (?, 'none', 'submitted', 'intake_submitted', ?, ?)",
         [di.id.into(), di.submitter_id.into(), now.into()],
     ))
     .await?;
@@ -602,5 +610,90 @@ pub async fn update_di_draft_fields(
         .ok_or_else(|| AppError::NotFound {
             entity: "InterventionRequest".into(),
             id: input.id.to_string(),
+        })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G) triage_submitted_di — Submitted → PendingReview (supervisor / planner triage)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Move a DI from `submitted` to `pending_review` (admission to the validation queue after triage).
+pub async fn triage_submitted_di(
+    db: &DatabaseConnection,
+    input: DiTriageSubmittedInput,
+    actor_id: i64,
+) -> AppResult<InterventionRequest> {
+    let current = get_intervention_request(db, input.di_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "InterventionRequest".into(),
+            id: input.di_id.to_string(),
+        })?;
+
+    let status = DiStatus::try_from_str(&current.status).map_err(|e| {
+        AppError::Internal(anyhow::anyhow!("Stored DI has invalid status: {e}"))
+    })?;
+
+    if status != DiStatus::Submitted {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Seules les demandes au statut « soumis » peuvent être triées vers la revue. \
+             Statut actuel : '{}'.",
+            current.status
+        )]));
+    }
+
+    guard_transition(&status, &DiStatus::PendingReview).map_err(|e| {
+        AppError::ValidationFailed(vec![e])
+    })?;
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET \
+                status = 'pending_review', \
+                row_version = row_version + 1, \
+                updated_at = ? \
+             WHERE id = ? AND row_version = ?",
+            [
+                now.clone().into(),
+                input.di_id.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "Conflit de version : cet enregistrement a été modifié par un autre utilisateur. \
+             Veuillez recharger et réessayer."
+                .into(),
+        ]));
+    }
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO di_state_transition_log \
+            (di_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            input.di_id.into(),
+            DiStatus::Submitted.as_str().into(),
+            DiStatus::PendingReview.as_str().into(),
+            "triage_accept".into(),
+            actor_id.into(),
+            sea_orm::Value::from(None::<String>),
+            sea_orm::Value::from(None::<String>),
+            now.into(),
+        ],
+    ))
+    .await?;
+
+    get_intervention_request(db, input.di_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "InterventionRequest".into(),
+            id: input.di_id.to_string(),
         })
 }

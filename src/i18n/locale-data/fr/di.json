@@ -24,6 +24,8 @@
     },
     "filters": {
       "status": "Statut",
+      "reviewQueue": "File de validation",
+      "triageInbox": "DIs à trier / flux d'entrée",
       "priority": "Priorité",
       "assignedTo": "Assigné à",
       "dateRange": "Période"
@@ -56,6 +58,11 @@
       "orgNode": "Nœud org.",
       "impact": "Impact",
       "production": "Production"
+    },
+    "tabs": {
+      "attachments": "Pièces jointes",
+      "stateLog": "Historique des statuts",
+      "activity": "Journal d'activité"
     }
   },
   "form": {
@@ -85,6 +92,11 @@
     },
     "originType": {
       "label": "Origine"
+    },
+    "symptom": {
+      "label": "Symptôme",
+      "placeholder": "Sélectionnez un symptôme",
+      "searchPlaceholder": "Rechercher un symptôme..."
     },
     "impactLevel": {
       "label": "Niveau d'impact"
@@ -124,6 +136,7 @@
       "descriptionRequired": "La description est requise",
       "equipmentRequired": "L'équipement est requis",
       "originRequired": "L'origine est requise",
+      "symptomRequired": "Le symptôme est requis",
       "urgencyRequired": "La priorité est requise",
       "impactRequired": "Le niveau d'impact est requis",
       "assetMissingOrgNode": "L'équipement sélectionné n'a pas d'unité organisationnelle. Veuillez en attribuer une d'abord."
@@ -198,8 +211,153 @@
     "saving": "Enregistrement…",
     "close": "Fermer"
   },
+  "stateLog": {
+    "empty": "Aucun changement d'état enregistré.",
+    "from": "De",
+    "to": "Vers",
+    "action": "Événement",
+    "at": "Date / heure",
+    "actor": "Par",
+    "actionLabel": {
+      "intake_submitted": "Soumission d'entrée (déclarant)",
+      "submit": "Soumission d'entrée (déclarant)",
+      "triage_accept": "Tri d'entrée : admis en file de revue",
+      "screen": "Tri technique",
+      "advance_to_approval": "Transmis pour approbation",
+      "return_for_clarification": "Renvoyé pour clarification",
+      "reject": "Rejet",
+      "approve": "Approbation",
+      "defer": "Report",
+      "reactivate": "Réactivation",
+      "convert": "Conversion en ordre de travail",
+      "screened": "Tri validé",
+      "returned": "Renvoyé",
+      "rejected": "Rejeté",
+      "approved": "Approuvé",
+      "deferred": "Reporté",
+      "none": "—"
+    },
+    "unknownAction": "Événement : {{action}}"
+  },
+  "auditTimeline": {
+    "loadError": "Impossible de charger le journal d'activité.",
+    "empty": "Aucun événement d'activité pour cette demande.",
+    "rawAction": "Code événement",
+    "resultApplied": "Appliqué",
+    "resultBlocked": "Bloqué",
+    "resultPartial": "Partiel",
+    "stepUp": "Rehaussement",
+    "actorUser": "Utilisateur n°{{id}}",
+    "actorSystem": "Système",
+    "actionLabel": {
+      "submit": "Prise en compte (déclarant)",
+      "intake_submitted": "Prise en compte (déclarant)",
+      "triage_submitted": "Tri d'entrée : admis en file de revue",
+      "triage_accept": "Tri d'entrée : admis en file de revue",
+      "screened": "Tri effectué",
+      "returned": "Renvoyé pour clarification",
+      "rejected": "Rejeté",
+      "approved": "Approuvé",
+      "converted": "Conversion",
+      "blocked": "Bloqué"
+    }
+  },
+  "attachments": {
+    "heading": "Pièces jointes",
+    "uploading": "Téléversement en cours…",
+    "dropHint": "Glisser-déposer ou cliquer pour ajouter un fichier",
+    "maxSize": "Max {{mb}} Mo",
+    "fileTooBig": "Le fichier « {{name}} » dépasse la taille maximale de {{mb}} Mo.",
+    "empty": "Aucune pièce jointe.",
+    "confirmDelete": "Confirmer",
+    "cancelDelete": "Annuler",
+    "deleteTitle": "Supprimer la pièce jointe"
+  },
+  "kanban": {
+    "colSubmitted": "Soumises / entrée",
+    "colReview": "En revue",
+    "colApproved": "Approuvées / planifiées",
+    "colWork": "En travaux",
+    "colClosed": "Clôturées"
+  },
+  "woConversion": {
+    "checkAsset": "Actif confirmé",
+    "checkClassif": "Classification définie",
+    "checkUrgency": "Urgence validée"
+  },
+  "print": {
+    "htmlLang": "fr",
+    "docTitle": "Fiche DI — {{code}}",
+    "ficheTitle": "Fiche de Demande d'Intervention",
+    "headerSubtitle": "Document confidentiel",
+    "refStrip": "Réf. : {{code}} | Date d'émission : {{date}}",
+    "identification": "IDENTIFICATION",
+    "equipment": "ÉQUIPEMENT CONCERNÉ",
+    "flags": "DRAPEAUX",
+    "description": "DESCRIPTION",
+    "reviewNotes": "NOTES DE REVUE",
+    "conversion": "CONVERSION",
+    "signatures": "Signatures",
+    "codeDi": "Code DI",
+    "title": "Titre",
+    "status": "Statut",
+    "urgencyReported": "Urgence déclarée",
+    "urgencyValidated": "Urgence validée",
+    "origin": "Origine",
+    "impactLevel": "Niveau d'impact",
+    "createdAt": "Créée le",
+    "submittedAt": "Soumise le",
+    "asset": "Équipement",
+    "subAsset": "Sous-ensemble",
+    "orgNode": "Nœud organisationnel",
+    "observedOn": "Observée le",
+    "declarant": "Déclarant",
+    "convertedToWo": "Convertie en OT",
+    "convertedAt": "Date de conversion",
+    "flagSafety": "Sécurité",
+    "flagEnv": "Environnement",
+    "flagQuality": "Qualité",
+    "flagProd": "Impact production",
+    "sigReporter": "Déclarant",
+    "sigChecker": "Vérificateur",
+    "sigMaint": "Resp. Maintenance",
+    "signatureLine": "Signature : _______________",
+    "dateLine": "Date : __/__/____",
+    "footer": "Réf. : {{code}} | {{product}} | {{date}} — Document confidentiel"
+  },
+  "approvalPrint": {
+    "title": "Fiche de validation — Demande d'intervention",
+    "subtitle": "Réf. : {{code}} — Date d'émission : {{date}}",
+    "thCode": "Code DI",
+    "thTitle": "Titre",
+    "thStatus": "Statut",
+    "thPriority": "Priorité",
+    "thOrigin": "Origine",
+    "thImpact": "Niveau d'impact",
+    "thAsset": "Équipement",
+    "thOrg": "Nœud org.",
+    "thSubmitted": "Date soumission",
+    "thDescription": "Description",
+    "thReviewerNote": "Note de revue",
+    "thApprovalNote": "Note d'approbation",
+    "conversion": "Transférée vers l'OT : {{from}} → {{to}}",
+    "sigDeclarant": "Déclarant",
+    "sigApprover": "Approbateur",
+    "sigResp": "Responsable maintenance",
+    "footer": "Document : {{code}}-APPROBATION — Confidentiel"
+  },
+  "triage": {
+    "panelTitle": "DIs à trier / Flux d'entrée",
+    "loading": "Chargement…",
+    "seeAllInList": "Voir la liste complète ({{more}} de plus)",
+    "acceptForReview": "Accepter pour revue"
+  },
+  "permissions": {
+    "diScreen": "Trier les demandes d'intervention en entrée (soumission → file de revue)"
+  },
   "review": {
     "panelTitle": "DI en attente de validation",
+    "seeAllInList": "Voir la liste complète ({{more}} de plus)",
     "modified": "Modifiée",
     "view": "Voir le détail",
     "returnAction": "Renvoyer",
@@ -222,7 +380,8 @@
     "clarificationNote": "Note de clarification",
     "clarificationNotePlaceholder": "Décrivez les informations nécessaires…",
     "clarificationRequired": "La note de clarification est requise",
-    "returnInfo": "La DI sera renvoyée au déclarant."
+    "returnInfo": "La DI sera renvoyée au déclarant.",
+    "screenAction": "Valider le tri"
   },
   "dashboard": {
     "total": "Total",

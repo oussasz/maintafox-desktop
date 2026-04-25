@@ -1858,6 +1858,13 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
             false,
         ),
         (
+            "di.screen",
+            "Triage incoming DIs (submitted → review queue)",
+            "intervention",
+            false,
+            false,
+        ),
+        (
             "di.review",
             "Screen, return, and reject intervention requests",
             "intervention",
@@ -2231,37 +2238,43 @@ async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
     Ok(())
 }
 
-/// Seeds the 4 system roles and assigns their initial permissions.
-/// System roles are non-deletable and are the baseline for role templates.
+/// Seeds baseline roles and assigns their initial permissions.
+///
+/// Protection policy:
+/// - Locked/system: Administrator, Readonly
+/// - Editable/custom baseline: Supervisor, Operator
 async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
 
-    let system_roles: &[(&str, &str, &str)] = &[
-        ("Administrator", "Full system access. Cannot be deleted.", "system"),
+    let baseline_roles: &[(&str, &str, i64, &str)] = &[
+        ("Administrator", "Full system access. Cannot be deleted.", 1, "system"),
         (
             "Supervisor",
             "Full operational access. Can manage work, personnel, inventory.",
-            "system",
+            0,
+            "custom",
         ),
         (
             "Operator",
             "Day-to-day CMMS use: view all, create and edit operational records.",
-            "system",
+            0,
+            "custom",
         ),
-        ("Readonly", "Read-only access to all operational modules.", "system"),
+        ("Readonly", "Read-only access to all operational modules.", 1, "system"),
     ];
 
-    for (name, desc, role_type) in system_roles {
+    for (name, desc, is_system, role_type) in baseline_roles {
         let sync_id = Uuid::new_v4().to_string();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT OR IGNORE INTO roles
                    (sync_id, name, description, is_system, role_type, status, created_at, updated_at, row_version)
-               VALUES (?, ?, ?, 1, ?, 'active', ?, ?, 1)",
+               VALUES (?, ?, ?, ?, ?, 'active', ?, ?, 1)",
             [
                 sync_id.into(),
                 (*name).into(),
                 (*desc).into(),
+                (*is_system).into(),
                 (*role_type).into(),
                 now.clone().into(),
                 now.clone().into(),
@@ -2374,6 +2387,7 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         "ot.edit",
         "di.view",
         "di.create",
+        "di.screen",
         "pm.view",
         "pm.manage",
         "pm.approve",

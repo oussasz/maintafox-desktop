@@ -24,6 +24,8 @@
     },
     "filters": {
       "status": "Status",
+      "reviewQueue": "Validation queue",
+      "triageInbox": "DIs to triage / entry queue",
       "priority": "Priority",
       "assignedTo": "Assigned to",
       "dateRange": "Date range"
@@ -56,6 +58,11 @@
       "orgNode": "Org. node",
       "impact": "Impact",
       "production": "Production"
+    },
+    "tabs": {
+      "attachments": "Attachments",
+      "stateLog": "State history",
+      "activity": "Activity log"
     }
   },
   "form": {
@@ -85,6 +92,11 @@
     },
     "originType": {
       "label": "Origin"
+    },
+    "symptom": {
+      "label": "Symptom",
+      "placeholder": "Select a symptom",
+      "searchPlaceholder": "Search symptom..."
     },
     "impactLevel": {
       "label": "Impact level"
@@ -124,6 +136,7 @@
       "descriptionRequired": "Description is required",
       "equipmentRequired": "Equipment is required",
       "originRequired": "Origin is required",
+      "symptomRequired": "Symptom is required",
       "urgencyRequired": "Priority is required",
       "impactRequired": "Impact level is required",
       "assetMissingOrgNode": "The selected equipment has no organizational unit. Please assign one first."
@@ -198,8 +211,153 @@
     "saving": "Saving…",
     "close": "Close"
   },
+  "stateLog": {
+    "empty": "No state transitions recorded.",
+    "from": "From",
+    "to": "To",
+    "action": "Event",
+    "at": "When",
+    "actor": "By",
+    "actionLabel": {
+      "intake_submitted": "Intake submitted (reporter)",
+      "submit": "Intake submitted (reporter)",
+      "triage_accept": "Screening: admitted to review queue",
+      "screen": "Technical screening",
+      "advance_to_approval": "Advanced to approval",
+      "return_for_clarification": "Returned for clarification",
+      "reject": "Rejected",
+      "approve": "Approved",
+      "defer": "Deferred",
+      "reactivate": "Reactivated",
+      "convert": "Converted to work order",
+      "screened": "Screening validated",
+      "returned": "Returned for clarification",
+      "rejected": "Rejected",
+      "approved": "Approved",
+      "deferred": "Deferred",
+      "none": "—"
+    },
+    "unknownAction": "Event: {{action}}"
+  },
+  "auditTimeline": {
+    "loadError": "Could not load activity log.",
+    "empty": "No activity events for this request.",
+    "rawAction": "Event code",
+    "resultApplied": "Applied",
+    "resultBlocked": "Blocked",
+    "resultPartial": "Partial",
+    "stepUp": "Step-up",
+    "actorUser": "User #{{id}}",
+    "actorSystem": "System",
+    "actionLabel": {
+      "submit": "Intake (reporter)",
+      "intake_submitted": "Intake (reporter)",
+      "triage_submitted": "Intake triage: admitted to review",
+      "triage_accept": "Screening: admitted to review queue",
+      "screened": "Screening completed",
+      "returned": "Returned for clarification",
+      "rejected": "Rejected",
+      "approved": "Approved",
+      "converted": "Conversion event",
+      "blocked": "Blocked"
+    }
+  },
+  "attachments": {
+    "heading": "Attachments",
+    "uploading": "Uploading…",
+    "dropHint": "Drop a file or click to browse",
+    "maxSize": "Max {{mb}} MB",
+    "fileTooBig": "File “{{name}}” exceeds the maximum size of {{mb}} MB.",
+    "empty": "No attachments.",
+    "confirmDelete": "Delete",
+    "cancelDelete": "Cancel",
+    "deleteTitle": "Delete attachment"
+  },
+  "kanban": {
+    "colSubmitted": "Submitted / intake",
+    "colReview": "In review",
+    "colApproved": "Approved / planned",
+    "colWork": "In progress",
+    "colClosed": "Closed"
+  },
+  "woConversion": {
+    "checkAsset": "Asset confirmed",
+    "checkClassif": "Classification set",
+    "checkUrgency": "Urgency validated"
+  },
+  "print": {
+    "htmlLang": "en",
+    "docTitle": "Intervention request — {{code}}",
+    "ficheTitle": "Intervention request form",
+    "headerSubtitle": "Confidential document",
+    "refStrip": "Ref.: {{code}} | Issued: {{date}}",
+    "identification": "IDENTIFICATION",
+    "equipment": "EQUIPMENT",
+    "flags": "FLAGS",
+    "description": "DESCRIPTION",
+    "reviewNotes": "REVIEW NOTES",
+    "conversion": "CONVERSION",
+    "signatures": "Signatures",
+    "codeDi": "DI code",
+    "title": "Title",
+    "status": "Status",
+    "urgencyReported": "Reported priority",
+    "urgencyValidated": "Validated priority",
+    "origin": "Origin",
+    "impactLevel": "Impact level",
+    "createdAt": "Created on",
+    "submittedAt": "Submitted on",
+    "asset": "Equipment",
+    "subAsset": "Sub-assembly",
+    "orgNode": "Organizational node",
+    "observedOn": "Observed on",
+    "declarant": "Reporter",
+    "convertedToWo": "Converted to work order",
+    "convertedAt": "Conversion date",
+    "flagSafety": "Safety",
+    "flagEnv": "Environment",
+    "flagQuality": "Quality",
+    "flagProd": "Production impact",
+    "sigReporter": "Reporter",
+    "sigChecker": "Verifier",
+    "sigMaint": "Maintenance lead",
+    "signatureLine": "Signature: _______________",
+    "dateLine": "Date: __/__/____",
+    "footer": "Ref: {{code}} | {{product}} | {{date}} — Confidential"
+  },
+  "approvalPrint": {
+    "title": "Approval sheet — intervention request",
+    "subtitle": "Ref.: {{code}} | Issued: {{date}}",
+    "thCode": "DI code",
+    "thTitle": "Title",
+    "thStatus": "Status",
+    "thPriority": "Priority",
+    "thOrigin": "Origin",
+    "thImpact": "Impact level",
+    "thAsset": "Equipment",
+    "thOrg": "Org. node",
+    "thSubmitted": "Submitted on",
+    "thDescription": "Description",
+    "thReviewerNote": "Reviewer note",
+    "thApprovalNote": "Approval note",
+    "conversion": "Handoff to work order: {{from}} → {{to}}",
+    "sigDeclarant": "Requester",
+    "sigApprover": "Approver",
+    "sigResp": "Maintenance responsible",
+    "footer": "Document: {{code}}-APPROVAL — Confidential"
+  },
+  "triage": {
+    "panelTitle": "DIs to triage / Entry queue",
+    "loading": "Loading…",
+    "seeAllInList": "View full list ({{more}} more)",
+    "acceptForReview": "Accept for review"
+  },
+  "permissions": {
+    "diScreen": "Triage incoming intervention requests (submitted → review queue)"
+  },
   "review": {
     "panelTitle": "Pending DIs",
+    "seeAllInList": "View full list ({{more}} more)",
     "modified": "Modified",
     "view": "View details",
     "returnAction": "Return",
@@ -222,7 +380,8 @@
     "clarificationNote": "Clarification note",
     "clarificationNotePlaceholder": "Describe what information is needed…",
     "clarificationRequired": "A clarification note is required",
-    "returnInfo": "The request will be returned to the requester."
+    "returnInfo": "The request will be returned to the requester.",
+    "screenAction": "Validate screening"
   },
   "dashboard": {
     "total": "Total",

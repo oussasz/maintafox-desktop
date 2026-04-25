@@ -1,30 +1,16 @@
 /**
  * DiPrintFiche.tsx
  *
- * Print-ready A4 DI (Demande d'Intervention) fiche. Opens a new browser
- * window with optimized HTML layout: company header, identification,
- * equipment, flags, description, review notes, signatures, footer.
- * Follows the same pattern as WoPrintFiche.tsx.
+ * Print-ready A4 DI fiche. Strings and dates follow the current i18n language.
  */
 
+import type { TFunction } from "i18next";
+
+import { i18n } from "@/i18n";
+import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-
-function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
 
 function esc(v: string | null | undefined): string {
   if (!v) return "";
@@ -35,75 +21,81 @@ function esc(v: string | null | undefined): string {
     .replace(/"/g, "&quot;");
 }
 
-function urgencyLabel(u: string): string {
-  const map: Record<string, string> = {
-    low: "Basse",
-    medium: "Moyenne",
-    high: "Haute",
-    critical: "Critique",
-  };
-  return map[u] ?? u;
-}
+type DiStatusKey =
+  | "new"
+  | "inReview"
+  | "approved"
+  | "rejected"
+  | "inProgress"
+  | "resolved"
+  | "closed"
+  | "cancelled";
 
-function impactLabel(i: string): string {
-  const map: Record<string, string> = {
-    unknown: "Inconnu",
-    none: "Aucun",
-    minor: "Mineur",
-    major: "Majeur",
-    critical: "Critique",
+function statusToI18nKey(s: string): DiStatusKey {
+  const map: Record<string, DiStatusKey> = {
+    submitted: "new",
+    pending_review: "inReview",
+    returned_for_clarification: "inReview",
+    rejected: "rejected",
+    screened: "inReview",
+    awaiting_approval: "inReview",
+    approved_for_planning: "approved",
+    deferred: "inReview",
+    converted_to_work_order: "inProgress",
+    closed_as_non_executable: "closed",
+    archived: "closed",
   };
-  return map[i] ?? i;
-}
-
-function originLabel(o: string): string {
-  const map: Record<string, string> = {
-    operator: "Opérateur",
-    technician: "Technicien",
-    inspection: "Inspection",
-    pm: "Maintenance préventive",
-    iot: "IoT / Capteur",
-    quality: "Qualité",
-    hse: "HSE",
-    production: "Production",
-    external: "Externe",
-  };
-  return map[o] ?? o;
-}
-
-function statusLabel(s: string): string {
-  const map: Record<string, string> = {
-    submitted: "Soumise",
-    pending_review: "En revue",
-    returned_for_clarification: "Retournée",
-    rejected: "Rejetée",
-    screened: "Triée",
-    awaiting_approval: "En attente d'approbation",
-    approved_for_planning: "Approuvée",
-    deferred: "Reportée",
-    converted_to_work_order: "Convertie en OT",
-    closed_as_non_executable: "Fermée (non exécutable)",
-    archived: "Archivée",
-  };
-  return map[s] ?? s;
+  return map[s] ?? "new";
 }
 
 // ── Build HTML ──────────────────────────────────────────────────────────────
 
-function buildHtml(di: InterventionRequest): string {
-  const now = new Date().toLocaleDateString("fr-FR");
+function buildHtml(di: InterventionRequest, t: TFunction<"di">, locale: string): string {
+  const fmt = (iso: string | null | undefined) => {
+    if (!iso) return "—";
+    try {
+      return new Date(iso).toLocaleString(locale, {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return String(iso);
+    }
+  };
+
+  const now = new Date().toLocaleDateString(locale, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+
+  const sk = statusToI18nKey(di.status);
+  const statusText = t(`status.${sk}` as "status.new");
+  const urgencyR = t(`priority.${di.reported_urgency}` as "priority.low");
+  const urgencyV = di.validated_urgency
+    ? t(`priority.${di.validated_urgency}` as "priority.low")
+    : null;
+  const originText = t(`form.origin.${di.origin_type}` as "form.origin.operator", {
+    defaultValue: di.origin_type,
+  });
+  const impactText = t(`form.impact.${di.impact_level}` as "form.impact.unknown", {
+    defaultValue: di.impact_level,
+  });
 
   const flags: string[] = [];
-  if (di.safety_flag) flags.push("Sécurité");
-  if (di.environmental_flag) flags.push("Environnement");
-  if (di.quality_flag) flags.push("Qualité");
-  if (di.production_impact) flags.push("Impact production");
+  if (di.safety_flag) flags.push(t("print.flagSafety"));
+  if (di.environmental_flag) flags.push(t("print.flagEnv"));
+  if (di.quality_flag) flags.push(t("print.flagQuality"));
+  if (di.production_impact) flags.push(t("print.flagProd"));
 
   return `<!DOCTYPE html>
-<html lang="fr">
+<html lang="${t("print.htmlLang")}">
 <head>
   <meta charset="utf-8" />
-  <title>Fiche DI — ${esc(di.code)}</title>
+  <title>${t("print.docTitle", { code: esc(di.code) })}</title>
   <style>
     @page { size: A4; margin: 15mm; }
     body { font-family: Arial, sans-serif; margin: 0; padding: 20px 30px; font-size: 11px; color: #333; }
@@ -130,42 +122,43 @@ function buildHtml(di: InterventionRequest): string {
 <body>
   <div class="header">
     <div class="company">Maintafox</div>
-    <h1>Fiche de Demande d'Intervention</h1>
-    <div class="subtitle">Document confidentiel</div>
+    <h1>${t("print.ficheTitle")}</h1>
+    <div class="subtitle">${t("print.headerSubtitle")}</div>
   </div>
 
   <div class="ref-strip">
-    <span>Référence : <strong>${esc(di.code)}</strong></span>
-    <span>Date d'émission : ${now}</span>
+    ${t("print.refStrip", { code: esc(di.code), date: now })}
   </div>
 
   <div class="section">
-    <h2>IDENTIFICATION</h2>
+    <h2>${t("print.identification")}</h2>
     <table>
-      <tr><th>Code DI</th><td>${esc(di.code)}</td></tr>
-      <tr><th>Titre</th><td>${esc(di.title)}</td></tr>
-      <tr><th>Statut</th><td>${statusLabel(di.status)}</td></tr>
-      <tr><th>Urgence déclarée</th><td>${urgencyLabel(di.reported_urgency)}</td></tr>
-      ${di.validated_urgency ? `<tr><th>Urgence validée</th><td>${urgencyLabel(di.validated_urgency)}</td></tr>` : ""}
-      <tr><th>Origine</th><td>${originLabel(di.origin_type)}</td></tr>
-      <tr><th>Niveau d'impact</th><td>${impactLabel(di.impact_level)}</td></tr>
-      <tr><th>Créée le</th><td>${fmtDate(di.created_at)}</td></tr>
-      <tr><th>Soumise le</th><td>${fmtDate(di.submitted_at)}</td></tr>
+      <tr><th>${t("print.codeDi")}</th><td>${esc(di.code)}</td></tr>
+      <tr><th>${t("print.title")}</th><td>${esc(di.title)}</td></tr>
+      <tr><th>${t("print.status")}</th><td>${esc(statusText)}</td></tr>
+      <tr><th>${t("print.urgencyReported")}</th><td>${esc(urgencyR)}</td></tr>
+      ${urgencyV != null ? `<tr><th>${t("print.urgencyValidated")}</th><td>${esc(urgencyV)}</td></tr>` : ""}
+      <tr><th>${t("print.origin")}</th><td>${esc(originText)}</td></tr>
+      <tr><th>${t("print.impactLevel")}</th><td>${esc(impactText)}</td></tr>
+      <tr><th>${t("print.createdAt")}</th><td>${fmt(di.created_at)}</td></tr>
+      <tr><th>${t("print.submittedAt")}</th><td>${fmt(di.submitted_at)}</td></tr>
     </table>
   </div>
 
   <div class="section">
-    <h2>ÉQUIPEMENT CONCERNÉ</h2>
+    <h2>${t("print.equipment")}</h2>
     <table>
-      <tr><th>Équipement</th><td>#${di.asset_id}${di.sub_asset_ref ? ` — Sous-ensemble : ${esc(di.sub_asset_ref)}` : ""}</td></tr>
-      <tr><th>Nœud organisationnel</th><td>#${di.org_node_id}</td></tr>
+      <tr><th>${t("print.asset")}</th><td>#${di.asset_id}${
+        di.sub_asset_ref ? ` — ${t("print.subAsset")} : ${esc(di.sub_asset_ref)}` : ""
+      }</td></tr>
+      <tr><th>${t("print.orgNode")}</th><td>#${di.org_node_id}</td></tr>
     </table>
   </div>
 
   ${
     flags.length > 0
       ? `<div class="section">
-    <h2>DRAPEAUX</h2>
+    <h2>${t("print.flags")}</h2>
     <div class="flags">
       ${flags.map((f) => `<span class="flag">${f}</span>`).join("")}
     </div>
@@ -174,16 +167,22 @@ function buildHtml(di: InterventionRequest): string {
   }
 
   <div class="section">
-    <h2>DESCRIPTION</h2>
-    ${di.observed_at ? `<p style="font-size:10px;margin-bottom:4px;">Observée le : <strong>${fmtDate(di.observed_at)}</strong></p>` : ""}
-    <p style="font-size:10px;margin-bottom:4px;">Déclarant : <strong>#${di.submitter_id}</strong></p>
+    <h2>${t("print.description")}</h2>
+    ${
+      di.observed_at
+        ? `<p style="font-size:10px;margin-bottom:4px;">${t("print.observedOn")} <strong>${fmt(
+            di.observed_at,
+          )}</strong></p>`
+        : ""
+    }
+    <p style="font-size:10px;margin-bottom:4px;">${t("print.declarant")} <strong>#${di.submitter_id}</strong></p>
     <div class="desc">${esc(di.description)}</div>
   </div>
 
   ${
     di.reviewer_note
       ? `<div class="section">
-    <h2>NOTES DE REVUE</h2>
+    <h2>${t("print.reviewNotes")}</h2>
     <div class="desc">${esc(di.reviewer_note)}</div>
   </div>`
       : ""
@@ -192,10 +191,10 @@ function buildHtml(di: InterventionRequest): string {
   ${
     di.converted_to_wo_id
       ? `<div class="section">
-    <h2>CONVERSION</h2>
+    <h2>${t("print.conversion")}</h2>
     <table>
-      <tr><th>Convertie en OT</th><td>#${di.converted_to_wo_id}</td></tr>
-      <tr><th>Date de conversion</th><td>${fmtDate(di.converted_at)}</td></tr>
+      <tr><th>${t("print.convertedToWo")}</th><td>#${di.converted_to_wo_id}</td></tr>
+      <tr><th>${t("print.convertedAt")}</th><td>${fmt(di.converted_at)}</td></tr>
     </table>
   </div>`
       : ""
@@ -203,27 +202,27 @@ function buildHtml(di: InterventionRequest): string {
 
   <div class="signatures">
     <div class="sig-box">
-      <p><strong>Déclarant</strong></p>
+      <p><strong>${t("print.sigReporter")}</strong></p>
       <br/><br/>
-      <p>Signature : _______________</p>
-      <p>Date : ___/___/______</p>
+      <p>${t("print.signatureLine")}</p>
+      <p>${t("print.dateLine")}</p>
     </div>
     <div class="sig-box">
-      <p><strong>Vérificateur</strong></p>
+      <p><strong>${t("print.sigChecker")}</strong></p>
       <br/><br/>
-      <p>Signature : _______________</p>
-      <p>Date : ___/___/______</p>
+      <p>${t("print.signatureLine")}</p>
+      <p>${t("print.dateLine")}</p>
     </div>
     <div class="sig-box">
-      <p><strong>Resp. Maintenance</strong></p>
+      <p><strong>${t("print.sigMaint")}</strong></p>
       <br/><br/>
-      <p>Signature : _______________</p>
-      <p>Date : ___/___/______</p>
+      <p>${t("print.signatureLine")}</p>
+      <p>${t("print.dateLine")}</p>
     </div>
   </div>
 
   <div class="footer">
-    Réf : ${esc(di.code)} | Maintafox | ${now} — Document confidentiel
+    ${t("print.footer", { code: esc(di.code), product: "Maintafox", date: now })}
   </div>
 </body>
 </html>`;
@@ -232,11 +231,41 @@ function buildHtml(di: InterventionRequest): string {
 // ── Public API ──────────────────────────────────────────────────────────────
 
 export function printDiFiche(di: InterventionRequest): void {
-  const html = buildHtml(di);
-  const w = window.open("", "_blank");
-  if (w) {
-    w.document.write(html);
-    w.document.close();
-    w.print();
+  let html = "";
+  try {
+    const t = i18n.getFixedT(i18n.language, "di");
+    const locale = intlLocaleForLanguage(i18n.language);
+    html = buildHtml(di, t, locale);
+  } catch {
+    // Last-resort fallback so the print action still works even if i18n/template generation fails.
+    html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(di.code)}</title></head><body><h1>${esc(di.code)}</h1><p>${esc(di.title)}</p><pre>${esc(di.description)}</pre></body></html>`;
   }
+
+  // Tauri/webview can block popup windows depending on platform settings.
+  // Use an iframe fallback so print preview always opens from current window.
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.setAttribute("aria-hidden", "true");
+
+  iframe.onload = () => {
+    const w = iframe.contentWindow;
+    if (!w) return;
+    w.focus();
+    w.print();
+    setTimeout(() => {
+      iframe.remove();
+    }, 1000);
+  };
+
+  document.body.appendChild(iframe);
+  const doc = iframe.contentDocument;
+  if (!doc) return;
+  doc.open();
+  doc.write(html);
+  doc.close();
 }

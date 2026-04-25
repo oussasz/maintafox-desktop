@@ -8,12 +8,19 @@
 
 import { create } from "zustand";
 
-import { createDi, getDi, listDis, updateDiDraft } from "@/services/di-service";
+import {
+  createDi,
+  getDi,
+  listDis,
+  triageSubmittedDi as triageSubmittedDiCommand,
+  updateDiDraft,
+} from "@/services/di-service";
 import { toErrorMessage } from "@/utils/errors";
 import type {
   DiCreateInput,
   DiDraftUpdateInput,
   DiListFilter,
+  DiTriageSubmittedInput,
   DiSummaryRow,
   DiTransitionRow,
   InterventionRequest,
@@ -51,6 +58,7 @@ interface DiStoreState {
   closeCreateForm: () => void;
   submitNewDi: (input: DiCreateInput) => Promise<InterventionRequest>;
   updateDraft: (input: DiDraftUpdateInput) => Promise<void>;
+  triageSubmittedDi: (input: DiTriageSubmittedInput) => Promise<InterventionRequest>;
 }
 
 export const useDiStore = create<DiStoreState>()((set, get) => ({
@@ -139,6 +147,31 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
           similar: detail.similar,
         },
       });
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  triageSubmittedDi: async (input) => {
+    set({ saving: true, error: null });
+    try {
+      const di = await triageSubmittedDiCommand(input);
+      const page = await listDis(get().filter);
+      set({ items: page.items, total: page.total });
+      if (get().activeDi?.di.id === di.id) {
+        const detail = await getDi(di.id);
+        set({
+          activeDi: {
+            di: detail.di,
+            transitions: detail.transitions,
+            similar: detail.similar,
+          },
+        });
+      }
+      return di;
     } catch (err) {
       set({ error: toErrorMessage(err) });
       throw err;

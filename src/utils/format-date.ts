@@ -4,6 +4,14 @@
  * Sprint S5 (GA-030).
  */
 
+/** Map i18next language code (e.g. `fr`, `en`) to a BCP 47 tag for `Intl` APIs. */
+export function intlLocaleForLanguage(lang: string | undefined): string {
+  if (!lang) return "fr-FR";
+  if (lang.startsWith("fr")) return "fr-FR";
+  if (lang.startsWith("en")) return "en-US";
+  return lang;
+}
+
 /**
  * Format a date string for display using the user's current i18n locale.
  * Falls back to "—" for null/undefined/empty values.

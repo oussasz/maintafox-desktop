@@ -8,10 +8,12 @@
 
 import { CheckCircle, ClipboardCheck, Inbox, Search, Wrench } from "lucide-react";
 import type { ReactNode } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { formatShortDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 // ── Kanban column definitions ───────────────────────────────────────────────
@@ -23,44 +25,6 @@ interface KanbanColumnDef {
   headerClass: string;
   statuses: string[];
 }
-
-const COLUMNS: KanbanColumnDef[] = [
-  {
-    id: "submitted",
-    label: "Soumises",
-    icon: <Inbox className="h-4 w-4" />,
-    headerClass: "bg-blue-50 text-blue-700 border-blue-200",
-    statuses: ["submitted"],
-  },
-  {
-    id: "review",
-    label: "En validation",
-    icon: <Search className="h-4 w-4" />,
-    headerClass: "bg-amber-50 text-amber-700 border-amber-200",
-    statuses: ["pending_review", "returned_for_clarification", "screened"],
-  },
-  {
-    id: "approved",
-    label: "Approuvées",
-    icon: <ClipboardCheck className="h-4 w-4" />,
-    headerClass: "bg-green-50 text-green-700 border-green-200",
-    statuses: ["approved_for_planning", "awaiting_approval", "deferred"],
-  },
-  {
-    id: "work",
-    label: "En travaux",
-    icon: <Wrench className="h-4 w-4" />,
-    headerClass: "bg-purple-50 text-purple-700 border-purple-200",
-    statuses: ["converted_to_work_order"],
-  },
-  {
-    id: "closed",
-    label: "Clôturées",
-    icon: <CheckCircle className="h-4 w-4" />,
-    headerClass: "bg-slate-50 text-slate-600 border-slate-200",
-    statuses: ["closed_as_non_executable", "archived"],
-  },
-];
 
 // ── Priority styling ────────────────────────────────────────────────────────
 
@@ -78,18 +42,6 @@ const URGENCY_BAR: Record<string, string> = {
   low: "bg-emerald-400",
 };
 
-const ORIGIN_LABELS: Record<string, string> = {
-  operator: "Opérateur",
-  technician: "Technicien",
-  inspection: "Inspection",
-  pm: "Préventif",
-  iot: "IoT",
-  quality: "Qualité",
-  hse: "HSE",
-  production: "Production",
-  external: "Externe",
-};
-
 // ── Props ───────────────────────────────────────────────────────────────────
 
 interface DiKanbanBoardProps {
@@ -100,13 +52,55 @@ interface DiKanbanBoardProps {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
-  // Group items by column
+  const { t } = useTranslation("di");
+
+  const columns = useMemo<KanbanColumnDef[]>(
+    () => [
+      {
+        id: "submitted",
+        label: t("kanban.colSubmitted"),
+        icon: <Inbox className="h-4 w-4" />,
+        headerClass: "bg-blue-50 text-blue-700 border-blue-200",
+        statuses: ["submitted"],
+      },
+      {
+        id: "review",
+        label: t("kanban.colReview"),
+        icon: <Search className="h-4 w-4" />,
+        headerClass: "bg-amber-50 text-amber-700 border-amber-200",
+        statuses: ["pending_review", "returned_for_clarification", "screened"],
+      },
+      {
+        id: "approved",
+        label: t("kanban.colApproved"),
+        icon: <ClipboardCheck className="h-4 w-4" />,
+        headerClass: "bg-green-50 text-green-700 border-green-200",
+        statuses: ["approved_for_planning", "awaiting_approval", "deferred"],
+      },
+      {
+        id: "work",
+        label: t("kanban.colWork"),
+        icon: <Wrench className="h-4 w-4" />,
+        headerClass: "bg-purple-50 text-purple-700 border-purple-200",
+        statuses: ["converted_to_work_order"],
+      },
+      {
+        id: "closed",
+        label: t("kanban.colClosed"),
+        icon: <CheckCircle className="h-4 w-4" />,
+        headerClass: "bg-slate-50 text-slate-600 border-slate-200",
+        statuses: ["closed_as_non_executable", "archived"],
+      },
+    ],
+    [t],
+  );
+
   const grouped = new Map<string, InterventionRequest[]>();
-  for (const col of COLUMNS) {
+  for (const col of columns) {
     grouped.set(col.id, []);
   }
   for (const item of items) {
-    const col = COLUMNS.find((c) => c.statuses.includes(item.status));
+    const col = columns.find((c) => c.statuses.includes(item.status));
     if (col) {
       grouped.get(col.id)?.push(item);
     }
@@ -115,7 +109,7 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
   return (
     <div className="relative flex flex-col h-full">
       <div className="flex gap-3 flex-1 overflow-x-auto p-1 pb-2">
-        {COLUMNS.map((col) => (
+        {columns.map((col) => (
           <KanbanColumn
             key={col.id}
             def={col}
@@ -167,7 +161,8 @@ function KanbanColumn({
 // ── Card ────────────────────────────────────────────────────────────────────
 
 function DiKanbanCard({ di, onClick }: { di: InterventionRequest; onClick: () => void }) {
-  const { t } = useTranslation("di");
+  const { t, i18n } = useTranslation("di");
+  const locale = intlLocaleForLanguage(i18n.language);
   const urgency = URGENCY_STYLE[di.reported_urgency];
   const desc = di.description.length > 80 ? `${di.description.substring(0, 80)}…` : di.description;
   const urgencyBarClass = URGENCY_BAR[di.reported_urgency] ?? "bg-gray-300";
@@ -209,13 +204,15 @@ function DiKanbanCard({ di, onClick }: { di: InterventionRequest; onClick: () =>
 
           {/* Origin tag */}
           <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-            {ORIGIN_LABELS[di.origin_type] ?? di.origin_type}
+            {t(`form.origin.${di.origin_type}` as "form.origin.operator", {
+              defaultValue: di.origin_type,
+            })}
           </Badge>
 
           {/* Safety flag */}
           {di.safety_flag && (
             <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
-              ⚠ Sécurité
+              ⚠ {t("detail.safety")}
             </Badge>
           )}
 
@@ -224,23 +221,10 @@ function DiKanbanCard({ di, onClick }: { di: InterventionRequest; onClick: () =>
             variant="outline"
             className="text-[10px] px-1.5 py-0 ml-auto text-muted-foreground"
           >
-            {formatShortDate(di.submitted_at)}
+            {formatShortDate(di.submitted_at, locale)}
           </Badge>
         </div>
       </CardContent>
     </Card>
   );
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatShortDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
 }

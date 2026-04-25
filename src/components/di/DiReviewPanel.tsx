@@ -2,15 +2,25 @@
  * DiReviewPanel.tsx
  *
  * Approver-facing collapsible panel showing a sorted queue of pending DIs.
- * Visible only to users with `di.review` permission.
+ * Shown to users with `di.screen` or `di.review` (see Requests page gate).
  * Sort: priority desc → submitted_at asc → equipment → requester.
  *
  * Phase 2 – Sub-phase 04 – File 02 – Sprint S4.
  */
 
-import { Check, ChevronDown, ChevronRight, ClipboardCheck, Eye, RotateCcw, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ClipboardCheck,
+  Eye,
+  ListTree,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +28,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { toErrorMessage } from "@/utils/errors";
+import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 // ── Priority ordering ───────────────────────────────────────────────────────
@@ -38,9 +49,9 @@ const URGENCY_STYLE: Record<string, string> = {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function formatShortDate(iso: string): string {
+function formatShortDateStr(iso: string, locale: string): string {
   try {
-    return new Date(iso).toLocaleDateString("fr-FR", {
+    return new Date(iso).toLocaleDateString(locale, {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
@@ -65,6 +76,9 @@ function sortReviewQueue(items: InterventionRequest[]): InterventionRequest[] {
   });
 }
 
+/** Visible rows in the requests header strip; the rest are linked via “full list”. */
+const REVIEW_QUEUE_PREVIEW_LIMIT = 3;
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function DiReviewPanel() {
@@ -86,6 +100,8 @@ export function DiReviewPanel() {
   }, [loadReviewQueue]);
 
   const sorted = useMemo(() => sortReviewQueue(reviewQueue), [reviewQueue]);
+  const previewItems = useMemo(() => sorted.slice(0, REVIEW_QUEUE_PREVIEW_LIMIT), [sorted]);
+  const hiddenInPreview = Math.max(0, sorted.length - previewItems.length);
 
   const handleView = useCallback(
     (di: InterventionRequest) => {
@@ -151,7 +167,7 @@ export function DiReviewPanel() {
             </div>
           )}
           <div className="divide-y">
-            {sorted.map((di) => (
+            {previewItems.map((di) => (
               <ReviewRow
                 key={di.id}
                 di={di}
@@ -163,6 +179,18 @@ export function DiReviewPanel() {
               />
             ))}
           </div>
+          {hiddenInPreview > 0 && (
+            <div className="border-t border-amber-200/60 bg-amber-50/40 px-4 py-2.5 text-center">
+              <Link
+                to="/requests?review=1"
+                className="inline-flex items-center justify-center gap-1.5 text-xs font-medium text-amber-900/90 hover:text-amber-950 hover:underline"
+              >
+                <ListTree className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                {t("review.seeAllInList", { more: hiddenInPreview })}
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-70" />
+              </Link>
+            </div>
+          )}
         </CardContent>
       )}
     </Card>
@@ -186,7 +214,8 @@ function ReviewRow({
   onReturn: () => void;
   onView: () => void;
 }) {
-  const { t } = useTranslation("di");
+  const { t, i18n } = useTranslation("di");
+  const dateLocale = intlLocaleForLanguage(i18n.language);
 
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-muted/50">
@@ -219,7 +248,7 @@ function ReviewRow({
 
       {/* Submitted date */}
       <span className="text-muted-foreground shrink-0 w-[80px] text-right">
-        {formatShortDate(di.submitted_at)}
+        {formatShortDateStr(di.submitted_at, dateLocale)}
       </span>
 
       {/* Actions */}
@@ -241,7 +270,7 @@ function ReviewRow({
             size="sm"
             className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
             onClick={onScreen}
-            title={t("review.screenAction", "Valider le tri")}
+            title={t("review.screenAction")}
           >
             <ClipboardCheck className="h-3.5 w-3.5" />
           </Button>

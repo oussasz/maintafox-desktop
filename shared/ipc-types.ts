@@ -3319,7 +3319,14 @@ export interface DiCreateInput {
   quality_flag: boolean;
   reported_urgency: string;
   observed_at?: string | null;
+  source_inspection_anomaly_id?: number | null;
   submitter_id: number;
+}
+
+/** Supervisor triage: move a `submitted` DI to the review queue (`pending_review`). */
+export interface DiTriageSubmittedInput {
+  di_id: number;
+  expected_row_version: number;
 }
 
 export interface DiDraftUpdateInput {

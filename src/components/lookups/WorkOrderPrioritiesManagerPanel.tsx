@@ -1,10 +1,11 @@
-import { AlertTriangle, Check, Lock, Pencil, X } from "lucide-react";
+import { AlertTriangle, Check, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ReferenceColorSwatchHex } from "@/components/lookups/ReferenceColorSwatchHex";
 import {
   REF_TABLE_ACTIONS_GROUP_CLASS,
+  refTableHeaderAddButtonClass,
   refTableIconButtonClass,
 } from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +48,7 @@ export function WorkOrderPrioritiesManagerPanel() {
   }, [loadRows]);
 
   const beginEdit = (row: WorkOrderPriorityOption) => {
+    if (row.is_system) return;
     setEditingId(row.id);
     setEditingDraft({ label: row.label, label_fr: row.label_fr });
   };
@@ -103,6 +105,16 @@ export function WorkOrderPrioritiesManagerPanel() {
             v1 — {t("browser.status.published")}
           </Badge>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className={refTableHeaderAddButtonClass()}
+          disabled
+          aria-label={t("editor.addValue")}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {t("editor.addValue")}
+        </Button>
       </div>
 
       {error ? (
@@ -261,10 +273,20 @@ export function WorkOrderPrioritiesManagerPanel() {
                               size="icon"
                               className={refTableIconButtonClass()}
                               onClick={() => beginEdit(row)}
-                              disabled={saving}
+                              disabled={saving || row.is_system}
                               aria-label={t("editor.edit")}
                             >
                               <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={refTableIconButtonClass()}
+                              onClick={() => void toggleActive(row, false)}
+                              disabled={saving || row.is_system || !row.is_active}
+                              aria-label={t("editor.deactivate")}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         )

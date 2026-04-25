@@ -28,6 +28,7 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
 import { searchAssets } from "@/services/asset-search-service";
+import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
 import { useDiStore } from "@/stores/di-store";
 import type {
   AssetSearchResult,
@@ -51,10 +52,9 @@ const ORIGIN_TYPES: DiOriginType[] = [
   "production",
   "external",
 ];
-
 const URGENCY_LEVELS: DiUrgency[] = ["low", "medium", "high", "critical"];
-
 const IMPACT_LEVELS: DiImpactLevel[] = ["unknown", "none", "minor", "major", "critical"];
+type RefOption = { id: number; code: string; label: string };
 
 const TITLE_MAX = 100;
 const DESC_MAX = 1000;
@@ -75,6 +75,7 @@ interface FormErrors {
   origin_type?: string;
   reported_urgency?: string;
   impact_level?: string;
+  symptom_code_id?: string;
   equipment?: string;
 }
 
@@ -85,6 +86,7 @@ function validate(
     origin_type: string;
     reported_urgency: string;
     impact_level: string;
+    symptomCodeId: number | null;
     assetId: number | null;
   },
   t: (key: string) => string,
@@ -95,6 +97,7 @@ function validate(
   if (!fields.origin_type) errors.origin_type = t("form.validation.originRequired");
   if (!fields.reported_urgency) errors.reported_urgency = t("form.validation.urgencyRequired");
   if (!fields.impact_level) errors.impact_level = t("form.validation.impactRequired");
+  if (!fields.symptomCodeId) errors.symptom_code_id = t("form.validation.symptomRequired");
   if (!fields.assetId) errors.equipment = t("form.validation.equipmentRequired");
   return errors;
 }
@@ -120,6 +123,14 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
   const [originType, setOriginType] = useState<string>(initial?.origin_type ?? "");
   const [urgency, setUrgency] = useState<string>(initial?.reported_urgency ?? "");
   const [impactLevel, setImpactLevel] = useState<string>(initial?.impact_level ?? "");
+  const [symptomCodeId, setSymptomCodeId] = useState<number | null>(
+    initial?.symptom_code_id ?? null,
+  );
+  const [symptomSearch, setSymptomSearch] = useState("");
+  const [originOptions, setOriginOptions] = useState<RefOption[]>([]);
+  const [priorityOptions, setPriorityOptions] = useState<RefOption[]>([]);
+  const [impactOptions, setImpactOptions] = useState<RefOption[]>([]);
+  const [symptomOptions, setSymptomOptions] = useState<RefOption[]>([]);
   const [observedAt, setObservedAt] = useState(initial?.observed_at ?? "");
   const [safetyFlag, setSafetyFlag] = useState(initial?.safety_flag ?? false);
   const [environmentalFlag, setEnvironmentalFlag] = useState(initial?.environmental_flag ?? false);
@@ -132,6 +143,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
   const [assetResults, setAssetResults] = useState<AssetSearchResult[]>([]);
   const [assetSearching, setAssetSearching] = useState(false);
   const [showAssetDropdown, setShowAssetDropdown] = useState(false);
+  const [loadingRefs, setLoadingRefs] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -149,6 +161,54 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
       });
     }
   }, [initial, selectedAsset]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingRefs(true);
+    void Promise.all([
+      listPublishedReferenceValuesByDomainCode("DI.ORIGIN"),
+      listPublishedReferenceValuesByDomainCode("DI.PRIORITY"),
+      listPublishedReferenceValuesByDomainCode("DI.IMPACT_LEVEL"),
+      listPublishedReferenceValuesByDomainCode("DI.SYMPTOM"),
+    ])
+      .then(([origins, priorities, impacts, symptoms]) => {
+        if (cancelled) return;
+        setOriginOptions(
+          origins.map((v) => ({
+            id: v.id,
+            code: v.code,
+            label: v.label,
+          })),
+        );
+        setPriorityOptions(
+          priorities.map((v) => ({
+            id: v.id,
+            code: v.code,
+            label: v.label,
+          })),
+        );
+        setImpactOptions(
+          impacts.map((v) => ({
+            id: v.id,
+            code: v.code,
+            label: v.label,
+          })),
+        );
+        setSymptomOptions(
+          symptoms.map((v) => ({
+            id: v.id,
+            code: v.code,
+            label: v.label,
+          })),
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRefs(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ── Equipment search with debounce ────────────────────────────────────
 
@@ -210,11 +270,12 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           origin_type: originType,
           reported_urgency: urgency,
           impact_level: impactLevel,
+          symptomCodeId: symptomCodeId,
           assetId: selectedAsset?.id ?? null,
         },
         (key) => t(key as never),
       ),
-    [title, description, originType, urgency, impactLevel, selectedAsset, t],
+    [title, description, originType, urgency, impactLevel, symptomCodeId, selectedAsset, t],
   );
 
   const isValid = Object.keys(currentErrors).length === 0;
@@ -240,6 +301,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
         "origin_type",
         "reported_urgency",
         "impact_level",
+        "symptom_code_id",
         "equipment",
       ]),
     );
@@ -261,6 +323,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           title,
           description,
           impact_level: impactLevel,
+          symptom_code_id: symptomCodeId,
           production_impact: productionImpact,
           safety_flag: safetyFlag,
           environmental_flag: environmentalFlag,
@@ -277,6 +340,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           title: title.trim(),
           description: description.trim(),
           origin_type: originType,
+          symptom_code_id: symptomCodeId,
           impact_level: impactLevel,
           production_impact: productionImpact,
           safety_flag: safetyFlag,
@@ -284,6 +348,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           quality_flag: qualityFlag,
           reported_urgency: urgency,
           observed_at: observedAt || null,
+          source_inspection_anomaly_id: null,
           submitter_id: info.user_id,
         };
         const di = await submitNewDi(input);
@@ -305,6 +370,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
     originType,
     urgency,
     impactLevel,
+    symptomCodeId,
     observedAt,
     safetyFlag,
     environmentalFlag,
@@ -315,6 +381,19 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
     onSubmitted,
     t,
   ]);
+
+  const filteredSymptoms = useMemo(() => {
+    const q = symptomSearch.trim().toLowerCase();
+    if (!q) return symptomOptions;
+    return symptomOptions.filter(
+      (s) => s.label.toLowerCase().includes(q) || s.code.toLowerCase().includes(q),
+    );
+  }, [symptomOptions, symptomSearch]);
+
+  const selectedSymptom = useMemo(
+    () => symptomOptions.find((s) => s.id === symptomCodeId) ?? null,
+    [symptomOptions, symptomCodeId],
+  );
 
   // ── Render ────────────────────────────────────────────────────────────
 
@@ -457,13 +536,53 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
               <SelectValue placeholder="—" />
             </SelectTrigger>
             <SelectContent>
-              {ORIGIN_TYPES.map((o) => (
-                <SelectItem key={o} value={o}>
-                  {t(`form.origin.${o}`)}
-                </SelectItem>
-              ))}
+              {(originOptions.length > 0 ? originOptions.map((o) => o.code) : ORIGIN_TYPES).map(
+                (o) => (
+                  <SelectItem key={o} value={o}>
+                    {originOptions.find((rv) => rv.code === o)?.label ?? t(`form.origin.${o}`)}
+                  </SelectItem>
+                ),
+              )}
             </SelectContent>
           </Select>
+        </FormField>
+
+        <FormField
+          name="symptom_code_id"
+          label={t("form.symptom.label")}
+          error={fieldError("symptom_code_id")}
+          required
+        >
+          <div className="space-y-2">
+            <Input
+              id="symptom_search"
+              placeholder={t("form.symptom.searchPlaceholder")}
+              value={symptomSearch}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setSymptomSearch(e.target.value)}
+            />
+            <Select
+              value={symptomCodeId !== null ? String(symptomCodeId) : ""}
+              onValueChange={(v) => {
+                setSymptomCodeId(v ? Number(v) : null);
+                markTouched("symptom_code_id");
+              }}
+            >
+              <SelectTrigger id="symptom_code_id">
+                <SelectValue
+                  placeholder={loadingRefs ? t("lookup.loading") : t("form.symptom.placeholder")}
+                >
+                  {selectedSymptom?.label}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {filteredSymptoms.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </FormField>
 
         {/* Urgency */}
@@ -484,9 +603,12 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
               <SelectValue placeholder="—" />
             </SelectTrigger>
             <SelectContent>
-              {URGENCY_LEVELS.map((u) => (
+              {(priorityOptions.length > 0
+                ? priorityOptions.map((u) => u.code)
+                : URGENCY_LEVELS
+              ).map((u) => (
                 <SelectItem key={u} value={u}>
-                  {t(`priority.${u}`)}
+                  {priorityOptions.find((rv) => rv.code === u)?.label ?? t(`priority.${u}`)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -511,11 +633,13 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
               <SelectValue placeholder="—" />
             </SelectTrigger>
             <SelectContent>
-              {IMPACT_LEVELS.map((l) => (
-                <SelectItem key={l} value={l}>
-                  {t(`form.impact.${l}`)}
-                </SelectItem>
-              ))}
+              {(impactOptions.length > 0 ? impactOptions.map((l) => l.code) : IMPACT_LEVELS).map(
+                (l) => (
+                  <SelectItem key={l} value={l}>
+                    {impactOptions.find((rv) => rv.code === l)?.label ?? t(`form.impact.${l}`)}
+                  </SelectItem>
+                ),
+              )}
             </SelectContent>
           </Select>
         </FormField>

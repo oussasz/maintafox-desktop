@@ -588,6 +588,7 @@ pub fn run() {
             commands::di::get_di,
             commands::di::create_di,
             commands::di::update_di_draft,
+            commands::di::triage_submitted_di,
             commands::di::screen_di,
             commands::di::return_di,
             commands::di::reject_di,

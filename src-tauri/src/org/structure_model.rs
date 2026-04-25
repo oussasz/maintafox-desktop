@@ -237,7 +237,7 @@ pub async fn fork_draft_from_published(
         return Err(AppError::ValidationFailed(vec!["the published model has no node types — add types to the active model before forking, or use an empty first draft (bootstrap) instead".to_string()]));
     }
 
-    let mut txn: DatabaseTransaction = db.begin().await?;
+    let txn: DatabaseTransaction = db.begin().await?;
 
     if has_any_draft(&txn).await? {
         return Err(AppError::ValidationFailed(vec!["a draft structure model already exists — publish, archive, or abandon it first".to_string()]));

@@ -7,6 +7,7 @@
  * Phase 2 – Sub-phase 04 – File 02 – Sprint S4.
  */
 
+import type { TFunction } from "i18next";
 import { ArrowRight, CheckCircle2, Loader2, Printer, TriangleAlert } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -26,8 +27,10 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
+import { i18n } from "@/i18n";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
+import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -45,18 +48,12 @@ const STATUS_STYLE: Record<string, string> = {
   awaiting_approval: "bg-yellow-100 text-yellow-800",
 };
 
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
+function esc(v: string): string {
+  return v
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function generateWoCodePreview(diCode: string): string {
@@ -65,15 +62,34 @@ function generateWoCodePreview(diCode: string): string {
 
 // ── Print ───────────────────────────────────────────────────────────────────
 
-function printApprovalSheet(di: InterventionRequest, approverName: string, note: string) {
+function printApprovalSheet(
+  di: InterventionRequest,
+  approverName: string,
+  note: string,
+  t: TFunction<"di">,
+  locale: string,
+) {
   const woCode = generateWoCodePreview(di.code);
-  const now = new Date().toLocaleString("fr-FR");
+  const now = new Date().toLocaleString(locale);
+  const fmt = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleString(locale, {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return iso;
+    }
+  };
 
   const html = `<!DOCTYPE html>
-<html lang="fr">
+<html lang="${i18n.language.split("-")[0] ?? "fr"}">
 <head>
   <meta charset="utf-8" />
-  <title>Fiche de validation — Demande d'Intervention</title>
+  <title>${t("approvalPrint.title")}</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 40px; font-size: 12px; }
     h1 { font-size: 18px; text-align: center; margin-bottom: 4px; }
@@ -89,48 +105,52 @@ function printApprovalSheet(di: InterventionRequest, approverName: string, note:
   </style>
 </head>
 <body>
-  <h1>Fiche de validation — Demande d'Intervention</h1>
-  <p class="subtitle">Référence : ${di.code} — Date d'émission : ${now}</p>
+  <h1>${t("approvalPrint.title")}</h1>
+  <p class="subtitle">${t("approvalPrint.subtitle", { code: esc(di.code), date: now })}</p>
 
   <table>
-    <tr><th>Code DI</th><td>${di.code}</td></tr>
-    <tr><th>Titre</th><td>${di.title}</td></tr>
-    <tr><th>Statut</th><td>${di.status}</td></tr>
-    <tr><th>Priorité</th><td>${di.reported_urgency}</td></tr>
-    <tr><th>Origine</th><td>${di.origin_type}</td></tr>
-    <tr><th>Niveau d'impact</th><td>${di.impact_level}</td></tr>
-    <tr><th>Équipement</th><td>#${di.asset_id}</td></tr>
-    <tr><th>Nœud org.</th><td>#${di.org_node_id}</td></tr>
-    <tr><th>Date soumission</th><td>${formatDate(di.submitted_at)}</td></tr>
-    <tr><th>Description</th><td>${di.description}</td></tr>
-    ${di.reviewer_note ? `<tr><th>Note de revue</th><td>${di.reviewer_note}</td></tr>` : ""}
-    ${note ? `<tr><th>Note d'approbation</th><td>${note}</td></tr>` : ""}
+    <tr><th>${t("approvalPrint.thCode")}</th><td>${esc(di.code)}</td></tr>
+    <tr><th>${t("approvalPrint.thTitle")}</th><td>${esc(di.title)}</td></tr>
+    <tr><th>${t("approvalPrint.thStatus")}</th><td>${esc(di.status)}</td></tr>
+    <tr><th>${t("approvalPrint.thPriority")}</th><td>${esc(di.reported_urgency)}</td></tr>
+    <tr><th>${t("approvalPrint.thOrigin")}</th><td>${esc(di.origin_type)}</td></tr>
+    <tr><th>${t("approvalPrint.thImpact")}</th><td>${esc(di.impact_level)}</td></tr>
+    <tr><th>${t("approvalPrint.thAsset")}</th><td>#${di.asset_id}</td></tr>
+    <tr><th>${t("approvalPrint.thOrg")}</th><td>#${di.org_node_id}</td></tr>
+    <tr><th>${t("approvalPrint.thSubmitted")}</th><td>${esc(fmt(di.submitted_at))}</td></tr>
+    <tr><th>${t("approvalPrint.thDescription")}</th><td>${esc(di.description)}</td></tr>
+    ${
+      di.reviewer_note
+        ? `<tr><th>${t("approvalPrint.thReviewerNote")}</th><td>${esc(di.reviewer_note)}</td></tr>`
+        : ""
+    }
+    ${note ? `<tr><th>${t("approvalPrint.thApprovalNote")}</th><td>${esc(note)}</td></tr>` : ""}
   </table>
 
-  <div class="conversion">Transférée à l'OT : ${di.code} → ${woCode}</div>
+  <div class="conversion">${t("approvalPrint.conversion", { from: esc(di.code), to: esc(woCode) })}</div>
 
   <div class="signatures">
     <div class="sig-box">
-      <p><strong>Déclarant</strong></p>
+      <p><strong>${t("approvalPrint.sigDeclarant")}</strong></p>
       <p>#${di.submitter_id}</p>
       <br/><br/>
-      <p>Signature : _______________</p>
+      <p>${t("print.signatureLine")}</p>
     </div>
     <div class="sig-box">
-      <p><strong>Approbateur</strong></p>
-      <p>${approverName}</p>
+      <p><strong>${t("approvalPrint.sigApprover")}</strong></p>
+      <p>${esc(approverName)}</p>
       <br/><br/>
-      <p>Signature : _______________</p>
+      <p>${t("print.signatureLine")}</p>
     </div>
     <div class="sig-box">
-      <p><strong>Responsable Maintenance</strong></p>
+      <p><strong>${t("approvalPrint.sigResp")}</strong></p>
       <br/><br/><br/>
-      <p>Signature : _______________</p>
+      <p>${t("print.signatureLine")}</p>
     </div>
   </div>
 
   <div class="footer">
-    Document : ${di.code}-APPROBATION — Confidentiel
+    ${t("approvalPrint.footer", { code: esc(di.code) })}
   </div>
 </body>
 </html>`;
@@ -146,7 +166,8 @@ function printApprovalSheet(di: InterventionRequest, approverName: string, note:
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function DiApprovalDialog() {
-  const { t } = useTranslation("di");
+  const { t, i18n } = useTranslation("di");
+  const dateLocale = intlLocaleForLanguage(i18n.language);
   const di = useDiReviewStore((s) => s.approvalDi);
   const closeApproval = useDiReviewStore((s) => s.closeApproval);
   const approve = useDiReviewStore((s) => s.approve);
@@ -209,9 +230,10 @@ export function DiApprovalDialog() {
 
   const handlePrint = useCallback(() => {
     if (di) {
-      printApprovalSheet(di, approverName, note);
+      const tPrint = i18n.getFixedT(i18n.language, "di");
+      printApprovalSheet(di, approverName, note, tPrint, intlLocaleForLanguage(i18n.language));
     }
-  }, [di, approverName, note]);
+  }, [di, approverName, note, i18n]);
 
   const handleClose = useCallback(() => {
     setNote("");
@@ -291,7 +313,15 @@ export function DiApprovalDialog() {
                   <span className="ml-4 text-muted-foreground">
                     {t("detail.fields.reportedAt")}:
                   </span>{" "}
-                  <span className="font-medium">{formatDate(di.submitted_at)}</span>
+                  <span className="font-medium">
+                    {new Date(di.submitted_at).toLocaleString(dateLocale, {
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
                 </div>
 
                 {/* Description */}

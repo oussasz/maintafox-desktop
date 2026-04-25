@@ -14,6 +14,7 @@ import { PermissionGate } from "@/components/PermissionGate";
 import { CHART_COLORS } from "@/components/charts/chart-utils";
 import { DashboardCustomizeDialog } from "@/components/dashboard/DashboardCustomizeDialog";
 import { DashboardDiStatusChart } from "@/components/dashboard/DashboardDiStatusChart";
+import { DashboardDisTriageInboxPanel } from "@/components/dashboard/DashboardDisTriageInboxPanel";
 import { DashboardReliabilitySnapshotCard } from "@/components/dashboard/DashboardReliabilitySnapshotCard";
 import { DashboardWorkloadChart } from "@/components/dashboard/DashboardWorkloadChart";
 import { KpiCard } from "@/components/dashboard/KpiCard";
@@ -85,6 +86,14 @@ export function DashboardPage() {
 
     const interval = setInterval(loadKpis, KPI_REFRESH_MS);
     return () => clearInterval(interval);
+  }, [loadKpis]);
+
+  useEffect(() => {
+    const onRefresh = () => {
+      loadKpis();
+    };
+    window.addEventListener("mf:dashboard-kpis-refresh", onRefresh);
+    return () => window.removeEventListener("mf:dashboard-kpis-refresh", onRefresh);
   }, [loadKpis]);
 
   useEffect(() => {
@@ -221,6 +230,10 @@ export function DashboardPage() {
       {visibleWidgets.map((w) => (
         <Fragment key={w.id}>{renderWidget(w.id)}</Fragment>
       ))}
+
+      <PermissionGate anyOf={["di.screen", "di.review"]}>
+        <DashboardDisTriageInboxPanel />
+      </PermissionGate>
 
       {import.meta.env.DEV ? (
         <details

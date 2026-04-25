@@ -4,9 +4,11 @@
 //!
 //! Permission gates:
 //!   di.view       — list, get, review events, SLA status, list attachments
-//!   di.create     — create any DI
-//!   di.create.own — create DI as self, upload attachment on own DI
-//!   di.review     — update draft, screen, return, reject, upload attachment on any DI
+//!   di.create       — create any DI
+//!   di.create.own   — create DI as self, upload attachment on own DI
+//!   di.screen       — triage submitted DIs (submitted → pending_review)
+//!   di.review       — update draft, return, reject, upload attachment on any DI; full review queue
+//!   (screen after triage: di.screen or di.review)
 //!   di.approve    — approve, defer, reactivate
 //!   di.convert    — convert DI to WO (step-up required)
 //!   di.admin      — SLA rule management, delete attachment records
@@ -17,7 +19,6 @@ use crate::auth::rbac::PermissionScope;
 use crate::di::attachments;
 use crate::di::audit;
 use crate::di::conversion;
-use crate::di::domain::DiOriginType;
 use crate::di::queries;
 use crate::di::review;
 use crate::di::sla;
@@ -123,12 +124,8 @@ pub async fn create_di(
     if input.description.trim().is_empty() {
         errors.push("La description est obligatoire.".into());
     }
-    if DiOriginType::try_from_str(&input.origin_type).is_err() {
-        errors.push(format!(
-            "Type d'origine invalide : '{}'. Valeurs autorisées : operator, technician, \
-             inspection, pm, iot, quality, hse, production, external.",
-            input.origin_type
-        ));
+    if input.origin_type.trim().is_empty() {
+        errors.push("Le type d'origine est obligatoire.".into());
     }
 
     // Validate asset_id resolves
@@ -168,6 +165,56 @@ pub async fn create_di(
     }
 
     queries::create_intervention_request(&state.db, input).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// C2) triage_submitted_di — requires di.screen or di.review (supervisor / planner)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn triage_submitted_di(
+    input: queries::DiTriageSubmittedInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::di::domain::InterventionRequest> {
+    let user = require_session!(state);
+    let uid = i64::from(user.user_id);
+
+    let has_screen = crate::auth::rbac::check_permission(
+        &state.db,
+        user.user_id,
+        "di.screen",
+        &PermissionScope::Global,
+    )
+    .await?;
+    let has_review = crate::auth::rbac::check_permission(
+        &state.db,
+        user.user_id,
+        "di.review",
+        &PermissionScope::Global,
+    )
+    .await?;
+
+    if !has_screen && !has_review {
+        return Err(AppError::PermissionDenied(
+            "Tri des demandes : permission di.screen ou di.review requise.".into(),
+        ));
+    }
+
+    let di = queries::triage_submitted_di(&state.db, input, uid).await?;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "triage_submitted".into(),
+            actor_id: Some(uid),
+            summary: Some("Tri d'entrée : DI admise en file de revue (soumis → en revue)".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(di)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -213,7 +260,7 @@ pub async fn update_di_draft(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// E) screen_di — requires di.review
+// E) screen_di — requires di.screen or di.review (same gate as triage to pending_review)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -222,7 +269,25 @@ pub async fn screen_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.review", PermissionScope::Global);
+    let has_screen = crate::auth::rbac::check_permission(
+        &state.db,
+        user.user_id,
+        "di.screen",
+        &PermissionScope::Global,
+    )
+    .await?;
+    let has_review = crate::auth::rbac::check_permission(
+        &state.db,
+        user.user_id,
+        "di.review",
+        &PermissionScope::Global,
+    )
+    .await?;
+    if !has_screen && !has_review {
+        return Err(AppError::PermissionDenied(
+            "Examen de la demande : permission di.screen ou di.review requise.".into(),
+        ));
+    }
     input.actor_id = i64::from(user.user_id);
     let di = review::screen_di(&state.db, input).await?;
     audit::record_di_change_event(&state.db, audit::DiAuditInput {
@@ -919,6 +984,7 @@ mod tests {
             "get_di",
             "create_di",
             "update_di_draft",
+            "triage_submitted_di",
             "screen_di",
             "return_di",
             "reject_di",
@@ -935,17 +1001,18 @@ mod tests {
             "update_sla_rule",
             "list_di_change_events",
             "list_all_di_change_events",
+            "get_di_stats",
         ];
         let unique: std::collections::HashSet<&str> = fns.iter().copied().collect();
         assert_eq!(fns.len(), unique.len(), "All DI command names must be unique");
-        assert_eq!(fns.len(), 20, "Expected exactly 20 DI commands (Files 01-04)");
+        assert_eq!(fns.len(), 22, "Expected exactly 22 DI commands (incl. triage_submitted_di + get_di_stats)");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
     // File 04 — Sprint S1 Supervisor Verification Tests
     // ═══════════════════════════════════════════════════════════════════════
 
-    // ─── V1 — Permission seed: exactly 7 canonical di.* permissions ─────
+    // ─── V1 — Permission seed: canonical di.* permissions (catalog + seeder) ─────
 
     #[tokio::test]
     async fn s1_v1_permission_seed_exactly_7_di_rows() {
@@ -975,10 +1042,10 @@ mod tests {
                 "di.create.own",
                 "di.delete",
                 "di.review",
-                "di.submit",
+                "di.screen",
                 "di.view",
             ],
-            "Exactly 9 canonical di.* permissions must exist (7 legacy + di.submit + di.delete from migration 029)"
+            "Canonical di.* permissions (triage: di.screen; no di.submit / di.submit.own)"
         );
     }
 

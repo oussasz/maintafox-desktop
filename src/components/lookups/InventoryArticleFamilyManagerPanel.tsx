@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import {
   REF_TABLE_ACTIONS_GROUP_CLASS,
+  refTableHeaderAddButtonClass,
   refTableIconButtonClass,
 } from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { usePermissions } from "@/hooks/use-permissions";
 import {
   createInventoryArticleFamily,
   deactivateInventoryArticleFamily,
@@ -40,6 +42,8 @@ const EMPTY_DRAFT: FamilyDraft = {
 
 export function InventoryArticleFamilyManagerPanel() {
   const { t } = useTranslation("reference");
+  const { can } = usePermissions();
+  const canManage = can("ref.manage");
   const [families, setFamilies] = useState<ArticleFamily[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -67,6 +71,7 @@ export function InventoryArticleFamilyManagerPanel() {
   }, []);
 
   const beginEdit = (family: ArticleFamily) => {
+    if (!canManage) return;
     setEditingId(family.id);
     setEditingDraft({
       code: family.code,
@@ -81,6 +86,7 @@ export function InventoryArticleFamilyManagerPanel() {
   };
 
   const submitCreate = async () => {
+    if (!canManage) return;
     setSaving(true);
     setError(null);
     try {
@@ -99,6 +105,7 @@ export function InventoryArticleFamilyManagerPanel() {
   };
 
   const startNewRow = () => {
+    if (!canManage) return;
     setNewDraft(EMPTY_DRAFT);
     setEditingId(null);
   };
@@ -108,6 +115,7 @@ export function InventoryArticleFamilyManagerPanel() {
   };
 
   const submitEdit = async (familyId: number) => {
+    if (!canManage) return;
     setSaving(true);
     setError(null);
     try {
@@ -127,6 +135,7 @@ export function InventoryArticleFamilyManagerPanel() {
   };
 
   const submitDeactivate = async () => {
+    if (!canManage) return;
     if (!deleteTarget) return;
     setSaving(true);
     setError(null);
@@ -155,9 +164,9 @@ export function InventoryArticleFamilyManagerPanel() {
         <Button
           variant="outline"
           size="sm"
-          className="gap-1.5"
+          className={refTableHeaderAddButtonClass()}
           onClick={startNewRow}
-          disabled={saving || !!newDraft}
+          disabled={!canManage || saving || !!newDraft}
         >
           <Plus className="h-3.5 w-3.5" />
           Add family
@@ -185,7 +194,7 @@ export function InventoryArticleFamilyManagerPanel() {
             </tr>
           </thead>
           <tbody>
-            {newDraft && (
+            {newDraft && canManage && (
               <tr className="bg-primary/5 border-b border-surface-border">
                 <td className="px-3 py-1.5">
                   <Input
@@ -316,7 +325,7 @@ export function InventoryArticleFamilyManagerPanel() {
                       </Badge>
                     </td>
                     <td className="px-3 py-1.5 text-right align-middle">
-                      {isEditing ? (
+                      {canManage && isEditing ? (
                         <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                           <Button
                             variant="ghost"
@@ -338,7 +347,7 @@ export function InventoryArticleFamilyManagerPanel() {
                             <X className="h-3.5 w-3.5" />
                           </Button>
                         </div>
-                      ) : (
+                      ) : canManage ? (
                         <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                           <Button
                             variant="ghost"
@@ -363,6 +372,8 @@ export function InventoryArticleFamilyManagerPanel() {
                             </Button>
                           ) : null}
                         </div>
+                      ) : (
+                        <span className="text-xs text-text-muted">—</span>
                       )}
                     </td>
                   </tr>

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import {
   REF_TABLE_ACTIONS_GROUP_CLASS,
+  refTableHeaderAddButtonClass,
   refTableIconButtonClass,
 } from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
@@ -61,6 +62,7 @@ export function WorkOrderTypesManagerPanel() {
   }, [loadRows]);
 
   const beginEdit = (row: WorkOrderTypeOption) => {
+    if (row.is_system) return;
     setEditingId(row.id);
     setEditingDraft({ code: row.code, label: row.label });
   };
@@ -153,21 +155,19 @@ export function WorkOrderTypesManagerPanel() {
             v1 — {t("browser.status.published")}
           </Badge>
         </div>
-        {canManage ? (
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            onClick={() => {
-              setNewDraft({ code: "", label: "" });
-              setEditingId(null);
-            }}
-            disabled={saving || !!newDraft}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("woTypes.addType")}
-          </Button>
-        ) : null}
+        <Button
+          variant="outline"
+          size="sm"
+          className={refTableHeaderAddButtonClass()}
+          onClick={() => {
+            setNewDraft({ code: "", label: "" });
+            setEditingId(null);
+          }}
+          disabled={!canManage || saving || !!newDraft}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {t("woTypes.addType")}
+        </Button>
       </div>
 
       {error ? (
@@ -359,23 +359,21 @@ export function WorkOrderTypesManagerPanel() {
                               size="icon"
                               className={refTableIconButtonClass()}
                               onClick={() => beginEdit(row)}
-                              disabled={saving}
+                              disabled={saving || row.is_system}
                               aria-label={t("editor.edit")}
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
-                            {!row.is_system ? (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className={refTableIconButtonClass()}
-                                onClick={() => setDeleteTarget(row)}
-                                disabled={saving}
-                                aria-label={t("editor.deactivate")}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            ) : null}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={refTableIconButtonClass()}
+                              onClick={() => setDeleteTarget(row)}
+                              disabled={saving || row.is_system}
+                              aria-label={t("editor.deactivate")}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
                           </div>
                         )
                       ) : (

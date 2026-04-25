@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import {
   REF_TABLE_ACTIONS_GROUP_CLASS,
+  refTableHeaderAddButtonClass,
   refTableIconButtonClass,
 } from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { usePermissions } from "@/hooks/use-permissions";
 import {
   createInventoryTaxCategory,
   deactivateInventoryTaxCategory,
@@ -36,6 +38,8 @@ const EMPTY_DRAFT: InventoryTaxCategoryInput = {
 
 export function InventoryTaxCategoryManagerPanel() {
   const { t } = useTranslation("reference");
+  const { can } = usePermissions();
+  const canManage = can("ref.manage");
   const [taxCategories, setTaxCategories] = useState<InventoryTaxCategory[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -63,6 +67,7 @@ export function InventoryTaxCategoryManagerPanel() {
   }, []);
 
   const beginEdit = (row: InventoryTaxCategory) => {
+    if (!canManage) return;
     setEditingId(row.id);
     setEditingDraft({
       code: row.code,
@@ -79,6 +84,7 @@ export function InventoryTaxCategoryManagerPanel() {
   };
 
   const submitCreate = async () => {
+    if (!canManage) return;
     if (!newDraft) return;
     setSaving(true);
     setError(null);
@@ -99,6 +105,7 @@ export function InventoryTaxCategoryManagerPanel() {
   };
 
   const submitEdit = async (row: InventoryTaxCategory) => {
+    if (!canManage) return;
     setSaving(true);
     setError(null);
     try {
@@ -118,6 +125,7 @@ export function InventoryTaxCategoryManagerPanel() {
   };
 
   const submitDeactivate = async () => {
+    if (!canManage) return;
     if (!deleteTarget) return;
     setSaving(true);
     setError(null);
@@ -146,12 +154,12 @@ export function InventoryTaxCategoryManagerPanel() {
         <Button
           variant="outline"
           size="sm"
-          className="gap-1.5"
+          className={refTableHeaderAddButtonClass()}
           onClick={() => {
             setNewDraft(EMPTY_DRAFT);
             setEditingId(null);
           }}
-          disabled={saving || !!newDraft}
+          disabled={!canManage || saving || !!newDraft}
         >
           <Plus className="h-3.5 w-3.5" />
           Add TVA type
@@ -180,7 +188,7 @@ export function InventoryTaxCategoryManagerPanel() {
             </tr>
           </thead>
           <tbody>
-            {newDraft ? (
+            {newDraft && canManage ? (
               <tr className="border-b border-surface-border bg-primary/5">
                 <td className="px-3 py-1.5">
                   <Input
@@ -333,7 +341,7 @@ export function InventoryTaxCategoryManagerPanel() {
                       </Badge>
                     </td>
                     <td className="px-3 py-1.5 text-right align-middle">
-                      {isEditing ? (
+                      {canManage && isEditing ? (
                         <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                           <Button
                             variant="ghost"
@@ -355,7 +363,7 @@ export function InventoryTaxCategoryManagerPanel() {
                             <X className="h-3.5 w-3.5" />
                           </Button>
                         </div>
-                      ) : (
+                      ) : canManage ? (
                         <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
                           <Button
                             variant="ghost"
@@ -380,6 +388,8 @@ export function InventoryTaxCategoryManagerPanel() {
                             </Button>
                           ) : null}
                         </div>
+                      ) : (
+                        <span className="text-xs text-text-muted">—</span>
                       )}
                     </td>
                   </tr>

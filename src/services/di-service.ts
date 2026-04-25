@@ -14,6 +14,7 @@ import type {
   DiGetResponse,
   DiListFilter,
   DiListPage,
+  DiTriageSubmittedInput,
   InterventionRequest,
 } from "@shared/ipc-types";
 
@@ -135,6 +136,17 @@ export async function createDi(input: DiCreateInput): Promise<InterventionReques
 export async function updateDiDraft(input: DiDraftUpdateInput): Promise<InterventionRequest> {
   try {
     const raw = await invoke<unknown>("update_di_draft", { input });
+    return InterventionRequestSchema.parse(raw) as InterventionRequest;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+export async function triageSubmittedDi(
+  input: DiTriageSubmittedInput,
+): Promise<InterventionRequest> {
+  try {
+    const raw = await invoke<unknown>("triage_submitted_di", { input });
     return InterventionRequestSchema.parse(raw) as InterventionRequest;
   } catch (err) {
     rethrowIfVersionConflict(err);

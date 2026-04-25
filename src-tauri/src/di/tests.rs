@@ -653,7 +653,7 @@ mod tests {
 
         assert_eq!(di.status, "submitted", "Initial status must be 'submitted'");
 
-        // Assert 1 row in di_state_transition_log (action = submit)
+        // Assert 1 row in di_state_transition_log (action = intake_submitted)
         let transitions = get_di_transition_log(&db, di.id)
             .await
             .expect("get transition log");
@@ -662,7 +662,7 @@ mod tests {
             1,
             "Exactly 1 transition log row after submission"
         );
-        assert_eq!(transitions[0].action, "submit");
+        assert_eq!(transitions[0].action, "intake_submitted");
         assert_eq!(transitions[0].to_status, "submitted");
 
         // Record a submission change event (the command layer would do this)

@@ -1,5 +1,5 @@
 import { Lock, ShieldAlert } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
@@ -28,6 +28,7 @@ export function AuthLockLayer() {
   const clearLock = useAuthInterceptorStore((s) => s.clear);
 
   const [password, setPassword] = useState("");
+  const passwordInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -66,6 +67,12 @@ export function AuthLockLayer() {
   const canTryPasswordResume =
     isOpen && (mode === "session" || mode === "unknown") && !session.info?.is_authenticated;
 
+  useEffect(() => {
+    if (!canTryPasswordResume) return;
+    const id = window.setTimeout(() => passwordInputRef.current?.focus(), 30);
+    return () => window.clearTimeout(id);
+  }, [canTryPasswordResume, isOpen]);
+
   const displayName = preInterrupt?.display_name ?? preInterrupt?.username ?? null;
 
   const onSubmit = useCallback(
@@ -94,12 +101,20 @@ export function AuthLockLayer() {
 
   return (
     <div
-      className="fixed inset-0 z-[5000] flex items-center justify-center bg-surface-0/90 p-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[2147483000] flex items-center justify-center p-6 pointer-events-auto"
       role="dialog"
       aria-modal="true"
       aria-labelledby="auth-lock-title"
+      onPointerDownCapture={(e) => {
+        // Keep all pointer interactions trapped inside lock layer while open.
+        e.stopPropagation();
+      }}
     >
-      <div className={cn("w-full max-w-md", mfAuth.card)}>
+      <div className="absolute inset-0 bg-surface-0/90 backdrop-blur-sm pointer-events-auto" />
+      <div
+        className={cn("relative z-[2147483001] w-full max-w-md pointer-events-auto", mfAuth.card)}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
         <div className="mb-6 flex justify-center">
           <MaintafoxWordmark size="sm" tone="auth" />
         </div>
@@ -140,12 +155,13 @@ export function AuthLockLayer() {
                 {t("login.form.password.label")}
               </label>
               <input
+                ref={passwordInputRef}
                 id="auth-lock-password"
                 type="password"
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className={cn("w-full", mfInput.authField)}
+                className={cn("w-full pointer-events-auto", mfInput.authField)}
                 disabled={session.isLoading}
                 required
               />

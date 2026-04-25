@@ -8,12 +8,12 @@ use crate::license::domain::{
 };
 use crate::license::queries;
 use crate::state::AppState;
-use crate::{require_permission, require_session, require_step_up};
+use crate::{require_permission, require_permission_allowing_system_admin, require_session, require_step_up};
 
 #[tauri::command]
 pub async fn get_license_enforcement_status(state: State<'_, AppState>) -> AppResult<LicenseStatusView> {
     let user = require_session!(state);
-    require_permission!(state, &user, "lic.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "lic.view", PermissionScope::Global);
     queries::get_license_status_view(&state.db, user.user_id).await
 }
 
@@ -35,7 +35,7 @@ pub async fn list_license_trace_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<LicenseTraceEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "lic.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "lic.view", PermissionScope::Global);
     queries::list_license_trace_events(&state.db, limit, correlation_id).await
 }
 
