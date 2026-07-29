@@ -66,12 +66,46 @@ type(scope): short imperative summary
 7. `git push -u origin HEAD` (or push current feature branch). **No force-push** to `main`/`staging`/`develop`. No force-push elsewhere unless the user explicitly orders it.
 8. Confirm clean tree for intended files; report commit SHA + branch + remote result.
 
-## PRs, tags, releases
+## Branch naming and work organization
 
-- Prefer an open PR `feature/*` → `develop` (draft OK). Update existing PR; do not open duplicates.
-- **Annotated `v*` tags only on `main`** after the promotion path. Never tag feature/develop/staging tips as official releases.
-- Version bumps (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `CHANGELOG.md`) only when doing a real release/versioning task — same commit, identical strings.
-- `git push origin --tags` only when new tags exist and policy allows them (on `main`).
+Allowed names only: `feature/p{N}-sp{NN}-{slug}`, `fix/{issue-id}-{slug}`, `chore/{slug}`, `hotfix/{version}-{slug}`.
+
+- One branch per sprint/logical unit; stay on the existing sprint branch instead of forking a near-duplicate.
+- Before committing, verify the branch name matches the current work; if it does not, create a correctly named branch from the current tip and continue there.
+- Backup/scratch refs (`safety/*`, `compare/*`, `recovery/*`, `backup-*`) are **local only** — never push them and never name them `v*`.
+- Keep merged sprint branches for 30 days (audit trail). Delete only stale local scratch refs, and only after confirming their commits are reachable from a pushed branch.
+- Report stale/diverged branches (remote `[gone]`, unmerged old sprint branches) instead of silently deleting or force-updating them.
+
+## Porting fixes already made on other branches
+
+When a fix exists on another branch, **reuse it — never re-implement or overwrite it**:
+
+1. Locate it: `git log --all --oneline --grep="<keyword>"` or `git branch -a --contains <sha>`.
+2. Bring it over with `git cherry-pick -x <sha>` (keeps provenance) onto the correct target branch.
+3. If the fix only lives in a stash/scratch ref, cherry-pick or apply it, then verify nothing else from that ref is lost.
+4. Never merge an old branch wholesale to grab one fix, and never revert newer work to make an old branch apply cleanly.
+5. Resolve conflicts by keeping current architecture; state clearly in the report which commits were ported.
+
+## Pull requests and GitHub hygiene
+
+- One PR per branch toward `develop` (draft is fine). Update the existing PR — never open duplicates; refresh its title/body when scope grows.
+- PR title format from `.github/PULL_REQUEST_TEMPLATE.md`: `[P{N}-SP{NN}-F{NN}-S{N}] Description`; fill Summary, Changes Made, and the Definition of Done checklist.
+- Apply existing labels from `.github/labels.yml` only (`phase:*`, `type:*`, `status:*`, `priority:*`) — do not invent labels.
+- Use `.github/ISSUE_TEMPLATE/` for bugs and supervisor feedback; link issues in `fix/*` PRs.
+- Respect required status checks in `.github/branch-protection.md` (`develop` 1 approval, `staging` 1, `main` 2). Never bypass or merge red CI.
+- Report CI failures with the cause; fix forward in new commits.
+
+## Version and release management
+
+Only during an explicit release/versioning task:
+
+1. Follow the phase ranges in `docs/VERSIONING_POLICY.md`; bump `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` to the **identical** string in one commit.
+2. Move `CHANGELOG.md` `[Unreleased]` into a dated version section; `[Unreleased]` must never be empty in a PR to `main`.
+3. Complete `docs/RELEASE_CHECKLIST.md` gates, then promote `develop` → `staging` → `main` by PR (2 approvals for `main`).
+4. After the merge to `main`, create the annotated tag there and push it separately:
+   `git tag -a v{VERSION} -m "Maintafox {VERSION} — {summary}"` then `git push origin --tags`.
+5. Publish the GitHub release from that tag (`gh release create v{VERSION} …`), verify installer artifacts, and keep it draft until artifacts are confirmed.
+6. Never tag or publish a release from `feature/*`, `fix/*`, `develop`, or `staging`; if the user asks for a release before promotion, explain the gap and offer the promotion path.
 
 ## Hard forbidden actions
 
@@ -84,6 +118,8 @@ type(scope): short imperative summary
 | `reset --hard` / destructive discard of user work | Forbidden without explicit user order + backup |
 | Commit secrets or build artifact trees | Forbidden |
 | Official release tags off `main` | Forbidden |
+| Deleting branches/refs holding unpushed work | Forbidden without explicit user order |
+| Re-implementing a fix that already exists on another branch | Forbidden — cherry-pick it |
 
 ## End-of-task report (always)
 
@@ -93,7 +129,9 @@ After auto commit/push, tell the user briefly:
 - branch pushed
 - PR link if any
 - what was excluded (e.g. local `target-check*`)
+- commits ported from other branches, if any
 - if a release tag was **not** created, say why (tags only on `main`)
+- any branch/organization problem noticed (bad name, stale branch, diverged `develop`)
 
 ```text
 ❌ BAD — leave a finished multi-file feature uncommitted; or git add -A including target-check
