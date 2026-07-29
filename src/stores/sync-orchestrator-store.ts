@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 
 import { i18n } from "@/i18n/config";
 import { isModuleCapabilityAllowed, parseCapabilityMap } from "@/lib/module-capability";
+import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { getEntitlementSummary } from "@/services/entitlement-service";
 import {
   computeRetryDelayMs,
@@ -27,13 +28,13 @@ import {
 import { exchangeControlPlaneSyncRound } from "@/services/sync-vps-transport-service";
 import { useAppStore } from "@/store/app-store";
 import { pushAppToast } from "@/store/app-toast-store";
-import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { extractIpcErrorCode, toErrorMessage } from "@/utils/errors";
 import type {
   ReplaySyncFailuresInput,
   ResolveSyncConflictInput,
   SyncConflictRecord,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 type TimelineSeverity = "info" | "warning" | "error";
 
@@ -42,7 +43,7 @@ async function resolveSyncCapabilityEnabled(): Promise<boolean> {
   try {
     const summary = await getEntitlementSummary();
     const map = parseCapabilityMap(summary.capability_map_json);
-    return isModuleCapabilityAllowed(map, "sync.view");
+    return isModuleCapabilityAllowed(map, P.SYNC_VIEW);
   } catch {
     // Without a readable entitlement summary, do not start automatic sync cycles.
     return false;

@@ -16,7 +16,7 @@ pub async fn apply_entitlement_envelope(
     state: State<'_, AppState>,
 ) -> AppResult<EntitlementRefreshResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ent.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ENT_MANAGE, PermissionScope::Global);
     require_step_up!(state);
     queries::apply_entitlement_envelope(&state.db, input).await
 }
@@ -42,6 +42,6 @@ pub async fn get_entitlement_diagnostics(
     state: State<'_, AppState>,
 ) -> AppResult<EntitlementDiagnostics> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ent.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ENT_VIEW, PermissionScope::Global);
     queries::get_entitlement_diagnostics(&state.db, limit).await
 }

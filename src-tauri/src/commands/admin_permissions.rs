@@ -86,7 +86,7 @@ pub async fn list_permissions(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PermissionWithSystem>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.permissions", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_PERMISSIONS, PermissionScope::Global);
 
     let mut conditions = Vec::<String>::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
@@ -149,7 +149,7 @@ pub async fn get_permission_dependencies(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PermissionDependencyRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.permissions", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_PERMISSIONS, PermissionScope::Global);
 
     let sql = "SELECT id, permission_name, required_permission_name, dependency_type \
                FROM permission_dependencies \
@@ -201,7 +201,7 @@ pub async fn create_custom_permission(
     state: State<'_, AppState>,
 ) -> AppResult<PermissionWithSystem> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.permissions", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_PERMISSIONS, PermissionScope::Global);
     require_step_up!(state);
 
     let name = input.name.trim().to_lowercase();
@@ -286,7 +286,7 @@ pub async fn validate_role_permissions(
     state: State<'_, AppState>,
 ) -> AppResult<RoleValidationResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
 
     let names: HashSet<String> = input.permission_names.into_iter().collect();
 

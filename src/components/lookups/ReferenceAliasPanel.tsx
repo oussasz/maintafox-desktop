@@ -43,6 +43,7 @@ import {
 } from "@/services/reference-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { ReferenceAlias, ReferenceValue } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -75,7 +76,7 @@ interface ReferenceAliasPanelProps {
 export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAliasPanelProps) {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
-  const canMutateAliases = canMutate && can("ref.manage");
+  const canMutateAliases = canMutate && can(P.REF_MANAGE);
 
   const [aliases, setAliases] = useState<ReferenceAlias[]>([]);
   const [loading, setLoading] = useState(false);
@@ -483,18 +484,10 @@ export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAlia
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteTarget(null)}
-              disabled={saving}
-            >
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={saving}>
               {t("editor.cancel")}
             </Button>
-            <Button
-              variant="destructive"
-              onClick={() => void handleDelete()}
-              disabled={saving}
-            >
+            <Button variant="destructive" onClick={() => void handleDelete()} disabled={saving}>
               {t("alias.delete")}
             </Button>
           </DialogFooter>

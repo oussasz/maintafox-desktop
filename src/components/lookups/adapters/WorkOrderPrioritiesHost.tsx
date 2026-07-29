@@ -30,11 +30,12 @@ import { listWorkOrderPriorities, updateWorkOrderPriority } from "@/services/wo-
 import { refreshWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
 import type { WorkOrderPriorityOption } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function WorkOrderPrioritiesHost() {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
-  const canManage = can("ref.manage");
+  const canManage = can(P.REF_MANAGE);
   const capabilities: ReferenceTableCapabilities = {
     canCreate: false,
     canUpdate: canManage,
@@ -188,10 +189,7 @@ export function WorkOrderPrioritiesHost() {
                 })
               : undefined;
             const trashDisabled =
-              saving ||
-              row.is_system ||
-              !row.is_active ||
-              !capabilities.canDeactivateOrDelete;
+              saving || row.is_system || !row.is_active || !capabilities.canDeactivateOrDelete;
             const trashTitle = trashDisabled
               ? refTableDisabledActionTitle({
                   isSystem: row.is_system,

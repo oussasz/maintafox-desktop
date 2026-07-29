@@ -36,6 +36,7 @@ import {
 import { useOrgGovernanceStore } from "@/stores/org-governance-store";
 import { formatOrgIpcError } from "@/utils/errors";
 import type { OrgNodeType, OrgRelationshipRule } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 interface OrgRelationshipRulesPanelProps {
   open: boolean;
@@ -153,7 +154,9 @@ export function OrgRelationshipRulesPanel({
 
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 text-sm">
           {structureModelId == null ? (
-            <p className="text-sm text-text-muted">{t("designer.manageHierarchyRulesNoDraftHint")}</p>
+            <p className="text-sm text-text-muted">
+              {t("designer.manageHierarchyRulesNoDraftHint")}
+            </p>
           ) : loading ? (
             <p className="text-sm text-text-muted">{t("relationshipRules.loading")}</p>
           ) : (
@@ -168,11 +171,15 @@ export function OrgRelationshipRulesPanel({
                       className="flex items-center justify-between gap-2 py-1.5 border-b border-surface-border/50 last:border-0"
                     >
                       <span>
-                        <span className="font-mono text-text-muted">{r.parent_type_label ?? "?"}</span>
+                        <span className="font-mono text-text-muted">
+                          {r.parent_type_label ?? "?"}
+                        </span>
                         <span className="mx-1.5 text-text-muted">→</span>
-                        <span className="font-mono text-text-primary">{r.child_type_label ?? "?"}</span>
+                        <span className="font-mono text-text-primary">
+                          {r.child_type_label ?? "?"}
+                        </span>
                       </span>
-                      <PermissionGate permission="org.admin">
+                      <PermissionGate permission={P.ORG_ADMIN}>
                         <Button
                           type="button"
                           size="sm"
@@ -190,7 +197,7 @@ export function OrgRelationshipRulesPanel({
                 </ul>
               )}
 
-              <PermissionGate permission="org.admin">
+              <PermissionGate permission={P.ORG_ADMIN}>
                 <div className="flex flex-wrap items-end gap-2 pt-1">
                   <div className="space-y-1 min-w-[140px]">
                     <span className="text-[10px] text-text-muted uppercase">

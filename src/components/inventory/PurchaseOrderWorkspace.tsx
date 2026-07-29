@@ -6,9 +6,10 @@ import { Printer } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { PermissionGate } from "@/components/PermissionGate";
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { printPoFiche } from "@/components/inventory/PoPrintFiche";
+import { isReceivablePurchaseOrder } from "@/components/inventory/ReceiveGoodsDialog";
 import { StockImpactPreview } from "@/components/inventory/StockImpactPreview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,7 +22,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
 import { cn } from "@/lib/utils";
@@ -29,6 +36,7 @@ import {
   getInventoryPurchaseOrderDetail,
   listInventoryDocumentLinks,
   transitionInventoryPurchaseOrder,
+  updateInventoryProcurementPostingState,
   upsertInventoryDocumentLink,
 } from "@/services/inventory-service";
 import { toErrorMessage } from "@/utils/errors";
@@ -39,6 +47,7 @@ import type {
   PurchaseOrderDetail,
   PurchaseOrderLine,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const DOC_PURPOSES = ["INVOICE", "CERTIFICATE", "QUOTATION", "PHOTO", "OTHER"] as const;
 
@@ -51,12 +60,23 @@ const PO_TIMELINE_STEPS = [
   { key: "CLOSED", statuses: ["RECEIVED_CLOSED"] },
 ] as const;
 
+/** ERP posting states seeded in `inventory.erp_posting_state`. */
+const POSTING_STATES = ["PENDING_POSTING", "POSTED", "POSTING_FAILED", "RECONCILED"] as const;
+
 export interface PurchaseOrderWorkspaceProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   poId: number | null;
   onTransitioned?: () => void;
   onReload?: () => void | Promise<void>;
+  /** Open the multi-line goods receipt dialog for this PO. */
+  onReceiveGoods?: (poId: number) => void;
+  /** Navigate back to the requisition that produced this PO. */
+  onOpenRequisition?: (requisitionId: number) => void;
+  /** Open a goods receipt from the receipts tab. */
+  onOpenGoodsReceipt?: (goodsReceiptId: number) => void;
+  /** Incrementing token forces a detail refresh (e.g. after posting a receipt). */
+  reloadToken?: number;
 }
 
 function lateByDays(expectedDelivery: string | null | undefined, status: string): number | null {
@@ -108,6 +128,10 @@ export function PurchaseOrderWorkspace({
   poId,
   onTransitioned,
   onReload,
+  onReceiveGoods,
+  onOpenRequisition,
+  onOpenGoodsReceipt,
+  reloadToken = 0,
 }: PurchaseOrderWorkspaceProps) {
   const { t, i18n } = useTranslation("inventory");
   const locale = intlLocaleForLanguage(i18n.language);
@@ -120,6 +144,8 @@ export function PurchaseOrderWorkspace({
   const [selectedLineId, setSelectedLineId] = useState<number | null>(null);
   const [docRef, setDocRef] = useState("");
   const [docPurpose, setDocPurpose] = useState<string>("INVOICE");
+  const [postingState, setPostingState] = useState<string>("PENDING_POSTING");
+  const [postingErrorDraft, setPostingErrorDraft] = useState("");
 
   const load = useCallback(async () => {
     if (!poId) {
@@ -136,6 +162,8 @@ export function PurchaseOrderWorkspace({
       ]);
       setDetail(poDetail);
       setDocuments(docs.length > 0 ? docs : poDetail.document_links);
+      setPostingState(poDetail.order.posting_state);
+      setPostingErrorDraft(poDetail.order.posting_error ?? "");
       setSelectedLineId((prev) => {
         if (prev && poDetail.lines.some((l) => l.id === prev)) return prev;
         return poDetail.lines[0]?.id ?? null;
@@ -151,7 +179,7 @@ export function PurchaseOrderWorkspace({
   useEffect(() => {
     if (!open || !poId) return;
     void load();
-  }, [open, poId, load]);
+  }, [open, poId, load, reloadToken]);
 
   const selectedLine: PurchaseOrderLine | null = useMemo(
     () => detail?.lines.find((l) => l.id === selectedLineId) ?? null,
@@ -174,6 +202,26 @@ export function PurchaseOrderWorkspace({
       });
       await load();
       onTransitioned?.();
+      await onReload?.();
+    } catch (err) {
+      setError(toErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const applyPostingState = async () => {
+    if (!detail) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateInventoryProcurementPostingState({
+        entity_type: "purchase_order",
+        entity_id: detail.order.id,
+        posting_state: postingState,
+        posting_error: postingErrorDraft.trim() || null,
+      });
+      await load();
       await onReload?.();
     } catch (err) {
       setError(toErrorMessage(err));
@@ -226,7 +274,9 @@ export function PurchaseOrderWorkspace({
             {order ? (
               <>
                 <span className="font-mono">{formatEntityCode(order.po_number)}</span>
-                <Badge variant="outline">{order.status}</Badge>
+                <Badge variant={order.status === "CANCELLED" ? "destructive" : "outline"}>
+                  {t(`procurement.statuses.${order.status}`, { defaultValue: order.status })}
+                </Badge>
                 {lateDays != null ? (
                   <Badge variant="destructive">
                     {t("procurement.poWorkspace.lateByDays", { count: lateDays })}
@@ -251,11 +301,19 @@ export function PurchaseOrderWorkspace({
               {error ? <p className="mb-3 text-sm text-destructive">{error}</p> : null}
               <Tabs defaultValue="general">
                 <TabsList className="mb-3 flex h-auto flex-wrap gap-1">
-                  <TabsTrigger value="general">{t("procurement.poWorkspace.tabs.general")}</TabsTrigger>
+                  <TabsTrigger value="general">
+                    {t("procurement.poWorkspace.tabs.general")}
+                  </TabsTrigger>
                   <TabsTrigger value="lines">{t("procurement.poWorkspace.tabs.lines")}</TabsTrigger>
-                  <TabsTrigger value="timeline">{t("procurement.poWorkspace.tabs.timeline")}</TabsTrigger>
-                  <TabsTrigger value="receipts">{t("procurement.poWorkspace.tabs.receipts")}</TabsTrigger>
-                  <TabsTrigger value="documents">{t("procurement.poWorkspace.tabs.documents")}</TabsTrigger>
+                  <TabsTrigger value="timeline">
+                    {t("procurement.poWorkspace.tabs.timeline")}
+                  </TabsTrigger>
+                  <TabsTrigger value="receipts">
+                    {t("procurement.poWorkspace.tabs.receipts")}
+                  </TabsTrigger>
+                  <TabsTrigger value="documents">
+                    {t("procurement.poWorkspace.tabs.documents")}
+                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="general" className="space-y-3 text-sm">
@@ -266,10 +324,17 @@ export function PurchaseOrderWorkspace({
                         order.supplier_name?.trim() || order.supplier_company_name,
                       )}
                     />
-                    <Field label={t("procurement.poWorkspace.fields.status")} value={order.status} />
+                    <Field
+                      label={t("procurement.poWorkspace.fields.status")}
+                      value={t(`procurement.statuses.${order.status}`, {
+                        defaultValue: order.status,
+                      })}
+                    />
                     <Field
                       label={t("procurement.poWorkspace.fields.posting")}
-                      value={order.posting_state}
+                      value={t(`procurement.postingStates.${order.posting_state}`, {
+                        defaultValue: order.posting_state,
+                      })}
                     />
                     <Field
                       label={t("procurement.poWorkspace.fields.createdAt")}
@@ -291,12 +356,85 @@ export function PurchaseOrderWorkspace({
                       label={t("procurement.poWorkspace.fields.updatedAt")}
                       value={formatDate(order.updated_at, locale)}
                     />
+                    {order.requisition_id != null && onOpenRequisition ? (
+                      <div>
+                        <div className="text-xs text-text-muted">
+                          {t("procurement.poWorkspace.fields.requisition")}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="link"
+                          className="h-auto p-0 font-medium"
+                          onClick={() => {
+                            onOpenChange(false);
+                            onOpenRequisition(order.requisition_id as number);
+                          }}
+                        >
+                          {t("procurement.requisitions.actions.open")}
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
+
+                  {order.posting_error ? (
+                    <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs">
+                      <span className="font-medium">{t("procurement.posting.error")}: </span>
+                      {order.posting_error}
+                    </p>
+                  ) : null}
+
+                  <PermissionGate permission={P.ERP_RECONCILE}>
+                    <div className="space-y-2 rounded-md border p-3">
+                      <div className="text-sm font-semibold">{t("procurement.posting.title")}</div>
+                      <p className="text-xs text-text-muted">{t("procurement.posting.hint")}</p>
+                      <div className="grid gap-2 sm:grid-cols-[180px_1fr_auto]">
+                        <div className="space-y-1">
+                          <Label className="text-xs">{t("procurement.posting.state")}</Label>
+                          <Select value={postingState} onValueChange={setPostingState}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {POSTING_STATES.map((state) => (
+                                <SelectItem key={state} value={state}>
+                                  {t(`procurement.postingStates.${state}`, { defaultValue: state })}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">{t("procurement.posting.error")}</Label>
+                          <Input
+                            value={postingErrorDraft}
+                            placeholder={t("procurement.posting.errorPlaceholder")}
+                            onChange={(e) => setPostingErrorDraft(e.target.value)}
+                          />
+                        </div>
+                        <div className="flex items-end">
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={
+                              saving ||
+                              (postingState === order.posting_state &&
+                                postingErrorDraft === (order.posting_error ?? ""))
+                            }
+                            onClick={() => void applyPostingState()}
+                          >
+                            {t("procurement.posting.apply")}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </PermissionGate>
                 </TabsContent>
 
                 <TabsContent value="lines" className="space-y-3">
                   {detail.lines.length === 0 ? (
-                    <p className="text-sm text-text-muted">{t("procurement.poWorkspace.lines.empty")}</p>
+                    <p className="text-sm text-text-muted">
+                      {t("procurement.poWorkspace.lines.empty")}
+                    </p>
                   ) : (
                     <div className="space-y-2">
                       {detail.lines.map((line) => {
@@ -338,7 +476,9 @@ export function PurchaseOrderWorkspace({
                               </span>
                               <span>
                                 {t("procurement.poWorkspace.lines.unitPrice")}:{" "}
-                                <strong className="text-foreground">{fmtMoney(line.unit_price)}</strong>
+                                <strong className="text-foreground">
+                                  {fmtMoney(line.unit_price)}
+                                </strong>
                               </span>
                             </div>
                             <div className="mt-1 text-xs">
@@ -414,21 +554,48 @@ export function PurchaseOrderWorkspace({
                       {t("procurement.poWorkspace.receipts.empty")}
                     </p>
                   ) : (
-                    detail.goods_receipts.map((gr) => (
-                      <div key={gr.id} className="rounded-md border p-3 text-sm">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono font-medium">
-                            {formatEntityCode(gr.gr_number)}
-                          </span>
-                          <Badge variant="outline">{gr.status}</Badge>
-                          <Badge variant="secondary">{gr.posting_state}</Badge>
-                        </div>
-                        <div className="mt-1 text-xs text-text-muted">
-                          {t("procurement.poWorkspace.receipts.receivedAt")}:{" "}
-                          {formatDate(gr.received_at, locale)}
-                        </div>
-                      </div>
-                    ))
+                    detail.goods_receipts.map((gr) => {
+                      const body = (
+                        <>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono font-medium">
+                              {formatEntityCode(gr.gr_number)}
+                            </span>
+                            <Badge variant="outline">{gr.status}</Badge>
+                            <Badge variant="secondary">
+                              {t(`procurement.postingStates.${gr.posting_state}`, {
+                                defaultValue: gr.posting_state,
+                              })}
+                            </Badge>
+                          </div>
+                          <div className="mt-1 text-xs text-text-muted">
+                            {t("procurement.poWorkspace.receipts.receivedAt")}:{" "}
+                            {formatDate(gr.received_at, locale)}
+                          </div>
+                        </>
+                      );
+                      if (!onOpenGoodsReceipt) {
+                        return (
+                          <div key={gr.id} className="rounded-md border p-3 text-sm">
+                            {body}
+                          </div>
+                        );
+                      }
+                      return (
+                        <button
+                          key={gr.id}
+                          type="button"
+                          title={t("procurement.poWorkspace.receipts.open")}
+                          className="w-full rounded-md border p-3 text-left text-sm hover:bg-accent/40"
+                          onClick={() => {
+                            onOpenChange(false);
+                            onOpenGoodsReceipt(gr.id);
+                          }}
+                        >
+                          {body}
+                        </button>
+                      );
+                    })
                   )}
                 </TabsContent>
 
@@ -446,15 +613,18 @@ export function PurchaseOrderWorkspace({
                         >
                           <span className="truncate font-medium">{doc.document_ref}</span>
                           <Badge variant="outline">
-                            {t(`documents.purposes.${doc.link_purpose}` as "documents.purposes.OTHER", {
-                              defaultValue: doc.link_purpose,
-                            })}
+                            {t(
+                              `documents.purposes.${doc.link_purpose}` as "documents.purposes.OTHER",
+                              {
+                                defaultValue: doc.link_purpose,
+                              },
+                            )}
                           </Badge>
                         </li>
                       ))}
                     </ul>
                   )}
-                  <PermissionGate permission="inv.procure">
+                  <PermissionGate permission={P.INV_PROCURE}>
                     <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_160px_auto]">
                       <div className="space-y-1">
                         <Label>{t("procurement.poWorkspace.documents.fields.ref")}</Label>
@@ -525,7 +695,7 @@ export function PurchaseOrderWorkspace({
               {t("procurement.poWorkspace.actions.close")}
             </Button>
             {order ? (
-              <PermissionGate permission="inv.procure">
+              <PermissionGate permission={P.INV_PROCURE}>
                 <>
                   <Button
                     variant="outline"
@@ -540,6 +710,15 @@ export function PurchaseOrderWorkspace({
                   >
                     {t("procurement.poWorkspace.actions.approve")}
                   </Button>
+                  {onReceiveGoods && isReceivablePurchaseOrder(order.status) ? (
+                    <Button
+                      variant="outline"
+                      disabled={saving}
+                      onClick={() => onReceiveGoods(order.id)}
+                    >
+                      {t("procurement.poWorkspace.actions.receive")}
+                    </Button>
+                  ) : null}
                   {cancelTarget ? (
                     <Button
                       variant="destructive"

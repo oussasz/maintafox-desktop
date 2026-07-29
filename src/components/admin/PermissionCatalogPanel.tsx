@@ -33,6 +33,7 @@ import {
   createCustomPermission,
 } from "@/services/rbac-service";
 import type { PermissionWithSystem, PermissionDependencyRow } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -435,7 +436,7 @@ export function PermissionCatalogPanel() {
           <h3 className="text-sm font-semibold text-text-primary">
             {t("permissions.domains", "Domaines")}
           </h3>
-          {can("adm.permissions") && (
+          {can(P.ADM_PERMISSIONS) && (
             <Button
               variant="ghost"
               size="sm"
@@ -512,7 +513,7 @@ export function PermissionCatalogPanel() {
                 className="w-48 pl-8"
               />
             </div>
-            {can("adm.permissions") && (
+            {can(P.ADM_PERMISSIONS) && (
               <Button size="sm" onClick={() => setShowCreate(true)}>
                 <Plus className="mr-1.5 h-4 w-4" />
                 {t("permissions.addCustom", "Ajouter")}

@@ -34,6 +34,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getActivationLicenseMetadata } from "@/services/product-license-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { Asset } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 interface AssetQrCodeProps {
   asset: Asset;
@@ -201,7 +202,7 @@ export function AssetQrCode({ asset }: AssetQrCodeProps) {
   );
 
   return (
-    <PermissionGate permission="eq.view">
+    <PermissionGate permission={P.EQ_VIEW}>
       <ToastProvider>
         <Popover open={open} onOpenChange={setOpen}>
           <div className="relative flex w-[124px] flex-col items-center gap-1.5 rounded-md border border-surface-border bg-surface-1 p-2.5 shadow-sm">
@@ -227,12 +228,7 @@ export function AssetQrCode({ asset }: AssetQrCodeProps) {
               aria-label={t("qr.expand")}
               onClick={() => setOpen(true)}
             >
-              <QrSvg
-                svgHtml={svgHtml}
-                loading={loading}
-                error={error}
-                size={COMPACT_SIZE_PX}
-              />
+              <QrSvg svgHtml={svgHtml} loading={loading} error={error} size={COMPACT_SIZE_PX} />
             </button>
 
             <p className="max-w-full truncate font-mono text-xs text-text-primary">
@@ -248,12 +244,7 @@ export function AssetQrCode({ asset }: AssetQrCodeProps) {
             <p className="text-[10px] font-medium uppercase tracking-wide text-text-muted">
               {t("qr.scanId")}
             </p>
-            <QrSvg
-              svgHtml={svgHtml}
-              loading={loading}
-              error={error}
-              size={EXPANDED_SIZE_PX}
-            />
+            <QrSvg svgHtml={svgHtml} loading={loading} error={error} size={EXPANDED_SIZE_PX} />
             <p className="font-mono text-xs text-text-primary">{asset.asset_code}</p>
             {exportError ? (
               <p className="text-center text-xs text-status-danger" role="alert">

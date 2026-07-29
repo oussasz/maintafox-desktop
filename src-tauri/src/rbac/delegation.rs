@@ -32,7 +32,7 @@ pub async fn can_delegate_permission(
     target_scope_type: &str,
     target_scope_reference: Option<&str>,
 ) -> AppResult<bool> {
-    // Extract the domain prefix (e.g. "ot" from "ot.create")
+    // Extract the domain prefix (e.g. "ot" from crate::rbac::permissions::OT_CREATE)
     let domain = match permission_name.split('.').next() {
         Some(d) => d,
         None => return Ok(false),
@@ -69,7 +69,7 @@ pub async fn can_delegate_permission(
 /// `allowed_domains_json` array?
 ///
 /// `permission_domain` should be the prefix up to the first `.`
-/// (e.g. `"ot"` for `"ot.create"`), or a full permission name — in which case
+/// (e.g. `"ot"` for `crate::rbac::permissions::OT_CREATE`), or a full permission name — in which case
 /// the domain is extracted automatically.
 pub fn validate_delegation_boundary(
     policy: &DelegatedAdminPolicy,

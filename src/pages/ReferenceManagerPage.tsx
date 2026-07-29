@@ -10,14 +10,14 @@ import { AlertTriangle, Database, Download, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { DomainBrowserPanel } from "@/components/lookups/DomainBrowserPanel";
+import { ReferenceImportWizard } from "@/components/lookups/ReferenceImportWizard";
+import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor";
 import { InventoryArticleFamilyHost } from "@/components/lookups/adapters/InventoryArticleFamilyHost";
 import { InventoryTaxCategoryHost } from "@/components/lookups/adapters/InventoryTaxCategoryHost";
 import { WorkOrderPrioritiesHost } from "@/components/lookups/adapters/WorkOrderPrioritiesHost";
 import { WorkOrderStatusesHost } from "@/components/lookups/adapters/WorkOrderStatusesHost";
 import { WorkOrderTypesHost } from "@/components/lookups/adapters/WorkOrderTypesHost";
-import { DomainBrowserPanel } from "@/components/lookups/DomainBrowserPanel";
-import { ReferenceImportWizard } from "@/components/lookups/ReferenceImportWizard";
-import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -40,6 +40,7 @@ import {
 } from "@/stores/reference-manager-store";
 import { refreshWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { refreshWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
+import { P } from "@shared/rbac/permissions.generated";
 
 const SYNTHETIC_REF_SELECTIONS: ReadonlyArray<readonly [number, number]> = [
   [INVENTORY_ARTICLE_FAMILY_DOMAIN_ID, INVENTORY_ARTICLE_FAMILY_SET_ID],
@@ -49,10 +50,7 @@ const SYNTHETIC_REF_SELECTIONS: ReadonlyArray<readonly [number, number]> = [
   [WORK_ORDER_STATUSES_DOMAIN_ID, WORK_ORDER_STATUSES_SET_ID],
 ];
 
-function isSyntheticRefSelection(
-  domainId: number | null,
-  setId: number | null,
-): boolean {
+function isSyntheticRefSelection(domainId: number | null, setId: number | null): boolean {
   if (domainId == null || setId == null) return false;
   return SYNTHETIC_REF_SELECTIONS.some(([d, s]) => d === domainId && s === setId);
 }
@@ -108,7 +106,10 @@ export function ReferenceManagerPage() {
     selectedSet?.status ?? null,
   );
   const canImportValues = Boolean(
-    selectedCaps?.can_create_value && can("ref.manage") && selectedDomainId != null && selectedDomainId > 0,
+    selectedCaps?.can_create_value &&
+    can(P.REF_MANAGE) &&
+    selectedDomainId != null &&
+    selectedDomainId > 0,
   );
 
   // ── Callbacks ───────────────────────────────────────────────────────────
@@ -145,7 +146,7 @@ export function ReferenceManagerPage() {
     );
   }
 
-  if (!can("ref.view")) {
+  if (!can(P.REF_VIEW)) {
     return (
       <div className="flex h-full items-center justify-center p-6">
         <div className="text-center space-y-3">
@@ -198,8 +199,7 @@ export function ReferenceManagerPage() {
                 <span className="text-text-secondary truncate">{selectedDomain.name}</span>
               </>
             )}
-            {selectedSet &&
-              selectedDomain?.governance_category !== "operational_dictionary" && (
+            {selectedSet && selectedDomain?.governance_category !== "operational_dictionary" && (
               <>
                 <Separator orientation="vertical" className="h-4 mx-1" />
                 <span className="text-text-secondary">v{selectedSet.version_no}</span>

@@ -30,13 +30,14 @@ import { isExportCancelled, revealInFolder } from "@/export";
 import { useToast } from "@/hooks/use-toast";
 import { getActivationLicenseMetadata } from "@/services/product-license-service";
 import { toErrorMessage } from "@/utils/errors";
+import type { PermissionName } from "@shared/rbac/permissions.generated";
 
 export interface EntityQrCodeProps {
   code: string;
   name: string;
   /** Deep-link payload, e.g. maintafox://article/12 */
   payload: string;
-  viewPermission: string;
+  viewPermission: PermissionName;
   metadata?: IdentificationLabelMetadataRow[];
   dialogTitle?: string;
   scanHint?: string;
@@ -249,12 +250,7 @@ export function EntityQrCode({
               aria-label={L.expand}
               onClick={() => setOpen(true)}
             >
-              <QrSvg
-                svgHtml={svgHtml}
-                loading={loading}
-                error={error}
-                size={COMPACT_SIZE_PX}
-              />
+              <QrSvg svgHtml={svgHtml} loading={loading} error={error} size={COMPACT_SIZE_PX} />
             </button>
 
             <p className="max-w-full truncate font-mono text-xs text-text-primary">{code}</p>
@@ -268,12 +264,7 @@ export function EntityQrCode({
             <p className="text-[10px] font-medium uppercase tracking-wide text-text-muted">
               {L.scanId}
             </p>
-            <QrSvg
-              svgHtml={svgHtml}
-              loading={loading}
-              error={error}
-              size={EXPANDED_SIZE_PX}
-            />
+            <QrSvg svgHtml={svgHtml} loading={loading} error={error} size={EXPANDED_SIZE_PX} />
             <p className="font-mono text-xs text-text-primary">{code}</p>
             {exportError ? (
               <p className="text-center text-xs text-status-danger" role="alert">

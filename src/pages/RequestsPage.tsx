@@ -25,8 +25,6 @@ import { useSearchParams } from "react-router-dom";
 import { PermissionGate } from "@/components/PermissionGate";
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { DataTable } from "@/components/data/DataTable";
-import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
-import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { DiApprovalDialog } from "@/components/di/DiApprovalDialog";
 import { DiArchivePanel } from "@/components/di/DiArchivePanel";
 import { DiCalendarView } from "@/components/di/DiCalendarView";
@@ -39,14 +37,16 @@ import { DiReturnDialog } from "@/components/di/DiReturnDialog";
 import { DiReviewPanel } from "@/components/di/DiReviewPanel";
 import { DiSlaRulesPanel } from "@/components/di/DiSlaRulesPanel";
 import { DI_STATUS_STYLE, diStatusToI18nKey } from "@/components/di/status-meta";
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
+import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
-import { cn } from "@/lib/utils";
 import { useDiStore } from "@/stores/di-store";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const URGENCY_STYLE: Record<string, string> = {
   low: "bg-green-100 text-green-800",
@@ -284,7 +284,7 @@ export function RequestsPage() {
   const statusFilterOptions = useMemo(() => {
     return [
       { value: STATUS_FILTER_REVIEW_QUEUE, label: t("list.filters.reviewQueue") },
-      ...(can("di.screen") || can("di.review")
+      ...(can(P.DI_SCREEN) || can(P.DI_REVIEW)
         ? [{ value: STATUS_FILTER_TRIAGE_INBOX, label: t("list.filters.triageInbox") }]
         : []),
       ...STATUS_OPTIONS,
@@ -403,7 +403,7 @@ export function RequestsPage() {
         },
       },
     ],
-    [t],
+    [t, dateLocale],
   );
 
   return (
@@ -420,7 +420,7 @@ export function RequestsPage() {
 
         <div className={mfLayout.moduleHeaderActions}>
           {/* New DI button */}
-          <PermissionGate permission="di.create">
+          <PermissionGate permission={P.DI_CREATE}>
             <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
               <Plus className="h-3.5 w-3.5" />
               {t("action.create")}
@@ -477,7 +477,7 @@ export function RequestsPage() {
             <Filter className="h-3.5 w-3.5" />
           </Button>
 
-          {can("di.admin") && (
+          {can(P.DI_ADMIN) && (
             <Button
               variant="outline"
               size="sm"
@@ -514,7 +514,7 @@ export function RequestsPage() {
       )}
 
       {/* ── Review panel (approvers only) ────────────────────────── */}
-      <PermissionGate anyOf={["di.screen", "di.review"]}>
+      <PermissionGate anyOf={[P.DI_SCREEN, P.DI_REVIEW]}>
         <DiReviewPanel />
       </PermissionGate>
 
@@ -560,7 +560,7 @@ export function RequestsPage() {
       <DiRejectionDialog />
       <DiReturnDialog />
 
-      {can("di.admin") && <DiSlaRulesPanel open={slaOpen} onClose={() => setSlaOpen(false)} />}
+      {can(P.DI_ADMIN) && <DiSlaRulesPanel open={slaOpen} onClose={() => setSlaOpen(false)} />}
     </div>
   );
 }

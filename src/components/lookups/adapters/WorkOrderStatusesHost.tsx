@@ -27,16 +27,17 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { listWorkOrderStatuses, updateWorkOrderStatus } from "@/services/wo-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { WorkOrderStatusOption } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function WorkOrderStatusesHost() {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
-  const canManage = can("ref.manage");
+  const canManage = can(P.REF_MANAGE);
   const capabilities: ReferenceTableCapabilities = {
     canCreate: false,
     canUpdate: canManage,
     canDeactivateOrDelete: false,
-    canToggleActive: false
+    canToggleActive: false,
   };
   const [rows, setRows] = useState<WorkOrderStatusOption[]>([]);
   const [loading, setLoading] = useState(false);

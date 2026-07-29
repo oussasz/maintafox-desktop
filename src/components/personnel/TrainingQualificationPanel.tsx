@@ -26,6 +26,7 @@ import type {
   TrainingExpiryAlertEvent,
   TrainingSession,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function TrainingQualificationPanel() {
   const { t } = useTranslation("personnel");
@@ -143,7 +144,7 @@ export function TrainingQualificationPanel() {
         </Button>
       </div>
 
-      <PermissionGate permission="trn.view">
+      <PermissionGate permission={P.TRN_VIEW}>
         <section className="space-y-2">
           <h3 className="text-sm font-medium text-text-muted">{t("training.selfService")}</h3>
           <div className="grid gap-4 md:grid-cols-2">
@@ -388,7 +389,7 @@ export function TrainingQualificationPanel() {
                 <option value="info">info</option>
               </select>
             </div>
-            <PermissionGate permission="trn.manage">
+            <PermissionGate permission={P.TRN_MANAGE}>
               <Button
                 type="button"
                 size="sm"

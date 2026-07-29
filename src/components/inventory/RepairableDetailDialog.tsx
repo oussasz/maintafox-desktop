@@ -5,8 +5,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { PermissionGate } from "@/components/PermissionGate";
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import {
+  RepairableActionDialog,
+  type RepairableActionKind,
+  type RepairableActionPayload,
+} from "@/components/inventory/RepairableActionDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,7 +23,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import {
@@ -32,9 +43,13 @@ import { formatDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type {
   InventoryDocumentLink,
   InventoryStateEvent,
+  InventorySupplier,
   RepairableOrderDetail,
   RepairVsReplaceResult,
+  StockLocation,
+  TransitionRepairableOrderInput,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const DOC_PURPOSES = ["INVOICE", "CERTIFICATE", "QUOTATION", "PHOTO", "OTHER"] as const;
 
@@ -51,6 +66,12 @@ export interface RepairableDetailDialogProps {
   onOpenChange: (open: boolean) => void;
   orderId: number | null;
   onTransitioned?: () => void;
+  /** Active non-blocked vendors for dispatch capture (owned by the parent panel). */
+  suppliers?: InventorySupplier[];
+  /** Active stock locations for return / scrap capture. */
+  locations?: StockLocation[];
+  /** Navigate to the article master record. */
+  onOpenArticle?: (articleId: number) => void;
 }
 
 function fmtMoney(n: number | null | undefined): string {
@@ -147,6 +168,9 @@ export function RepairableDetailDialog({
   onOpenChange,
   orderId,
   onTransitioned,
+  suppliers = [],
+  locations = [],
+  onOpenArticle,
 }: RepairableDetailDialogProps) {
   const { t, i18n } = useTranslation("inventory");
   const locale = intlLocaleForLanguage(i18n.language);
@@ -161,6 +185,7 @@ export function RepairableDetailDialog({
   const [closeRepairCost, setCloseRepairCost] = useState("");
   const [closeWarrantyUntil, setCloseWarrantyUntil] = useState("");
   const [closeWarrantyActive, setCloseWarrantyActive] = useState(false);
+  const [actionKind, setActionKind] = useState<RepairableActionKind | null>(null);
 
   const load = useCallback(async () => {
     if (!orderId) {
@@ -195,14 +220,14 @@ export function RepairableDetailDialog({
     void load();
   }, [open, orderId, load]);
 
+  const order = detail?.order;
+
   const runTransition = async (
     nextStatus: string,
-    extras?: {
-      repair_cost?: number | null;
-      warranty_until?: string | null;
-      warranty_active?: boolean | null;
-      return_location_id?: number | null;
-    },
+    extras?: Omit<
+      TransitionRepairableOrderInput,
+      "order_id" | "expected_row_version" | "next_status"
+    >,
   ) => {
     if (!detail) return;
     setSaving(true);
@@ -221,6 +246,50 @@ export function RepairableDetailDialog({
     } finally {
       setSaving(false);
     }
+  };
+
+  const ACTION_TARGET: Record<RepairableActionKind, string> = {
+    dispatch: "SENT_FOR_REPAIR",
+    scrap: "SCRAPPED",
+    cancel: "CANCELLED",
+    receive: "RETURNED_FROM_REPAIR",
+  };
+
+  const confirmAction = async (payload: RepairableActionPayload) => {
+    if (!actionKind) return;
+    const target = ACTION_TARGET[actionKind];
+    const extras: Omit<
+      TransitionRepairableOrderInput,
+      "order_id" | "expected_row_version" | "next_status"
+    > = { ...payload };
+    if (actionKind === "receive" && payload.return_location_id == null) {
+      extras.return_location_id = detail?.order.return_location_id ?? null;
+    }
+    if (actionKind === "scrap" && payload.return_location_id == null) {
+      extras.return_location_id = detail?.order.return_location_id ?? null;
+    }
+    setActionKind(null);
+    await runTransition(target, extras);
+  };
+
+  const startSend = () => {
+    if (!order) return;
+    if (!order.serial_number?.trim() || order.vendor_supplier_id == null) {
+      setActionKind("dispatch");
+      return;
+    }
+    void runTransition("SENT_FOR_REPAIR");
+  };
+
+  const startReceiveBack = () => {
+    if (!order) return;
+    if (order.return_location_id == null) {
+      setActionKind("receive");
+      return;
+    }
+    void runTransition("RETURNED_FROM_REPAIR", {
+      return_location_id: order.return_location_id,
+    });
   };
 
   const addDocument = async () => {
@@ -253,310 +322,365 @@ export function RepairableDetailDialog({
     });
   };
 
-  const order = detail?.order;
   const currentRank = order ? stepRank(order.status) : -1;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] max-w-2xl flex-col gap-0 overflow-hidden p-0">
-        <DialogHeader className="shrink-0 border-b px-6 py-4">
-          <DialogTitle className="flex flex-wrap items-center gap-2">
-            {order ? (
-              <>
-                <span className="font-mono">{formatEntityCode(order.order_code)}</span>
-                <Badge variant="outline">{order.status}</Badge>
-                {order.warranty_active === 1 ? (
-                  <Badge variant="secondary">
-                    {t("procurement.repairableDetail.warrantyActive")}
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="flex max-h-[90vh] max-w-2xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b px-6 py-4">
+            <DialogTitle className="flex flex-wrap items-center gap-2">
+              {order ? (
+                <>
+                  <span className="font-mono">{formatEntityCode(order.order_code)}</span>
+                  <Badge variant={order.status === "SCRAPPED" ? "destructive" : "outline"}>
+                    {t(`procurement.repairableStatuses.${order.status}`, {
+                      defaultValue: order.status,
+                    })}
                   </Badge>
-                ) : null}
-              </>
-            ) : (
-              t("procurement.repairableDetail.title")
-            )}
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
-          {loading ? (
-            <p className="text-sm text-text-muted">{t("procurement.repairableDetail.loading")}</p>
-          ) : error && !detail ? (
-            <p className="text-sm text-destructive">{error}</p>
-          ) : !detail || !order ? (
-            <p className="text-sm text-text-muted">{t("procurement.repairableDetail.noSelection")}</p>
-          ) : (
-            <>
-              {error ? <p className="text-sm text-destructive">{error}</p> : null}
-
-              <section className="space-y-2">
-                <h3 className="text-sm font-semibold">
-                  {t("procurement.repairableDetail.sections.summary")}
-                </h3>
-                <div className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-2">
-                  <Field
-                    label={t("procurement.repairableDetail.fields.article")}
-                    value={formatAssetLabel(order.article_code, order.article_name)}
-                  />
-                  <Field
-                    label={t("procurement.repairableDetail.fields.serial")}
-                    value={formatOrDash(order.serial_number)}
-                  />
-                  <Field
-                    label={t("procurement.repairableDetail.fields.reason")}
-                    value={formatOrDash(order.reason)}
-                  />
-                  <Field
-                    label={t("procurement.repairableDetail.fields.vendor")}
-                    value={formatOrDash(
-                      order.vendor_supplier_name?.trim() || order.vendor_supplier_code,
-                    )}
-                  />
-                  <Field
-                    label={t("procurement.repairableDetail.fields.sentAt")}
-                    value={formatDate(order.sent_at, locale)}
-                  />
-                  <Field
-                    label={t("procurement.repairableDetail.fields.returnedAt")}
-                    value={formatDate(order.returned_at, locale)}
-                  />
-                  <Field
-                    label={t("procurement.repairableDetail.fields.repairCost")}
-                    value={fmtMoney(order.repair_cost)}
-                  />
-                  <Field
-                    label={t("procurement.repairableDetail.fields.warrantyUntil")}
-                    value={formatDate(order.warranty_until, locale)}
-                  />
-                  {order.work_order_code ? (
-                    <div className="sm:col-span-2">
-                      <div className="mb-1 text-xs text-text-muted">
-                        {t("procurement.repairableDetail.fields.workOrder")}
-                      </div>
-                      <LinkedEntityBadge
-                        entity="work_order"
-                        code={order.work_order_code}
-                        entityId={order.work_order_id}
-                      />
-                    </div>
+                  {order.warranty_active === 1 ? (
+                    <Badge variant="secondary">
+                      {t("procurement.repairableDetail.warrantyActive")}
+                    </Badge>
                   ) : null}
-                </div>
-              </section>
+                </>
+              ) : (
+                t("procurement.repairableDetail.title")
+              )}
+            </DialogTitle>
+          </DialogHeader>
 
-              <section>
-                <h3 className="mb-2 text-sm font-semibold">
-                  {t("procurement.repairableDetail.sections.timeline")}
-                </h3>
-                <ol className="relative ml-3 space-y-0 border-l border-border">
-                  {REPAIR_TIMELINE_STEPS.map((step, index) => {
-                    const complete = currentRank >= 0 && index <= currentRank;
-                    const event = eventForStatus(detail.state_events, step.status);
-                    const isCurrent = order.status === step.status;
-                    return (
-                      <li key={step.key} className="relative pb-5 pl-6 last:pb-0">
-                        <span
-                          className={cn(
-                            "absolute -left-1.5 top-1 h-3 w-3 rounded-full border-2 border-background",
-                            complete ? "bg-primary" : "bg-muted-foreground/30",
-                            isCurrent && "ring-2 ring-primary/40",
-                          )}
-                        />
-                        <div className="text-sm font-medium">
-                          {t(`procurement.repairableDetail.timeline.${step.key}`)}
-                        </div>
-                        {event ? (
-                          <div className="mt-0.5 text-xs text-text-muted">
-                            {formatDate(event.changed_at, locale)}
-                            {event.note ? ` — ${event.note}` : null}
-                          </div>
-                        ) : (
-                          <div className="mt-0.5 text-xs text-text-muted">
-                            {complete
-                              ? t("procurement.repairableDetail.timeline.reached")
-                              : t("procurement.repairableDetail.timeline.pending")}
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ol>
-              </section>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
+            {loading ? (
+              <p className="text-sm text-text-muted">{t("procurement.repairableDetail.loading")}</p>
+            ) : error && !detail ? (
+              <p className="text-sm text-destructive">{error}</p>
+            ) : !detail || !order ? (
+              <p className="text-sm text-text-muted">
+                {t("procurement.repairableDetail.noSelection")}
+              </p>
+            ) : (
+              <>
+                {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-              <section>
-                <RepairVsReplaceCard result={detail.repair_vs_replace} />
-              </section>
-
-              <section>
-                <h3 className="mb-2 text-sm font-semibold">
-                  {t("procurement.repairableDetail.sections.history")}
-                </h3>
-                <div className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-3">
-                  <Field
-                    label={t("procurement.repairableDetail.history.repairCount")}
-                    value={String(detail.history_stats.repair_count)}
-                  />
-                  <Field
-                    label={t("procurement.repairableDetail.history.avgCost")}
-                    value={fmtMoney(detail.history_stats.avg_cost)}
-                  />
-                  <Field
-                    label={t("procurement.repairableDetail.history.avgTurnaround")}
-                    value={
-                      detail.history_stats.avg_turnaround_days != null
-                        ? t("procurement.repairableDetail.history.days", {
-                            count: detail.history_stats.avg_turnaround_days,
-                            days: fmtDays(detail.history_stats.avg_turnaround_days),
-                          })
-                        : "—"
-                    }
-                  />
-                </div>
-              </section>
-
-              <section className="space-y-2">
-                <h3 className="text-sm font-semibold">
-                  {t("procurement.repairableDetail.sections.documents")}
-                </h3>
-                {documents.length === 0 ? (
-                  <p className="text-sm text-text-muted">
-                    {t("procurement.repairableDetail.documents.empty")}
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {documents.map((doc) => (
-                      <li
-                        key={doc.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded border px-3 py-2 text-sm"
-                      >
-                        <span className="truncate font-medium">{doc.document_ref}</span>
-                        <Badge variant="outline">
-                          {t(`documents.purposes.${doc.link_purpose}` as "documents.purposes.OTHER", {
-                            defaultValue: doc.link_purpose,
-                          })}
-                        </Badge>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <PermissionGate permission="inv.procure">
-                  <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_160px_auto]">
-                    <div className="space-y-1">
-                      <Label>{t("procurement.repairableDetail.documents.fields.ref")}</Label>
-                      <Input value={docRef} onChange={(e) => setDocRef(e.target.value)} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>{t("procurement.repairableDetail.documents.fields.purpose")}</Label>
-                      <Select value={docPurpose} onValueChange={setDocPurpose}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {DOC_PURPOSES.map((p) => (
-                            <SelectItem key={p} value={p}>
-                              {t(`documents.purposes.${p}` as "documents.purposes.OTHER")}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex items-end">
-                      <Button
-                        size="sm"
-                        disabled={saving || !docRef.trim()}
-                        onClick={() => void addDocument()}
-                      >
-                        {t("procurement.repairableDetail.documents.add")}
-                      </Button>
-                    </div>
-                  </div>
-                </PermissionGate>
-              </section>
-
-              {order.status === "RETURNED_FROM_REPAIR" ? (
-                <section className="space-y-2 rounded-md border p-3">
+                <section className="space-y-2">
                   <h3 className="text-sm font-semibold">
-                    {t("procurement.repairableDetail.sections.closeFields")}
+                    {t("procurement.repairableDetail.sections.summary")}
                   </h3>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1">
-                      <Label>{t("procurement.repairableDetail.fields.repairCost")}</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={closeRepairCost}
-                        onChange={(e) => setCloseRepairCost(e.target.value)}
+                  <div className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-2">
+                    {onOpenArticle ? (
+                      <div>
+                        <div className="text-xs text-text-muted">
+                          {t("procurement.repairableDetail.fields.article")}
+                        </div>
+                        <button
+                          type="button"
+                          className="font-medium text-primary hover:underline"
+                          onClick={() => {
+                            onOpenChange(false);
+                            onOpenArticle(order.article_id);
+                          }}
+                        >
+                          {formatAssetLabel(order.article_code, order.article_name)}
+                        </button>
+                      </div>
+                    ) : (
+                      <Field
+                        label={t("procurement.repairableDetail.fields.article")}
+                        value={formatAssetLabel(order.article_code, order.article_name)}
                       />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>{t("procurement.repairableDetail.fields.warrantyUntil")}</Label>
-                      <Input
-                        type="date"
-                        value={closeWarrantyUntil}
-                        onChange={(e) => setCloseWarrantyUntil(e.target.value)}
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 sm:col-span-2">
-                      <input
-                        type="checkbox"
-                        id="repair-warranty-active"
-                        checked={closeWarrantyActive}
-                        onChange={(e) => setCloseWarrantyActive(e.target.checked)}
-                      />
-                      <Label htmlFor="repair-warranty-active">
-                        {t("procurement.repairableDetail.fields.warrantyActive")}
-                      </Label>
-                    </div>
+                    )}
+                    <Field
+                      label={t("procurement.repairableDetail.fields.serial")}
+                      value={formatOrDash(order.serial_number)}
+                    />
+                    <Field
+                      label={t("procurement.repairableDetail.fields.reason")}
+                      value={formatOrDash(order.reason)}
+                    />
+                    <Field
+                      label={t("procurement.repairableDetail.fields.vendor")}
+                      value={formatOrDash(
+                        order.vendor_supplier_name?.trim() || order.vendor_supplier_code,
+                      )}
+                    />
+                    <Field
+                      label={t("procurement.repairableDetail.fields.sentAt")}
+                      value={formatDate(order.sent_at, locale)}
+                    />
+                    <Field
+                      label={t("procurement.repairableDetail.fields.returnedAt")}
+                      value={formatDate(order.returned_at, locale)}
+                    />
+                    <Field
+                      label={t("procurement.repairableDetail.fields.repairCost")}
+                      value={fmtMoney(order.repair_cost)}
+                    />
+                    <Field
+                      label={t("procurement.repairableDetail.fields.warrantyUntil")}
+                      value={formatDate(order.warranty_until, locale)}
+                    />
+                    {order.work_order_code ? (
+                      <div className="sm:col-span-2">
+                        <div className="mb-1 text-xs text-text-muted">
+                          {t("procurement.repairableDetail.fields.workOrder")}
+                        </div>
+                        <LinkedEntityBadge
+                          entity="work_order"
+                          code={order.work_order_code}
+                          entityId={order.work_order_id}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </section>
-              ) : null}
-            </>
-          )}
-        </div>
 
-        <DialogFooter className="shrink-0 flex-wrap gap-2 border-t px-6 py-3">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            {t("procurement.repairableDetail.actions.close")}
-          </Button>
-          {order ? (
-            <PermissionGate permission="inv.procure">
-              <>
-                <Button
-                  variant="outline"
-                  disabled={saving || order.status !== "REQUESTED"}
-                  onClick={() => void runTransition("RELEASED")}
-                >
-                  {t("procurement.repairableDetail.actions.release")}
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={saving || order.status !== "RELEASED"}
-                  onClick={() => void runTransition("SENT_FOR_REPAIR")}
-                >
-                  {t("procurement.repairableDetail.actions.send")}
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={saving || order.status !== "SENT_FOR_REPAIR"}
-                  onClick={() =>
-                    void runTransition("RETURNED_FROM_REPAIR", {
-                      return_location_id: order.return_location_id,
-                    })
-                  }
-                >
-                  {t("procurement.repairableDetail.actions.receiveBack")}
-                </Button>
-                <Button
-                  disabled={saving || order.status !== "RETURNED_FROM_REPAIR"}
-                  onClick={() => void handleClose()}
-                >
-                  {t("procurement.repairableDetail.actions.closeOrder")}
-                </Button>
+                <section>
+                  <h3 className="mb-2 text-sm font-semibold">
+                    {t("procurement.repairableDetail.sections.timeline")}
+                  </h3>
+                  <ol className="relative ml-3 space-y-0 border-l border-border">
+                    {REPAIR_TIMELINE_STEPS.map((step, index) => {
+                      const complete = currentRank >= 0 && index <= currentRank;
+                      const event = eventForStatus(detail.state_events, step.status);
+                      const isCurrent = order.status === step.status;
+                      return (
+                        <li key={step.key} className="relative pb-5 pl-6 last:pb-0">
+                          <span
+                            className={cn(
+                              "absolute -left-1.5 top-1 h-3 w-3 rounded-full border-2 border-background",
+                              complete ? "bg-primary" : "bg-muted-foreground/30",
+                              isCurrent && "ring-2 ring-primary/40",
+                            )}
+                          />
+                          <div className="text-sm font-medium">
+                            {t(`procurement.repairableDetail.timeline.${step.key}`)}
+                          </div>
+                          {event ? (
+                            <div className="mt-0.5 text-xs text-text-muted">
+                              {formatDate(event.changed_at, locale)}
+                              {event.note ? ` — ${event.note}` : null}
+                            </div>
+                          ) : (
+                            <div className="mt-0.5 text-xs text-text-muted">
+                              {complete
+                                ? t("procurement.repairableDetail.timeline.reached")
+                                : t("procurement.repairableDetail.timeline.pending")}
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </section>
+
+                <section>
+                  <RepairVsReplaceCard result={detail.repair_vs_replace} />
+                </section>
+
+                <section>
+                  <h3 className="mb-2 text-sm font-semibold">
+                    {t("procurement.repairableDetail.sections.history")}
+                  </h3>
+                  <div className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-3">
+                    <Field
+                      label={t("procurement.repairableDetail.history.repairCount")}
+                      value={String(detail.history_stats.repair_count)}
+                    />
+                    <Field
+                      label={t("procurement.repairableDetail.history.avgCost")}
+                      value={fmtMoney(detail.history_stats.avg_cost)}
+                    />
+                    <Field
+                      label={t("procurement.repairableDetail.history.avgTurnaround")}
+                      value={
+                        detail.history_stats.avg_turnaround_days != null
+                          ? t("procurement.repairableDetail.history.days", {
+                              count: detail.history_stats.avg_turnaround_days,
+                              days: fmtDays(detail.history_stats.avg_turnaround_days),
+                            })
+                          : "—"
+                      }
+                    />
+                  </div>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-sm font-semibold">
+                    {t("procurement.repairableDetail.sections.documents")}
+                  </h3>
+                  {documents.length === 0 ? (
+                    <p className="text-sm text-text-muted">
+                      {t("procurement.repairableDetail.documents.empty")}
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {documents.map((doc) => (
+                        <li
+                          key={doc.id}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded border px-3 py-2 text-sm"
+                        >
+                          <span className="truncate font-medium">{doc.document_ref}</span>
+                          <Badge variant="outline">
+                            {t(
+                              `documents.purposes.${doc.link_purpose}` as "documents.purposes.OTHER",
+                              {
+                                defaultValue: doc.link_purpose,
+                              },
+                            )}
+                          </Badge>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <PermissionGate permission={P.INV_PROCURE}>
+                    <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_160px_auto]">
+                      <div className="space-y-1">
+                        <Label>{t("procurement.repairableDetail.documents.fields.ref")}</Label>
+                        <Input value={docRef} onChange={(e) => setDocRef(e.target.value)} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>{t("procurement.repairableDetail.documents.fields.purpose")}</Label>
+                        <Select value={docPurpose} onValueChange={setDocPurpose}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {DOC_PURPOSES.map((p) => (
+                              <SelectItem key={p} value={p}>
+                                {t(`documents.purposes.${p}` as "documents.purposes.OTHER")}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-end">
+                        <Button
+                          size="sm"
+                          disabled={saving || !docRef.trim()}
+                          onClick={() => void addDocument()}
+                        >
+                          {t("procurement.repairableDetail.documents.add")}
+                        </Button>
+                      </div>
+                    </div>
+                  </PermissionGate>
+                </section>
+
+                {order.status === "RETURNED_FROM_REPAIR" ? (
+                  <section className="space-y-2 rounded-md border p-3">
+                    <h3 className="text-sm font-semibold">
+                      {t("procurement.repairableDetail.sections.closeFields")}
+                    </h3>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <Label>{t("procurement.repairableDetail.fields.repairCost")}</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={closeRepairCost}
+                          onChange={(e) => setCloseRepairCost(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>{t("procurement.repairableDetail.fields.warrantyUntil")}</Label>
+                        <Input
+                          type="date"
+                          value={closeWarrantyUntil}
+                          onChange={(e) => setCloseWarrantyUntil(e.target.value)}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 sm:col-span-2">
+                        <input
+                          type="checkbox"
+                          id="repair-warranty-active"
+                          checked={closeWarrantyActive}
+                          onChange={(e) => setCloseWarrantyActive(e.target.checked)}
+                        />
+                        <Label htmlFor="repair-warranty-active">
+                          {t("procurement.repairableDetail.fields.warrantyActive")}
+                        </Label>
+                      </div>
+                    </div>
+                  </section>
+                ) : null}
               </>
-            </PermissionGate>
-          ) : null}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+            )}
+          </div>
+
+          <DialogFooter className="shrink-0 flex-wrap gap-2 border-t px-6 py-3">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              {t("procurement.repairableDetail.actions.close")}
+            </Button>
+            {order ? (
+              <PermissionGate permission={P.INV_PROCURE}>
+                <>
+                  <Button
+                    variant="outline"
+                    disabled={saving || order.status !== "REQUESTED"}
+                    onClick={() => void runTransition("RELEASED")}
+                  >
+                    {t("procurement.repairableDetail.actions.release")}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={saving || order.status !== "RELEASED"}
+                    onClick={startSend}
+                  >
+                    {t("procurement.repairableDetail.actions.send")}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={saving || order.status !== "SENT_FOR_REPAIR"}
+                    onClick={startReceiveBack}
+                  >
+                    {t("procurement.repairableDetail.actions.receiveBack")}
+                  </Button>
+                  <Button
+                    disabled={saving || order.status !== "RETURNED_FROM_REPAIR"}
+                    onClick={() => void handleClose()}
+                  >
+                    {t("procurement.repairableDetail.actions.closeOrder")}
+                  </Button>
+                  {order.status === "REQUESTED" || order.status === "RELEASED" ? (
+                    <Button
+                      variant="destructive"
+                      disabled={saving}
+                      onClick={() => setActionKind("cancel")}
+                    >
+                      {t("procurement.repairableDetail.actions.cancel")}
+                    </Button>
+                  ) : null}
+                  {order.status === "SENT_FOR_REPAIR" || order.status === "RETURNED_FROM_REPAIR" ? (
+                    <Button
+                      variant="destructive"
+                      disabled={saving}
+                      onClick={() => setActionKind("scrap")}
+                    >
+                      {t("procurement.repairableDetail.actions.scrap")}
+                    </Button>
+                  ) : null}
+                </>
+              </PermissionGate>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <RepairableActionDialog
+        open={actionKind != null}
+        onOpenChange={(next) => {
+          if (!next) setActionKind(null);
+        }}
+        kind={actionKind}
+        order={order ?? null}
+        suppliers={suppliers}
+        locations={locations}
+        saving={saving}
+        onConfirm={confirmAction}
+      />
+    </>
   );
 }
 

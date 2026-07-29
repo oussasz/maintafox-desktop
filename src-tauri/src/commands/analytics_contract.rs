@@ -25,8 +25,8 @@ pub async fn list_analytics_contract_versions(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AnalyticsContractVersionRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "sync.manage", PermissionScope::Global);
-    require_permission!(state, &user, "integrity.repair", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::SYNC_MANAGE, PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::INTEGRITY_REPAIR, PermissionScope::Global);
     list_contract_versions(&state.db).await
 }
 
@@ -36,7 +36,7 @@ pub async fn register_analytics_contract_version(
     state: State<'_, AppState>,
 ) -> AppResult<AnalyticsContractVersionRow> {
     let u = require_session!(state);
-    require_permission!(state, &u, "sync.manage", PermissionScope::Global);
+    require_permission!(state, &u, crate::rbac::permissions::SYNC_MANAGE, PermissionScope::Global);
     require_step_up!(state);
 
     if input.contract_id.trim().is_empty()

@@ -33,6 +33,7 @@ import { useDiStore } from "@/stores/di-store";
 import { toErrorMessage } from "@/utils/errors";
 import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 // ── Priority ordering ───────────────────────────────────────────────────────
 
@@ -175,9 +176,9 @@ export function DiReviewPanel() {
               <ReviewRow
                 key={di.id}
                 di={di}
-                canApprove={can("di.approve")}
-                canReview={can("di.review")}
-                canScreen={can("di.screen") || can("di.review")}
+                canApprove={can(P.DI_APPROVE)}
+                canReview={can(P.DI_REVIEW)}
+                canScreen={can(P.DI_SCREEN) || can(P.DI_REVIEW)}
                 onScreen={() => handleQuickScreen(di)}
                 onApprove={() => openApproval(di)}
                 onReject={() => openRejection(di)}

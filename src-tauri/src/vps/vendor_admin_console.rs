@@ -6,15 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::vps::domain::{VpsContractFamily, VpsTypedError};
 
-/// Console RBAC names (must match `permissions` rows from migration 066).
+/// Console RBAC names (re-export canonical registry constants).
 pub mod permissions {
-    pub const CONSOLE_VIEW: &str = "console.view";
-    pub const CUSTOMER_MANAGE: &str = "customer.manage";
-    pub const ENTITLEMENT_MANAGE: &str = "entitlement.manage";
-    pub const SYNC_OPERATE: &str = "sync.operate";
-    pub const ROLLOUT_MANAGE: &str = "rollout.manage";
-    pub const PLATFORM_OBSERVE: &str = "platform.observe";
-    pub const AUDIT_VIEW: &str = "audit.view";
+    pub use crate::rbac::permissions::{
+        AUDIT_VIEW, CONSOLE_VIEW, CUSTOMER_MANAGE, ENTITLEMENT_MANAGE, PLATFORM_OBSERVE,
+        ROLLOUT_MANAGE, SYNC_OPERATE,
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,15 +74,15 @@ impl StepUpActionKind {
 /// Minimum permissions for a control-plane admin route (server must enforce).
 pub fn required_permissions_for_console_route(route_key: &str) -> &'static [&'static str] {
     match route_key {
-        "vcn.home" | "vcn.overview" => &[permissions::CONSOLE_VIEW],
-        "vcn.customers" => &[permissions::CONSOLE_VIEW, permissions::CUSTOMER_MANAGE],
-        "vcn.entitlements" => &[permissions::CONSOLE_VIEW, permissions::ENTITLEMENT_MANAGE],
-        "vcn.machines" => &[permissions::CONSOLE_VIEW, permissions::ENTITLEMENT_MANAGE],
-        "vcn.sync" => &[permissions::CONSOLE_VIEW, permissions::SYNC_OPERATE],
-        "vcn.rollouts" => &[permissions::CONSOLE_VIEW, permissions::ROLLOUT_MANAGE],
-        "vcn.health" => &[permissions::CONSOLE_VIEW, permissions::PLATFORM_OBSERVE],
-        "vcn.audit" => &[permissions::CONSOLE_VIEW, permissions::AUDIT_VIEW],
-        _ => &[permissions::CONSOLE_VIEW],
+        "vcn.home" | "vcn.overview" => &[crate::rbac::permissions::CONSOLE_VIEW],
+        "vcn.customers" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::CUSTOMER_MANAGE],
+        "vcn.entitlements" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::ENTITLEMENT_MANAGE],
+        "vcn.machines" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::ENTITLEMENT_MANAGE],
+        "vcn.sync" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::SYNC_OPERATE],
+        "vcn.rollouts" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::ROLLOUT_MANAGE],
+        "vcn.health" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::PLATFORM_OBSERVE],
+        "vcn.audit" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::AUDIT_VIEW],
+        _ => &[crate::rbac::permissions::CONSOLE_VIEW],
     }
 }
 

@@ -99,7 +99,7 @@ async fn resolve_allowed_actions(state: &AppState, user_id: i32) -> AppResult<Op
         &state.db,
         &state.permission_cache,
         user_id,
-        "adm.permissions",
+        crate::rbac::permissions::ADM_PERMISSIONS,
         &PermissionScope::Global,
     )
     .await?;
@@ -112,7 +112,7 @@ async fn resolve_allowed_actions(state: &AppState, user_id: i32) -> AppResult<Op
         &state.db,
         &state.permission_cache,
         user_id,
-        "adm.users",
+        crate::rbac::permissions::ADM_USERS,
         &PermissionScope::Global,
     )
     .await?;
@@ -121,7 +121,7 @@ async fn resolve_allowed_actions(state: &AppState, user_id: i32) -> AppResult<Op
         &state.db,
         &state.permission_cache,
         user_id,
-        "adm.roles",
+        crate::rbac::permissions::ADM_ROLES,
         &PermissionScope::Global,
     )
     .await?;
@@ -201,7 +201,7 @@ pub async fn list_admin_events(
         &state.db,
         &state.permission_cache,
         caller.user_id,
-        "adm.users",
+        crate::rbac::permissions::ADM_USERS,
         &PermissionScope::Global,
     )
     .await?;
@@ -209,7 +209,7 @@ pub async fn list_admin_events(
         &state.db,
         &state.permission_cache,
         caller.user_id,
-        "adm.roles",
+        crate::rbac::permissions::ADM_ROLES,
         &PermissionScope::Global,
     )
     .await?;
@@ -217,7 +217,7 @@ pub async fn list_admin_events(
         &state.db,
         &state.permission_cache,
         caller.user_id,
-        "adm.permissions",
+        crate::rbac::permissions::ADM_PERMISSIONS,
         &PermissionScope::Global,
     )
     .await?;
@@ -340,7 +340,7 @@ pub async fn get_admin_event(
         &state.db,
         &state.permission_cache,
         caller.user_id,
-        "adm.users",
+        crate::rbac::permissions::ADM_USERS,
         &PermissionScope::Global,
     )
     .await?;
@@ -348,7 +348,7 @@ pub async fn get_admin_event(
         &state.db,
         &state.permission_cache,
         caller.user_id,
-        "adm.roles",
+        crate::rbac::permissions::ADM_ROLES,
         &PermissionScope::Global,
     )
     .await?;
@@ -356,7 +356,7 @@ pub async fn get_admin_event(
         &state.db,
         &state.permission_cache,
         caller.user_id,
-        "adm.permissions",
+        crate::rbac::permissions::ADM_PERMISSIONS,
         &PermissionScope::Global,
     )
     .await?;

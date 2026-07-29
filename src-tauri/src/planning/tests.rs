@@ -277,8 +277,8 @@ async fn ensure_approver_user(db: &DatabaseConnection, user_id: i64, personnel_i
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at, granted_by_id)
-         SELECT 777, id, '2026-01-01T00:00:00Z', 1 FROM permissions WHERE name IN ('plan.confirm')",
-        [],
+         SELECT 777, id, '2026-01-01T00:00:00Z', 1 FROM permissions WHERE name = ?",
+        [crate::rbac::permissions::PLAN_CONFIRM.into()],
     ))
     .await
     .expect("grant approver permission");

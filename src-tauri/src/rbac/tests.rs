@@ -355,10 +355,10 @@ mod tests {
             .await
             .expect("effective_permissions");
 
-        assert!(perms.contains("ot.view"), "missing ot.view: {perms:?}");
-        assert!(perms.contains("ot.edit"), "missing ot.edit: {perms:?}");
-        assert!(perms.contains("di.view"), "missing di.view: {perms:?}");
-        assert!(perms.contains("di.approve"), "missing di.approve: {perms:?}");
+        assert!(perms.contains(crate::rbac::permissions::OT_VIEW), "missing ot.view: {perms:?}");
+        assert!(perms.contains(crate::rbac::permissions::OT_EDIT), "missing ot.edit: {perms:?}");
+        assert!(perms.contains(crate::rbac::permissions::DI_VIEW), "missing di.view: {perms:?}");
+        assert!(perms.contains(crate::rbac::permissions::DI_APPROVE), "missing di.approve: {perms:?}");
     }
 
     /// 02 — Entity-scoped Technician role grants permissions only at the assigned entity.
@@ -386,7 +386,7 @@ mod tests {
                 .await
                 .expect("perms for entity_A");
         assert!(
-            perms_a.contains("ot.view"),
+            perms_a.contains(crate::rbac::permissions::OT_VIEW),
             "entity_A should have ot.view: {perms_a:?}"
         );
 
@@ -396,7 +396,7 @@ mod tests {
                 .await
                 .expect("perms for entity_B");
         assert!(
-            !perms_b.contains("ot.view"),
+            !perms_b.contains(crate::rbac::permissions::OT_VIEW),
             "entity_B should NOT have ot.view: {perms_b:?}"
         );
     }
@@ -485,13 +485,13 @@ mod tests {
         let db = setup_db().await;
 
         // ot.close depends hard on ot.edit; ot.edit depends hard on ot.view
-        let names: HashSet<String> = ["ot.close"].iter().map(|s| s.to_string()).collect();
+        let names: HashSet<String> = [crate::rbac::permissions::OT_CLOSE].iter().map(|s| s.to_string()).collect();
         let result = resolver::validate_hard_dependencies(&db, &names).await;
 
         assert!(result.is_err(), "expected hard-dep error");
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("ot.edit"),
+            err_msg.contains(crate::rbac::permissions::OT_EDIT),
             "error should mention ot.edit: {err_msg}"
         );
     }
@@ -503,7 +503,7 @@ mod tests {
         let db = setup_db().await;
 
         // Set with all hard deps satisfied: ot.view → ot.edit → ot.close + ot.reopen
-        let names: HashSet<String> = ["ot.reopen", "ot.close", "ot.edit", "ot.view"]
+        let names: HashSet<String> = [crate::rbac::permissions::OT_REOPEN, crate::rbac::permissions::OT_CLOSE, crate::rbac::permissions::OT_EDIT, crate::rbac::permissions::OT_VIEW]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -518,7 +518,7 @@ mod tests {
             .expect("dependency_warnings_for");
 
         let has_reopen_warn = warns.iter().any(|d| {
-            d.permission_name == "ot.reopen"
+            d.permission_name == crate::rbac::permissions::OT_REOPEN
                 && d.dependency_type == "warn"
         });
         assert!(
@@ -541,7 +541,7 @@ mod tests {
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT requires_step_up FROM permissions WHERE name = ?",
-                ["ot.close".into()],
+                [crate::rbac::permissions::OT_CLOSE.into()],
             ))
             .await
             .expect("query")
@@ -554,7 +554,7 @@ mod tests {
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT requires_step_up FROM permissions WHERE name = ?",
-                ["ot.view".into()],
+                [crate::rbac::permissions::OT_VIEW.into()],
             ))
             .await
             .expect("query")
@@ -645,7 +645,7 @@ mod tests {
             .expect("effective_permissions");
 
         assert!(
-            perms.contains("ot.view"),
+            perms.contains(crate::rbac::permissions::OT_VIEW),
             "emergency grant before expiry should be active: {perms:?}"
         );
     }
@@ -681,7 +681,7 @@ mod tests {
         let db = setup_db().await;
 
         // Create a "SiteAdmin" custom role
-        let site_admin_role_id = create_test_role(&db, "SiteAdmin_t13", &["adm.users"]).await;
+        let site_admin_role_id = create_test_role(&db, "SiteAdmin_t13", &[crate::rbac::permissions::ADM_USERS]).await;
 
         // Create delegation policy: this role can manage ot and di domains at entity_A
         insert_delegation_policy(
@@ -713,7 +713,7 @@ mod tests {
             &db,
             bob_id,
             target_user_id,
-            "ot.edit",
+            crate::rbac::permissions::OT_EDIT,
             "org_node",
             Some("entity_A"),
         )
@@ -726,7 +726,7 @@ mod tests {
             &db,
             bob_id,
             target_user_id,
-            "adm.users",
+            crate::rbac::permissions::ADM_USERS,
             "org_node",
             Some("entity_A"),
         )
@@ -745,7 +745,7 @@ mod tests {
         let db = setup_db().await;
 
         // Create a test role with known permissions
-        let perm_names = ["ot.view", "ot.create", "ot.edit"];
+        let perm_names = [crate::rbac::permissions::OT_VIEW, crate::rbac::permissions::OT_CREATE, crate::rbac::permissions::OT_EDIT];
         let role_id = create_test_role(&db, "TestRole_t14", &perm_names).await;
 
         // Export: read the role's permissions from DB
@@ -856,23 +856,23 @@ mod tests {
                 .await
                 .expect("perms after assign");
         assert!(
-            perms_after_assign.contains("ot.view"),
+            perms_after_assign.contains(crate::rbac::permissions::OT_VIEW),
             "Technician should have ot.view: {perms_after_assign:?}"
         );
         assert!(
-            !perms_after_assign.contains("adm.users"),
+            !perms_after_assign.contains(crate::rbac::permissions::ADM_USERS),
             "Technician should NOT have adm.users: {perms_after_assign:?}"
         );
 
         // ── Step 3: Simulate access (verify same assertions via resolver) ─
         let has_ot_view =
-            resolver::user_has_permission(&db, alice_id, "ot.view", "tenant", None)
+            resolver::user_has_permission(&db, alice_id, crate::rbac::permissions::OT_VIEW, "tenant", None)
                 .await
                 .expect("has ot.view");
         assert!(has_ot_view, "simulate: ot.view should be true");
 
         let has_adm_users =
-            resolver::user_has_permission(&db, alice_id, "adm.users", "tenant", None)
+            resolver::user_has_permission(&db, alice_id, crate::rbac::permissions::ADM_USERS, "tenant", None)
                 .await
                 .expect("has adm.users");
         assert!(!has_adm_users, "simulate: adm.users should be false");
@@ -880,7 +880,7 @@ mod tests {
         // ── Step 4: Validate ot.create in Technician's permission set ────
         // Maintenance Technician has ot.view, ot.create, ot.edit
         // ot.create depends hard on ot.view → satisfied
-        let tech_perm_set: HashSet<String> = ["ot.view", "ot.create", "ot.edit"]
+        let tech_perm_set: HashSet<String> = [crate::rbac::permissions::OT_VIEW, crate::rbac::permissions::OT_CREATE, crate::rbac::permissions::OT_EDIT]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -978,7 +978,7 @@ mod tests {
                 .expect("perms after deactivate");
         // Assignments are still present, resolver doesn't check is_active
         assert!(
-            perms_after_deactivate.contains("ot.view"),
+            perms_after_deactivate.contains(crate::rbac::permissions::OT_VIEW),
             "resolver returns perms even for deactivated users (command layer checks is_active)"
         );
     }

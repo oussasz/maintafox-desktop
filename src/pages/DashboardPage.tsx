@@ -21,12 +21,12 @@ import { KpiCard } from "@/components/dashboard/KpiCard";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
 import { Button } from "@/components/ui/button";
 import { usePermissions } from "@/hooks/use-permissions";
+import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import {
   getDashboardKpiValidation,
   getDashboardKpis,
   getDashboardLayout,
 } from "@/services/dashboard-service";
-import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { useAppStore } from "@/store/app-store";
 import { useSessionStore } from "@/store/session-store";
 import {
@@ -39,6 +39,7 @@ import {
 } from "@shared/dashboard-layout";
 import type { DashboardKpiValidation, DashboardKpis } from "@shared/ipc-types";
 import { DASHBOARD_KPI_DRILL_PATH, DASHBOARD_KPI_KEYS } from "@shared/kpi-definitions";
+import { P } from "@shared/rbac/permissions.generated";
 
 const KPI_REFRESH_MS = 5 * 60 * 1000;
 
@@ -125,7 +126,7 @@ export function DashboardPage() {
   const canShowWidget = useCallback(
     (id: string) => {
       if (id === DASHBOARD_WIDGET_IDS.KPIS || id === DASHBOARD_WIDGET_IDS.WORKLOAD) {
-        return canAny("di.view", "ot.view", "eq.view", "pm.view");
+        return canAny(P.DI_VIEW, P.OT_VIEW, P.EQ_VIEW, P.PM_VIEW);
       }
       const p = DASHBOARD_WIDGET_PERMISSION[id];
       return !p || can(p);
@@ -242,7 +243,7 @@ export function DashboardPage() {
         <Fragment key={w.id}>{renderWidget(w.id)}</Fragment>
       ))}
 
-      <PermissionGate anyOf={["di.screen", "di.review"]}>
+      <PermissionGate anyOf={[P.DI_SCREEN, P.DI_REVIEW]}>
         <DashboardDisTriageInboxPanel />
       </PermissionGate>
 
@@ -277,12 +278,12 @@ export function DashboardPage() {
       <div className="space-y-2">
         <h2 className="text-sm font-medium text-text-muted">{t("quickActions.title")}</h2>
         <div className="flex flex-wrap gap-3">
-          <PermissionGate permission="di.create">
+          <PermissionGate permission={P.DI_CREATE}>
             <Button variant="outline" size="sm" onClick={() => navigate("/requests?action=create")}>
               {t("quickActions.newDi")}
             </Button>
           </PermissionGate>
-          <PermissionGate permission="ot.create">
+          <PermissionGate permission={P.OT_CREATE}>
             <Button
               variant="outline"
               size="sm"
@@ -291,7 +292,7 @@ export function DashboardPage() {
               {t("quickActions.newWo")}
             </Button>
           </PermissionGate>
-          <PermissionGate permission="eq.manage">
+          <PermissionGate permission={P.EQ_MANAGE}>
             <Button
               variant="outline"
               size="sm"

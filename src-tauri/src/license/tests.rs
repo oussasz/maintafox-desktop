@@ -141,13 +141,13 @@ async fn enforcement_matrix_blocks_write_and_allows_safe_read_when_suspended() {
     .await
     .expect("suspend");
 
-    let read_decision = queries::evaluate_permission_matrix(&db, 1, "inv.view")
+    let read_decision = queries::evaluate_permission_matrix(&db, 1, crate::rbac::permissions::INV_VIEW)
         .await
         .expect("read decision");
     assert!(read_decision.allowed);
     assert!(read_decision.degraded_to_read_only);
 
-    let write_decision = queries::evaluate_permission_matrix(&db, 1, "inv.manage")
+    let write_decision = queries::evaluate_permission_matrix(&db, 1, crate::rbac::permissions::INV_MANAGE)
         .await
         .expect("write decision");
     assert!(!write_decision.allowed);
@@ -232,7 +232,7 @@ async fn reactivation_restores_write_path_and_recovery_status_message() {
     .await
     .expect("reactivate");
 
-    let write_decision = queries::evaluate_permission_matrix(&db, 1, "inv.manage")
+    let write_decision = queries::evaluate_permission_matrix(&db, 1, crate::rbac::permissions::INV_MANAGE)
         .await
         .expect("write decision");
     assert!(write_decision.allowed);

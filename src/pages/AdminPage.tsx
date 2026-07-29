@@ -6,6 +6,7 @@ import { useSearchParams } from "react-router-dom";
 import { AdminMetricCards } from "@/components/admin/AdminMetricCards";
 import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
 // Lazy-load each admin panel
 const UserListPanel = lazy(() =>
@@ -50,52 +51,52 @@ const AdminAuditTimeline = lazy(() =>
 interface AdminTab {
   key: string;
   labelKey: string;
-  permission: string | string[];
+  permission: PermissionName | PermissionName[];
   component: React.LazyExoticComponent<React.ComponentType>;
 }
 
 const ADMIN_TABS: AdminTab[] = [
-  { key: "users", labelKey: "admin:tabs.users", permission: "adm.users", component: UserListPanel },
+  { key: "users", labelKey: "admin:tabs.users", permission: P.ADM_USERS, component: UserListPanel },
   {
     key: "roles",
     labelKey: "admin:tabs.roles",
-    permission: "adm.roles",
+    permission: P.ADM_ROLES,
     component: RoleEditorPanel,
   },
   {
     key: "permissions",
     labelKey: "admin:tabs.permissions",
-    permission: "adm.permissions",
+    permission: P.ADM_PERMISSIONS,
     component: PermissionCatalogPanel,
   },
   {
     key: "sessions",
     labelKey: "admin:tabs.sessions",
-    permission: "adm.users",
+    permission: P.ADM_USERS,
     component: SessionVisibilityPanel,
   },
   {
     key: "delegation",
     labelKey: "admin:tabs.delegation",
-    permission: "adm.roles",
+    permission: P.ADM_ROLES,
     component: DelegationManagerPanel,
   },
   {
     key: "emergency",
     labelKey: "admin:tabs.emergency",
-    permission: "adm.users",
+    permission: P.ADM_USERS,
     component: EmergencyElevationPanel,
   },
   {
     key: "import-export",
     labelKey: "admin:tabs.importExport",
-    permission: "adm.roles",
+    permission: P.ADM_ROLES,
     component: RoleImportExportPanel,
   },
   {
     key: "audit",
     labelKey: "admin:tabs.audit",
-    permission: ["adm.users", "adm.roles", "adm.permissions"],
+    permission: [P.ADM_USERS, P.ADM_ROLES, P.ADM_PERMISSIONS],
     component: AdminAuditTimeline,
   },
 ];

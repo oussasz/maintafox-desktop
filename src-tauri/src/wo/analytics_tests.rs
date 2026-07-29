@@ -246,6 +246,7 @@ mod tests {
                 planned_end: "2026-04-10T16:00:00Z".into(),
                 shift: None,
                 expected_duration_hours: Some(8.0),
+                planned_downtime_hours: None,
                 urgency_id: None,
             },
         )
@@ -350,6 +351,7 @@ mod tests {
                 stock_location_id: None,
                 auto_reserve: Some(false),
                 notes: None,
+                origin: None,
             },
         )
         .await
@@ -438,6 +440,7 @@ mod tests {
                 sequence_order: 1,
                 is_mandatory: true,
                 estimated_minutes: Some(30),
+                origin: None,
             },
         )
         .await
@@ -562,7 +565,7 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════════
     //
     // The `reopen_wo` IPC command in commands/wo.rs uses:
-    //   require_permission!(state, &user, "ot.admin", PermissionScope::Global);
+    //   require_permission!(state, &user, crate::rbac::permissions::OT_ADMIN, PermissionScope::Global);
     //
     // This is verified by code inspection only; domain-layer tests cannot
     // exercise the Tauri session/state model.

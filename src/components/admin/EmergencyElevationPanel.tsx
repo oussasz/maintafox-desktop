@@ -35,6 +35,7 @@ import {
   revokeEmergencyElevation,
 } from "@/services/rbac-service";
 import type { EmergencyGrantView, RoleWithPermissions, UserWithRoles } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const SCOPE_TYPES = ["global", "site", "department"] as const;
 
@@ -315,7 +316,7 @@ export function EmergencyElevationPanel() {
         id: "actions",
         header: "",
         cell: ({ row }) => {
-          if (row.original.is_expired || !can("adm.users")) return null;
+          if (row.original.is_expired || !can(P.ADM_USERS)) return null;
           return (
             <Button
               variant="ghost"
@@ -346,7 +347,7 @@ export function EmergencyElevationPanel() {
         <h2 className="text-lg font-semibold text-text-primary">
           {t("emergency.title", "Emergency Elevations")}
         </h2>
-        {can("adm.users") && (
+        {can(P.ADM_USERS) && (
           <Button
             size="sm"
             onClick={() => {

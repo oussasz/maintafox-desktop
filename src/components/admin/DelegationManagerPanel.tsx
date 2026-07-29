@@ -36,6 +36,7 @@ import {
   updateDelegationPolicy,
 } from "@/services/rbac-service";
 import type { DelegationPolicyView, RoleWithPermissions } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const SCOPE_TYPES = ["tenant", "site", "department"] as const;
 
@@ -258,7 +259,7 @@ export function DelegationManagerPanel() {
         id: "actions",
         header: "",
         cell: ({ row }) => {
-          if (!can("adm.roles")) return null;
+          if (!can(P.ADM_ROLES)) return null;
           return (
             <div className="flex items-center gap-1">
               <Button variant="ghost" size="sm" onClick={() => openEdit(row.original)}>
@@ -314,7 +315,7 @@ export function DelegationManagerPanel() {
         <h2 className="text-lg font-semibold text-text-primary">
           {t("delegation.title", "Delegation Policies")}
         </h2>
-        {can("adm.roles") && (
+        {can(P.ADM_ROLES) && (
           <Button
             size="sm"
             onClick={() => {

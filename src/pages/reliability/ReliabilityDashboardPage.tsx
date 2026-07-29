@@ -19,6 +19,7 @@ import {
 import { mfCard, mfChart } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
+import { listAssets } from "@/services/asset-service";
 import {
   evaluateMarkovModel,
   getWeibullDashboardPayload,
@@ -29,13 +30,13 @@ import {
   refreshReliabilityKpiSnapshot,
   runWeibullFit,
 } from "@/services/reliability-service";
-import { listAssets } from "@/services/asset-service";
 import type {
   Asset,
   ReliabilityKpiSnapshot,
   ReliabilityRulIndicator,
   WeibullDashboardPayload,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { useRequiredRamsEquipmentId } from "./rams-equipment-context";
 
@@ -62,7 +63,7 @@ function parseExposureProvenance(raw: string | null | undefined): ExposureProven
 export function ReliabilityDashboardPage() {
   const { t } = useTranslation("reliability");
   const { can, isLoading: permissionsLoading } = usePermissions();
-  const canAnalyze = can("ram.analyze");
+  const canAnalyze = can(P.RAM_ANALYZE);
   const equipmentId = useRequiredRamsEquipmentId();
 
   const [rows, setRows] = useState<ReliabilityKpiSnapshot[]>([]);
@@ -162,7 +163,7 @@ export function ReliabilityDashboardPage() {
         ...p,
         cmp_r:
           weibullDashboard?.comparison_points != null
-            ? weibullDashboard.comparison_points.find((cp) => cp.t === p.t)?.r ?? null
+            ? (weibullDashboard.comparison_points.find((cp) => cp.t === p.t)?.r ?? null)
             : null,
       })),
     [weibullDashboard],
@@ -215,7 +216,7 @@ export function ReliabilityDashboardPage() {
   };
 
   const loadMarkov = useCallback(async () => {
-    if (!can("ram.view")) {
+    if (!can(P.RAM_VIEW)) {
       setMarkovPts([]);
       setMarkovErr(null);
       return;
@@ -465,7 +466,9 @@ export function ReliabilityDashboardPage() {
                 />
                 {t("dashboard.includeCensored")}
               </span>
-              <span className="text-[10px] text-text-muted">{t("dashboard.weibullCensoredHint")}</span>
+              <span className="text-[10px] text-text-muted">
+                {t("dashboard.weibullCensoredHint")}
+              </span>
             </label>
             <label className="flex items-center gap-2 text-text-secondary">
               {t("dashboard.fleetCompare")}
@@ -621,7 +624,10 @@ export function ReliabilityDashboardPage() {
                   {(weibullDashboard?.t_effective_hours ?? rul?.t_hours) != null ? (
                     <span className="text-text-muted">
                       {" "}
-                      @ t = {(weibullDashboard?.t_effective_hours ?? rul?.t_hours ?? 0).toFixed(1)} h
+                      @ t = {(weibullDashboard?.t_effective_hours ?? rul?.t_hours ?? 0).toFixed(
+                        1,
+                      )}{" "}
+                      h
                     </span>
                   ) : null}
                 </p>

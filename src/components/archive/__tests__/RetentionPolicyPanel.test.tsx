@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RetentionPolicyPanel } from "@/components/archive/RetentionPolicyPanel";
 import { PermissionProvider } from "@/contexts/PermissionContext";
+import { P } from "@shared/rbac/permissions.generated";
 
 const mockGetMyPermissions = vi.fn();
 
@@ -62,7 +63,7 @@ function permission(name: string) {
 describe("RetentionPolicyPanel staged retention edits", () => {
   beforeEach(() => {
     mockGetMyPermissions.mockReset();
-    mockGetMyPermissions.mockResolvedValue([permission("adm.settings")]);
+    mockGetMyPermissions.mockResolvedValue([permission(P.ADM_SETTINGS)]);
     archiveMocks.listRetentionPolicies.mockClear();
     archiveMocks.updateRetentionPolicy.mockClear();
   });

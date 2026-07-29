@@ -29,11 +29,12 @@ import {
 import { refreshWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
 import type { WorkOrderTypeOption } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function WorkOrderTypesManagerPanel() {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
-  const canManage = can("ref.manage");
+  const canManage = can(P.REF_MANAGE);
 
   const [rows, setRows] = useState<WorkOrderTypeOption[]>([]);
   const [loading, setLoading] = useState(false);

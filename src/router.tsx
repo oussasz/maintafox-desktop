@@ -6,6 +6,7 @@ import { PermissionRoute } from "@/components/auth/PermissionRoute";
 import { ProductLicenseGate } from "@/components/auth/ProductLicenseGate";
 import { AppShell } from "@/components/layout/AppShell";
 import { DashboardPage } from "@/pages/DashboardPage";
+import { P } from "@shared/rbac/permissions.generated";
 
 // Lazy-load all module pages
 const EquipmentPage = lazy(() =>
@@ -203,38 +204,38 @@ const routes: RouteObject[] = [
                 element: <PageSuspense />,
                 children: [
                   {
-                    element: <PermissionRoute permission="eq.view" />,
+                    element: <PermissionRoute permission={P.EQ_VIEW} />,
                     children: [
                       { path: "equipment", element: <EquipmentPage /> },
                       { path: "equipment/import", element: <AssetImportPage /> },
                     ],
                   },
                   {
-                    element: <PermissionRoute permission="di.view" />,
+                    element: <PermissionRoute permission={P.DI_VIEW} />,
                     children: [{ path: "requests", element: <RequestsPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="ot.view" />,
+                    element: <PermissionRoute permission={P.OT_VIEW} />,
                     children: [{ path: "work-orders", element: <WorkOrdersPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="plan.view" />,
+                    element: <PermissionRoute permission={P.PLAN_VIEW} />,
                     children: [{ path: "planning", element: <PlanningPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="pm.view" />,
+                    element: <PermissionRoute permission={P.PM_VIEW} />,
                     children: [{ path: "pm", element: <PmPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="ptw.view" />,
+                    element: <PermissionRoute permission={P.PTW_VIEW} />,
                     children: [{ path: "permits", element: <PermitsPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="ins.view" />,
+                    element: <PermissionRoute permission={P.INS_VIEW} />,
                     children: [{ path: "inspections", element: <InspectionsPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="trn.view" />,
+                    element: <PermissionRoute permission={P.TRN_VIEW} />,
                     children: [
                       {
                         path: "training",
@@ -243,11 +244,11 @@ const routes: RouteObject[] = [
                     ],
                   },
                   {
-                    element: <PermissionRoute permission="inv.view" />,
+                    element: <PermissionRoute permission={P.INV_VIEW} />,
                     children: [{ path: "inventory", element: <InventoryPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="rep.view" />,
+                    element: <PermissionRoute permission={P.REP_VIEW} />,
                     children: [
                       { path: "analytics", element: <AnalyticsPage /> },
                       {
@@ -265,15 +266,15 @@ const routes: RouteObject[] = [
                     ],
                   },
                   {
-                    element: <PermissionRoute permission="fin.view" />,
+                    element: <PermissionRoute permission={P.FIN_VIEW} />,
                     children: [{ path: "budget", element: <BudgetPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="per.view" />,
+                    element: <PermissionRoute permission={P.PER_VIEW} />,
                     children: [{ path: "personnel", element: <PersonnelPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="adm.users" />,
+                    element: <PermissionRoute permission={P.ADM_USERS} />,
                     children: [
                       {
                         path: "users",
@@ -282,20 +283,20 @@ const routes: RouteObject[] = [
                     ],
                   },
                   {
-                    element: <PermissionRoute anyOf={["adm.users", "adm.roles"]} />,
+                    element: <PermissionRoute anyOf={[P.ADM_USERS, P.ADM_ROLES]} />,
                     children: [{ path: "admin", element: <AdminPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="org.view" />,
+                    element: <PermissionRoute permission={P.ORG_VIEW} />,
                     children: [{ path: "org", element: <OrgPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="ref.view" />,
+                    element: <PermissionRoute permission={P.REF_VIEW} />,
                     children: [{ path: "lookups", element: <LookupsPage /> }],
                   },
                   { path: "notifications", element: <NotificationsPage /> },
                   {
-                    element: <PermissionRoute permission="doc.view" />,
+                    element: <PermissionRoute permission={P.DOC_VIEW} />,
                     children: [
                       {
                         path: "documentation",
@@ -322,19 +323,19 @@ const routes: RouteObject[] = [
                     element: <Navigate to="/" replace />,
                   },
                   {
-                    element: <PermissionRoute permission="arc.view" />,
+                    element: <PermissionRoute permission={P.ARC_VIEW} />,
                     children: [{ path: "archive", element: <ArchivePage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="log.view" />,
+                    element: <PermissionRoute permission={P.LOG_VIEW} />,
                     children: [{ path: "activity", element: <ActivityPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="adm.settings" />,
+                    element: <PermissionRoute permission={P.ADM_SETTINGS} />,
                     children: [{ path: "settings", element: <SettingsPage /> }],
                   },
                   {
-                    element: <PermissionRoute permission="cfg.view" />,
+                    element: <PermissionRoute permission={P.CFG_VIEW} />,
                     children: [
                       {
                         path: "configuration",
@@ -342,7 +343,10 @@ const routes: RouteObject[] = [
                       },
                     ],
                   },
-                  { path: "diagnostics", element: <DiagnosticsPage /> },
+                  {
+                    element: <PermissionRoute permission={P.ADM_SETTINGS} />,
+                    children: [{ path: "diagnostics", element: <DiagnosticsPage /> }],
+                  },
                   { path: "profile", element: <ProfilePage /> },
                   { path: "unauthorized", element: <UnauthorizedPage /> },
                 ],

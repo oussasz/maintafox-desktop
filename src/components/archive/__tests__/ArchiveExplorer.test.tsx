@@ -3,7 +3,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { ArchiveExplorer } from "@/components/archive/ArchiveExplorer";
 import { PermissionProvider } from "@/contexts/PermissionContext";
-import type { ArchiveFilterInput, ArchiveItemDetail, ArchiveItemSummary } from "@/services/archive-service";
+import type {
+  ArchiveFilterInput,
+  ArchiveItemDetail,
+  ArchiveItemSummary,
+} from "@/services/archive-service";
+import { P } from "@shared/rbac/permissions.generated";
 
 const mockGetMyPermissions = vi.fn();
 
@@ -72,12 +77,16 @@ const archiveMocks = vi.hoisted(() => {
     listArchiveItems: vi.fn((_filter: ArchiveFilterInput) => Promise.resolve(fixtureItems)),
     getArchiveItem: vi.fn(
       (_id: number): Promise<ArchiveItemDetail> =>
-        Promise.reject(new Error("getArchiveItem not stubbed for this test")) as Promise<ArchiveItemDetail>,
+        Promise.reject(
+          new Error("getArchiveItem not stubbed for this test"),
+        ) as Promise<ArchiveItemDetail>,
     ),
     exportArchiveItems: vi.fn((_payload: unknown) =>
       Promise.resolve({ items: [{ archive_item_id: 1, payload_json: { ok: true } }] }),
     ),
-    purgeArchiveItems: vi.fn((_payload: unknown) => Promise.resolve({ strict_mode: true, purged_item_ids: [] })),
+    purgeArchiveItems: vi.fn((_payload: unknown) =>
+      Promise.resolve({ strict_mode: true, purged_item_ids: [] }),
+    ),
     restoreArchiveItem: vi.fn((_payload: unknown) =>
       Promise.resolve({ archive_item_id: 1, restore_action_id: 1, message: "ok" }),
     ),
@@ -110,21 +119,21 @@ function lastListArchiveFilter(): ArchiveFilterInput | undefined {
 function makePermissions() {
   return [
     {
-      name: "arc.export",
+      name: P.ARC_EXPORT,
       description: "",
       category: "archive",
       is_dangerous: false,
       requires_step_up: false,
     },
     {
-      name: "arc.restore",
+      name: P.ARC_RESTORE,
       description: "",
       category: "archive",
       is_dangerous: false,
       requires_step_up: false,
     },
     {
-      name: "arc.purge",
+      name: P.ARC_PURGE,
       description: "",
       category: "archive",
       is_dangerous: true,
@@ -174,8 +183,10 @@ describe("ArchiveExplorer — folder tree after filter updates (SP07 carry-forwa
       expect(lastListArchiveFilter()?.legal_hold).toBe(true);
     });
 
-    const woClosedChip = screen.getAllByRole("button", { name: "WO_CLOSED" })[1]!;
-    fireEvent.click(woClosedChip);
+    const woClosedChips = screen.getAllByRole("button", { name: "WO_CLOSED" });
+    const woClosedChip = woClosedChips[1];
+    expect(woClosedChip).toBeDefined();
+    fireEvent.click(woClosedChip as HTMLElement);
     await waitFor(() => {
       expect(screen.getByText("WO-1001")).toBeInTheDocument();
     });
@@ -192,8 +203,10 @@ describe("ArchiveExplorer — folder tree after filter updates (SP07 carry-forwa
     const woClosedInTree = within(tree).getByRole("button", { name: "WO_CLOSED" });
     fireEvent.click(woClosedInTree);
 
-    const year2024UnderWo = within(tree).getAllByRole("button", { name: /^2024 / })[1]!;
-    fireEvent.click(year2024UnderWo);
+    const year2024Buttons = within(tree).getAllByRole("button", { name: /^2024 / });
+    const year2024UnderWo = year2024Buttons[1];
+    expect(year2024UnderWo).toBeDefined();
+    fireEvent.click(year2024UnderWo as HTMLElement);
     await waitFor(() => {
       const f = lastListArchiveFilter();
       expect(f?.date_from).toBe("2024-01-01");
@@ -211,7 +224,7 @@ describe("ArchiveExplorer — folder tree after filter updates (SP07 carry-forwa
     renderExplorer();
 
     const detail: ArchiveItemDetail = {
-      item: archiveMocks.fixtureItems[0]!,
+      item: archiveMocks.fixtureItems[0] as (typeof archiveMocks.fixtureItems)[number],
       payload: {
         id: 10,
         archive_item_id: 1,

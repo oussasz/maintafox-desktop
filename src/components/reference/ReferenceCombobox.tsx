@@ -30,6 +30,7 @@ import {
 } from "@/services/reference-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { ReferenceGovernanceCapabilities, ReferenceValue } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export type ReferenceValueMode = "code" | "id";
 
@@ -85,7 +86,7 @@ export function ReferenceCombobox({
 }: ReferenceComboboxProps) {
   const { t, i18n } = useTranslation("reference");
   const { can } = usePermissions();
-  const canManage = can("ref.manage");
+  const canManage = can(P.REF_MANAGE);
   const cfg = getReferenceTypeConfig(referenceType);
 
   const [open, setOpen] = useState(false);
@@ -105,11 +106,7 @@ export function ReferenceCombobox({
   const effectiveParentLabel = parentLabel ?? resolvedParentLabel;
   const parentReady = !needsParent || (effectiveParentId != null && effectiveParentId > 0);
   const canShowCreate =
-    allowCreate &&
-    Boolean(caps?.can_operational_create) &&
-    canManage &&
-    parentReady &&
-    !disabled;
+    allowCreate && Boolean(caps?.can_operational_create) && canManage && parentReady && !disabled;
 
   useEffect(() => {
     let cancelled = false;
@@ -166,9 +163,7 @@ export function ReferenceCombobox({
     try {
       const rows = await listPublishedReferenceValuesByDomainCode(cfg.domainCode);
       if (token !== reloadToken.current) return;
-      const filtered = needsParent
-        ? rows.filter((r) => r.parent_id === effectiveParentId)
-        : rows;
+      const filtered = needsParent ? rows.filter((r) => r.parent_id === effectiveParentId) : rows;
       setItems(filtered);
     } catch (err) {
       if (token !== reloadToken.current) return;
@@ -252,9 +247,7 @@ export function ReferenceCombobox({
         onClick={() => !isDisabled && setOpen((o) => !o)}
       >
         <span className="truncate">
-          {selected || value
-            ? displayLabel
-            : placeholder || emptyStateLabel(cfg, i18n.language)}
+          {selected || value ? displayLabel : placeholder || emptyStateLabel(cfg, i18n.language)}
         </span>
         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
       </Button>

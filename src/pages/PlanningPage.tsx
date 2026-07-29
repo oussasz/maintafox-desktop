@@ -21,6 +21,7 @@ import { listOrgTree } from "@/services/org-node-service";
 import { listPersonnel } from "@/services/personnel-service";
 import { usePlanningStore } from "@/stores/planning-store";
 import { toErrorMessage } from "@/utils/errors";
+import { P } from "@shared/rbac/permissions.generated";
 
 type OrgTeamOption = { id: number; label: string };
 type PersonnelOption = { id: number; label: string };
@@ -411,7 +412,7 @@ export function PlanningPage() {
         </div>
 
         <div className={mfLayout.moduleHeaderActions}>
-          <PermissionGate permission="plan.edit">
+          <PermissionGate permission={P.PLAN_EDIT}>
             <Button
               size="sm"
               variant="outline"
@@ -423,7 +424,7 @@ export function PlanningPage() {
               {t("actions.refreshBacklog")}
             </Button>
           </PermissionGate>
-          <PermissionGate permission="plan.confirm">
+          <PermissionGate permission={P.PLAN_CONFIRM}>
             <Button
               size="sm"
               variant="outline"
@@ -435,7 +436,7 @@ export function PlanningPage() {
               {t("actions.freezePeriod")}
             </Button>
           </PermissionGate>
-          <PermissionGate permission="plan.confirm">
+          <PermissionGate permission={P.PLAN_CONFIRM}>
             <Button
               size="sm"
               variant="outline"
@@ -654,7 +655,7 @@ export function PlanningPage() {
                       />
                     </div>
                   </div>
-                  <PermissionGate permission="plan.confirm">
+                  <PermissionGate permission={P.PLAN_CONFIRM}>
                     <Button
                       className="mt-3"
                       size="sm"
@@ -708,7 +709,7 @@ export function PlanningPage() {
                       />
                     </div>
                   </div>
-                  <PermissionGate permission="plan.windows">
+                  <PermissionGate permission={P.PLAN_WINDOWS}>
                     <Button
                       className="mt-3"
                       size="sm"
@@ -887,7 +888,7 @@ export function PlanningPage() {
                     />
                   </div>
                 </div>
-                <PermissionGate permission="plan.confirm">
+                <PermissionGate permission={P.PLAN_CONFIRM}>
                   <Button
                     className="mt-3"
                     size="sm"

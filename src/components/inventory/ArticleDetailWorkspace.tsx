@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   ClipboardList,
-  FileText,
   Loader2,
   MoreHorizontal,
   Package,
@@ -23,8 +22,8 @@ import {
   EntityQrCode,
   EntitySummaryKpiStrip,
 } from "@/components/detail";
-import { InventoryAdjustmentDialog } from "@/components/inventory/InventoryAdjustmentDialog";
 import { ArticleConsumptionChart } from "@/components/inventory/ArticleConsumptionChart";
+import { InventoryAdjustmentDialog } from "@/components/inventory/InventoryAdjustmentDialog";
 import { ReservationInsightsPanel } from "@/components/inventory/ReservationInsightsPanel";
 import {
   SupplierArticleSourcesSection,
@@ -89,6 +88,7 @@ import type {
   InventoryTransaction,
   StockReservation,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export type ArticleDetailView =
   | "details"
@@ -107,6 +107,8 @@ export interface ArticleDetailWorkspaceProps {
   onCreateRequisition: () => void;
   /** Optional: refresh parent list after a stock change. */
   onStockAdjusted?: () => void;
+  /** Optional: open a purchase order from the purchase history section. */
+  onOpenPurchaseOrder?: (purchaseOrderId: number) => void;
 }
 
 function formatQty(n: number): string {
@@ -132,6 +134,7 @@ export function ArticleDetailWorkspace({
   onDeactivate,
   onCreateRequisition,
   onStockAdjusted,
+  onOpenPurchaseOrder,
 }: ArticleDetailWorkspaceProps) {
   const { t } = useTranslation("inventory");
   const { t: tc } = useTranslation("common");
@@ -328,7 +331,7 @@ export function ArticleDetailWorkspace({
             code={article.article_code}
             name={article.article_name}
             payload={`maintafox://article/${article.id}`}
-            viewPermission="inv.view"
+            viewPermission={P.INV_VIEW}
             metadata={[
               {
                 label: t("detail.fields.unit"),
@@ -341,7 +344,7 @@ export function ArticleDetailWorkspace({
         }
         primaryActionsSlot={
           <>
-            <PermissionGate permission="inv.manage">
+            <PermissionGate permission={P.INV_MANAGE}>
               <Button
                 variant="default"
                 size="sm"
@@ -352,7 +355,7 @@ export function ArticleDetailWorkspace({
                 {t("detail.actions.adjustStock")}
               </Button>
             </PermissionGate>
-            <PermissionGate permission="inv.procure">
+            <PermissionGate permission={P.INV_PROCURE}>
               <Button
                 variant="outline"
                 size="sm"
@@ -366,7 +369,7 @@ export function ArticleDetailWorkspace({
           </>
         }
         overflowSlot={
-          <PermissionGate permission="inv.manage">
+          <PermissionGate permission={P.INV_MANAGE}>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -405,7 +408,11 @@ export function ArticleDetailWorkspace({
             kpis={[
               { id: "onHand", label: t("detail.kpis.onHand"), value: formatQty(kpis.onHand) },
               { id: "reserved", label: t("detail.kpis.reserved"), value: formatQty(kpis.reserved) },
-              { id: "available", label: t("detail.kpis.available"), value: formatQty(kpis.available) },
+              {
+                id: "available",
+                label: t("detail.kpis.available"),
+                value: formatQty(kpis.available),
+              },
               { id: "locations", label: t("detail.kpis.locations"), value: String(kpis.locations) },
               {
                 id: "movements30d",
@@ -501,9 +508,22 @@ export function ArticleDetailWorkspace({
             ) : (
               <div className="space-y-2">
                 {purchaseHistory.map((row) => (
-                  <div key={row.purchase_order_id} className="rounded border border-surface-border p-2.5 text-sm">
+                  <div
+                    key={row.purchase_order_id}
+                    className="rounded border border-surface-border p-2.5 text-sm"
+                  >
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono font-medium">{row.po_number}</span>
+                      {onOpenPurchaseOrder ? (
+                        <button
+                          type="button"
+                          className="font-mono font-medium text-primary hover:underline"
+                          onClick={() => onOpenPurchaseOrder(row.purchase_order_id)}
+                        >
+                          {row.po_number}
+                        </button>
+                      ) : (
+                        <span className="font-mono font-medium">{row.po_number}</span>
+                      )}
                       <Badge variant="outline" className="h-4 text-[10px]">
                         {row.status}
                       </Badge>
@@ -520,12 +540,11 @@ export function ArticleDetailWorkspace({
                       </span>
                       {row.unit_price != null ? (
                         <span>
-                          {t("article.purchaseHistory.columns.unitPrice")}: {row.unit_price.toFixed(2)}
+                          {t("article.purchaseHistory.columns.unitPrice")}:{" "}
+                          {row.unit_price.toFixed(2)}
                         </span>
                       ) : null}
-                      {row.ordered_at ? (
-                        <span>{formatDate(row.ordered_at)}</span>
-                      ) : null}
+                      {row.ordered_at ? <span>{formatDate(row.ordered_at)}</span> : null}
                     </div>
                   </div>
                 ))}
@@ -541,7 +560,7 @@ export function ArticleDetailWorkspace({
           <CardContent className="pt-4">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm font-medium">{t("article.sections.equivalents")}</p>
-              <PermissionGate permission="inv.manage">
+              <PermissionGate permission={P.INV_MANAGE}>
                 <Button
                   size="sm"
                   variant="outline"
@@ -575,10 +594,8 @@ export function ArticleDetailWorkspace({
                     {eq.is_bidirectional === 1 ? (
                       <span className="text-xs text-text-muted">↔</span>
                     ) : null}
-                    {eq.notes ? (
-                      <span className="text-xs text-text-muted">{eq.notes}</span>
-                    ) : null}
-                    <PermissionGate permission="inv.manage">
+                    {eq.notes ? <span className="text-xs text-text-muted">{eq.notes}</span> : null}
+                    <PermissionGate permission={P.INV_MANAGE}>
                       <Button
                         size="sm"
                         variant="ghost"
@@ -620,7 +637,8 @@ export function ArticleDetailWorkspace({
                       {row.reason ? <span>{row.reason}</span> : null}
                       {row.repair_cost != null ? (
                         <span>
-                          {t("article.repairableHistory.columns.cost")}: {row.repair_cost.toFixed(2)}
+                          {t("article.repairableHistory.columns.cost")}:{" "}
+                          {row.repair_cost.toFixed(2)}
                         </span>
                       ) : null}
                       <span>{formatDate(row.created_at)}</span>
@@ -639,7 +657,7 @@ export function ArticleDetailWorkspace({
           <CardContent className="pt-4">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm font-medium">{t("article.sections.documents")}</p>
-              <PermissionGate permission="inv.manage">
+              <PermissionGate permission={P.INV_MANAGE}>
                 <Button
                   size="sm"
                   variant="outline"
@@ -723,7 +741,10 @@ export function ArticleDetailWorkspace({
           </DetailSectionCard>
 
           <DetailSectionCard title={t("detail.sections.inventory")} icon={Package}>
-            <DetailFieldRow label={t("detail.fields.minStock")} value={formatQty(article.min_stock)} />
+            <DetailFieldRow
+              label={t("detail.fields.minStock")}
+              value={formatQty(article.min_stock)}
+            />
             <DetailFieldRow
               label={t("detail.fields.maxStock")}
               value={article.max_stock != null ? formatQty(article.max_stock) : "—"}
@@ -845,10 +866,7 @@ export function ArticleDetailWorkspace({
             </div>
             <div className="space-y-1">
               <Label>{t("article.equivalents.fields.notes")}</Label>
-              <Input
-                value={equivNotes}
-                onChange={(e) => setEquivNotes(e.target.value)}
-              />
+              <Input value={equivNotes} onChange={(e) => setEquivNotes(e.target.value)} />
             </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
@@ -911,10 +929,7 @@ export function ArticleDetailWorkspace({
             <Button variant="outline" onClick={() => setDocFormOpen(false)}>
               Cancel
             </Button>
-            <Button
-              disabled={docSaving || !docRef.trim()}
-              onClick={() => void saveDocLink()}
-            >
+            <Button disabled={docSaving || !docRef.trim()} onClick={() => void saveDocLink()}>
               Save
             </Button>
           </DialogFooter>

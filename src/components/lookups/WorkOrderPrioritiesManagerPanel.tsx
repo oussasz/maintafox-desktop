@@ -17,11 +17,12 @@ import { listWorkOrderPriorities, updateWorkOrderPriority } from "@/services/wo-
 import { refreshWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
 import type { WorkOrderPriorityOption } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function WorkOrderPrioritiesManagerPanel() {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
-  const canManage = can("ref.manage");
+  const canManage = can(P.REF_MANAGE);
 
   const [rows, setRows] = useState<WorkOrderPriorityOption[]>([]);
   const [loading, setLoading] = useState(false);

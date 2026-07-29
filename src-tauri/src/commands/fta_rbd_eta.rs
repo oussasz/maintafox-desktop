@@ -16,21 +16,21 @@ use crate::{require_permission, require_permission_allowing_system_admin, requir
 #[tauri::command]
 pub async fn list_fta_models(filter: FtaModelsFilter, state: State<'_, AppState>) -> AppResult<Vec<FtaModel>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
     queries::list_fta_models(&state.db, filter).await
 }
 
 #[tauri::command]
 pub async fn create_fta_model(input: CreateFtaModelInput, state: State<'_, AppState>) -> AppResult<FtaModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     queries::create_fta_model(&state.db, Some(i64::from(user.user_id)), input).await
 }
 
 #[tauri::command]
 pub async fn update_fta_model(input: UpdateFtaModelInput, state: State<'_, AppState>) -> AppResult<FtaModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::update_fta_model(&state.db, input).await
 }
@@ -38,7 +38,7 @@ pub async fn update_fta_model(input: UpdateFtaModelInput, state: State<'_, AppSt
 #[tauri::command]
 pub async fn delete_fta_model(id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::delete_fta_model(&state.db, id).await
 }
@@ -46,28 +46,28 @@ pub async fn delete_fta_model(id: i64, state: State<'_, AppState>) -> AppResult<
 #[tauri::command]
 pub async fn evaluate_fta_model(id: i64, state: State<'_, AppState>) -> AppResult<FtaModel> {
     let user = require_session!(state);
-    require_permission_allowing_system_admin!(state, &user, "ram.analyze", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, crate::rbac::permissions::RAM_ANALYZE, PermissionScope::Global);
     queries::evaluate_fta_model(&state.db, id).await
 }
 
 #[tauri::command]
 pub async fn list_rbd_models(filter: RbdModelsFilter, state: State<'_, AppState>) -> AppResult<Vec<RbdModel>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
     queries::list_rbd_models(&state.db, filter).await
 }
 
 #[tauri::command]
 pub async fn create_rbd_model(input: CreateRbdModelInput, state: State<'_, AppState>) -> AppResult<RbdModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     queries::create_rbd_model(&state.db, Some(i64::from(user.user_id)), input).await
 }
 
 #[tauri::command]
 pub async fn update_rbd_model(input: UpdateRbdModelInput, state: State<'_, AppState>) -> AppResult<RbdModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::update_rbd_model(&state.db, input).await
 }
@@ -75,7 +75,7 @@ pub async fn update_rbd_model(input: UpdateRbdModelInput, state: State<'_, AppSt
 #[tauri::command]
 pub async fn delete_rbd_model(id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::delete_rbd_model(&state.db, id).await
 }
@@ -83,7 +83,7 @@ pub async fn delete_rbd_model(id: i64, state: State<'_, AppState>) -> AppResult<
 #[tauri::command]
 pub async fn evaluate_rbd_model(id: i64, state: State<'_, AppState>) -> AppResult<RbdModel> {
     let user = require_session!(state);
-    require_permission_allowing_system_admin!(state, &user, "ram.analyze", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, crate::rbac::permissions::RAM_ANALYZE, PermissionScope::Global);
     queries::evaluate_rbd_model(&state.db, id).await
 }
 
@@ -93,7 +93,7 @@ pub async fn list_event_tree_models(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<EventTreeModel>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
     queries::list_event_tree_models(&state.db, filter).await
 }
 
@@ -103,7 +103,7 @@ pub async fn create_event_tree_model(
     state: State<'_, AppState>,
 ) -> AppResult<EventTreeModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     queries::create_event_tree_model(&state.db, Some(i64::from(user.user_id)), input).await
 }
 
@@ -113,7 +113,7 @@ pub async fn update_event_tree_model(
     state: State<'_, AppState>,
 ) -> AppResult<EventTreeModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::update_event_tree_model(&state.db, input).await
 }
@@ -121,7 +121,7 @@ pub async fn update_event_tree_model(
 #[tauri::command]
 pub async fn delete_event_tree_model(id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::delete_event_tree_model(&state.db, id).await
 }
@@ -129,6 +129,6 @@ pub async fn delete_event_tree_model(id: i64, state: State<'_, AppState>) -> App
 #[tauri::command]
 pub async fn evaluate_event_tree_model(id: i64, state: State<'_, AppState>) -> AppResult<EventTreeModel> {
     let user = require_session!(state);
-    require_permission_allowing_system_admin!(state, &user, "ram.analyze", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, crate::rbac::permissions::RAM_ANALYZE, PermissionScope::Global);
     queries::evaluate_event_tree_model(&state.db, id).await
 }

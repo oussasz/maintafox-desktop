@@ -133,7 +133,7 @@ mod tests {
         to_value_id: i64,
     ) -> AppResult<ref_migrations::ReferenceUsageMigrationResult> {
         let user = crate::require_session!(state);
-        crate::require_permission!(state, &user, "ref.publish", PermissionScope::Global);
+        crate::require_permission!(state, &user, crate::rbac::permissions::REF_PUBLISH, PermissionScope::Global);
         crate::require_step_up!(state);
 
         ref_migrations::merge_reference_values(

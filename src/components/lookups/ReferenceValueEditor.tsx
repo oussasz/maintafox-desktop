@@ -3,22 +3,14 @@
  * Chrome lives in ReferenceValueTable; governance wiring stays here.
  */
 
-import {
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Pencil,
-  Plus,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PublishReadinessPanel } from "@/components/lookups/PublishReadinessPanel";
 import { ReferenceAliasPanel } from "@/components/lookups/ReferenceAliasPanel";
 import { ReferenceColorSwatchHex } from "@/components/lookups/ReferenceColorSwatchHex";
-import { SchedulePatternDialog } from "@/components/lookups/SchedulePatternPanel";
 import {
   ReferenceValueTable,
   ReferenceValueTableBody,
@@ -28,6 +20,7 @@ import {
   ReferenceValueTableHeadCell,
   ReferenceValueTableRow,
 } from "@/components/lookups/ReferenceValueTable";
+import { SchedulePatternDialog } from "@/components/lookups/SchedulePatternPanel";
 import {
   REF_TABLE_ACTIONS_GROUP_CLASS,
   REF_TABLE_BADGE_CLASS,
@@ -43,7 +36,11 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useReferenceCapabilities } from "@/hooks/use-reference-capabilities";
-import { governanceCategoryLabelKey, preferredWorkingSet, publishedReadOnlyBannerKey } from "@/lib/reference-governance-ui";
+import {
+  governanceCategoryLabelKey,
+  preferredWorkingSet,
+  publishedReadOnlyBannerKey,
+} from "@/lib/reference-governance-ui";
 import {
   createDraftReferenceSet,
   discardDraftReferenceSet,
@@ -54,7 +51,7 @@ import { useReferenceGovernanceStore } from "@/stores/reference-governance-store
 import { useReferenceManagerStore } from "@/stores/reference-manager-store";
 import { toErrorMessage } from "@/utils/errors";
 import type { CreateReferenceValuePayload, ReferenceValue } from "@shared/ipc-types";
-import type { KeyboardEvent } from "react";
+import { P } from "@shared/rbac/permissions.generated";
 
 const PAGE_SIZE = 50;
 
@@ -108,7 +105,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   const isDraft = refSet?.status === "draft";
   const setStatus = refSet?.status ?? null;
   const { caps } = useReferenceCapabilities(domainId, setId, setStatus);
-  const canManage = can("ref.manage");
+  const canManage = can(P.REF_MANAGE);
   const canCreateValue = Boolean(caps?.can_create_value && canManage);
   const canUpdateValue = Boolean(caps?.can_update_value && canManage);
   const canDeactivateValue = Boolean(caps?.can_deactivate_value && canManage);
@@ -116,8 +113,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   const canDiscardDraftSet = Boolean(caps?.can_discard_draft_set && canManage);
   const canShowPublishPanel = Boolean(caps?.can_publish && isDraft && refSet);
   const showReadOnlyBanner =
-    Boolean(caps) &&
-    !caps!.can_create_value &&
+    caps != null &&
+    !caps.can_create_value &&
     (setStatus === "published" || setStatus === "superseded");
   const isAnalyticalProtected = Boolean(caps?.requires_analytical_protection);
 
@@ -250,11 +247,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
           label: editRow.label,
           description: editRow.description || null,
         });
-        if (
-          showParent &&
-          existing &&
-          (existing.parent_id ?? null) !== (editRow.parentId ?? null)
-        ) {
+        if (showParent && existing && (existing.parent_id ?? null) !== (editRow.parentId ?? null)) {
           const moved = await moveReferenceValueParent(valueId, editRow.parentId);
           useReferenceGovernanceStore.setState((s) => ({
             values: s.values.map((v) => (v.id === valueId ? moved : v)),
@@ -549,19 +542,15 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         <ReferenceValueTableGrid>
           <ReferenceValueTableHead>
             <tr>
-              <ReferenceValueTableHeadCell
-                sortable
-                onSort={() => toggleSort("code")}
-              >
+              <ReferenceValueTableHeadCell sortable onSort={() => toggleSort("code")}>
                 {t("editor.colCode")} {sortField === "code" && (sortAsc ? "↑" : "↓")}
               </ReferenceValueTableHeadCell>
-              <ReferenceValueTableHeadCell
-                sortable
-                onSort={() => toggleSort("label")}
-              >
+              <ReferenceValueTableHeadCell sortable onSort={() => toggleSort("label")}>
                 {t("editor.colLabel")} {sortField === "label" && (sortAsc ? "↑" : "↓")}
               </ReferenceValueTableHeadCell>
-              <ReferenceValueTableHeadCell>{t("editor.colDescription")}</ReferenceValueTableHeadCell>
+              <ReferenceValueTableHeadCell>
+                {t("editor.colDescription")}
+              </ReferenceValueTableHeadCell>
               {showSchedule ? (
                 <ReferenceValueTableHeadCell>
                   {t("schedulePattern.column")}
@@ -573,10 +562,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
               {showColorColumn ? (
                 <ReferenceValueTableHeadCell>{t("editor.colColor")}</ReferenceValueTableHeadCell>
               ) : null}
-              <ReferenceValueTableHeadCell
-                sortable
-                onSort={() => toggleSort("is_active")}
-              >
+              <ReferenceValueTableHeadCell sortable onSort={() => toggleSort("is_active")}>
                 {t("editor.colStatus")} {sortField === "is_active" && (sortAsc ? "↑" : "↓")}
               </ReferenceValueTableHeadCell>
               <ReferenceValueTableHeadCell align="right">
@@ -792,9 +778,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         aria-label={t("editor.colStatus")}
                       />
                       <span className="text-sm text-text-muted">
-                        {v.is_active
-                          ? t("editor.statusActive")
-                          : t("editor.statusInactive")}
+                        {v.is_active ? t("editor.statusActive") : t("editor.statusInactive")}
                       </span>
                     </div>
                   </ReferenceValueTableCell>
@@ -847,7 +831,9 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
                         ) : null}
                       </div>
                     ) : (
-                      <span className="text-xs text-text-muted">{REF_TABLE_EMPTY_ACTIONS_MARK}</span>
+                      <span className="text-xs text-text-muted">
+                        {REF_TABLE_EMPTY_ACTIONS_MARK}
+                      </span>
                     )}
                   </ReferenceValueTableCell>
                 </ReferenceValueTableRow>

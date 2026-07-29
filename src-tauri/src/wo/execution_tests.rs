@@ -267,6 +267,7 @@ mod tests {
                 planned_end: "2026-04-10T16:00:00Z".into(),
                 shift: None,
                 expected_duration_hours: Some(8.0),
+                planned_downtime_hours: None,
                 urgency_id: None,
             },
         )
@@ -453,6 +454,7 @@ mod tests {
                 sequence_order: 1,
                 is_mandatory: true,
                 estimated_minutes: Some(15),
+                origin: None,
             },
         )
         .await
@@ -600,6 +602,7 @@ mod tests {
                 wo_id,
                 downtime_type: "full".into(),
                 comment: Some("Equipment down".into()),
+                classification_code: None,
                 actor_id: actor,
             },
         )
@@ -704,6 +707,7 @@ mod tests {
                 planned_end: "2026-04-10T16:00:00Z".into(),
                 shift: None,
                 expected_duration_hours: Some(8.0),
+                planned_downtime_hours: None,
                 urgency_id: None,
             },
         )
@@ -778,6 +782,7 @@ mod tests {
                 wo_id,
                 downtime_type: "partial".into(),
                 comment: Some("Reduced throughput".into()),
+                classification_code: None,
                 actor_id: actor,
             },
         )
@@ -840,10 +845,10 @@ mod tests {
 
         assign_role(&db, 90, "Readonly").await;
 
-        let can_view = rbac::check_permission(&db, 90, "ot.view", &PermissionScope::Global)
+        let can_view = rbac::check_permission(&db, 90, crate::rbac::permissions::OT_VIEW, &PermissionScope::Global)
             .await
             .expect("check ot.view");
-        let can_edit = rbac::check_permission(&db, 90, "ot.edit", &PermissionScope::Global)
+        let can_edit = rbac::check_permission(&db, 90, crate::rbac::permissions::OT_EDIT, &PermissionScope::Global)
             .await
             .expect("check ot.edit");
 
@@ -981,6 +986,7 @@ mod tests {
                 planned_end: "2026-04-10T16:00:00Z".into(),
                 shift: Some("nuit".into()),
                 expected_duration_hours: None,
+                planned_downtime_hours: None,
                 urgency_id: None,
             },
         )

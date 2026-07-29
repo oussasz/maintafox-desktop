@@ -32,6 +32,7 @@ import {
 } from "@/services/inventory-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { ArticleFamily } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 interface FamilyDraft {
   code: string;
@@ -44,12 +45,12 @@ const EMPTY_DRAFT: FamilyDraft = { code: "", name: "", description: "" };
 export function InventoryArticleFamilyHost() {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
-  const canManage = can("ref.manage");
+  const canManage = can(P.REF_MANAGE);
   const capabilities: ReferenceTableCapabilities = {
     canCreate: canManage,
     canUpdate: canManage,
     canDeactivateOrDelete: canManage,
-    canToggleActive: false
+    canToggleActive: false,
   };
   const [families, setFamilies] = useState<ArticleFamily[]>([]);
   const [loading, setLoading] = useState(false);

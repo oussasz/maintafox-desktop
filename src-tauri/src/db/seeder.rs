@@ -1373,6 +1373,8 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         .await?;
         seed_value(db, d, "CANCELLED", "Annulée", "Annulée", "Cancelled", None, 6, true).await?;
         seed_value(db, d, "CLOSED", "Clôturée", "Clôturée", "Closed", None, 7, true).await?;
+        // First-class approval rejection — distinct from CANCELLED for audit and future KPIs.
+        seed_value(db, d, "REJECTED", "Rejetée", "Rejetée", "Rejected", Some("#dc3545"), 8, true).await?;
     }
 
     // inventory.erp_posting_state
@@ -1915,414 +1917,48 @@ async fn seed_value(
 /// Permissions are ordered by domain prefix then action suffix.
 /// All seeded permissions have `is_system` = 1 and cannot be deleted.
 async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
-    // Permission rows: (name, description, category, is_dangerous, requires_step_up)
-    // Format: dot-notation `domain.action`
-    let permissions: &[(&str, &str, &str, bool, bool)] = &[
-        // ── Equipment (eq) ──────────────────────────────────────────────────
-        ("eq.view", "View equipment registry", "equipment", false, false),
-        ("eq.manage", "Create/edit equipment records", "equipment", false, false),
-        (
-            "eq.import",
-            "Import equipment from CSV / ERP",
-            "equipment",
-            false,
-            false,
-        ),
-        ("eq.delete", "Soft-delete equipment records", "equipment", true, true),
-        // ── Intervention Requests (di) ────────────────────────────────────
-        ("di.view", "View intervention request list and details", "intervention", false, false),
-        (
-            "di.create",
-            "Submit new intervention requests (all assets)",
-            "intervention",
-            false,
-            false,
-        ),
-        (
-            "di.create.own",
-            "Submit intervention requests (own entity only)",
-            "intervention",
-            false,
-            false,
-        ),
-        (
-            "di.screen",
-            "Triage incoming DIs (submitted → review queue)",
-            "intervention",
-            false,
-            false,
-        ),
-        (
-            "di.review",
-            "Screen, return, and reject intervention requests",
-            "intervention",
-            false,
-            false,
-        ),
-        (
-            "di.approve",
-            "Approve, defer, or reactivate intervention requests",
-            "intervention",
-            true,
-            true,
-        ),
-        (
-            "di.convert",
-            "Convert approved DI to work order",
-            "intervention",
-            true,
-            true,
-        ),
-        (
-            "di.admin",
-            "Override, archive, reopen, manage SLA rules",
-            "intervention",
-            true,
-            false,
-        ),
-        // ── Work Orders (ot) ──────────────────────────────────────────────
-        ("ot.view", "View work orders", "work_order", false, false),
-        ("ot.create", "Create work orders", "work_order", false, false),
-        ("ot.edit", "Edit work orders", "work_order", false, false),
-        ("ot.delete", "Delete work orders", "work_order", true, true),
-        ("ot.close", "Close work orders", "work_order", false, false),
-        ("ot.approve", "Approve work order execution", "work_order", false, false),
-        // ── Organization (org) ───────────────────────────────────────────
-        (
-            "org.view",
-            "View organizational structure",
-            "organization",
-            false,
-            false,
-        ),
-        (
-            "org.manage",
-            "Create/edit org nodes and entities",
-            "organization",
-            false,
-            false,
-        ),
-        (
-            "org.admin",
-            "Manage org structure model and types",
-            "organization",
-            true,
-            true,
-        ),
-        // ── Personnel (per) ──────────────────────────────────────────────
-        ("per.view", "View personnel records", "personnel", false, false),
-        ("per.manage", "Create/edit personnel records", "personnel", false, false),
-        ("per.report", "View and export workforce reports", "personnel", false, false),
-        (
-            "per.sensitiveview",
-            "View sensitive personnel fields",
-            "personnel",
-            false,
-            false,
-        ),
-        // ── Reference Data (ref) ─────────────────────────────────────────
-        ("ref.view", "View reference/lookup values", "reference", false, false),
-        (
-            "ref.manage",
-            "Create/edit governed reference values",
-            "reference",
-            false,
-            false,
-        ),
-        ("ref.publish", "Publish reference changes", "reference", true, true),
-        // ── Inventory (inv) ──────────────────────────────────────────────
-        ("inv.view", "View inventory and stock levels", "inventory", false, false),
-        ("inv.manage", "Create/edit inventory records", "inventory", false, false),
-        ("inv.adjust", "Post inventory adjustments", "inventory", true, true),
-        (
-            "inv.order",
-            "Create purchase / replenishment orders",
-            "inventory",
-            false,
-            false,
-        ),
-        // ── Preventive Maintenance (pm) ──────────────────────────────────
-        ("pm.view", "View PM plans and schedules", "maintenance", false, false),
-        ("pm.manage", "Create/edit PM plans", "maintenance", false, false),
-        ("pm.approve", "Approve PM plan changes", "maintenance", false, false),
-        // ── RAMS / Reliability (ram) ─────────────────────────────────────
-        ("ram.view", "View RAMS / reliability data", "reliability", false, false),
-        (
-            "ram.manage",
-            "Edit RAMS records and failure modes",
-            "reliability",
-            false,
-            false,
-        ),
-        // ── Sync (sync) — mirror migrations 060/061; kept here so the catalogue matches RBAC
-        (
-            "sync.view",
-            "View sync health, conflicts, and replay history",
-            "sync",
-            false,
-            false,
-        ),
-        (
-            "sync.manage",
-            "Apply sync batches and stage sync envelopes",
-            "sync",
-            true,
-            false,
-        ),
-        (
-            "sync.resolve",
-            "Resolve sync conflicts and change conflict lifecycle states",
-            "sync",
-            true,
-            false,
-        ),
-        (
-            "sync.replay",
-            "Run sync replay and checkpoint rollback workflows",
-            "sync",
-            true,
-            true,
-        ),
-        (
-            "sync.repair",
-            "Preview and execute scoped sync repair actions",
-            "sync",
-            true,
-            true,
-        ),
-        // ── Reports & Analytics (rep) ─────────────────────────────────────
-        ("rep.view", "View standard reports", "reporting", false, false),
-        ("rep.export", "Export report data", "reporting", false, false),
-        ("rep.manage", "Create/edit custom reports", "reporting", false, false),
-        // ── Archive Explorer (arc) ────────────────────────────────────────
-        ("arc.view", "Browse archive entries", "archive", false, false),
-        ("arc.export", "Export archived data", "archive", false, false),
-        // ── Documentation (doc) ──────────────────────────────────────────
-        (
-            "doc.view",
-            "View documentation and help content",
-            "documentation",
-            false,
-            false,
-        ),
-        (
-            "doc.manage",
-            "Create/edit documentation articles",
-            "documentation",
-            false,
-            false,
-        ),
-        // ── Administration (adm) ─────────────────────────────────────────
-        ("adm.users", "Manage user accounts", "administration", true, true),
-        (
-            "adm.roles",
-            "Manage roles and permissions",
-            "administration",
-            true,
-            true,
-        ),
-        (
-            "adm.permissions",
-            "Assign permissions to roles",
-            "administration",
-            true,
-            true,
-        ),
-        (
-            "adm.settings",
-            "Manage application settings",
-            "administration",
-            false,
-            false,
-        ),
-        ("adm.audit", "View the full audit log", "administration", false, false),
-        // ── Vendor control-plane console (vcn) ─────────────────────────────
-        (
-            "console.view",
-            "Access vendor control-plane console shell",
-            "vendor_console",
-            false,
-            false,
-        ),
-        (
-            "customer.manage",
-            "Manage tenant customer records in vendor console",
-            "vendor_console",
-            true,
-            false,
-        ),
-        (
-            "entitlement.manage",
-            "Change entitlements and license posture (vendor console)",
-            "vendor_console",
-            true,
-            true,
-        ),
-        (
-            "sync.operate",
-            "Vendor-console sync operations (queues, repair windows)",
-            "vendor_console",
-            true,
-            true,
-        ),
-        (
-            "rollout.manage",
-            "Publish and roll back control-plane update rollouts",
-            "vendor_console",
-            true,
-            true,
-        ),
-        (
-            "platform.observe",
-            "View platform health and integration status (vendor console)",
-            "vendor_console",
-            false,
-            false,
-        ),
-        (
-            "audit.view",
-            "Read vendor-scoped audit and evidence trails",
-            "vendor_console",
-            false,
-            false,
-        ),
-        // ── Planning (plan) ──────────────────────────────────────────────
-        (
-            "plan.view",
-            "View planning and scheduling data",
-            "planning",
-            false,
-            false,
-        ),
-        ("plan.manage", "Manage planning schedules", "planning", false, false),
-        // ── Audit Log (log) ──────────────────────────────────────────────
-        ("log.view", "View activity feed", "audit", false, false),
-        ("log.export", "Export audit log data", "audit", true, true),
-        // ── Training (trn) ───────────────────────────────────────────────
-        (
-            "trn.view",
-            "View training and certification records",
-            "training",
-            false,
-            false,
-        ),
-        (
-            "trn.manage",
-            "Manage training records and plans",
-            "training",
-            false,
-            false,
-        ),
-        ("trn.certify", "Issue or revoke certifications", "training", true, true),
-        // ── IoT Integration (iot) ────────────────────────────────────────
-        (
-            "iot.view",
-            "View IoT device data and readings",
-            "integration",
-            false,
-            false,
-        ),
-        (
-            "iot.manage",
-            "Configure IoT gateways and devices",
-            "integration",
-            false,
-            false,
-        ),
-        // ── ERP Connector (erp) ──────────────────────────────────────────
-        (
-            "erp.view",
-            "View ERP sync status and mappings",
-            "integration",
-            false,
-            false,
-        ),
-        (
-            "erp.manage",
-            "Configure ERP integration settings",
-            "integration",
-            true,
-            true,
-        ),
-        (
-            "erp.sync",
-            "Trigger manual ERP synchronization",
-            "integration",
-            true,
-            true,
-        ),
-        // ── Work Permits (ptw) ───────────────────────────────────────────
-        ("ptw.view", "View work permits", "safety", false, false),
-        ("ptw.create", "Create work permits", "safety", false, false),
-        ("ptw.approve", "Approve or reject work permits", "safety", true, true),
-        ("ptw.cancel", "Cancel active work permits", "safety", true, true),
-        // ── Budget / Finance (fin) ───────────────────────────────────────
-        ("fin.view", "View budgets and cost data", "finance", false, false),
-        ("fin.budget", "Manage governed budget baselines", "finance", true, false),
-        ("fin.report", "Export governed budget reports", "finance", false, false),
-        ("fin.manage", "Manage budgets and cost centers", "finance", false, false),
-        ("fin.approve", "Approve budget changes", "finance", true, true),
-        // ── Inspection (ins) ─────────────────────────────────────────────
-        (
-            "ins.view",
-            "View inspection rounds and checklists",
-            "inspection",
-            false,
-            false,
-        ),
-        (
-            "ins.manage",
-            "Create/edit inspection rounds",
-            "inspection",
-            false,
-            false,
-        ),
-        (
-            "ins.complete",
-            "Complete inspection round executions",
-            "inspection",
-            false,
-            false,
-        ),
-        // ── Configuration Engine (cfg) ───────────────────────────────────
-        ("cfg.view", "View tenant configuration", "configuration", false, false),
-        (
-            "cfg.manage",
-            "Manage tenant configuration rules",
-            "configuration",
-            true,
-            true,
-        ),
-        (
-            "cfg.publish",
-            "Publish configuration changes",
-            "configuration",
-            true,
-            true,
-        ),
-    ];
-
+    // Canonical catalog is the sole permission SSOT (shared/rbac/permission-registry.json).
     let now = Utc::now().to_rfc3339();
-
-    for (name, desc, category, is_dangerous, requires_step_up) in permissions {
+    for meta in crate::rbac::permissions::CATALOG {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT OR IGNORE INTO permissions
                    (name, description, category, is_dangerous, requires_step_up, is_system, created_at)
                VALUES (?, ?, ?, ?, ?, 1, ?)",
             [
-                (*name).into(),
-                (*desc).into(),
-                (*category).into(),
-                i32::from(*is_dangerous).into(),
-                i32::from(*requires_step_up).into(),
+                meta.name.into(),
+                meta.description.into(),
+                meta.category.into(),
+                i32::from(meta.is_dangerous).into(),
+                i32::from(meta.requires_step_up).into(),
                 now.clone().into(),
             ],
         ))
         .await?;
     }
 
-    tracing::info!(count = permissions.len(), "seeder::permissions_seeded");
+    // Keep metadata aligned for rows that already existed under older descriptions.
+    for meta in crate::rbac::permissions::CATALOG {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"UPDATE permissions
+               SET description = ?, category = ?, is_dangerous = ?, requires_step_up = ?
+             WHERE name = ? AND is_system = 1",
+            [
+                meta.description.into(),
+                meta.category.into(),
+                i32::from(meta.is_dangerous).into(),
+                i32::from(meta.requires_step_up).into(),
+                meta.name.into(),
+            ],
+        ))
+        .await?;
+    }
+
+    tracing::info!(
+        count = crate::rbac::permissions::CATALOG.len(),
+        "seeder::permissions_seeded"
+    );
     Ok(())
 }
 
@@ -2378,59 +2014,16 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         assign_all_permissions_to_role(db, rid, &now).await?;
     }
 
-    // Supervisor -> all operational permissions (excludes admin-only and config-only)
-    let excluded_for_supervisor = [
-        "adm.users",
-        "adm.roles",
-        "adm.permissions",
-        "cfg.manage",
-        "cfg.publish",
-        "erp.manage",
-        "erp.sync",
-        "log.export",
-    ];
+    // Supervisor -> all operational permissions (excludes admin-only and control-plane)
+    let excluded_for_supervisor = crate::rbac::permissions::SUPERVISOR_EXCLUSIONS;
     if let Some(rid) = get_role_id_by_name(db, "Supervisor").await? {
-        assign_permissions_excluding(db, rid, &excluded_for_supervisor, &now).await?;
+        assign_permissions_excluding(db, rid, excluded_for_supervisor, &now).await?;
     }
 
     // Operator -> view + create/edit operational modules, no delete/approve/dangerous
-    let operator_permissions = [
-        "eq.view",
-        "eq.manage",
-        "di.view",
-        "di.create",
-        "di.create.own",
-        "ot.view",
-        "ot.create",
-        "ot.edit",
-        "org.view",
-        "per.view",
-        "per.report",
-        "ref.view",
-        "inv.view",
-        "inv.manage",
-        "pm.view",
-        "ram.view",
-        "sync.view",
-        "rep.view",
-        "arc.view",
-        "doc.view",
-        "plan.view",
-        "log.view",
-        "trn.view",
-        "iot.view",
-        "erp.view",
-        "ptw.view",
-        "ptw.create",
-        "fin.view",
-        "fin.report",
-        "ins.view",
-        "ins.complete",
-        "cfg.view",
-        "adm.settings",
-    ];
+    let operator_permissions = crate::rbac::permissions::OPERATOR_PERMISSIONS;
     if let Some(rid) = get_role_id_by_name(db, "Operator").await? {
-        for perm_name in &operator_permissions {
+        for perm_name in operator_permissions {
             assign_permission_by_name(db, rid, perm_name, &now).await?;
         }
     }
@@ -2458,48 +2051,20 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
 
     // Maintenance Supervisor -> same exclusions as Supervisor
     if let Some(rid) = get_role_id_by_name(db, "Maintenance Supervisor").await? {
-        assign_permissions_excluding(db, rid, &excluded_for_supervisor, &now).await?;
+        assign_permissions_excluding(db, rid, excluded_for_supervisor, &now).await?;
     }
 
     // Maintenance Technician -> same permissions as Operator
     if let Some(rid) = get_role_id_by_name(db, "Maintenance Technician").await? {
-        for perm_name in &operator_permissions {
+        for perm_name in operator_permissions {
             assign_permission_by_name(db, rid, perm_name, &now).await?;
         }
     }
 
     // Planner/Scheduler -> planning & scheduling focus
-    let planner_permissions = [
-        "ot.view",
-        "ot.create",
-        "ot.edit",
-        "di.view",
-        "di.create",
-        "di.screen",
-        "pm.view",
-        "pm.manage",
-        "pm.approve",
-        "plan.view",
-        "plan.manage",
-        "eq.view",
-        "inv.view",
-        "inv.manage",
-        "inv.order",
-        "org.view",
-        "per.view",
-        "per.report",
-        "ref.view",
-        "rep.view",
-        "rep.export",
-        "arc.view",
-        "doc.view",
-        "log.view",
-        "ram.view",
-        "sync.view",
-        "cfg.view",
-    ];
+    let planner_permissions = crate::rbac::permissions::PLANNER_PERMISSIONS;
     if let Some(rid) = get_role_id_by_name(db, "Planner/Scheduler").await? {
-        for perm_name in &planner_permissions {
+        for perm_name in planner_permissions {
             assign_permission_by_name(db, rid, perm_name, &now).await?;
         }
     }
@@ -2595,18 +2160,24 @@ async fn assign_permission_by_name(
 /// overwrite an existing admin account or its password.
 /// Idempotent backfill: Administrator/Superadmin must hold ram.analyze (added post-seed in some DBs).
 async fn ensure_admin_ram_permissions(db: &DatabaseConnection) -> AppResult<()> {
-    db.execute(Statement::from_string(
-        DbBackend::Sqlite,
-        r"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
-         SELECT r.id, p.id, strftime('%Y-%m-%dT%H:%M:%SZ','now')
-         FROM roles r
-         CROSS JOIN permissions p
-         WHERE r.deleted_at IS NULL
-           AND r.name IN ('Administrator', 'Superadmin')
-           AND p.name IN ('ram.analyze', 'ram.manage', 'ram.export')"
-            .to_string(),
-    ))
-    .await?;
+    for perm in [
+        crate::rbac::permissions::RAM_ANALYZE,
+        crate::rbac::permissions::RAM_MANAGE,
+        crate::rbac::permissions::RAM_EXPORT,
+    ] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
+             SELECT r.id, p.id, strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             FROM roles r
+             CROSS JOIN permissions p
+             WHERE r.deleted_at IS NULL
+               AND r.name IN ('Administrator', 'Superadmin')
+               AND p.name = ?",
+            [perm.into()],
+        ))
+        .await?;
+    }
     Ok(())
 }
 

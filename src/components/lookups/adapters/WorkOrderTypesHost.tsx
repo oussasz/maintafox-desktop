@@ -35,16 +35,17 @@ import {
 import { refreshWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
 import type { WorkOrderTypeOption } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function WorkOrderTypesHost() {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
-  const canManage = can("ref.manage");
+  const canManage = can(P.REF_MANAGE);
   const capabilities: ReferenceTableCapabilities = {
     canCreate: canManage,
     canUpdate: canManage,
     canDeactivateOrDelete: canManage,
-    canToggleActive: canManage
+    canToggleActive: canManage,
   };
   const [rows, setRows] = useState<WorkOrderTypeOption[]>([]);
   const [loading, setLoading] = useState(false);
@@ -269,8 +270,7 @@ export function WorkOrderTypesHost() {
                   t,
                 })
               : undefined;
-            const trashDisabled =
-              saving || row.is_system || !capabilities.canDeactivateOrDelete;
+            const trashDisabled = saving || row.is_system || !capabilities.canDeactivateOrDelete;
             const trashTitle = trashDisabled
               ? refTableDisabledActionTitle({
                   isSystem: row.is_system,

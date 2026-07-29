@@ -27,6 +27,7 @@ import {
 } from "@/services/inventory-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { ArticleFamily } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 interface FamilyDraft {
   code: string;
@@ -43,7 +44,7 @@ const EMPTY_DRAFT: FamilyDraft = {
 export function InventoryArticleFamilyManagerPanel() {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
-  const canManage = can("ref.manage");
+  const canManage = can(P.REF_MANAGE);
   const [families, setFamilies] = useState<ArticleFamily[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);

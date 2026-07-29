@@ -1,3 +1,4 @@
+import type { P } from "@shared/rbac/permissions.generated";
 // IPC contract types shared between src/ (frontend) and the Tauri command layer.
 // Types defined here must be kept in sync with Rust structs in src-tauri/src/.
 
@@ -373,13 +374,13 @@ export interface VpsAdminMutationRequest {
 }
 
 export type VendorConsolePermission =
-  | "console.view"
-  | "customer.manage"
-  | "entitlement.manage"
-  | "sync.operate"
-  | "rollout.manage"
-  | "platform.observe"
-  | "audit.view";
+  | typeof P.CONSOLE_VIEW
+  | typeof P.CUSTOMER_MANAGE
+  | typeof P.ENTITLEMENT_MANAGE
+  | typeof P.SYNC_OPERATE
+  | typeof P.ROLLOUT_MANAGE
+  | typeof P.PLATFORM_OBSERVE
+  | typeof P.AUDIT_VIEW;
 
 /** Typed admin mutation envelope; server ignores client permission claims. */
 export interface VendorAdminMutationEnvelope {
@@ -2946,11 +2947,7 @@ export interface RepairableHistoryStats {
   avg_turnaround_days: number | null;
 }
 
-export type RepairVsReplaceRecommendation =
-  | "REPAIR"
-  | "REPLACE"
-  | "REVIEW"
-  | "INSUFFICIENT_DATA";
+export type RepairVsReplaceRecommendation = "REPAIR" | "REPLACE" | "REVIEW" | "INSUFFICIENT_DATA";
 
 export interface RepairVsReplaceResult {
   repair_cost: number | null;

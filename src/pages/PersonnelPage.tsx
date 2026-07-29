@@ -32,6 +32,7 @@ import { listPositions } from "@/services/personnel-service";
 import { usePersonnelStore } from "@/stores/personnel-store";
 import type { OrgDesignerNodeRow } from "@shared/ipc-types";
 import type { Personnel } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 type PersonnelViewMode = "list" | "cards";
 
@@ -117,8 +118,11 @@ export function PersonnelPage() {
     localStorage.setItem(VIEW_STORAGE_KEY, v);
   }, []);
 
-  const selectedStatuses = filter.availability_status ?? [];
-  const selectedEmployment = filter.employment_type ?? [];
+  const selectedStatuses = useMemo(
+    () => filter.availability_status ?? [],
+    [filter.availability_status],
+  );
+  const selectedEmployment = useMemo(() => filter.employment_type ?? [], [filter.employment_type]);
 
   const handleEntityFilter = useCallback(
     (val: string | null) => {
@@ -316,7 +320,7 @@ export function PersonnelPage() {
         </div>
 
         <div className={mfLayout.moduleHeaderActions}>
-          <PermissionGate permission="per.manage">
+          <PermissionGate permission={P.PER_MANAGE}>
             <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
               <Plus className="h-3.5 w-3.5" />
               {t("action.create")}

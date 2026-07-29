@@ -606,13 +606,13 @@ mod tests {
     async fn v3_unassigned_user_denied_all_ref_permissions() {
         let db = setup().await;
         // User 999 has no scope assignments
-        let view = rbac::check_permission(&db, 999, "ref.view", &PermissionScope::Global)
+        let view = rbac::check_permission(&db, 999, crate::rbac::permissions::REF_VIEW, &PermissionScope::Global)
             .await
             .expect("check");
-        let manage = rbac::check_permission(&db, 999, "ref.manage", &PermissionScope::Global)
+        let manage = rbac::check_permission(&db, 999, crate::rbac::permissions::REF_MANAGE, &PermissionScope::Global)
             .await
             .expect("check");
-        let publish = rbac::check_permission(&db, 999, "ref.publish", &PermissionScope::Global)
+        let publish = rbac::check_permission(&db, 999, crate::rbac::permissions::REF_PUBLISH, &PermissionScope::Global)
             .await
             .expect("check");
 
@@ -626,13 +626,13 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 10, "Operator").await;
 
-        let view = rbac::check_permission(&db, 10, "ref.view", &PermissionScope::Global)
+        let view = rbac::check_permission(&db, 10, crate::rbac::permissions::REF_VIEW, &PermissionScope::Global)
             .await
             .expect("check");
-        let manage = rbac::check_permission(&db, 10, "ref.manage", &PermissionScope::Global)
+        let manage = rbac::check_permission(&db, 10, crate::rbac::permissions::REF_MANAGE, &PermissionScope::Global)
             .await
             .expect("check");
-        let publish = rbac::check_permission(&db, 10, "ref.publish", &PermissionScope::Global)
+        let publish = rbac::check_permission(&db, 10, crate::rbac::permissions::REF_PUBLISH, &PermissionScope::Global)
             .await
             .expect("check");
 
@@ -646,13 +646,13 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 20, "Administrator").await;
 
-        let view = rbac::check_permission(&db, 20, "ref.view", &PermissionScope::Global)
+        let view = rbac::check_permission(&db, 20, crate::rbac::permissions::REF_VIEW, &PermissionScope::Global)
             .await
             .expect("check");
-        let manage = rbac::check_permission(&db, 20, "ref.manage", &PermissionScope::Global)
+        let manage = rbac::check_permission(&db, 20, crate::rbac::permissions::REF_MANAGE, &PermissionScope::Global)
             .await
             .expect("check");
-        let publish = rbac::check_permission(&db, 20, "ref.publish", &PermissionScope::Global)
+        let publish = rbac::check_permission(&db, 20, crate::rbac::permissions::REF_PUBLISH, &PermissionScope::Global)
             .await
             .expect("check");
 
@@ -670,7 +670,7 @@ mod tests {
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT requires_step_up FROM permissions WHERE name = ?",
-                ["ref.publish".into()],
+                [crate::rbac::permissions::REF_PUBLISH.into()],
             ))
             .await
             .expect("query")
@@ -687,7 +687,7 @@ mod tests {
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT requires_step_up FROM permissions WHERE name = ?",
-                ["ref.manage".into()],
+                [crate::rbac::permissions::REF_MANAGE.into()],
             ))
             .await
             .expect("query")
@@ -701,13 +701,13 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 30, "Readonly").await;
 
-        let view = rbac::check_permission(&db, 30, "ref.view", &PermissionScope::Global)
+        let view = rbac::check_permission(&db, 30, crate::rbac::permissions::REF_VIEW, &PermissionScope::Global)
             .await
             .expect("check");
-        let manage = rbac::check_permission(&db, 30, "ref.manage", &PermissionScope::Global)
+        let manage = rbac::check_permission(&db, 30, crate::rbac::permissions::REF_MANAGE, &PermissionScope::Global)
             .await
             .expect("check");
-        let publish = rbac::check_permission(&db, 30, "ref.publish", &PermissionScope::Global)
+        let publish = rbac::check_permission(&db, 30, crate::rbac::permissions::REF_PUBLISH, &PermissionScope::Global)
             .await
             .expect("check");
 

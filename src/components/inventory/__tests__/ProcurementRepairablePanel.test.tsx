@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import i18next from "i18next";
 import { createRef, type ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { initReactI18next } from "react-i18next";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ProcurementRepairablePanel,
@@ -8,6 +10,8 @@ import {
   requisitionDeclineOrCloseTarget,
   type ProcurementRepairablePanelHandle,
 } from "@/components/inventory/ProcurementRepairablePanel";
+import enCommon from "@/i18n/en/common.json";
+import enInventory from "@/i18n/locale-data/en/inventory.json";
 
 const mocks = vi.hoisted(() => ({
   createInventoryProcurementRequisition: vi.fn(),
@@ -26,7 +30,12 @@ const mocks = vi.hoisted(() => ({
   listInventoryPurchaseOrderLines: vi.fn(),
   listInventoryPurchaseOrders: vi.fn(),
   listInventoryRepairableOrders: vi.fn(),
+  listInventoryGoodsReceipts: vi.fn(),
+  listInventoryGoodsReceiptLines: vi.fn(),
   listInventoryStateEvents: vi.fn(),
+  getInventoryPurchaseOrderDetail: vi.fn(),
+  updateInventoryProcurementPostingState: vi.fn(),
+  upsertInventoryDocumentLink: vi.fn(),
   receiveInventoryPurchaseOrderGoods: vi.fn(),
   transitionInventoryProcurementRequisition: vi.fn(),
   transitionInventoryPurchaseOrder: vi.fn(),
@@ -44,6 +53,17 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/components/PermissionGate", () => ({
   PermissionGate: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+vi.mock("@/hooks/use-permissions", () => ({
+  usePermissions: () => ({
+    can: () => true,
+    canAny: () => true,
+    canAll: () => true,
+    permissions: [],
+    isLoading: false,
+    reload: vi.fn(),
+  }),
 }));
 
 vi.mock("@/services/inventory-service", () => mocks);
@@ -69,6 +89,20 @@ describe("procurement transition targets", () => {
 });
 
 describe("ProcurementRepairablePanel", () => {
+  // Real English resources so assertions read like the shipped UI.
+  beforeAll(async () => {
+    if (!i18next.isInitialized) {
+      await i18next.use(initReactI18next).init({
+        lng: "en",
+        fallbackLng: "en",
+        ns: ["inventory", "common"],
+        defaultNS: "inventory",
+        resources: { en: { inventory: enInventory, common: enCommon } },
+        interpolation: { escapeValue: false },
+      });
+    }
+  });
+
   beforeEach(() => {
     Object.values(mocks).forEach((fn) => fn.mockReset());
     mocks.listInventoryArticles.mockResolvedValue([
@@ -171,7 +205,39 @@ describe("ProcurementRepairablePanel", () => {
     ]);
     mocks.listInventoryPurchaseOrderLines.mockResolvedValue([]);
     mocks.listInventoryRepairableOrders.mockResolvedValue([]);
+    mocks.listInventoryGoodsReceipts.mockResolvedValue([]);
+    mocks.listInventoryGoodsReceiptLines.mockResolvedValue([]);
     mocks.listInventoryStateEvents.mockResolvedValue([]);
+    mocks.listInventoryDocumentLinks.mockResolvedValue([]);
+    mocks.updateInventoryProcurementPostingState.mockResolvedValue({});
+    mocks.upsertInventoryDocumentLink.mockResolvedValue({});
+    mocks.getInventoryPurchaseOrderDetail.mockImplementation(async (poId: number) => ({
+      order: {
+        id: poId,
+        po_number: "PO-1",
+        requisition_id: 501,
+        supplier_company_id: 71,
+        supplier_company_name: "Supplier 1",
+        supplier_id: 71,
+        supplier_name: "Supplier 1",
+        status: "DRAFT",
+        posting_state: "PENDING_POSTING",
+        posting_error: null,
+        ordered_by_id: null,
+        ordered_at: null,
+        approved_by_id: null,
+        approved_at: null,
+        expected_delivery_date: null,
+        row_version: 2,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+      lines: [],
+      goods_receipts: [],
+      state_events: [],
+      document_links: [],
+      total_amount: null,
+    }));
     mocks.createInventoryProcurementRequisition.mockResolvedValue({});
     mocks.createInventoryPurchaseOrderFromRequisition.mockResolvedValue({});
     mocks.createInventoryRepairableOrder.mockResolvedValue({});
@@ -184,15 +250,19 @@ describe("ProcurementRepairablePanel", () => {
   it("creates a requisition from the create dialog opened via ref", async () => {
     const ref = createRef<ProcurementRepairablePanelHandle>();
     render(<ProcurementRepairablePanel ref={ref} />);
-    await waitFor(() => expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(1),
+    );
 
     ref.current?.openCreateRequisition();
     await waitFor(() => expect(screen.getByText("New requisition")).toBeInTheDocument());
 
     const selects = screen.getAllByRole("combobox");
-    fireEvent.click(selects[0]!);
+    expect(selects[0]).toBeDefined();
+    expect(selects[1]).toBeDefined();
+    fireEvent.click(selects[0] as HTMLElement);
     fireEvent.click(screen.getByText("A-11 - Bearing"));
-    fireEvent.click(selects[1]!);
+    fireEvent.click(selects[1] as HTMLElement);
     fireEvent.click(screen.getByText("MAIN/BIN"));
     fireEvent.change(screen.getByLabelText("Requested quantity"), { target: { value: "5" } });
     fireEvent.click(screen.getByRole("button", { name: "Create requisition" }));
@@ -210,7 +280,9 @@ describe("ProcurementRepairablePanel", () => {
 
   it("cancels a draft requisition with CANCELLED not CLOSED", async () => {
     render(<ProcurementRepairablePanel />);
-    await waitFor(() => expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(1),
+    );
 
     fireEvent.click(screen.getByText("REQ-1"));
     await waitFor(() => expect(screen.getByRole("heading", { name: /REQ-1/ })).toBeInTheDocument());
@@ -252,9 +324,13 @@ describe("ProcurementRepairablePanel", () => {
   it("exposes reload on the panel handle", async () => {
     const ref = createRef<ProcurementRepairablePanelHandle>();
     render(<ProcurementRepairablePanel ref={ref} />);
-    await waitFor(() => expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(1),
+    );
 
     await ref.current?.reload();
-    await waitFor(() => expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(mocks.listInventoryProcurementRequisitions).toHaveBeenCalledTimes(2),
+    );
   });
 });

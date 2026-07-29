@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { PermissionProvider } from "@/contexts/PermissionContext";
 import { usePermissions } from "@/hooks/use-permissions";
 import { resetPermissionCacheForTests, writePermissionCache } from "@/lib/permission-cache";
+import { P } from "@shared/rbac/permissions.generated";
 
 const mockGetMyPermissions = vi.fn();
 const mockSession = vi.fn();
@@ -23,21 +24,21 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 const MOCK_PERMISSIONS = [
   {
-    name: "eq.view",
+    name: P.EQ_VIEW,
     description: "View equipment",
     category: "equipment",
     is_dangerous: false,
     requires_step_up: false,
   },
   {
-    name: "eq.manage",
+    name: P.EQ_MANAGE,
     description: "Edit equipment",
     category: "equipment",
     is_dangerous: false,
     requires_step_up: false,
   },
   {
-    name: "adm.users",
+    name: P.ADM_USERS,
     description: "Manage users",
     category: "administration",
     is_dangerous: true,
@@ -101,17 +102,17 @@ describe("usePermissions", () => {
     const { result } = renderHook(() => usePermissions(), { wrapper });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.can("eq.view")).toBe(true);
-    expect(result.current.can("eq.manage")).toBe(true);
-    expect(result.current.can("adm.users")).toBe(true);
+    expect(result.current.can(P.EQ_VIEW)).toBe(true);
+    expect(result.current.can(P.EQ_MANAGE)).toBe(true);
+    expect(result.current.can(P.ADM_USERS)).toBe(true);
   });
 
   it("can() returns false for missing permission", async () => {
     const { result } = renderHook(() => usePermissions(), { wrapper });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.can("adm.roles")).toBe(false);
-    expect(result.current.can("eq.delete")).toBe(false);
+    expect(result.current.can(P.ADM_ROLES)).toBe(false);
+    expect(result.current.can(P.EQ_DELETE)).toBe(false);
   });
 
   it("refresh() reloads permissions", async () => {
@@ -121,7 +122,7 @@ describe("usePermissions", () => {
     mockGetMyPermissions.mockResolvedValue([
       ...MOCK_PERMISSIONS,
       {
-        name: "ot.view",
+        name: P.OT_VIEW,
         description: "View WO",
         category: "work_order",
         is_dangerous: false,
@@ -134,13 +135,15 @@ describe("usePermissions", () => {
     });
 
     await waitFor(() => expect(result.current.permissions).toHaveLength(4));
-    expect(result.current.can("ot.view")).toBe(true);
+    expect(result.current.can(P.OT_VIEW)).toBe(true);
   });
 
   it("does not call getMyPermissions when session is unauthenticated", async () => {
+    const base = authenticatedSession();
+    if (!base.info) throw new Error("expected authenticated session info");
     mockSession.mockReturnValue({
-      ...authenticatedSession(),
-      info: { ...authenticatedSession().info!, is_authenticated: false, user_id: null },
+      ...base,
+      info: { ...base.info, is_authenticated: false, user_id: null },
     });
 
     const { result } = renderHook(() => usePermissions(), { wrapper });
@@ -165,7 +168,7 @@ describe("usePermissions", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.permissions).toHaveLength(3);
-    expect(result.current.can("eq.view")).toBe(true);
+    expect(result.current.can(P.EQ_VIEW)).toBe(true);
   });
 
   it("restores cached permissions after remount when reload fails", async () => {
@@ -179,6 +182,6 @@ describe("usePermissions", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.permissions).toHaveLength(3);
-    expect(result.current.can("eq.view")).toBe(true);
+    expect(result.current.can(P.EQ_VIEW)).toBe(true);
   });
 });

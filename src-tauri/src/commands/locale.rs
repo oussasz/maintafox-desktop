@@ -41,12 +41,12 @@ pub async fn set_locale_preference(
         let allowed = crate::auth::rbac::check_permission(
             &state.db,
             user.user_id,
-            "adm.settings",
+            crate::rbac::permissions::ADM_SETTINGS,
             &crate::auth::rbac::PermissionScope::Global,
         )
         .await?;
         if !allowed {
-            return Err(crate::errors::AppError::PermissionDenied("adm.settings".into()));
+            return Err(crate::errors::AppError::PermissionDenied(crate::rbac::permissions::ADM_SETTINGS.into()));
         }
         "locale.default_language"
     } else {

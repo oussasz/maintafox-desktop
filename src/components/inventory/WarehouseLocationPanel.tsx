@@ -1,22 +1,11 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { MapPin, Warehouse as WarehouseIcon } from "lucide-react";
-import {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useState,
-} from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
-import {
-  DetailFieldRow,
-  DetailSectionCard,
-  EntityDetailHeader,
-} from "@/components/detail";
+import { DetailFieldRow, DetailSectionCard, EntityDetailHeader } from "@/components/detail";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,6 +30,7 @@ import {
 import { useInventoryStore } from "@/stores/inventory-store";
 import { toErrorMessage } from "@/utils/errors";
 import type { StockLocation, Warehouse } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export type WarehouseLocationPanelHandle = {
   openCreateWarehouse: () => void;
@@ -251,8 +241,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
         {
           accessorKey: "is_default",
           header: t("topology.columns.default"),
-          cell: ({ row }) =>
-            row.original.is_default === 1 ? tc("action.yes") : tc("action.no"),
+          cell: ({ row }) => (row.original.is_default === 1 ? tc("action.yes") : tc("action.no")),
         },
         {
           accessorKey: "is_active",
@@ -264,7 +253,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
           id: "actions",
           header: "",
           cell: ({ row }) => (
-            <PermissionGate permission="inv.manage">
+            <PermissionGate permission={P.INV_MANAGE}>
               <Button
                 type="button"
                 variant="outline"
@@ -334,7 +323,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                   value={selectedWarehouse.code}
                   mono
                 />
-                <PermissionGate permission="inv.manage">
+                <PermissionGate permission={P.INV_MANAGE}>
                   <div className="space-y-3 pt-1">
                     <div className="space-y-1">
                       <Label htmlFor="wh-name">{t("topology.fields.name")}</Label>
@@ -361,7 +350,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
               </DetailSectionCard>
 
               <DetailSectionCard title={t("topology.sections.locations")} icon={MapPin}>
-                <PermissionGate permission="inv.manage">
+                <PermissionGate permission={P.INV_MANAGE}>
                   <div className="mb-3 space-y-3 rounded-md border border-surface-border p-3">
                     <div className="grid gap-2 md:grid-cols-3">
                       <div className="space-y-1">
@@ -464,7 +453,12 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                       >
                         {t("topology.actions.saveLocation")}
                       </Button>
-                      <Button type="button" size="sm" variant="outline" onClick={cancelEditLocation}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={cancelEditLocation}
+                      >
                         {tc("action.cancel")}
                       </Button>
                     </div>
@@ -499,7 +493,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
                 {locError}
               </div>
             ) : null}
-            <PermissionGate permission="inv.manage">
+            <PermissionGate permission={P.INV_MANAGE}>
               <div className="grid gap-3">
                 <div className="space-y-1">
                   <Label htmlFor="create-wh-code">{t("topology.fields.code")}</Label>
@@ -525,7 +519,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
                 {tc("action.cancel")}
               </Button>
-              <PermissionGate permission="inv.manage">
+              <PermissionGate permission={P.INV_MANAGE}>
                 <Button
                   type="button"
                   disabled={saving || !createCode.trim() || !createName.trim()}

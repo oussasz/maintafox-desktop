@@ -20,14 +20,14 @@ use crate::{require_permission, require_session};
 #[tauri::command]
 pub async fn list_pm_plans(filter: PmPlanFilter, state: State<'_, AppState>) -> AppResult<Vec<PmPlan>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::list_pm_plans(&state.db, filter).await
 }
 
 #[tauri::command]
 pub async fn get_pm_plan(plan_id: i64, state: State<'_, AppState>) -> AppResult<PmPlan> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::get_pm_plan(&state.db, plan_id).await
 }
 
@@ -63,7 +63,7 @@ pub async fn transition_pm_plan_lifecycle(
 #[tauri::command]
 pub async fn list_pm_plan_versions(pm_plan_id: i64, state: State<'_, AppState>) -> AppResult<Vec<PmPlanVersion>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::list_pm_plan_versions(&state.db, pm_plan_id).await
 }
 
@@ -106,7 +106,7 @@ pub async fn list_pm_occurrences(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PmOccurrence>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::list_pm_occurrences(&state.db, filter).await
 }
 
@@ -133,7 +133,7 @@ pub async fn transition_pm_occurrence(
 #[tauri::command]
 pub async fn get_pm_due_metrics(state: State<'_, AppState>) -> AppResult<PmDueMetrics> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::get_pm_due_metrics(&state.db).await
 }
 
@@ -144,7 +144,7 @@ pub async fn list_pm_planning_readiness(
     state: State<'_, AppState>,
 ) -> AppResult<PmPlanningReadinessProjection> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::list_pm_planning_readiness(&state.db, input).await
 }
 
@@ -154,7 +154,7 @@ pub async fn get_pm_governance_kpi_report(
     state: State<'_, AppState>,
 ) -> AppResult<PmGovernanceKpiReport> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::get_pm_governance_kpi_report(&state.db, input).await
 }
 #[tauri::command]
@@ -173,7 +173,7 @@ pub async fn list_pm_executions(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PmExecution>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::list_pm_executions(&state.db, filter).await
 }
 
@@ -183,7 +183,7 @@ pub async fn list_pm_findings(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PmFinding>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::list_pm_findings(&state.db, execution_id).await
 }
 
@@ -193,7 +193,7 @@ pub async fn list_pm_recurring_findings(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PmRecurringFinding>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "pm.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::list_pm_recurring_findings(&state.db, input).await
 }
 
@@ -203,42 +203,61 @@ async fn enforce_pm_capability(state: &State<'_, AppState>, user: &Authenticated
     Ok(())
 }
 
-/// Catalog uses `pm.create`; legacy roles use `pm.manage` ("Create/edit PM plans").
+/// Require `pm.create` (canonical). Holders of legacy `pm.manage` are migrated to
+/// `pm.create`/`pm.edit`/`pm.delete` by the RBAC normalization migration.
 pub(crate) async fn require_pm_create_or_manage(state: &State<'_, AppState>, user: &AuthenticatedUser) -> AppResult<()> {
     let scope = PermissionScope::Global;
-    if rbac::check_permission_cached(&state.db, &state.permission_cache, user.user_id, "pm.create", &scope).await? {
-        return enforce_pm_capability(state, user, "pm.create").await;
+    if rbac::check_permission_cached(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::PM_CREATE,
+        &scope,
+    )
+    .await?
+    {
+        return enforce_pm_capability(state, user, crate::rbac::permissions::PM_CREATE).await;
     }
-    if rbac::check_permission_cached(&state.db, &state.permission_cache, user.user_id, "pm.manage", &scope).await? {
-        return enforce_pm_capability(state, user, "pm.manage").await;
-    }
-    Err(AppError::PermissionDenied(
-        "Permission requise : pm.create ou pm.manage".into(),
-    ))
+    Err(AppError::PermissionDenied(format!(
+        "Permission requise : {}",
+        crate::rbac::permissions::PM_CREATE
+    )))
 }
 
 pub(crate) async fn require_pm_edit_or_manage(state: &State<'_, AppState>, user: &AuthenticatedUser) -> AppResult<()> {
     let scope = PermissionScope::Global;
-    if rbac::check_permission_cached(&state.db, &state.permission_cache, user.user_id, "pm.edit", &scope).await? {
-        return enforce_pm_capability(state, user, "pm.edit").await;
+    if rbac::check_permission_cached(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::PM_EDIT,
+        &scope,
+    )
+    .await?
+    {
+        return enforce_pm_capability(state, user, crate::rbac::permissions::PM_EDIT).await;
     }
-    if rbac::check_permission_cached(&state.db, &state.permission_cache, user.user_id, "pm.manage", &scope).await? {
-        return enforce_pm_capability(state, user, "pm.manage").await;
-    }
-    Err(AppError::PermissionDenied(
-        "Permission requise : pm.edit ou pm.manage".into(),
-    ))
+    Err(AppError::PermissionDenied(format!(
+        "Permission requise : {}",
+        crate::rbac::permissions::PM_EDIT
+    )))
 }
 
 pub(crate) async fn require_pm_delete_or_manage(state: &State<'_, AppState>, user: &AuthenticatedUser) -> AppResult<()> {
     let scope = PermissionScope::Global;
-    if rbac::check_permission_cached(&state.db, &state.permission_cache, user.user_id, "pm.delete", &scope).await? {
-        return enforce_pm_capability(state, user, "pm.delete").await;
+    if rbac::check_permission_cached(
+        &state.db,
+        &state.permission_cache,
+        user.user_id,
+        crate::rbac::permissions::PM_DELETE,
+        &scope,
+    )
+    .await?
+    {
+        return enforce_pm_capability(state, user, crate::rbac::permissions::PM_DELETE).await;
     }
-    if rbac::check_permission_cached(&state.db, &state.permission_cache, user.user_id, "pm.manage", &scope).await? {
-        return enforce_pm_capability(state, user, "pm.manage").await;
-    }
-    Err(AppError::PermissionDenied(
-        "Permission requise : pm.delete ou pm.manage".into(),
-    ))
+    Err(AppError::PermissionDenied(format!(
+        "Permission requise : {}",
+        crate::rbac::permissions::PM_DELETE
+    )))
 }

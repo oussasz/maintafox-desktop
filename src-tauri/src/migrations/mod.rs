@@ -134,6 +134,7 @@ mod m20260729_000133_unify_wo_code_prefix_ot;
 mod m20260729_000134_inventory_transaction_reason_code;
 mod m20260730_000135_inventory_procurement_maturity;
 mod m20260731_000136_supplier_contacts_po_eta_repairable;
+mod m20260729_000137_rbac_permission_normalization;
 mod m_test;
 
 pub struct Migrator;
@@ -276,6 +277,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260729_000134_inventory_transaction_reason_code::Migration),
             Box::new(m20260730_000135_inventory_procurement_maturity::Migration),
             Box::new(m20260731_000136_supplier_contacts_po_eta_repairable::Migration),
+            Box::new(m20260729_000137_rbac_permission_normalization::Migration),
             Box::new(m_test::Migration),
         ]
     }

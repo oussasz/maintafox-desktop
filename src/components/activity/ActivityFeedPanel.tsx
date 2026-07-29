@@ -17,6 +17,7 @@ import {
   saveActivityFilter,
 } from "@/services/activity-service";
 import { toErrorMessage } from "@/utils/errors";
+import { P } from "@shared/rbac/permissions.generated";
 
 const PAGE_SIZE = 40;
 
@@ -157,12 +158,14 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
   if (permissionsLoading) {
     return (
       <Card className={className}>
-        <CardContent className="pt-6 text-sm text-muted-foreground">Loading permissions…</CardContent>
+        <CardContent className="pt-6 text-sm text-muted-foreground">
+          Loading permissions…
+        </CardContent>
       </Card>
     );
   }
 
-  if (!can("log.view")) {
+  if (!can(P.LOG_VIEW)) {
     return (
       <Card className={className}>
         <CardHeader className="pb-3">
@@ -282,7 +285,12 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
               setSelectedSavedViewId(e.target.value);
               const id = Number(e.target.value);
               const selected = savedViews.find((s) => s.id === id);
-              if (!selected || typeof selected.filter_json !== "object" || selected.filter_json === null) return;
+              if (
+                !selected ||
+                typeof selected.filter_json !== "object" ||
+                selected.filter_json === null
+              )
+                return;
               const raw = selected.filter_json as Record<string, unknown>;
               setEventClass(typeof raw["event_class"] === "string" ? raw["event_class"] : "");
               setSourceModule(typeof raw["source_module"] === "string" ? raw["source_module"] : "");
@@ -349,7 +357,9 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
         <div className="space-y-3">
           {grouped.map(([day, rows]) => (
             <div key={day} className="space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{day}</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {day}
+              </div>
               {rows.map((row) => (
                 <div key={row.id} className="rounded-md border p-2">
                   <div className="flex flex-wrap items-center gap-2">
@@ -359,7 +369,9 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
                     <span className="text-xs text-muted-foreground">
                       {row.actor_username ?? `user:${row.actor_id ?? "system"}`}
                     </span>
-                    <span className="text-xs text-muted-foreground">{new Date(row.happened_at).toLocaleString()}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(row.happened_at).toLocaleString()}
+                    </span>
                   </div>
 
                   <div className="mt-1 text-sm text-muted-foreground">
@@ -385,7 +397,9 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
                   </div>
 
                   {expanded[row.id] && (
-                    <pre className="mt-2 whitespace-pre-wrap rounded bg-muted p-2 text-xs">{expanded[row.id]}</pre>
+                    <pre className="mt-2 whitespace-pre-wrap rounded bg-muted p-2 text-xs">
+                      {expanded[row.id]}
+                    </pre>
                   )}
                 </div>
               ))}
@@ -407,7 +421,11 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
             onClick={() =>
               setOffset((prev) => {
                 const nextOffset = Math.max(0, prev - PAGE_SIZE);
-                setAppliedFilter((current) => ({ ...current, offset: nextOffset, limit: PAGE_SIZE }));
+                setAppliedFilter((current) => ({
+                  ...current,
+                  offset: nextOffset,
+                  limit: PAGE_SIZE,
+                }));
                 return nextOffset;
               })
             }
@@ -421,7 +439,11 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
             onClick={() =>
               setOffset((prev) => {
                 const nextOffset = prev + PAGE_SIZE;
-                setAppliedFilter((current) => ({ ...current, offset: nextOffset, limit: PAGE_SIZE }));
+                setAppliedFilter((current) => ({
+                  ...current,
+                  offset: nextOffset,
+                  limit: PAGE_SIZE,
+                }));
                 return nextOffset;
               })
             }

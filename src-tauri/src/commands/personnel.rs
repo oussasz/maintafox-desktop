@@ -42,7 +42,7 @@ async fn can_read_personnel_record(
         &state.db,
         &state.permission_cache,
         user.user_id,
-        "per.view",
+        crate::rbac::permissions::PER_VIEW,
         &PermissionScope::Global,
     )
     .await?;
@@ -62,7 +62,7 @@ pub async fn list_personnel(
     state: State<'_, AppState>,
 ) -> AppResult<PersonnelListPage> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_VIEW, PermissionScope::Global);
     queries::list_personnel(&state.db, filter).await
 }
 
@@ -95,7 +95,7 @@ pub async fn create_personnel(
     state: State<'_, AppState>,
 ) -> AppResult<Personnel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
 
     let trimmed = input.full_name.trim().to_string();
     if trimmed.is_empty() {
@@ -135,7 +135,7 @@ pub async fn update_personnel(
     state: State<'_, AppState>,
 ) -> AppResult<Personnel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
 
     if let Some(pid) = input.position_id {
         queries::assert_position_exists(&state.db, pid).await?;
@@ -161,7 +161,7 @@ pub async fn deactivate_personnel(
     state: State<'_, AppState>,
 ) -> AppResult<Personnel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
     require_step_up!(state);
 
     queries::deactivate_personnel(&state.db, id, expected_row_version, i64::from(user.user_id)).await
@@ -174,7 +174,7 @@ pub async fn deactivate_personnel(
 #[tauri::command]
 pub async fn list_positions(state: State<'_, AppState>) -> AppResult<Vec<Position>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_VIEW, PermissionScope::Global);
     queries::list_positions(&state.db).await
 }
 
@@ -186,7 +186,7 @@ pub async fn create_position(
     state: State<'_, AppState>,
 ) -> AppResult<Position> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
     queries::create_position(&state.db, code, name, category).await
 }
 
@@ -199,7 +199,7 @@ pub async fn list_schedule_classes(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ScheduleClassWithDetails>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_VIEW, PermissionScope::Global);
     queries::list_schedule_classes(&state.db).await
 }
 
@@ -229,7 +229,7 @@ pub async fn create_rate_card(
     state: State<'_, AppState>,
 ) -> AppResult<PersonnelRateCard> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
     queries::create_rate_card(
         &state.db,
         personnel_id,
@@ -268,7 +268,7 @@ pub async fn create_authorization(
     state: State<'_, AppState>,
 ) -> AppResult<PersonnelAuthorization> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
     queries::create_authorization(
         &state.db,
         personnel_id,
@@ -291,7 +291,7 @@ pub async fn list_external_companies(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ExternalCompany>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_VIEW, PermissionScope::Global);
     queries::list_external_companies(&state.db, filter).await
 }
 
@@ -305,7 +305,7 @@ pub async fn create_external_company(
     state: State<'_, AppState>,
 ) -> AppResult<ExternalCompany> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
     if name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
             "Le nom de l'entreprise est obligatoire.".into(),
@@ -328,7 +328,7 @@ pub async fn list_company_contacts(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ExternalCompanyContact>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_VIEW, PermissionScope::Global);
     queries::list_company_contacts(&state.db, company_id).await
 }
 
@@ -338,7 +338,7 @@ pub async fn list_skills_matrix(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<skills::SkillMatrixRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_VIEW, PermissionScope::Global);
     skills::list_skills_matrix(&state.db, filter).await
 }
 
@@ -348,7 +348,7 @@ pub async fn list_availability_calendar(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<availability::AvailabilityCalendarEntry>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_VIEW, PermissionScope::Global);
     availability::list_availability_calendar(&state.db, filter).await
 }
 
@@ -358,7 +358,7 @@ pub async fn list_team_capacity_summary(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<teams::TeamCapacitySummaryRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_VIEW, PermissionScope::Global);
     teams::list_team_capacity_summary(&state.db, filter).await
 }
 
@@ -368,7 +368,7 @@ pub async fn create_availability_block(
     state: State<'_, AppState>,
 ) -> AppResult<availability::PersonnelAvailabilityBlock> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
 
     let block = availability::create_availability_block(&state.db, input, i64::from(user.user_id)).await?;
     if block.is_critical {
@@ -454,7 +454,7 @@ pub async fn scan_succession_risk(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SuccessionRiskRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_VIEW, PermissionScope::Global);
     queries::scan_succession_risk(&state.db, entity_id, team_id).await
 }
 
@@ -495,7 +495,7 @@ pub async fn create_personnel_import_batch(
     state: State<'_, AppState>,
 ) -> AppResult<import::PersonnelImportBatchSummary> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
     import::create_import_batch(&state.db, input, Some(i64::from(user.user_id))).await
 }
 
@@ -505,7 +505,7 @@ pub async fn get_personnel_import_preview(
     state: State<'_, AppState>,
 ) -> AppResult<import::PersonnelImportPreview> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
     import::get_import_preview(&state.db, batch_id).await
 }
 
@@ -515,7 +515,7 @@ pub async fn apply_personnel_import_batch(
     state: State<'_, AppState>,
 ) -> AppResult<import::PersonnelImportApplyResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
     require_step_up!(state);
     import::apply_import_batch(&state.db, batch_id, Some(i64::from(user.user_id))).await
 }
@@ -525,7 +525,7 @@ pub async fn get_workforce_summary_report(
     state: State<'_, AppState>,
 ) -> AppResult<reports::WorkforceSummaryReport> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.report", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_REPORT, PermissionScope::Global);
     reports::workforce_summary(&state.db).await
 }
 
@@ -535,7 +535,7 @@ pub async fn get_workforce_skills_gap_report(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<reports::WorkforceSkillsGapRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.report", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_REPORT, PermissionScope::Global);
     reports::workforce_skills_gap(&state.db, limit).await
 }
 
@@ -544,7 +544,7 @@ pub async fn get_workforce_kpi_report(
     state: State<'_, AppState>,
 ) -> AppResult<reports::WorkforceKpiReport> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.report", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_REPORT, PermissionScope::Global);
     reports::workforce_kpis(&state.db).await
 }
 
@@ -554,7 +554,7 @@ pub async fn export_workforce_report_csv(
     state: State<'_, AppState>,
 ) -> AppResult<String> {
     let user = require_session!(state);
-    require_permission!(state, &user, "per.report", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_REPORT, PermissionScope::Global);
     match report_kind.trim().to_lowercase().as_str() {
         "summary" => reports::export_summary_csv(&state.db).await,
         "skills_gap" => reports::export_skills_gap_csv(&state.db).await,

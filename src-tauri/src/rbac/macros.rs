@@ -16,7 +16,7 @@
 //! let user = require_session!(state);
 //!
 //! // Authorise — checks permission + step-up
-//! require_permission!(state, &user, "di.view", PermissionScope::Global);
+//! require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
 //!
 //! // Step-up only (no permission check)
 //! require_step_up!(state);

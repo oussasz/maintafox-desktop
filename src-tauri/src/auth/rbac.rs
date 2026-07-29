@@ -351,14 +351,14 @@ mod tests {
     #[test]
     fn permission_record_serializes() {
         let rec = PermissionRecord {
-            name: "eq.view".into(),
+            name: crate::rbac::permissions::EQ_VIEW.into(),
             description: "View equipment".into(),
             category: "equipment".into(),
             is_dangerous: false,
             requires_step_up: false,
         };
         let json = serde_json::to_string(&rec).expect("serialize");
-        assert!(json.contains("eq.view"));
+        assert!(json.contains(crate::rbac::permissions::EQ_VIEW));
         assert!(json.contains("\"is_dangerous\":false"));
     }
 }

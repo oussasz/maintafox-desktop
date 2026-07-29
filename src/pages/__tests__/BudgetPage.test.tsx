@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BudgetPage } from "@/pages/BudgetPage";
+import { P } from "@shared/rbac/permissions.generated";
 
 const budgetMocks = vi.hoisted(() => ({
   listCostCenters: vi.fn(),
@@ -61,9 +62,14 @@ vi.mock("@/services/org-node-service", () => ({
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({
     can: (name: string) =>
-      name === "fin.report" ? permissionState.canReport : name === "fin.post" ? permissionState.canPost : false,
+      name === P.FIN_REPORT
+        ? permissionState.canReport
+        : name === P.FIN_POST
+          ? permissionState.canPost
+          : false,
     canAny: (...names: string[]) =>
-      permissionState.canBudget && names.some((name) => name === "fin.budget" || name === "fin.manage"),
+      permissionState.canBudget &&
+      names.some((name) => name === P.FIN_BUDGET || name === P.FIN_MANAGE),
   }),
 }));
 
@@ -105,8 +111,8 @@ describe("BudgetPage", () => {
         currency_code: "EUR",
         title: "FY26 Baseline",
         planning_basis: "Annual baseline",
-        source_basis_mix_json: "{\"pm\":0.7}",
-        labor_assumptions_json: "{\"headcount\":12}",
+        source_basis_mix_json: '{"pm":0.7}',
+        labor_assumptions_json: '{"headcount":12}',
         baseline_reference: "FY26-BASE",
         erp_external_ref: "ERP-BGT-26",
         successor_of_version_id: null,
@@ -227,8 +233,8 @@ describe("BudgetPage", () => {
       currency_code: "EUR",
       title: "FY26 Baseline",
       planning_basis: "Annual baseline",
-      source_basis_mix_json: "{\"pm\":0.7}",
-      labor_assumptions_json: "{\"headcount\":12}",
+      source_basis_mix_json: '{"pm":0.7}',
+      labor_assumptions_json: '{"headcount":12}',
       baseline_reference: "FY26-BASE",
       erp_external_ref: "ERP-BGT-26",
       successor_of_version_id: null,

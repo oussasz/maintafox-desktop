@@ -7,6 +7,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { isModuleCapabilityAllowed } from "@/lib/module-capability";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
+import type { PermissionName } from "@shared/rbac/permissions.generated";
 
 export interface NavItem {
   key: string;
@@ -15,8 +16,12 @@ export interface NavItem {
   icon: ReactNode;
   groupKey?: string;
   isGroupHeader?: boolean;
-  /** Permission required to see this nav item. If undefined, always visible. */
-  requiredPermission?: string;
+  /**
+   * Permission required to see this nav item. If undefined, always visible.
+   * Sidebar only supports a single permission (no anyOf); use the primary
+   * route permission and document OR cases at the call site.
+   */
+  requiredPermission?: PermissionName;
 }
 
 interface SidebarProps {

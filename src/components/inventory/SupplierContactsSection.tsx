@@ -30,6 +30,7 @@ import {
 } from "@/services/inventory-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { SupplierContact } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { SUPPLIER_CONTACT_ROLES } from "./supplier-sourcing";
 
@@ -138,7 +139,7 @@ export function SupplierContactsSection({ supplierId }: SupplierContactsSectionP
         <p className="text-xs text-text-muted">
           {t("procurement.suppliers.contacts.resultCount", { count: contacts.length })}
         </p>
-        <PermissionGate permission="inv.manage">
+        <PermissionGate permission={P.INV_MANAGE}>
           <Button size="sm" variant="outline" onClick={openAddForm}>
             {t("procurement.suppliers.contacts.add")}
           </Button>
@@ -184,7 +185,7 @@ export function SupplierContactsSection({ supplierId }: SupplierContactsSectionP
                   {contact.email}
                 </a>
               ) : null}
-              <PermissionGate permission="inv.manage">
+              <PermissionGate permission={P.INV_MANAGE}>
                 <div className="ml-auto flex gap-1">
                   <Button
                     size="sm"

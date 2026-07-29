@@ -2,23 +2,24 @@
 // On loading, renders nothing (no flash of unauthorized content).
 //
 // Usage:
-//   <PermissionGate permission="eq.manage">
+//   <PermissionGate permission={P.EQ_MANAGE}>
 //     <EditEquipmentButton />
 //   </PermissionGate>
 //
-//   <PermissionGate permission="adm.users" fallback={<NotAuthorized />}>
+//   <PermissionGate permission={P.ADM_USERS} fallback={<NotAuthorized />}>
 //     <UserManagementPanel />
 //   </PermissionGate>
 
 import type { ReactNode, ReactElement } from "react";
 
 import { usePermissions } from "@/hooks/use-permissions";
+import { type PermissionName } from "@shared/rbac/permissions.generated";
 
 interface PermissionGateProps {
   /** Single permission name (use this or `anyOf`, not both). */
-  permission?: string;
+  permission?: PermissionName;
   /** User must have at least one of these permissions. */
-  anyOf?: string[];
+  anyOf?: PermissionName[];
   children: ReactNode;
   fallback?: ReactNode;
 }

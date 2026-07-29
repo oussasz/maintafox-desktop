@@ -1142,7 +1142,7 @@ mod tests {
         let db = setup().await;
 
         // User 999 has NO user_scope_assignments → check_permission returns false
-        let has_perm = rbac::check_permission(&db, 999, "eq.import", &PermissionScope::Global)
+        let has_perm = rbac::check_permission(&db, 999, crate::rbac::permissions::EQ_IMPORT, &PermissionScope::Global)
             .await
             .expect("check_permission should not error");
 
@@ -1170,7 +1170,7 @@ mod tests {
         .await
         .expect("insert user_scope_assignment");
 
-        let has_perm = rbac::check_permission(&db, 1, "eq.import", &PermissionScope::Global)
+        let has_perm = rbac::check_permission(&db, 1, crate::rbac::permissions::EQ_IMPORT, &PermissionScope::Global)
             .await
             .expect("check_permission should not error");
 
@@ -1198,7 +1198,7 @@ mod tests {
         .await
         .expect("insert operator assignment");
 
-        let has_perm = rbac::check_permission(&db, 2, "eq.import", &PermissionScope::Global)
+        let has_perm = rbac::check_permission(&db, 2, crate::rbac::permissions::EQ_IMPORT, &PermissionScope::Global)
             .await
             .expect("check_permission should not error");
 

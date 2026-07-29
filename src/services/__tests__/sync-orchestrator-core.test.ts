@@ -8,6 +8,7 @@ import {
   normalizeRuntimeStateAfterRestart,
   shouldRetry,
 } from "@/services/sync-orchestrator-core";
+import { P } from "@shared/rbac/permissions.generated";
 
 describe("sync orchestrator core", () => {
   it("computes bounded retry delay with deterministic jitter", () => {
@@ -18,17 +19,16 @@ describe("sync orchestrator core", () => {
   });
 
   it("treats explicit sync:false capability as not allowed", async () => {
-    const { isModuleCapabilityAllowed, parseCapabilityMap } = await import(
-      "@/lib/module-capability"
-    );
+    const { isModuleCapabilityAllowed, parseCapabilityMap } =
+      await import("@/lib/module-capability");
     const map = parseCapabilityMap(
       JSON.stringify({
         equipment: true,
         sync: false,
       }),
     );
-    expect(isModuleCapabilityAllowed(map, "sync.view")).toBe(false);
-    expect(isModuleCapabilityAllowed(map, "eq.view")).toBe(true);
+    expect(isModuleCapabilityAllowed(map, P.SYNC_VIEW)).toBe(false);
+    expect(isModuleCapabilityAllowed(map, P.EQ_VIEW)).toBe(true);
   });
 
   it("blocks scheduling when entitlement is suspended", () => {

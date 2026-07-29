@@ -16,7 +16,7 @@ use crate::{require_permission, require_permission_allowing_system_admin, requir
 #[tauri::command]
 pub async fn get_ram_advanced_guardrails(state: State<'_, AppState>) -> AppResult<GuardrailFlags> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
     queries::get_ram_advanced_guardrails(&state.db).await
 }
 
@@ -26,28 +26,28 @@ pub async fn set_ram_advanced_guardrails(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     queries::set_ram_advanced_guardrails(&state.db, &flags).await
 }
 
 #[tauri::command]
 pub async fn list_mc_models(filter: McModelsFilter, state: State<'_, AppState>) -> AppResult<Vec<McModel>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
     queries::list_mc_models(&state.db, filter).await
 }
 
 #[tauri::command]
 pub async fn create_mc_model(input: CreateMcModelInput, state: State<'_, AppState>) -> AppResult<McModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     queries::create_mc_model(&state.db, Some(i64::from(user.user_id)), input).await
 }
 
 #[tauri::command]
 pub async fn update_mc_model(input: UpdateMcModelInput, state: State<'_, AppState>) -> AppResult<McModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::update_mc_model(&state.db, input).await
 }
@@ -55,7 +55,7 @@ pub async fn update_mc_model(input: UpdateMcModelInput, state: State<'_, AppStat
 #[tauri::command]
 pub async fn delete_mc_model(id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::delete_mc_model(&state.db, id).await
 }
@@ -63,7 +63,7 @@ pub async fn delete_mc_model(id: i64, state: State<'_, AppState>) -> AppResult<(
 #[tauri::command]
 pub async fn evaluate_mc_model(id: i64, state: State<'_, AppState>) -> AppResult<McModel> {
     let user = require_session!(state);
-    require_permission_allowing_system_admin!(state, &user, "ram.analyze", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, crate::rbac::permissions::RAM_ANALYZE, PermissionScope::Global);
     queries::evaluate_mc_model(&state.db, id).await
 }
 
@@ -73,7 +73,7 @@ pub async fn list_markov_models(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<MarkovModel>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
     queries::list_markov_models(&state.db, filter).await
 }
 
@@ -83,7 +83,7 @@ pub async fn create_markov_model(
     state: State<'_, AppState>,
 ) -> AppResult<MarkovModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     queries::create_markov_model(&state.db, Some(i64::from(user.user_id)), input).await
 }
 
@@ -93,7 +93,7 @@ pub async fn update_markov_model(
     state: State<'_, AppState>,
 ) -> AppResult<MarkovModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::update_markov_model(&state.db, input).await
 }
@@ -101,7 +101,7 @@ pub async fn update_markov_model(
 #[tauri::command]
 pub async fn delete_markov_model(id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::delete_markov_model(&state.db, id).await
 }
@@ -109,6 +109,6 @@ pub async fn delete_markov_model(id: i64, state: State<'_, AppState>) -> AppResu
 #[tauri::command]
 pub async fn evaluate_markov_model(id: i64, state: State<'_, AppState>) -> AppResult<MarkovModel> {
     let user = require_session!(state);
-    require_permission_allowing_system_admin!(state, &user, "ram.analyze", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, crate::rbac::permissions::RAM_ANALYZE, PermissionScope::Global);
     queries::evaluate_markov_model(&state.db, id).await
 }

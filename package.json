@@ -31,7 +31,10 @@
     "db:reset:ci": "pnpm tsx scripts/dev-db-reset.ts --yes",
     "migrate:check": "tsx scripts/check-migrations.ts",
     "audit:tauri-conf": "pnpm tsx scripts/audit-tauri-conf.ts",
-    "guard:phase4:fixtures": "pnpm tsx scripts/check-control-plane-fixture-imports.ts"
+    "guard:phase4:fixtures": "pnpm tsx scripts/check-control-plane-fixture-imports.ts",
+    "rbac:generate": "tsx scripts/generate-permissions.ts",
+    "rbac:check": "tsx scripts/check-rbac-parity.ts",
+    "rbac:rewrite": "tsx scripts/rewrite-permission-literals.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",

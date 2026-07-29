@@ -557,8 +557,8 @@ async fn resolve_accessible_entity_scope_ids(
                AND (usa.valid_from IS NULL OR usa.valid_from <= datetime('now'))
                AND (usa.valid_to IS NULL OR usa.valid_to >= datetime('now'))
                AND usa.scope_type IN ('entity', 'org_node')
-               AND p.name = 'log.view'",
-            [i64::from(user_id).into()],
+               AND p.name = ?",
+            [i64::from(user_id).into(), crate::rbac::permissions::LOG_VIEW.into()],
         ))
         .await?;
 
@@ -584,7 +584,7 @@ async fn resolve_log_view_access(
         &state.db,
         &state.permission_cache,
         user_id,
-        "log.view",
+        crate::rbac::permissions::LOG_VIEW,
         &PermissionScope::Global,
     )
     .await?;

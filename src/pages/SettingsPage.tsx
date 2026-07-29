@@ -26,6 +26,7 @@ import {
   listSettingsCategories,
 } from "@/services/settings-service";
 import type { AppSetting, SettingsChangeEvent } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function SettingsPage() {
   const { t } = useTranslation("settings");
@@ -87,7 +88,7 @@ export function SettingsPage() {
 
   return (
     <PermissionGate
-      permission="adm.settings"
+      permission={P.ADM_SETTINGS}
       fallback={
         <div className="flex flex-1 items-center justify-center gap-2 text-text-muted">
           <AlertCircle className="h-5 w-5" />

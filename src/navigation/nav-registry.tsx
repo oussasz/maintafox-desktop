@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 import type { NavItem } from "@/components/layout/Sidebar";
+import { P } from "@shared/rbac/permissions.generated";
 
 export const defaultNavItems: NavItem[] = [
   // ── Core Operations ───────────────────────────────────────
@@ -40,21 +41,21 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.equipment",
     path: "/equipment",
     icon: <Cog className="h-4 w-4" />,
-    requiredPermission: "eq.view",
+    requiredPermission: P.EQ_VIEW,
   },
   {
     key: "requests",
     labelKey: "nav.requests",
     path: "/requests",
     icon: <ClipboardList className="h-4 w-4" />,
-    requiredPermission: "di.view",
+    requiredPermission: P.DI_VIEW,
   },
   {
     key: "work-orders",
     labelKey: "nav.workOrders",
     path: "/work-orders",
     icon: <Wrench className="h-4 w-4" />,
-    requiredPermission: "ot.view",
+    requiredPermission: P.OT_VIEW,
   },
 
   // ── Planning ──────────────────────────────────────────────
@@ -70,14 +71,14 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.planning",
     path: "/planning",
     icon: <Calendar className="h-4 w-4" />,
-    requiredPermission: "plan.view",
+    requiredPermission: P.PLAN_VIEW,
   },
   {
     key: "pm",
     labelKey: "nav.pm",
     path: "/pm",
     icon: <CalendarClock className="h-4 w-4" />,
-    requiredPermission: "pm.view",
+    requiredPermission: P.PM_VIEW,
   },
 
   // ── Compliance ────────────────────────────────────────────
@@ -93,21 +94,22 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.permits",
     path: "/permits",
     icon: <ShieldCheck className="h-4 w-4" />,
-    requiredPermission: "ptw.view",
+    requiredPermission: P.PTW_VIEW,
   },
   {
     key: "inspections",
     labelKey: "nav.inspections",
     path: "/inspections",
     icon: <CheckSquare className="h-4 w-4" />,
-    requiredPermission: "ins.view",
+    requiredPermission: P.INS_VIEW,
   },
   {
     key: "training",
     labelKey: "nav.training",
+    // Landing is /personnel?tab=training — gated by per.view (same as personnel route).
     path: "/personnel?tab=training",
     icon: <GraduationCap className="h-4 w-4" />,
-    requiredPermission: "trn.view",
+    requiredPermission: P.PER_VIEW,
   },
 
   // ── Inventory ─────────────────────────────────────────────
@@ -123,7 +125,7 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.inventory",
     path: "/inventory",
     icon: <Package className="h-4 w-4" />,
-    requiredPermission: "inv.view",
+    requiredPermission: P.INV_VIEW,
   },
 
   // ── Analytics & Reporting ─────────────────────────────────
@@ -139,21 +141,22 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.analytics",
     path: "/analytics",
     icon: <BarChart3 className="h-4 w-4" />,
-    requiredPermission: "rep.view",
+    requiredPermission: P.REP_VIEW,
   },
   {
     key: "reliability",
     labelKey: "nav.reliability",
+    // Parent route PermissionRoute uses rep.view (shared analytics/reliability gate).
     path: "/reliability/dashboard",
     icon: <Activity className="h-4 w-4" />,
-    requiredPermission: "ram.view",
+    requiredPermission: P.REP_VIEW,
   },
   {
     key: "budget",
     labelKey: "nav.budget",
     path: "/budget",
     icon: <DollarSign className="h-4 w-4" />,
-    requiredPermission: "fin.view",
+    requiredPermission: P.FIN_VIEW,
   },
 
   // ── Administration ────────────────────────────────────────
@@ -163,28 +166,30 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.personnel",
     path: "/personnel",
     icon: <Users className="h-4 w-4" />,
-    requiredPermission: "per.view",
+    requiredPermission: P.PER_VIEW,
   },
   {
     key: "admin",
     labelKey: "nav.admin",
     path: "/admin",
     icon: <ShieldCheck className="h-4 w-4" />,
-    requiredPermission: "adm.users",
+    // Route allows adm.users OR adm.roles (PermissionRoute anyOf). Sidebar only
+    // supports a single requiredPermission — use adm.users for nav visibility.
+    requiredPermission: P.ADM_USERS,
   },
   {
     key: "org",
     labelKey: "nav.org",
     path: "/org",
     icon: <Building2 className="h-4 w-4" />,
-    requiredPermission: "org.view",
+    requiredPermission: P.ORG_VIEW,
   },
   {
     key: "lookups",
     labelKey: "nav.lookups",
     path: "/lookups",
     icon: <BookOpen className="h-4 w-4" />,
-    requiredPermission: "ref.view",
+    requiredPermission: P.REF_VIEW,
   },
   {
     key: "notifications",
@@ -197,35 +202,35 @@ export const defaultNavItems: NavItem[] = [
     labelKey: "nav.documentation",
     path: "/documentation",
     icon: <HelpCircle className="h-4 w-4" />,
-    requiredPermission: "doc.view",
+    requiredPermission: P.DOC_VIEW,
   },
   {
     key: "archive",
     labelKey: "nav.archive",
     path: "/archive",
     icon: <Archive className="h-4 w-4" />,
-    requiredPermission: "arc.view",
+    requiredPermission: P.ARC_VIEW,
   },
   {
     key: "activity",
     labelKey: "nav.activity",
     path: "/activity",
     icon: <ScrollText className="h-4 w-4" />,
-    requiredPermission: "log.view",
+    requiredPermission: P.LOG_VIEW,
   },
   {
     key: "settings",
     labelKey: "nav.settings",
     path: "/settings",
     icon: <Settings className="h-4 w-4" />,
-    requiredPermission: "adm.settings",
+    requiredPermission: P.ADM_SETTINGS,
   },
   {
     key: "diagnostics",
     labelKey: "nav.diagnostics",
     path: "/diagnostics",
     icon: <HeartPulse className="h-4 w-4" />,
-    requiredPermission: "adm.settings",
+    requiredPermission: P.ADM_SETTINGS,
   },
   { key: "profile", labelKey: "nav.profile", path: "/profile", icon: <User className="h-4 w-4" /> },
 ];

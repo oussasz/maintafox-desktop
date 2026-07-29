@@ -2,16 +2,17 @@ import type { ReactNode } from "react";
 import { Outlet } from "react-router-dom";
 
 import { usePermissions } from "@/hooks/use-permissions";
+import { type PermissionName } from "@shared/rbac/permissions.generated";
 
 import { UnauthorizedPage } from "../../pages/UnauthorizedPage";
 
 interface PermissionRouteProps {
   /** Single permission check */
-  permission?: string;
+  permission?: PermissionName;
   /** Pass if the user has ANY of these permissions */
-  anyOf?: string[];
+  anyOf?: PermissionName[];
   /** Pass only if the user has ALL of these permissions */
-  allOf?: string[];
+  allOf?: PermissionName[];
   /** Custom fallback (defaults to UnauthorizedPage) */
   fallback?: ReactNode;
 }
@@ -21,7 +22,7 @@ interface PermissionRouteProps {
  * `<Outlet />` only if the permission check passes.
  *
  * Usage in router.tsx:
- *   <Route element={<PermissionRoute permission="eq.view" />}>
+ *   <Route element={<PermissionRoute permission={P.EQ_VIEW} />}>
  *     <Route path="equipment" element={<EquipmentPage />} />
  *   </Route>
  */

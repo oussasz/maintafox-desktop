@@ -16,7 +16,7 @@ use crate::{require_permission, require_session, require_step_up};
 #[tauri::command]
 pub async fn list_all_settings(state: State<'_, AppState>) -> AppResult<Vec<AppSetting>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
     settings::list_all_settings(&state.db).await
 }
 
@@ -27,7 +27,7 @@ pub async fn list_settings_by_category(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AppSetting>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
     settings::list_settings_by_category(&state.db, &category).await
 }
 
@@ -35,7 +35,7 @@ pub async fn list_settings_by_category(
 #[tauri::command]
 pub async fn list_settings_categories(state: State<'_, AppState>) -> AppResult<Vec<String>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
     settings::list_settings_categories(&state.db).await
 }
 
@@ -64,7 +64,7 @@ pub struct SetSettingPayload {
 #[tauri::command]
 pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
 
     let scope = payload.scope.unwrap_or_else(|| "tenant".to_string());
 
@@ -111,6 +111,6 @@ pub async fn list_setting_change_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SettingsChangeEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
     settings::list_change_events(&state.db, limit.unwrap_or(50)).await
 }

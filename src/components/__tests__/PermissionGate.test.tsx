@@ -7,6 +7,7 @@ import { PersonnelExportMenu } from "@/components/personnel/PersonnelExportMenu"
 import { PersonnelImportWizard } from "@/components/personnel/PersonnelImportWizard";
 import { WorkforceReportPanel } from "@/components/personnel/WorkforceReportPanel";
 import { PermissionProvider } from "@/contexts/PermissionContext";
+import { P } from "@shared/rbac/permissions.generated";
 
 const mockGetMyPermissions = vi.fn();
 const mockGetWorkforceSummaryReport = vi.fn();
@@ -81,7 +82,7 @@ describe("PermissionGate", () => {
   it("renders children when user has any of the permissions (anyOf)", async () => {
     mockGetMyPermissions.mockResolvedValue([
       {
-        name: "pm.manage",
+        name: P.PM_EDIT,
         description: "",
         category: "maintenance",
         is_dangerous: false,
@@ -90,7 +91,7 @@ describe("PermissionGate", () => {
     ]);
 
     renderWithPermissionProvider(
-      <PermissionGate anyOf={["pm.create", "pm.manage"]} fallback={<span>no pm write</span>}>
+      <PermissionGate anyOf={[P.PM_CREATE, P.PM_EDIT]} fallback={<span>no pm write</span>}>
         <span data-testid="gate-pm">pm actions</span>
       </PermissionGate>,
     );
@@ -104,7 +105,7 @@ describe("PermissionGate", () => {
   it("renders children when user has the permission", async () => {
     mockGetMyPermissions.mockResolvedValue([
       {
-        name: "eq.view",
+        name: P.EQ_VIEW,
         description: "",
         category: "equipment",
         is_dangerous: false,
@@ -113,7 +114,7 @@ describe("PermissionGate", () => {
     ]);
 
     renderWithPermissionProvider(
-      <PermissionGate permission="eq.view" fallback={<span>no eq.view</span>}>
+      <PermissionGate permission={P.EQ_VIEW} fallback={<span>no eq.view</span>}>
         <span data-testid="gate-content">has eq.view</span>
       </PermissionGate>,
     );
@@ -128,7 +129,7 @@ describe("PermissionGate", () => {
   it("renders fallback when user lacks the permission", async () => {
     mockGetMyPermissions.mockResolvedValue([
       {
-        name: "di.view",
+        name: P.DI_VIEW,
         description: "",
         category: "intervention",
         is_dangerous: false,
@@ -137,7 +138,7 @@ describe("PermissionGate", () => {
     ]);
 
     renderWithPermissionProvider(
-      <PermissionGate permission="eq.view" fallback={<span>no eq.view</span>}>
+      <PermissionGate permission={P.EQ_VIEW} fallback={<span>no eq.view</span>}>
         <span data-testid="gate-content">has eq.view</span>
       </PermissionGate>,
     );
@@ -153,7 +154,7 @@ describe("PermissionGate", () => {
     mockGetMyPermissions.mockReturnValue(new Promise(() => {}));
 
     const { container } = renderWithPermissionProvider(
-      <PermissionGate permission="eq.view">
+      <PermissionGate permission={P.EQ_VIEW}>
         <span>should not appear</span>
       </PermissionGate>,
     );
@@ -165,7 +166,7 @@ describe("PermissionGate", () => {
     mockGetMyPermissions.mockResolvedValue([]);
 
     const { container } = renderWithPermissionProvider(
-      <PermissionGate permission="eq.view">
+      <PermissionGate permission={P.EQ_VIEW}>
         <span>should not appear</span>
       </PermissionGate>,
     );
@@ -194,14 +195,14 @@ describe("PermissionGate", () => {
   it("shows personnel governance controls with per.manage and per.report", async () => {
     mockGetMyPermissions.mockResolvedValue([
       {
-        name: "per.manage",
+        name: P.PER_MANAGE,
         description: "",
         category: "personnel",
         is_dangerous: false,
         requires_step_up: false,
       },
       {
-        name: "per.report",
+        name: P.PER_REPORT,
         description: "",
         category: "personnel",
         is_dangerous: false,

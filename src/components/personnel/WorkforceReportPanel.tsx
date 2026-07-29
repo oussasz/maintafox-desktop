@@ -13,7 +13,12 @@ import {
   getWorkforceSummaryReport,
 } from "@/services/personnel-service";
 import { toErrorMessage } from "@/utils/errors";
-import type { WorkforceKpiReport, WorkforceSkillsGapRow, WorkforceSummaryReport } from "@shared/ipc-types";
+import type {
+  WorkforceKpiReport,
+  WorkforceSkillsGapRow,
+  WorkforceSummaryReport,
+} from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function WorkforceReportPanel() {
   const { t } = useTranslation("personnel");
@@ -47,7 +52,7 @@ export function WorkforceReportPanel() {
   }, [refresh]);
 
   return (
-    <PermissionGate permission="per.report">
+    <PermissionGate permission={P.PER_REPORT}>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
@@ -58,7 +63,11 @@ export function WorkforceReportPanel() {
             <CardDescription>{t("reports.panel.description")}</CardDescription>
           </div>
           <Button size="sm" variant="outline" onClick={() => void refresh()} disabled={loading}>
-            {loading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}
+            {loading ? (
+              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 h-3.5 w-3.5" />
+            )}
             {t("reports.panel.refresh")}
           </Button>
         </CardHeader>
@@ -86,10 +95,15 @@ export function WorkforceReportPanel() {
             ) : (
               <div className="space-y-1">
                 {skillsGap.map((row) => (
-                  <div key={row.personnel_id} className="flex items-center justify-between rounded border px-2 py-1 text-xs">
+                  <div
+                    key={row.personnel_id}
+                    className="flex items-center justify-between rounded border px-2 py-1 text-xs"
+                  >
                     <span className="font-mono">{row.employee_code}</span>
                     <span className="truncate px-2">{row.full_name}</span>
-                    <Badge variant="outline">{t("reports.skillsGap.score", { score: row.gap_score })}</Badge>
+                    <Badge variant="outline">
+                      {t("reports.skillsGap.score", { score: row.gap_score })}
+                    </Badge>
                   </div>
                 ))}
               </div>

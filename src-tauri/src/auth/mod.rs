@@ -56,7 +56,7 @@ macro_rules! require_session {
 /// Usage inside an `async` Tauri command:
 /// ```ignore
 /// let user = require_session!(state);
-/// require_permission!(state, &user, "eq.delete", PermissionScope::Global);
+/// require_permission!(state, &user, crate::rbac::permissions::EQ_DELETE, PermissionScope::Global);
 /// ```
 #[macro_export]
 macro_rules! require_permission {

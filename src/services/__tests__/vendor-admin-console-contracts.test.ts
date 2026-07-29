@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { P } from "@shared/rbac/permissions.generated";
+
 import {
   VendorAdminMutationEnvelopeSchema,
   VendorAdminMfaEventSchema,
@@ -8,7 +10,7 @@ import {
 
 describe("vendor-admin-console-contracts", () => {
   it("parses vendor console permission literals", () => {
-    expect(VendorConsolePermissionSchema.parse("console.view")).toBe("console.view");
+    expect(VendorConsolePermissionSchema.parse(P.CONSOLE_VIEW)).toBe(P.CONSOLE_VIEW);
   });
 
   it("rejects invalid admin mutation action slug", () => {

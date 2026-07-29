@@ -38,6 +38,7 @@ import {
   setLegalHold,
 } from "@/services/archive-service";
 import { toErrorMessage } from "@/utils/errors";
+import { P } from "@shared/rbac/permissions.generated";
 
 interface ArchiveExplorerProps {
   className?: string;
@@ -405,22 +406,26 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
           </CardHeader>
           <CardContent className="space-y-3">
             {error && <div className="text-sm text-destructive">{error}</div>}
-            {loading && <div className="text-sm text-muted-foreground">Loading archive items...</div>}
+            {loading && (
+              <div className="text-sm text-muted-foreground">Loading archive items...</div>
+            )}
 
             {selectedRows.length > 0 && !permissionsLoading && (
               <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 p-2">
-                <span className="text-sm text-muted-foreground">{selectedRows.length} selected</span>
-                {can("arc.export") && (
+                <span className="text-sm text-muted-foreground">
+                  {selectedRows.length} selected
+                </span>
+                {can(P.ARC_EXPORT) && (
                   <Button size="sm" variant="outline" onClick={() => void runBulkExport()}>
                     Export Selected
                   </Button>
                 )}
-                {can("arc.purge") && (
+                {can(P.ARC_PURGE) && (
                   <Button size="sm" variant="outline" onClick={() => void runBulkLegalHold()}>
                     Legal Hold (all)
                   </Button>
                 )}
-                {can("arc.purge") && (
+                {can(P.ARC_PURGE) && (
                   <Button size="sm" variant="destructive" onClick={() => void runBulkPurge()}>
                     Purge (eligible only)
                   </Button>
@@ -466,7 +471,9 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
                         />
                         <div className="min-w-0">
                           <p className="truncate font-medium">{item.source_record_id}</p>
-                          <p className="truncate text-xs text-muted-foreground">{item.source_module}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {item.source_module}
+                          </p>
                         </div>
                         <Badge variant="outline" className="h-fit">
                           {item.archive_class}
@@ -484,14 +491,17 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
                       </button>
                     ))}
                     {visibleItems.length === 0 && !loading && (
-                      <div className="p-4 text-sm text-muted-foreground">No archived items found.</div>
+                      <div className="p-4 text-sm text-muted-foreground">
+                        No archived items found.
+                      </div>
                     )}
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-muted-foreground">
-                    Showing {Math.min(filteredItems.length, page * LIST_PAGE_SIZE + visibleItems.length)} of{" "}
+                    Showing{" "}
+                    {Math.min(filteredItems.length, page * LIST_PAGE_SIZE + visibleItems.length)} of{" "}
                     {filteredItems.length}
                   </span>
                   <div className="flex gap-2">
@@ -526,9 +536,9 @@ export function ArchiveExplorer({ className }: ArchiveExplorerProps) {
                     setSelectedDetail(await getArchiveItem(selectedId));
                   }
                 }}
-                canExport={can("arc.export")}
-                canRestore={can("arc.restore")}
-                canPurge={can("arc.purge")}
+                canExport={can(P.ARC_EXPORT)}
+                canRestore={can(P.ARC_RESTORE)}
+                canPurge={can(P.ARC_PURGE)}
               />
             )}
           </CardContent>
@@ -623,7 +633,10 @@ function ArchiveItemDetailView({
                     archive_item_ids: [detail.item.id],
                     export_reason: "Single item export",
                   });
-                  downloadAsJson(`archive-${detail.item.id}.json`, payload.items[0]?.payload_json ?? payload);
+                  downloadAsJson(
+                    `archive-${detail.item.id}.json`,
+                    payload.items[0]?.payload_json ?? payload,
+                  );
                 } catch (err) {
                   setActionError(toErrorMessage(err));
                 } finally {
@@ -649,11 +662,7 @@ function ArchiveItemDetailView({
         )}
 
         {canPurge && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setLegalHoldDialogOpen(true)}
-          >
+          <Button size="sm" variant="outline" onClick={() => setLegalHoldDialogOpen(true)}>
             {detail.item.legal_hold ? "Legal Hold Off" : "Legal Hold On"}
           </Button>
         )}
@@ -687,11 +696,14 @@ function ArchiveItemDetailView({
         <div className="space-y-2 rounded-md border p-3">
           <div className="grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
             <div>
-              <span className="text-muted-foreground">Restore policy:</span> {detail.item.restore_policy}
+              <span className="text-muted-foreground">Restore policy:</span>{" "}
+              {detail.item.restore_policy}
             </div>
             <div>
               <span className="text-muted-foreground">Retention policy:</span>{" "}
-              {detail.retention_policy ? `${detail.retention_policy.module_code}/${detail.retention_policy.archive_class}` : "—"}
+              {detail.retention_policy
+                ? `${detail.retention_policy.module_code}/${detail.retention_policy.archive_class}`
+                : "—"}
             </div>
           </div>
 
@@ -708,12 +720,16 @@ function ArchiveItemDetailView({
             <div key={action.id} className="rounded border p-2 text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline">{action.action}</Badge>
-                <span className="text-xs text-muted-foreground">{formatShortDate(action.action_at)}</span>
+                <span className="text-xs text-muted-foreground">
+                  {formatShortDate(action.action_at)}
+                </span>
                 <Badge variant={action.result_status === "success" ? "outline" : "destructive"}>
                   {action.result_status}
                 </Badge>
               </div>
-              {action.reason_note && <p className="mt-1 text-xs text-muted-foreground">{action.reason_note}</p>}
+              {action.reason_note && (
+                <p className="mt-1 text-xs text-muted-foreground">{action.reason_note}</p>
+              )}
             </div>
           ))}
           {detail.actions.length === 0 && (
@@ -727,7 +743,8 @@ function ArchiveItemDetailView({
           <DialogHeader>
             <DialogTitle>Confirm restore</DialogTitle>
             <DialogDescription>
-              Restoration writes an archive action and defers record replay to module-specific handlers.
+              Restoration writes an archive action and defers record replay to module-specific
+              handlers.
             </DialogDescription>
           </DialogHeader>
           <Textarea
@@ -770,8 +787,12 @@ function ArchiveItemDetailView({
       <Dialog open={legalHoldDialogOpen} onOpenChange={setLegalHoldDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{detail.item.legal_hold ? "Disable legal hold" : "Enable legal hold"}</DialogTitle>
-            <DialogDescription>Reason is required and will be recorded in archive actions.</DialogDescription>
+            <DialogTitle>
+              {detail.item.legal_hold ? "Disable legal hold" : "Enable legal hold"}
+            </DialogTitle>
+            <DialogDescription>
+              Reason is required and will be recorded in archive actions.
+            </DialogDescription>
           </DialogHeader>
           <Textarea
             value={legalHoldReason}
@@ -883,7 +904,10 @@ function ArchiveItemDetailView({
   );
 }
 
-function evaluatePurgeEligibility(detail: ArchiveItemDetail): { eligible: boolean; reasons: string[] } {
+function evaluatePurgeEligibility(detail: ArchiveItemDetail): {
+  eligible: boolean;
+  reasons: string[];
+} {
   const reasons: string[] = [];
   if (detail.item.legal_hold) {
     reasons.push("Blocked: legal hold is enabled.");
@@ -957,7 +981,9 @@ function StatCard({
 }
 
 function downloadAsJson(fileName: string, payload: unknown) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { DraftStatusBanner } from "@/components/org/DraftStatusBanner";
 import { ImpactPreviewDrawer } from "@/components/org/ImpactPreviewDrawer";
 import { NodeTypeManagerPanel } from "@/components/org/NodeTypeManagerPanel";
 import { OrgDesignerLifecycleBar } from "@/components/org/OrgDesignerLifecycleBar";
@@ -18,11 +19,11 @@ import { OrgExportMenu } from "@/components/org/OrgExportMenu";
 import { OrgNodeCreateDialog } from "@/components/org/OrgNodeCreateDialog";
 import { OrgRelationshipRulesPanel } from "@/components/org/OrgRelationshipRulesPanel";
 import { OrganizationTreePanel } from "@/components/org/OrganizationTreePanel";
-import { DraftStatusBanner } from "@/components/org/DraftStatusBanner";
 import { Button } from "@/components/ui/button";
 import { mfLayout } from "@/design-system/tokens";
 import { isOrgStructureDesignMode, useOrgDesignerStore } from "@/stores/org-designer-store";
 import { useOrgGovernanceStore } from "@/stores/org-governance-store";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function OrganizationDesignerPage() {
   const { t } = useTranslation("org");
@@ -122,7 +123,7 @@ export function OrganizationDesignerPage() {
           <h1 className={mfLayout.moduleTitle}>{t("designer.title")}</h1>
         </div>
         <div className={mfLayout.moduleHeaderActions}>
-          <PermissionGate permission="org.admin">
+          <PermissionGate permission={P.ORG_ADMIN}>
             <Button
               variant="outline"
               size="sm"
@@ -141,7 +142,7 @@ export function OrganizationDesignerPage() {
               {t("designer.manageTypes")}
             </Button>
           </PermissionGate>
-          <PermissionGate permission="org.admin">
+          <PermissionGate permission={P.ORG_ADMIN}>
             <Button
               variant="outline"
               size="sm"

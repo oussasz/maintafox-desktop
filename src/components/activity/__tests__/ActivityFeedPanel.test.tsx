@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ActivityFeedPanel } from "@/components/activity/ActivityFeedPanel";
 import { PermissionProvider } from "@/contexts/PermissionContext";
+import { P } from "@shared/rbac/permissions.generated";
 
 const mockGetMyPermissions = vi.fn();
 
@@ -35,7 +36,8 @@ vi.mock("@/services/activity-service", () => ({
   listActivityEvents: (filter: unknown) => activityMocks.listActivityEvents(filter),
   listSavedActivityFilters: () => activityMocks.listSavedActivityFilters(),
   saveActivityFilter: (payload: unknown) => activityMocks.saveActivityFilter(payload),
-  getEventChain: (eventId: number, rootTable: string) => activityMocks.getEventChain(eventId, rootTable),
+  getEventChain: (eventId: number, rootTable: string) =>
+    activityMocks.getEventChain(eventId, rootTable),
 }));
 
 function renderPanel() {
@@ -59,7 +61,7 @@ function permission(name: string) {
 describe("ActivityFeedPanel accessibility and saved views", () => {
   beforeEach(() => {
     mockGetMyPermissions.mockReset();
-    mockGetMyPermissions.mockResolvedValue([permission("log.view")]);
+    mockGetMyPermissions.mockResolvedValue([permission(P.LOG_VIEW)]);
     activityMocks.listActivityEvents.mockClear();
     activityMocks.listSavedActivityFilters.mockClear();
   });

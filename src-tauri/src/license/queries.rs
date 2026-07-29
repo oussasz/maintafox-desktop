@@ -15,9 +15,9 @@ use crate::license::security::{append_license_trace, mark_key_compromised, Licen
 fn capability_class_for_permission(permission: &str) -> &'static str {
     if permission.ends_with(".view")
         || permission.starts_with("audit.")
-        || permission.starts_with("act.view")
-        || permission.starts_with("ent.view")
-        || permission.starts_with("sync.view")
+        || permission.starts_with(crate::rbac::permissions::ACT_VIEW)
+        || permission.starts_with(crate::rbac::permissions::ENT_VIEW)
+        || permission.starts_with(crate::rbac::permissions::SYNC_VIEW)
     {
         "read"
     } else if permission.starts_with("act.") || permission.starts_with("ent.") {

@@ -21,13 +21,13 @@
 ///   - `ot.delete`  — delete draft work orders (dangerous)
 pub fn wo_permission_domain() -> Vec<(&'static str, &'static str, bool, bool)> {
     vec![
-        ("ot.view", "View work orders and details", false, false),
-        ("ot.create", "Create new work orders", false, false),
-        ("ot.edit", "Edit, plan, assign, and execute work orders", false, false),
-        ("ot.approve", "Approve work orders from draft", false, false),
-        ("ot.close", "Close technically verified work orders", true, true),
-        ("ot.reopen", "Reopen recently closed work orders", true, true),
-        ("ot.admin", "Override, archive, manage WO settings", true, false),
-        ("ot.delete", "Delete draft work orders", true, false),
+        (crate::rbac::permissions::OT_VIEW, "View work orders and details", false, false),
+        (crate::rbac::permissions::OT_CREATE, "Create new work orders", false, false),
+        (crate::rbac::permissions::OT_EDIT, "Edit, plan, assign, and execute work orders", false, false),
+        (crate::rbac::permissions::OT_APPROVE, "Approve work orders from draft", false, false),
+        (crate::rbac::permissions::OT_CLOSE, "Close technically verified work orders", true, true),
+        (crate::rbac::permissions::OT_REOPEN, "Reopen recently closed work orders", true, true),
+        (crate::rbac::permissions::OT_ADMIN, "Override, archive, manage WO settings", true, false),
+        (crate::rbac::permissions::OT_DELETE, "Delete draft work orders", true, false),
     ]
 }

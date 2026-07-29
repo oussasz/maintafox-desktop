@@ -1,3 +1,4 @@
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 /** Mirrors `DEFAULT_DASHBOARD_LAYOUT_JSON` in `commands/dashboard.rs`. */
 
 export const DASHBOARD_WIDGET_IDS = {
@@ -31,9 +32,9 @@ export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutV1 = {
 };
 
 /** Optional permission required to load widget data (not stored in layout). */
-export const DASHBOARD_WIDGET_PERMISSION: Partial<Record<string, string>> = {
-  [DASHBOARD_WIDGET_IDS.DI_STATUS]: "di.view",
-  [DASHBOARD_WIDGET_IDS.RELIABILITY_SNAPSHOT]: "rep.view",
+export const DASHBOARD_WIDGET_PERMISSION: Partial<Record<string, PermissionName>> = {
+  [DASHBOARD_WIDGET_IDS.DI_STATUS]: P.DI_VIEW,
+  [DASHBOARD_WIDGET_IDS.RELIABILITY_SNAPSHOT]: P.REP_VIEW,
 };
 
 export function parseDashboardLayoutJson(raw: string): DashboardLayoutV1 {

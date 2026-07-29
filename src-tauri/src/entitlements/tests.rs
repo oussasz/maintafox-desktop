@@ -128,10 +128,10 @@ async fn signed_envelope_persists_and_capability_check_is_enforced() {
     assert_eq!(summary.effective_state, "active");
     assert_eq!(summary.envelope_id.as_deref(), Some("env-001"));
 
-    queries::enforce_capability_for_permission(&db, "inv.manage")
+    queries::enforce_capability_for_permission(&db, crate::rbac::permissions::INV_MANAGE)
         .await
         .expect("inventory capability allowed");
-    queries::enforce_capability_for_permission(&db, "inv.view")
+    queries::enforce_capability_for_permission(&db, crate::rbac::permissions::INV_VIEW)
         .await
         .expect("inventory view maps to same module");
 }
@@ -160,7 +160,7 @@ async fn state_transitions_and_mid_session_policy_refresh_are_consistent() {
     queries::apply_entitlement_envelope(&db, env1)
         .await
         .expect("apply v1");
-    queries::enforce_capability_for_permission(&db, "fin.manage")
+    queries::enforce_capability_for_permission(&db, crate::rbac::permissions::FIN_MANAGE)
         .await
         .expect("finance write allowed in v1");
 
@@ -173,7 +173,7 @@ async fn state_transitions_and_mid_session_policy_refresh_are_consistent() {
         .await
         .expect("apply v2 suspended");
 
-    let blocked = queries::enforce_capability_for_permission(&db, "fin.manage")
+    let blocked = queries::enforce_capability_for_permission(&db, crate::rbac::permissions::FIN_MANAGE)
         .await
         .expect_err("finance write must be blocked when suspended");
     assert!(format!("{blocked}").contains("Entitlement capability blocked"));

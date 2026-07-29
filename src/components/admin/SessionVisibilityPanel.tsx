@@ -19,6 +19,7 @@ import { useStepUp } from "@/hooks/use-step-up";
 import { useToast } from "@/hooks/use-toast";
 import { listActiveSessions, revokeSession } from "@/services/rbac-service";
 import type { SessionSummary } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const AUTO_REFRESH_MS = 30_000;
 
@@ -165,7 +166,7 @@ export function SessionVisibilityPanel() {
         id: "actions",
         header: "",
         cell: ({ row }) => {
-          if (row.original.is_current_session || !can("adm.users")) return null;
+          if (row.original.is_current_session || !can(P.ADM_USERS)) return null;
           return (
             <Button
               variant="ghost"

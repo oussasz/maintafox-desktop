@@ -11,6 +11,7 @@ import {
   updateMarkovModel,
 } from "@/services/reliability-service";
 import type { MarkovModel } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const DEFAULT_MARKOV_GRAPH = `{"spec_version":1,"kind":"discrete","states":["Up","Degraded","Down"],"matrix":[[0.94,0.05,0.01],[0.10,0.75,0.15],[0.25,0.50,0.25]]}`;
 
@@ -21,7 +22,7 @@ type MarkovAdvancedPanelProps = {
 export function MarkovAdvancedPanel({ equipmentId }: MarkovAdvancedPanelProps) {
   const { t } = useTranslation("reliability");
   const { can, isLoading: permissionsLoading } = usePermissions();
-  const canAnalyze = can("ram.analyze");
+  const canAnalyze = can(P.RAM_ANALYZE);
 
   const [rows, setRows] = useState<MarkovModel[]>([]);
   const [selected, setSelected] = useState<MarkovModel | null>(null);
@@ -31,7 +32,7 @@ export function MarkovAdvancedPanel({ equipmentId }: MarkovAdvancedPanelProps) {
   const [loading, setLoading] = useState(false);
 
   const loadRows = useCallback(async () => {
-    if (!can("ram.view")) {
+    if (!can(P.RAM_VIEW)) {
       setRows([]);
       return;
     }

@@ -12,12 +12,13 @@ import { useTranslation } from "react-i18next";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import type { Asset } from "@shared/ipc-types";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
 interface ContextMenuAction {
   key: string;
   label: string;
   icon: React.ReactNode;
-  permission?: string;
+  permission?: PermissionName;
   variant?: "default" | "danger";
   onAction: () => void;
 }
@@ -75,7 +76,7 @@ export function AssetTreeContextMenu({
       key: "add-child",
       label: t("contextMenu.addChild"),
       icon: <Plus className="h-3.5 w-3.5" />,
-      permission: "eq.manage",
+      permission: P.EQ_MANAGE,
       onAction: () => {
         onAddChild(asset);
         onClose();
@@ -85,7 +86,7 @@ export function AssetTreeContextMenu({
       key: "edit",
       label: t("contextMenu.edit"),
       icon: <Pencil className="h-3.5 w-3.5" />,
-      permission: "eq.manage",
+      permission: P.EQ_MANAGE,
       onAction: () => {
         onEdit(asset);
         onClose();
@@ -95,14 +96,14 @@ export function AssetTreeContextMenu({
       key: "copy-code",
       label: t("contextMenu.copyCode"),
       icon: <ClipboardCopy className="h-3.5 w-3.5" />,
-      permission: "eq.view",
+      permission: P.EQ_VIEW,
       onAction: handleCopyCode,
     },
     {
       key: "move",
       label: t("contextMenu.move"),
       icon: <Move className="h-3.5 w-3.5" />,
-      permission: "eq.manage",
+      permission: P.EQ_MANAGE,
       onAction: () => {
         onMove(asset);
         onClose();
@@ -112,7 +113,7 @@ export function AssetTreeContextMenu({
       key: "decommission",
       label: t("contextMenu.decommission"),
       icon: <AlertTriangle className="h-3.5 w-3.5" />,
-      permission: "eq.manage",
+      permission: P.EQ_MANAGE,
       variant: "danger",
       onAction: () => {
         onDecommission(asset);

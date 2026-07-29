@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuditLogViewer } from "@/components/activity/AuditLogViewer";
 import { PermissionProvider } from "@/contexts/PermissionContext";
+import { P } from "@shared/rbac/permissions.generated";
 
 const mockGetMyPermissions = vi.fn();
 
@@ -66,7 +67,7 @@ function permission(name: string) {
 describe("AuditLogViewer labels and detail errors", () => {
   beforeEach(() => {
     mockGetMyPermissions.mockReset();
-    mockGetMyPermissions.mockResolvedValue([permission("log.view"), permission("log.export")]);
+    mockGetMyPermissions.mockResolvedValue([permission(P.LOG_VIEW), permission(P.LOG_EXPORT)]);
     auditMocks.listAuditEvents.mockClear();
     auditMocks.getAuditEvent.mockClear();
   });

@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useOrgDesignerStore } from "@/stores/org-designer-store";
 import type { OrgDesignerNodeRow } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const INDENT_PX = 20;
 
@@ -170,7 +171,7 @@ export function OrganizationTreePanel({
           className="border-0"
         />
         {canAddDraftNodes && !readOnly && (onAddRoot || onAddChild) && (
-          <PermissionGate permission="org.manage">
+          <PermissionGate permission={P.ORG_MANAGE}>
             <div className="px-4 pb-2 flex flex-wrap gap-1.5">
               {onAddRoot && (
                 <Button

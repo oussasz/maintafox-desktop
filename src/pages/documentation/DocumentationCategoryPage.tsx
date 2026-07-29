@@ -36,6 +36,7 @@ import {
 } from "@/services/documentation-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { Asset, LibraryDocument, LibraryDocumentCategory } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { isDocumentationCategorySlug, SLUG_TO_CATEGORY } from "./documentation-slugs";
 
@@ -49,7 +50,7 @@ export function DocumentationCategoryPage() {
     return SLUG_TO_CATEGORY[categorySlug];
   }, [categorySlug]);
 
-  const canManage = can("doc.manage");
+  const canManage = can(P.DOC_MANAGE);
 
   const [docs, setDocs] = useState<LibraryDocument[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -219,7 +220,7 @@ export function DocumentationCategoryPage() {
         </div>
       ) : null}
 
-      <PermissionGate permission="doc.manage">
+      <PermissionGate permission={P.DOC_MANAGE}>
         <div className="mb-8 max-w-xl space-y-3 rounded-lg border border-surface-border bg-surface-1 p-4">
           <h3 className="text-sm font-medium text-text-primary">{t("upload.title")}</h3>
           <div className="grid gap-2">

@@ -4,16 +4,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { Sidebar } from "@/components/layout/Sidebar";
 import { defaultNavItems, appRoutes } from "@/navigation/nav-registry";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
-const mockCan = vi.fn((_permission: string) => true);
+const mockCan = vi.fn((_permission: PermissionName) => true);
 
 vi.mock("@/hooks/use-permissions", () => ({
   usePermissions: () => ({
-    can: (permission: string) => mockCan(permission),
-    canAny: (permissions: string[]) => permissions.some((p) => mockCan(p)),
-    canAll: (permissions: string[]) => permissions.every((p) => mockCan(p)),
+    can: (permission: PermissionName) => mockCan(permission),
+    canAny: (...permissions: PermissionName[]) => permissions.some((p) => mockCan(p)),
+    canAll: (...permissions: PermissionName[]) => permissions.every((p) => mockCan(p)),
     permissions: [],
-    loading: false,
+    isLoading: false,
     refresh: async () => undefined,
   }),
 }));
@@ -32,7 +33,7 @@ vi.mock("react-i18next", () => ({
 const ALL_PERMISSIONS = [
   ...new Set(
     defaultNavItems
-      .filter((i): i is typeof i & { requiredPermission: string } => !!i.requiredPermission)
+      .filter((i): i is typeof i & { requiredPermission: PermissionName } => !!i.requiredPermission)
       .map((i) => i.requiredPermission),
   ),
 ];
@@ -52,7 +53,9 @@ describe("Sidebar — permission-based filtering", () => {
   });
 
   it("V1 — Admin sees all 27 nav items", async () => {
-    mockCan.mockImplementation((permission: string) => ALL_PERMISSIONS.includes(permission));
+    mockCan.mockImplementation((permission: PermissionName) =>
+      ALL_PERMISSIONS.includes(permission),
+    );
     renderSidebar();
 
     await waitFor(() => {
@@ -64,8 +67,8 @@ describe("Sidebar — permission-based filtering", () => {
   });
 
   it("V2 — Non-admin sees only permitted modules (unauthorized hidden, not greyed)", async () => {
-    const allowed = new Set(["eq.view", "di.view"]);
-    mockCan.mockImplementation((permission: string) => allowed.has(permission));
+    const allowed = new Set<PermissionName>([P.EQ_VIEW, P.DI_VIEW]);
+    mockCan.mockImplementation((permission: PermissionName) => allowed.has(permission));
     renderSidebar();
 
     await waitFor(() => {
@@ -98,7 +101,7 @@ describe("Sidebar — permission-based filtering", () => {
   });
 
   it("empty groups are hidden when all children are filtered out", async () => {
-    mockCan.mockImplementation((permission: string) => permission === "eq.view");
+    mockCan.mockImplementation((permission: PermissionName) => permission === P.EQ_VIEW);
     renderSidebar();
 
     await waitFor(() => {

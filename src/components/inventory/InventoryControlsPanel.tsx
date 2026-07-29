@@ -7,7 +7,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useSession } from "@/hooks/use-session";
 import {
   approveInventoryCountLine,
@@ -37,6 +43,7 @@ import type {
   StockLocation,
   Warehouse,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function InventoryControlsPanel() {
   const { info } = useSession();
@@ -73,14 +80,15 @@ export function InventoryControlsPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [warehouseRows, locationRows, articleRows, sessionRows, runRows, txRows] = await Promise.all([
-        listInventoryWarehouses(),
-        listInventoryLocations(null),
-        listInventoryArticles({ search: null }),
-        listInventoryCountSessions(),
-        listInventoryReconciliationRuns(),
-        listInventoryTransactions({ source_type: "COUNT_SESSION", limit: 120 }),
-      ]);
+      const [warehouseRows, locationRows, articleRows, sessionRows, runRows, txRows] =
+        await Promise.all([
+          listInventoryWarehouses(),
+          listInventoryLocations(null),
+          listInventoryArticles({ search: null }),
+          listInventoryCountSessions(),
+          listInventoryReconciliationRuns(),
+          listInventoryTransactions({ source_type: "COUNT_SESSION", limit: 120 }),
+        ]);
       setWarehouses(warehouseRows.filter((row) => row.is_active === 1));
       setLocations(locationRows.filter((row) => row.is_active === 1));
       setArticles(articleRows.filter((row) => row.is_active === 1));
@@ -153,7 +161,12 @@ export function InventoryControlsPanel() {
     {
       accessorKey: "is_critical",
       header: "Critical",
-      cell: ({ row }) => (row.original.is_critical === 1 ? <Badge variant="destructive">Critical</Badge> : <Badge>Normal</Badge>),
+      cell: ({ row }) =>
+        row.original.is_critical === 1 ? (
+          <Badge variant="destructive">Critical</Badge>
+        ) : (
+          <Badge>Normal</Badge>
+        ),
     },
     {
       accessorKey: "approved_by_id",
@@ -177,7 +190,12 @@ export function InventoryControlsPanel() {
     {
       accessorKey: "is_break",
       header: "Severity",
-      cell: ({ row }) => (row.original.is_break === 1 ? <Badge variant="destructive">Break</Badge> : <Badge>Info</Badge>),
+      cell: ({ row }) =>
+        row.original.is_break === 1 ? (
+          <Badge variant="destructive">Break</Badge>
+        ) : (
+          <Badge>Info</Badge>
+        ),
     },
   ];
 
@@ -194,37 +212,55 @@ export function InventoryControlsPanel() {
 
   return (
     <div className="space-y-4">
-      {error ? <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-sm">{error}</div> : null}
+      {error ? (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-sm">
+          {error}
+        </div>
+      ) : null}
 
-      <PermissionGate permission="inv.count">
+      <PermissionGate permission={P.INV_COUNT}>
         <div className="rounded-md border p-4">
           <h3 className="mb-2 text-sm font-semibold">Cycle-count Session Lifecycle</h3>
           <div className="grid gap-2 md:grid-cols-4">
             <div className="space-y-1">
               <Label className="text-xs">Warehouse</Label>
-              <Select value={String(newWarehouseId)} onValueChange={(v) => setNewWarehouseId(Number(v))}>
-              <SelectTrigger><SelectValue placeholder="Warehouse" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">Select warehouse</SelectItem>
-                {warehouses.map((w) => (
-                  <SelectItem key={w.id} value={String(w.id)}>{w.code} - {w.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <Select
+                value={String(newWarehouseId)}
+                onValueChange={(v) => setNewWarehouseId(Number(v))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Warehouse" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">Select warehouse</SelectItem>
+                  {warehouses.map((w) => (
+                    <SelectItem key={w.id} value={String(w.id)}>
+                      {w.code} - {w.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Scope location (optional)</Label>
-              <Select value={String(newLocationId)} onValueChange={(v) => setNewLocationId(Number(v))}>
-              <SelectTrigger><SelectValue placeholder="Scope location (optional)" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">All session locations</SelectItem>
-                {locations
-                  .filter((l) => newWarehouseId <= 0 || l.warehouse_id === newWarehouseId)
-                  .map((l) => (
-                    <SelectItem key={l.id} value={String(l.id)}>{l.warehouse_code}/{l.code}</SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+              <Select
+                value={String(newLocationId)}
+                onValueChange={(v) => setNewLocationId(Number(v))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Scope location (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">All session locations</SelectItem>
+                  {locations
+                    .filter((l) => newWarehouseId <= 0 || l.warehouse_id === newWarehouseId)
+                    .map((l) => (
+                      <SelectItem key={l.id} value={String(l.id)}>
+                        {l.warehouse_code}/{l.code}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label htmlFor="inv-cc-threshold" className="text-xs">
@@ -240,31 +276,38 @@ export function InventoryControlsPanel() {
               />
             </div>
             <div className="flex items-end">
-            <Button
-              disabled={saving || newWarehouseId <= 0}
-              onClick={() =>
-                void withSave(async () => {
-                  const session = await createInventoryCountSession({
-                    warehouse_id: newWarehouseId,
-                    location_id: newLocationId > 0 ? newLocationId : null,
-                    critical_abs_threshold: newThreshold,
-                    actor_id: info?.user_id ?? null,
-                  });
-                  setSelectedSessionId(session.id);
-                })
-              }
-            >
-              Create session
-            </Button>
+              <Button
+                disabled={saving || newWarehouseId <= 0}
+                onClick={() =>
+                  void withSave(async () => {
+                    const session = await createInventoryCountSession({
+                      warehouse_id: newWarehouseId,
+                      location_id: newLocationId > 0 ? newLocationId : null,
+                      critical_abs_threshold: newThreshold,
+                      actor_id: info?.user_id ?? null,
+                    });
+                    setSelectedSessionId(session.id);
+                  })
+                }
+              >
+                Create session
+              </Button>
             </div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Select value={String(selectedSessionId ?? 0)} onValueChange={(v) => setSelectedSessionId(Number(v) || null)}>
-              <SelectTrigger className="w-72"><SelectValue placeholder="Select session" /></SelectTrigger>
+            <Select
+              value={String(selectedSessionId ?? 0)}
+              onValueChange={(v) => setSelectedSessionId(Number(v) || null)}
+            >
+              <SelectTrigger className="w-72">
+                <SelectValue placeholder="Select session" />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="0">Select session</SelectItem>
                 {sessions.map((session) => (
-                  <SelectItem key={session.id} value={String(session.id)}>{session.session_code} ({session.status})</SelectItem>
+                  <SelectItem key={session.id} value={String(session.id)}>
+                    {session.session_code} ({session.status})
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -274,14 +317,16 @@ export function InventoryControlsPanel() {
                   variant="outline"
                   size="sm"
                   disabled={saving || selectedSession.status !== "draft"}
-                  onClick={() => void withSave(async () => {
-                    await transitionInventoryCountSession({
-                      session_id: selectedSession.id,
-                      expected_row_version: selectedSession.row_version,
-                      next_status: "counting",
-                      actor_id: info?.user_id ?? null,
-                    });
-                  })}
+                  onClick={() =>
+                    void withSave(async () => {
+                      await transitionInventoryCountSession({
+                        session_id: selectedSession.id,
+                        expected_row_version: selectedSession.row_version,
+                        next_status: "counting",
+                        actor_id: info?.user_id ?? null,
+                      });
+                    })
+                  }
                 >
                   Start counting
                 </Button>
@@ -289,14 +334,16 @@ export function InventoryControlsPanel() {
                   variant="outline"
                   size="sm"
                   disabled={saving || selectedSession.status !== "counting"}
-                  onClick={() => void withSave(async () => {
-                    await transitionInventoryCountSession({
-                      session_id: selectedSession.id,
-                      expected_row_version: selectedSession.row_version,
-                      next_status: "submitted",
-                      actor_id: info?.user_id ?? null,
-                    });
-                  })}
+                  onClick={() =>
+                    void withSave(async () => {
+                      await transitionInventoryCountSession({
+                        session_id: selectedSession.id,
+                        expected_row_version: selectedSession.row_version,
+                        next_status: "submitted",
+                        actor_id: info?.user_id ?? null,
+                      });
+                    })
+                  }
                 >
                   Submit
                 </Button>
@@ -304,27 +351,31 @@ export function InventoryControlsPanel() {
                   variant="outline"
                   size="sm"
                   disabled={saving || selectedSession.status !== "submitted"}
-                  onClick={() => void withSave(async () => {
-                    await transitionInventoryCountSession({
-                      session_id: selectedSession.id,
-                      expected_row_version: selectedSession.row_version,
-                      next_status: "approved",
-                      actor_id: info?.user_id ?? null,
-                    });
-                  })}
+                  onClick={() =>
+                    void withSave(async () => {
+                      await transitionInventoryCountSession({
+                        session_id: selectedSession.id,
+                        expected_row_version: selectedSession.row_version,
+                        next_status: "approved",
+                        actor_id: info?.user_id ?? null,
+                      });
+                    })
+                  }
                 >
                   Approve session
                 </Button>
                 <Button
                   size="sm"
                   disabled={saving || selectedSession.status !== "approved"}
-                  onClick={() => void withSave(async () => {
-                    await postInventoryCountSession({
-                      session_id: selectedSession.id,
-                      expected_row_version: selectedSession.row_version,
-                      actor_id: info?.user_id ?? null,
-                    });
-                  })}
+                  onClick={() =>
+                    void withSave(async () => {
+                      await postInventoryCountSession({
+                        session_id: selectedSession.id,
+                        expected_row_version: selectedSession.row_version,
+                        actor_id: info?.user_id ?? null,
+                      });
+                    })
+                  }
                 >
                   Post variances
                 </Button>
@@ -340,84 +391,119 @@ export function InventoryControlsPanel() {
           <div className="grid gap-2 md:grid-cols-5">
             <div className="space-y-1">
               <Label className="text-xs">Article</Label>
-              <Select value={String(lineArticleId)} onValueChange={(v) => setLineArticleId(Number(v))}>
-              <SelectTrigger><SelectValue placeholder="Article" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">Select article</SelectItem>
-                {articles.map((a) => (
-                  <SelectItem key={a.id} value={String(a.id)}>{a.article_code} - {a.article_name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <Select
+                value={String(lineArticleId)}
+                onValueChange={(v) => setLineArticleId(Number(v))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Article" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">Select article</SelectItem>
+                  {articles.map((a) => (
+                    <SelectItem key={a.id} value={String(a.id)}>
+                      {a.article_code} - {a.article_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Location</Label>
-              <Select value={String(lineLocationId)} onValueChange={(v) => setLineLocationId(Number(v))}>
-              <SelectTrigger><SelectValue placeholder="Location" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">Select location</SelectItem>
-                {locations
-                  .filter((l) => l.warehouse_id === selectedSession.warehouse_id)
-                  .map((l) => (
-                    <SelectItem key={l.id} value={String(l.id)}>{l.warehouse_code}/{l.code}</SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+              <Select
+                value={String(lineLocationId)}
+                onValueChange={(v) => setLineLocationId(Number(v))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Location" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">Select location</SelectItem>
+                  {locations
+                    .filter((l) => l.warehouse_id === selectedSession.warehouse_id)
+                    .map((l) => (
+                      <SelectItem key={l.id} value={String(l.id)}>
+                        {l.warehouse_code}/{l.code}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Counted quantity</Label>
-              <Input type="number" min={0} step="0.01" value={lineCountQty} onChange={(e) => setLineCountQty(Number(e.target.value || 0))} />
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={lineCountQty}
+                onChange={(e) => setLineCountQty(Number(e.target.value || 0))}
+              />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Variance reason code</Label>
-              <Input value={lineVarianceReasonCode} onChange={(e) => setLineVarianceReasonCode(e.target.value)} placeholder="If variance vs system" />
+              <Input
+                value={lineVarianceReasonCode}
+                onChange={(e) => setLineVarianceReasonCode(e.target.value)}
+                placeholder="If variance vs system"
+              />
             </div>
             <div className="flex items-end">
-            <Button
-              disabled={saving || lineArticleId <= 0 || lineLocationId <= 0}
-              onClick={() => {
-                void (async () => {
-                  setSaving(true);
-                  setError(null);
-                  try {
-                    await upsertInventoryCountLine({
-                      session_id: selectedSession.id,
-                      article_id: lineArticleId,
-                      location_id: lineLocationId,
-                      counted_qty: lineCountQty,
-                      variance_reason_code: lineVarianceReasonCode.trim() || null,
-                    });
-                    await refreshCountLines();
-                  } catch (err) {
-                    setError(toErrorMessage(err));
-                  } finally {
-                    setSaving(false);
-                  }
-                })();
-              }}
-            >
-              Upsert line
-            </Button>
+              <Button
+                disabled={saving || lineArticleId <= 0 || lineLocationId <= 0}
+                onClick={() => {
+                  void (async () => {
+                    setSaving(true);
+                    setError(null);
+                    try {
+                      await upsertInventoryCountLine({
+                        session_id: selectedSession.id,
+                        article_id: lineArticleId,
+                        location_id: lineLocationId,
+                        counted_qty: lineCountQty,
+                        variance_reason_code: lineVarianceReasonCode.trim() || null,
+                      });
+                      await refreshCountLines();
+                    } catch (err) {
+                      setError(toErrorMessage(err));
+                    } finally {
+                      setSaving(false);
+                    }
+                  })();
+                }}
+              >
+                Upsert line
+              </Button>
             </div>
           </div>
           <div className="mt-2 flex gap-2">
             <div className="min-w-0 flex-1 space-y-1">
               <Label className="text-xs">Reviewer evidence note</Label>
-              <Input value={lineReviewerEvidence} onChange={(e) => setLineReviewerEvidence(e.target.value)} />
+              <Input
+                value={lineReviewerEvidence}
+                onChange={(e) => setLineReviewerEvidence(e.target.value)}
+              />
             </div>
             <Button
               variant="outline"
-              disabled={saving || !lineReviewerEvidence.trim() || lines.every((line) => line.approval_required === 0 || line.approved_by_id !== null)}
-              onClick={() => void withSave(async () => {
-                const pending = lines.find((line) => line.approval_required === 1 && line.approved_by_id === null);
-                if (!pending || !info?.user_id) return;
-                await approveInventoryCountLine({
-                  line_id: pending.id,
-                  expected_row_version: pending.row_version,
-                  reviewer_id: info.user_id,
-                  reviewer_evidence: lineReviewerEvidence,
-                });
-              })}
+              disabled={
+                saving ||
+                !lineReviewerEvidence.trim() ||
+                lines.every((line) => line.approval_required === 0 || line.approved_by_id !== null)
+              }
+              onClick={() =>
+                void withSave(async () => {
+                  const pending = lines.find(
+                    (line) => line.approval_required === 1 && line.approved_by_id === null,
+                  );
+                  if (!pending || !info?.user_id) return;
+                  await approveInventoryCountLine({
+                    line_id: pending.id,
+                    expected_row_version: pending.row_version,
+                    reviewer_id: info.user_id,
+                    reviewer_evidence: lineReviewerEvidence,
+                  });
+                })
+              }
             >
               Approve next pending variance
             </Button>
@@ -427,18 +513,24 @@ export function InventoryControlsPanel() {
           </div>
           {selectedSession.status === "posted" ? (
             <div className="mt-3 flex gap-2">
-              <Input value={sessionReversalReason} onChange={(e) => setSessionReversalReason(e.target.value)} placeholder="Reversal reason (mandatory)" />
+              <Input
+                value={sessionReversalReason}
+                onChange={(e) => setSessionReversalReason(e.target.value)}
+                placeholder="Reversal reason (mandatory)"
+              />
               <Button
                 variant="destructive"
                 disabled={saving || sessionReversalReason.trim().length < 5}
-                onClick={() => void withSave(async () => {
-                  await reverseInventoryCountSession({
-                    session_id: selectedSession.id,
-                    expected_row_version: selectedSession.row_version,
-                    reason: sessionReversalReason,
-                    actor_id: info?.user_id ?? null,
-                  });
-                })}
+                onClick={() =>
+                  void withSave(async () => {
+                    await reverseInventoryCountSession({
+                      session_id: selectedSession.id,
+                      expected_row_version: selectedSession.row_version,
+                      reason: sessionReversalReason,
+                      actor_id: info?.user_id ?? null,
+                    });
+                  })
+                }
               >
                 Reverse posting
               </Button>
@@ -449,30 +541,47 @@ export function InventoryControlsPanel() {
 
       <div className="rounded-md border p-4">
         <h3 className="mb-2 text-sm font-semibold">Daily Integrity and Reconciliation</h3>
-        <PermissionGate permission="erp.reconcile">
+        <PermissionGate permission={P.ERP_RECONCILE}>
           <Button
             size="sm"
             disabled={saving}
-            onClick={() => void withSave(async () => {
-              await runInventoryReconciliation({ actor_id: info?.user_id ?? null, drift_break_threshold: 0.01 });
-            })}
+            onClick={() =>
+              void withSave(async () => {
+                await runInventoryReconciliation({
+                  actor_id: info?.user_id ?? null,
+                  drift_break_threshold: 0.01,
+                });
+              })
+            }
           >
             Run daily reconciliation
           </Button>
         </PermissionGate>
         <div className="mt-2 flex gap-2">
-          <Select value={String(selectedRunId ?? 0)} onValueChange={(v) => setSelectedRunId(Number(v) || null)}>
-            <SelectTrigger className="w-72"><SelectValue placeholder="Select reconciliation run" /></SelectTrigger>
+          <Select
+            value={String(selectedRunId ?? 0)}
+            onValueChange={(v) => setSelectedRunId(Number(v) || null)}
+          >
+            <SelectTrigger className="w-72">
+              <SelectValue placeholder="Select reconciliation run" />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="0">Select run</SelectItem>
               {runs.map((run) => (
-                <SelectItem key={run.id} value={String(run.id)}>{run.run_code} ({run.drift_rows} drift rows)</SelectItem>
+                <SelectItem key={run.id} value={String(run.id)}>
+                  {run.run_code} ({run.drift_rows} drift rows)
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
         <div className="mt-3">
-          <DataTable columns={findingColumns} data={findings} searchable={false} isLoading={loading} />
+          <DataTable
+            columns={findingColumns}
+            data={findings}
+            searchable={false}
+            isLoading={loading}
+          />
         </div>
       </div>
 

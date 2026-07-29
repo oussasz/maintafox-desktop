@@ -31,6 +31,7 @@ import { useOrgDesignerStore, isOrgStructureDesignMode } from "@/stores/org-desi
 import { useOrgNodeStore } from "@/stores/org-node-store";
 import { formatOrgIpcError } from "@/utils/errors";
 import type { OrgDesignerNodeRow, OrgNodeEquipmentRow } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -300,7 +301,7 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
           className="flex-1 min-h-0 overflow-y-auto p-4 data-[state=inactive]:hidden"
         >
           {!readOnly && (
-            <PermissionGate permission="org.manage">
+            <PermissionGate permission={P.ORG_MANAGE}>
               <div className="mb-4 space-y-2 rounded-lg border border-surface-border p-3">
                 <p className="text-xs font-medium text-text-muted">
                   {t("designer.metadata.title")}
@@ -475,45 +476,45 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
                 {t("designer.inspector.equipmentDraftReadOnly")}
               </p>
             ) : (
-            <div className="mt-4 space-y-2">
-              <Input
-                value={equipSearch}
-                onChange={(e) => void handleEquipSearch(e.target.value)}
-                placeholder={t("designer.inspector.equipSearchPlaceholder")}
-                className="h-8 text-xs"
-                disabled={equipmentReadOnly}
-              />
-              {equipSearching && (
-                <p className="text-xs text-text-muted">{t("designer.inspector.searching")}</p>
-              )}
-              {equipResults.length > 0 && (
-                <div className="space-y-1 max-h-48 overflow-y-auto border border-surface-border rounded-md p-2">
-                  {equipResults.map((eq) => (
-                    <button
-                      key={eq.id}
-                      type="button"
-                      className="w-full text-left rounded-md p-2 text-sm hover:bg-surface-2 cursor-pointer disabled:opacity-50"
-                      onClick={() => void handleAssign(eq.id)}
-                      disabled={equipmentReadOnly}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs text-text-muted">
-                          {eq.asset_id_code}
-                        </span>
-                        <span>{eq.name}</span>
-                      </div>
-                      {eq.current_node_name && (
-                        <p className="text-[11px] text-status-warning mt-0.5">
-                          {t("designer.inspector.equipCurrentlyAssigned", {
-                            node: eq.current_node_name,
-                          })}
-                        </p>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+              <div className="mt-4 space-y-2">
+                <Input
+                  value={equipSearch}
+                  onChange={(e) => void handleEquipSearch(e.target.value)}
+                  placeholder={t("designer.inspector.equipSearchPlaceholder")}
+                  className="h-8 text-xs"
+                  disabled={equipmentReadOnly}
+                />
+                {equipSearching && (
+                  <p className="text-xs text-text-muted">{t("designer.inspector.searching")}</p>
+                )}
+                {equipResults.length > 0 && (
+                  <div className="space-y-1 max-h-48 overflow-y-auto border border-surface-border rounded-md p-2">
+                    {equipResults.map((eq) => (
+                      <button
+                        key={eq.id}
+                        type="button"
+                        className="w-full text-left rounded-md p-2 text-sm hover:bg-surface-2 cursor-pointer disabled:opacity-50"
+                        onClick={() => void handleAssign(eq.id)}
+                        disabled={equipmentReadOnly}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs text-text-muted">
+                            {eq.asset_id_code}
+                          </span>
+                          <span>{eq.name}</span>
+                        </div>
+                        {eq.current_node_name && (
+                          <p className="text-[11px] text-status-warning mt-0.5">
+                            {t("designer.inspector.equipCurrentlyAssigned", {
+                              node: eq.current_node_name,
+                            })}
+                          </p>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </TabsContent>
         )}

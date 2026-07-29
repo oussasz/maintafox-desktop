@@ -45,6 +45,7 @@ import type {
   PmOccurrence,
   PmPlanVersion,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const PLAN_STATUS_OPTIONS = [
   "draft",
@@ -1074,13 +1075,13 @@ export function PmPage() {
           <Badge variant="secondary">{plans.length}</Badge>
         </div>
         <div className="flex items-center gap-2">
-          <PermissionGate anyOf={["pm.create", "pm.manage"]}>
+          <PermissionGate anyOf={[P.PM_CREATE, P.PM_EDIT]}>
             <Button size="sm" className="gap-1.5" onClick={openCreatePlan}>
               <Plus className="h-3.5 w-3.5" />
               {t("actions.newPlan")}
             </Button>
           </PermissionGate>
-          <PermissionGate anyOf={["pm.create", "pm.manage"]}>
+          <PermissionGate anyOf={[P.PM_CREATE, P.PM_EDIT]}>
             <Button
               size="sm"
               variant="outline"
@@ -1257,7 +1258,7 @@ export function PmPage() {
                 </div>
               </div>
 
-              <PermissionGate anyOf={["pm.edit", "pm.manage"]}>
+              <PermissionGate anyOf={[P.PM_EDIT, P.PM_EDIT]}>
                 <div className="grid items-end gap-3 md:grid-cols-[1fr_auto_auto]">
                   <div className="space-y-1">
                     <Label>{t("fields.lifecycle")}</Label>
@@ -1291,7 +1292,7 @@ export function PmPage() {
                   >
                     <RefreshCw className="h-4 w-4" />
                   </Button>
-                  <PermissionGate anyOf={["pm.delete", "pm.manage"]}>
+                  <PermissionGate anyOf={[P.PM_DELETE, P.PM_EDIT]}>
                     <Button
                       variant="outline"
                       size="icon"
@@ -1313,7 +1314,7 @@ export function PmPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h3 className="font-medium">{t("sections.versions")}</h3>
-                  <PermissionGate anyOf={["pm.create", "pm.manage"]}>
+                  <PermissionGate anyOf={[P.PM_CREATE, P.PM_EDIT]}>
                     <Button
                       size="sm"
                       variant="outline"
@@ -1347,7 +1348,7 @@ export function PmPage() {
                         <td className="px-3 py-2">{formatEnumLabel(version.status)}</td>
                         <td className="px-3 py-2">
                           <div className="flex gap-2">
-                            <PermissionGate anyOf={["pm.edit", "pm.manage"]}>
+                            <PermissionGate anyOf={[P.PM_EDIT, P.PM_EDIT]}>
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -1380,7 +1381,7 @@ export function PmPage() {
                                 {t("actions.publish")}
                               </Button>
                             </PermissionGate>
-                            <PermissionGate anyOf={["pm.delete", "pm.manage"]}>
+                            <PermissionGate anyOf={[P.PM_DELETE, P.PM_EDIT]}>
                               <Button
                                 size="sm"
                                 variant="destructive"
@@ -1459,7 +1460,7 @@ export function PmPage() {
                                 ))}
                               </SelectContent>
                             </Select>
-                            <PermissionGate anyOf={["pm.edit", "pm.manage"]}>
+                            <PermissionGate anyOf={[P.PM_EDIT, P.PM_EDIT]}>
                               <Button
                                 size="sm"
                                 variant="outline"

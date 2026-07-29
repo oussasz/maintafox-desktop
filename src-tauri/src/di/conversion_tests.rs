@@ -405,7 +405,7 @@ mod tests {
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT requires_step_up FROM permissions WHERE name = ?",
-                ["di.convert".into()],
+                [crate::rbac::permissions::DI_CONVERT.into()],
             ))
             .await
             .expect("query");
@@ -421,7 +421,7 @@ mod tests {
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "SELECT requires_step_up FROM permissions WHERE name = ?",
-                    ["di.approve".into()],
+                    [crate::rbac::permissions::DI_APPROVE.into()],
                 ))
                 .await
                 .expect("query")

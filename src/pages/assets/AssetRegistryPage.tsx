@@ -16,13 +16,14 @@ import { AssetDetailPanel } from "@/components/assets/AssetDetailPanel";
 import { AssetEditForm } from "@/components/assets/AssetEditForm";
 import { AssetFilterBar } from "@/components/assets/AssetFilterBar";
 import { AssetResultTable } from "@/components/assets/AssetResultTable";
-import { WoFormDialog } from "@/components/wo/WoFormDialog";
 import { DiFormDialog } from "@/components/di/DiFormDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { WoFormDialog } from "@/components/wo/WoFormDialog";
 import { mfLayout } from "@/design-system/tokens";
 import { useAssetSearchStore } from "@/stores/asset-search-store";
 import { useAssetStore } from "@/stores/asset-store";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function AssetRegistryPage() {
   const { t } = useTranslation("equipment");
@@ -52,7 +53,7 @@ export function AssetRegistryPage() {
           </Badge>
         </div>
         <div className={mfLayout.moduleHeaderActions}>
-          <PermissionGate permission="eq.manage">
+          <PermissionGate permission={P.EQ_MANAGE}>
             <Button size="sm" className="gap-1.5" onClick={() => openCreateForm()}>
               <Plus className="h-3.5 w-3.5" />
               {t("createForm.button")}

@@ -8,7 +8,10 @@ import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { ArticleDetailWorkspace } from "@/components/inventory/ArticleDetailWorkspace";
-import { ArticleEditorFields, type ExtendedArticleInput } from "@/components/inventory/ArticleEditorFields";
+import {
+  ArticleEditorFields,
+  type ExtendedArticleInput,
+} from "@/components/inventory/ArticleEditorFields";
 import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
 import {
   ProcurementRepairablePanel,
@@ -32,10 +35,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
 import { getLookupValues } from "@/services/lookup-service";
 import { useInventoryStore } from "@/stores/inventory-store";
-import type {
-  InventoryArticle,
-  LookupValueOption,
-} from "@shared/ipc-types";
+import type { InventoryArticle, LookupValueOption } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const EMPTY_ARTICLE_FORM: ExtendedArticleInput = {
   article_code: "",
@@ -258,6 +259,23 @@ export function InventoryPage() {
     }, 0);
   };
 
+  /** Procurement surfaces → open the article master record. */
+  const handleOpenArticleFromProcurement = (articleId: number) => {
+    const article = articles.find((row) => row.id === articleId);
+    if (!article) return;
+    setSelectedArticle(article);
+    setEditingInDialog(false);
+    setInvTab("master");
+  };
+
+  /** Article purchase history → open the PO inside the procurement tab. */
+  const handleOpenPurchaseOrderFromDetail = (purchaseOrderId: number) => {
+    setInvTab("procurement");
+    window.setTimeout(() => {
+      procurementPanelRef.current?.openPurchaseOrder(purchaseOrderId);
+    }, 0);
+  };
+
   const createNewArticle = async () => {
     await createArticle(articleForm);
     resetArticleForm();
@@ -368,7 +386,7 @@ export function InventoryPage() {
         </div>
         <div className={mfLayout.moduleHeaderActions}>
           {invTab === "master" ? (
-            <PermissionGate permission="inv.manage">
+            <PermissionGate permission={P.INV_MANAGE}>
               <Button
                 size="sm"
                 className="gap-1.5"
@@ -383,7 +401,7 @@ export function InventoryPage() {
             </PermissionGate>
           ) : null}
           {invTab === "topology" ? (
-            <PermissionGate permission="inv.manage">
+            <PermissionGate permission={P.INV_MANAGE}>
               <Button
                 size="sm"
                 className="gap-1.5"
@@ -396,7 +414,7 @@ export function InventoryPage() {
           ) : null}
 
           {invTab === "procurement" ? (
-            <PermissionGate permission="inv.procure">
+            <PermissionGate permission={P.INV_PROCURE}>
               <Button
                 size="sm"
                 className="gap-1.5"
@@ -521,6 +539,7 @@ export function InventoryPage() {
                   onDeactivate={() => void softDeleteSelectedArticle()}
                   onCreateRequisition={handleCreateRequisitionFromDetail}
                   onStockAdjusted={() => void loadAll()}
+                  onOpenPurchaseOrder={handleOpenPurchaseOrderFromDetail}
                 />
               ) : (
                 <div className="flex h-full items-center justify-center p-6">
@@ -540,6 +559,7 @@ export function InventoryPage() {
             ref={procurementPanelRef}
             viewMode={procurementView}
             onViewModeChange={switchProcurementView}
+            onOpenArticle={handleOpenArticleFromProcurement}
           />
         </TabsContent>
         <TabsContent value="controls" className="mt-4 space-y-4">
@@ -559,11 +579,9 @@ export function InventoryPage() {
         >
           <DialogHeader>
             <DialogTitle>Edit article</DialogTitle>
-            <DialogDescription>
-              Update catalog data and replenishment parameters.
-            </DialogDescription>
+            <DialogDescription>Update catalog data and replenishment parameters.</DialogDescription>
           </DialogHeader>
-          <PermissionGate permission="inv.manage">
+          <PermissionGate permission={P.INV_MANAGE}>
             <ArticleEditorFields
               articleForm={articleForm}
               setArticleForm={setArticleForm}
@@ -581,7 +599,7 @@ export function InventoryPage() {
             <Button variant="outline" onClick={() => setEditingInDialog(false)}>
               Cancel
             </Button>
-            <PermissionGate permission="inv.manage">
+            <PermissionGate permission={P.INV_MANAGE}>
               <Button
                 onClick={() => void saveEditedArticle()}
                 disabled={saving || !isArticleFormValid}
@@ -611,7 +629,7 @@ export function InventoryPage() {
               alerts; maximum stock is optional.
             </DialogDescription>
           </DialogHeader>
-          <PermissionGate permission="inv.manage">
+          <PermissionGate permission={P.INV_MANAGE}>
             <ArticleEditorFields
               articleForm={articleForm}
               setArticleForm={setArticleForm}
@@ -629,7 +647,7 @@ export function InventoryPage() {
             <Button type="button" variant="outline" onClick={() => setCreateArticleOpen(false)}>
               Cancel
             </Button>
-            <PermissionGate permission="inv.manage">
+            <PermissionGate permission={P.INV_MANAGE}>
               <Button
                 type="button"
                 onClick={() => void createNewArticle()}

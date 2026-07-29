@@ -61,6 +61,7 @@ import {
   useReferenceManagerStore,
 } from "@/stores/reference-manager-store";
 import type { ReferenceDomain, ReferenceSet } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 // ── Status badge variant mapping ──────────────────────────────────────────────
 
@@ -311,7 +312,7 @@ export function DomainBrowserPanel({ onCreateDraftSet }: DomainBrowserPanelProps
           const showLock = showCategoryLockIcon(category);
           const domainCaps = domainCapabilities[domain.id];
           const canCreateDraft =
-            can("ref.manage") && !isSynthetic && (domainCaps?.can_create_draft_set ?? false);
+            can(P.REF_MANAGE) && !isSynthetic && (domainCaps?.can_create_draft_set ?? false);
           const fullCategoryLabel = String(t(governanceCategoryLabelKey(category)));
           const shortCategoryLabel = String(t(governanceCategoryShortLabelKey(category)));
 

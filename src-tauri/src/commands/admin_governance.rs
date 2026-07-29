@@ -192,7 +192,7 @@ pub async fn list_active_sessions(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SessionSummary>> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
 
     // Get the caller's current session id for is_current_session flag
     let current_session_id = {
@@ -290,7 +290,7 @@ pub async fn revoke_session(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
     require_step_up!(state);
 
     // Guard: cannot revoke your own current session
@@ -362,7 +362,7 @@ pub async fn list_delegation_policies(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<DelegationPolicyView>> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
 
     let sql = "\
         SELECT dap.id, dap.admin_role_id, r.name AS admin_role_name, \
@@ -409,7 +409,7 @@ pub async fn create_delegation_policy(
     state: State<'_, AppState>,
 ) -> AppResult<DelegationPolicyView> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
     require_step_up!(state);
 
     // ── Validate admin_role_id exists ───────────────────────────────────
@@ -534,7 +534,7 @@ pub async fn update_delegation_policy(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
     require_step_up!(state);
 
     // Fetch current policy
@@ -636,7 +636,7 @@ pub async fn delete_delegation_policy(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
     require_step_up!(state);
 
     let row = state
@@ -709,7 +709,7 @@ pub async fn list_emergency_grants(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<EmergencyGrantView>> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
 
     let sql = "\
         SELECT usa.id AS assignment_id, usa.user_id, ua.username, \
@@ -771,7 +771,7 @@ pub async fn export_role_model(
     state: State<'_, AppState>,
 ) -> AppResult<RoleExportPayload> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
 
     if role_ids.is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -860,7 +860,7 @@ pub async fn import_role_model(
     state: State<'_, AppState>,
 ) -> AppResult<ImportResult> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
     require_step_up!(state);
 
     if input.roles.is_empty() {

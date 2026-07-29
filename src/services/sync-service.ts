@@ -23,6 +23,7 @@ import type {
   SyncReplayRun,
   SyncStateSummary,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const SyncOutboxItemSchema = z.object({
   id: z.number(),
@@ -304,7 +305,7 @@ export async function getSyncStateSummary(): Promise<SyncStateSummary> {
     // Roles with RAM visibility may not always have sync.view on upgraded tenants yet.
     // Degrade gracefully to an empty summary instead of surfacing noisy permission toasts.
     if (
-      message.includes("sync.view") ||
+      message.includes(P.SYNC_VIEW) ||
       message.includes("permission refus") ||
       message.includes("permission denied")
     ) {

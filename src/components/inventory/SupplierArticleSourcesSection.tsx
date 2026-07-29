@@ -39,6 +39,7 @@ import {
 } from "@/services/inventory-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { SupplierArticleSource, SupplierArticleSourceInput } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { riskBadgeVariant } from "./supplier-sourcing";
 
@@ -164,9 +165,7 @@ export function SupplierArticleSourcesSection({
    * (including reactivation) through the row actions instead.
    */
   const counterpartOptions = useMemo(() => {
-    const linked = new Set(
-      sources.map((s) => (mode === "article" ? s.supplier_id : s.article_id)),
-    );
+    const linked = new Set(sources.map((s) => (mode === "article" ? s.supplier_id : s.article_id)));
     if (mode === "article") {
       return (suppliers ?? [])
         .filter((s) => !linked.has(s.id))
@@ -256,7 +255,7 @@ export function SupplierArticleSourcesSection({
         <p className="text-xs text-text-muted">
           {t("procurement.suppliers.sources.resultCount", { count: sources.length })}
         </p>
-        <PermissionGate permission="inv.manage">
+        <PermissionGate permission={P.INV_MANAGE}>
           <Button size="sm" variant="outline" disabled={!canAdd} onClick={openAddForm}>
             {t("procurement.suppliers.sources.add")}
           </Button>
@@ -361,7 +360,7 @@ export function SupplierArticleSourcesSection({
                   {source.lead_time_days != null ? formatNumber(source.lead_time_days) : "—"}
                 </TableCell>
                 <TableCell className="px-2 py-1.5 text-right">
-                  <PermissionGate permission="inv.manage">
+                  <PermissionGate permission={P.INV_MANAGE}>
                     <div className="flex justify-end gap-1">
                       {source.is_active === 1 && source.is_preferred === 0 ? (
                         <Button
@@ -424,9 +423,7 @@ export function SupplierArticleSourcesSection({
               ) : (
                 <Select
                   value={String(form.counterpartId)}
-                  onValueChange={(v) =>
-                    setForm((prev) => ({ ...prev, counterpartId: Number(v) }))
-                  }
+                  onValueChange={(v) => setForm((prev) => ({ ...prev, counterpartId: Number(v) }))}
                 >
                   <SelectTrigger id="source-counterpart" className="h-8 text-sm">
                     <SelectValue placeholder={counterpartHeader} />
@@ -480,9 +477,7 @@ export function SupplierArticleSourcesSection({
                 />
               </div>
               <div>
-                <Label htmlFor="source-moq">
-                  {t("procurement.suppliers.sources.fields.moq")}
-                </Label>
+                <Label htmlFor="source-moq">{t("procurement.suppliers.sources.fields.moq")}</Label>
                 <Input
                   id="source-moq"
                   type="number"
@@ -510,7 +505,9 @@ export function SupplierArticleSourcesSection({
                 id="source-preferred"
                 checked={form.isPreferred}
                 disabled={!form.isActive}
-                onCheckedChange={(checked) => setForm((prev) => ({ ...prev, isPreferred: checked }))}
+                onCheckedChange={(checked) =>
+                  setForm((prev) => ({ ...prev, isPreferred: checked }))
+                }
               />
               <Label htmlFor="source-preferred">
                 {t("procurement.suppliers.sources.fields.preferred")}

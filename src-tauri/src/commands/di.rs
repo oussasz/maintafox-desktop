@@ -52,7 +52,7 @@ pub async fn list_di(
     state: State<'_, AppState>,
 ) -> AppResult<queries::DiListPage> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
     queries::list_intervention_requests(&state.db, filter).await
 }
 
@@ -66,7 +66,7 @@ pub async fn get_di(
     state: State<'_, AppState>,
 ) -> AppResult<DiGetResponse> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
 
     let di = queries::get_intervention_request(&state.db, id)
         .await?
@@ -106,13 +106,13 @@ pub async fn create_di(
     let has_global = crate::auth::rbac::check_permission(
         &state.db,
         user.user_id,
-        "di.create",
+        crate::rbac::permissions::DI_CREATE,
         &PermissionScope::Global,
     )
     .await?;
 
     if !has_global {
-        require_permission!(state, &user, "di.create.own", PermissionScope::Global);
+        require_permission!(state, &user, crate::rbac::permissions::DI_CREATE_OWN, PermissionScope::Global);
     }
 
     // ── Validate required fields ──────────────────────────────────────────
@@ -216,14 +216,14 @@ pub async fn triage_submitted_di(
     let has_screen = crate::auth::rbac::check_permission(
         &state.db,
         user.user_id,
-        "di.screen",
+        crate::rbac::permissions::DI_SCREEN,
         &PermissionScope::Global,
     )
     .await?;
     let has_review = crate::auth::rbac::check_permission(
         &state.db,
         user.user_id,
-        "di.review",
+        crate::rbac::permissions::DI_REVIEW,
         &PermissionScope::Global,
     )
     .await?;
@@ -278,16 +278,16 @@ pub async fn update_di_draft(
         let has_own = crate::auth::rbac::check_permission(
             &state.db,
             user.user_id,
-            "di.create.own",
+            crate::rbac::permissions::DI_CREATE_OWN,
             &PermissionScope::Global,
         )
         .await?;
         if !has_own {
-            require_permission!(state, &user, "di.review", PermissionScope::Global);
+            require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
         }
     } else {
         // Not owner — must have di.review
-        require_permission!(state, &user, "di.review", PermissionScope::Global);
+        require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
     }
 
     queries::update_di_draft_fields(&state.db, input).await
@@ -306,14 +306,14 @@ pub async fn screen_di(
     let has_screen = crate::auth::rbac::check_permission(
         &state.db,
         user.user_id,
-        "di.screen",
+        crate::rbac::permissions::DI_SCREEN,
         &PermissionScope::Global,
     )
     .await?;
     let has_review = crate::auth::rbac::check_permission(
         &state.db,
         user.user_id,
-        "di.review",
+        crate::rbac::permissions::DI_REVIEW,
         &PermissionScope::Global,
     )
     .await?;
@@ -346,7 +346,7 @@ pub async fn return_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.review", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
     input.actor_id = i64::from(user.user_id);
     let di = review::return_di_for_clarification(&state.db, input).await?;
     audit::record_di_change_event(&state.db, audit::DiAuditInput {
@@ -371,7 +371,7 @@ pub async fn reject_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.review", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
     input.actor_id = i64::from(user.user_id);
     let di = review::reject_di(&state.db, input).await?;
     audit::record_di_change_event(&state.db, audit::DiAuditInput {
@@ -396,7 +396,7 @@ pub async fn approve_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.approve", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
 
     // Step-up check — record blocked audit event if it fails
     {
@@ -439,7 +439,7 @@ pub async fn defer_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.approve", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
     input.actor_id = i64::from(user.user_id);
     let di = review::defer_di(&state.db, input).await?;
     audit::record_di_change_event(&state.db, audit::DiAuditInput {
@@ -464,7 +464,7 @@ pub async fn reactivate_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.approve", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
     input.actor_id = i64::from(user.user_id);
     let di = review::reactivate_deferred_di(&state.db, input).await?;
     audit::record_di_change_event(&state.db, audit::DiAuditInput {
@@ -489,7 +489,7 @@ pub async fn close_di_as_non_executable(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.approve", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
     input.actor_id = i64::from(user.user_id);
     let di = review::close_di_as_non_executable(&state.db, input).await?;
     audit::record_di_change_event(&state.db, audit::DiAuditInput {
@@ -514,7 +514,7 @@ pub async fn archive_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.approve", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
     input.actor_id = i64::from(user.user_id);
     let di = review::archive_di(&state.db, input).await?;
     audit::record_di_change_event(&state.db, audit::DiAuditInput {
@@ -539,7 +539,7 @@ pub async fn get_di_review_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<review::DiReviewEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
     review::get_review_events(&state.db, di_id).await
 }
 
@@ -575,15 +575,15 @@ pub async fn upload_di_attachment(
         let has_own = crate::auth::rbac::check_permission(
             &state.db,
             user.user_id,
-            "di.create.own",
+            crate::rbac::permissions::DI_CREATE_OWN,
             &PermissionScope::Global,
         )
         .await?;
         if !has_own {
-            require_permission!(state, &user, "di.review", PermissionScope::Global);
+            require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
         }
     } else {
-        require_permission!(state, &user, "di.review", PermissionScope::Global);
+        require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
     }
 
     let app_data_dir = app
@@ -627,15 +627,15 @@ pub async fn upload_di_attachment_from_path(
         let has_own = crate::auth::rbac::check_permission(
             &state.db,
             user.user_id,
-            "di.create.own",
+            crate::rbac::permissions::DI_CREATE_OWN,
             &PermissionScope::Global,
         )
         .await?;
         if !has_own {
-            require_permission!(state, &user, "di.review", PermissionScope::Global);
+            require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
         }
     } else {
-        require_permission!(state, &user, "di.review", PermissionScope::Global);
+        require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
     }
 
     let app_data_dir = app
@@ -662,7 +662,7 @@ pub async fn read_di_attachment_preview(
     state: State<'_, AppState>,
 ) -> AppResult<attachments::DiAttachmentPreview> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
 
     let app_data_dir = app
         .path()
@@ -682,7 +682,7 @@ pub async fn list_di_attachments(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<attachments::DiAttachment>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
     attachments::list_di_attachments(&state.db, di_id).await
 }
 
@@ -696,7 +696,7 @@ pub async fn delete_di_attachment(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_ADMIN, PermissionScope::Global);
     attachments::delete_di_attachment_record(&state.db, attachment_id).await
 }
 
@@ -710,7 +710,7 @@ pub async fn convert_di_to_wo(
     state: State<'_, AppState>,
 ) -> AppResult<conversion::WoConversionResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.convert", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_CONVERT, PermissionScope::Global);
 
     // Step-up check — record blocked audit event if it fails
     {
@@ -756,7 +756,7 @@ pub async fn get_sla_status(
     state: State<'_, AppState>,
 ) -> AppResult<sla::DiSlaStatus> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
 
     let di = queries::get_intervention_request(&state.db, di_id)
         .await?
@@ -777,7 +777,7 @@ pub async fn list_sla_rules(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<sla::DiSlaRule>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
     sla::list_sla_rules(&state.db).await
 }
 
@@ -791,7 +791,7 @@ pub async fn update_sla_rule(
     state: State<'_, AppState>,
 ) -> AppResult<sla::DiSlaRule> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_ADMIN, PermissionScope::Global);
     sla::update_sla_rule(&state.db, input).await
 }
 
@@ -806,7 +806,7 @@ pub async fn list_di_change_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<audit::DiChangeEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
     audit::list_di_change_events(&state.db, di_id, limit.unwrap_or(50)).await
 }
 
@@ -820,7 +820,7 @@ pub async fn list_all_di_change_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<audit::DiChangeEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_ADMIN, PermissionScope::Global);
     audit::list_all_change_events(&state.db, filter).await
 }
 
@@ -834,7 +834,7 @@ pub async fn get_di_stats(
     state: State<'_, AppState>,
 ) -> AppResult<stats::DiStatsPayload> {
     let user = require_session!(state);
-    require_permission!(state, &user, "di.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
     stats::get_di_stats(&state.db, filter).await
 }
 
@@ -896,7 +896,7 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 50, "Readonly").await;
 
-        let has = rbac::check_permission(&db, 50, "di.approve", &PermissionScope::Global)
+        let has = rbac::check_permission(&db, 50, crate::rbac::permissions::DI_APPROVE, &PermissionScope::Global)
             .await
             .expect("check");
         assert!(!has, "Readonly must NOT have di.approve");
@@ -907,7 +907,7 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 51, "Operator").await;
 
-        let has = rbac::check_permission(&db, 51, "di.approve", &PermissionScope::Global)
+        let has = rbac::check_permission(&db, 51, crate::rbac::permissions::DI_APPROVE, &PermissionScope::Global)
             .await
             .expect("check");
         assert!(!has, "Operator must NOT have di.approve");
@@ -919,10 +919,10 @@ mod tests {
         assign_role(&db, 52, "Readonly").await;
 
         // Verify user has di.view but not di.approve
-        let view = rbac::check_permission(&db, 52, "di.view", &PermissionScope::Global)
+        let view = rbac::check_permission(&db, 52, crate::rbac::permissions::DI_VIEW, &PermissionScope::Global)
             .await
             .expect("check");
-        let approve = rbac::check_permission(&db, 52, "di.approve", &PermissionScope::Global)
+        let approve = rbac::check_permission(&db, 52, crate::rbac::permissions::DI_APPROVE, &PermissionScope::Global)
             .await
             .expect("check");
 
@@ -935,7 +935,7 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 53, "Supervisor").await;
 
-        let has = rbac::check_permission(&db, 53, "di.approve", &PermissionScope::Global)
+        let has = rbac::check_permission(&db, 53, crate::rbac::permissions::DI_APPROVE, &PermissionScope::Global)
             .await
             .expect("check");
         assert!(has, "Supervisor must have di.approve");
@@ -946,7 +946,7 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 54, "Administrator").await;
 
-        let has = rbac::check_permission(&db, 54, "di.approve", &PermissionScope::Global)
+        let has = rbac::check_permission(&db, 54, crate::rbac::permissions::DI_APPROVE, &PermissionScope::Global)
             .await
             .expect("check");
         assert!(has, "Administrator must have di.approve");
@@ -960,7 +960,7 @@ mod tests {
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT requires_step_up FROM permissions WHERE name = ?",
-                ["di.approve".into()],
+                [crate::rbac::permissions::DI_APPROVE.into()],
             ))
             .await
             .expect("query")
@@ -976,7 +976,7 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 60, "Supervisor").await;
 
-        let has = rbac::check_permission(&db, 60, "di.review", &PermissionScope::Global)
+        let has = rbac::check_permission(&db, 60, crate::rbac::permissions::DI_REVIEW, &PermissionScope::Global)
             .await
             .expect("check");
         assert!(has, "Supervisor must have di.review for screen_di access");
@@ -987,7 +987,7 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 61, "Administrator").await;
 
-        let has = rbac::check_permission(&db, 61, "di.review", &PermissionScope::Global)
+        let has = rbac::check_permission(&db, 61, crate::rbac::permissions::DI_REVIEW, &PermissionScope::Global)
             .await
             .expect("check");
         assert!(has, "Administrator must have di.review");
@@ -998,7 +998,7 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 62, "Operator").await;
 
-        let has = rbac::check_permission(&db, 62, "di.review", &PermissionScope::Global)
+        let has = rbac::check_permission(&db, 62, crate::rbac::permissions::DI_REVIEW, &PermissionScope::Global)
             .await
             .expect("check");
         assert!(!has, "Operator must NOT have di.review");
@@ -1009,7 +1009,7 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 63, "Readonly").await;
 
-        let has = rbac::check_permission(&db, 63, "di.review", &PermissionScope::Global)
+        let has = rbac::check_permission(&db, 63, crate::rbac::permissions::DI_REVIEW, &PermissionScope::Global)
             .await
             .expect("check");
         assert!(!has, "Readonly must NOT have di.review");
@@ -1023,7 +1023,7 @@ mod tests {
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT requires_step_up FROM permissions WHERE name = ?",
-                ["di.review".into()],
+                [crate::rbac::permissions::DI_REVIEW.into()],
             ))
             .await
             .expect("query")
@@ -1194,15 +1194,15 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "di.admin",
-                "di.approve",
-                "di.convert",
-                "di.create",
-                "di.create.own",
-                "di.delete",
-                "di.review",
-                "di.screen",
-                "di.view",
+                crate::rbac::permissions::DI_ADMIN,
+                crate::rbac::permissions::DI_APPROVE,
+                crate::rbac::permissions::DI_CONVERT,
+                crate::rbac::permissions::DI_CREATE,
+                crate::rbac::permissions::DI_CREATE_OWN,
+                crate::rbac::permissions::DI_DELETE,
+                crate::rbac::permissions::DI_REVIEW,
+                crate::rbac::permissions::DI_SCREEN,
+                crate::rbac::permissions::DI_VIEW,
             ],
             "Canonical di.* permissions (triage: di.screen; no di.submit / di.submit.own)"
         );

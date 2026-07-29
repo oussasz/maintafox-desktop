@@ -36,6 +36,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useReferenceGovernanceStore } from "@/stores/reference-governance-store";
 import { useReferenceManagerStore } from "@/stores/reference-manager-store";
 import type { ReferencePublishIssue } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -47,7 +48,7 @@ interface PublishReadinessPanelProps {
 export function PublishReadinessPanel({ setId, isProtected }: PublishReadinessPanelProps) {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
-  const mayPublish = can("ref.publish");
+  const mayPublish = can(P.REF_PUBLISH);
 
   const readiness = useReferenceGovernanceStore((s) => s.readiness);
   const readinessLoading = useReferenceGovernanceStore((s) => s.readinessLoading);

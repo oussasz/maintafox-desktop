@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { usePermissions } from "@/hooks/use-permissions";
 import type { InterventionRequest } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 // ── Statuses for review actions ───────────────────────────────────────────────
 
@@ -61,11 +62,11 @@ export function DiContextMenu({
   const { t } = useTranslation("di");
   const { can } = usePermissions();
 
-  const canEdit = can("di.create") && EDITABLE_STATES.has(di.status);
-  const canDelete = can("di.admin") && di.status === "submitted";
-  const canApprove = can("di.approve") && di.status === "awaiting_approval";
-  const canReject = can("di.review") && REVIEW_STATES.has(di.status);
-  const canReturn = can("di.review") && di.status === "pending_review";
+  const canEdit = can(P.DI_CREATE) && EDITABLE_STATES.has(di.status);
+  const canDelete = can(P.DI_ADMIN) && di.status === "submitted";
+  const canApprove = can(P.DI_APPROVE) && di.status === "awaiting_approval";
+  const canReject = can(P.DI_REVIEW) && REVIEW_STATES.has(di.status);
+  const canReturn = can(P.DI_REVIEW) && di.status === "pending_review";
 
   return (
     <DropdownMenu>

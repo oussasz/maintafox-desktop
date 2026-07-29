@@ -76,7 +76,7 @@ pub async fn list_audit_events(
         &state.db,
         &state.permission_cache,
         user.user_id,
-        "adm.audit",
+        crate::rbac::permissions::ADM_AUDIT,
         &PermissionScope::Global,
     )
     .await?;
@@ -133,7 +133,7 @@ pub async fn get_audit_event(event_id: i64, state: State<'_, AppState>) -> AppRe
         &state.db,
         &state.permission_cache,
         user.user_id,
-        "adm.audit",
+        crate::rbac::permissions::ADM_AUDIT,
         &PermissionScope::Global,
     )
     .await?;
@@ -199,7 +199,7 @@ pub async fn export_audit_log(
     state: State<'_, AppState>,
 ) -> AppResult<ExportResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "log.export", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::LOG_EXPORT, PermissionScope::Global);
     require_step_up!(state);
 
     if payload.export_reason.trim().is_empty() {
@@ -246,7 +246,7 @@ pub async fn export_audit_log(
         &state.db,
         &state.permission_cache,
         user.user_id,
-        "adm.audit",
+        crate::rbac::permissions::ADM_AUDIT,
         &PermissionScope::Global,
     )
     .await?;
@@ -367,7 +367,7 @@ async fn ensure_log_view_access(state: &State<'_, AppState>, user_id: i32) -> Ap
         &state.db,
         &state.permission_cache,
         user_id,
-        "log.view",
+        crate::rbac::permissions::LOG_VIEW,
         &PermissionScope::Global,
     )
     .await?;
@@ -388,8 +388,8 @@ async fn ensure_log_view_access(state: &State<'_, AppState>, user_id: i32) -> Ap
                AND (usa.valid_from IS NULL OR usa.valid_from <= datetime('now'))
                AND (usa.valid_to IS NULL OR usa.valid_to >= datetime('now'))
                AND usa.scope_type IN ('entity', 'org_node', 'site', 'team')
-               AND p.name = 'log.view'",
-            [i64::from(user_id).into()],
+               AND p.name = ?",
+            [i64::from(user_id).into(), crate::rbac::permissions::LOG_VIEW.into()],
         ))
         .await?;
     let scoped_count = row

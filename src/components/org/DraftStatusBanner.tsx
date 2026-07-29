@@ -3,14 +3,7 @@
  * publish-readiness validation in a single banner (replaces stacked alerts).
  */
 
-import {
-  CheckCircle,
-  Info,
-  Loader2,
-  ShieldAlert,
-  TriangleAlert,
-  Wrench,
-} from "lucide-react";
+import { CheckCircle, Info, Loader2, ShieldAlert, TriangleAlert, Wrench } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -23,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { useOrgDesignerStore } from "@/stores/org-designer-store";
 import { useOrgGovernanceStore } from "@/stores/org-governance-store";
 import type { OrgPublishValidationResult } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 type DraftBannerVariant = "info" | "success" | "warning" | "error";
 
@@ -182,7 +176,10 @@ export function DraftStatusBanner({
         <div className="flex-1 min-w-0 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-text-primary">{draftTitle}</span>
-            <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0", variantBadgeClass[variant])}>
+            <Badge
+              variant="outline"
+              className={cn("text-[10px] px-1.5 py-0", variantBadgeClass[variant])}
+            >
               {statusLabel}
             </Badge>
           </div>
@@ -220,7 +217,7 @@ export function DraftStatusBanner({
 
           {hasUnmappedLineage && (
             <div className="pt-1.5 space-y-1">
-              <PermissionGate permission="org.admin">
+              <PermissionGate permission={P.ORG_ADMIN}>
                 <Button
                   size="sm"
                   variant="outline"

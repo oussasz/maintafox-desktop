@@ -17,7 +17,7 @@ use crate::{require_permission, require_session};
 #[tauri::command]
 pub async fn list_permit_types(state: State<'_, AppState>) -> AppResult<Vec<PermitType>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_VIEW, PermissionScope::Global);
     queries::list_permit_types(&state.db).await
 }
 
@@ -27,7 +27,7 @@ pub async fn upsert_permit_type(
     state: State<'_, AppState>,
 ) -> AppResult<PermitType> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.issue", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_ISSUE, PermissionScope::Global);
     queries::upsert_permit_type(&state.db, input).await
 }
 
@@ -37,14 +37,14 @@ pub async fn list_work_permits(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<WorkPermit>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_VIEW, PermissionScope::Global);
     queries::list_work_permits(&state.db, filter).await
 }
 
 #[tauri::command]
 pub async fn get_work_permit(id: i64, state: State<'_, AppState>) -> AppResult<WorkPermit> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_VIEW, PermissionScope::Global);
     queries::get_work_permit(&state.db, id).await?.ok_or_else(|| AppError::NotFound {
         entity: "WorkPermit".into(),
         id: id.to_string(),
@@ -57,7 +57,7 @@ pub async fn create_work_permit(
     state: State<'_, AppState>,
 ) -> AppResult<WorkPermit> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.issue", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_ISSUE, PermissionScope::Global);
     queries::create_work_permit(&state.db, input).await
 }
 
@@ -67,7 +67,7 @@ pub async fn update_work_permit(
     state: State<'_, AppState>,
 ) -> AppResult<WorkPermit> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.issue", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_ISSUE, PermissionScope::Global);
     queries::update_work_permit(&state.db, input).await
 }
 
@@ -79,10 +79,10 @@ pub async fn set_work_permit_status(
     let user = require_session!(state);
     match input.status.as_str() {
         "closed" | "handed_back" | "cancelled" => {
-            require_permission!(state, &user, "ptw.close", PermissionScope::Global);
+            require_permission!(state, &user, crate::rbac::permissions::PTW_CLOSE, PermissionScope::Global);
         }
         _ => {
-            require_permission!(state, &user, "ptw.issue", PermissionScope::Global);
+            require_permission!(state, &user, crate::rbac::permissions::PTW_ISSUE, PermissionScope::Global);
         }
     }
     queries::set_work_permit_status(&state.db, input).await
@@ -94,7 +94,7 @@ pub async fn list_permit_isolations(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PermitIsolation>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_VIEW, PermissionScope::Global);
     queries::list_permit_isolations(&state.db, permit_id).await
 }
 
@@ -104,7 +104,7 @@ pub async fn upsert_permit_isolation(
     state: State<'_, AppState>,
 ) -> AppResult<PermitIsolation> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.issue", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_ISSUE, PermissionScope::Global);
     queries::upsert_permit_isolation(&state.db, input).await
 }
 
@@ -114,7 +114,7 @@ pub async fn suspend_work_permit(
     state: State<'_, AppState>,
 ) -> AppResult<(WorkPermit, PermitSuspension)> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.issue", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_ISSUE, PermissionScope::Global);
     queries::suspend_work_permit(&state.db, input).await
 }
 
@@ -124,7 +124,7 @@ pub async fn append_permit_handover_log(
     state: State<'_, AppState>,
 ) -> AppResult<PermitHandoverLog> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.close", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_CLOSE, PermissionScope::Global);
     queries::append_permit_handover_log(&state.db, input).await
 }
 
@@ -134,7 +134,7 @@ pub async fn list_permit_suspensions(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PermitSuspension>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_VIEW, PermissionScope::Global);
     queries::list_permit_suspensions(&state.db, permit_id).await
 }
 
@@ -144,7 +144,7 @@ pub async fn list_permit_handover_logs(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PermitHandoverLog>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_VIEW, PermissionScope::Global);
     queries::list_permit_handover_logs(&state.db, permit_id).await
 }
 
@@ -155,7 +155,7 @@ pub async fn get_loto_card_view(
     state: State<'_, AppState>,
 ) -> AppResult<LotoCardView> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_VIEW, PermissionScope::Global);
     queries::get_loto_card_view(&state.db, permit_id, isolation_id).await
 }
 
@@ -165,20 +165,20 @@ pub async fn record_loto_card_print(
     state: State<'_, AppState>,
 ) -> AppResult<LotoCardPrintJob> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.issue", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_ISSUE, PermissionScope::Global);
     queries::record_loto_card_print(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn list_open_permits_report(state: State<'_, AppState>) -> AppResult<Vec<WorkPermit>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_VIEW, PermissionScope::Global);
     queries::list_open_permits_report(&state.db).await
 }
 
 #[tauri::command]
 pub async fn permit_compliance_kpi_30d(state: State<'_, AppState>) -> AppResult<PermitComplianceKpi30d> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ptw.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PTW_VIEW, PermissionScope::Global);
     queries::permit_compliance_kpi_30d(&state.db).await
 }

@@ -536,8 +536,8 @@ async fn pm_permission_boundaries_view_without_create_edit() {
         "INSERT INTO role_permissions (role_id, permission_id, granted_at)
          SELECT ?, p.id, strftime('%Y-%m-%dT%H:%M:%SZ','now')
          FROM permissions p
-         WHERE p.name = 'pm.view'",
-        [role_id.into()],
+         WHERE p.name = ?",
+        [role_id.into(), crate::rbac::permissions::PM_VIEW.into()],
     ))
     .await
     .expect("grant pm.view");
@@ -571,13 +571,13 @@ async fn pm_permission_boundaries_view_without_create_edit() {
     .await
     .expect("insert user scope assignment");
 
-    let can_view = rbac::check_permission(&db, user_id, "pm.view", &PermissionScope::Global)
+    let can_view = rbac::check_permission(&db, user_id, crate::rbac::permissions::PM_VIEW, &PermissionScope::Global)
         .await
         .expect("check pm.view");
-    let can_create = rbac::check_permission(&db, user_id, "pm.create", &PermissionScope::Global)
+    let can_create = rbac::check_permission(&db, user_id, crate::rbac::permissions::PM_CREATE, &PermissionScope::Global)
         .await
         .expect("check pm.create");
-    let can_edit = rbac::check_permission(&db, user_id, "pm.edit", &PermissionScope::Global)
+    let can_edit = rbac::check_permission(&db, user_id, crate::rbac::permissions::PM_EDIT, &PermissionScope::Global)
         .await
         .expect("check pm.edit");
 

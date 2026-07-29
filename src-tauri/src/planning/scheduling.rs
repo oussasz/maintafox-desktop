@@ -617,8 +617,12 @@ async fn user_has_plan_approval_scope(db: &impl ConnectionTrait, user_id: i64) -
              WHERE usa.user_id = ?
                AND usa.deleted_at IS NULL
                AND (usa.valid_to IS NULL OR usa.valid_to >= strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-               AND p.name IN ('plan.confirm', 'plan.windows')",
-            [user_id.into()],
+               AND p.name IN (?, ?)",
+            [
+                user_id.into(),
+                crate::rbac::permissions::PLAN_CONFIRM.into(),
+                crate::rbac::permissions::PLAN_WINDOWS.into(),
+            ],
         ))
         .await?
         .and_then(|r| r.try_get("", "c").ok())

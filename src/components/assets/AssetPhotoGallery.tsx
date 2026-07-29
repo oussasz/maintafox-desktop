@@ -29,6 +29,7 @@ import {
 } from "@/services/asset-lifecycle-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { AssetPhoto } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 function photoDataUrl(preview: { mime_type: string; data_base64: string }): string {
   return `data:${preview.mime_type};base64,${preview.data_base64}`;
@@ -210,7 +211,7 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
             )}
           </CardTitle>
         </div>
-        <PermissionGate permission="eq.manage">
+        <PermissionGate permission={P.EQ_MANAGE}>
           <Button
             variant="outline"
             size="sm"
@@ -236,7 +237,7 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
           <div className="flex flex-col items-center justify-center gap-2 py-8 text-text-muted">
             <Camera className="h-8 w-8" />
             <p className="text-sm">{t("photos.empty")}</p>
-            <PermissionGate permission="eq.manage">
+            <PermissionGate permission={P.EQ_MANAGE}>
               <Button variant="outline" size="sm" onClick={() => void handleUpload()}>
                 <Upload className="mr-1.5 h-3.5 w-3.5" />
                 {t("photos.uploadFirst")}
@@ -314,7 +315,7 @@ export function AssetPhotoGallery({ assetId, onToast }: AssetPhotoGalleryProps) 
             </button>
 
             {/* Delete button (permission-gated) */}
-            <PermissionGate permission="eq.manage">
+            <PermissionGate permission={P.EQ_MANAGE}>
               <button
                 type="button"
                 className="absolute bottom-3 right-3 rounded-md bg-status-danger/90 px-3 py-1.5 text-xs text-white hover:bg-status-danger"

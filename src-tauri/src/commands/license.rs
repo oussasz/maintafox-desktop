@@ -13,7 +13,7 @@ use crate::{require_permission, require_permission_allowing_system_admin, requir
 #[tauri::command]
 pub async fn get_license_enforcement_status(state: State<'_, AppState>) -> AppResult<LicenseStatusView> {
     let user = require_session!(state);
-    require_permission_allowing_system_admin!(state, &user, "lic.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, crate::rbac::permissions::LIC_VIEW, PermissionScope::Global);
     queries::get_license_status_view(&state.db, user.user_id).await
 }
 
@@ -23,7 +23,7 @@ pub async fn apply_admin_license_action(
     state: State<'_, AppState>,
 ) -> AppResult<ApplyAdminLicenseActionResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "lic.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::LIC_MANAGE, PermissionScope::Global);
     require_step_up!(state);
     queries::apply_admin_license_action(&state.db, input, Some(i64::from(user.user_id))).await
 }
@@ -35,7 +35,7 @@ pub async fn list_license_trace_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<LicenseTraceEvent>> {
     let user = require_session!(state);
-    require_permission_allowing_system_admin!(state, &user, "lic.view", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, crate::rbac::permissions::LIC_VIEW, PermissionScope::Global);
     queries::list_license_trace_events(&state.db, limit, correlation_id).await
 }
 
@@ -45,7 +45,7 @@ pub async fn apply_licensing_compromise_response(
     state: State<'_, AppState>,
 ) -> AppResult<ApplyLicensingCompromiseResponseResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "lic.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::LIC_MANAGE, PermissionScope::Global);
     require_step_up!(state);
     queries::apply_licensing_compromise_response(&state.db, input, Some(i64::from(user.user_id))).await
 }

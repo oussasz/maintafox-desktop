@@ -15,6 +15,7 @@ import {
 } from "@/services/inventory-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { InventoryReplenishmentRecommendation } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export interface ProcurementRecommendationsPanelProps {
   warehouseId?: number | null;
@@ -65,7 +66,7 @@ export function ProcurementRecommendationsPanel({
     void load();
   }, [load]);
 
-  const createPoFromRec = async (rec: InventoryReplenishmentRecommendation) => {
+  const createRequisitionFromRec = async (rec: InventoryReplenishmentRecommendation) => {
     const key = `${rec.article_id}-${rec.warehouse_id}`;
     setCreatingId(key);
     setError(null);
@@ -101,15 +102,25 @@ export function ProcurementRecommendationsPanel({
     <div className="mb-4 rounded-md border p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">
-          {t("procurement.recommendations.title", { defaultValue: "Replenishment recommendations" })}
+          {t("procurement.recommendations.title", {
+            defaultValue: "Replenishment recommendations",
+          })}
         </h3>
-        <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => void load()}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={loading}
+          onClick={() => void load()}
+        >
           {t("procurement.recommendations.refresh", { defaultValue: "Refresh" })}
         </Button>
       </div>
       {error ? <p className="mb-2 text-sm text-destructive">{error}</p> : null}
       {loading ? (
-        <p className="text-sm text-text-muted">{t("procurement.recommendations.loading", { defaultValue: "Loading…" })}</p>
+        <p className="text-sm text-text-muted">
+          {t("procurement.recommendations.loading", { defaultValue: "Loading…" })}
+        </p>
       ) : (
         <div className="space-y-2">
           {rows.slice(0, 12).map((rec) => {
@@ -125,7 +136,10 @@ export function ProcurementRecommendationsPanel({
                     <span className="font-medium">
                       {formatAssetLabel(rec.article_code, rec.article_name)}
                     </span>
-                    <Badge variant={isTransfer ? "secondary" : "outline"} className="h-5 text-[10px]">
+                    <Badge
+                      variant={isTransfer ? "secondary" : "outline"}
+                      className="h-5 text-[10px]"
+                    >
                       {isTransfer
                         ? t("procurement.recommendations.transfer", { defaultValue: "Transfer" })
                         : t("procurement.recommendations.purchase", { defaultValue: "Purchase" })}
@@ -137,20 +151,32 @@ export function ProcurementRecommendationsPanel({
                     {t("procurement.recommendations.suggestedQty", {
                       defaultValue: "Suggested qty",
                     })}
-                    : <strong className="text-foreground tabular-nums">{rec.suggested_reorder_qty}</strong>
+                    :{" "}
+                    <strong className="text-foreground tabular-nums">
+                      {rec.suggested_reorder_qty}
+                    </strong>
                     {" · "}
-                    {t("procurement.recommendations.available", { defaultValue: "Available" })}:{" "}
+                    {t("procurement.recommendations.available", {
+                      defaultValue: "Available",
+                    })}:{" "}
                     <strong className="text-foreground tabular-nums">{rec.available_qty}</strong>
                   </p>
                   <p className="text-xs text-text-muted">
-                    {t("procurement.recommendations.supplier", { defaultValue: "Preferred supplier" })}:{" "}
-                    {formatOrDash(rec.suggested_supplier_name)} ·{" "}
-                    {t("procurement.recommendations.lead", { defaultValue: "ETA" })}: {fmtDate(rec.expected_arrival)} ·{" "}
-                    {t("procurement.recommendations.cost", { defaultValue: "Est. cost" })}: {fmtMoney(rec.estimated_cost)}
+                    {t("procurement.recommendations.supplier", {
+                      defaultValue: "Preferred supplier",
+                    })}
+                    : {formatOrDash(rec.suggested_supplier_name)} ·{" "}
+                    {t("procurement.recommendations.lead", { defaultValue: "ETA" })}:{" "}
+                    {fmtDate(rec.expected_arrival)} ·{" "}
+                    {t("procurement.recommendations.cost", { defaultValue: "Est. cost" })}:{" "}
+                    {fmtMoney(rec.estimated_cost)}
                   </p>
                   {isTransfer && rec.transfer_options.length > 0 ? (
                     <p className="text-xs text-text-muted">
-                      {t("procurement.recommendations.surplusFrom", { defaultValue: "Surplus from" })}:{" "}
+                      {t("procurement.recommendations.surplusFrom", {
+                        defaultValue: "Surplus from",
+                      })}
+                      :{" "}
                       {rec.transfer_options
                         .slice(0, 3)
                         .map((opt) => `${opt.warehouse_code} (${opt.available_qty})`)
@@ -166,17 +192,19 @@ export function ProcurementRecommendationsPanel({
                       })}
                     </Badge>
                   ) : null}
-                  <PermissionGate permission="inv.procure">
+                  <PermissionGate permission={P.INV_PROCURE}>
                     <Button
                       type="button"
                       size="sm"
                       variant={isTransfer ? "outline" : "default"}
                       disabled={creatingId === key}
-                      onClick={() => void createPoFromRec(rec)}
+                      onClick={() => void createRequisitionFromRec(rec)}
                     >
                       {creatingId === key
                         ? t("procurement.recommendations.creating", { defaultValue: "Creating…" })
-                        : t("procurement.recommendations.createPo", { defaultValue: "Create PO" })}
+                        : t("procurement.recommendations.createRequisition", {
+                            defaultValue: "Create requisition",
+                          })}
                     </Button>
                   </PermissionGate>
                 </div>

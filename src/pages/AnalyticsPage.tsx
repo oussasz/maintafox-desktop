@@ -16,13 +16,14 @@ import {
   upsertMyReportSchedule,
 } from "@/services/reports-service";
 import type { ReportRun, ReportSchedule, ReportTemplate } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function AnalyticsPage() {
   const { t } = useTranslation("reports");
   const { can } = usePermissions();
-  const canView = can("rep.view");
-  const canExport = can("rep.export");
-  const canManage = can("rep.manage");
+  const canView = can(P.REP_VIEW);
+  const canExport = can(P.REP_EXPORT);
+  const canManage = can(P.REP_MANAGE);
 
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [schedules, setSchedules] = useState<ReportSchedule[]>([]);

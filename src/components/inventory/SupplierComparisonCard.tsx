@@ -23,6 +23,7 @@ import {
 } from "@/services/inventory-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { SupplierArticleSource } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { computeCompositeRatings, effectiveUnitPrice, riskBadgeVariant } from "./supplier-sourcing";
 
@@ -185,7 +186,7 @@ export function SupplierComparisonCard({
                   </span>
                 </TableCell>
                 <TableCell className="px-2 py-1.5 text-right">
-                  <PermissionGate permission="inv.manage">
+                  <PermissionGate permission={P.INV_MANAGE}>
                     {source.is_preferred === 0 ? (
                       <Button
                         size="sm"

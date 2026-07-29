@@ -39,14 +39,14 @@ use crate::{require_permission, require_session, require_step_up};
 #[tauri::command]
 pub async fn list_org_structure_models(state: State<'_, AppState>) -> AppResult<Vec<OrgStructureModel>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     structure_model::list_models(&state.db).await
 }
 
 #[tauri::command]
 pub async fn get_active_org_structure_model(state: State<'_, AppState>) -> AppResult<Option<OrgStructureModel>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     structure_model::get_active_model(&state.db).await
 }
 
@@ -56,7 +56,7 @@ pub async fn create_org_structure_model(
     state: State<'_, AppState>,
 ) -> AppResult<OrgStructureModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
     if structure_model::get_active_model(&state.db).await?.is_some() {
         return Err(fail(
             "ORG_ACTIVE_MODEL_EXISTS",
@@ -74,7 +74,7 @@ pub async fn fork_org_draft_from_published(
     state: State<'_, AppState>,
 ) -> AppResult<OrgStructureModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
     let result = structure_model::fork_draft_from_published(&state.db, &payload, user.user_id).await?;
     audit::record_org_change(
         &state.db,
@@ -112,7 +112,7 @@ pub async fn publish_org_structure_model(
 #[tauri::command]
 pub async fn archive_org_structure_model(model_id: i32, state: State<'_, AppState>) -> AppResult<OrgStructureModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
     structure_model::archive_model(&state.db, model_id).await
 }
 
@@ -121,7 +121,7 @@ pub async fn archive_org_structure_model(model_id: i32, state: State<'_, AppStat
 #[tauri::command]
 pub async fn list_org_node_types(structure_model_id: i32, state: State<'_, AppState>) -> AppResult<Vec<OrgNodeType>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     node_types::list_node_types(&state.db, structure_model_id).await
 }
 
@@ -131,14 +131,14 @@ pub async fn create_org_node_type(
     state: State<'_, AppState>,
 ) -> AppResult<OrgNodeType> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
     node_types::create_node_type(&state.db, payload).await
 }
 
 #[tauri::command]
 pub async fn deactivate_org_node_type(node_type_id: i32, state: State<'_, AppState>) -> AppResult<OrgNodeType> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
     node_types::deactivate_node_type(&state.db, node_type_id).await
 }
 
@@ -148,7 +148,7 @@ pub async fn update_org_node_type(
     state: State<'_, AppState>,
 ) -> AppResult<OrgNodeType> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
     node_types::update_node_type(&state.db, payload).await
 }
 
@@ -158,7 +158,7 @@ pub async fn get_org_node_type_usage_count(
     state: State<'_, AppState>,
 ) -> AppResult<i32> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     node_types::count_nodes_using_type(&state.db, node_type_id).await
 }
 
@@ -170,7 +170,7 @@ pub async fn list_org_node_equipment(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<OrgNodeEquipmentRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     equipment_assignment::list_equipment_by_node(&state.db, node_id).await
 }
 
@@ -181,7 +181,7 @@ pub async fn search_unassigned_equipment(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<OrgNodeEquipmentRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     equipment_assignment::search_unassigned_equipment(&state.db, &query, limit.unwrap_or(20)).await
 }
 
@@ -191,7 +191,7 @@ pub async fn assign_equipment_to_node(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_MANAGE, PermissionScope::Global);
     equipment_assignment::assign_equipment_to_node(&state.db, payload).await
 }
 
@@ -201,7 +201,7 @@ pub async fn unassign_equipment_from_node(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_MANAGE, PermissionScope::Global);
     equipment_assignment::unassign_equipment_from_node(&state.db, equipment_id).await
 }
 
@@ -213,7 +213,7 @@ pub async fn list_org_relationship_rules(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<OrgRelationshipRule>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     relationship_rules::list_rules(&state.db, structure_model_id).await
 }
 
@@ -223,14 +223,14 @@ pub async fn create_org_relationship_rule(
     state: State<'_, AppState>,
 ) -> AppResult<OrgRelationshipRule> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
     relationship_rules::create_rule(&state.db, payload).await
 }
 
 #[tauri::command]
 pub async fn delete_org_relationship_rule(rule_id: i32, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
     relationship_rules::delete_rule(&state.db, rule_id).await
 }
 
@@ -239,7 +239,7 @@ pub async fn delete_org_relationship_rule(rule_id: i32, state: State<'_, AppStat
 #[tauri::command]
 pub async fn list_org_tree(state: State<'_, AppState>) -> AppResult<Vec<OrgTreeRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     nodes::list_active_org_tree(&state.db).await
 }
 
@@ -250,7 +250,7 @@ pub async fn get_org_node(
     state: State<'_, AppState>,
 ) -> AppResult<OrgNode> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     if let Some(expected_model_id) = structure_model_id {
         crate::org::model_scope::assert_node_in_model(&state.db, node_id, expected_model_id).await?;
     }
@@ -264,7 +264,7 @@ pub async fn list_org_node_responsibilities(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<OrgNodeResponsibility>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     responsibilities::list_node_responsibilities(&state.db, node_id, include_inactive).await
 }
 
@@ -275,7 +275,7 @@ pub async fn list_org_entity_bindings(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<OrgEntityBinding>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     entity_bindings::list_entity_bindings(&state.db, node_id, include_inactive).await
 }
 
@@ -287,7 +287,7 @@ pub async fn create_org_node(
     state: State<'_, AppState>,
 ) -> AppResult<OrgNode> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_MANAGE, PermissionScope::Global);
 
     let result = nodes::create_org_node(&state.db, payload, user.user_id).await?;
 
@@ -316,7 +316,7 @@ pub async fn update_org_node_metadata(
     state: State<'_, AppState>,
 ) -> AppResult<OrgNode> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_MANAGE, PermissionScope::Global);
 
     let before = nodes::get_org_node_by_id(&state.db, payload.node_id).await.ok();
     let result = nodes::update_org_node_metadata(&state.db, payload).await?;
@@ -346,7 +346,7 @@ pub async fn assign_org_node_responsibility(
     state: State<'_, AppState>,
 ) -> AppResult<OrgNodeResponsibility> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_MANAGE, PermissionScope::Global);
 
     let result = responsibilities::assign_responsibility(&state.db, payload, user.user_id).await?;
 
@@ -376,7 +376,7 @@ pub async fn end_org_node_responsibility(
     state: State<'_, AppState>,
 ) -> AppResult<OrgNodeResponsibility> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_MANAGE, PermissionScope::Global);
 
     let result = responsibilities::end_responsibility_assignment(
         &state.db,
@@ -411,7 +411,7 @@ pub async fn upsert_org_entity_binding(
     state: State<'_, AppState>,
 ) -> AppResult<OrgEntityBinding> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_MANAGE, PermissionScope::Global);
 
     let result = entity_bindings::upsert_entity_binding(&state.db, payload, user.user_id).await?;
 
@@ -441,7 +441,7 @@ pub async fn expire_org_entity_binding(
     state: State<'_, AppState>,
 ) -> AppResult<OrgEntityBinding> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_MANAGE, PermissionScope::Global);
 
     let result =
         entity_bindings::expire_entity_binding(&state.db, binding_id, valid_to, user.user_id)
@@ -474,7 +474,7 @@ pub async fn move_org_node(
     state: State<'_, AppState>,
 ) -> AppResult<OrgNode> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
     require_step_up!(state);
 
     let before = nodes::get_org_node_by_id(&state.db, payload.node_id).await.ok();
@@ -506,7 +506,7 @@ pub async fn deactivate_org_node(
     state: State<'_, AppState>,
 ) -> AppResult<OrgNode> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
     require_step_up!(state);
 
     let before = nodes::get_org_node_by_id(&state.db, node_id).await.ok();
@@ -540,7 +540,7 @@ pub async fn get_org_designer_snapshot(
     state: State<'_, AppState>,
 ) -> AppResult<OrgDesignerSnapshot> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     tree_queries::get_org_designer_snapshot(&state.db, prefer_draft).await
 }
 
@@ -553,7 +553,7 @@ pub async fn search_org_designer_nodes(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<OrgDesignerNodeRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     tree_queries::search_nodes(
         &state.db,
         &query,
@@ -570,7 +570,7 @@ pub async fn preview_org_change(
     state: State<'_, AppState>,
 ) -> AppResult<OrgImpactPreview> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     impact_preview::dispatch_preview(&state.db, payload).await
 }
 
@@ -582,7 +582,7 @@ pub async fn validate_org_model_for_publish(
     state: State<'_, AppState>,
 ) -> AppResult<OrgPublishValidationResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     validation::validate_draft_model_for_publish(&state.db, model_id).await
 }
 
@@ -592,7 +592,7 @@ pub async fn reconcile_org_draft_lineage(
     state: State<'_, AppState>,
 ) -> AppResult<OrgDraftLineageReconcileResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
 
     let result =
         structure_model::reconcile_org_draft_lineage(&state.db, draft_model_id).await?;
@@ -622,7 +622,7 @@ pub async fn publish_org_model(
     state: State<'_, AppState>,
 ) -> AppResult<OrgPublishValidationResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_ADMIN, PermissionScope::Global);
     require_step_up!(state);
 
     let result = validation::publish_model_with_remap(&state.db, model_id, user.user_id).await;
@@ -687,7 +687,7 @@ pub async fn list_org_change_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<OrgChangeEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "org.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ORG_VIEW, PermissionScope::Global);
     audit::list_org_change_events(
         &state.db,
         limit,

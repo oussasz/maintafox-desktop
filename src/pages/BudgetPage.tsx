@@ -93,6 +93,7 @@ import type {
   ForecastRun,
   OrgTreeRow,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 type CostCenterFormState = {
   code: string;
@@ -190,9 +191,9 @@ function parseOptionalNumber(value: string, noneValue = "__none__"): number | nu
 
 export function BudgetPage() {
   const { canAny, can } = usePermissions();
-  const canBudget = canAny("fin.budget", "fin.manage");
-  const canPost = can("fin.post");
-  const canReport = can("fin.report");
+  const canBudget = canAny(P.FIN_BUDGET, P.FIN_MANAGE);
+  const canPost = can(P.FIN_POST);
+  const canReport = can(P.FIN_REPORT);
 
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [versions, setVersions] = useState<BudgetVersion[]>([]);
@@ -1042,7 +1043,7 @@ export function BudgetPage() {
             <RefreshCw className="h-3.5 w-3.5" />
             Refresh
           </Button>
-          <PermissionGate permission="fin.report">
+          <PermissionGate permission={P.FIN_REPORT}>
             <Button variant="secondary" size="sm" disabled>
               <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
               Report-ready metadata enabled
@@ -2179,7 +2180,7 @@ export function BudgetPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <PermissionGate permission="fin.report">
+                <PermissionGate permission={P.FIN_REPORT}>
                   <div className="flex flex-wrap gap-2">
                     <Button
                       variant="outline"
@@ -2357,7 +2358,7 @@ export function BudgetPage() {
                         className="w-64"
                       />
                     </div>
-                    <PermissionGate permission="fin.report">
+                    <PermissionGate permission={P.FIN_REPORT}>
                       <Button
                         variant="outline"
                         onClick={() => void handleRecordSignedExport("posted_actuals")}
@@ -2425,7 +2426,7 @@ export function BudgetPage() {
                     Integration exceptions
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <PermissionGate permission="fin.report">
+                    <PermissionGate permission={P.FIN_REPORT}>
                       <Button
                         variant="outline"
                         size="sm"

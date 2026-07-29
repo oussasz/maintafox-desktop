@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { exportWorkforceReportCsv } from "@/services/personnel-service";
+import { P } from "@shared/rbac/permissions.generated";
 
 function downloadCsv(fileName: string, data: string) {
   const blob = new Blob([data], { type: "text/csv;charset=utf-8;" });
@@ -33,7 +34,7 @@ export function PersonnelExportMenu() {
   }, []);
 
   return (
-    <PermissionGate permission="per.report">
+    <PermissionGate permission={P.PER_REPORT}>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" size="sm" className="gap-1.5">

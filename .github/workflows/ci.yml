@@ -46,6 +46,9 @@ jobs:
       - name: TypeScript type check
         run: pnpm run typecheck
 
+      - name: RBAC permission parity
+        run: pnpm run rbac:check
+
       - name: ESLint
         run: pnpm run lint:check
 

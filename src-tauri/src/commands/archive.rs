@@ -157,7 +157,7 @@ pub async fn list_archive_items(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ArchiveItemSummary>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "arc.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ARC_VIEW, PermissionScope::Global);
 
     let filter = filter.unwrap_or(ArchiveFilterInput {
         source_module: None,
@@ -232,7 +232,7 @@ pub async fn list_archive_items(
 #[tauri::command]
 pub async fn get_archive_item(archive_item_id: i64, state: State<'_, AppState>) -> AppResult<ArchiveItemDetail> {
     let user = require_session!(state);
-    require_permission!(state, &user, "arc.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ARC_VIEW, PermissionScope::Global);
 
     let item_row = state
         .db
@@ -344,7 +344,7 @@ pub async fn restore_archive_item(
     state: State<'_, AppState>,
 ) -> AppResult<ArchiveRestoreResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "arc.restore", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ARC_RESTORE, PermissionScope::Global);
     require_step_up!(state);
 
     let row = state
@@ -540,9 +540,9 @@ pub async fn export_archive_items(
     state: State<'_, AppState>,
 ) -> AppResult<ExportPayload> {
     let user = require_session!(state);
-    require_permission!(state, &user, "arc.export", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ARC_EXPORT, PermissionScope::Global);
     // Explicitly enforce arc.view too as requested.
-    require_permission!(state, &user, "arc.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ARC_VIEW, PermissionScope::Global);
 
     if payload.archive_item_ids.is_empty() {
         return Ok(ExportPayload { items: Vec::new() });
@@ -610,7 +610,7 @@ pub async fn purge_archive_items(
     state: State<'_, AppState>,
 ) -> AppResult<PurgeResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "arc.purge", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ARC_PURGE, PermissionScope::Global);
     require_step_up!(state);
 
     let strict_mode = load_archive_purge_strict_mode(&state).await?;
@@ -710,7 +710,7 @@ pub async fn purge_archive_items(
 #[tauri::command]
 pub async fn set_legal_hold(payload: LegalHoldInput, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "arc.purge", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ARC_PURGE, PermissionScope::Global);
     require_step_up!(state);
 
     let update_res = state
@@ -761,7 +761,7 @@ pub async fn set_legal_hold(payload: LegalHoldInput, state: State<'_, AppState>)
 #[tauri::command]
 pub async fn list_retention_policies(state: State<'_, AppState>) -> AppResult<Vec<RetentionPolicy>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "arc.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ARC_VIEW, PermissionScope::Global);
 
     let rows = state
         .db
@@ -790,7 +790,7 @@ pub async fn update_retention_policy(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
     require_step_up!(state);
 
     let existing = state

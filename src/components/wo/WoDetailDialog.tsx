@@ -53,21 +53,17 @@ import {
   WoExecutionControls,
   type WoExecutionControlsHandle,
 } from "@/components/wo/WoExecutionControls";
-import {
-  WoPlanningPanel,
-} from "@/components/wo/WoPlanningPanel";
+import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { usePermissions } from "@/hooks/use-permissions";
-import {
-  needsPlanningApproval,
-  useWoLifecycleActions,
-} from "@/hooks/use-wo-lifecycle-actions";
-import { pushAppToast } from "@/store/app-toast-store";
+import { needsPlanningApproval, useWoLifecycleActions } from "@/hooks/use-wo-lifecycle-actions";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
+import { pushAppToast } from "@/store/app-toast-store";
+import { useWoStore } from "@/stores/wo-store";
 import { formatDate } from "@/utils/format-date";
 import { statusToI18nKey, STATUS_STYLE, URGENCY_STYLE } from "@/utils/wo-status";
-import { useWoStore } from "@/stores/wo-store";
 import type { WoCompletionGate, WoStatus, WorkOrder } from "@shared/ipc-types";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
 const EXECUTION_VISIBLE: Set<string> = new Set([
   "ready",
@@ -77,12 +73,7 @@ const EXECUTION_VISIBLE: Set<string> = new Set([
   "closed",
 ]);
 
-const CLOSEOUT_VISIBLE: Set<string> = new Set([
-  "in_progress",
-  "on_hold",
-  "completed",
-  "closed",
-]);
+const CLOSEOUT_VISIBLE: Set<string> = new Set(["in_progress", "on_hold", "completed", "closed"]);
 const CANCELLABLE_DENY = new Set(["closed", "cancelled"]);
 const ATTACHMENT_UPLOAD_DENY = new Set(["closed", "cancelled"]);
 
@@ -136,18 +127,15 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
     return () => {
       cancelled = true;
     };
-  }, [wo?.id, wo?.row_version, wo?.parts_actuals_confirmed, showCloseout]);
+  }, [wo, wo?.id, wo?.row_version, wo?.parts_actuals_confirmed, showCloseout]);
 
-  const closeoutProgress = useMemo(
-    () => completionGatesProgress(closeoutGates),
-    [closeoutGates],
-  );
+  const closeoutProgress = useMemo(() => completionGatesProgress(closeoutGates), [closeoutGates]);
 
   const handlePrint = useCallback(() => {
     if (wo) void printWoFiche(wo, t, i18n.resolvedLanguage || i18n.language || "fr");
   }, [wo, t, i18n.resolvedLanguage, i18n.language]);
 
-  const canEditWo = can("ot.edit");
+  const canEditWo = can(P.OT_EDIT);
   const canUploadAttachments =
     canEditWo && wo != null && !ATTACHMENT_UPLOAD_DENY.has(wo.status_code ?? "");
 
@@ -475,7 +463,7 @@ export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailD
 interface FooterActionsProps {
   wo: WorkOrder;
   busy: boolean;
-  can: (p: string) => boolean;
+  can: (p: PermissionName) => boolean;
   t: (key: string) => string;
   needsApproval: boolean;
   onEdit: () => void;
@@ -511,7 +499,7 @@ function FooterActions({
 
   return (
     <>
-      {s === "draft" && can("ot.edit") && (
+      {s === "draft" && can(P.OT_EDIT) && (
         <>
           <Button size="sm" variant="outline" onClick={onEdit} disabled={busy} className="gap-1.5">
             <Pencil className="h-3.5 w-3.5" />
@@ -524,10 +512,16 @@ function FooterActions({
         </>
       )}
 
-      {s === "planning" && can("ot.edit") && (
+      {s === "planning" && can(P.OT_EDIT) && (
         <>
           {needsApproval && (
-            <Button size="sm" variant="outline" onClick={onApprove} disabled={busy} className="gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onApprove}
+              disabled={busy}
+              className="gap-1.5"
+            >
               <FileCheck2 className="h-3.5 w-3.5" />
               {t("planning.approvePlanning")}
             </Button>
@@ -544,9 +538,15 @@ function FooterActions({
         </>
       )}
 
-      {s === "ready" && can("ot.edit") && (
+      {s === "ready" && can(P.OT_EDIT) && (
         <>
-          <Button size="sm" variant="outline" onClick={onReturnToPlanning} disabled={busy} className="gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onReturnToPlanning}
+            disabled={busy}
+            className="gap-1.5"
+          >
             <RotateCcw className="h-3.5 w-3.5" />
             {t("planning.returnToPlanning")}
           </Button>
@@ -562,7 +562,7 @@ function FooterActions({
         </>
       )}
 
-      {s === "in_progress" && can("ot.edit") && (
+      {s === "in_progress" && can(P.OT_EDIT) && (
         <>
           <Button size="sm" variant="outline" onClick={onHold} disabled={busy} className="gap-1.5">
             <Pause className="h-3.5 w-3.5" />
@@ -580,7 +580,7 @@ function FooterActions({
         </>
       )}
 
-      {s === "on_hold" && can("ot.edit") && (
+      {s === "on_hold" && can(P.OT_EDIT) && (
         <Button
           size="sm"
           onClick={onResume}
@@ -592,7 +592,7 @@ function FooterActions({
         </Button>
       )}
 
-      {!CANCELLABLE_DENY.has(s) && can("ot.close") && (
+      {!CANCELLABLE_DENY.has(s) && can(P.OT_CLOSE) && (
         <Button
           size="sm"
           variant="outline"

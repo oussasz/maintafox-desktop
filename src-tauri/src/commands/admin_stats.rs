@@ -29,7 +29,7 @@ pub struct AdminStatsPayload {
 #[tauri::command]
 pub async fn get_admin_stats(state: State<'_, AppState>) -> AppResult<AdminStatsPayload> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
 
     let sql = r#"
         WITH

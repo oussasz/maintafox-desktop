@@ -37,7 +37,7 @@ pub async fn get_equipment_taxonomy_catalog(
     state: State<'_, AppState>,
 ) -> AppResult<EquipmentTaxonomyCatalog> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     taxonomy_reference::list_equipment_taxonomy_catalog(&state.db).await
 }
 
@@ -50,7 +50,7 @@ pub async fn list_assets(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<identity::Asset>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     identity::list_assets(&state.db, status_filter, org_node_filter, query, limit).await
 }
 
@@ -60,7 +60,7 @@ pub async fn get_asset_by_id(
     state: State<'_, AppState>,
 ) -> AppResult<identity::Asset> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     identity::get_asset_by_id(&state.db, asset_id).await
 }
 
@@ -70,7 +70,7 @@ pub async fn list_asset_children(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<hierarchy::AssetHierarchyRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     hierarchy::list_asset_children(&state.db, parent_asset_id).await
 }
 
@@ -80,7 +80,7 @@ pub async fn list_asset_parents(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<hierarchy::AssetHierarchyRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     hierarchy::list_asset_parents(&state.db, child_asset_id).await
 }
 
@@ -90,7 +90,7 @@ pub async fn search_assets(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<search::AssetSearchResult>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     search::search_assets(&state.db, filters).await
 }
 
@@ -101,7 +101,7 @@ pub async fn suggest_asset_codes(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<search::AssetSuggestion>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     search::suggest_asset_codes(&state.db, &prefix, limit).await
 }
 
@@ -112,7 +112,7 @@ pub async fn suggest_asset_names(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<search::AssetSuggestion>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     search::suggest_asset_names(&state.db, &partial, limit).await
 }
 
@@ -124,7 +124,7 @@ pub async fn get_asset_binding_summary(
     state: State<'_, AppState>,
 ) -> AppResult<bindings::AssetBindingSummary> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     bindings::get_asset_binding_summary(&state.db, asset_id).await
 }
 
@@ -134,7 +134,7 @@ pub async fn get_asset_health_score(
     state: State<'_, AppState>,
 ) -> AppResult<health::AssetHealthScore> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     health::get_asset_health_score(&state.db, asset_id).await
 }
 
@@ -144,7 +144,7 @@ pub async fn list_asset_history_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<history::AssetHistoryEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     history::list_asset_history_events(&state.db, query).await
 }
 
@@ -154,7 +154,7 @@ pub async fn get_asset_history_summary(
     state: State<'_, AppState>,
 ) -> AppResult<history::AssetHistorySummary> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     history::get_asset_history_summary(&state.db, asset_id).await
 }
 
@@ -166,7 +166,7 @@ pub async fn create_asset(
     state: State<'_, AppState>,
 ) -> AppResult<identity::Asset> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     identity::create_asset(&state.db, payload, user.user_id).await
 }
 
@@ -178,7 +178,7 @@ pub async fn update_asset_identity(
     state: State<'_, AppState>,
 ) -> AppResult<identity::Asset> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     identity::update_asset_identity(&state.db, asset_id, payload, expected_row_version, user.user_id)
         .await
 }
@@ -189,7 +189,7 @@ pub async fn link_asset_hierarchy(
     state: State<'_, AppState>,
 ) -> AppResult<hierarchy::AssetHierarchyRow> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     hierarchy::link_asset_hierarchy(&state.db, payload, user.user_id).await
 }
 
@@ -200,7 +200,7 @@ pub async fn unlink_asset_hierarchy(
     state: State<'_, AppState>,
 ) -> AppResult<hierarchy::AssetHierarchyRow> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     hierarchy::unlink_asset_hierarchy(&state.db, relation_id, effective_to, user.user_id).await
 }
 
@@ -212,7 +212,7 @@ pub async fn move_asset_org_node(
     state: State<'_, AppState>,
 ) -> AppResult<identity::Asset> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     hierarchy::move_asset_org_node(
         &state.db,
         asset_id,
@@ -232,7 +232,7 @@ pub async fn list_asset_lifecycle_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<lifecycle::AssetLifecycleEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     lifecycle::list_asset_lifecycle_events(&state.db, asset_id, limit).await
 }
 
@@ -242,7 +242,7 @@ pub async fn record_lifecycle_event(
     state: State<'_, AppState>,
 ) -> AppResult<lifecycle::AssetLifecycleEvent> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     lifecycle::record_lifecycle_event(&state.db, payload, user.user_id).await
 }
 
@@ -252,7 +252,7 @@ pub async fn decommission_asset(
     state: State<'_, AppState>,
 ) -> AppResult<identity::Asset> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     decommission::decommission_asset(&state.db, payload, user.user_id).await
 }
 
@@ -264,7 +264,7 @@ pub async fn list_asset_meters(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<meters::AssetMeter>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     meters::list_asset_meters(&state.db, asset_id).await
 }
 
@@ -274,7 +274,7 @@ pub async fn create_asset_meter(
     state: State<'_, AppState>,
 ) -> AppResult<meters::AssetMeter> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     meters::create_asset_meter(&state.db, payload, user.user_id).await
 }
 
@@ -284,7 +284,7 @@ pub async fn record_meter_reading(
     state: State<'_, AppState>,
 ) -> AppResult<meters::MeterReading> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     meters::record_meter_reading(&state.db, payload, user.user_id).await
 }
 
@@ -294,7 +294,7 @@ pub async fn get_latest_meter_value(
     state: State<'_, AppState>,
 ) -> AppResult<Option<meters::MeterReading>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     meters::get_latest_meter_value(&state.db, meter_id).await
 }
 
@@ -305,7 +305,7 @@ pub async fn list_meter_readings(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<meters::MeterReading>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     meters::list_meter_readings(&state.db, meter_id, limit).await
 }
 
@@ -318,7 +318,7 @@ pub async fn list_asset_document_links(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<documents::AssetDocumentLink>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     documents::list_asset_document_links(&state.db, asset_id, include_expired.unwrap_or(false))
         .await
 }
@@ -329,7 +329,7 @@ pub async fn upsert_asset_document_link(
     state: State<'_, AppState>,
 ) -> AppResult<documents::AssetDocumentLink> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     documents::upsert_asset_document_link(&state.db, payload, user.user_id).await
 }
 
@@ -340,7 +340,7 @@ pub async fn expire_asset_document_link(
     state: State<'_, AppState>,
 ) -> AppResult<documents::AssetDocumentLink> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     documents::expire_asset_document_link(&state.db, link_id, valid_to, user.user_id).await
 }
 
@@ -353,7 +353,7 @@ pub async fn list_asset_photos(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<photos::AssetPhoto>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     let app_data_dir = app
         .path()
         .app_data_dir()
@@ -368,7 +368,7 @@ pub async fn read_asset_photo_preview(
     state: State<'_, AppState>,
 ) -> AppResult<photos::AssetPhotoPreview> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     let app_data_dir = app
         .path()
         .app_data_dir()
@@ -383,7 +383,7 @@ pub async fn upload_asset_photo(
     state: State<'_, AppState>,
 ) -> AppResult<photos::AssetPhoto> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     let app_data_dir = app
         .path()
         .app_data_dir()
@@ -398,7 +398,7 @@ pub async fn delete_asset_photo(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
     let app_data_dir = app
         .path()
         .app_data_dir()
@@ -416,7 +416,7 @@ pub async fn create_asset_import_batch(
     state: State<'_, AppState>,
 ) -> AppResult<import::ImportBatchSummary> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.import", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_IMPORT, PermissionScope::Global);
 
     let batch = import::create_import_batch(
         &state.db,
@@ -434,7 +434,7 @@ pub async fn validate_asset_import_batch(
     state: State<'_, AppState>,
 ) -> AppResult<import::ImportBatchSummary> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.import", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_IMPORT, PermissionScope::Global);
     import::validate_import_batch(&state.db, batch_id, Some(user.user_id as i64)).await
 }
 
@@ -444,7 +444,7 @@ pub async fn get_asset_import_preview(
     state: State<'_, AppState>,
 ) -> AppResult<import::ImportPreview> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.import", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_IMPORT, PermissionScope::Global);
     import::get_import_preview(&state.db, batch_id).await
 }
 
@@ -455,7 +455,7 @@ pub async fn apply_asset_import_batch(
     state: State<'_, AppState>,
 ) -> AppResult<import::ApplyResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.import", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_IMPORT, PermissionScope::Global);
     import::apply_import_batch(&state.db, batch_id, &policy, Some(user.user_id as i64)).await
 }
 
@@ -466,6 +466,6 @@ pub async fn list_asset_import_batches(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<import::ImportBatchSummary>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "eq.import", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_IMPORT, PermissionScope::Global);
     import::list_import_batches(&state.db, status_filter, limit).await
 }

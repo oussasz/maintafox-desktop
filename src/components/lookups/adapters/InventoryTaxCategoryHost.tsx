@@ -32,6 +32,7 @@ import {
 } from "@/services/inventory-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { InventoryTaxCategory, InventoryTaxCategoryInput } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const EMPTY_DRAFT: InventoryTaxCategoryInput = {
   code: "",
@@ -44,12 +45,12 @@ const EMPTY_DRAFT: InventoryTaxCategoryInput = {
 export function InventoryTaxCategoryHost() {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
-  const canManage = can("ref.manage");
+  const canManage = can(P.REF_MANAGE);
   const capabilities: ReferenceTableCapabilities = {
     canCreate: canManage,
     canUpdate: canManage,
     canDeactivateOrDelete: canManage,
-    canToggleActive: false
+    canToggleActive: false,
   };
   const [rows, setRows] = useState<InventoryTaxCategory[]>([]);
   const [loading, setLoading] = useState(false);

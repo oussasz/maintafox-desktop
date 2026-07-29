@@ -17,13 +17,14 @@ import {
   useOrgDesignerStore,
 } from "@/stores/org-designer-store";
 import { useOrgGovernanceStore } from "@/stores/org-governance-store";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { AbandonOrgDraftDialog, OrgStructureDraftDialog } from "./OrgStructureDraftDialog";
 
 function AbandonDraftButton({ onClick }: { onClick: () => void }) {
   const { t } = useTranslation("org");
   return (
-    <PermissionGate permission="org.admin">
+    <PermissionGate permission={P.ORG_ADMIN}>
       <Button
         size="sm"
         variant="outline"
@@ -46,8 +47,7 @@ function PublishDraftButton({ draftModelId }: { draftModelId: number }) {
   const loadAuditEvents = useOrgGovernanceStore((s) => s.loadAuditEvents);
   const loadSnapshot = useOrgDesignerStore((s) => s.loadSnapshot);
 
-  const canPublish =
-    validation?.can_publish === true && !storeError && !validationLoading;
+  const canPublish = validation?.can_publish === true && !storeError && !validationLoading;
 
   const handlePublish = async () => {
     try {
@@ -174,10 +174,7 @@ export function OrgDesignerLifecycleBar() {
 
       {hasDraft && !hasActive && showDraftActions && draftModelId != null && (
         <div className="flex flex-wrap justify-end gap-2">
-          <DraftPrimaryActions
-            draftModelId={draftModelId}
-            onAbandon={() => setAbandonOpen(true)}
-          />
+          <DraftPrimaryActions draftModelId={draftModelId} onAbandon={() => setAbandonOpen(true)} />
         </div>
       )}
 
@@ -190,7 +187,7 @@ export function OrgDesignerLifecycleBar() {
       {!hasActive && !hasDraft && (
         <div className="rounded-md border border-status-warning/30 bg-status-warning/10 p-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-text-primary">{t("lifecycle.noModelYet")}</p>
-          <PermissionGate permission="org.admin">
+          <PermissionGate permission={P.ORG_ADMIN}>
             <Button size="sm" className="gap-1.5" onClick={() => setBootstrapOpen(true)}>
               <Plus className="h-3.5 w-3.5" />
               {t("lifecycle.createInitialDraft")}
@@ -202,7 +199,7 @@ export function OrgDesignerLifecycleBar() {
       {hasActive && !hasDraft && (
         <div className="rounded-md border border-surface-border bg-surface-0 p-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-text-primary max-w-prose">{t("lifecycle.publishedNoDraft")}</p>
-          <PermissionGate permission="org.admin">
+          <PermissionGate permission={P.ORG_ADMIN}>
             <Button size="sm" className="gap-1.5" onClick={() => setForkOpen(true)}>
               <Plus className="h-3.5 w-3.5" />
               {t("lifecycle.startVersionFromPublished")}

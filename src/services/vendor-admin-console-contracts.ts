@@ -1,14 +1,16 @@
 import { z } from "zod";
 
+import { P } from "@shared/rbac/permissions.generated";
+
 /** Vendor console RBAC — must match migration 066 / `vps::vendor_admin_console::permissions`. */
 export const VendorConsolePermissionSchema = z.enum([
-  "console.view",
-  "customer.manage",
-  "entitlement.manage",
-  "sync.operate",
-  "rollout.manage",
-  "platform.observe",
-  "audit.view",
+  P.CONSOLE_VIEW,
+  P.CUSTOMER_MANAGE,
+  P.ENTITLEMENT_MANAGE,
+  P.SYNC_OPERATE,
+  P.ROLLOUT_MANAGE,
+  P.PLATFORM_OBSERVE,
+  P.AUDIT_VIEW,
 ]);
 
 export type VendorConsolePermission = z.infer<typeof VendorConsolePermissionSchema>;

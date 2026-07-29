@@ -30,6 +30,7 @@ import {
   updateRbdModel,
 } from "@/services/reliability-service";
 import type { FtaModel, RbdModel } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { useRequiredRamsEquipmentId } from "./rams-equipment-context";
 
@@ -519,8 +520,8 @@ function VisualLabCanvas({ mode, equipmentId }: { mode: LabMode; equipmentId: nu
   const { t } = useTranslation("reliability");
   const { theme } = useTheme();
   const { can } = usePermissions();
-  const canManage = can("ram.manage");
-  const canAnalyze = can("ram.analyze");
+  const canManage = can(P.RAM_MANAGE);
+  const canAnalyze = can(P.RAM_ANALYZE);
 
   const graphHostRef = useRef<HTMLDivElement | null>(null);
   const stencilHostRef = useRef<HTMLDivElement | null>(null);

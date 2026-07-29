@@ -1,24 +1,38 @@
 import { History, Lock } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { usePermissions } from "@/hooks/use-permissions";
+import { type ActivityEventSummary, listActivityEvents } from "@/services/activity-service";
 import {
   type RetentionPolicy,
   listRetentionPolicies,
   updateRetentionPolicy,
 } from "@/services/archive-service";
-import { type ActivityEventSummary, listActivityEvents } from "@/services/activity-service";
 import { toErrorMessage } from "@/utils/errors";
+import { P } from "@shared/rbac/permissions.generated";
 
 export function RetentionPolicyPanel() {
   const { can, isLoading: permissionsLoading } = usePermissions();
-  const canEdit = can("adm.settings");
+  const canEdit = can(P.ADM_SETTINGS);
 
   const [rows, setRows] = useState<RetentionPolicy[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,7 +81,8 @@ export function RetentionPolicyPanel() {
 
   useEffect(() => {
     if (selectedPolicyId === null && rows.length > 0) {
-      setSelectedPolicyId(rows[0]!.id);
+      const first = rows[0];
+      if (first) setSelectedPolicyId(first.id);
     }
   }, [rows, selectedPolicyId]);
 
@@ -75,7 +90,10 @@ export function RetentionPolicyPanel() {
     setRetentionDrafts((prev) => {
       const next: Record<number, string> = {};
       for (const row of rows) {
-        next[row.id] = savingId === row.id ? (prev[row.id] ?? String(row.retention_years)) : String(row.retention_years);
+        next[row.id] =
+          savingId === row.id
+            ? (prev[row.id] ?? String(row.retention_years))
+            : String(row.retention_years);
       }
       return next;
     });
@@ -110,7 +128,8 @@ export function RetentionPolicyPanel() {
           requires_legal_hold_check?: boolean;
         } = { policy_id: policy.id };
 
-        if (changes.retention_years !== undefined) payload.retention_years = changes.retention_years;
+        if (changes.retention_years !== undefined)
+          payload.retention_years = changes.retention_years;
         if (changes.purge_mode !== undefined) payload.purge_mode = changes.purge_mode;
         if (changes.allow_restore !== undefined) payload.allow_restore = changes.allow_restore;
         if (changes.allow_purge !== undefined) payload.allow_purge = changes.allow_purge;
@@ -233,7 +252,9 @@ export function RetentionPolicyPanel() {
                     <Switch
                       checked={row.allow_restore}
                       disabled={!canEdit || savingId === row.id}
-                      onCheckedChange={(checked) => void patchPolicy(row, { allow_restore: checked })}
+                      onCheckedChange={(checked) =>
+                        void patchPolicy(row, { allow_restore: checked })
+                      }
                     />
                   </TableCell>
                   <TableCell>

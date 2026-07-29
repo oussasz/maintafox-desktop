@@ -21,11 +21,11 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import {
   Select,
   SelectContent,
@@ -56,6 +56,7 @@ import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import { toErrorMessage } from "@/utils/errors";
 import type { WoCompletionGate, WorkOrder } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -110,7 +111,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
   const { withStepUp, StepUpDialogElement } = useStepUp();
   const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
   const woItems = useWoStore((s) => s.items);
-  const canReopen = can("ot.admin");
+  const canReopen = can(P.OT_ADMIN);
 
   // Track current WO state (gets updated after transitions)
   const [currentWo, setCurrentWo] = useState<WorkOrder>(wo);
@@ -227,7 +228,14 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
     return () => {
       cancelled = true;
     };
-  }, [wo.id, currentWo.row_version, rootCauseSummary, failureModeId, symptomId, causeNotDetermined]);
+  }, [
+    wo.id,
+    currentWo.row_version,
+    rootCauseSummary,
+    failureModeId,
+    symptomId,
+    causeNotDetermined,
+  ]);
 
   // Keep currentWo in sync with prop changes (e.g., parent refreshes)
   useEffect(() => {
@@ -434,10 +442,7 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
               })}
             </span>
           </div>
-          <WoCompletionGatesChecklist
-            gates={completionGates}
-            showBlockingCount={false}
-          />
+          <WoCompletionGatesChecklist gates={completionGates} showBlockingCount={false} />
         </section>
       )}
 
@@ -761,7 +766,9 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
                 rows={2}
                 placeholder={t("closeout.fmecaOverrideReasonPlaceholder")}
               />
-              <Label htmlFor="wo-fmeca-override-signer-id">{t("closeout.fmecaOverrideSignerId")}</Label>
+              <Label htmlFor="wo-fmeca-override-signer-id">
+                {t("closeout.fmecaOverrideSignerId")}
+              </Label>
               <Select
                 value={fmecaOverrideSignerId || "__none"}
                 onValueChange={(v) => setFmecaOverrideSignerId(v === "__none" ? "" : v)}
@@ -845,7 +852,9 @@ export function WoCloseOutPanel({ wo, canEdit, onClosed }: WoCloseOutPanelProps)
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="in_progress">{t("closeout.reopenTargetInProgress")}</SelectItem>
+                    <SelectItem value="in_progress">
+                      {t("closeout.reopenTargetInProgress")}
+                    </SelectItem>
                     <SelectItem value="planning">{t("closeout.reopenTargetPlanning")}</SelectItem>
                   </SelectContent>
                 </Select>

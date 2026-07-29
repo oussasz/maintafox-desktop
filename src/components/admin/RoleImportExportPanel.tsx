@@ -37,6 +37,7 @@ import type {
   RoleValidationResult,
   RoleWithPermissions,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 // ── Preview row for import ───────────────────────────────────────────────
 
@@ -425,7 +426,7 @@ export function RoleImportExportPanel() {
               </div>
             )}
 
-            {can("adm.roles") && (
+            {can(P.ADM_ROLES) && (
               <Button
                 size="sm"
                 disabled={importing || importPreview.some((r) => r.validating)}

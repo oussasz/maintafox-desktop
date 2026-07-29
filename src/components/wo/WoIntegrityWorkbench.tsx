@@ -26,6 +26,7 @@ import {
   waiveDataIntegrityFinding,
 } from "@/services/data-integrity-service";
 import type { AnalyticsContractVersionRow, DataIntegrityFindingRow } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 function repairOptionsForCode(code: string): { value: string; labelKey: string }[] {
   switch (code) {
@@ -88,7 +89,7 @@ export function WoIntegrityWorkbench() {
   }, [load]);
 
   return (
-    <PermissionGate permission="integrity.repair">
+    <PermissionGate permission={P.INTEGRITY_REPAIR}>
       <div className="border-b border-surface-border bg-surface-elevated/40 px-6 py-3">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-2 min-w-0">
@@ -251,7 +252,7 @@ function FindingRow({
       {opts.length > 0 && (
         <div className="flex flex-wrap gap-2 items-end pt-1 border-t border-surface-border">
           <div className="flex flex-col gap-0.5">
-            <label className="text-[10px] text-text-muted">{t("integrity.repair")}</label>
+            <label className="text-[10px] text-text-muted">{t(P.INTEGRITY_REPAIR)}</label>
             <Select value={repairKind} onValueChange={setRepairKind}>
               <SelectTrigger className="h-7 w-[200px] text-xs">
                 <SelectValue />

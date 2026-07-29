@@ -259,6 +259,7 @@ mod tests {
                 planned_end: "2026-04-10T12:00:00Z".into(),
                 shift: None,
                 expected_duration_hours: Some(4.0),
+                planned_downtime_hours: None,
                 urgency_id: None,
             },
         )
@@ -403,8 +404,8 @@ mod tests {
         let db = setup().await;
 
         let expected = [
-            "ot.view", "ot.create", "ot.edit", "ot.approve",
-            "ot.close", "ot.reopen", "ot.admin", "ot.delete",
+            crate::rbac::permissions::OT_VIEW, crate::rbac::permissions::OT_CREATE, crate::rbac::permissions::OT_EDIT, crate::rbac::permissions::OT_APPROVE,
+            crate::rbac::permissions::OT_CLOSE, crate::rbac::permissions::OT_REOPEN, crate::rbac::permissions::OT_ADMIN, crate::rbac::permissions::OT_DELETE,
         ];
 
         for name in expected {

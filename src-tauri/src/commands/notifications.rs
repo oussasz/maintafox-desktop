@@ -249,7 +249,7 @@ pub async fn acknowledge_notification(
         &state.db,
         &state.permission_cache,
         user.user_id,
-        "adm.users",
+        crate::rbac::permissions::ADM_USERS,
         &PermissionScope::Global,
     )
     .await?;
@@ -493,7 +493,7 @@ pub async fn update_notification_preference(
 #[tauri::command]
 pub async fn list_notification_rules(state: State<'_, AppState>) -> AppResult<Vec<NotificationRuleDetail>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
 
     let rows = state
         .db
@@ -557,7 +557,7 @@ pub async fn update_notification_rule(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
 
     if let Some(ref routing_mode) = payload.routing_mode {
         if !matches!(
@@ -632,7 +632,7 @@ pub async fn list_notification_categories(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<NotificationCategory>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
 
     let rows = state
         .db

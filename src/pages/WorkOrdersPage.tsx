@@ -41,13 +41,13 @@ import { WoIntegrityWorkbench } from "@/components/wo/WoIntegrityWorkbench";
 import { WoKanbanView } from "@/components/wo/WoKanbanView";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { mfLayout } from "@/design-system/tokens";
-import { cn } from "@/lib/utils";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { formatDate } from "@/utils/format-date";
 import { STATUS_STYLE, statusToI18nKey } from "@/utils/wo-status";
 import type { WorkOrder } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 type WoViewMode = "list" | "kanban" | "calendar" | "dashboard" | "integrity";
 
@@ -320,10 +320,7 @@ export function WorkOrdersPage() {
         cell: ({ row }) => {
           const wo = row.original;
           return (
-            <div
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.stopPropagation()}
-            >
+            <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
               <WoContextMenu
                 wo={wo}
                 onViewDetail={(item) => void openWo(item.id)}
@@ -362,7 +359,7 @@ export function WorkOrdersPage() {
 
         <div className={mfLayout.moduleHeaderActions}>
           {/* New WO button */}
-          <PermissionGate permission="ot.create">
+          <PermissionGate permission={P.OT_CREATE}>
             <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
               <Plus className="h-3.5 w-3.5" />
               {t("action.create")}
@@ -454,7 +451,7 @@ export function WorkOrdersPage() {
       )}
 
       {/* ── DI management panel (ot.edit permission) ─────────────────── */}
-      <PermissionGate permission="ot.edit">
+      <PermissionGate permission={P.OT_EDIT}>
         <WoDiManagementPanel />
       </PermissionGate>
 

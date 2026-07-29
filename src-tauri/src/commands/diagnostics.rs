@@ -8,7 +8,7 @@ use crate::{require_permission, require_session};
 use tauri::State;
 
 /// Runs the database integrity check and returns a report.
-/// Called by the frontend on startup and from the diagnostics panel.
+/// Called by the frontend on startup (pre-auth, read-only) and from the diagnostics panel.
 #[tauri::command]
 pub async fn run_integrity_check(state: State<'_, AppState>) -> AppResult<integrity::IntegrityReport> {
     integrity::run_integrity_check(&state.db).await
@@ -19,6 +19,14 @@ pub async fn run_integrity_check(state: State<'_, AppState>) -> AppResult<integr
 /// Safe to call even if seed data is already present (idempotent).
 #[tauri::command]
 pub async fn repair_seed_data(state: State<'_, AppState>) -> AppResult<integrity::IntegrityReport> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    crate::require_step_up!(state);
     tracing::info!("diagnostics::repair_seed_data called");
     seeder::seed_system_data(&state.db).await?;
     integrity::run_integrity_check(&state.db).await
@@ -31,6 +39,17 @@ pub async fn repair_seed_data(state: State<'_, AppState>) -> AppResult<integrity
 pub async fn seed_demo_data(state: State<'_, AppState>) -> AppResult<String> {
     if !product_license::is_product_activation_complete(&state.db).await? {
         return Ok("No active activation claim. Bootstrap skipped.".into());
+    }
+    // Prefer authenticated admin path; allow activation-only bootstrap when no session.
+    let has_session = state.session.read().await.current.is_some();
+    if has_session {
+        let user = require_session!(state);
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::ADM_SETTINGS,
+            PermissionScope::Global
+        );
     }
     crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, 0).await?;
     Ok("Tenant bootstrap completed from activation claim.".into())
@@ -46,7 +65,7 @@ pub async fn seed_rams_sql_demo_data(
     state: State<'_, AppState>,
 ) -> AppResult<String> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
     if let Some(id) = equipment_id {
         crate::db::rams_sql_demo_seed::ensure_equipment_rams_simulation(&state.db, id).await?;
         Ok(format!("RAMS SQL demo seed completed for equipment {id}."))
@@ -65,7 +84,7 @@ pub async fn seed_rams_presentation_data(
     state: State<'_, AppState>,
 ) -> AppResult<RamsPresentationSeedReport> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
     rams_presentation_seed::seed_rams_presentation_data(&state.db, input).await
 }
 

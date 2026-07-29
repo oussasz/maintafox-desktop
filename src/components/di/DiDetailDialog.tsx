@@ -16,17 +16,31 @@
  * Phase 2 – Sub-phase 04 – Sprint S4.
  */
 
-import { Archive, Calendar, Check, ClipboardCheck, Printer, RotateCcw, Shield, User, X } from "lucide-react";
+import {
+  Archive,
+  Calendar,
+  Check,
+  ClipboardCheck,
+  Printer,
+  RotateCcw,
+  Shield,
+  User,
+  X,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
-import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
 import { DiDetailPanel } from "@/components/di/DiDetailPanel";
 import { printDiFiche } from "@/components/di/DiPrintFiche";
 import { DiSlaStatusBadge } from "@/components/di/DiSlaStatusBadge";
-import { DI_STATUS_STYLE, TERMINAL_DI_STATES, diStatusToI18nKey } from "@/components/di/status-meta";
+import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
+import {
+  DI_STATUS_STYLE,
+  TERMINAL_DI_STATES,
+  diStatusToI18nKey,
+} from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -51,6 +65,7 @@ import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { DiSlaStatus, DiTransitionRow, InterventionRequest } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 const URGENCY_STYLE: Record<string, string> = {
   low: "bg-green-100 text-green-800",
@@ -75,13 +90,6 @@ const SCREENABLE = new Set(["pending_review"]);
 const APPROVABLE = new Set(["awaiting_approval"]);
 const REJECTABLE = new Set(["pending_review", "screened", "awaiting_approval"]);
 const RETURNABLE = new Set(["pending_review"]);
-const REVIEWABLE = new Set([
-  "submitted",
-  "pending_review",
-  "returned_for_clarification",
-  "screened",
-  "awaiting_approval",
-]);
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -201,14 +209,13 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
   if (!di) return null;
 
   const statusKey = diStatusToI18nKey(di.status);
-  const canUseReviewQueueActions = can("di.review") && REVIEWABLE.has(di.status);
-  const canRunScreen = (can("di.screen") || can("di.review")) && SCREENABLE.has(di.status);
-  const canReturnForClarification = can("di.review") && RETURNABLE.has(di.status);
-  const canRejectInReview = can("di.review") && REJECTABLE.has(di.status);
-  const canApproveForPlanning = can("di.approve") && APPROVABLE.has(di.status);
-  const canCloseNeed = can("di.approve") && di.status === "approved_for_planning";
+  const canRunScreen = (can(P.DI_SCREEN) || can(P.DI_REVIEW)) && SCREENABLE.has(di.status);
+  const canReturnForClarification = can(P.DI_REVIEW) && RETURNABLE.has(di.status);
+  const canRejectInReview = can(P.DI_REVIEW) && REJECTABLE.has(di.status);
+  const canApproveForPlanning = can(P.DI_APPROVE) && APPROVABLE.has(di.status);
+  const canCloseNeed = can(P.DI_APPROVE) && di.status === "approved_for_planning";
   const canArchive =
-    (can("di.approve") || can("di.admin")) &&
+    (can(P.DI_APPROVE) || can(P.DI_ADMIN)) &&
     (di.status === "rejected" ||
       di.status === "converted_to_work_order" ||
       di.status === "closed_as_non_executable");
@@ -216,16 +223,14 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
     di.status === "returned_for_clarification" &&
     info?.user_id != null &&
     info.user_id === di.submitter_id &&
-    can("di.create.own");
+    can(P.DI_CREATE_OWN);
   const canTriageToReviewQueue =
-    di.status === "submitted" &&
-    (can("di.screen") || can("di.review")) &&
-    info?.user_id != null;
+    di.status === "submitted" && (can(P.DI_SCREEN) || can(P.DI_REVIEW)) && info?.user_id != null;
   const canUploadAttachment =
     info != null &&
     !TERMINAL_DI_STATES.has(di.status) &&
-    ((info.user_id === di.submitter_id && can("di.create.own")) || can("di.review"));
-  const canDeleteAttachment = can("di.admin") && !TERMINAL_DI_STATES.has(di.status);
+    ((info.user_id === di.submitter_id && can(P.DI_CREATE_OWN)) || can(P.DI_REVIEW));
+  const canDeleteAttachment = can(P.DI_ADMIN) && !TERMINAL_DI_STATES.has(di.status);
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>

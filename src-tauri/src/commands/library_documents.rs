@@ -18,7 +18,7 @@ pub async fn list_library_documents(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<LibraryDocumentRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "doc.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DOC_VIEW, PermissionScope::Global);
     library_documents::list_library_documents(&state.db, category, equipment_id).await
 }
 
@@ -35,7 +35,7 @@ pub async fn upload_library_document(
     state: State<'_, AppState>,
 ) -> AppResult<LibraryDocumentRow> {
     let user = require_session!(state);
-    require_permission!(state, &user, "doc.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DOC_MANAGE, PermissionScope::Global);
 
     let app_data_dir = app
         .path()
@@ -63,7 +63,7 @@ pub async fn get_library_document_file(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<u8>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "doc.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DOC_VIEW, PermissionScope::Global);
 
     let app_data_dir = app
         .path()
@@ -79,7 +79,7 @@ pub async fn delete_library_document(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "doc.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DOC_MANAGE, PermissionScope::Global);
     library_documents::delete_library_document_record(&state.db, id).await
 }
 
@@ -89,6 +89,6 @@ pub async fn update_library_document(
     state: State<'_, AppState>,
 ) -> AppResult<LibraryDocumentRow> {
     let user = require_session!(state);
-    require_permission!(state, &user, "doc.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::DOC_MANAGE, PermissionScope::Global);
     library_documents::update_library_document_metadata(&state.db, input).await
 }

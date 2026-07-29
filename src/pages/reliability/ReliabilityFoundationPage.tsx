@@ -21,6 +21,7 @@ import {
   listRuntimeExposureLogs,
   refreshReliabilityKpiSnapshot,
 } from "@/services/reliability-service";
+import { P } from "@shared/rbac/permissions.generated";
 
 import { useRequiredRamsEquipmentId } from "./rams-equipment-context";
 
@@ -73,7 +74,7 @@ export function ReliabilityFoundationPage() {
   const { t } = useTranslation("reliability");
   const navigate = useNavigate();
   const { can } = usePermissions();
-  const canSeedPresentation = can("adm.settings");
+  const canSeedPresentation = can(P.ADM_SETTINGS);
   const equipmentId = useRequiredRamsEquipmentId();
 
   const [activeTab, setActiveTab] = useState<FoundationTab>("quality");
@@ -232,9 +233,7 @@ export function ReliabilityFoundationPage() {
             }),
       );
       if (report.warnings.length > 0) {
-        setStatusMessage((prev) =>
-          [prev, report.warnings.join(" · ")].filter(Boolean).join(" · "),
-        );
+        setStatusMessage((prev) => [prev, report.warnings.join(" · ")].filter(Boolean).join(" · "));
       }
       await refreshAll();
     } catch (e) {
@@ -575,7 +574,9 @@ export function ReliabilityFoundationPage() {
               <button
                 type="button"
                 disabled={!canSeedPresentation || presentationSeeding || loading}
-                title={!canSeedPresentation ? t("foundation.presentationSeedPermission") : undefined}
+                title={
+                  !canSeedPresentation ? t("foundation.presentationSeedPermission") : undefined
+                }
                 onClick={() => void onSeedPresentation()}
                 className="rounded-md border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-text-primary hover:bg-primary/15 disabled:opacity-40"
               >

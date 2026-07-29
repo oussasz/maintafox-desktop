@@ -3,17 +3,23 @@
 Reference for the role-based access control model, permission naming, macros,
 dangerous action guards, and frontend usage.
 
+> **Canonical SSOT (2026-07):** Permission names, metadata, aliases, dependencies,
+> and default role sets live in [`shared/rbac/permission-registry.json`](../shared/rbac/permission-registry.json).
+> Generated constants: `crate::rbac::permissions::*` (Rust) and `P` / `PermissionName`
+> from `@shared/rbac/permissions.generated` (TypeScript).
+> **Never** use permission-name string literals in application code.
+> Run `pnpm rbac:generate` after registry edits and `pnpm rbac:check` in CI.
+> See [`.cursor/rules/rbac-permissions.mdc`](../.cursor/rules/rbac-permissions.mdc).
+
 ## Permission Naming Convention
 
 All permissions use dot-notation: `domain.action` or `domain.action.scope`.
 
 Rules:
-- Domain prefix must match one of the 22 PRD 6.7 domains: `eq`, `di`, `ot`, `org`,
-  `per`, `ref`, `inv`, `pm`, `ram`, `rep`, `arc`, `doc`, `adm`, `plan`, `log`, `trn`,
-  `iot`, `erp`, `ptw`, `fin`, `ins`, `cfg`
-- Action suffix is lowercase alphanumeric (no dots, no underscores)
+- Domain prefix must match a registered catalog category (see the registry)
+- Action suffix is lowercase alphanumeric (dots allowed only for scoped actions like `di.create.own`)
 - Scope is optional and scopes to a specific resource sub-domain
-- Examples: `eq.view`, `ot.approve`, `adm.users`, `ptw.approve`
+- Examples: use `P.EQ_VIEW`, `P.OT_APPROVE`, `P.ADM_USERS` — never raw strings
 
 ## System Roles
 
@@ -27,7 +33,19 @@ Rules:
 System roles are seeded on first launch. Tenants can clone them as role templates
 and customize the clone; the originals remain unchanged.
 
-## Permission Catalogue (68 permissions across 22 domains)
+## Permission Catalogue
+
+The live catalogue is defined by the registry (100+ permissions including sync,
+licensing, entitlements, integrity, and vendor-console catalog-only entries).
+Do not maintain a parallel table here — open the registry / Permissions admin tab.
+
+Historical note: older docs listed ~68 permissions and obsolete aliases such as
+`inv.order` / `inv.adjust` / `di.edit`. Those aliases are migrated onto canonical
+names by migration `m20260729_000137_rbac_permission_normalization`.
+
+## Permission Catalogue (legacy snapshot — superseded)
+
+The table below is retained only for archaeology. Prefer the registry.
 
 | Domain | Prefix | Permissions |
 |--------|--------|-------------|

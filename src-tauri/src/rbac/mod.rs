@@ -12,8 +12,14 @@ pub mod cache;
 pub mod delegation;
 pub mod macros;
 pub mod model;
+pub mod permissions_generated;
 pub mod resolver;
 pub mod scope_chain;
+
+/// Canonical permission constants and catalog metadata (generated).
+pub mod permissions {
+    pub use super::permissions_generated::*;
+}
 
 #[cfg(test)]
 mod tests;

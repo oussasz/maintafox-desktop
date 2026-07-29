@@ -17,6 +17,7 @@ import {
 } from "@/services/activity-service";
 import { getSessionInfo } from "@/services/auth-service";
 import { toErrorMessage } from "@/utils/errors";
+import { P } from "@shared/rbac/permissions.generated";
 
 const PAGE_SIZE = 40;
 
@@ -62,7 +63,17 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
       if (!Number.isNaN(parsed)) out.actor_id = parsed;
     }
     return out;
-  }, [actionCode, actorId, currentUserId, dateFrom, dateTo, mySecurityOnly, offset, result, retentionClass]);
+  }, [
+    actionCode,
+    actorId,
+    currentUserId,
+    dateFrom,
+    dateTo,
+    mySecurityOnly,
+    offset,
+    result,
+    retentionClass,
+  ]);
 
   const visibleItems = useMemo(() => {
     if (!mySecurityOnly) return items;
@@ -173,7 +184,7 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
           </Button>
         </div>
 
-        {can("log.export") && (
+        {can(P.LOG_EXPORT) && (
           <div className="rounded-md border p-2">
             <div className="mb-2 text-xs text-muted-foreground">
               Export writes a meta-audit row (`export.audit_log`) and returns JSON payload.
@@ -262,8 +273,12 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                     {row.actor_username ?? row.actor_id ?? "system"}
                   </span>
                   <Badge variant="outline">{row.auth_context}</Badge>
-                  <Badge variant={row.result === "success" ? "outline" : "destructive"}>{row.result}</Badge>
-                  <span className="text-xs text-muted-foreground">{new Date(row.happened_at).toLocaleString()}</span>
+                  <Badge variant={row.result === "success" ? "outline" : "destructive"}>
+                    {row.result}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(row.happened_at).toLocaleString()}
+                  </span>
                 </button>
                 {expandedId === row.id && (
                   <div className="mt-2 rounded bg-muted p-2 text-xs">
@@ -274,16 +289,19 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                       <div className="mb-1 text-destructive">{detailErrors[row.id]}</div>
                     )}
                     <div>
-                      <span className="text-muted-foreground">target:</span> {row.target_type ?? "—"} /{" "}
-                      {row.target_id ?? "—"}
+                      <span className="text-muted-foreground">target:</span>{" "}
+                      {row.target_type ?? "—"} / {row.target_id ?? "—"}
                     </div>
                     <div>
-                      <span className="text-muted-foreground">retention:</span> {row.retention_class}
+                      <span className="text-muted-foreground">retention:</span>{" "}
+                      {row.retention_class}
                     </div>
                     <div className="mt-1 font-mono">
                       before_hash: {detailsMap[row.id]?.before_hash ?? "null"}
                     </div>
-                    <div className="font-mono">after_hash: {detailsMap[row.id]?.after_hash ?? "null"}</div>
+                    <div className="font-mono">
+                      after_hash: {detailsMap[row.id]?.after_hash ?? "null"}
+                    </div>
                     <pre className="mt-2 max-h-52 overflow-auto rounded border bg-background p-2 font-mono text-[11px]">
                       {JSON.stringify(detailsMap[row.id]?.details_json ?? {}, null, 2)}
                     </pre>
@@ -292,7 +310,9 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
               </div>
             ))}
             {!loading && visibleItems.length === 0 && (
-              <div className="p-4 text-center text-sm text-muted-foreground">No audit events found.</div>
+              <div className="p-4 text-center text-sm text-muted-foreground">
+                No audit events found.
+              </div>
             )}
           </div>
         </div>

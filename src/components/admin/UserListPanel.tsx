@@ -64,6 +64,7 @@ import type {
   RoleWithPermissions,
   Personnel,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 // ── Detail modal ────────────────────────────────────────────────────────────
 
@@ -268,7 +269,7 @@ function CreateUserDialog({
   const { t } = useTranslation("admin");
   const { toast } = useToast();
   const { can } = usePermissions();
-  const canViewPersonnel = can("per.view");
+  const canViewPersonnel = can(P.PER_VIEW);
 
   const [username, setUsername] = useState("");
   const [identityMode, setIdentityMode] = useState("local");
@@ -816,7 +817,7 @@ function EditUserDialog({
   const { t } = useTranslation("admin");
   const { toast } = useToast();
   const { can } = usePermissions();
-  const canViewPersonnel = can("per.view");
+  const canViewPersonnel = can(P.PER_VIEW);
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
@@ -1253,7 +1254,7 @@ export function UserListPanel() {
         header: "",
         cell: ({ row }) => (
           <div className="flex items-center gap-1">
-            {can("adm.users") &&
+            {can(P.ADM_USERS) &&
               row.original.locked_until != null &&
               row.original.locked_until > new Date().toISOString() && (
                 <Button
@@ -1268,7 +1269,7 @@ export function UserListPanel() {
                   <LockOpen className="h-3.5 w-3.5 text-amber-600" />
                 </Button>
               )}
-            {can("adm.users") && (
+            {can(P.ADM_USERS) && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -1281,7 +1282,7 @@ export function UserListPanel() {
                 <Pencil className="h-3.5 w-3.5 text-primary" />
               </Button>
             )}
-            {can("adm.users") && (
+            {can(P.ADM_USERS) && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -1293,7 +1294,7 @@ export function UserListPanel() {
                 <ShieldCheck className="h-3.5 w-3.5" />
               </Button>
             )}
-            {can("adm.users") && row.original.is_active && (
+            {can(P.ADM_USERS) && row.original.is_active && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -1361,7 +1362,7 @@ export function UserListPanel() {
               className="border-0 px-0 py-0"
             />
           </div>
-          {can("adm.users") && (
+          {can(P.ADM_USERS) && (
             <Button size="sm" className="shrink-0 mt-0.5" onClick={() => setShowCreate(true)}>
               <Plus className="mr-1.5 h-4 w-4" />
               {t("users.create", "Nouvel utilisateur")}

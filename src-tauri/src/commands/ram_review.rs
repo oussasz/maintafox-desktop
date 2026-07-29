@@ -18,7 +18,7 @@ pub async fn list_ram_expert_sign_offs(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<RamExpertSignOff>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.view", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
     queries::list_ram_expert_sign_offs(&state.db, filter).await
 }
 
@@ -28,7 +28,7 @@ pub async fn create_ram_expert_sign_off(
     state: State<'_, AppState>,
 ) -> AppResult<RamExpertSignOff> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     queries::create_ram_expert_sign_off(&state.db, Some(i64::from(user.user_id)), input).await
 }
 
@@ -38,7 +38,7 @@ pub async fn update_ram_expert_sign_off(
     state: State<'_, AppState>,
 ) -> AppResult<RamExpertSignOff> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::update_ram_expert_sign_off(&state.db, input).await
 }
@@ -49,7 +49,7 @@ pub async fn sign_ram_expert_review(
     state: State<'_, AppState>,
 ) -> AppResult<RamExpertSignOff> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::sign_ram_expert_review(&state.db, input).await
 }
@@ -57,7 +57,7 @@ pub async fn sign_ram_expert_review(
 #[tauri::command]
 pub async fn delete_ram_expert_sign_off(id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.manage", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
     let _ = user;
     queries::delete_ram_expert_sign_off(&state.db, id).await
 }

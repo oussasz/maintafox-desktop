@@ -32,8 +32,8 @@ import {
   updateRole,
   deleteRole,
   listRoleTemplates,
+  listPermissions,
   simulateAccess,
-  getMyPermissions,
   validateRolePermissions,
 } from "@/services/rbac-service";
 import type { RoleValidationResult } from "@shared/ipc-types";
@@ -46,6 +46,7 @@ import type {
   CreateRoleInput,
   UpdateRoleInput,
 } from "@shared/ipc-types";
+import { P, ROLE_TEMPLATES } from "@shared/rbac/permissions.generated";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -204,10 +205,16 @@ function CreateRoleDialog({
     try {
       let permissionNames: string[] = [];
       if (selectedTemplate) {
-        try {
-          permissionNames = JSON.parse(selectedTemplate.module_set_json) as string[];
-        } catch {
-          permissionNames = [];
+        const fromGenerated = ROLE_TEMPLATES[selectedTemplate.name];
+        if (fromGenerated) {
+          permissionNames = [...fromGenerated];
+        } else {
+          // Fallback for custom / legacy templates not in ROLE_TEMPLATES.
+          try {
+            permissionNames = JSON.parse(selectedTemplate.module_set_json) as string[];
+          } catch {
+            permissionNames = [];
+          }
         }
       }
       const input: CreateRoleInput = {
@@ -464,15 +471,11 @@ export function RoleEditorPanel() {
       const [r, tmpl, perms] = await Promise.all([
         listRoles(),
         listRoleTemplates(),
-        getMyPermissions(),
+        listPermissions({}),
       ]);
       setRoles(r);
       setTemplates(tmpl);
-      // Collect all unique permission names from all roles as the "universe"
-      const allPerms = new Set<string>();
-      for (const role of r) for (const p of role.permissions) allPerms.add(p);
-      for (const p of perms) allPerms.add(p.name);
-      setAllPermissions([...allPerms].sort());
+      setAllPermissions([...perms.map((p) => p.name)].sort());
     } catch {
       toast({
         title: t("roles.errors.loadFailed", "Erreur de chargement des rôles"),
@@ -621,12 +624,12 @@ export function RoleEditorPanel() {
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-text-primary">{t("roles.list", "Rôles")}</h3>
           <div className="flex gap-1">
-            {can("adm.roles") && (
+            {can(P.ADM_ROLES) && (
               <Button variant="ghost" size="sm" onClick={() => setShowCreate(true)}>
                 <Plus className="h-4 w-4" />
               </Button>
             )}
-            {can("adm.roles") && (
+            {can(P.ADM_ROLES) && (
               <Button variant="ghost" size="sm" onClick={() => setShowSimulate(true)}>
                 <Wand2 className="h-4 w-4" />
               </Button>
@@ -704,12 +707,12 @@ export function RoleEditorPanel() {
               </div>
 
               <div className="flex gap-2">
-                {can("adm.roles") && hasPendingChanges && (
+                {can(P.ADM_ROLES) && hasPendingChanges && (
                   <Button size="sm" onClick={handleSave} disabled={hasHardDepErrors || validating}>
                     {t("roles.save", "Enregistrer")}
                   </Button>
                 )}
-                {can("adm.roles") && !roleDetail.role.is_system && (
+                {can(P.ADM_ROLES) && !roleDetail.role.is_system && (
                   <Button
                     variant="destructive"
                     size="sm"

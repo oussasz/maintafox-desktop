@@ -1306,9 +1306,40 @@ pub async fn get_product_license_diagnostics(state: State<'_, AppState>) -> AppR
     }))
 }
 
-/// Wipes device-scoped product license onboarding (SQLite `app_settings`). Does not delete business data.
+/// Wipes device-scoped product license onboarding (SQLite `app_settings`).
+///
+/// Authorization:
+/// - Authenticated session → `adm.settings` + step-up
+/// - No session → only allowed before a tenant administrator exists (bootstrap recovery)
 #[tauri::command]
 pub async fn reset_product_license_activation(state: State<'_, AppState>) -> AppResult<()> {
+    let has_session = state.session.read().await.current.is_some();
+    if has_session {
+        let user = require_session!(state);
+        crate::require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::ADM_SETTINGS,
+            crate::auth::rbac::PermissionScope::Global
+        );
+        crate::require_step_up!(state);
+    } else {
+        let tenant_id = load_state_record(&state)
+            .await?
+            .and_then(|r| r.activation_claim.as_ref().map(|c| c.tenant_id.clone()));
+        let has_admin = if let Some(ref tid) = tenant_id {
+            tenant_has_administrator_for_id(&state.db, tid).await?
+        } else {
+            false
+        };
+        if has_admin {
+            return Err(AppError::Auth(
+                "Session requise pour réinitialiser l'activation une fois un administrateur créé."
+                    .into(),
+            ));
+        }
+    }
+
     let changed_by_id = state
         .session
         .read()
@@ -1344,6 +1375,33 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
 
 #[tauri::command]
 pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppResult<u64> {
+    let has_session = state.session.read().await.current.is_some();
+    if has_session {
+        let user = require_session!(state);
+        crate::require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::ADM_SETTINGS,
+            crate::auth::rbac::PermissionScope::Global
+        );
+        crate::require_step_up!(state);
+    } else {
+        let tenant_id = load_state_record(&state)
+            .await?
+            .and_then(|r| r.activation_claim.as_ref().map(|c| c.tenant_id.clone()));
+        let has_admin = if let Some(ref tid) = tenant_id {
+            tenant_has_administrator_for_id(&state.db, tid).await?
+        } else {
+            false
+        };
+        if has_admin {
+            return Err(AppError::Auth(
+                "Session requise pour réinitialiser les données runtime une fois un administrateur créé."
+                    .into(),
+            ));
+        }
+    }
+
     tracing::warn!(event = "desktop_tenant_runtime_reset_command", "reset_local_tenant_runtime_data command invoked");
     let wiped_rows = reset_local_tenant_runtime_data_impl(&state).await?;
     {

@@ -20,12 +20,12 @@
 ///   - `di.admin`      — override, archive, reopen, manage SLA rules (dangerous)
 pub fn di_permission_domain() -> Vec<(&'static str, &'static str, bool, bool)> {
     vec![
-        ("di.view", "View intervention request list and details", false, false),
-        ("di.create", "Submit new intervention requests (all assets)", false, false),
-        ("di.create.own", "Submit intervention requests (own entity only)", false, false),
-        ("di.review", "Screen, return, and reject intervention requests", false, false),
-        ("di.approve", "Approve, defer, or reactivate intervention requests", true, true),
-        ("di.convert", "Convert approved DI to work order", true, true),
-        ("di.admin", "Override, archive, reopen, manage SLA rules", true, false),
+        (crate::rbac::permissions::DI_VIEW, "View intervention request list and details", false, false),
+        (crate::rbac::permissions::DI_CREATE, "Submit new intervention requests (all assets)", false, false),
+        (crate::rbac::permissions::DI_CREATE_OWN, "Submit intervention requests (own entity only)", false, false),
+        (crate::rbac::permissions::DI_REVIEW, "Screen, return, and reject intervention requests", false, false),
+        (crate::rbac::permissions::DI_APPROVE, "Approve, defer, or reactivate intervention requests", true, true),
+        (crate::rbac::permissions::DI_CONVERT, "Convert approved DI to work order", true, true),
+        (crate::rbac::permissions::DI_ADMIN, "Override, archive, reopen, manage SLA rules", true, false),
     ]
 }

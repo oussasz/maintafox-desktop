@@ -82,7 +82,7 @@ const childTreeRow = {
 
 const permissionDeniedError = {
   code: "PERMISSION_DENIED",
-  message: "Permission denied: action 'org.manage' on resource 'global'",
+  message: "Permission denied: action P.ORG_MANAGE on resource 'global'",
 };
 
 const versionConflictError = {

@@ -314,7 +314,7 @@ pub async fn list_users(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<UserWithRoles>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.users", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
 
     // Build WHERE clauses dynamically
     let mut conditions = vec!["ua.deleted_at IS NULL".to_owned()];
@@ -379,7 +379,7 @@ pub async fn get_user(
     state: State<'_, AppState>,
 ) -> AppResult<UserDetail> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
 
     let row = state
         .db
@@ -429,7 +429,7 @@ pub async fn get_user(
 #[tauri::command]
 pub async fn list_assignable_roles(state: State<'_, AppState>) -> AppResult<Vec<AssignableRoleSummary>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.users", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
 
     let rows = state
         .db
@@ -492,7 +492,7 @@ pub async fn create_user(
     state: State<'_, AppState>,
 ) -> AppResult<IdPayload> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
     // TODO: re-enable require_step_up!(state) once StepUpDialog UI is built (SP06-F03)
 
     // Validate identity_mode
@@ -687,7 +687,7 @@ pub async fn list_users_missing_tenant_scope(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<MissingTenantScopeUser>> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
     list_missing_tenant_scope_users(&state.db).await
 }
 
@@ -697,7 +697,7 @@ pub async fn backfill_users_missing_tenant_scope(
     state: State<'_, AppState>,
 ) -> AppResult<TenantScopeBackfillResult> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
     require_step_up!(state);
 
     let activated_tenant_id =
@@ -762,7 +762,7 @@ pub async fn update_user(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
 
     // Guard: cannot deactivate self
     if input.is_active == Some(false) && i64::from(caller.user_id) == input.user_id {
@@ -874,7 +874,7 @@ pub async fn deactivate_user(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
     require_step_up!(state);
 
     // Guard: cannot deactivate self
@@ -1115,7 +1115,7 @@ pub async fn assign_role_scope(
     state: State<'_, AppState>,
 ) -> AppResult<IdPayload> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
     require_step_up!(state);
 
     assign_role_scope_impl(state.inner(), &caller, input, true, Some(&app)).await
@@ -1129,7 +1129,7 @@ pub async fn revoke_role_scope(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
     require_step_up!(state);
 
     // Look up the affected user_id before soft-deleting
@@ -1192,7 +1192,7 @@ pub async fn revoke_role_scope(
 #[tauri::command]
 pub async fn list_roles(state: State<'_, AppState>) -> AppResult<Vec<RoleWithPermissions>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
 
     let rows = state
         .db
@@ -1229,7 +1229,7 @@ pub async fn get_role(
     state: State<'_, AppState>,
 ) -> AppResult<RoleDetail> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
 
     let row = state
         .db
@@ -1280,7 +1280,7 @@ pub async fn create_role(
     state: State<'_, AppState>,
 ) -> AppResult<IdPayload> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
     require_step_up!(state);
 
     // Validate name is not empty
@@ -1375,7 +1375,7 @@ pub async fn update_role(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
     require_step_up!(state);
 
     // Load current role
@@ -1478,7 +1478,7 @@ pub async fn delete_role(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
     require_step_up!(state);
 
     let row = state
@@ -1539,7 +1539,7 @@ pub async fn list_role_templates(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<model::RoleTemplate>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.roles", PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
 
     let rows = state
         .db
@@ -1574,7 +1574,7 @@ pub async fn simulate_access(
     state: State<'_, AppState>,
 ) -> AppResult<SimulateAccessResult> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
 
     // Get effective permissions
     let perms = resolver::effective_permissions(
@@ -1631,7 +1631,7 @@ pub async fn grant_emergency_elevation(
     state: State<'_, AppState>,
 ) -> AppResult<IdPayload> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
     require_step_up!(state);
 
     // Validate reason is non-empty
@@ -1719,7 +1719,7 @@ pub async fn revoke_emergency_elevation(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, "adm.users", PermissionScope::Global);
+    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
 
     // Lookup the assignment to get user_id and verify it is an emergency assignment
     let row = state
@@ -1778,7 +1778,7 @@ pub async fn unlock_user_account(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let admin = require_session!(state);
-    require_permission!(state, &admin, "adm.users", PermissionScope::Global);
+    require_permission!(state, &admin, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
     require_step_up!(state);
 
     // Verify user exists

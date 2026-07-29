@@ -1,20 +1,29 @@
 import { listen } from "@tauri-apps/api/event";
-import { type ReactNode, createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  createContext,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Outlet } from "react-router-dom";
 
 import { useSession } from "@/hooks/use-session";
 import { readPermissionCache, writePermissionCache } from "@/lib/permission-cache";
 import { getMyPermissions } from "@/services/rbac-service";
 import type { PermissionRecord } from "@shared/ipc-types";
+import { type PermissionName } from "@shared/rbac/permissions.generated";
 
 // ── Context value ─────────────────────────────────────────────────────────
 
 export interface PermissionContextValue {
   permissions: PermissionRecord[];
   isLoading: boolean;
-  can: (permissionName: string) => boolean;
-  canAny: (...permissionNames: string[]) => boolean;
-  canAll: (...permissionNames: string[]) => boolean;
+  can: (permissionName: PermissionName) => boolean;
+  canAny: (...permissionNames: PermissionName[]) => boolean;
+  canAll: (...permissionNames: PermissionName[]) => boolean;
   refresh: () => Promise<void>;
 }
 
@@ -110,15 +119,18 @@ export function PermissionProvider({ children }: PermissionProviderProps) {
   // Memoized permission check helpers
   const nameSet = useMemo(() => new Set(permissions.map((p) => p.name)), [permissions]);
 
-  const can = useCallback((permissionName: string) => nameSet.has(permissionName), [nameSet]);
+  const can = useCallback(
+    (permissionName: PermissionName) => nameSet.has(permissionName),
+    [nameSet],
+  );
 
   const canAny = useCallback(
-    (...permissionNames: string[]) => permissionNames.some((n) => nameSet.has(n)),
+    (...permissionNames: PermissionName[]) => permissionNames.some((n) => nameSet.has(n)),
     [nameSet],
   );
 
   const canAll = useCallback(
-    (...permissionNames: string[]) => permissionNames.every((n) => nameSet.has(n)),
+    (...permissionNames: PermissionName[]) => permissionNames.every((n) => nameSet.has(n)),
     [nameSet],
   );
 

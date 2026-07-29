@@ -16,8 +16,21 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   applyPersonnelImportBatch,
   createPersonnelImportBatch,
@@ -29,6 +42,7 @@ import type {
   PersonnelImportBatchSummary,
   PersonnelImportPreview,
 } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 type ImportMode = "create_and_update" | "create_only";
 
@@ -131,7 +145,7 @@ export function PersonnelImportWizard() {
   const canApply = useMemo(() => batch?.status === "validated", [batch?.status]);
 
   return (
-    <PermissionGate permission="per.manage">
+    <PermissionGate permission={P.PER_MANAGE}>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogTrigger asChild>
           <Button variant="outline" size="sm" className="gap-1.5">
@@ -156,7 +170,9 @@ export function PersonnelImportWizard() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="create_and_update">{t("import.mode.createAndUpdate")}</SelectItem>
+                  <SelectItem value="create_and_update">
+                    {t("import.mode.createAndUpdate")}
+                  </SelectItem>
                   <SelectItem value="create_only">{t("import.mode.createOnly")}</SelectItem>
                 </SelectContent>
               </Select>
@@ -175,10 +191,18 @@ export function PersonnelImportWizard() {
 
             {batch ? (
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">{t("import.badges.total", { count: batch.total_rows })}</Badge>
-                <Badge variant="outline">{t("import.badges.valid", { count: batch.valid_rows })}</Badge>
-                <Badge variant="outline">{t("import.badges.warning", { count: batch.warning_rows })}</Badge>
-                <Badge variant="outline">{t("import.badges.error", { count: batch.error_rows })}</Badge>
+                <Badge variant="outline">
+                  {t("import.badges.total", { count: batch.total_rows })}
+                </Badge>
+                <Badge variant="outline">
+                  {t("import.badges.valid", { count: batch.valid_rows })}
+                </Badge>
+                <Badge variant="outline">
+                  {t("import.badges.warning", { count: batch.warning_rows })}
+                </Badge>
+                <Badge variant="outline">
+                  {t("import.badges.error", { count: batch.error_rows })}
+                </Badge>
               </div>
             ) : null}
 
@@ -201,8 +225,12 @@ export function PersonnelImportWizard() {
                     {preview.rows.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell>{row.row_no}</TableCell>
-                        <TableCell className="font-mono text-xs">{row.employee_code ?? "-"}</TableCell>
-                        <TableCell className="font-mono text-xs">{row.hr_external_id ?? "-"}</TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {row.employee_code ?? "-"}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {row.hr_external_id ?? "-"}
+                        </TableCell>
                         <TableCell>{row.validation_status}</TableCell>
                         <TableCell>{row.proposed_action ?? "-"}</TableCell>
                         <TableCell className="max-w-[350px]">

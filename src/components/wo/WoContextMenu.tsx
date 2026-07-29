@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { usePermissions } from "@/hooks/use-permissions";
 import type { WorkOrder } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 // ── Status sets — Option B lifecycle ────────────────────────────────────────
 
@@ -57,10 +58,10 @@ export function WoContextMenu({
   const { t } = useTranslation("ot");
   const { can } = usePermissions();
 
-  const canEdit = can("ot.edit") && EDITABLE_STATES.has(wo.status_code ?? "");
-  const canStart = can("ot.edit") && STARTABLE_STATES.has(wo.status_code ?? "");
-  const canComplete = can("ot.edit") && COMPLETABLE_STATES.has(wo.status_code ?? "");
-  const canCancel = can("ot.close") && !CANCELLABLE_DENY.has(wo.status_code ?? "");
+  const canEdit = can(P.OT_EDIT) && EDITABLE_STATES.has(wo.status_code ?? "");
+  const canStart = can(P.OT_EDIT) && STARTABLE_STATES.has(wo.status_code ?? "");
+  const canComplete = can(P.OT_EDIT) && COMPLETABLE_STATES.has(wo.status_code ?? "");
+  const canCancel = can(P.OT_CLOSE) && !CANCELLABLE_DENY.has(wo.status_code ?? "");
 
   return (
     <DropdownMenu>
