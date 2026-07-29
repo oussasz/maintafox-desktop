@@ -111,11 +111,17 @@ describe("ProductLicenseGate", () => {
     });
     mockedGetEntitlementSummary.mockResolvedValue({
       envelope_id: "env_test",
-      edition: "core",
-      trust_state: "verified",
-      capability_count: 0,
-      last_applied_at: null,
-    } as Awaited<ReturnType<typeof getEntitlementSummary>>);
+      state: "active",
+      effective_state: "active",
+      tier: "core",
+      channel: "stable",
+      lineage_version: 1,
+      valid_until: null,
+      offline_grace_until: null,
+      last_verified_at: null,
+      capability_map_json: "{}",
+      feature_flag_map_json: "{}",
+    });
     mockedGetProductActivationToken.mockResolvedValue(null);
   });
 

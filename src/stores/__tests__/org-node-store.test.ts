@@ -116,7 +116,7 @@ describe("V1 — Permission split", () => {
 
     await useOrgNodeStore.getState().loadTree();
 
-    expect(mockInvoke).toHaveBeenCalledWith("list_org_tree");
+    expect(mockInvoke).toHaveBeenCalledWith("list_org_tree", undefined);
     const state = useOrgNodeStore.getState();
     expect(state.treeRows).toHaveLength(1);
     expect(state.error).toBeNull();
@@ -133,7 +133,13 @@ describe("V1 — Permission split", () => {
 
     const { createOrgNode } = await import("@/services/org-node-service");
     await expect(
-      createOrgNode({ code: "SITE-001", name: "Test", node_type_id: 1, parent_id: null }),
+      createOrgNode({
+        code: "SITE-001",
+        name: "Test",
+        node_type_id: 1,
+        structure_model_id: 1,
+        parent_id: null,
+      }),
     ).rejects.toEqual(permissionDeniedError);
   });
 
@@ -145,6 +151,7 @@ describe("V1 — Permission split", () => {
       code: "SITE-001",
       name: "Usine Principale",
       node_type_id: 1,
+      structure_model_id: 1,
       parent_id: null,
     });
 
@@ -310,18 +317,19 @@ describe("V3 — Version conflict path", () => {
 
     // Simulate: another session updated the node (row_version is now 2)
     // Our stale update with expected_row_version=1 is rejected
-    const { updateOrgNodeMetadata } = await import("@/services/org-node-service");
+    const { updateOrgNodeMetadata, VersionConflictError } =
+      await import("@/services/org-node-service");
     mockInvoke.mockRejectedValueOnce(versionConflictError);
 
-    // updateOrgNodeMetadata propagates the raw IPC error (unlike move/deactivate
-    // which wrap it in VersionConflictError). The caller catches and sets store error.
+    // updateOrgNodeMetadata wraps row-version mismatches in VersionConflictError
+    // (same as move/deactivate). The store remains recoverable after the reject.
     await expect(
       updateOrgNodeMetadata({
         node_id: 1,
         name: "New Name",
         expected_row_version: 1,
       }),
-    ).rejects.toEqual(versionConflictError);
+    ).rejects.toThrow(VersionConflictError);
 
     // Store state is still intact — tree and selection remain
     const state = useOrgNodeStore.getState();

@@ -91,7 +91,7 @@ describe("listOrgTree", () => {
     mockInvoke.mockResolvedValueOnce([]);
     const result = await listOrgTree();
     expect(result).toEqual([]);
-    expect(mockInvoke).toHaveBeenCalledWith("list_org_tree");
+    expect(mockInvoke).toHaveBeenCalledWith("list_org_tree", undefined);
   });
 
   it("returns validated tree rows", async () => {
@@ -138,7 +138,13 @@ describe("createOrgNode", () => {
 
   it("calls create_org_node with the payload", async () => {
     mockInvoke.mockResolvedValueOnce(baseNode);
-    const payload = { code: "SITE-001", name: "Usine", node_type_id: 1, parent_id: null };
+    const payload = {
+      code: "SITE-001",
+      name: "Usine",
+      node_type_id: 1,
+      structure_model_id: 1,
+      parent_id: null,
+    };
     await createOrgNode(payload);
     expect(mockInvoke).toHaveBeenCalledWith("create_org_node", { payload });
   });
