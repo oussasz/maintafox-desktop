@@ -1,0 +1,101 @@
+---
+description: Auto commit/push after major work using Maintafox branching, conventional commits, and release/tag policy
+alwaysApply: true
+---
+
+# GitHub & Git strategy (agent must follow)
+
+**SSOT docs (read when unsure):** `docs/BRANCHING_STRATEGY.md`, `docs/VERSIONING_POLICY.md`, `docs/RELEASE_CHECKLIST.md`
+
+The product owner is not a programmer. After major or fundamental work (or a coherent series of related changes), **you must commit and push** using this strategy—do not leave durable progress uncommitted unless the user says to wait.
+
+## When to commit and push (timing)
+
+Do this automatically when any of these are true:
+
+1. A feature/fix/chore slice is **functionally complete** (builds, hooks pass, intent delivered).
+2. A **series of related edits** forms one logical unit (e.g. DI triage + migrations + i18n).
+3. Work is **risky to lose** (schema, IPC, auth, migrations, multi-file refactors).
+4. The user asks to save/push progress, or ends a major task without an open “hold commits” request.
+
+Do **not** spam micro-commits for every tiny edit mid-debug; batch into one conventional commit per logical unit. Prefer **one clear commit** over many noisy ones for the same slice.
+
+## Branch model (never violate)
+
+```
+feature|fix|chore → develop (PR) → staging → main (PR)
+hotfix from release tag on main → PR to main + PR to develop
+```
+
+- Work only on `feature/*`, `fix/*`, `chore/*`, or `hotfix/*` — never commit directly to `main`, `staging`, or `develop`.
+- If detached/wrong branch: create/switch to the correct branch **before** committing; never rewrite protected history.
+- Keep existing feature branch when already on one (e.g. `feature/p5-sp00-…`); do not invent a parallel branch for the same sprint unless asked.
+
+## Commit message style (unified conventional)
+
+Format:
+
+```text
+type(scope): short imperative summary
+
+- optional body bullets: why / what modules
+```
+
+| type | use for |
+|------|---------|
+| `feat` | new capability |
+| `fix` | bug fix |
+| `chore` | gitignore, deps, tooling, non-app docs |
+| `docs` | documentation only |
+| `refactor` | no behavior change |
+| `test` | tests only |
+| `perf` | performance |
+
+- Scope = module area: `di`, `org`, `auth`, `admin`, `wo`, `gitignore`, `phase5`, etc.
+- Subject: imperative, ≤ ~72 chars, no trailing period.
+- Match recent repo style (e.g. `feat(di,lookups,auth): …`, `chore(gitignore): …`).
+
+## Safe commit procedure (mandatory checklist)
+
+1. `git status` + `git diff` + `git log -5` (style check).
+2. Stage **only source of truth**: app code, migrations, shared IPC, docs intended for the change.
+3. **Never stage:** secrets (`.env`, credentials), `node_modules/`, `src-tauri/target/`, `src-tauri/target-*`, `target-check*`, build caches, IDE junk, large generated binaries unless the user explicitly wants them.
+4. If huge untracked trees appear under `target*` / `target-check*`: **do not** `git add -A`; stage paths explicitly; recommend/add `.gitignore` entries in a separate `chore(gitignore): …` commit.
+5. Commit with HEREDOC/`-m` multi-line conventional message (PowerShell-safe on Windows).
+6. If pre-commit/lint-staged fails: **fix the issue**, create a **new** commit — never `--no-verify`, never amend a failed commit.
+7. `git push -u origin HEAD` (or push current feature branch). **No force-push** to `main`/`staging`/`develop`. No force-push elsewhere unless the user explicitly orders it.
+8. Confirm clean tree for intended files; report commit SHA + branch + remote result.
+
+## PRs, tags, releases
+
+- Prefer an open PR `feature/*` → `develop` (draft OK). Update existing PR; do not open duplicates.
+- **Annotated `v*` tags only on `main`** after the promotion path. Never tag feature/develop/staging tips as official releases.
+- Version bumps (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `CHANGELOG.md`) only when doing a real release/versioning task — same commit, identical strings.
+- `git push origin --tags` only when new tags exist and policy allows them (on `main`).
+
+## Hard forbidden actions
+
+| Action | Status |
+|--------|--------|
+| Direct commit to `main` / `staging` / `develop` | Forbidden |
+| Force-push protected branches | Never |
+| Amend/rebase **pushed** shared commits | Forbidden |
+| `--no-verify` / skip hooks | Forbidden |
+| `reset --hard` / destructive discard of user work | Forbidden without explicit user order + backup |
+| Commit secrets or build artifact trees | Forbidden |
+| Official release tags off `main` | Forbidden |
+
+## End-of-task report (always)
+
+After auto commit/push, tell the user briefly:
+
+- commit SHA + message
+- branch pushed
+- PR link if any
+- what was excluded (e.g. local `target-check*`)
+- if a release tag was **not** created, say why (tags only on `main`)
+
+```text
+❌ BAD — leave a finished multi-file feature uncommitted; or git add -A including target-check
+✅ GOOD — conventional commit of the logical unit on feature/*, push, keep/update PR to develop
+```
