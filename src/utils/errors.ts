@@ -34,16 +34,20 @@ export function extractIpcValidationDetails(err: unknown): OrgIssueLike[] {
   const details = (err as { details: unknown }).details;
   if (!Array.isArray(details)) return [];
 
+  type RawIpcIssue = {
+    message?: unknown;
+    code?: unknown;
+    params?: unknown;
+  };
+
   const issues: OrgIssueLike[] = [];
   for (const item of details) {
     if (typeof item !== "object" || item === null) continue;
-    const row = item as Record<string, unknown>;
+    const row = item as RawIpcIssue;
     const message = typeof row.message === "string" ? row.message : "";
     if (!message && typeof row.code !== "string") continue;
     const params =
-      typeof row.params === "object" &&
-      row.params !== null &&
-      !Array.isArray(row.params)
+      typeof row.params === "object" && row.params !== null && !Array.isArray(row.params)
         ? Object.fromEntries(
             Object.entries(row.params as Record<string, unknown>).filter(
               (entry): entry is [string, string] => typeof entry[1] === "string",
