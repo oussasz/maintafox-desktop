@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 
-import { capabilityMapForEdition, parseEditionId } from "@/lib/edition-capability-catalog";
+import {
+  capabilityMapForEdition,
+  parseEditionId,
+  type EditionId,
+} from "@/lib/edition-capability-catalog";
 import { parseCapabilityMap } from "@/lib/module-capability";
 import { ENTITLEMENTS_UPDATED_EVENT, getEntitlementSummary } from "@/services/entitlement-service";
 import { getProductLicenseOnboardingState } from "@/services/product-license-service";
@@ -33,7 +37,7 @@ export function useModuleCapabilities(): {
         let parsed = parseCapabilityMap(summary.capability_map_json);
         if (Object.keys(parsed).length === 0) {
           const onboarding = await getProductLicenseOnboardingState().catch(() => null);
-          const fallbackEdition =
+          const fallbackEdition: EditionId | null =
             parseEditionId(onboarding?.license_edition) ?? parseEditionId(summary.tier);
           if (fallbackEdition) {
             parsed = capabilityMapForEdition(fallbackEdition);

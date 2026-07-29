@@ -32,11 +32,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useStepUp } from "@/hooks/use-step-up";
+import { formatOrgValidationIssue } from "@/lib/format-org-validation-issue";
 import { deactivateOrgNode, moveOrgNode } from "@/services/org-node-service";
 import { useOrgDesignerStore } from "@/stores/org-designer-store";
 import { useOrgNodeStore } from "@/stores/org-node-store";
 import { formatOrgIpcError } from "@/utils/errors";
-import { formatOrgValidationIssue } from "@/lib/format-org-validation-issue";
 
 export function ImpactPreviewDrawer() {
   const { t } = useTranslation("org");
@@ -56,8 +56,7 @@ export function ImpactPreviewDrawer() {
 
   const hasBlockers = (preview?.blockers.length ?? 0) > 0;
   const hasWarnings = (preview?.warnings.length ?? 0) > 0;
-  const confirmDisabled =
-    hasBlockers || (hasWarnings && !warningsAcknowledged) || confirming;
+  const confirmDisabled = hasBlockers || (hasWarnings && !warningsAcknowledged) || confirming;
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
@@ -73,7 +72,8 @@ export function ImpactPreviewDrawer() {
     setConfirming(true);
     try {
       if (preview.action === "MoveNode") {
-        if (previewPayload.new_parent_id == null) {
+        const newParentId = previewPayload.new_parent_id;
+        if (newParentId == null) {
           setConfirmError(t("preview.moveRequiresParent"));
           return;
         }
@@ -85,7 +85,7 @@ export function ImpactPreviewDrawer() {
         await withStepUp(() =>
           moveOrgNode({
             node_id: preview.subject_node_id,
-            new_parent_id: previewPayload.new_parent_id,
+            new_parent_id: newParentId,
             expected_row_version: rowVersion,
           }),
         );
