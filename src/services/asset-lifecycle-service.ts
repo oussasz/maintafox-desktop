@@ -8,6 +8,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { AssetSchema } from "@/services/asset-service";
 import type {
   Asset,
   AssetBindingSummary,
@@ -192,6 +193,8 @@ export const AssetBindingSummarySchema = z.object({
   linked_document_count: DomainBindingEntrySchema,
   linked_iot_signal_count: DomainBindingEntrySchema,
   linked_erp_mapping_count: DomainBindingEntrySchema,
+  open_di_count: DomainBindingEntrySchema,
+  open_wo_count: DomainBindingEntrySchema,
 });
 
 export async function getAssetBindingSummary(assetId: number): Promise<AssetBindingSummary> {
@@ -201,21 +204,9 @@ export async function getAssetBindingSummary(assetId: number): Promise<AssetBind
 
 // â”€â”€ Decommission commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-const DecommissionResultSchema = z
-  .object({
-    id: z.number(),
-    sync_id: z.string(),
-    asset_code: z.string(),
-    asset_name: z.string(),
-    status_code: z.string(),
-    decommissioned_at: z.string().nullable(),
-    row_version: z.number(),
-  })
-  .passthrough();
-
 export async function decommissionAsset(payload: DecommissionAssetPayload): Promise<Asset> {
   const raw = await invoke<unknown>("decommission_asset", { payload });
-  return DecommissionResultSchema.parse(raw) as unknown as Asset;
+  return AssetSchema.parse(raw) as Asset;
 }
 
 // â”€â”€ Photo commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

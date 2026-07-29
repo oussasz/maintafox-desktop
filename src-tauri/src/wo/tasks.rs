@@ -12,7 +12,8 @@
 //!   - `reopen_task` is not allowed after `mechanically_complete`.
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
+use crate::wo::execution_log::{emit_execution_event, part_label_json};
+use crate::wo::time::now_utc_z;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +34,13 @@ pub struct WoTask {
     pub completed_at: Option<String>,
     pub result_code: Option<String>,
     pub notes: Option<String>,
+    /// `planned` | `execution_added` | `generated` (reserved for PM)
+    #[serde(default = "default_task_origin")]
+    pub origin: String,
+}
+
+fn default_task_origin() -> String {
+    "planned".into()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -42,6 +50,7 @@ pub struct AddTaskInput {
     pub sequence_order: i64,
     pub is_mandatory: bool,
     pub estimated_minutes: Option<i64>,
+    pub origin: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -89,6 +98,11 @@ fn map_task(row: &sea_orm::QueryResult) -> AppResult<WoTask> {
         notes: row
             .try_get::<Option<String>>("", "notes")
             .map_err(|e| decode_err("notes", e))?,
+        origin: row
+            .try_get::<Option<String>>("", "origin")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "planned".into()),
     })
 }
 
@@ -113,11 +127,11 @@ async fn load_wo_status_code(db: &DatabaseConnection, wo_id: i64) -> AppResult<S
 }
 
 /// Valid result codes for task completion.
-const VALID_RESULT_CODES: &[&str] = &["ok", "nok", "na", "deferred"];
+const VALID_RESULT_CODES: &[&str] = &["ok", "nok", "na", "deferred", "cancelled"];
 
 const TASK_COLS: &str = "id, work_order_id, task_description, sequence_order, \
     estimated_minutes, is_mandatory, is_completed, completed_by_id, completed_at, \
-    result_code, notes";
+    result_code, notes, origin";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) add_task
@@ -125,14 +139,35 @@ const TASK_COLS: &str = "id, work_order_id, task_description, sequence_order, \
 
 pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult<WoTask> {
     let status_code = load_wo_status_code(db, input.wo_id).await?;
-    if !matches!(
-        status_code.as_str(),
-        "draft" | "planned" | "ready_to_schedule" | "assigned"
-    ) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Les tâches ne peuvent être ajoutées qu'aux statuts draft/planned/ready_to_schedule/assigned. \
-             Statut actuel : '{status_code}'."
-        )]));
+
+    let origin = if let Some(ref o) = input.origin {
+        o.clone()
+    } else if matches!(status_code.as_str(), "in_progress" | "on_hold") {
+        "execution_added".to_string()
+    } else {
+        "planned".to_string()
+    };
+
+    // `generated` reserved for PM — reject client writes for now.
+    if origin == "generated" {
+        return Err(AppError::ValidationFailed(vec![
+            "origin 'generated' est réservé à la génération PM.".into(),
+        ]));
+    }
+    if !matches!(origin.as_str(), "planned" | "execution_added") {
+        return Err(AppError::ValidationFailed(vec![
+            "origin invalide (planned|execution_added).".into(),
+        ]));
+    }
+
+    match (status_code.as_str(), origin.as_str()) {
+        ("draft" | "planning" | "ready", "planned") => {}
+        ("in_progress" | "on_hold", "execution_added") => {}
+        _ => {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Impossible d'ajouter une tâche ({origin}) au statut '{status_code}'."
+            )]));
+        }
     }
 
     if input.task_description.trim().is_empty() {
@@ -144,17 +179,18 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_tasks \
-         (work_order_id, task_description, sequence_order, is_mandatory, estimated_minutes) \
-         VALUES (?, ?, ?, ?, ?)",
+         (work_order_id, task_description, sequence_order, is_mandatory, estimated_minutes, origin) \
+         VALUES (?, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
-            input.task_description.into(),
+            input.task_description.clone().into(),
             input.sequence_order.into(),
             i64::from(input.is_mandatory).into(),
             input
                 .estimated_minutes
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            origin.clone().into(),
         ],
     ))
     .await?;
@@ -169,7 +205,19 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
         .ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!("Failed to re-read task after insert"))
         })?;
-    map_task(&row)
+    let task = map_task(&row)?;
+    let _ = emit_execution_event(
+        db,
+        task.work_order_id,
+        "task_added",
+        "executionLog.taskAdded",
+        part_label_json(&task.task_description),
+        Some("task"),
+        Some(task.id),
+        None,
+    )
+    .await;
+    Ok(task)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -185,12 +233,13 @@ pub async fn complete_task(
 ) -> AppResult<WoTask> {
     if !VALID_RESULT_CODES.contains(&result_code.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "result_code invalide : '{}'. Valeurs autorisées : ok, nok, na, deferred.",
+            "result_code invalide : '{}'. Valeurs autorisées : ok, nok, na, deferred, cancelled.",
             result_code
         )]));
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = now_utc_z();
+    let result_code_owned = result_code.clone();
 
     let result = db
         .execute(Statement::from_sql_and_values(
@@ -232,7 +281,28 @@ pub async fn complete_task(
             entity: "WoTask".into(),
             id: task_id.to_string(),
         })?;
-    map_task(&row)
+    let task = map_task(&row)?;
+    let cancelled = result_code_owned == "cancelled";
+    let _ = emit_execution_event(
+        db,
+        task.work_order_id,
+        if cancelled {
+            "task_cancelled"
+        } else {
+            "task_completed"
+        },
+        if cancelled {
+            "executionLog.taskCancelled"
+        } else {
+            "executionLog.taskCompleted"
+        },
+        part_label_json(&task.task_description),
+        Some("task"),
+        Some(task.id),
+        Some(actor_id),
+    )
+    .await;
+    Ok(task)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -264,7 +334,7 @@ pub async fn reopen_task(
     // Blocked once mechanically complete or later
     if matches!(
         status_code.as_str(),
-        "mechanically_complete" | "technically_verified" | "closed" | "cancelled"
+        "completed" | "closed" | "cancelled"
     ) {
         return Err(AppError::ValidationFailed(vec![format!(
             "La réouverture d'une tâche n'est pas autorisée au statut '{status_code}'."

@@ -1,13 +1,15 @@
 /**
  * Typed reference to the globally mocked invoke function.
- * The mock itself is created in src/test/setup.ts â€” this module provides
+ * The mock itself is created in src/test/setup.ts — this module provides
  * typed access and pre-built fixtures for test convenience.
+ *
+ * Prefer the Tauri core `invoke` mock: app services wrap it via `@/lib/ipc-invoke`,
+ * so resetting/asserting on the core mock covers all IPC call sites.
  */
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { vi } from "vitest";
 
-import { invoke } from "@/lib/ipc-invoke";
-
-export const mockInvoke = vi.mocked(invoke);
+export const mockInvoke = vi.mocked(tauriInvoke);
 
 /** Pre-built valid response fixtures matching shared/ipc-types.ts */
 export const fixtures = {
@@ -63,6 +65,19 @@ export const fixtures = {
     force_password_change: true,
     expires_at: new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
     last_activity_at: new Date().toISOString(),
+    tenant_id: "ten_demo",
+    token_tenant_id: "ten_demo",
+  },
+  lockedSession: {
+    is_authenticated: false,
+    is_locked: true,
+    user_id: 1,
+    username: "admin",
+    display_name: "Administrateur",
+    is_admin: true,
+    force_password_change: false,
+    expires_at: new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
+    last_activity_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
     tenant_id: "ten_demo",
     token_tenant_id: "ten_demo",
   },

@@ -21,13 +21,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { mfAlert, mfLayout, mfTable } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import { clearPin, setPin } from "@/services/auth-service";
 import {
   declareOwnSkill,
   getPersonnelWorkloadSummary,
-  listPersonnelSkillReferenceValues,
   listPersonnelWorkHistory,
   listSkillsMatrix,
 } from "@/services/personnel-service";
@@ -40,7 +40,6 @@ import {
   updateMyProfile,
 } from "@/services/user-service";
 import type {
-  PersonnelSkillReferenceValue,
   PersonnelWorkHistoryEntry,
   PersonnelWorkloadSummary,
   SkillMatrixRow,
@@ -77,7 +76,6 @@ export function ProfilePage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [sessions, setSessions] = useState<SessionHistoryEntry[]>([]);
   const [mySkills, setMySkills] = useState<SkillMatrixRow[]>([]);
-  const [skillCatalog, setSkillCatalog] = useState<PersonnelSkillReferenceValue[]>([]);
   const [workHistory, setWorkHistory] = useState<PersonnelWorkHistoryEntry[]>([]);
   const [workload, setWorkload] = useState<PersonnelWorkloadSummary | null>(null);
   const [selectedSkillRef, setSelectedSkillRef] = useState<number | null>(null);
@@ -126,24 +124,19 @@ export function ProfilePage() {
       });
 
       if (p.personnel_id != null) {
-        const [catalog, skills, history, summary] = await Promise.all([
-          listPersonnelSkillReferenceValues(),
+        const [skills, history, summary] = await Promise.all([
           listSkillsMatrix({ personnel_id: p.personnel_id, include_inactive: true }),
           listPersonnelWorkHistory(p.personnel_id, 20),
           getPersonnelWorkloadSummary(p.personnel_id),
         ]);
-        setSkillCatalog(catalog);
         setMySkills(skills);
         setWorkHistory(history);
         setWorkload(summary);
-        if (catalog.length > 0) {
-          setSelectedSkillRef((prev) => prev ?? catalog[0]?.id ?? null);
-        }
       } else {
-        setSkillCatalog([]);
         setMySkills([]);
         setWorkHistory([]);
         setWorkload(null);
+        setSelectedSkillRef(null);
       }
     } catch {
       /* ignore — UI shows empty */
@@ -358,19 +351,16 @@ export function ProfilePage() {
                 </div>
 
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-                  <select
-                    className="h-9 rounded-md border border-surface-border bg-surface-1 px-2 text-sm"
-                    value={selectedSkillRef ?? ""}
-                    onChange={(e) =>
-                      setSelectedSkillRef(e.target.value ? Number(e.target.value) : null)
+                  <ReferenceCombobox
+                    referenceType="personnel.skills"
+                    valueMode="id"
+                    value={selectedSkillRef != null ? String(selectedSkillRef) : null}
+                    onChange={(idStr) =>
+                      setSelectedSkillRef(idStr ? Number(idStr) : null)
                     }
-                  >
-                    {skillCatalog.map((skill) => (
-                      <option key={skill.id} value={skill.id}>
-                        {skill.label}
-                      </option>
-                    ))}
-                  </select>
+                    allowClear={false}
+                    placeholder={t("profile.selectSkill", "Select a skill")}
+                  />
                   <select
                     className="h-9 rounded-md border border-surface-border bg-surface-1 px-2 text-sm"
                     value={selectedSkillLevel}

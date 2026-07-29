@@ -45,6 +45,22 @@ export async function uploadDiAttachment(input: DiAttachmentUploadInput): Promis
   return DiAttachmentSchema.parse(raw) as DiAttachment;
 }
 
+/** Path-based upload (same model as equipment photos). */
+export async function uploadDiAttachmentFromPath(input: {
+  diId: number;
+  sourcePath: string;
+  attachmentType?: string | null;
+  notes?: string | null;
+}): Promise<DiAttachment> {
+  const raw = await invoke<unknown>("upload_di_attachment_from_path", {
+    diId: input.diId,
+    sourcePath: input.sourcePath,
+    attachmentType: input.attachmentType ?? null,
+    notes: input.notes ?? null,
+  });
+  return DiAttachmentSchema.parse(raw) as DiAttachment;
+}
+
 export async function listDiAttachments(diId: number): Promise<DiAttachment[]> {
   const raw = await invoke<unknown>("list_di_attachments", { diId });
   return z.array(DiAttachmentSchema).parse(raw) as DiAttachment[];
@@ -52,6 +68,18 @@ export async function listDiAttachments(diId: number): Promise<DiAttachment[]> {
 
 export async function deleteDiAttachment(attachmentId: number): Promise<void> {
   await invoke<unknown>("delete_di_attachment", { attachmentId });
+}
+
+const DiAttachmentPreviewSchema = z.object({
+  mime_type: z.string(),
+  data_base64: z.string(),
+});
+
+export async function readDiAttachmentPreview(
+  attachmentId: number,
+): Promise<{ mime_type: string; data_base64: string }> {
+  const raw = await invoke<unknown>("read_di_attachment_preview", { attachmentId });
+  return DiAttachmentPreviewSchema.parse(raw);
 }
 
 // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

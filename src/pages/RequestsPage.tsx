@@ -17,23 +17,16 @@ import {
   List,
   Plus,
   RefreshCw,
-  Search,
-  X,
 } from "lucide-react";
-import {
-  type ChangeEvent,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { DataTable } from "@/components/data/DataTable";
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
+import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { DiApprovalDialog } from "@/components/di/DiApprovalDialog";
 import { DiArchivePanel } from "@/components/di/DiArchivePanel";
 import { DiCalendarView } from "@/components/di/DiCalendarView";
@@ -45,37 +38,15 @@ import { DiRejectionDialog } from "@/components/di/DiRejectionDialog";
 import { DiReturnDialog } from "@/components/di/DiReturnDialog";
 import { DiReviewPanel } from "@/components/di/DiReviewPanel";
 import { DiSlaRulesPanel } from "@/components/di/DiSlaRulesPanel";
+import { DI_STATUS_STYLE, diStatusToI18nKey } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { mfInput, mfLayout } from "@/design-system/tokens";
+import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import { useDiStore } from "@/stores/di-store";
+import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
-
-// ── Status → badge style mapping ────────────────────────────────────────────
-
-const STATUS_STYLE: Record<string, string> = {
-  submitted: "bg-blue-100 text-blue-800",
-  pending_review: "bg-amber-100 text-amber-800",
-  returned_for_clarification: "bg-orange-100 text-orange-800",
-  rejected: "bg-red-100 text-red-700",
-  screened: "bg-sky-100 text-sky-800",
-  awaiting_approval: "bg-yellow-100 text-yellow-800",
-  approved_for_planning: "bg-green-100 text-green-800",
-  deferred: "bg-gray-100 text-gray-600",
-  converted_to_work_order: "bg-emerald-100 text-emerald-800",
-  closed_as_non_executable: "bg-slate-100 text-slate-600",
-  archived: "bg-neutral-100 text-neutral-500",
-};
 
 const URGENCY_STYLE: Record<string, string> = {
   low: "bg-green-100 text-green-800",
@@ -99,7 +70,8 @@ const STATUS_FILTER_TRIAGE_INBOX = "__triage_inbox__";
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function RequestsPage() {
-  const { t } = useTranslation("di");
+  const { t, i18n } = useTranslation("di");
+  const dateLocale = intlLocaleForLanguage(i18n.language);
   const [searchParams, setSearchParams] = useSearchParams();
   const items = useDiStore((s) => s.items);
   const total = useDiStore((s) => s.total);
@@ -118,9 +90,8 @@ export function RequestsPage() {
     () => localStorage.getItem("di-show-filters") !== "0",
   );
   const [searchInput, setSearchInput] = useState("");
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>("__all__");
-  const [priorityFilter, setPriorityFilter] = useState<string>("__all__");
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
 
   const { can } = usePermissions();
   const [slaOpen, setSlaOpen] = useState(false);
@@ -186,9 +157,9 @@ export function RequestsPage() {
 
   const STATUS_OPTIONS = useMemo(
     () =>
-      Object.keys(STATUS_STYLE).map((code) => ({
-        code,
-        label: t(`status.${statusToI18nKey(code)}` as const),
+      Object.keys(DI_STATUS_STYLE).map((code) => ({
+        value: code,
+        label: t(`status.${diStatusToI18nKey(code)}` as const),
       })),
     [t],
   );
@@ -196,33 +167,22 @@ export function RequestsPage() {
   const PRIORITY_OPTIONS = useMemo(
     () =>
       ["low", "medium", "high", "critical"].map((code) => ({
-        code,
+        value: code,
         label: t(`priority.${code}`),
       })),
     [t],
   );
 
-  const handleSearchChange = useCallback(
-    (e: ChangeEvent<HTMLInputElement>) => {
-      const val = e.target.value;
-      setSearchInput(val);
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-      searchTimerRef.current = setTimeout(() => {
-        setFilter({ search: val || null });
-        void loadDis();
-      }, 300);
+  const onSearchChange = useCallback(
+    (val: string) => {
+      setFilter({ search: val.trim() || null });
+      void loadDis();
     },
     [loadDis, setFilter],
   );
 
-  const clearSearch = useCallback(() => {
-    setSearchInput("");
-    setFilter({ search: null });
-    void loadDis();
-  }, [loadDis, setFilter]);
-
   const handleStatusFilter = useCallback(
-    (val: string) => {
+    (val: string | null) => {
       setStatusFilter(val);
       if (val === STATUS_FILTER_REVIEW_QUEUE) {
         setFilter({
@@ -277,7 +237,7 @@ export function RequestsPage() {
             { replace: true },
           );
         }
-        if (val === "__all__") {
+        if (val == null) {
           setFilter({ status: null, submitter_id: null, limit: 50, offset: 0 });
         } else {
           setFilter({ status: [val], submitter_id: null, limit: 50, offset: 0 });
@@ -289,12 +249,76 @@ export function RequestsPage() {
   );
 
   const handlePriorityFilter = useCallback(
-    (val: string) => {
+    (val: string | null) => {
       setPriorityFilter(val);
-      setFilter({ urgency: val === "__all__" ? null : val });
+      setFilter({ urgency: val });
       void loadDis();
     },
     [loadDis, setFilter],
+  );
+
+  const resetFilters = useCallback(() => {
+    setSearchInput("");
+    setStatusFilter(null);
+    setPriorityFilter(null);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.delete("review");
+        p.delete("triage");
+        return p;
+      },
+      { replace: true },
+    );
+    setFilter({
+      search: null,
+      status: null,
+      urgency: null,
+      submitter_id: null,
+      limit: 50,
+      offset: 0,
+    });
+    void loadDis();
+  }, [loadDis, setFilter, setSearchParams]);
+
+  const statusFilterOptions = useMemo(() => {
+    return [
+      { value: STATUS_FILTER_REVIEW_QUEUE, label: t("list.filters.reviewQueue") },
+      ...(can("di.screen") || can("di.review")
+        ? [{ value: STATUS_FILTER_TRIAGE_INBOX, label: t("list.filters.triageInbox") }]
+        : []),
+      ...STATUS_OPTIONS,
+    ];
+  }, [STATUS_OPTIONS, can, t]);
+
+  const filterDefs = useMemo<SmartFilterDef[]>(
+    () => [
+      {
+        id: "status",
+        kind: "select",
+        label: t("list.filters.status"),
+        options: statusFilterOptions,
+        value: statusFilter,
+        onChange: handleStatusFilter,
+      },
+      {
+        id: "priority",
+        kind: "select",
+        label: t("list.filters.priority"),
+        options: PRIORITY_OPTIONS,
+        value: priorityFilter,
+        onChange: handlePriorityFilter,
+      },
+    ],
+    [
+      t,
+      statusFilterOptions,
+      PRIORITY_OPTIONS,
+      statusFilter,
+      priorityFilter,
+      handleStatusFilter,
+      handlePriorityFilter,
+    ],
   );
 
   const toggleFilters = useCallback(() => {
@@ -311,13 +335,20 @@ export function RequestsPage() {
         accessorKey: "code",
         header: t("list.columns.number"),
         cell: ({ row }) => (
-          <span className="font-mono text-xs">
+          <span className="font-mono text-xs inline-flex items-center gap-1.5 flex-wrap">
             {row.original.code}
             {row.original.is_modified && (
-              <Badge className="ml-1.5 bg-amber-100 text-amber-800 border-0 text-[9px] px-1 py-0">
+              <Badge className="bg-amber-100 text-amber-800 border-0 text-[9px] px-1 py-0">
                 {t("review.modified")}
               </Badge>
             )}
+            <LinkedEntityBadge
+              entity="work_order"
+              code={row.original.converted_to_wo_code}
+              entityId={row.original.converted_to_wo_id}
+              title={row.original.converted_to_wo_title}
+              className="text-[10px] px-1.5 py-0"
+            />
           </span>
         ),
       },
@@ -336,9 +367,9 @@ export function RequestsPage() {
           return (
             <Badge
               variant="outline"
-              className={`text-[10px] border-0 ${STATUS_STYLE[s] ?? "bg-gray-100 text-gray-600"}`}
+              className={`text-[10px] border-0 ${DI_STATUS_STYLE[s] ?? "bg-gray-100 text-gray-600"}`}
             >
-              {t(`status.${statusToI18nKey(s)}` as const)}
+              {t(`status.${diStatusToI18nKey(s)}` as const)}
             </Badge>
           );
         },
@@ -360,7 +391,15 @@ export function RequestsPage() {
         header: t("list.columns.reportedAt"),
         cell: ({ row }) => {
           const d = row.original.submitted_at;
-          return <span className="text-xs text-text-muted">{formatDate(d)}</span>;
+          return (
+            <span className="text-xs text-text-muted">
+              {formatDiDate(d, dateLocale, {
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+              })}
+            </span>
+          );
         },
       },
     ],
@@ -463,62 +502,15 @@ export function RequestsPage() {
       </div>
 
       {showFilters && (
-        <div className={mfLayout.moduleFilterBar}>
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
-            <Input
-              className={mfInput.filterSearch}
-              placeholder={t("search.placeholder")}
-              value={searchInput}
-              onChange={handleSearchChange}
-            />
-            {searchInput && (
-              <button
-                type="button"
-                className="absolute right-2 top-2 text-text-muted hover:text-text-primary"
-                onClick={clearSearch}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-
-          <Select value={statusFilter} onValueChange={handleStatusFilter}>
-            <SelectTrigger className={cn(mfInput.filterSelect, "w-[180px]")}>
-              <SelectValue placeholder={t("list.filters.status")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">{t("list.filters.status")}</SelectItem>
-              <SelectItem value={STATUS_FILTER_REVIEW_QUEUE}>
-                {t("list.filters.reviewQueue")}
-              </SelectItem>
-              {(can("di.screen") || can("di.review")) && (
-                <SelectItem value={STATUS_FILTER_TRIAGE_INBOX}>
-                  {t("list.filters.triageInbox")}
-                </SelectItem>
-              )}
-              {STATUS_OPTIONS.map((opt) => (
-                <SelectItem key={opt.code} value={opt.code}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={priorityFilter} onValueChange={handlePriorityFilter}>
-            <SelectTrigger className={cn(mfInput.filterSelect, "w-[140px]")}>
-              <SelectValue placeholder={t("list.filters.priority")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">{t("list.filters.priority")}</SelectItem>
-              {PRIORITY_OPTIONS.map((opt) => (
-                <SelectItem key={opt.code} value={opt.code}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <SmartFilterBar
+          searchPlaceholder={t("search.placeholder")}
+          searchValue={searchInput}
+          onSearchInputChange={setSearchInput}
+          onSearchChange={onSearchChange}
+          filters={filterDefs}
+          resultCount={items.length}
+          onReset={resetFilters}
+        />
       )}
 
       {/* ── Review panel (approvers only) ────────────────────────── */}
@@ -571,46 +563,4 @@ export function RequestsPage() {
       {can("di.admin") && <DiSlaRulesPanel open={slaOpen} onClose={() => setSlaOpen(false)} />}
     </div>
   );
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-type DiStatusKey =
-  | "new"
-  | "inReview"
-  | "approved"
-  | "rejected"
-  | "inProgress"
-  | "resolved"
-  | "closed"
-  | "cancelled";
-
-/** Map Rust snake_case status to camelCase i18n key */
-function statusToI18nKey(s: string): DiStatusKey {
-  const map: Record<string, DiStatusKey> = {
-    submitted: "new",
-    pending_review: "inReview",
-    returned_for_clarification: "inReview",
-    rejected: "rejected",
-    screened: "inReview",
-    awaiting_approval: "inReview",
-    approved_for_planning: "approved",
-    deferred: "inReview",
-    converted_to_work_order: "inProgress",
-    closed_as_non_executable: "closed",
-    archived: "closed",
-  };
-  return map[s] ?? "new";
-}
-
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  } catch {
-    return iso;
-  }
 }

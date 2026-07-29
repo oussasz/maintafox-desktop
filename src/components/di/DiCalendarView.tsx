@@ -10,8 +10,10 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { diStatusToI18nKey } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -65,6 +67,7 @@ const DAY_NAMES_EN = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function DiCalendarView({ items, onChipClick, onChipContextMenu }: DiCalendarViewProps) {
   const { t, i18n } = useTranslation("di");
+  const dateLocale = intlLocaleForLanguage(i18n.language);
   const [mode, setMode] = useState<CalendarMode>("month");
   const [cursor, setCursor] = useState(() => new Date());
 
@@ -147,13 +150,13 @@ export function DiCalendarView({ items, onChipClick, onChipContextMenu }: DiCale
           </Button>
           <span className="text-sm font-semibold text-text-primary capitalize">
             {mode === "day"
-              ? cursor.toLocaleDateString(i18n.language, {
+              ? cursor.toLocaleDateString(dateLocale, {
                   weekday: "long",
                   day: "numeric",
                   month: "long",
                   year: "numeric",
                 })
-              : formatMonthYear(cursor, i18n.language)}
+              : formatMonthYear(cursor, dateLocale)}
           </span>
         </div>
 
@@ -237,7 +240,7 @@ export function DiCalendarView({ items, onChipClick, onChipContextMenu }: DiCale
                   <div
                     className={`text-xs font-medium mb-2 ${isToday ? "text-brand-primary" : "text-text-muted"}`}
                   >
-                    {day.toLocaleDateString(i18n.language, { weekday: "short", day: "numeric" })}
+                    {day.toLocaleDateString(dateLocale, { weekday: "short", day: "numeric" })}
                   </div>
                   <div className="space-y-1">
                     {dis.map((di) => (
@@ -287,7 +290,7 @@ export function DiCalendarView({ items, onChipClick, onChipContextMenu }: DiCale
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs text-text-muted">{di.code}</span>
                       <Badge variant="outline" className="text-[10px] border-0 bg-surface-1">
-                        {t(`status.${statusToI18nKey(di.status)}`)}
+                        {t(`status.${diStatusToI18nKey(di.status)}`)}
                       </Badge>
                     </div>
                     <p className="text-sm mt-1">{di.title}</p>
@@ -303,30 +306,3 @@ export function DiCalendarView({ items, onChipClick, onChipContextMenu }: DiCale
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-type DiStatusKey =
-  | "new"
-  | "inReview"
-  | "approved"
-  | "rejected"
-  | "inProgress"
-  | "resolved"
-  | "closed"
-  | "cancelled";
-
-function statusToI18nKey(s: string): DiStatusKey {
-  const map: Record<string, DiStatusKey> = {
-    submitted: "new",
-    pending_review: "inReview",
-    returned_for_clarification: "inReview",
-    rejected: "rejected",
-    screened: "inReview",
-    awaiting_approval: "inReview",
-    approved_for_planning: "approved",
-    deferred: "inReview",
-    converted_to_work_order: "inProgress",
-    closed_as_non_executable: "closed",
-    archived: "closed",
-  };
-  return map[s] ?? "new";
-}

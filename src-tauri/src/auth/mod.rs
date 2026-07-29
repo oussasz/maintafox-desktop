@@ -22,6 +22,9 @@ mod auth_integration_tests;
 
 /// Short-circuit an IPC command if there is no active authenticated session.
 ///
+/// Distinguishes idle-lock (`SESSION_LOCKED`) from missing/expired (`AUTH_ERROR`).
+/// On success, refreshes `last_activity_at` so normal IPC keeps the session alive.
+///
 /// Usage inside an `async` Tauri command:
 /// ```ignore
 /// let user = require_session!(state);
@@ -30,14 +33,20 @@ mod auth_integration_tests;
 #[macro_export]
 macro_rules! require_session {
     ($state:expr) => {{
-        let guard = $state.session.read().await;
-        if !guard.is_authenticated() {
-            return Err($crate::errors::AppError::Auth(
-                "Session expirée ou absente. Veuillez vous reconnecter.".into(),
-            ));
+        let mut guard = $state.session.write().await;
+        match guard.require_active_user() {
+            Ok(user) => user,
+            Err($crate::auth::session_manager::RequireSessionFailure::IdleLocked) => {
+                return Err($crate::errors::AppError::SessionLocked(
+                    "Session verrouillée pour inactivité. Veuillez vous déverrouiller.".into(),
+                ));
+            }
+            Err($crate::auth::session_manager::RequireSessionFailure::MissingOrExpired) => {
+                return Err($crate::errors::AppError::Auth(
+                    "Session expirée ou absente. Veuillez vous reconnecter.".into(),
+                ));
+            }
         }
-        // SAFETY: is_authenticated() guarantees current is Some and non-expired
-        guard.current.as_ref().unwrap().user.clone()
     }};
 }
 

@@ -14,7 +14,6 @@
 //!     via `require_step_up!`).
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait,
 };
@@ -23,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use super::domain::{
     guard_transition, map_intervention_request, DiStatus, InterventionRequest,
 };
+use crate::wo::domain::generate_wo_code;
+use crate::wo::time::now_utc_z;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
@@ -52,17 +53,35 @@ pub struct WoConversionResult {
 /// All columns from `intervention_requests` for SELECT reuse (aliased as `ir`).
 const IR_COLS: &str = "\
     ir.id, ir.code, ir.asset_id, ir.sub_asset_ref, ir.org_node_id, \
-    ir.status, ir.title, ir.description, ir.origin_type, ir.symptom_code_id, \
+    ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
     ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
     ir.observed_at, ir.submitted_at, \
     ir.review_team_id, ir.reviewer_id, ir.screened_at, ir.approved_at, \
     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
     ir.converted_to_wo_id, ir.converted_at, \
+    ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
+    ir.sla_escalation_threshold_hours, ir.sla_response_deadline, ir.sla_resolution_deadline, \
+    ir.sla_response_breach_notified_at, ir.sla_resolution_breach_notified_at, \
     ir.reviewer_note, ir.classification_code_id, \
     ir.is_recurrence_flag, ir.recurrence_di_id, \
     ir.source_inspection_anomaly_id, \
     ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
+
+/// Display enrichment columns (must be paired with `IR_JOINS`).
+const IR_JOIN_COLS: &str = "\
+    eq.asset_id_code AS asset_code, eq.name AS asset_label, \
+    org.code AS org_node_code, org.name AS org_node_label, \
+    COALESCE(us.display_name, us.username) AS submitter_display_name, \
+    COALESCE(urv.display_name, urv.username) AS reviewer_display_name, \
+    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title";
+
+const IR_JOINS: &str = "\
+    LEFT JOIN equipment eq ON eq.id = ir.asset_id \
+    LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
+    LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
+    LEFT JOIN user_accounts urv ON urv.id = ir.reviewer_id \
+    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -107,7 +126,12 @@ pub async fn convert_di_to_work_order(
     let di_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {IR_COLS} FROM intervention_requests ir WHERE ir.id = ?"),
+            &format!(
+                "SELECT {IR_COLS}, {IR_JOIN_COLS} \
+                 FROM intervention_requests ir \
+                 {IR_JOINS} \
+                 WHERE ir.id = ?"
+            ),
             [input.di_id.into()],
         ))
         .await?
@@ -131,6 +155,9 @@ pub async fn convert_di_to_work_order(
     if di.asset_id == 0 {
         errors.push("Contexte d'actif requis pour la conversion.".into());
     }
+    if di.org_node_id == 0 {
+        errors.push("Contexte d'entité requis pour la conversion.".into());
+    }
 
     if di.classification_code_id.is_none() {
         errors.push("Classification requise pour la conversion.".into());
@@ -141,42 +168,65 @@ pub async fn convert_di_to_work_order(
     }
 
     // ── 3. Create WO in work_orders table ───────────────────────────────
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = now_utc_z();
 
-    // Resolve draft status_id
-    let draft_row = txn
+    // Guard duplicate conversion: keep only one non-terminal WO per DI.
+    let duplicate_row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT wo.id, wo.code \
+             FROM work_orders wo \
+             JOIN work_order_statuses wos ON wos.id = wo.status_id \
+             WHERE wo.source_di_id = ? AND wos.is_terminal = 0 \
+             ORDER BY wo.id DESC LIMIT 1",
+            [input.di_id.into()],
+        ))
+        .await?;
+    if let Some(row) = duplicate_row {
+        let existing_id: i64 = row.try_get("", "id").unwrap_or_default();
+        let existing_code: String = row
+            .try_get("", "code")
+            .unwrap_or_else(|_| "N/A".to_string());
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
+        )]));
+    }
+
+    // Resolve planning status_id (DI already submitted intake → land in planning)
+    let planning_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id FROM work_order_statuses WHERE code = 'draft'".to_string(),
+            "SELECT id FROM work_order_statuses WHERE code = 'planning'".to_string(),
         ))
         .await?
         .ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!(
-                "work_order_statuses missing 'draft' row"
+                "work_order_statuses missing 'planning' row"
             ))
         })?;
-    let draft_status_id: i64 = draft_row
+    let planning_status_id: i64 = planning_row
         .try_get("", "id")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("draft status_id decode: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("planning status_id decode: {e}")))?;
 
-    // Resolve default type_id (corrective = 1)
-    let type_id: i64 = 1;
-
-    // Generate WO code (OT-NNNN)
-    let max_row = txn
-        .query_one(Statement::from_string(
+    // Resolve default type_id (corrective)
+    let type_row = txn
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COALESCE(MAX(CAST(SUBSTR(code, 4) AS INTEGER)), 0) AS max_seq \
-             FROM work_orders WHERE code LIKE 'OT-%'"
-                .to_string(),
+            "SELECT id FROM work_order_types WHERE lower(code) = 'corrective' LIMIT 1",
+            [],
         ))
-        .await?;
-    let next_seq: i64 = max_row
-        .as_ref()
-        .and_then(|row| row.try_get::<i64>("", "max_seq").ok())
-        .unwrap_or(0)
-        + 1;
-    let wo_code = format!("OT-{next_seq:04}");
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "work_order_types missing 'corrective' row"
+            ))
+        })?;
+    let type_id: i64 = type_row
+        .try_get("", "id")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("corrective type_id decode: {e}")))?;
+
+    // Single SSOT allocator (same sequence as manual / PM / inspection create).
+    let wo_code = generate_wo_code(&txn).await?;
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -188,7 +238,7 @@ pub async fn convert_di_to_work_order(
         [
             wo_code.clone().into(),
             type_id.into(),
-            draft_status_id.into(),
+            planning_status_id.into(),
             if di.asset_id == 0 { sea_orm::Value::from(None::<i64>) } else { di.asset_id.into() },
             input.di_id.into(),
             if di.org_node_id == 0 { sea_orm::Value::from(None::<i64>) } else { di.org_node_id.into() },
@@ -224,12 +274,47 @@ pub async fn convert_di_to_work_order(
         .try_get("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("WO id decode: {e}")))?;
 
+    // Carry-over DI technical context into WO closeout context for RAMS.
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO work_order_failure_details \
+         (work_order_id, symptom_id, failure_mode_id, failure_cause_id, failure_effect_id, \
+          is_temporary_repair, is_permanent_repair, cause_not_determined, notes) \
+         VALUES (?, ?, NULL, NULL, NULL, 0, 0, 0, ?)",
+        [
+            wo_id.into(),
+            di.symptom_code_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            Some(format!(
+                "Auto-propagated from DI #{}, classification_code_id={}",
+                di.id,
+                di.classification_code_id.unwrap_or_default()
+            ))
+            .map(sea_orm::Value::from)
+            .unwrap_or(sea_orm::Value::from(None::<String>)),
+        ],
+    ))
+    .await?;
+
+    // Carry-over DI attachments by linking existing file paths to the new WO.
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO work_order_attachments \
+         (work_order_id, file_name, relative_path, mime_type, size_bytes, uploaded_by_id, uploaded_at, notes) \
+         SELECT ?, da.file_name, da.relative_path, da.mime_type, da.size_bytes, da.uploaded_by_id, da.uploaded_at, \
+                COALESCE(da.notes, 'Linked from DI conversion') \
+         FROM di_attachments da WHERE da.di_id = ?",
+        [wo_id.into(), input.di_id.into()],
+    ))
+    .await?;
+
     // Insert initial WO transition log
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO wo_state_transition_log \
             (wo_id, from_status, to_status, action, actor_id, notes, acted_at) \
-         VALUES (?, '__none__', 'draft', 'create_from_di', ?, ?, ?)",
+         VALUES (?, '__none__', 'planning', 'create_from_di', ?, ?, ?)",
         [
             wo_id.into(),
             input.actor_id.into(),
@@ -285,13 +370,16 @@ pub async fn convert_di_to_work_order(
     ))
     .await?;
 
-    // ── 7. Insert review event ────────────────────────────────────────────
+    // ── 7. Insert review event (SLA snapshot from frozen DI columns) ──────
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_review_events \
             (di_id, event_type, actor_id, acted_at, from_status, to_status, \
-             reason_code, notes, sla_target_hours, sla_deadline, step_up_used) \
-         VALUES (?, 'converted', ?, ?, ?, ?, NULL, ?, NULL, NULL, 1)",
+             reason_code, notes, sla_target_hours, sla_deadline, \
+             sla_resolution_target_hours, sla_resolution_deadline, step_up_used) \
+         VALUES (?, 'converted', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 1)",
         [
             input.di_id.into(),
             input.actor_id.into(),
@@ -300,6 +388,19 @@ pub async fn convert_di_to_work_order(
             to_str.into(),
             input
                 .conversion_notes
+                .clone()
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            snap.response_target_hours
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            snap.response_deadline
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            snap.resolution_target_hours
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            snap.resolution_deadline
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
         ],
@@ -310,7 +411,12 @@ pub async fn convert_di_to_work_order(
     let updated_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {IR_COLS} FROM intervention_requests ir WHERE ir.id = ?"),
+            &format!(
+                "SELECT {IR_COLS}, {IR_JOIN_COLS} \
+                 FROM intervention_requests ir \
+                 {IR_JOINS} \
+                 WHERE ir.id = ?"
+            ),
             [input.di_id.into()],
         ))
         .await?

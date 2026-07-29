@@ -1,8 +1,8 @@
 //! Supervisor verification tests for Phase 2 SP03 File 03 Sprint S1.
 //!
-//! V1 — Preferred alias uniqueness
-//! V2 — Duplicate alias guard
-//! V3 — Delete behavior (auto-promote on preferred deletion)
+//! V1 â€” Preferred alias uniqueness
+//! V2 â€” Duplicate alias guard
+//! V3 â€” Delete behavior (auto-promote on preferred deletion)
 
 #[cfg(test)]
 mod tests {
@@ -50,6 +50,7 @@ mod tests {
                 name: "Alias Test Domain".to_string(),
                 structure_type: "flat".to_string(),
                 governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
                 is_extendable: Some(true),
                 validation_rules_json: None,
             },
@@ -101,9 +102,9 @@ mod tests {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V1 — Preferred alias uniqueness
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V1 â€” Preferred alias uniqueness
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v1_only_one_preferred_alias_per_scope() {
@@ -120,7 +121,7 @@ mod tests {
         .expect("first preferred");
         assert!(a1.is_preferred);
 
-        // Create second preferred alias in same scope — should demote a1
+        // Create second preferred alias in same scope â€” should demote a1
         let a2 = aliases::create_alias(
             &db,
             alias_payload(val_id, "Autre ancien nom", "fr", "legacy", true),
@@ -152,7 +153,7 @@ mod tests {
         .await
         .expect("fr preferred");
 
-        // Preferred in en/legacy — different locale, should NOT demote fr one
+        // Preferred in en/legacy â€” different locale, should NOT demote fr one
         let a_en = aliases::create_alias(
             &db,
             alias_payload(val_id, "Old name EN", "en", "legacy", true),
@@ -161,7 +162,7 @@ mod tests {
         .await
         .expect("en preferred");
 
-        // Preferred in fr/search — different type, should NOT demote fr/legacy one
+        // Preferred in fr/search â€” different type, should NOT demote fr/legacy one
         let a_search = aliases::create_alias(
             &db,
             alias_payload(val_id, "Recherche FR", "fr", "search", true),
@@ -200,7 +201,7 @@ mod tests {
         .await
         .expect("a2");
 
-        // Update a2 to preferred — should demote a1
+        // Update a2 to preferred â€” should demote a1
         let a2_updated = aliases::update_alias(
             &db,
             a2.id,
@@ -220,9 +221,9 @@ mod tests {
         assert!(!a1_r.is_preferred, "a1 should be demoted after a2 became preferred");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V2 — Duplicate alias guard
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V2 â€” Duplicate alias guard
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v2_duplicate_alias_label_rejected() {
@@ -264,7 +265,7 @@ mod tests {
         .await
         .expect("legacy alias");
 
-        // Same label but different type — should succeed
+        // Same label but different type â€” should succeed
         aliases::create_alias(
             &db,
             alias_payload(val_id, "Same Label", "fr", "search", false),
@@ -287,7 +288,7 @@ mod tests {
         .await
         .expect("fr alias");
 
-        // Same label but different locale — should succeed
+        // Same label but different locale â€” should succeed
         aliases::create_alias(
             &db,
             alias_payload(val_id, "Same Label", "en", "legacy", false),
@@ -297,9 +298,9 @@ mod tests {
         .expect("en alias with same label should be allowed");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V3 — Delete behavior (auto-promote on preferred deletion)
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V3 â€” Delete behavior (auto-promote on preferred deletion)
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v3_delete_preferred_auto_promotes_oldest() {
@@ -387,7 +388,7 @@ mod tests {
         .await
         .expect("only alias");
 
-        // Delete the only alias — should not panic (nothing to promote)
+        // Delete the only alias â€” should not panic (nothing to promote)
         aliases::delete_alias(&db, a1.id, 1)
             .await
             .expect("delete last alias should succeed");
@@ -397,9 +398,9 @@ mod tests {
         assert!(list.is_empty());
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Additional coverage: list and basic CRUD
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn list_aliases_returns_ordered_results() {

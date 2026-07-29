@@ -1,8 +1,23 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { MapPin, Warehouse as WarehouseIcon } from "lucide-react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useState,
+} from "react";
+import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
+import {
+  DetailFieldRow,
+  DetailSectionCard,
+  EntityDetailHeader,
+} from "@/components/detail";
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +30,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { mfLayout } from "@/design-system/tokens";
 import {
   createInventoryStockLocation,
   createInventoryWarehouse,
@@ -22,33 +38,34 @@ import {
   updateInventoryStockLocation,
   updateInventoryWarehouse,
 } from "@/services/inventory-service";
-import { toErrorMessage } from "@/utils/errors";
 import { useInventoryStore } from "@/stores/inventory-store";
+import { toErrorMessage } from "@/utils/errors";
 import type { StockLocation, Warehouse } from "@shared/ipc-types";
 
 export type WarehouseLocationPanelHandle = {
   openCreateWarehouse: () => void;
 };
 
-type Props = {
-  searchFilter: string;
-};
-
-export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle, Props>(
-  function WarehouseLocationPanel({ searchFilter }, ref) {
+export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle>(
+  function WarehouseLocationPanel(_props, ref) {
+    const { t } = useTranslation("inventory");
+    const { t: tc } = useTranslation("common");
     const warehouses = useInventoryStore((s) => s.warehouses);
     const loadAll = useInventoryStore((s) => s.loadAll);
     const saving = useInventoryStore((s) => s.saving);
 
-    const [dialogOpen, setDialogOpen] = useState(false);
-    const [editingWarehouse, setEditingWarehouse] = useState<Warehouse | null>(null);
-    const [pendingCreate, setPendingCreate] = useState(false);
+    const [searchInput, setSearchInput] = useState("");
+    const [searchFilter, setSearchFilter] = useState("");
+    const [selectedWarehouse, setSelectedWarehouse] = useState<Warehouse | null>(null);
 
-    const [whCode, setWhCode] = useState("");
+    const [createOpen, setCreateOpen] = useState(false);
+    const [createCode, setCreateCode] = useState("");
+    const [createName, setCreateName] = useState("");
+
     const [whName, setWhName] = useState("");
     const [whActive, setWhActive] = useState(true);
 
-    const [dialogLocations, setDialogLocations] = useState<StockLocation[]>([]);
+    const [locations, setLocations] = useState<StockLocation[]>([]);
     const [locSaving, setLocSaving] = useState(false);
     const [locError, setLocError] = useState<string | null>(null);
 
@@ -62,36 +79,43 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle, P
     const [editLocDefault, setEditLocDefault] = useState(false);
     const [editLocActive, setEditLocActive] = useState(true);
 
-    const reloadDialogLocations = useCallback(async (warehouseId: number) => {
+    const reloadLocations = useCallback(async (warehouseId: number) => {
       const rows = await listInventoryLocations(warehouseId);
-      setDialogLocations(rows);
+      setLocations(rows);
     }, []);
 
     useEffect(() => {
-      if (!editingWarehouse?.id) {
-        setDialogLocations([]);
+      setSelectedWarehouse((prev) => {
+        if (!prev) return null;
+        return warehouses.find((w) => w.id === prev.id) ?? null;
+      });
+    }, [warehouses]);
+
+    useEffect(() => {
+      if (!selectedWarehouse) {
+        setLocations([]);
+        setWhName("");
+        setWhActive(true);
+        setEditLoc(null);
+        setLocError(null);
         return;
       }
-      void reloadDialogLocations(editingWarehouse.id).catch(() => setDialogLocations([]));
-    }, [editingWarehouse?.id, reloadDialogLocations]);
-
-    const resetWarehouseForm = () => {
-      setWhCode("");
-      setWhName("");
-      setWhActive(true);
-      setNewLocCode("");
-      setNewLocName("");
-      setNewLocDefault(false);
+      const warehouseId = selectedWarehouse.id;
+      setWhName(selectedWarehouse.name);
+      setWhActive(selectedWarehouse.is_active === 1);
       setEditLoc(null);
       setLocError(null);
-    };
+      void reloadLocations(warehouseId).catch(() => setLocations([]));
+      // Sync form when selection changes, not on every warehouse list refresh mid-edit.
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: selectedWarehouse.id only
+    }, [selectedWarehouse?.id, reloadLocations]);
 
     useImperativeHandle(ref, () => ({
       openCreateWarehouse: () => {
-        setEditingWarehouse(null);
-        setPendingCreate(true);
-        resetWarehouseForm();
-        setDialogOpen(true);
+        setCreateCode("");
+        setCreateName("");
+        setLocError(null);
+        setCreateOpen(true);
       },
     }));
 
@@ -103,79 +127,51 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle, P
       );
     }, [warehouses, searchFilter]);
 
-    const openEdit = (w: Warehouse) => {
-      setPendingCreate(false);
-      setEditingWarehouse(w);
-      setWhCode(w.code);
-      setWhName(w.name);
-      setWhActive(w.is_active === 1);
-      setNewLocCode("");
-      setNewLocName("");
-      setNewLocDefault(false);
-      setEditLoc(null);
-      setLocError(null);
-      setDialogOpen(true);
+    const selectWarehouse = (w: Warehouse) => {
+      setSelectedWarehouse((prev) => (prev?.id === w.id ? null : w));
     };
 
-    const saveWarehouseCore = async () => {
-      if (pendingCreate || !editingWarehouse) {
+    const handleCreateWarehouse = async () => {
+      if (!createCode.trim() || !createName.trim()) return;
+      try {
+        setLocError(null);
         const created = await createInventoryWarehouse({
-          code: whCode.trim(),
-          name: whName.trim(),
+          code: createCode.trim(),
+          name: createName.trim(),
         });
-        setPendingCreate(false);
-        setEditingWarehouse(created);
-        setWhCode(created.code);
-        setWhName(created.name);
-        setWhActive(created.is_active === 1);
         await loadAll();
-        await reloadDialogLocations(created.id);
-        return;
+        setCreateOpen(false);
+        setSelectedWarehouse(created);
+      } catch (err) {
+        setLocError(toErrorMessage(err));
       }
-      await updateInventoryWarehouse(editingWarehouse.id, {
-        name: whName.trim(),
-        is_active: whActive,
-      });
-      await loadAll();
-      const refreshed = useInventoryStore.getState().warehouses.find((x) => x.id === editingWarehouse.id);
-      if (refreshed) setEditingWarehouse(refreshed);
     };
 
     const handleSaveWarehouse = async () => {
-      if (!whCode.trim() || !whName.trim()) return;
+      if (!selectedWarehouse || !whName.trim()) return;
       try {
         setLocError(null);
-        await saveWarehouseCore();
+        await updateInventoryWarehouse(selectedWarehouse.id, {
+          name: whName.trim(),
+          is_active: whActive,
+        });
+        await loadAll();
+        const refreshed = useInventoryStore
+          .getState()
+          .warehouses.find((x) => x.id === selectedWarehouse.id);
+        if (refreshed) setSelectedWarehouse(refreshed);
       } catch (err) {
         setLocError(toErrorMessage(err));
       }
     };
 
     const handleAddLocation = async () => {
-      if (!newLocCode.trim() || !newLocName.trim()) return;
+      if (!selectedWarehouse || !newLocCode.trim() || !newLocName.trim()) return;
       setLocSaving(true);
       setLocError(null);
       try {
-        let warehouseId = editingWarehouse?.id ?? null;
-        if (!warehouseId) {
-          if (!whCode.trim() || !whName.trim()) {
-            setLocError("Save warehouse code and name first.");
-            return;
-          }
-          const created = await createInventoryWarehouse({
-            code: whCode.trim(),
-            name: whName.trim(),
-          });
-          warehouseId = created.id;
-          setPendingCreate(false);
-          setEditingWarehouse(created);
-          setWhCode(created.code);
-          setWhName(created.name);
-          setWhActive(created.is_active === 1);
-        }
-
         await createInventoryStockLocation({
-          warehouse_id: warehouseId,
+          warehouse_id: selectedWarehouse.id,
           code: newLocCode.trim(),
           name: newLocName.trim(),
           is_default: newLocDefault,
@@ -183,7 +179,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle, P
         setNewLocCode("");
         setNewLocName("");
         setNewLocDefault(false);
-        await reloadDialogLocations(warehouseId);
+        await reloadLocations(selectedWarehouse.id);
         await loadAll();
       } catch (err) {
         setLocError(toErrorMessage(err));
@@ -205,7 +201,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle, P
     };
 
     const saveEditLocation = async () => {
-      if (!editLoc || !editLocCode.trim() || !editLocName.trim()) return;
+      if (!editLoc || !selectedWarehouse || !editLocCode.trim() || !editLocName.trim()) return;
       setLocSaving(true);
       setLocError(null);
       try {
@@ -216,7 +212,7 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle, P
           is_active: editLocActive,
         });
         cancelEditLocation();
-        if (editingWarehouse?.id) await reloadDialogLocations(editingWarehouse.id);
+        await reloadLocations(selectedWarehouse.id);
         await loadAll();
       } catch (err) {
         setLocError(toErrorMessage(err));
@@ -225,253 +221,319 @@ export const WarehouseLocationPanel = forwardRef<WarehouseLocationPanelHandle, P
       }
     };
 
+    const resetTopologyFilters = useCallback(() => {
+      setSearchInput("");
+      setSearchFilter("");
+    }, []);
+
     const whColumns: ColumnDef<Warehouse>[] = useMemo(
       () => [
-        { accessorKey: "code", header: "Code" },
-        { accessorKey: "name", header: "Name" },
+        { accessorKey: "code", header: t("topology.columns.code") },
+        { accessorKey: "name", header: t("topology.columns.name") },
         {
           accessorKey: "is_active",
-          header: "Status",
+          header: t("topology.columns.status"),
           cell: ({ row }) =>
             row.original.is_active === 1 ? (
-              <Badge variant="secondary">Active</Badge>
+              <Badge variant="secondary">{tc("status.active")}</Badge>
             ) : (
-              <Badge>Inactive</Badge>
+              <Badge>{tc("status.inactive")}</Badge>
             ),
         },
-        { accessorKey: "created_at", header: "Created" },
       ],
-      [],
+      [t, tc],
     );
 
     const locColumns: ColumnDef<StockLocation>[] = useMemo(
       () => [
-        { accessorKey: "code", header: "Code" },
-        { accessorKey: "name", header: "Name" },
+        { accessorKey: "code", header: t("topology.columns.code") },
+        { accessorKey: "name", header: t("topology.columns.name") },
         {
           accessorKey: "is_default",
-          header: "Default",
-          cell: ({ row }) => (row.original.is_default === 1 ? "Yes" : "No"),
+          header: t("topology.columns.default"),
+          cell: ({ row }) =>
+            row.original.is_default === 1 ? tc("action.yes") : tc("action.no"),
         },
         {
           accessorKey: "is_active",
-          header: "Active",
-          cell: ({ row }) => (row.original.is_active === 1 ? "Yes" : "No"),
+          header: t("topology.columns.active"),
+          cell: ({ row }) =>
+            row.original.is_active === 1 ? tc("status.active") : tc("status.inactive"),
         },
         {
           id: "actions",
           header: "",
           cell: ({ row }) => (
-            <Button type="button" variant="outline" size="sm" onClick={() => beginEditLocation(row.original)}>
-              Edit
-            </Button>
+            <PermissionGate permission="inv.manage">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  beginEditLocation(row.original);
+                }}
+              >
+                {tc("action.edit")}
+              </Button>
+            </PermissionGate>
           ),
         },
       ],
-      [],
+      [t, tc],
     );
 
-    const dialogTitle = pendingCreate
-      ? "New warehouse"
-      : editingWarehouse
-        ? `${editingWarehouse.code} — ${editingWarehouse.name}`
-        : "Warehouse";
-
     return (
-      <div className="space-y-4">
-        {locError ? (
-          <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm">{locError}</div>
-        ) : null}
+      <div className={mfLayout.moduleWorkspaceSplit}>
+        <div className="flex w-[55%] min-w-[400px] flex-col border-r border-surface-border">
+          <SmartFilterBar
+            searchPlaceholder={t("filters.searchWarehouse")}
+            searchValue={searchInput}
+            onSearchInputChange={setSearchInput}
+            onSearchChange={(q) => setSearchFilter(q.trim())}
+            filters={[]}
+            resultCount={filteredWarehouses.length}
+            onReset={resetTopologyFilters}
+          />
+          <div className="min-h-0 flex-1 overflow-auto p-1">
+            <DataTable
+              columns={whColumns}
+              data={filteredWarehouses}
+              isLoading={false}
+              searchable={false}
+              onRowClick={selectWarehouse}
+              isRowSelected={(row) => row.id === selectedWarehouse?.id}
+            />
+          </div>
+        </div>
 
-        <DataTable
-          columns={whColumns}
-          data={filteredWarehouses}
-          isLoading={false}
-          searchable={false}
-          onRowClick={openEdit}
-        />
+        <div className="min-w-[300px] flex-1 overflow-hidden">
+          {selectedWarehouse ? (
+            <div className="flex h-full flex-col space-y-4 overflow-auto p-4">
+              {locError && !createOpen ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm">
+                  {locError}
+                </div>
+              ) : null}
+
+              <EntityDetailHeader
+                code={selectedWarehouse.code}
+                designation={selectedWarehouse.name}
+                statusSlot={
+                  <Badge variant={selectedWarehouse.is_active === 1 ? "secondary" : "outline"}>
+                    {selectedWarehouse.is_active === 1
+                      ? tc("status.active")
+                      : tc("status.inactive")}
+                  </Badge>
+                }
+              />
+
+              <DetailSectionCard title={t("topology.sections.warehouse")} icon={WarehouseIcon}>
+                <DetailFieldRow
+                  label={t("topology.fields.code")}
+                  value={selectedWarehouse.code}
+                  mono
+                />
+                <PermissionGate permission="inv.manage">
+                  <div className="space-y-3 pt-1">
+                    <div className="space-y-1">
+                      <Label htmlFor="wh-name">{t("topology.fields.name")}</Label>
+                      <Input
+                        id="wh-name"
+                        value={whName}
+                        onChange={(e) => setWhName(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch id="wh-active" checked={whActive} onCheckedChange={setWhActive} />
+                      <Label htmlFor="wh-active">{t("topology.fields.active")}</Label>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => void handleSaveWarehouse()}
+                      disabled={saving || !whName.trim()}
+                    >
+                      {t("topology.actions.saveWarehouse")}
+                    </Button>
+                  </div>
+                </PermissionGate>
+              </DetailSectionCard>
+
+              <DetailSectionCard title={t("topology.sections.locations")} icon={MapPin}>
+                <PermissionGate permission="inv.manage">
+                  <div className="mb-3 space-y-3 rounded-md border border-surface-border p-3">
+                    <div className="grid gap-2 md:grid-cols-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="new-loc-code">{t("topology.fields.locationCode")}</Label>
+                        <Input
+                          id="new-loc-code"
+                          value={newLocCode}
+                          onChange={(e) => setNewLocCode(e.target.value)}
+                          placeholder="BIN-A1"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="new-loc-name">{t("topology.fields.locationName")}</Label>
+                        <Input
+                          id="new-loc-name"
+                          value={newLocName}
+                          onChange={(e) => setNewLocName(e.target.value)}
+                          placeholder="Shelf A1"
+                        />
+                      </div>
+                      <div className="flex items-end gap-2 pb-0.5">
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            id="new-loc-def"
+                            checked={newLocDefault}
+                            onCheckedChange={setNewLocDefault}
+                          />
+                          <Label htmlFor="new-loc-def">{t("topology.fields.defaultBin")}</Label>
+                        </div>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={locSaving || !newLocCode.trim() || !newLocName.trim()}
+                      onClick={() => void handleAddLocation()}
+                    >
+                      {t("topology.actions.addLocation")}
+                    </Button>
+                  </div>
+                </PermissionGate>
+
+                {locations.length === 0 ? (
+                  <p className="text-xs text-text-muted">{t("topology.emptyLocations")}</p>
+                ) : (
+                  <DataTable
+                    columns={locColumns}
+                    data={locations}
+                    searchable={false}
+                    isLoading={false}
+                  />
+                )}
+
+                {editLoc ? (
+                  <div className="mt-3 space-y-2 rounded-md border bg-muted/30 p-3">
+                    <div className="text-sm font-medium">
+                      {t("topology.actions.editLocation")} {editLoc.code}
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <div className="space-y-1">
+                        <Label htmlFor="el-code">{t("topology.fields.locationCode")}</Label>
+                        <Input
+                          id="el-code"
+                          value={editLocCode}
+                          onChange={(e) => setEditLocCode(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="el-name">{t("topology.fields.locationName")}</Label>
+                        <Input
+                          id="el-name"
+                          value={editLocName}
+                          onChange={(e) => setEditLocName(e.target.value)}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id="el-def"
+                          checked={editLocDefault}
+                          onCheckedChange={setEditLocDefault}
+                        />
+                        <Label htmlFor="el-def">{t("topology.fields.defaultBin")}</Label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id="el-act"
+                          checked={editLocActive}
+                          onCheckedChange={setEditLocActive}
+                        />
+                        <Label htmlFor="el-act">{t("topology.fields.active")}</Label>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={locSaving}
+                        onClick={() => void saveEditLocation()}
+                      >
+                        {t("topology.actions.saveLocation")}
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={cancelEditLocation}>
+                        {tc("action.cancel")}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </DetailSectionCard>
+            </div>
+          ) : (
+            <div className="flex h-full items-center justify-center p-6">
+              <p className="text-sm text-text-muted">{t("topology.noSelection")}</p>
+            </div>
+          )}
+        </div>
 
         <Dialog
-          open={dialogOpen}
+          open={createOpen}
           onOpenChange={(o) => {
-            setDialogOpen(o);
+            setCreateOpen(o);
             if (!o) {
-              setEditingWarehouse(null);
-              setPendingCreate(false);
-              resetWarehouseForm();
+              setCreateCode("");
+              setCreateName("");
+              setLocError(null);
             }
           }}
         >
-          <DialogContent
-            className="max-h-[90vh] max-w-2xl overflow-y-auto"
-            onPointerDownOutside={(e) => e.preventDefault()}
-          >
+          <DialogContent className="max-w-md" onPointerDownOutside={(e) => e.preventDefault()}>
             <DialogHeader>
-              <DialogTitle>{dialogTitle}</DialogTitle>
+              <DialogTitle>{t("topology.createTitle")}</DialogTitle>
             </DialogHeader>
-
-            <div className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-2">
+            {locError && createOpen ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm">
+                {locError}
+              </div>
+            ) : null}
+            <PermissionGate permission="inv.manage">
+              <div className="grid gap-3">
                 <div className="space-y-1">
-                  <Label htmlFor="wh-code">Code</Label>
+                  <Label htmlFor="create-wh-code">{t("topology.fields.code")}</Label>
                   <Input
-                    id="wh-code"
-                    value={whCode}
-                    onChange={(e) => setWhCode(e.target.value)}
-                    disabled={!pendingCreate && !!editingWarehouse}
+                    id="create-wh-code"
+                    value={createCode}
+                    onChange={(e) => setCreateCode(e.target.value)}
                     placeholder="e.g. WH01"
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="wh-name">Name</Label>
+                  <Label htmlFor="create-wh-name">{t("topology.fields.name")}</Label>
                   <Input
-                    id="wh-name"
-                    value={whName}
-                    onChange={(e) => setWhName(e.target.value)}
+                    id="create-wh-name"
+                    value={createName}
+                    onChange={(e) => setCreateName(e.target.value)}
                     placeholder="Display name"
                   />
                 </div>
-                {!pendingCreate && editingWarehouse ? (
-                  <div className="flex items-center gap-2 md:col-span-2">
-                    <Switch id="wh-active" checked={whActive} onCheckedChange={setWhActive} />
-                    <Label htmlFor="wh-active">Warehouse active</Label>
-                  </div>
-                ) : null}
               </div>
-
-              <PermissionGate permission="inv.manage">
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => void handleSaveWarehouse()}
-                    disabled={saving || !whCode.trim() || !whName.trim()}
-                  >
-                    {pendingCreate ? "Create warehouse" : "Save warehouse"}
-                  </Button>
-                </div>
-              </PermissionGate>
-
-              {pendingCreate || editingWarehouse ? (
-                <div className="space-y-3 rounded-md border p-3">
-                  <h4 className="text-sm font-semibold">Locations</h4>
-                  {pendingCreate ? (
-                    <p className="text-xs text-text-muted">
-                      Adding the first location will save this warehouse and attach the location in one action.
-                    </p>
-                  ) : null}
-                  <div className="grid gap-2 md:grid-cols-3">
-                    <div className="space-y-1">
-                      <Label htmlFor="new-loc-code">Location code</Label>
-                      <Input
-                        id="new-loc-code"
-                        value={newLocCode}
-                        onChange={(e) => setNewLocCode(e.target.value)}
-                        placeholder="BIN-A1"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label htmlFor="new-loc-name">Location name</Label>
-                      <Input
-                        id="new-loc-name"
-                        value={newLocName}
-                        onChange={(e) => setNewLocName(e.target.value)}
-                        placeholder="Shelf A1"
-                      />
-                    </div>
-                    <div className="flex items-end gap-2 pb-0.5">
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          id="new-loc-def"
-                          checked={newLocDefault}
-                          onCheckedChange={setNewLocDefault}
-                        />
-                        <Label htmlFor="new-loc-def">Default bin</Label>
-                      </div>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    disabled={
-                      locSaving ||
-                      !newLocCode.trim() ||
-                      !newLocName.trim() ||
-                      (pendingCreate && (!whCode.trim() || !whName.trim()))
-                    }
-                    onClick={() => void handleAddLocation()}
-                  >
-                    {pendingCreate ? "Save warehouse & add location" : "Add location"}
-                  </Button>
-
-                  <DataTable
-                    columns={locColumns}
-                    data={dialogLocations}
-                    searchable={false}
-                    isLoading={false}
-                  />
-
-                  {editLoc ? (
-                    <div className="rounded-md border bg-muted/30 p-3 space-y-2">
-                      <div className="text-sm font-medium">Edit location {editLoc.code}</div>
-                      <div className="grid gap-2 md:grid-cols-2">
-                        <div className="space-y-1">
-                          <Label htmlFor="el-code">Code</Label>
-                          <Input
-                            id="el-code"
-                            value={editLocCode}
-                            onChange={(e) => setEditLocCode(e.target.value)}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label htmlFor="el-name">Name</Label>
-                          <Input
-                            id="el-name"
-                            value={editLocName}
-                            onChange={(e) => setEditLocName(e.target.value)}
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            id="el-def"
-                            checked={editLocDefault}
-                            onCheckedChange={setEditLocDefault}
-                          />
-                          <Label htmlFor="el-def">Default bin</Label>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            id="el-act"
-                            checked={editLocActive}
-                            onCheckedChange={setEditLocActive}
-                          />
-                          <Label htmlFor="el-act">Active</Label>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={locSaving}
-                          onClick={() => void saveEditLocation()}
-                        >
-                          Save location
-                        </Button>
-                        <Button type="button" size="sm" variant="outline" onClick={cancelEditLocation}>
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-
+            </PermissionGate>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                Close
+              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
+                {tc("action.cancel")}
               </Button>
+              <PermissionGate permission="inv.manage">
+                <Button
+                  type="button"
+                  disabled={saving || !createCode.trim() || !createName.trim()}
+                  onClick={() => void handleCreateWarehouse()}
+                >
+                  {t("topology.actions.createWarehouse")}
+                </Button>
+              </PermissionGate>
             </DialogFooter>
           </DialogContent>
         </Dialog>

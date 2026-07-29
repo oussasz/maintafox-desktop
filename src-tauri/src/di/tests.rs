@@ -23,7 +23,9 @@ mod tests {
         approve_di_for_planning, reject_di, return_di_for_clarification, screen_di,
         DiApproveInput, DiRejectInput, DiReturnInput, DiScreenInput,
     };
-    use crate::di::sla::{compute_sla_status, resolve_sla_rule};
+    use crate::di::sla::{compute_sla_status, resolve_sla_rule, DiSlaLifecycleStatus};
+    use crate::di::sla_poller::run_sla_poll_tick;
+    use crate::di::review::get_review_events;
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Setup helpers
@@ -90,9 +92,9 @@ mod tests {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at) \
+            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
              VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
-             datetime('now'), datetime('now'));".to_string(),
+             datetime('now'), datetime('now'), 1);".to_string(),
         ))
         .await
         .expect("insert test org_node");
@@ -138,14 +140,22 @@ mod tests {
     }
 
     /// Build a standard DiCreateInput for testing.
-    fn make_create_input(user_id: i64) -> DiCreateInput {
+    async fn seeded_symptom_id(db: &sea_orm::DatabaseConnection) -> i64 {
+        crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+            .await
+            .expect("symptom lookup")
+            .expect("seeded DI.SYMPTOM vibration")
+    }
+
+    async fn make_create_input(db: &sea_orm::DatabaseConnection, user_id: i64) -> DiCreateInput {
         DiCreateInput {
             asset_id: 1,
             org_node_id: 1,
             title: "Pump vibration alert".to_string(),
             description: "Excessive vibration on pump P-101".to_string(),
             origin_type: "operator".to_string(),
-            symptom_code_id: None,
+            request_type: "repair".to_string(),
+            symptom_code_id: Some(seeded_symptom_id(db).await),
             impact_level: "unknown".to_string(),
             production_impact: false,
             safety_flag: false,
@@ -201,19 +211,11 @@ mod tests {
         .expect("row_version")
     }
 
-    /// Create the `asset_registry` table required by `compute_sla_status`.
-    /// The SLA engine queries `asset_registry.criticality_class` for rule resolution.
-    async fn create_asset_registry_table(db: &sea_orm::DatabaseConnection) {
-        db.execute(Statement::from_string(
-            DbBackend::Sqlite,
-            "CREATE TABLE IF NOT EXISTS asset_registry (
-                id INTEGER PRIMARY KEY,
-                criticality_class TEXT
-            );".to_string(),
-        ))
-        .await
-        // SAFETY: DDL must succeed in test context
-        .expect("create asset_registry table");
+    /// No-op retained for call-site clarity: criticality comes from `equipment`.
+    async fn ensure_equipment_criticality_path(_db: &sea_orm::DatabaseConnection) {
+        // Production SLA lookup uses equipment + lookup/reference JOINs.
+        // Test fixtures already create equipment rows; missing criticality simply
+        // falls through to urgency-only SLA rules.
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -340,14 +342,14 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di1 = create_intervention_request(&db, make_create_input(user_id))
+        let di1 = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             // SAFETY: first DI insert must succeed in a clean DB
             .expect("create DI #1");
-        let di2 = create_intervention_request(&db, make_create_input(user_id))
+        let di2 = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI #2");
-        let di3 = create_intervention_request(&db, make_create_input(user_id))
+        let di3 = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI #3");
 
@@ -435,8 +437,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        // Create asset_registry table (required by compute_sla_status)
-        create_asset_registry_table(&db).await;
+        ensure_equipment_criticality_path(&db).await;
 
         // Insert a critical rule: 1h response
         db.execute(Statement::from_sql_and_values(
@@ -450,7 +451,7 @@ mod tests {
         .expect("insert critical SLA rule");
 
         // Create a DI with urgency=critical
-        let mut input = make_create_input(user_id);
+        let mut input = make_create_input(&db, user_id).await;
         input.reported_urgency = "critical".to_string();
         let di = create_intervention_request(&db, input)
             .await
@@ -491,8 +492,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        // Create asset_registry table (required by compute_sla_status)
-        create_asset_registry_table(&db).await;
+        ensure_equipment_criticality_path(&db).await;
 
         // Insert a critical rule: 1h response
         db.execute(Statement::from_sql_and_values(
@@ -506,7 +506,7 @@ mod tests {
         .expect("insert critical SLA rule");
 
         // Create a DI with urgency=critical
-        let mut input = make_create_input(user_id);
+        let mut input = make_create_input(&db, user_id).await;
         input.reported_urgency = "critical".to_string();
         let di = create_intervention_request(&db, input)
             .await
@@ -540,16 +540,246 @@ mod tests {
         );
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // TEST 08 â€” Optimistic lock on draft update
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TEST 07b — SLA At Risk via escalation_threshold_hours
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_07b_sla_at_risk_via_escalation_threshold() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "DELETE FROM di_sla_rules;".to_string(),
+        ))
+        .await
+        .expect("clear rules");
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
+             target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
+             VALUES ('Medium', 'medium', NULL, NULL, 24, 72, 4, 1)",
+            [],
+        ))
+        .await
+        .expect("insert rule");
+
+        let mut input = make_create_input(&db, user_id).await;
+        input.reported_urgency = "medium".to_string();
+        let di = create_intervention_request(&db, input)
+            .await
+            .expect("create DI");
+
+        // 6h elapsed: past escalation (4h) but under response target (24h)
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET \
+             submitted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-6 hours') \
+             WHERE id = ?",
+            [di.id.into()],
+        ))
+        .await
+        .expect("backdate");
+
+        let di_updated = crate::di::queries::get_intervention_request(&db, di.id)
+            .await
+            .expect("re-read")
+            .expect("exists");
+
+        let sla_status = compute_sla_status(&db, &di_updated)
+            .await
+            .expect("compute");
+
+        assert!(!sla_status.is_response_breached);
+        assert_eq!(sla_status.status, Some(DiSlaLifecycleStatus::AtRisk));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TEST 07c — create persists sla_initialized review event
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_07c_create_persists_sla_initialized_event() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
+            .await
+            .expect("create DI");
+
+        let events = get_review_events(&db, di.id).await.expect("events");
+        let init = events
+            .iter()
+            .find(|e| e.event_type == "sla_initialized")
+            .expect("sla_initialized event must exist");
+        assert!(
+            init.sla_target_hours.is_some(),
+            "sla_target_hours must be populated"
+        );
+        assert!(
+            init.sla_deadline.is_some(),
+            "sla_deadline must be populated"
+        );
+        assert!(
+            init.sla_resolution_target_hours.is_some(),
+            "sla_resolution_target_hours must be populated"
+        );
+        assert!(
+            init.sla_resolution_deadline.is_some(),
+            "sla_resolution_deadline must be populated"
+        );
+        assert!(
+            di.sla_response_deadline.is_some(),
+            "DI must have frozen sla_response_deadline"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TEST 07c2 — frozen SLA is immutable after rule edit
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_07c2_sla_snapshot_immutable_after_rule_change() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "DELETE FROM di_sla_rules;".to_string(),
+        ))
+        .await
+        .expect("clear rules");
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
+             target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
+             VALUES ('High', 'high', NULL, NULL, 4, 24, 2, 1)",
+            [],
+        ))
+        .await
+        .expect("insert 4h rule");
+
+        let mut input = make_create_input(&db, user_id).await;
+        input.reported_urgency = "high".to_string();
+        let di = create_intervention_request(&db, input)
+            .await
+            .expect("create DI");
+
+        assert_eq!(di.sla_target_response_hours, Some(4));
+        let frozen_deadline = di.sla_response_deadline.clone().expect("deadline");
+
+        // Change live rule to 2h — must not rewrite existing DI snapshot.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE di_sla_rules SET target_response_hours = 2 WHERE urgency_level = 'high'",
+            [],
+        ))
+        .await
+        .expect("update rule");
+
+        let di2 = crate::di::queries::get_intervention_request(&db, di.id)
+            .await
+            .expect("re-read")
+            .expect("exists");
+        let status = compute_sla_status(&db, &di2).await.expect("status");
+
+        assert_eq!(status.target_response_hours, Some(4));
+        assert_eq!(status.sla_deadline.as_deref(), Some(frozen_deadline.as_str()));
+        assert_eq!(di2.sla_target_response_hours, Some(4));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TEST 07d — SLA poller emits once (dedupe)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_07d_sla_poller_dedupes_breach_notification() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "DELETE FROM di_sla_rules;".to_string(),
+        ))
+        .await
+        .expect("clear rules");
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
+             target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
+             VALUES ('Critical', 'critical', NULL, NULL, 1, 8, 1, 1)",
+            [],
+        ))
+        .await
+        .expect("insert rule");
+
+        let mut input = make_create_input(&db, user_id).await;
+        input.reported_urgency = "critical".to_string();
+        let di = create_intervention_request(&db, input)
+            .await
+            .expect("create DI");
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET \
+             submitted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 hours'), \
+             sla_response_deadline = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-9 hours'), \
+             sla_resolution_deadline = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-2 hours') \
+             WHERE id = ?",
+            [di.id.into()],
+        ))
+        .await
+        .expect("backdate");
+
+        run_sla_poll_tick(&db).await.expect("first tick");
+        run_sla_poll_tick(&db).await.expect("second tick");
+
+        let di_after = crate::di::queries::get_intervention_request(&db, di.id)
+            .await
+            .expect("re-read")
+            .expect("exists");
+        assert!(
+            di_after.sla_response_breach_notified_at.is_some(),
+            "response breach must set notify timestamp"
+        );
+        assert!(
+            di_after.sla_resolution_breach_notified_at.is_some(),
+            "resolution breach must set notify timestamp"
+        );
+
+        let response_count: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM notification_events \
+                 WHERE dedupe_key = ?",
+                [format!("di-sla-response-breach-{}", di.id).into()],
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get("", "c")
+            .expect("c");
+
+        assert_eq!(
+            response_count, 1,
+            "response breach must emit once across ticks"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TEST 08 — Optimistic lock on draft update
+    // ═══════════════════════════════════════════════════════════════════════════
 
     #[tokio::test]
     async fn test_08_optimistic_lock_on_draft_update() {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
 
@@ -561,6 +791,7 @@ mod tests {
                 expected_row_version: 0, // stale!
                 title: Some("Updated title".into()),
                 description: None,
+                request_type: None,
                 symptom_code_id: None,
                 impact_level: None,
                 production_impact: None,
@@ -602,7 +833,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
 
@@ -647,7 +878,7 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         // â”€â”€ Phase A: Submission â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
 
@@ -796,6 +1027,22 @@ mod tests {
             conversion.di.converted_at.is_some(),
             "converted_at must be set after conversion"
         );
+        assert!(
+            conversion
+                .di
+                .converted_to_wo_code
+                .as_deref()
+                .is_some_and(|c| !c.is_empty()),
+            "converted_to_wo_code must be enriched after conversion"
+        );
+        assert!(
+            conversion
+                .di
+                .converted_to_wo_title
+                .as_deref()
+                .is_some_and(|t| !t.is_empty()),
+            "converted_to_wo_title must be enriched after conversion"
+        );
 
         // Verify WO exists with source_di_id
         let wo_row = db
@@ -838,6 +1085,7 @@ mod tests {
                 expected_row_version: conversion.di.row_version,
                 title: Some("Should fail".into()),
                 description: None,
+                request_type: None,
                 symptom_code_id: None,
                 impact_level: None,
                 production_impact: None,
@@ -904,7 +1152,7 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         // Create and advance to pending_review
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -936,6 +1184,7 @@ mod tests {
                 expected_row_version: returned.row_version,
                 title: None,
                 description: Some("Updated: vibration at 120Hz on bearing DE".into()),
+                request_type: None,
                 symptom_code_id: None,
                 impact_level: None,
                 production_impact: None,
@@ -994,7 +1243,7 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         // Create DI and advance to awaiting_approval (for speed, bypass screened)
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;

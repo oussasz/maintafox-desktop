@@ -84,12 +84,14 @@ pub async fn resolve_scope_chain(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"WITH RECURSIVE scope_cte(id, parent_id, node_type_id, depth) AS (
-                SELECT id, parent_id, node_type_id, depth
-                FROM org_nodes
-                WHERE id = ? AND deleted_at IS NULL
+                SELECT n.id, n.parent_id, n.node_type_id, n.depth
+                FROM org_nodes n
+                INNER JOIN org_structure_models m ON m.id = n.structure_model_id AND m.status = 'active'
+                WHERE n.id = ? AND n.deleted_at IS NULL
                 UNION ALL
                 SELECT o.id, o.parent_id, o.node_type_id, o.depth
                 FROM org_nodes o
+                INNER JOIN org_structure_models m2 ON m2.id = o.structure_model_id AND m2.status = 'active'
                 INNER JOIN scope_cte s ON o.id = s.parent_id
                 WHERE o.deleted_at IS NULL
             )

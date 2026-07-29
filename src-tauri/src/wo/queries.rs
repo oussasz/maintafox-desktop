@@ -6,7 +6,6 @@
 //! to stay consistent with the codebase's established query pattern.
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -16,6 +15,7 @@ use super::domain::{
     WoStatus, WoTransitionRow, WorkOrder,
 };
 use super::statuses::ensure_work_order_statuses_if_needed;
+use super::time::now_utc_z;
 use super::types::resolve_work_order_type_id_by_code;
 
 /// Ensures at least one closeout policy row exists and returns its id (for COALESCE on new WOs).
@@ -39,9 +39,12 @@ async fn ensure_default_closeout_validation_policy_id(db: &DatabaseConnection) -
          (entity_id, policy_name, applies_when, require_failure_mode_if_unplanned, \
           require_downtime_if_production_impact, allow_close_with_cause_not_determined, \
           allow_close_with_cause_mode_only, require_verification_return_to_service, \
-          notes_min_length_when_cnd, entity_sync_id, row_version) \
+          notes_min_length_when_cnd, require_fmeca_parts_for_critical, \
+          fmeca_parts_override_reason_min_length, fmeca_parts_override_require_distinct_signer, \
+          fmeca_parts_override_allowed_roles_json, entity_sync_id, row_version) \
          VALUES (NULL, 'default_corrective', \
-          '{\"maintenance_type\":[\"corrective\",\"emergency\"]}', 1, 1, 1, 0, 1, 10, \
+          '{\"maintenance_type\":[\"corrective\",\"emergency\"]}', 1, 1, 1, 0, 1, 10, 1, 12, 1, \
+          '[\"Supervisor\",\"Maintenance Supervisor\",\"Administrator\",\"Superadmin\"]', \
           'closeout_policy:runtime_seed', 1)"
             .to_string(),
     ))
@@ -116,7 +119,7 @@ const WO_COLS: &str = "\
     wo.mechanically_completed_at, wo.technically_verified_at, \
     wo.closed_at, wo.cancelled_at, \
     wo.expected_duration_hours, wo.actual_duration_hours, \
-    wo.active_labor_hours, wo.total_waiting_hours, wo.downtime_hours, \
+    wo.active_labor_hours, wo.total_waiting_hours, wo.downtime_hours, wo.planned_downtime_hours, \
     wo.labor_cost, wo.parts_cost, wo.service_cost, wo.total_cost, \
     wo.recurrence_risk_level, wo.production_impact_id, \
     wo.root_cause_summary, wo.corrective_action_summary, wo.verification_method, \
@@ -133,8 +136,11 @@ const WO_JOIN_COLS: &str = "\
     wot.code  AS type_code,    wot.label AS type_label, \
     ul.level  AS urgency_level, ul.label AS urgency_label, ul.hex_color AS urgency_color, \
     ar.asset_id_code AS asset_code, ar.name AS asset_label, \
-    up.username  AS planner_username, \
-    ur.username  AS responsible_username";
+    COALESCE(up.display_name, up.username) AS planner_username, \
+    COALESCE(ur.display_name, ur.username) AS responsible_username, \
+    COALESCE(up.display_name, up.username) AS planner_display_name, \
+    COALESCE(ur.display_name, ur.username) AS responsible_display_name, \
+    irdi.code AS source_di_code, irdi.title AS source_di_title, irdi.status AS source_di_status";
 
 /// JOIN clause used by list and get queries.
 const WO_JOINS: &str = "\
@@ -143,7 +149,8 @@ const WO_JOINS: &str = "\
     LEFT JOIN urgency_levels      ul  ON ul.id  = wo.urgency_id \
     LEFT JOIN equipment           ar  ON ar.id  = wo.equipment_id \
     LEFT JOIN user_accounts       up  ON up.id  = wo.planner_id \
-    LEFT JOIN user_accounts       ur  ON ur.id  = wo.primary_responsible_id";
+    LEFT JOIN user_accounts       ur  ON ur.id  = wo.primary_responsible_id \
+    LEFT JOIN intervention_requests irdi ON irdi.id = wo.source_di_id";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) list_work_orders — paginated, filtered
@@ -346,6 +353,7 @@ pub async fn create_work_order(
 
     let equipment_id = input.equipment_id.filter(|&e| e > 0);
     let urgency_id = input.urgency_id.filter(|&u| u > 0);
+    let mut entity_id = input.entity_id.filter(|&e| e > 0);
 
     let creator_ok = db
         .query_one(Statement::from_sql_and_values(
@@ -365,13 +373,50 @@ pub async fn create_work_order(
         let ex = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT 1 AS ok FROM equipment WHERE id = ?",
+                "SELECT id, installed_at_node_id FROM equipment \
+                 WHERE id = ? AND deleted_at IS NULL",
                 [eid.into()],
             ))
             .await?;
-        if ex.is_none() {
+        if let Some(row) = ex {
+            if entity_id.is_none() {
+                entity_id = row
+                    .try_get::<Option<i64>>("", "installed_at_node_id")
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!(
+                            "equipment.installed_at_node_id decode: {e}"
+                        ))
+                    })?;
+            }
+        } else {
             return Err(AppError::ValidationFailed(vec![format!(
-                "Équipement introuvable (equipment_id={eid})."
+                "Équipement introuvable ou supprimé (equipment_id={eid})."
+            )]));
+        }
+    }
+    if equipment_id.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "equipment_id est obligatoire (aucun OT orphelin autorisé).".into(),
+        ]));
+    }
+    if entity_id.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "L'équipement n'a pas de nœud d'installation (installed_at_node_id). \
+             Affectez l'équipement à une entité organisationnelle avant de créer un OT."
+                .into(),
+        ]));
+    }
+    if let Some(nid) = entity_id {
+        let node_ok = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM org_nodes WHERE id = ? AND deleted_at IS NULL",
+                [nid.into()],
+            ))
+            .await?;
+        if node_ok.is_none() {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Nœud organisationnel introuvable ou supprimé (entity_id={nid})."
             )]));
         }
     }
@@ -405,6 +450,26 @@ pub async fn create_work_order(
         if di_exists.is_none() {
             return Err(AppError::ValidationFailed(vec![format!(
                 "DI introuvable (source_di_id={di_id})."
+            )]));
+        }
+        let existing_wo = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT wo.id, wo.code \
+                 FROM work_orders wo \
+                 JOIN work_order_statuses wos ON wos.id = wo.status_id \
+                 WHERE wo.source_di_id = ? AND wos.is_terminal = 0 \
+                 ORDER BY wo.id DESC LIMIT 1",
+                [di_id.into()],
+            ))
+            .await?;
+        if let Some(row) = existing_wo {
+            let existing_id: i64 = row.try_get("", "id").unwrap_or_default();
+            let existing_code: String = row
+                .try_get("", "code")
+                .unwrap_or_else(|_| "N/A".to_string());
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
             )]));
         }
     }
@@ -466,12 +531,12 @@ pub async fn create_work_order(
         creator_id = input.creator_id,
         default_closeout_policy_id = default_closeout_policy_id,
         source_di_id = ?input.source_di_id,
-        entity_id = ?input.entity_id,
+        entity_id = ?entity_id,
         "create_work_order: resolved FK targets before INSERT"
     );
 
     let code = generate_wo_code(db).await?;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = now_utc_z();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -510,7 +575,7 @@ pub async fn create_work_order(
                 .clone()
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
-            input.entity_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
+            entity_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.planner_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.creator_id.into(),
             urgency_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
@@ -683,7 +748,7 @@ pub async fn update_wo_draft_fields(
     }
 
     // Always bump version + updated_at
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = now_utc_z();
     sets.push("row_version = row_version + 1".into());
     sets.push("updated_at = ?".into());
     values.push(now.into());
@@ -774,7 +839,7 @@ pub async fn cancel_work_order(
         .try_get::<i64>("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("cancelled status_id decode: {e}")))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = now_utc_z();
 
     // 4. Update
     let result = db

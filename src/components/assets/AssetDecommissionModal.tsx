@@ -3,12 +3,11 @@
  *
  * GAP EQ-04: Decommission / Retire modal with dependency analysis.
  * Shows binding dependencies, blocker banner, reason textarea,
- * and target state selector (Retired / Scrapped / Transferred).
+ * and target state selector (Decommissioned / Scrapped).
  */
 
 import {
   AlertTriangle,
-  Ban,
   ClipboardList,
   FileText,
   Loader2,
@@ -68,7 +67,7 @@ function buildDependencies(
 ): DependencyRow[] {
   const entry = (
     domain: string,
-    field: keyof Omit<AssetBindingSummary, "asset_id">,
+    field: "open_di_count" | "open_wo_count" | "linked_pm_plan_count" | "linked_iot_signal_count" | "linked_document_count",
     icon: React.ReactNode,
     level: "blocker" | "warning" | "info",
     detail: string,
@@ -84,14 +83,14 @@ function buildDependencies(
   return [
     entry(
       t("binding.domains.di"),
-      "linked_di_count",
+      "open_di_count",
       <ClipboardList className={ICON_CLS} />,
       "blocker",
       t("decommission.blockerDetail"),
     ),
     entry(
       t("binding.domains.wo"),
-      "linked_wo_count",
+      "open_wo_count",
       <Wrench className={ICON_CLS} />,
       "blocker",
       t("decommission.blockerDetail"),
@@ -130,7 +129,7 @@ export function AssetDecommissionModal({
 
   const [summary, setSummary] = useState<AssetBindingSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
-  const [targetStatus, setTargetStatus] = useState<TargetStatus>("RETIRED");
+  const [targetStatus, setTargetStatus] = useState<TargetStatus>("DECOMMISSIONED");
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -150,7 +149,7 @@ export function AssetDecommissionModal({
   useEffect(() => {
     if (open) {
       setReason("");
-      setTargetStatus("RETIRED");
+      setTargetStatus("DECOMMISSIONED");
       setError(null);
       void loadSummary();
     }
@@ -199,53 +198,36 @@ export function AssetDecommissionModal({
             </p>
             <p className="text-xs text-text-muted">{asset.class_name ?? "—"}</p>
           </div>
-          <Badge variant="outline" className="text-xs">
-            {asset.status_code}
-          </Badge>
+          <Badge variant="outline">{asset.status_code}</Badge>
         </div>
 
-        {/* Dependencies */}
+        {/* Dependency analysis */}
         {loadingSummary ? (
-          <div className="flex items-center justify-center py-4">
-            <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-text-muted" />
           </div>
         ) : (
-          <div className="space-y-3">
-            {/* Blocker banner */}
+          <div className="space-y-2">
             {hasBlockers && (
-              <div className="flex items-start gap-2 rounded-md border border-status-danger/30 bg-status-danger/5 p-3">
-                <Ban className="mt-0.5 h-4 w-4 shrink-0 text-status-danger" />
-                <p className="text-sm text-status-danger">
-                  {t("decommission.blockerBanner", { count: blockerCount })}
-                </p>
+              <div className="rounded-md border border-status-danger/40 bg-status-danger/5 px-3 py-2 text-sm text-status-danger">
+                {t("decommission.blockerBanner", { count: blockerCount })}
               </div>
             )}
-
-            {/* Dependency table */}
-            <div className="space-y-1.5">
-              {dependencies.map((dep) => {
-                const count = !dep.available ? "—" : (dep.count ?? 0).toString();
-                const isActive = dep.available && dep.count !== null && dep.count > 0;
-                const levelColor =
-                  dep.level === "blocker" && isActive
-                    ? "text-status-danger"
-                    : dep.level === "warning" && isActive
-                      ? "text-status-warning"
-                      : "text-text-muted";
-
-                return (
-                  <div
-                    key={dep.domain}
-                    className="flex items-center gap-3 rounded-md border px-3 py-2 text-sm"
-                  >
-                    {dep.icon}
-                    <span className="flex-1">{dep.domain}</span>
-                    <span className={`font-mono text-xs ${levelColor}`}>{count}</span>
-                    {isActive && <span className={`text-xs ${levelColor}`}>{dep.detail}</span>}
-                  </div>
-                );
-              })}
-            </div>
+            {dependencies.map((dep) => (
+              <div
+                key={dep.domain}
+                className="flex items-center justify-between gap-2 rounded border px-3 py-2 text-sm"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  {dep.icon}
+                  <span className="truncate">{dep.domain}</span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="font-mono text-xs">{dep.available ? (dep.count ?? 0) : "—"}</span>
+                  <span className="text-xs text-text-muted">{dep.detail}</span>
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -262,11 +244,10 @@ export function AssetDecommissionModal({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="RETIRED">{t("decommission.statuses.retired")}</SelectItem>
-                  <SelectItem value="SCRAPPED">{t("decommission.statuses.scrapped")}</SelectItem>
-                  <SelectItem value="TRANSFERRED">
-                    {t("decommission.statuses.transferred")}
+                  <SelectItem value="DECOMMISSIONED">
+                    {t("decommission.statuses.decommissioned")}
                   </SelectItem>
+                  <SelectItem value="SCRAPPED">{t("decommission.statuses.scrapped")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

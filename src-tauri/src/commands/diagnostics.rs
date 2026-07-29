@@ -1,7 +1,10 @@
+use crate::auth::rbac::PermissionScope;
 use crate::commands::product_license;
-use crate::db::{integrity, seeder};
+use crate::db::{integrity, rams_presentation_seed, seeder};
+use crate::db::rams_presentation_seed::{RamsPresentationSeedInput, RamsPresentationSeedReport};
 use crate::errors::AppResult;
 use crate::state::AppState;
+use crate::{require_permission, require_session};
 use tauri::State;
 
 /// Runs the database integrity check and returns a report.
@@ -31,6 +34,39 @@ pub async fn seed_demo_data(state: State<'_, AppState>) -> AppResult<String> {
     }
     crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, 0).await?;
     Ok("Tenant bootstrap completed from activation claim.".into())
+}
+
+/// DEMO ONLY — explicit developer command.
+/// Direct SQL RAMS simulation backfill (schedule, anchor WO, failure events, exposure logs).
+/// When `equipment_id` is omitted, runs the full explicit demo orchestrator (SQL + presentation).
+/// Never invoked by startup, equipment create, login, onboarding, or migrations.
+#[tauri::command]
+pub async fn seed_rams_sql_demo_data(
+    equipment_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<String> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    if let Some(id) = equipment_id {
+        crate::db::rams_sql_demo_seed::ensure_equipment_rams_simulation(&state.db, id).await?;
+        Ok(format!("RAMS SQL demo seed completed for equipment {id}."))
+    } else {
+        rams_presentation_seed::run_explicit_rams_demo_seed(&state.db).await?;
+        Ok("RAMS demo seed completed for eligible equipment (explicit).".into())
+    }
+}
+
+/// DEMO ONLY — explicit developer command.
+/// Seeds governed RAMS presentation data on an existing equipment via production WO close-out paths.
+/// Invoked only from the manual "Generate Demo RAMS Data" UI or diagnostics IPC — never automatically.
+#[tauri::command]
+pub async fn seed_rams_presentation_data(
+    input: RamsPresentationSeedInput,
+    state: State<'_, AppState>,
+) -> AppResult<RamsPresentationSeedReport> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    rams_presentation_seed::seed_rams_presentation_data(&state.db, input).await
 }
 
 // ─── SP06-F03 commands ────────────────────────────────────────────────────────

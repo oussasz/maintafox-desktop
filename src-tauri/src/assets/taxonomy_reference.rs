@@ -441,8 +441,78 @@ pub async fn sync_equipment_classes_from_published_reference(db: &DatabaseConnec
     Ok(())
 }
 
+/// Idempotent recreate of EQUIPMENT.* domains + published v1 sets when missing
+/// (same substrate as migration 103). Required when migration history is present
+/// but catalog rows were wiped.
+async fn ensure_equipment_taxonomy_domains_and_published_sets(
+    db: &DatabaseConnection,
+) -> AppResult<()> {
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT OR IGNORE INTO reference_domains \
+         (code, name, structure_type, governance_level, governance_category, \
+          is_extendable, validation_rules_json, created_at, updated_at) \
+         VALUES \
+         ('EQUIPMENT.CLASS', 'Classes d''équipement', 'flat', 'system_seeded', 'system_catalog', 0, NULL, \
+          strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')), \
+         ('EQUIPMENT.CRITICALITY', 'Criticités d''équipement', 'flat', 'system_seeded', 'system_catalog', 0, NULL, \
+          strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')), \
+         ('EQUIPMENT.STATUS', 'Statuts d''équipement', 'flat', 'system_seeded', 'system_catalog', 0, NULL, \
+          strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')), \
+         ('EQUIPMENT.FAMILY', 'Familles d''équipement', 'flat', 'tenant_managed', 'operational_dictionary', 1, NULL, \
+          strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')), \
+         ('EQUIPMENT.SUBFAMILY', 'Sous-familles d''équipement', 'flat', 'tenant_managed', 'operational_dictionary', 1, NULL, \
+          strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))"
+            .to_string(),
+    ))
+    .await?;
+
+    // Align category for rows inserted before governance_category existed.
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE reference_domains SET governance_category = 'system_catalog' \
+         WHERE UPPER(TRIM(code)) IN ('EQUIPMENT.CLASS','EQUIPMENT.CRITICALITY','EQUIPMENT.STATUS')"
+            .to_string(),
+    ))
+    .await?;
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "UPDATE reference_domains SET governance_category = 'operational_dictionary' \
+         WHERE UPPER(TRIM(code)) IN ('EQUIPMENT.FAMILY','EQUIPMENT.SUBFAMILY')"
+            .to_string(),
+    ))
+    .await?;
+
+    for code in [
+        DOMAIN_CLASS,
+        DOMAIN_CRITICALITY,
+        DOMAIN_STATUS,
+        DOMAIN_FAMILY,
+        DOMAIN_SUBFAMILY,
+    ] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO reference_sets \
+             (domain_id, version_no, status, effective_from, created_by_id, created_at, published_at) \
+             SELECT d.id, 1, 'published', strftime('%Y-%m-%dT%H:%M:%SZ','now'), NULL, \
+                    strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now') \
+               FROM reference_domains d \
+              WHERE d.code = ? \
+                AND NOT EXISTS ( \
+                    SELECT 1 FROM reference_sets rs \
+                     WHERE rs.domain_id = d.id AND rs.status = 'published' \
+                )",
+            [code.into()],
+        ))
+        .await?;
+    }
+
+    Ok(())
+}
+
 /// Startup hook: repair drift for system-locked equipment domains.
 pub async fn ensure_equipment_taxonomy_reference_integrity(db: &DatabaseConnection) -> AppResult<()> {
+    ensure_equipment_taxonomy_domains_and_published_sets(db).await?;
     ensure_required_equipment_status_values(db).await?;
     ensure_required_equipment_criticality_values(db).await?;
     ensure_required_equipment_class_values(db).await?;

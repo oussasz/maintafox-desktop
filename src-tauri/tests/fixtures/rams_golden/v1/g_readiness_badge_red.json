@@ -1,0 +1,21 @@
+{
+  "name": "G-READINESS-BADGE-RED",
+  "asset_key": "equip-p102",
+  "period": { "start": "2020-01-01T00:00:00Z", "end": "2025-12-31T23:59:59Z" },
+  "exposure_hours": 2000.0,
+  "min_sample_n": 5,
+  "profile": "cmms_documentary",
+  "events": [
+    {"id": 1, "failed_at": "2021-03-01T08:00:00Z", "eligible": true, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": false, "corrective_documented": true},
+    {"id": 2, "failed_at": "2021-06-01T08:00:00Z", "eligible": true, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 3, "failed_at": "2022-01-01T08:00:00Z", "eligible": true, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 4, "failed_at": "2023-01-01T08:00:00Z", "eligible": true, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 5, "failed_at": "2024-01-01T08:00:00Z", "eligible": true, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true}
+  ],
+  "expected": {
+    "badge": "red",
+    "blocking_issue_codes": ["MISSING_FAILURE_MODE"],
+    "documentary_ready": false
+  },
+  "tolerance": { "rel": 1e-9 }
+}

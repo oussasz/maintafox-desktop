@@ -11,6 +11,7 @@
 //! seeders when `MAINTAFOX_SEED_DEMO=1` and activation is not complete.
 
 use crate::errors::{AppError, AppResult};
+use crate::reference::governance::derive_category_for_persist;
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
@@ -92,21 +93,21 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
 
     // ── 3. Org nodes (site → zones → buildings → lines) ──────────────
     // Root site
-    let site_id = insert_org_node(db, "DEMO-SITE", "Site Casablanca", type_ids[0], None, "/", 0, &now).await?;
+    let site_id = insert_org_node(db, model_id, "DEMO-SITE", "Site Casablanca", type_ids[0], None, "/", 0, &now).await?;
 
     // Zones
-    let zone_prod = insert_org_node(db, "ZONE-PROD", "Zone Production", type_ids[1], Some(site_id), &format!("/{site_id}/"), 1, &now).await?;
-    let zone_util = insert_org_node(db, "ZONE-UTIL", "Zone Utilités", type_ids[1], Some(site_id), &format!("/{site_id}/"), 1, &now).await?;
+    let zone_prod = insert_org_node(db, model_id, "ZONE-PROD", "Zone Production", type_ids[1], Some(site_id), &format!("/{site_id}/"), 1, &now).await?;
+    let zone_util = insert_org_node(db, model_id, "ZONE-UTIL", "Zone Utilités", type_ids[1], Some(site_id), &format!("/{site_id}/"), 1, &now).await?;
 
     // Buildings
-    let bat_a = insert_org_node(db, "BAT-A", "Bâtiment A – Production", type_ids[2], Some(zone_prod), &format!("/{site_id}/{zone_prod}/"), 2, &now).await?;
-    let _bat_b = insert_org_node(db, "BAT-B", "Bâtiment B – Conditionnement", type_ids[2], Some(zone_prod), &format!("/{site_id}/{zone_prod}/"), 2, &now).await?;
-    let bat_util = insert_org_node(db, "BAT-UTIL", "Bâtiment Utilités", type_ids[2], Some(zone_util), &format!("/{site_id}/{zone_util}/"), 2, &now).await?;
+    let bat_a = insert_org_node(db, model_id, "BAT-A", "Bâtiment A – Production", type_ids[2], Some(zone_prod), &format!("/{site_id}/{zone_prod}/"), 2, &now).await?;
+    let _bat_b = insert_org_node(db, model_id, "BAT-B", "Bâtiment B – Conditionnement", type_ids[2], Some(zone_prod), &format!("/{site_id}/{zone_prod}/"), 2, &now).await?;
+    let bat_util = insert_org_node(db, model_id, "BAT-UTIL", "Bâtiment Utilités", type_ids[2], Some(zone_util), &format!("/{site_id}/{zone_util}/"), 2, &now).await?;
 
     // Lines
-    let line_1 = insert_org_node(db, "LIGNE-01", "Ligne 1 – Embouteillage", type_ids[3], Some(bat_a), &format!("/{site_id}/{zone_prod}/{bat_a}/"), 3, &now).await?;
-    let line_2 = insert_org_node(db, "LIGNE-02", "Ligne 2 – Mélange", type_ids[3], Some(bat_a), &format!("/{site_id}/{zone_prod}/{bat_a}/"), 3, &now).await?;
-    let _line_util = insert_org_node(db, "LIGNE-UTIL", "Circuit eau glacée", type_ids[3], Some(bat_util), &format!("/{site_id}/{zone_util}/{bat_util}/"), 3, &now).await?;
+    let line_1 = insert_org_node(db, model_id, "LIGNE-01", "Ligne 1 – Embouteillage", type_ids[3], Some(bat_a), &format!("/{site_id}/{zone_prod}/{bat_a}/"), 3, &now).await?;
+    let line_2 = insert_org_node(db, model_id, "LIGNE-02", "Ligne 2 – Mélange", type_ids[3], Some(bat_a), &format!("/{site_id}/{zone_prod}/{bat_a}/"), 3, &now).await?;
+    let _line_util = insert_org_node(db, model_id, "LIGNE-UTIL", "Circuit eau glacée", type_ids[3], Some(bat_util), &format!("/{site_id}/{zone_util}/{bat_util}/"), 3, &now).await?;
 
     // ── 4. Equipment classes ──────────────────────────────────────────
     let cls_pump = insert_eq_class(db, "POMPE", "Pompes", None, "class", &now).await?;
@@ -284,28 +285,30 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
     // ── Reference domains ─────────────────────────────────────────────
     let domains: &[(&str, &str, &str, &str, bool)] = &[
         ("EQUIPMENT.FAMILY",       "Familles d'équipements",          "hierarchical",       "tenant_managed",       true),
-        ("EQUIPMENT.CLASS",        "Classes d'équipements",           "flat",                "tenant_managed",       true),
+        ("EQUIPMENT.CLASS",        "Classes d'équipements",           "flat",                "system_seeded",        false),
         ("EQUIPMENT.STATUS",       "Statuts équipement",              "flat",                "system_seeded",        false),
         ("WORK.PRIORITY",          "Priorités ordre de travail",      "flat",                "protected_analytical", false),
-        ("WORK.FAILURE_MODES",     "Modes de défaillance",            "hierarchical",        "tenant_managed",       true),
+        ("WORK.FAILURE_MODES",     "Modes de défaillance",            "hierarchical",        "system_seeded",        false),
         ("ORG.POSITIONS",          "Postes organisationnels",         "flat",                "tenant_managed",       true),
-        ("ORG.SCHEDULES",          "Horaires de travail",             "flat",                "tenant_managed",       true),
+        ("ORG.SCHEDULE_CLASS",     "Classes horaires",                "flat",                "tenant_managed",       true),
         ("PERSONNEL.SKILLS",       "Compétences techniques",          "hierarchical",        "tenant_managed",       true),
         ("PERSONNEL.CERTIFICATIONS", "Certifications et habilitations", "flat",              "tenant_managed",       true),
     ];
 
     let mut domain_ids: Vec<(i64, &str)> = Vec::new();
     for (code, name, structure, governance, extendable) in domains {
+        let category = derive_category_for_persist(code, governance);
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO reference_domains
-                (code, name, structure_type, governance_level, is_extendable, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (code, name, structure_type, governance_level, governance_category, is_extendable, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (*code).into(),
                 (*name).into(),
                 (*structure).into(),
                 (*governance).into(),
+                category.as_str().into(),
                 (*extendable as i32).into(),
                 now.clone().into(),
                 now.clone().into(),
@@ -409,8 +412,47 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                     ("HOT_WORK",     "Permis feu / travaux chauds", None, 4, None),
                 ], &now).await?;
             }
+            "ORG.SCHEDULE_CLASS" => {
+                // Prefer integrity guard for weekday details; seed identity row here for demo.
+                seed_ref_values(db, set_id, &[
+                    ("DAY_SHIFT", "Journée normale", None, 1, None),
+                    ("NIGHT_SHIFT", "Équipe de nuit", None, 2, None),
+                    ("CONTINUOUS_24", "Continuité 24h", None, 3, None),
+                ], &now).await?;
+                // Attach schedule metadata on DAY_SHIFT
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE reference_values SET metadata_json = ?, semantic_tag = 'schedule_class' \
+                     WHERE set_id = ? AND code = 'DAY_SHIFT'",
+                    [
+                        r#"{"shift_pattern_code":"DAY_SHIFT","is_continuous":false,"nominal_hours_per_day":8.0}"#.into(),
+                        set_id.into(),
+                    ],
+                ))
+                .await?;
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE reference_values SET metadata_json = ?, semantic_tag = 'schedule_class' \
+                     WHERE set_id = ? AND code = 'NIGHT_SHIFT'",
+                    [
+                        r#"{"shift_pattern_code":"NIGHT_SHIFT","is_continuous":false,"nominal_hours_per_day":8.0}"#.into(),
+                        set_id.into(),
+                    ],
+                ))
+                .await?;
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "UPDATE reference_values SET metadata_json = ?, semantic_tag = 'schedule_class' \
+                     WHERE set_id = ? AND code = 'CONTINUOUS_24'",
+                    [
+                        r#"{"shift_pattern_code":"CONTINUOUS_24","is_continuous":true,"nominal_hours_per_day":24.0}"#.into(),
+                        set_id.into(),
+                    ],
+                ))
+                .await?;
+            }
             _ => {
-                // ORG.POSITIONS, ORG.SCHEDULES — minimal seed
+                // ORG.POSITIONS — minimal seed
                 seed_ref_values(db, set_id, &[
                     ("DEFAULT", "Valeur par défaut", None, 1, None),
                 ], &now).await?;
@@ -590,7 +632,8 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
     let sentinel = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id FROM work_orders WHERE code = 'WO-DEMO-001' LIMIT 1".to_string(),
+            "SELECT id FROM work_orders WHERE title = 'Remplacement roulement pompe P-001' LIMIT 1"
+                .to_string(),
         ))
         .await?;
     if sentinel.is_some() {
@@ -666,11 +709,11 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
     let s_closed = status_id(db, "closed").await?;
 
     // WO definitions:
-    // (code, title, description, type_id, status_id, urgency_id, eq_index, planned_start, planned_end, duration_h)
+    // (demo_key, title, description, type_id, status_id, urgency_id, eq_index, planned_start, planned_end, duration_h)
     let wo_defs: &[(&str, &str, &str, i64, i64, i64, usize, &str, &str, f64)] = &[
         // 1. Draft — corrective
         (
-            "WO-DEMO-001",
+            "demo_001",
             "Remplacement roulement pompe P-001",
             "Suite DI vibrations anormales. Roulement côté accouplement à remplacer. Prévoir joint mécanique en même temps.",
             1, s_draft, 4, 0,
@@ -678,87 +721,87 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
         ),
         // 2. Draft — preventive
         (
-            "WO-DEMO-002",
-            "Maintenance préventive moteur M-002",
-            "Graissage roulements, contrôle isolement, vérification alignement. Plan MP trimestriel.",
-            2, s_draft, 2, 3,
-            "2026-04-20T06:00:00Z", "2026-04-20T14:00:00Z", 4.0,
+            "demo_002",
+            "Lubrification générale moteur MOT-001",
+            "Lubrification planifiée semestrielle. Graisse EP2, points A/B/C selon fiche constructeur.",
+            2, s_draft, 2, 1,
+            "2026-04-20T08:00:00Z", "2026-04-20T12:00:00Z", 4.0,
         ),
-        // 3. Planned — preventive
+        // 3. Planned
         (
-            "WO-DEMO-003",
-            "Inspection courroies convoyeur CONV-001",
-            "Inspection visuelle et mesure tension courroies. Vérifier usure et alignement galets.",
-            4, s_planned, 3, 4,
-            "2026-04-18T08:00:00Z", "2026-04-18T12:00:00Z", 4.0,
+            "demo_003",
+            "Contrôle alignement laser pompe P-002",
+            "Alignement laser après intervention roulement. Tolérance constructeur ±0.05 mm.",
+            1, s_planned, 3, 2,
+            "2026-04-10T07:00:00Z", "2026-04-10T11:00:00Z", 4.0,
         ),
-        // 4. Ready to schedule — corrective
+        // 4. Ready to schedule
         (
-            "WO-DEMO-004",
-            "Réparation vanne régulation VAN-001",
-            "Vanne ne ferme plus complètement. Passage de vapeur détecté. Remplacer siège et clapet.",
-            1, s_ready, 4, 8,
-            "2026-04-16T08:00:00Z", "2026-04-16T16:00:00Z", 6.0,
+            "demo_004",
+            "Remplacement courroie ventilateur VEN-001",
+            "Courroie usée détectée en ronde. Remplacement préventif avant rupture.",
+            2, s_ready, 3, 3,
+            "2026-04-12T08:00:00Z", "2026-04-12T10:00:00Z", 2.0,
         ),
-        // 5. Assigned — emergency
+        // 5. Assigned
         (
-            "WO-DEMO-005",
-            "Dépannage urgence compresseur COMP-001",
-            "Alarme surpression répétée. Soupape de sécurité déclenchée. Intervention immédiate requise.",
-            5, s_assigned, 5, 6,
-            "2026-04-14T06:00:00Z", "2026-04-14T18:00:00Z", 10.0,
+            "demo_005",
+            "Inspection visuelle réducteur RED-001",
+            "Inspection visuelle et contrôle niveau huile. Signalement DI bruits anormaux.",
+            3, s_assigned, 3, 4,
+            "2026-04-08T08:00:00Z", "2026-04-08T12:00:00Z", 4.0,
         ),
-        // 6. In progress — corrective (for V1 test: cause not determined)
+        // 6. In progress
         (
-            "WO-DEMO-006",
+            "demo_006",
             "Diagnostic cavitation pompe P-003",
-            "Bruit de cavitation à la mise en route. Vérifier pression aspiration, état roue, NPSH disponible.",
-            1, s_in_progress, 4, 10,
-            "2026-04-12T08:00:00Z", "2026-04-12T16:00:00Z", 8.0,
+            "Pompe en cavitation intermittente. Diagnostic en cours : NPSH, crépine, vanne aspiration.",
+            1, s_in_progress, 4, 0,
+            "2026-04-05T06:00:00Z", "2026-04-05T18:00:00Z", 12.0,
         ),
-        // 7. In progress — improvement
+        // 7. Paused
         (
-            "WO-DEMO-007",
-            "Installation capteur vibration pompe P-002",
-            "Montage capteur SKF CMSS2200 sur palier pompe doseuse. Câblage vers automate et paramétrage seuils.",
-            3, s_in_progress, 3, 1,
-            "2026-04-13T08:00:00Z", "2026-04-14T16:00:00Z", 12.0,
+            "demo_007",
+            "Remplacement joint torique vérin HYD-001",
+            "En attente pièce joint torique 50x3 NBR70. Fournisseur confirmé livraison J+2.",
+            1, s_paused, 3, 5,
+            "2026-04-01T08:00:00Z", "2026-04-03T16:00:00Z", 4.0,
         ),
-        // 8. Paused — corrective (waiting for parts)
+        // 8. Mechanically complete (older status name may map differently — keep seed status ids)
         (
-            "WO-DEMO-008",
-            "Remplacement joint SPI moteur M-001",
-            "Fuite huile réducteur. Joint SPI côté ventilateur à remplacer. En attente pièce (délai 5j).",
-            1, s_paused, 3, 2,
-            "2026-04-10T08:00:00Z", "2026-04-11T12:00:00Z", 6.0,
+            "demo_008",
+            "Réglage fin de course vérin HYD-002",
+            "Fin de course mécanique réglée. Essais à vide OK. En attente validation production.",
+            1, s_mech_complete, 2, 6,
+            "2026-03-28T08:00:00Z", "2026-03-28T12:00:00Z", 4.0,
         ),
-        // 9. Mechanically complete — corrective
+        // 9. Mechanically complete — partial close-out
         (
-            "WO-DEMO-009",
-            "Réparation fuite circuit eau vanne VAN-002",
-            "Changement garniture vanne papillon terminé. En attente vérification technique avant remise en service.",
-            1, s_mech_complete, 3, 9,
-            "2026-04-08T08:00:00Z", "2026-04-08T16:00:00Z", 5.0,
+            "demo_009",
+            "Changement filtre hydraulique HYD-003",
+            "Filtre remplacé. Analyse huile en attente retour labo.",
+            2, s_mech_complete, 2, 7,
+            "2026-03-25T08:00:00Z", "2026-03-25T10:00:00Z", 2.0,
         ),
-        // 10. Technically verified — corrective (for V2/V3 close-out tests)
+        // 10. Technically verified — full close-out data
         (
-            "WO-DEMO-010",
-            "Remplacement roulement moteur surpression M-003",
-            "Échauffement excessif carter (95°C). Roulement remplacé, alignement vérifié, test vibrations OK.",
-            1, s_tech_verified, 4, 11,
-            "2026-04-05T08:00:00Z", "2026-04-06T16:00:00Z", 12.0,
+            "demo_010",
+            "Remplacement roulement moteur MOT-002",
+            "Roulement NDE remplacé. Alignement vérifié. Vibrations nominales après reprise.",
+            1, s_tech_verified, 4, 1,
+            "2026-03-20T06:00:00Z", "2026-03-20T18:00:00Z", 10.0,
         ),
-        // 11. Closed — preventive
+        // 11. Closed — full close-out
         (
-            "WO-DEMO-011",
-            "Vidange huile compresseur COMP-002",
-            "Vidange huile compresseur réfrigérant effectuée. Niveau rétabli. Filtre changé.",
-            2, s_closed, 2, 7,
-            "2026-04-01T08:00:00Z", "2026-04-01T12:00:00Z", 3.0,
+            "demo_011",
+            "Révision annuelle compresseur COMP-001",
+            "Révision annuelle complète. Filtres, séparateur, clapets, huile. Rapport joint.",
+            2, s_closed, 2, 8,
+            "2026-03-10T06:00:00Z", "2026-03-12T18:00:00Z", 24.0,
         ),
         // 12. Closed — emergency
         (
-            "WO-DEMO-012",
+            "demo_012",
             "Dépannage bande convoyeur CONV-002",
             "Bande décentrée corrigée. Réglage tension et alignement galets effectués. Reprise production OK.",
             5, s_closed, 4, 5,
@@ -766,8 +809,9 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
         ),
     ];
 
-    for (code, title, desc, type_id, sid, urgency_id, eq_idx, p_start, p_end, dur) in wo_defs {
+    for (demo_key, title, desc, type_id, sid, urgency_id, eq_idx, p_start, p_end, dur) in wo_defs {
         let eq_id = if *eq_idx < eq_ids.len() { Some(eq_ids[*eq_idx]) } else { None };
+        let code = crate::wo::domain::generate_wo_code(db).await?;
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -779,7 +823,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
                 row_version, created_at, updated_at
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
             [
-                (*code).into(),
+                code.into(),
                 (*type_id).into(),
                 (*sid).into(),
                 eq_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
@@ -812,8 +856,8 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
 
         // ── Sub-entity data for specific WOs ──────────────────────────
 
-        // WO-DEMO-006 (in_progress): add tasks + failure detail with cause_not_determined
-        if *code == "WO-DEMO-006" {
+        // demo_006 (in_progress): add tasks + failure detail with cause_not_determined
+        if *demo_key == "demo_006" {
             // Tasks
             for (seq, task_desc, mandatory) in [
                 (1, "Vérifier pression aspiration (manomètre)", true),
@@ -852,8 +896,8 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             .await?;
         }
 
-        // WO-DEMO-010 (technically_verified): full data for close-out test
-        if *code == "WO-DEMO-010" {
+        // demo_010 (technically_verified): full data for close-out test
+        if *demo_key == "demo_010" {
             // Tasks (all completed)
             for (seq, task_desc) in [
                 (1, "Déposer roulement côté accouplement"),
@@ -926,8 +970,8 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             .await?;
         }
 
-        // WO-DEMO-009 (mechanically complete): partial data
-        if *code == "WO-DEMO-009" {
+        // demo_009 (mechanically complete): partial data
+        if *demo_key == "demo_009" {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO work_order_tasks \
@@ -964,8 +1008,8 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             .await?;
         }
 
-        // WO-DEMO-011 (closed): full close-out data
-        if *code == "WO-DEMO-011" {
+        // demo_011 (closed): full close-out data
+        if *demo_key == "demo_011" {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO work_order_tasks \
@@ -1069,6 +1113,7 @@ async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
 
 async fn insert_org_node(
     db: &DatabaseConnection,
+    structure_model_id: i64,
     code: &str,
     name: &str,
     type_id: i64,
@@ -1080,8 +1125,9 @@ async fn insert_org_node(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_nodes
-            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, created_at, updated_at, row_version)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1)",
+            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+             created_at, updated_at, row_version, structure_model_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, ?)",
         [
             Uuid::new_v4().to_string().into(),
             code.into(),
@@ -1092,6 +1138,7 @@ async fn insert_org_node(
             depth.into(),
             now.into(),
             now.into(),
+            structure_model_id.into(),
         ],
     ))
     .await?;

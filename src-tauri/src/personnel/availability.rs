@@ -104,7 +104,7 @@ pub async fn list_availability_calendar(
                 p.full_name,
                 p.primary_entity_id,
                 p.primary_team_id,
-                p.home_schedule_id
+                p.home_schedule_reference_value_id
             FROM personnel p
             WHERE {}
          ),
@@ -171,7 +171,7 @@ pub async fn list_availability_calendar(
             LIMIT 1
          )
          LEFT JOIN schedule_details sd
-            ON sd.schedule_class_id = pd.home_schedule_id
+            ON sd.reference_value_id = pd.home_schedule_reference_value_id
            AND sd.day_of_week = pd.day_of_week
          WHERE 1 = 1
          {}

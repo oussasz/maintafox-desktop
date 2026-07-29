@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -12,14 +12,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSession } from "@/hooks/use-session";
+import { formatOrDash, formatPersonLabel } from "@/lib/display";
 import {
+  checkWoPartStockAvailability,
+  createProcurementRequisitionFromWoPart,
   evaluateInventoryUnitCost,
   listInventoryArticles,
   listInventoryLocations,
 } from "@/services/inventory-service";
 import { listOrgTree } from "@/services/org-node-service";
-import { addPart, addTask, listParts, listTasks } from "@/services/wo-execution-service";
-import { assignWo, planWo } from "@/services/wo-service";
+import { addPart, addTask, addWoTool, listParts, listTasks, listWoTools } from "@/services/wo-execution-service";
+import { assignWo, evaluateWoReadiness, planWo } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
@@ -28,14 +31,22 @@ import type {
   StockLocation,
   WoExecPart,
   WoExecTask,
+  WoMaterialReadiness,
+  WoReadinessResult,
+  WoTool,
   WorkOrder,
   WorkOrderPriorityOption,
   WoShift,
 } from "@shared/ipc-types";
 
+export interface WoPlanningPanelHandle {
+  refreshReadiness: () => Promise<WoReadinessResult | null>;
+}
+
 interface WoPlanningPanelProps {
   wo: WorkOrder;
   canEdit: boolean;
+  onReadinessChange?: (report: WoReadinessResult | null) => void;
 }
 
 interface TaskDraft {
@@ -66,12 +77,10 @@ interface SelectOption {
   label: string;
 }
 
-const PLAN_EDITABLE_STATUSES = new Set([
-  "draft",
-  "awaiting_approval",
-  "planned",
-  "ready_to_schedule",
-]);
+/** Full plan/tasks/parts editable only in planning */
+const PLANNING_EDITABLE = new Set(["planning"]);
+/** Ready allows reschedule / reassign only */
+const READY_SCHEDULE_EDITABLE = new Set(["ready"]);
 
 function planningPriorityLabel(p: WorkOrderPriorityOption, lang: string): string {
   return lang.toLowerCase().startsWith("fr") ? p.label_fr : p.label;
@@ -131,7 +140,14 @@ function toPartDraft(part: WoExecPart): PartDraft {
   };
 }
 
-export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
+function blockingMessagesFromReport(result: WoReadinessResult): string[] {
+  return result.checks
+    .filter((c) => c.blocking && c.outcome === "fail")
+    .map((c) => (c.message?.trim() ? c.message : c.code));
+}
+
+export const WoPlanningPanel = forwardRef<WoPlanningPanelHandle, WoPlanningPanelProps>(
+  function WoPlanningPanel({ wo, canEdit, onReadinessChange }, ref) {
   const { t, i18n } = useTranslation("ot");
   const prioritiesCatalog = useWorkOrderPrioritiesCatalog((s) => s.priorities);
   const loadPriorities = useWorkOrderPrioritiesCatalog((s) => s.load);
@@ -153,6 +169,9 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
   const [expectedHours, setExpectedHours] = useState(
     wo.expected_duration_hours != null ? String(wo.expected_duration_hours) : "",
   );
+  const [plannedDowntimeHours, setPlannedDowntimeHours] = useState(
+    wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
+  );
   const [urgencyId, setUrgencyId] = useState(wo.urgency_id != null ? String(wo.urgency_id) : "");
 
   const [assignedGroupId, setAssignedGroupId] = useState(
@@ -165,6 +184,9 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
 
   const [tasks, setTasks] = useState<TaskDraft[]>([]);
   const [parts, setParts] = useState<PartDraft[]>([]);
+  const [tools, setTools] = useState<WoTool[]>([]);
+  const [newToolLabel, setNewToolLabel] = useState("");
+  const [newToolCode, setNewToolCode] = useState("");
   const [articleOptions, setArticleOptions] = useState<InventoryArticle[]>([]);
   const [locationOptions, setLocationOptions] = useState<StockLocation[]>([]);
   const [activeArticleField, setActiveArticleField] = useState<string | null>(null);
@@ -175,6 +197,16 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
   const [responsibleOptions, setResponsibleOptions] = useState<SelectOption[]>([]);
   const lastValuationKeyByPart = useRef<Record<string, string>>({});
 
+  // Readiness evaluation state (planning → ready)
+  const [readinessReport, setReadinessReport] = useState<WoReadinessResult | null>(null);
+  const [readinessBlocking, setReadinessBlocking] = useState<string[]>([]);
+  const [plannerOptions, setPlannerOptions] = useState<SelectOption[]>([]);
+
+  // Material readiness (shortage detection)
+  const [materialReadiness, setMaterialReadiness] = useState<WoMaterialReadiness | null>(null);
+  const [shortageReqCreating, setShortageReqCreating] = useState<number | null>(null);
+  const [shortageSuccessIds, setShortageSuccessIds] = useState<number[]>([]);
+
   useEffect(() => {
     setStatusCode(wo.status_code ?? "draft");
     setRowVersion(wo.row_version);
@@ -183,6 +215,9 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
     setPlannedEnd(toDatetimeLocal(wo.planned_end));
     setShift((wo.shift as WoShift | null) ?? "");
     setExpectedHours(wo.expected_duration_hours != null ? String(wo.expected_duration_hours) : "");
+    setPlannedDowntimeHours(
+      wo.planned_downtime_hours != null ? String(wo.planned_downtime_hours) : "",
+    );
     setUrgencyId(wo.urgency_id != null ? String(wo.urgency_id) : "");
     setAssignedGroupId(wo.assigned_group_id != null ? String(wo.assigned_group_id) : "");
     setPrimaryResponsibleId(
@@ -230,36 +265,77 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
   }, []);
 
   useEffect(() => {
-    const dedup = new Map<string, string>();
+    const responsibleDedup = new Map<string, string>();
+    const plannerDedup = new Map<string, string>();
 
     for (const item of woItems) {
       if (item.primary_responsible_id != null) {
         const id = String(item.primary_responsible_id);
-        const label = item.responsible_username?.trim() || `User #${id}`;
-        dedup.set(id, label);
+        const label =
+          item.responsible_display_name?.trim() ||
+          item.responsible_username?.trim() ||
+          formatOrDash(null);
+        responsibleDedup.set(id, label);
+      }
+      if (item.planner_id != null) {
+        const id = String(item.planner_id);
+        const label =
+          item.planner_display_name?.trim() ||
+          item.planner_username?.trim() ||
+          formatOrDash(null);
+        plannerDedup.set(id, label);
       }
     }
 
     if (info?.user_id != null) {
       const id = String(info.user_id);
-      if (!dedup.has(id)) {
-        dedup.set(id, info.username ?? `User #${id}`);
-      }
+      const selfLabel = formatPersonLabel(info.display_name, info.username);
+      if (!responsibleDedup.has(id)) responsibleDedup.set(id, selfLabel);
+      if (!plannerDedup.has(id)) plannerDedup.set(id, selfLabel);
     }
 
     if (wo.primary_responsible_id != null) {
       const id = String(wo.primary_responsible_id);
-      if (!dedup.has(id)) {
-        dedup.set(id, wo.responsible_username ?? `User #${id}`);
+      if (!responsibleDedup.has(id)) {
+        responsibleDedup.set(
+          id,
+          formatPersonLabel(wo.responsible_display_name, wo.responsible_username),
+        );
       }
     }
 
-    const opts = Array.from(dedup.entries())
-      .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+    if (wo.planner_id != null) {
+      const id = String(wo.planner_id);
+      if (!plannerDedup.has(id)) {
+        plannerDedup.set(
+          id,
+          formatPersonLabel(wo.planner_display_name, wo.planner_username),
+        );
+      }
+    }
 
-    setResponsibleOptions(opts);
-  }, [woItems, wo.primary_responsible_id, wo.responsible_username, info?.user_id, info?.username]);
+    setResponsibleOptions(
+      Array.from(responsibleDedup.entries())
+        .map(([value, label]) => ({ value, label }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    );
+    setPlannerOptions(
+      Array.from(plannerDedup.entries())
+        .map(([value, label]) => ({ value, label }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    );
+  }, [
+    woItems,
+    wo.primary_responsible_id,
+    wo.responsible_username,
+    wo.responsible_display_name,
+    wo.planner_id,
+    wo.planner_username,
+    wo.planner_display_name,
+    info?.user_id,
+    info?.username,
+    info?.display_name,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -289,17 +365,20 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
 
     async function loadPlanningData() {
       try {
-        const [taskRows, partRows] = await Promise.all([
+        const [taskRows, partRows, toolRows] = await Promise.all([
           listTasks(wo.id).catch(() => []),
           listParts(wo.id).catch(() => []),
+          listWoTools(wo.id).catch(() => [] as WoTool[]),
         ]);
         if (cancelled) return;
         setTasks(taskRows.map(toTaskDraft));
         setParts(partRows.map(toPartDraft));
+        setTools(toolRows);
       } catch {
         if (!cancelled) {
           setTasks([]);
           setParts([]);
+          setTools([]);
         }
       }
     }
@@ -310,6 +389,27 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       cancelled = true;
     };
   }, [wo.id]);
+
+  // Check material availability whenever parts change (planning status only)
+  useEffect(() => {
+    const hasPersisted = parts.some((p) => p.persisted);
+    if (!hasPersisted || statusCode !== "planning") {
+      setMaterialReadiness(null);
+      return;
+    }
+    let cancelled = false;
+    void checkWoPartStockAvailability(wo.id)
+      .then((result) => {
+        if (!cancelled) setMaterialReadiness(result);
+      })
+      .catch(() => {
+        if (!cancelled) setMaterialReadiness(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wo.id, parts, statusCode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -345,8 +445,11 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
     };
   }, [parts, locationOptions]);
 
-  const isPastPlannedStatus = !PLAN_EDITABLE_STATUSES.has(statusCode);
-  const allFieldsDisabled = !canEdit || isPastPlannedStatus || busy;
+  const isPlanningEditable = PLANNING_EDITABLE.has(statusCode);
+  const isReadyScheduleEditable = READY_SCHEDULE_EDITABLE.has(statusCode);
+  const scheduleFieldsDisabled = !canEdit || (!isPlanningEditable && !isReadyScheduleEditable) || busy;
+  const tasksPartsDisabled = !canEdit || !isPlanningEditable || busy;
+  const allFieldsDisabled = scheduleFieldsDisabled;
 
   const planReady =
     plannerId.trim().length > 0 &&
@@ -366,10 +469,37 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
 
   const requireActor = info?.user_id ?? null;
 
-  const handleMoveToReady = useCallback(async () => {
-    if (!planReady || !requireActor) {
-      return;
+  const loadReadiness = useCallback(async () => {
+    if (statusCode !== "planning") {
+      setReadinessReport(null);
+      setReadinessBlocking([]);
+      onReadinessChange?.(null);
+      return null;
     }
+    try {
+      const result = await evaluateWoReadiness({ wo_id: wo.id });
+      setReadinessReport(result);
+      setReadinessBlocking(blockingMessagesFromReport(result));
+      onReadinessChange?.(result);
+      return result;
+    } catch (e) {
+      setReadinessReport(null);
+      setReadinessBlocking([]);
+      onReadinessChange?.(null);
+      setError(toErrorMessage(e));
+      return null;
+    }
+  }, [statusCode, wo.id, onReadinessChange]);
+
+  useEffect(() => {
+    void loadReadiness();
+  }, [loadReadiness]);
+
+  useImperativeHandle(ref, () => ({ refreshReadiness: loadReadiness }), [loadReadiness]);
+
+  /** Save planning data without status change (non-transitioning) */
+  const handleSavePlan = useCallback(async () => {
+    if (!planReady || !requireActor) return;
 
     setBusy(true);
     setError(null);
@@ -383,12 +513,16 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
         planned_end: fromDatetimeLocal(plannedEnd),
         shift: shift || null,
         expected_duration_hours: parseNumber(expectedHours),
+        planned_downtime_hours: parseNumber(plannedDowntimeHours),
         urgency_id: parseNumber(urgencyId),
       });
 
       setRowVersion(next.row_version);
       setStatusCode(next.status_code ?? statusCode);
       await refreshActiveWo();
+      if ((next.status_code ?? statusCode) === "planning") {
+        await loadReadiness();
+      }
     } catch (e) {
       setError(toErrorMessage(e));
     } finally {
@@ -404,10 +538,15 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
     plannedEnd,
     shift,
     expectedHours,
+    plannedDowntimeHours,
     urgencyId,
     refreshActiveWo,
     statusCode,
+    loadReadiness,
   ]);
+
+  // Kept as alias — planWo is a non-status save in Option B.
+  const handleMoveToReady = handleSavePlan;
 
   const handleAssign = useCallback(async () => {
     if (!assignReady || !requireActor) {
@@ -429,6 +568,9 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       setRowVersion(next.row_version);
       setStatusCode(next.status_code ?? statusCode);
       await refreshActiveWo();
+      if ((next.status_code ?? statusCode) === "planning") {
+        await loadReadiness();
+      }
     } catch (e) {
       setError(toErrorMessage(e));
     } finally {
@@ -444,6 +586,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
     scheduledAt,
     refreshActiveWo,
     statusCode,
+    loadReadiness,
   ]);
 
   const addTaskRow = useCallback(() => {
@@ -470,7 +613,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
 
   const saveTaskRow = useCallback(
     async (row: TaskDraft) => {
-      if (row.persisted || allFieldsDisabled || !row.task_description.trim()) {
+      if (row.persisted || tasksPartsDisabled || !row.task_description.trim()) {
         return;
       }
 
@@ -494,7 +637,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
         setBusy(false);
       }
     },
-    [allFieldsDisabled, wo.id],
+    [tasksPartsDisabled, wo.id],
   );
 
   const addPartRow = useCallback(() => {
@@ -524,7 +667,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
 
   const savePartRow = useCallback(
     async (row: PartDraft) => {
-      if (row.persisted || allFieldsDisabled) {
+      if (row.persisted || tasksPartsDisabled) {
         return;
       }
 
@@ -565,8 +708,79 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
         setBusy(false);
       }
     },
-    [allFieldsDisabled, wo.id, t],
+    [tasksPartsDisabled, wo.id, t],
   );
+
+  const savePlannedTool = useCallback(async () => {
+    if (tasksPartsDisabled) return;
+    const label = newToolLabel.trim();
+    if (!label) {
+      setError(t("execution.tools.labelRequired"));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await addWoTool({
+        wo_id: wo.id,
+        tool_label: label,
+        tool_code: newToolCode.trim() || null,
+        origin: "planned",
+      });
+      setTools((prev) => [...prev, created]);
+      setNewToolLabel("");
+      setNewToolCode("");
+    } catch (e) {
+      setError(toErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [tasksPartsDisabled, newToolLabel, newToolCode, wo.id, t]);
+
+  // ── Draft: submit-only identification summary (footer owns Submit) ─────
+  if (statusCode === "draft") {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">{t("planning.draftSubmitHint")}</p>
+        <div className="rounded-md border p-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <span className="text-muted-foreground">{t("planning.draftIdentification")}: </span>
+            <span className="font-medium">{wo.title || "—"}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground">{t("detail.fields.type")}: </span>
+            <span className="font-medium">{wo.type_label ?? "—"}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground">{t("detail.fields.equipment")}: </span>
+            <span className="font-medium">{wo.asset_label ?? "—"}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (statusCode === "cancelled") {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">{t("planning.cancelledStubHint")}</p>
+        <div className="rounded-md border p-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <span className="text-muted-foreground">{t("planning.draftIdentification")}: </span>
+            <span className="font-medium">{wo.title || "—"}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground">{t("detail.fields.type")}: </span>
+            <span className="font-medium">{wo.type_label ?? "—"}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground">{t("detail.fields.equipment")}: </span>
+            <span className="font-medium">{wo.asset_label ?? "—"}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -581,12 +795,23 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
         <div className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1">
             <Label>{t("planning.plannerId")}</Label>
-            <Input
-              type="number"
-              value={plannerId}
-              onChange={(e) => setPlannerId(e.target.value)}
+            <Select
+              value={plannerId || "__none"}
+              onValueChange={(value) => setPlannerId(value === "__none" ? "" : value)}
               disabled={allFieldsDisabled}
-            />
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={t("planning.plannerId")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">—</SelectItem>
+                {plannerOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1">
             <Label>{t("planning.plannedStart")}</Label>
@@ -636,6 +861,18 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
               disabled={allFieldsDisabled}
             />
           </div>
+          <div className="space-y-1">
+            <Label>{t("planning.plannedDowntimeHours")}</Label>
+            <Input
+              type="number"
+              step="0.25"
+              min="0"
+              value={plannedDowntimeHours}
+              onChange={(e) => setPlannedDowntimeHours(e.target.value)}
+              disabled={allFieldsDisabled}
+              placeholder={t("planning.plannedDowntimeHoursPlaceholder")}
+            />
+          </div>
         </div>
       </section>
 
@@ -664,6 +901,21 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
           </SelectContent>
         </Select>
       </section>
+
+      {(isPlanningEditable || isReadyScheduleEditable) && (
+        <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+          <Button
+            variant="outline"
+            onClick={() => void handleMoveToReady()}
+            disabled={allFieldsDisabled || !planReady || !requireActor}
+          >
+            {t("planning.planWo")}
+          </Button>
+          {!requireActor && (
+            <span className="text-sm text-muted-foreground">{t("planning.sessionRequired")}</span>
+          )}
+        </div>
+      )}
 
       <section className="space-y-3">
         <h3 className="text-sm font-semibold">3. {t("planning.assignment")}</h3>
@@ -719,19 +971,32 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
           </div>
         </div>
         {groupOptions.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            No organizational groups are loaded. Define and publish at least one org node (team /
-            site) in the Organization structure designer so you can assign this work order.
-          </p>
+          <p className="text-xs text-muted-foreground">{t("planning.noOrgGroups")}</p>
         ) : null}
+        {(isPlanningEditable || isReadyScheduleEditable) && (
+          <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+            <Button
+              variant="outline"
+              onClick={() => void handleAssign()}
+              disabled={allFieldsDisabled || !assignReady || !requireActor}
+            >
+              {t("planning.assign")}
+            </Button>
+            {!requireActor && (
+              <span className="text-sm text-muted-foreground">{t("planning.sessionRequired")}</span>
+            )}
+          </div>
+        )}
       </section>
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">4. {t("planning.prerequisites")}</h3>
-          <Button size="sm" variant="outline" onClick={addTaskRow} disabled={allFieldsDisabled}>
-            {t("planning.addTask")}
-          </Button>
+          {isPlanningEditable && (
+            <Button size="sm" variant="outline" onClick={addTaskRow} disabled={tasksPartsDisabled}>
+              {t("planning.addTask")}
+            </Button>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -747,7 +1012,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                 placeholder={t("planning.taskDescription")}
                 value={task.task_description}
                 onChange={(e) => updateTaskRow(task.localId, { task_description: e.target.value })}
-                disabled={allFieldsDisabled || task.persisted}
+                disabled={tasksPartsDisabled || task.persisted}
               />
               <Input
                 type="number"
@@ -756,14 +1021,14 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                 onChange={(e) =>
                   updateTaskRow(task.localId, { sequence_order: Number(e.target.value) || 1 })
                 }
-                disabled={allFieldsDisabled || task.persisted}
+                disabled={tasksPartsDisabled || task.persisted}
               />
               <Input
                 type="number"
                 min="0"
                 value={task.estimated_minutes}
                 onChange={(e) => updateTaskRow(task.localId, { estimated_minutes: e.target.value })}
-                disabled={allFieldsDisabled || task.persisted}
+                disabled={tasksPartsDisabled || task.persisted}
                 placeholder={t("planning.minutes")}
               />
               <label className="flex items-center gap-2 text-sm">
@@ -771,28 +1036,30 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                   type="checkbox"
                   checked={task.is_mandatory}
                   onChange={(e) => updateTaskRow(task.localId, { is_mandatory: e.target.checked })}
-                  disabled={allFieldsDisabled || task.persisted}
+                  disabled={tasksPartsDisabled || task.persisted}
                 />
                 {t("planning.mandatory")}
               </label>
               <div className="flex items-center gap-2">
-                {!task.persisted && (
+                {!task.persisted && isPlanningEditable && (
                   <Button
                     size="sm"
                     onClick={() => void saveTaskRow(task)}
-                    disabled={allFieldsDisabled}
+                    disabled={tasksPartsDisabled}
                   >
                     {t("planning.saveTask")}
                   </Button>
                 )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => removeTaskRow(task.localId)}
-                  disabled={allFieldsDisabled}
-                >
-                  {t("planning.removeTask")}
-                </Button>
+                {isPlanningEditable && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => removeTaskRow(task.localId)}
+                    disabled={tasksPartsDisabled}
+                  >
+                    {t("planning.removeTask")}
+                  </Button>
+                )}
               </div>
             </div>
           ))}
@@ -802,9 +1069,11 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">5. {t("planning.partsPlan")}</h3>
-          <Button size="sm" variant="outline" onClick={addPartRow} disabled={allFieldsDisabled}>
-            {t("planning.addRow")}
-          </Button>
+          {isPlanningEditable && (
+            <Button size="sm" variant="outline" onClick={addPartRow} disabled={tasksPartsDisabled}>
+              {t("planning.addRow")}
+            </Button>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -847,9 +1116,9 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                         article_ref: "",
                       })
                     }
-                    disabled={allFieldsDisabled || part.persisted}
+                    disabled={tasksPartsDisabled || part.persisted}
                   />
-                  {activeArticleField === part.localId && !allFieldsDisabled && !part.persisted && (
+                  {activeArticleField === part.localId && !tasksPartsDisabled && !part.persisted && (
                     <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
                       {filteredArticles.length === 0 ? (
                         <div className="px-2 py-1.5 text-sm text-muted-foreground">
@@ -890,7 +1159,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                         stock_location_id: value === "__none" ? null : Number(value),
                       })
                     }
-                    disabled={allFieldsDisabled || part.persisted}
+                    disabled={tasksPartsDisabled || part.persisted}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Location" />
@@ -915,7 +1184,7 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                     onChange={(e) =>
                       updatePartRow(part.localId, { quantity_planned: e.target.value })
                     }
-                    disabled={allFieldsDisabled || part.persisted}
+                    disabled={tasksPartsDisabled || part.persisted}
                   />
                 </div>
                 <div className="space-y-1">
@@ -926,15 +1195,15 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                     step="0.01"
                     value={part.unit_cost}
                     onChange={(e) => updatePartRow(part.localId, { unit_cost: e.target.value })}
-                    disabled={allFieldsDisabled || part.persisted}
+                    disabled={tasksPartsDisabled || part.persisted}
                   />
                   {part.persisted && part.reservation_id != null ? (
                     <p className="text-xs text-muted-foreground">
-                      Stock reservation ID: {part.reservation_id}
+                      {t("planning.stockReserved")}
                     </p>
                   ) : null}
                   {part.persisted && part.reservation_id == null ? (
-                    <p className="text-xs text-amber-800">No stock reservation on this line.</p>
+                    <p className="text-xs text-amber-800">{t("planning.noStockReservation")}</p>
                   ) : null}
                 </div>
                 <div className="flex items-end text-sm font-medium">
@@ -943,23 +1212,25 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
                   ).toFixed(2)}
                 </div>
                 <div className="flex items-end gap-2">
-                  {!part.persisted && (
+                  {!part.persisted && isPlanningEditable && (
                     <Button
                       size="sm"
                       onClick={() => void savePartRow(part)}
-                      disabled={allFieldsDisabled}
+                      disabled={tasksPartsDisabled}
                     >
                       {t("planning.savePart")}
                     </Button>
                   )}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => removePartRow(part.localId)}
-                    disabled={allFieldsDisabled}
-                  >
-                    {t("planning.removePart")}
-                  </Button>
+                  {isPlanningEditable && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => removePartRow(part.localId)}
+                      disabled={tasksPartsDisabled}
+                    >
+                      {t("planning.removePart")}
+                    </Button>
+                  )}
                 </div>
               </div>
             );
@@ -971,24 +1242,218 @@ export function WoPlanningPanel({ wo, canEdit }: WoPlanningPanelProps) {
         </div>
       </section>
 
-      <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-        <Button
-          onClick={() => void handleMoveToReady()}
-          disabled={allFieldsDisabled || !planReady || !requireActor}
-        >
-          {t("planning.planWo")}
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => void handleAssign()}
-          disabled={allFieldsDisabled || !assignReady || !requireActor}
-        >
-          {t("planning.assign")}
-        </Button>
-        {!requireActor && (
-          <span className="text-sm text-muted-foreground">{t("planning.sessionRequired")}</span>
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold">6. {t("planning.toolsPlan")}</h3>
+        {tools.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("planning.noPlannedTools")}</p>
+        ) : (
+          <ul className="space-y-1 text-sm">
+            {tools.map((tool) => (
+              <li key={tool.id} className="flex items-center gap-2 border-b border-border/50 py-1.5">
+                <span className="font-medium">{tool.tool_label}</span>
+                {tool.tool_code ? (
+                  <span className="text-muted-foreground">({tool.tool_code})</span>
+                ) : null}
+                <span className="text-xs text-muted-foreground">
+                  {t("execution.badge.planned")}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
-      </div>
+        {isPlanningEditable && (
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[160px] flex-1 space-y-1">
+              <Label>{t("execution.tools.label")}</Label>
+              <Input
+                value={newToolLabel}
+                onChange={(e) => setNewToolLabel(e.target.value)}
+                disabled={tasksPartsDisabled}
+                placeholder={t("execution.tools.labelPlaceholder")}
+              />
+            </div>
+            <div className="w-[140px] space-y-1">
+              <Label>{t("execution.tools.code")}</Label>
+              <Input
+                value={newToolCode}
+                onChange={(e) => setNewToolCode(e.target.value)}
+                disabled={tasksPartsDisabled}
+                placeholder={t("execution.tools.codePlaceholder")}
+              />
+            </div>
+            <Button
+              size="sm"
+              onClick={() => void savePlannedTool()}
+              disabled={tasksPartsDisabled || busy}
+            >
+              {t("planning.addTool")}
+            </Button>
+          </div>
+        )}
+      </section>
+
+      {materialReadiness ? (
+        <section className="space-y-2 rounded-md border p-3">
+          <h3 className="text-sm font-semibold">
+            {t("wo.materialReadiness.title", {
+              ns: "inventory",
+              defaultValue: "Material readiness",
+            })}
+          </h3>
+          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+            <span>
+              {t("wo.materialReadiness.ready", { ns: "inventory", defaultValue: "Ready" })}:{" "}
+              <span className="font-medium text-foreground">
+                {materialReadiness.is_fully_available
+                  ? t("wo.materialReadiness.yes", { ns: "inventory", defaultValue: "YES" })
+                  : t("wo.materialReadiness.no", { ns: "inventory", defaultValue: "NO" })}
+              </span>
+            </span>
+            {materialReadiness.ready_pct != null ? (
+              <span>
+                {t("wo.materialReadiness.readyPct", { ns: "inventory", defaultValue: "Ready %" })}:{" "}
+                <span className="font-medium tabular-nums text-foreground">
+                  {Math.round(materialReadiness.ready_pct)}%
+                </span>
+              </span>
+            ) : null}
+            {materialReadiness.reserved_pct != null ? (
+              <span>
+                {t("wo.materialReadiness.reservedPct", {
+                  ns: "inventory",
+                  defaultValue: "Reserved %",
+                })}
+                :{" "}
+                <span className="font-medium tabular-nums text-foreground">
+                  {Math.round(materialReadiness.reserved_pct)}%
+                </span>
+              </span>
+            ) : null}
+            {materialReadiness.expected_arrival ? (
+              <span>
+                {t("wo.materialReadiness.expectedArrival", {
+                  ns: "inventory",
+                  defaultValue: "Expected arrival",
+                })}
+                :{" "}
+                <span className="font-medium text-foreground">
+                  {materialReadiness.expected_arrival}
+                </span>
+              </span>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {/* ── Parts shortage → purchase requisition ── */}
+      {materialReadiness && !materialReadiness.is_fully_available && materialReadiness.shortages.length > 0 ? (
+        <section className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3">
+          <h3 className="text-sm font-semibold text-amber-800">
+            {t("wo.shortage.title", { ns: "inventory" })}
+          </h3>
+          <p className="text-xs text-amber-700">
+            {t("wo.shortage.description", { ns: "inventory" })}
+          </p>
+          <div className="space-y-1.5">
+            {materialReadiness.shortages.map((shortage) => {
+              const wasCreated = shortageSuccessIds.includes(shortage.article_id);
+              return (
+                <div
+                  key={shortage.article_id}
+                  className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-white p-2 text-xs"
+                >
+                  <span className="font-medium">{shortage.article_code}</span>
+                  <span className="text-muted-foreground">— {shortage.article_name}</span>
+                  <span className="ml-auto tabular-nums text-amber-700">
+                    {t("wo.shortage.columns.requested", { ns: "inventory" })}: {shortage.requested_qty} ·{" "}
+                    {t("wo.shortage.columns.available", { ns: "inventory" })}: {shortage.available_qty} ·{" "}
+                    <span className="font-semibold text-red-700">
+                      {t("wo.shortage.columns.shortage", { ns: "inventory" })}: {shortage.shortage_qty}
+                    </span>
+                  </span>
+                  {wasCreated ? (
+                    <span className="text-xs font-medium text-green-700">
+                      ✓ {t("wo.shortage.requisitionCreated", { ns: "inventory" })}
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-xs"
+                      disabled={shortageReqCreating === shortage.article_id}
+                      onClick={() => {
+                        setShortageReqCreating(shortage.article_id);
+                        void createProcurementRequisitionFromWoPart(
+                          wo.id,
+                          shortage.article_id,
+                          shortage.shortage_qty,
+                          shortage.preferred_location_id,
+                        )
+                          .then(() => {
+                            setShortageSuccessIds((prev) => [...prev, shortage.article_id]);
+                          })
+                          .catch((err) => {
+                            setError(toErrorMessage(err));
+                          })
+                          .finally(() => {
+                            setShortageReqCreating(null);
+                          });
+                      }}
+                    >
+                      {shortageReqCreating === shortage.article_id
+                        ? "…"
+                        : t("wo.shortage.createRequisition", { ns: "inventory" })}
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {statusCode === "planning" && readinessReport && (
+        <section className="space-y-2 rounded-md border p-3">
+          <h3 className="text-sm font-semibold">{t("planning.readinessChecklist")}</h3>
+          <ul className="space-y-1 text-sm">
+            {readinessReport.checks.map((check) => (
+              <li key={check.code} className="flex items-start gap-2">
+                <span
+                  className={
+                    check.outcome === "pass"
+                      ? "text-green-700"
+                      : check.outcome === "na"
+                        ? "text-muted-foreground"
+                        : check.blocking
+                          ? "text-amber-800"
+                          : "text-muted-foreground"
+                  }
+                >
+                  {check.outcome === "pass" ? "✓" : check.outcome === "na" ? "—" : "✗"}
+                </span>
+                <span>
+                  {check.message?.trim() || check.code}
+                  {!check.blocking && check.outcome === "fail" ? (
+                    <span className="text-muted-foreground"> ({t("planning.readinessRecommended")})</span>
+                  ) : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {readinessBlocking.length > 0 && statusCode === "planning" && (
+        <div className="w-full rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <p className="mb-1 font-medium">{t("planning.readinessBlocking")}</p>
+          <ul className="list-disc list-inside space-y-0.5">
+            {readinessBlocking.map((msg, i) => (
+              <li key={i}>{msg}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
-}
+});
+

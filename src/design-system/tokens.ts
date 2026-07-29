@@ -89,6 +89,72 @@ export const mfModal = {
     "gap-4 border border-surface-border bg-surface-1 p-6 text-text-primary shadow-panel duration-200 sm:rounded-xl",
 } as const;
 
+/**
+ * Create / Edit entity form dialogs — official Maintafox Enterprise Dialog Standard.
+ * See docs/UX_ENTITY_FORM_DIALOG_PATTERN.md. Prefer `EntityFormDialog` over one-off shells.
+ */
+export const mfEntityForm = {
+  dialog:
+    "flex max-h-[90vh] w-full max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl",
+  dialogWide:
+    "flex max-h-[90vh] w-full max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl",
+  header: "shrink-0 space-y-1.5 px-6 pb-3 pt-6 text-left",
+  title: "text-lg font-semibold tracking-tight text-text-primary",
+  description: "text-sm text-text-muted",
+  body: "min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-2",
+  footer:
+    "flex shrink-0 flex-col-reverse gap-2 border-t border-surface-border bg-surface-0 px-6 py-4 sm:flex-row sm:justify-end sm:gap-2 sm:space-x-0",
+  section: "space-y-3",
+  sectionTitle: "text-sm font-semibold text-text-primary",
+  sectionDescription: "text-xs text-text-muted",
+  fieldGroup: "space-y-3 rounded-lg border border-surface-border/60 bg-surface-2/40 p-3",
+  fieldGroupTitle: "text-xs font-semibold uppercase tracking-wide text-text-secondary",
+  divider: "border-t border-surface-border",
+  hint: "rounded-md border border-status-warning/30 bg-status-warning/10 px-3 py-2 text-sm text-status-warning",
+  hintInfo: "rounded-md border border-primary/20 bg-primary-bg/80 px-3 py-2 text-sm text-text-primary",
+  collapsibleTrigger:
+    "flex w-full items-center justify-between rounded-md border border-surface-border bg-surface-2/50 px-3 py-2 text-left text-sm font-semibold text-text-primary hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+  mediaDropzone:
+    "flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-surface-2/40 px-4 py-6 text-center text-sm text-text-muted transition-colors hover:border-primary/40 hover:bg-surface-2/70",
+  mediaGrid: "grid grid-cols-3 gap-2 sm:grid-cols-4",
+  mediaTile:
+    "group relative aspect-square overflow-hidden rounded-md border border-surface-border bg-surface-2",
+} as const;
+
+/**
+ * Identification / QR label dialogs — official Maintafox enterprise label modal.
+ * See docs/UX_IDENTIFICATION_DIALOG_PATTERN.md. Prefer `IdentificationLabelDialog`.
+ * Export/print: docs/UX_EXPORT_SYSTEM.md.
+ */
+export const mfIdentification = {
+  dialog:
+    "flex max-h-[90vh] w-full max-w-md flex-col gap-0 overflow-hidden p-0 sm:max-w-lg sm:rounded-xl",
+  header: "shrink-0 space-y-1.5 px-6 pb-3 pt-6 text-center",
+  title: "text-lg font-semibold tracking-tight text-text-primary",
+  description: "text-sm text-text-muted",
+  body: "min-h-0 flex-1 overflow-y-auto px-6 py-4",
+  footer:
+    "flex shrink-0 flex-col-reverse gap-2 border-t border-surface-border bg-surface-0 px-6 py-4 sm:flex-row sm:justify-end sm:gap-2 sm:space-x-0",
+  labelStack: "flex flex-col items-center text-center space-y-3",
+  logoRow: "flex flex-col items-center gap-1.5",
+  /** QR sits directly on the dialog surface — no card / border / shadow. */
+  qrSize:
+    "mx-auto flex h-[min(72vw,280px)] w-[min(72vw,280px)] items-center justify-center [&_svg]:h-full [&_svg]:w-full",
+  primaryCode: "font-mono text-base font-bold tracking-tight text-text-primary",
+  entityName: "text-sm text-text-primary",
+  metaRow: "text-xs text-text-muted",
+  barcodeSlot: "hidden min-h-[48px] w-full data-[enabled=true]:block",
+} as const;
+
+/**
+ * Shared export footer actions — use with `ExportActions`.
+ * @see docs/UX_EXPORT_SYSTEM.md
+ */
+export const mfExport = {
+  actions:
+    "flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2 sm:space-x-0",
+} as const;
+
 /** Table / list rows — prefer with DataTable; fallback for plain lists */
 export const mfTable = {
   rowHover: "transition-colors duration-fast hover:bg-surface-3/80",

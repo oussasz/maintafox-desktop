@@ -17,8 +17,10 @@ pub mod conversion;
 pub mod domain;
 pub mod permissions;
 pub mod queries;
+pub mod reference_catalog;
 pub mod review;
 pub mod sla;
+pub mod sla_poller;
 pub mod stats;
 
 #[cfg(test)]

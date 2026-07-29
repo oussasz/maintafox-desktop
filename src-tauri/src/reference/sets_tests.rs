@@ -1,8 +1,8 @@
 //! Supervisor verification tests for Phase 2 SP03 File 01 Sprint S2.
 //!
-//! V1 — Transition ordering: draft → validated → published; skip not allowed
-//! V2 — Single published set: publish v2 supersedes v1
-//! V3 — Published edit block: published set cannot be directly edited
+//! V1 â€” Transition ordering: draft â†’ validated â†’ published; skip not allowed
+//! V2 â€” Single published set: publish v2 supersedes v1
+//! V3 â€” Published edit block: published set cannot be directly edited
 
 #[cfg(test)]
 mod tests {
@@ -41,9 +41,10 @@ mod tests {
     async fn setup_domain(db: &sea_orm::DatabaseConnection) -> i64 {
         let payload = CreateReferenceDomainPayload {
             code: "FAILURE_CLASS".to_string(),
-            name: "Classes de défaillance".to_string(),
+            name: "Classes de dÃ©faillance".to_string(),
             structure_type: "hierarchical".to_string(),
             governance_level: "protected_analytical".to_string(),
+            governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(false),
             validation_rules_json: None,
         };
@@ -57,9 +58,10 @@ mod tests {
     async fn setup_domain_2(db: &sea_orm::DatabaseConnection) -> i64 {
         let payload = CreateReferenceDomainPayload {
             code: "EQUIPMENT_FAMILY".to_string(),
-            name: "Familles d'équipements".to_string(),
+            name: "Familles d'Ã©quipements".to_string(),
             structure_type: "hierarchical".to_string(),
             governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(true),
             validation_rules_json: None,
         };
@@ -69,7 +71,7 @@ mod tests {
         domain.id
     }
 
-    // ── V1 — Transition ordering ──────────────────────────────────────────
+    // â”€â”€ V1 â€” Transition ordering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[tokio::test]
     async fn v1_publish_draft_directly_must_fail() {
@@ -81,7 +83,7 @@ mod tests {
             .expect("create draft");
         assert_eq!(draft.status, SET_STATUS_DRAFT);
 
-        // Attempt to publish a draft directly — must fail
+        // Attempt to publish a draft directly â€” must fail
         let err = sets::publish_set(&db, draft.id, 1)
             .await
             .expect_err("publishing draft directly should fail");
@@ -103,7 +105,7 @@ mod tests {
         let db = setup().await;
         let domain_id = setup_domain(&db).await;
 
-        // Create, validate, publish v1 → becomes published
+        // Create, validate, publish v1 â†’ becomes published
         let v1 = sets::create_draft_set(&db, domain_id, 1)
             .await
             .expect("create v1 draft");
@@ -115,7 +117,7 @@ mod tests {
             .expect("publish v1");
         assert_eq!(v1.status, SET_STATUS_PUBLISHED);
 
-        // Create, validate, publish v2 → v1 becomes superseded
+        // Create, validate, publish v2 â†’ v1 becomes superseded
         let v2 = sets::create_draft_set(&db, domain_id, 1)
             .await
             .expect("create v2 draft");
@@ -132,7 +134,7 @@ mod tests {
             .expect("get v1");
         assert_eq!(v1_after.status, SET_STATUS_SUPERSEDED);
 
-        // Try to validate superseded v1 — must fail
+        // Try to validate superseded v1 â€” must fail
         let err = sets::validate_set(&db, v1.id, 1)
             .await
             .expect_err("validate superseded should fail");
@@ -153,7 +155,7 @@ mod tests {
             .expect("validate");
         assert_eq!(validated.status, SET_STATUS_VALIDATED);
 
-        // Try to validate again — must fail (already validated, not draft)
+        // Try to validate again â€” must fail (already validated, not draft)
         let err = sets::validate_set(&db, validated.id, 1)
             .await
             .expect_err("revalidate should fail");
@@ -207,7 +209,7 @@ mod tests {
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
 
-    // ── V2 — Single published set ─────────────────────────────────────────
+    // â”€â”€ V2 â€” Single published set â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[tokio::test]
     async fn v2_publish_v2_supersedes_v1() {
@@ -275,13 +277,13 @@ mod tests {
         let b1 = sets::validate_set(&db, b1.id, 1).await.expect("validate B1");
         let b1 = sets::publish_set(&db, b1.id, 1).await.expect("publish B1");
 
-        // Both should be published — domains are independent
+        // Both should be published â€” domains are independent
         let a1_r = sets::get_reference_set(&db, a1.id).await.expect("get A1");
         let b1_r = sets::get_reference_set(&db, b1.id).await.expect("get B1");
         assert_eq!(a1_r.status, SET_STATUS_PUBLISHED);
         assert_eq!(b1_r.status, SET_STATUS_PUBLISHED);
 
-        // Publish v2 in domain A — should NOT affect domain B
+        // Publish v2 in domain A â€” should NOT affect domain B
         let a2 = sets::create_draft_set(&db, domain_a, 1)
             .await
             .expect("create A2");
@@ -323,7 +325,7 @@ mod tests {
         assert_eq!(v3.version_no, 3);
     }
 
-    // ── V3 — Published edit block ─────────────────────────────────────────
+    // â”€â”€ V3 â€” Published edit block â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[tokio::test]
     async fn v3_published_set_immutable_via_guard() {
@@ -392,7 +394,7 @@ mod tests {
             .await
             .expect("publish");
 
-        // Attempt to publish again — must fail
+        // Attempt to publish again â€” must fail
         let err = sets::publish_set(&db, published.id, 1)
             .await
             .expect_err("re-publish should fail");
@@ -400,7 +402,7 @@ mod tests {
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
 
-    // ── Additional edge-case coverage ─────────────────────────────────────
+    // â”€â”€ Additional edge-case coverage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[tokio::test]
     async fn only_one_draft_per_domain() {
@@ -499,5 +501,322 @@ mod tests {
             .expect("create draft");
 
         assert_eq!(draft.created_by_id, Some(42));
+    }
+
+    // ── Clone-from-published + discard ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn bootstrap_draft_is_empty_when_no_published() {
+        let db = setup().await;
+        let domain_id = setup_domain(&db).await;
+
+        let draft = sets::create_draft_set(&db, domain_id, 1)
+            .await
+            .expect("bootstrap draft");
+        let vals = crate::reference::values::list_values(&db, draft.id)
+            .await
+            .expect("list");
+        assert!(vals.is_empty(), "bootstrap draft must be empty");
+    }
+
+    #[tokio::test]
+    async fn clone_from_published_preserves_hierarchy_metadata_and_aliases() {
+        use crate::reference::aliases::{self, CreateReferenceAliasPayload};
+        use crate::reference::values::{self, CreateReferenceValuePayload};
+
+        let db = setup().await;
+        let domain_id = setup_domain(&db).await;
+
+        let draft = sets::create_draft_set(&db, domain_id, 1)
+            .await
+            .expect("v1 draft");
+
+        let root = values::create_value(
+            &db,
+            CreateReferenceValuePayload {
+            set_id: draft.id,
+            parent_id: None,
+            code: "ROOT".into(),
+            label: "Root".into(),
+            description: Some("root desc".into()),
+            sort_order: Some(10),
+            color_hex: Some("#112233".into()),
+            icon_name: None,
+            semantic_tag: None,
+            external_code: Some("EXT-R".into()),
+            metadata_json: Some(r#"{"k":"v"}"#.into()),
+            },
+            1,
+        )
+        .await
+        .expect("root");
+
+        let child = values::create_value(
+            &db,
+            CreateReferenceValuePayload {
+                set_id: draft.id,
+                parent_id: Some(root.id),
+                code: "CHILD".into(),
+                label: "Child".into(),
+                description: None,
+                sort_order: Some(20),
+                color_hex: None,
+                icon_name: None,
+                semantic_tag: None,
+                external_code: None,
+                metadata_json: None,
+            },
+            1,
+        )
+        .await
+        .expect("child");
+
+        // Inactive leaf
+        let inactive = values::create_value(
+            &db,
+            CreateReferenceValuePayload {
+                set_id: draft.id,
+                parent_id: None,
+                code: "OLD".into(),
+                label: "Old".into(),
+                description: None,
+                sort_order: Some(30),
+                color_hex: None,
+                icon_name: None,
+                semantic_tag: None,
+                external_code: None,
+                metadata_json: None,
+            },
+            1,
+        )
+        .await
+        .expect("inactive");
+        values::deactivate_value(&db, inactive.id, 1)
+            .await
+            .expect("deactivate");
+
+        aliases::create_alias(
+            &db,
+            CreateReferenceAliasPayload {
+                reference_value_id: root.id,
+                alias_label: "Racine".into(),
+                locale: "fr".into(),
+                alias_type: "search".into(),
+                is_preferred: Some(true),
+            },
+            1,
+        )
+        .await
+        .expect("alias");
+
+        sets::validate_set(&db, draft.id, 1)
+            .await
+            .expect("validate");
+        let published = sets::publish_set(&db, draft.id, 1)
+            .await
+            .expect("publish");
+
+        let v2 = sets::create_draft_set(&db, domain_id, 1)
+            .await
+            .expect("clone draft");
+
+        let cloned = values::list_values(&db, v2.id).await.expect("list clone");
+        assert_eq!(cloned.len(), 3);
+
+        let c_root = cloned.iter().find(|v| v.code == "ROOT").expect("ROOT");
+        let c_child = cloned.iter().find(|v| v.code == "CHILD").expect("CHILD");
+        let c_old = cloned.iter().find(|v| v.code == "OLD").expect("OLD");
+
+        assert_ne!(c_root.id, root.id);
+        assert_ne!(c_child.id, child.id);
+        assert_eq!(c_child.parent_id, Some(c_root.id), "parent remapped");
+        assert_eq!(c_root.description.as_deref(), Some("root desc"));
+        assert_eq!(c_root.sort_order, Some(10));
+        assert_eq!(c_root.color_hex.as_deref(), Some("#112233"));
+        assert_eq!(c_root.external_code.as_deref(), Some("EXT-R"));
+        assert_eq!(c_root.metadata_json.as_deref(), Some(r#"{"k":"v"}"#));
+        assert!(!c_old.is_active, "inactive preserved");
+
+        let aliases = aliases::list_aliases(&db, c_root.id)
+            .await
+            .expect("aliases");
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases[0].alias_label, "Racine");
+        assert!(aliases[0].is_preferred);
+
+        // Published untouched
+        let pub_vals = values::list_values(&db, published.id)
+            .await
+            .expect("pub vals");
+        assert_eq!(pub_vals.len(), 3);
+        assert_eq!(pub_vals.iter().find(|v| v.code == "ROOT").unwrap().id, root.id);
+    }
+
+    #[tokio::test]
+    async fn discard_draft_removes_set_keeps_published() {
+        use crate::reference::values::{self, CreateReferenceValuePayload};
+
+        let db = setup().await;
+        let domain_id = setup_domain(&db).await;
+
+        let v1 = sets::create_draft_set(&db, domain_id, 1).await.expect("v1");
+        values::create_value(
+            &db,
+            CreateReferenceValuePayload {
+                set_id: v1.id,
+                parent_id: None,
+                code: "A".into(),
+                label: "A".into(),
+                description: None,
+                sort_order: None,
+                color_hex: None,
+                icon_name: None,
+                semantic_tag: None,
+                external_code: None,
+                metadata_json: None,
+            },
+            1,
+        )
+        .await
+        .expect("val");
+        sets::validate_set(&db, v1.id, 1).await.expect("validate");
+        let published = sets::publish_set(&db, v1.id, 1).await.expect("publish");
+
+        let draft = sets::create_draft_set(&db, domain_id, 1)
+            .await
+            .expect("draft");
+        assert!(!values::list_values(&db, draft.id).await.unwrap().is_empty());
+
+        sets::discard_draft_set(&db, draft.id)
+            .await
+            .expect("discard");
+
+        let err = sets::get_reference_set(&db, draft.id)
+            .await
+            .expect_err("draft gone");
+        assert!(matches!(err, AppError::NotFound { .. }));
+
+        let still = sets::get_reference_set(&db, published.id)
+            .await
+            .expect("published remains");
+        assert_eq!(still.status, SET_STATUS_PUBLISHED);
+
+        // Can create a new draft again
+        let again = sets::create_draft_set(&db, domain_id, 1)
+            .await
+            .expect("new draft after discard");
+        assert_eq!(again.status, SET_STATUS_DRAFT);
+    }
+
+    #[tokio::test]
+    async fn discard_rejects_published_set() {
+        let db = setup().await;
+        let domain_id = setup_domain(&db).await;
+        let v1 = sets::create_draft_set(&db, domain_id, 1).await.expect("draft");
+        sets::validate_set(&db, v1.id, 1).await.expect("validate");
+        let published = sets::publish_set(&db, v1.id, 1).await.expect("publish");
+
+        let err = sets::discard_draft_set(&db, published.id)
+            .await
+            .expect_err("cannot discard published");
+        assert!(matches!(err, AppError::ValidationFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn publish_after_clone_supersedes_prior() {
+        use crate::reference::values::{self, CreateReferenceValuePayload};
+
+        let db = setup().await;
+        let domain_id = setup_domain(&db).await;
+
+        let v1 = sets::create_draft_set(&db, domain_id, 1).await.expect("v1");
+        values::create_value(
+            &db,
+            CreateReferenceValuePayload {
+                set_id: v1.id,
+                parent_id: None,
+                code: "KEEP".into(),
+                label: "Keep".into(),
+                description: None,
+                sort_order: None,
+                color_hex: None,
+                icon_name: None,
+                semantic_tag: None,
+                external_code: None,
+                metadata_json: None,
+            },
+            1,
+        )
+        .await
+        .expect("val");
+        sets::validate_set(&db, v1.id, 1).await.expect("validate");
+        sets::publish_set(&db, v1.id, 1).await.expect("publish v1");
+
+        let v2 = sets::create_draft_set(&db, domain_id, 1)
+            .await
+            .expect("clone");
+        sets::validate_set(&db, v2.id, 1).await.expect("validate v2");
+        let published = sets::publish_set(&db, v2.id, 1).await.expect("publish v2");
+        assert_eq!(published.status, SET_STATUS_PUBLISHED);
+
+        let prior = sets::get_reference_set(&db, v1.id).await.expect("v1");
+        assert_eq!(prior.status, SET_STATUS_SUPERSEDED);
+
+        let live = values::list_values(&db, published.id).await.expect("live");
+        assert!(live.iter().any(|v| v.code == "KEEP"));
+    }
+
+    #[tokio::test]
+    async fn clone_rolls_back_on_orphan_hierarchy() {
+        use crate::reference::values::{self, CreateReferenceValuePayload};
+
+        let db = setup().await;
+        let domain_id = setup_domain(&db).await;
+
+        let v1 = sets::create_draft_set(&db, domain_id, 1).await.expect("v1");
+        values::create_value(
+            &db,
+            CreateReferenceValuePayload {
+                set_id: v1.id,
+                parent_id: None,
+                code: "OK".into(),
+                label: "Ok".into(),
+                description: None,
+                sort_order: None,
+                color_hex: None,
+                icon_name: None,
+                semantic_tag: None,
+                external_code: None,
+                metadata_json: None,
+            },
+            1,
+        )
+        .await
+        .expect("val");
+        sets::validate_set(&db, v1.id, 1).await.expect("validate");
+        sets::publish_set(&db, v1.id, 1).await.expect("publish");
+
+        // Corrupt published set with orphan parent_id (raw insert)
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO reference_values (set_id, parent_id, code, label, is_active) \
+             VALUES (?, 999999, 'ORPH', 'Orphan', 1)",
+            [v1.id.into()],
+        ))
+        .await
+        .expect("corrupt");
+
+        let err = sets::create_draft_set(&db, domain_id, 1)
+            .await
+            .expect_err("clone must fail on orphan");
+        assert!(matches!(err, AppError::ValidationFailed(_)));
+
+        let sets = sets::list_sets_for_domain(&db, domain_id)
+            .await
+            .expect("list");
+        assert!(
+            !sets.iter().any(|s| s.status == SET_STATUS_DRAFT),
+            "failed clone must leave no draft"
+        );
     }
 }

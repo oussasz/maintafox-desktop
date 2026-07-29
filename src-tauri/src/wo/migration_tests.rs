@@ -1,8 +1,8 @@
 //! Supervisor verification tests for Phase 2 SP05 File 01 Sprint S1.
 //!
 //! V1 — Migration 022 applies cleanly; all tables created; work_order_stubs dropped.
-//! V2 — Seed row counts: work_order_types=7, work_order_statuses=12, urgency_levels=5,
-//!       delay_reason_codes=10.
+//! V2 — Seed row counts: work_order_types=7, work_order_statuses=8 live system rows
+//!       (Option B; table may also hold retired rows), urgency_levels=5, delay_reason_codes=10.
 
 #[cfg(test)]
 mod tests {
@@ -162,9 +162,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v2_work_order_statuses_has_12_rows() {
+    async fn v2_work_order_statuses_has_8_rows() {
         let db = setup().await;
-        assert_eq!(count_rows(&db, "work_order_statuses").await, 12);
+        let row = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS cnt FROM work_order_statuses WHERE is_system = 1;"
+                    .to_string(),
+            ))
+            .await
+            .expect("query")
+            .expect("row");
+        let cnt: i64 = row.try_get("", "cnt").unwrap();
+        assert_eq!(cnt, 8);
+
+        for code in [
+            "draft",
+            "planning",
+            "ready",
+            "in_progress",
+            "on_hold",
+            "completed",
+            "closed",
+            "cancelled",
+        ] {
+            let found = db
+                .query_one(Statement::from_string(
+                    DbBackend::Sqlite,
+                    format!(
+                        "SELECT 1 AS ok FROM work_order_statuses \
+                         WHERE is_system = 1 AND code = '{code}' LIMIT 1;"
+                    ),
+                ))
+                .await
+                .expect("query");
+            assert!(found.is_some(), "missing system status code: {code}");
+        }
     }
 
     #[tokio::test]

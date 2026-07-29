@@ -1,29 +1,37 @@
-//! Publish validation and node-type remap service.
+//! Publish validation and atomic promote service.
 //!
-//! Before a draft structure model can be activated, the validator confirms
-//! that live nodes can be safely mapped into the new model's node-type
-//! vocabulary.  The remap plan bridges old active type IDs to new draft
-//! type IDs by matching on the stable `code` field.
+//! Before a draft structure model can be activated the validator confirms that
+//! the draft *node tree* is structurally sound against the draft *type schema*.
+//! Node checks now evaluate **draft nodes** (`structure_model_id = draft_model_id`)
+//! rather than the global live tree; the two trees are never mixed.
+//!
+//! `publish_model_with_remap` performs the full atomic promote:
+//!   1. Validate draft (draft tree vs draft schema)
+//!   2. Build active-node → draft-node map via origin_node_id
+//!   3. Detect unmapped active nodes still referenced by ops FKs → fail early
+//!   4. Remap all operational FKs (old active node ids → new draft node ids)
+//!   5. Soft-delete all nodes in the old active model
+//!   6. Supersede old active model; activate draft
+//!   7. Clear origin_node_id on the newly active nodes
+//!   8. Commit
+//!
+//! First publish (no prior active model): skip steps 3–5 & 7.
 //!
 //! Sub-phase 01 — File 04 — Sprint S1.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::errors::{AppError, AppResult};
+use crate::errors::{
+    issue_params, AppError, AppResult, AppValidationIssue, org_validation_failed_issues,
+};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrgValidationIssue {
-    pub code: String,
-    /// `"error"` (blocking) or `"warning"` (informational).
-    pub severity: String,
-    pub message: String,
-    pub related_id: Option<i64>,
-}
+/// Publish / preview validation issue (alias of shared IPC shape).
+pub type OrgValidationIssue = AppValidationIssue;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrgPublishValidationResult {
@@ -32,6 +40,7 @@ pub struct OrgPublishValidationResult {
     pub issue_count: i64,
     pub blocking_count: i64,
     pub issues: Vec<OrgValidationIssue>,
+    /// Number of active nodes that will be remapped to draft clones.
     pub remap_count: i64,
 }
 
@@ -54,7 +63,7 @@ struct DraftNodeType {
     can_carry_cost_center: bool,
 }
 
-struct LiveNodeInfo {
+struct DraftNodeInfo {
     node_id: i64,
     node_name: String,
     type_code: String,
@@ -135,24 +144,24 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
     ))
 }
 
-fn blocking_issue(code: &str, message: String, related_id: Option<i64>) -> OrgValidationIssue {
-    OrgValidationIssue {
-        code: code.to_string(),
-        severity: "error".to_string(),
-        message,
-        related_id,
-    }
+fn blocking_issue(
+    code: &str,
+    message: String,
+    related_id: Option<i64>,
+    params: HashMap<String, String>,
+) -> OrgValidationIssue {
+    AppValidationIssue::error_with_related(code, message, related_id, params)
 }
 
 // ─── Service functions ────────────────────────────────────────────────────────
 
 /// Validate a draft structure model for publish readiness.
 ///
-/// Returns a result struct with all detected issues.  `can_publish` is `true`
-/// only when zero blocking issues exist.
+/// Structural schema checks (1–5, 9–10) evaluate the draft type vocabulary.
+/// Node tree checks (6–8) evaluate **draft nodes** (`structure_model_id = model_id`)
+/// against the draft type rules. No assumption is made about a global live tree.
 ///
-/// Accepts any `ConnectionTrait` implementor so it can run both standalone
-/// (with `&DatabaseConnection`) and inside a transaction.
+/// `can_publish` is `true` only when zero blocking issues exist.
 pub async fn validate_draft_model_for_publish(
     db: &impl ConnectionTrait,
     model_id: i64,
@@ -177,9 +186,13 @@ pub async fn validate_draft_model_for_publish(
         .map_err(|e| decode_err("status", e))?;
 
     if model_status != "draft" {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "model {model_id} is '{model_status}', not 'draft' — only draft models can be validated for publish"
-        )]));
+        return Err(crate::errors::org_validation_failed(
+            "ORG_VALIDATE_NOT_DRAFT",
+            format!(
+                "This model is '{model_status}', not a draft. Only drafts can be checked for publish."
+            ),
+            crate::errors::issue_params(&[("status", model_status)]),
+        ));
     }
 
     // ── Fetch all active draft node types ─────────────────────────────────
@@ -232,17 +245,20 @@ pub async fn validate_draft_model_for_publish(
     if root_types.is_empty() {
         issues.push(blocking_issue(
             "NO_ROOT_TYPE",
-            "draft model has no root node type".to_string(),
+            "This draft has no top-level organization type. Mark exactly one type as the root."
+                .to_string(),
             None,
+            HashMap::new(),
         ));
     } else if root_types.len() > 1 {
+        let root_count = root_types.len().to_string();
         issues.push(blocking_issue(
             "MULTIPLE_ROOT_TYPES",
             format!(
-                "draft model has {} root types (expected exactly 1)",
-                root_types.len()
+                "This draft has {root_count} top-level types. Keep only one type marked as the root."
             ),
             None,
+            issue_params(&[("rootCount", root_count)]),
         ));
     }
 
@@ -254,13 +270,15 @@ pub async fn validate_draft_model_for_publish(
         }
         for (code, count) in &code_counts {
             if *count > 1 {
+                let type_code = (*code).to_string();
+                let count_str = count.to_string();
                 issues.push(blocking_issue(
                     "DUPLICATE_TYPE_CODE",
                     format!(
-                        "node type code '{}' appears {} times in the draft model",
-                        code, count
+                        "The type code '{type_code}' is used {count_str} times. Each type needs a unique code."
                     ),
                     None,
+                    issue_params(&[("typeCode", type_code), ("count", count_str)]),
                 ));
             }
         }
@@ -305,13 +323,15 @@ pub async fn validate_draft_model_for_publish(
         // 4. Every type must be reachable from the root
         for t in &draft_types {
             if !reachable.contains(&t.code) {
+                let type_code = t.code.clone();
                 issues.push(blocking_issue(
                     "UNREACHABLE_TYPE",
                     format!(
-                        "node type '{}' is not reachable from the root through relationship rules",
-                        t.code
+                        "The level '{type_code}' is not connected to the top of your organization. \
+                         Add a relationship rule so it can sit under the root or another allowed level."
                     ),
                     Some(t.id),
+                    issue_params(&[("typeCode", type_code)]),
                 ));
             }
         }
@@ -320,8 +340,10 @@ pub async fn validate_draft_model_for_publish(
         if has_cycle {
             issues.push(blocking_issue(
                 "RULE_GRAPH_CYCLE",
-                "the relationship-rule graph contains a cycle".to_string(),
+                "Some relationship rules form a loop (A under B and B under A). Remove the circular link."
+                    .to_string(),
                 None,
+                HashMap::new(),
             ));
         }
     }
@@ -330,8 +352,10 @@ pub async fn validate_draft_model_for_publish(
     if !draft_types.iter().any(|t| t.can_own_work) {
         issues.push(blocking_issue(
             "NO_WORK_CAPABLE_TYPE",
-            "no active node type in the draft model has can_own_work enabled".to_string(),
+            "No organization level is set up to own work. Turn on work ownership for at least one level."
+                .to_string(),
             None,
+            HashMap::new(),
         ));
     }
 
@@ -339,115 +363,145 @@ pub async fn validate_draft_model_for_publish(
     if !draft_types.iter().any(|t| t.can_host_assets) {
         issues.push(blocking_issue(
             "NO_ASSET_CAPABLE_TYPE",
-            "no active node type in the draft model has can_host_assets enabled".to_string(),
+            "No organization level is set up to host assets. Turn on asset hosting for at least one level."
+                .to_string(),
             None,
+            HashMap::new(),
         ));
     }
 
-    // ── Live-node checks (6 – 8) ─────────────────────────────────────────
-    // Skipped when no active model exists (first publish — no live nodes).
-    let active_model_exists = db
-        .query_one(Statement::from_string(
+    // ── Draft-tree node checks (6–8) ──────────────────────────────────────
+    // Evaluate the draft tree (structure_model_id = model_id) against draft
+    // type rules. This replaces the old live-tree checks and works for both
+    // first publish (empty draft tree) and subsequent publishes.
+    let draft_node_rows = db
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM org_structure_models WHERE status = 'active' LIMIT 1".to_string(),
+            "SELECT n.id AS node_id, n.name AS node_name, \
+                    nt.code AS type_code, n.cost_center_code, \
+                    pnt.code AS parent_type_code \
+             FROM org_nodes n \
+             JOIN org_node_types nt ON nt.id = n.node_type_id \
+             LEFT JOIN org_nodes p ON p.id = n.parent_id \
+                  AND p.deleted_at IS NULL \
+                  AND p.structure_model_id = n.structure_model_id \
+             LEFT JOIN org_node_types pnt ON pnt.id = p.node_type_id \
+             WHERE n.deleted_at IS NULL \
+               AND n.structure_model_id = ?",
+            [model_id.into()],
         ))
-        .await?
-        .is_some();
+        .await?;
 
-    let mut remap_count: i64 = 0;
-
-    if active_model_exists {
-        let live_rows = db
-            .query_all(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT n.id AS node_id, n.name AS node_name, \
-                        nt.code AS type_code, n.cost_center_code, \
-                        pnt.code AS parent_type_code \
-                 FROM org_nodes n \
-                 JOIN org_node_types nt ON nt.id = n.node_type_id \
-                 LEFT JOIN org_nodes p ON p.id = n.parent_id AND p.deleted_at IS NULL \
-                 LEFT JOIN org_node_types pnt ON pnt.id = p.node_type_id \
-                 WHERE n.deleted_at IS NULL AND n.status = 'active'"
-                    .to_string(),
-            ))
-            .await?;
-
-        let live_nodes: Vec<LiveNodeInfo> = live_rows
-            .into_iter()
-            .map(|row| {
-                Ok(LiveNodeInfo {
-                    node_id: row
-                        .try_get::<i64>("", "node_id")
-                        .map_err(|e| decode_err("node_id", e))?,
-                    node_name: row
-                        .try_get::<String>("", "node_name")
-                        .map_err(|e| decode_err("node_name", e))?,
-                    type_code: row
-                        .try_get::<String>("", "type_code")
-                        .map_err(|e| decode_err("type_code", e))?,
-                    cost_center_code: row
-                        .try_get::<Option<String>>("", "cost_center_code")
-                        .map_err(|e| decode_err("cost_center_code", e))?,
-                    parent_type_code: row
-                        .try_get::<Option<String>>("", "parent_type_code")
-                        .map_err(|e| decode_err("parent_type_code", e))?,
-                })
+    let draft_nodes: Vec<DraftNodeInfo> = draft_node_rows
+        .into_iter()
+        .map(|row| {
+            Ok(DraftNodeInfo {
+                node_id: row
+                    .try_get::<i64>("", "node_id")
+                    .map_err(|e| decode_err("node_id", e))?,
+                node_name: row
+                    .try_get::<String>("", "node_name")
+                    .map_err(|e| decode_err("node_name", e))?,
+                type_code: row
+                    .try_get::<String>("", "type_code")
+                    .map_err(|e| decode_err("type_code", e))?,
+                cost_center_code: row
+                    .try_get::<Option<String>>("", "cost_center_code")
+                    .map_err(|e| decode_err("cost_center_code", e))?,
+                parent_type_code: row
+                    .try_get::<Option<String>>("", "parent_type_code")
+                    .map_err(|e| decode_err("parent_type_code", e))?,
             })
-            .collect::<AppResult<Vec<_>>>()?;
+        })
+        .collect::<AppResult<Vec<_>>>()?;
 
-        // Count distinct type codes used by live nodes that map into the draft model
-        let used_codes: HashSet<&str> =
-            live_nodes.iter().map(|n| n.type_code.as_str()).collect();
-        remap_count = used_codes
-            .iter()
-            .filter(|c| draft_type_by_code.contains_key(**c))
-            .count() as i64;
+    for node in &draft_nodes {
+        // 6. Every draft node's type code exists in this draft model
+        let Some(draft_type) = draft_type_by_code.get(node.type_code.as_str()) else {
+            let node_name = node.node_name.clone();
+            let type_code = node.type_code.clone();
+            issues.push(blocking_issue(
+                "MISSING_TYPE_CODE",
+                format!(
+                    "'{node_name}' uses the level '{type_code}', which is not defined in this draft. \
+                     Assign a valid level or add that type."
+                ),
+                Some(node.node_id),
+                issue_params(&[("nodeName", node_name), ("typeCode", type_code)]),
+            ));
+            continue;
+        };
 
-        for node in &live_nodes {
-            // 6. Every active live node's type code exists in the draft model
-            let Some(draft_type) = draft_type_by_code.get(node.type_code.as_str()) else {
+        // 7. Parent-child pair remains allowed by the draft model's rules
+        if let Some(ref parent_code) = node.parent_type_code {
+            if !allowed_pairs.contains(&(parent_code.clone(), node.type_code.clone())) {
+                let node_name = node.node_name.clone();
+                let parent_type = parent_code.clone();
+                let child_type = node.type_code.clone();
                 issues.push(blocking_issue(
-                    "MISSING_TYPE_CODE",
+                    "PARENT_CHILD_NOT_ALLOWED",
                     format!(
-                        "live node '{}' (id={}) uses type code '{}' which does not exist in the draft model",
-                        node.node_name, node.node_id, node.type_code
+                        "'{node_name}' ({child_type}) cannot sit under a {parent_type} with the \
+                         current relationship rules. Move it or update the rules."
                     ),
                     Some(node.node_id),
-                ));
-                continue;
-            };
-
-            // 7. Parent-child pair remains allowed by the draft model's rules
-            if let Some(ref parent_code) = node.parent_type_code {
-                if !allowed_pairs
-                    .contains(&(parent_code.clone(), node.type_code.clone()))
-                {
-                    issues.push(blocking_issue(
-                        "PARENT_CHILD_NOT_ALLOWED",
-                        format!(
-                            "live node '{}' (id={}) has parent type '{}' / child type '{}' \
-                             which is not allowed in the draft model",
-                            node.node_name, node.node_id, parent_code, node.type_code
-                        ),
-                        Some(node.node_id),
-                    ));
-                }
-            }
-
-            // 8. cost_center_code requires can_carry_cost_center on the draft type
-            if node.cost_center_code.is_some() && !draft_type.can_carry_cost_center {
-                issues.push(blocking_issue(
-                    "COST_CENTER_INCOMPATIBLE",
-                    format!(
-                        "live node '{}' (id={}) has a cost_center_code but type '{}' in the \
-                         draft model does not allow cost centers",
-                        node.node_name, node.node_id, node.type_code
-                    ),
-                    Some(node.node_id),
+                    issue_params(&[
+                        ("nodeName", node_name),
+                        ("parentType", parent_type),
+                        ("childType", child_type),
+                    ]),
                 ));
             }
         }
+
+        // 8. cost_center_code requires can_carry_cost_center on the draft type
+        if node.cost_center_code.is_some() && !draft_type.can_carry_cost_center {
+            let node_name = node.node_name.clone();
+            let type_code = node.type_code.clone();
+            issues.push(blocking_issue(
+                "COST_CENTER_INCOMPATIBLE",
+                format!(
+                    "'{node_name}' has a cost center, but its level '{type_code}' does not allow \
+                     cost centers. Remove the cost center or allow them on that level."
+                ),
+                Some(node.node_id),
+                issue_params(&[("nodeName", node_name), ("typeCode", type_code)]),
+            ));
+        }
     }
+
+    // Unmapped active nodes with ops refs block publish (same rule as publish_model_with_remap).
+    if let Some(active_id) = crate::org::model_scope::try_get_active_model_id(db).await? {
+        let unmapped =
+            collect_unmapped_active_nodes_with_ops_refs(db, model_id, active_id).await?;
+        for u in unmapped {
+            let node_name = u.node_name.clone();
+            let ops_ref_count = u.ops_ref_count.to_string();
+            issues.push(blocking_issue(
+                "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS",
+                format!(
+                    "'{node_name}' is still used by live data but is missing from this draft. \
+                     Repair the draft copies, or detach those links before publishing."
+                ),
+                Some(u.node_id),
+                issue_params(&[("nodeName", node_name), ("opsRefCount", ops_ref_count)]),
+            ));
+        }
+    }
+
+    // remap_count = draft nodes with an origin_node_id (clones of active nodes)
+    let remap_count_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS cnt FROM org_nodes \
+             WHERE structure_model_id = ? AND origin_node_id IS NOT NULL AND deleted_at IS NULL",
+            [model_id.into()],
+        ))
+        .await?
+        .expect("COUNT always returns a row");
+    let remap_count: i64 = remap_count_row
+        .try_get("", "cnt")
+        .map_err(|e| decode_err("cnt", e))?;
 
     // ── Build result ──────────────────────────────────────────────────────
     let blocking_count = issues.iter().filter(|i| i.severity == "error").count() as i64;
@@ -521,14 +575,227 @@ pub async fn build_type_remap_plan(
         .collect()
 }
 
-/// Publish a draft model with full validation and transactional live-node remap.
+// ─── FK remap helpers ─────────────────────────────────────────────────────────
+
+/// Remap a single INTEGER FK column in a table.
+async fn remap_integer_fk(
+    txn: &impl ConnectionTrait,
+    table: &str,
+    column: &str,
+    old_id: i64,
+    new_id: i64,
+    now: &str,
+) -> AppResult<()> {
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        &format!(
+            "UPDATE {table} SET {column} = ?, updated_at = ?, row_version = row_version + 1 \
+             WHERE {column} = ?"
+        ),
+        [new_id.into(), now.to_string().into(), old_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Remap an INTEGER FK on tables that have `row_version` but no `updated_at`.
+async fn remap_integer_fk_row_version_only(
+    txn: &impl ConnectionTrait,
+    table: &str,
+    column: &str,
+    old_id: i64,
+    new_id: i64,
+) -> AppResult<()> {
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        &format!(
+            "UPDATE {table} SET {column} = ?, row_version = row_version + 1 \
+             WHERE {column} = ?"
+        ),
+        [new_id.into(), old_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Remap a TEXT scope_reference column in user_scope_assignments for a specific scope_type.
+async fn remap_scope_reference(
+    txn: &impl ConnectionTrait,
+    scope_type: &str,
+    old_id: i64,
+    new_id: i64,
+    now: &str,
+) -> AppResult<()> {
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE user_scope_assignments \
+         SET scope_reference = ?, updated_at = ?, row_version = row_version + 1 \
+         WHERE scope_type = ? AND scope_reference = ? AND deleted_at IS NULL",
+        [
+            new_id.to_string().into(),
+            now.to_string().into(),
+            scope_type.to_string().into(),
+            old_id.to_string().into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Count how many ops records reference a given active node id.
+/// Returns a non-zero count if the node has any live ops references.
+async fn count_ops_references(
+    txn: &impl ConnectionTrait,
+    active_node_id: i64,
+) -> AppResult<i64> {
+    // Only filter `deleted_at` on tables that actually have that column
+    // (equipment, user_scope_assignments). personnel / work_orders /
+    // intervention_requests use hard deletes or status flags instead.
+    let check_sql = format!(
+        "SELECT \
+          (SELECT COUNT(*) FROM equipment WHERE installed_at_node_id = {id} AND deleted_at IS NULL) + \
+          (SELECT COUNT(*) FROM equipment WHERE functional_position_node_id = {id} AND deleted_at IS NULL) + \
+          (SELECT COUNT(*) FROM intervention_requests WHERE org_node_id = {id}) + \
+          (SELECT COUNT(*) FROM work_orders WHERE location_id = {id}) + \
+          (SELECT COUNT(*) FROM personnel WHERE primary_entity_id = {id}) + \
+          (SELECT COUNT(*) FROM personnel WHERE primary_team_id = {id}) + \
+          (SELECT COUNT(*) FROM user_scope_assignments WHERE scope_reference = '{id}' AND scope_type IN ('entity','org_node','site','team') AND deleted_at IS NULL) + \
+          (SELECT COUNT(*) FROM capacity_rules WHERE entity_id = {id}) + \
+          (SELECT COUNT(*) FROM capacity_rules WHERE team_id = {id}) + \
+          (SELECT COUNT(*) FROM planning_windows WHERE entity_id = {id}) + \
+          (SELECT COUNT(*) FROM schedule_commitments WHERE assigned_team_id = {id}) + \
+          (SELECT COUNT(*) FROM cost_centers WHERE entity_id = {id}) + \
+          (SELECT COUNT(*) FROM budget_lines WHERE team_id = {id}) + \
+          (SELECT COUNT(*) FROM inspection_templates WHERE org_scope_id = {id}) + \
+          (SELECT COUNT(*) FROM closeout_validation_policies WHERE entity_id = {id}) \
+         AS total",
+        id = active_node_id
+    );
+    let row = txn
+        .query_one(Statement::from_string(DbBackend::Sqlite, check_sql))
+        .await?
+        .expect("scalar COUNT query always returns a row");
+    let total: i64 = row
+        .try_get("", "total")
+        .map_err(|e| decode_err("total", e))?;
+    Ok(total)
+}
+
+/// Active live node that has ops FKs but no draft clone with `origin_node_id`.
+#[derive(Debug, Clone)]
+pub struct UnmappedActiveNodeWithOpsRefs {
+    pub node_id: i64,
+    pub node_name: String,
+    pub ops_ref_count: i64,
+}
+
+/// Shared publish/validate check: active nodes with ops refs and no draft lineage clone.
+pub async fn collect_unmapped_active_nodes_with_ops_refs(
+    db: &impl ConnectionTrait,
+    draft_model_id: i64,
+    active_model_id: i64,
+) -> AppResult<Vec<UnmappedActiveNodeWithOpsRefs>> {
+    let clone_rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT origin_node_id AS active_id \
+             FROM org_nodes \
+             WHERE structure_model_id = ? \
+               AND origin_node_id IS NOT NULL \
+               AND deleted_at IS NULL",
+            [draft_model_id.into()],
+        ))
+        .await?;
+
+    let mut remapped: HashSet<i64> = HashSet::new();
+    for row in &clone_rows {
+        let active_id: i64 = row
+            .try_get("", "active_id")
+            .map_err(|e| decode_err("active_id", e))?;
+        remapped.insert(active_id);
+    }
+
+    let active_node_rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, name FROM org_nodes \
+             WHERE structure_model_id = ? AND deleted_at IS NULL",
+            [active_model_id.into()],
+        ))
+        .await?;
+
+    let mut out = Vec::new();
+    for row in &active_node_rows {
+        let active_id: i64 = row
+            .try_get("", "id")
+            .map_err(|e| decode_err("id", e))?;
+        if remapped.contains(&active_id) {
+            continue;
+        }
+        let active_name: String = row
+            .try_get("", "name")
+            .map_err(|e| decode_err("name", e))?;
+        let ref_count = count_ops_references(db, active_id).await?;
+        if ref_count > 0 {
+            out.push(UnmappedActiveNodeWithOpsRefs {
+                node_id: active_id,
+                node_name: active_name,
+                ops_ref_count: ref_count,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Execute all ops FK remaps for a single (old → new) node pair.
+async fn remap_node_ops_fks(
+    txn: &impl ConnectionTrait,
+    old_id: i64,
+    new_id: i64,
+    now: &str,
+) -> AppResult<()> {
+    // Tables whose updated_at column has a different name or might not track it
+    // use a simpler form; all standard tables follow the same schema convention.
+    remap_integer_fk(txn, "equipment", "installed_at_node_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "equipment", "functional_position_node_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "intervention_requests", "org_node_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "work_orders", "location_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "personnel", "primary_entity_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "personnel", "primary_team_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "capacity_rules", "entity_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "capacity_rules", "team_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "planning_windows", "entity_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "schedule_commitments", "assigned_team_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "cost_centers", "entity_id", old_id, new_id, now).await?;
+    remap_integer_fk(txn, "budget_lines", "team_id", old_id, new_id, now).await?;
+    remap_integer_fk_row_version_only(txn, "inspection_templates", "org_scope_id", old_id, new_id).await?;
+    remap_integer_fk(txn, "closeout_validation_policies", "entity_id", old_id, new_id, now).await?;
+
+    // user_scope_assignments.scope_reference is TEXT; remap both scope types that store node IDs.
+    remap_scope_reference(txn, "entity", old_id, new_id, now).await?;
+    remap_scope_reference(txn, "org_node", old_id, new_id, now).await?;
+    remap_scope_reference(txn, "site", old_id, new_id, now).await?;
+    remap_scope_reference(txn, "team", old_id, new_id, now).await?;
+
+    Ok(())
+}
+
+// ─── Publish ──────────────────────────────────────────────────────────────────
+
+/// Atomically promote a draft model to active.
 ///
 /// Transaction sequence:
-/// 1. Validate the draft model (all 10 checks)
-/// 2. If `can_publish = false` → abort with `AppError::ValidationFailed`
-/// 3. Build and execute the node-type remap (update `org_nodes.node_type_id`)
-/// 4. Supersede the current active model
-/// 5. Activate the draft model
+/// 1. Validate draft tree (draft nodes vs draft schema).
+/// 2. If `can_publish = false` → abort with `AppError::OrgValidationFailed`.
+/// 3. (When prior active model exists)
+///    a. Build active-id → draft-id map from `origin_node_id` on draft nodes.
+///    b. Detect active nodes with no draft clone that still have ops FK refs → fail.
+///    c. Remap all ops FKs: old active node id → new draft node id.
+///    d. Soft-delete all nodes in the old active model (`deleted_at = now`).
+///    e. Supersede the old active model.
+/// 4. Activate the draft model.
+/// 5. Clear `origin_node_id` on the newly active nodes (they are now the live tree).
+/// 6. Commit.
 pub async fn publish_model_with_remap(
     db: &DatabaseConnection,
     draft_model_id: i64,
@@ -540,44 +807,115 @@ pub async fn publish_model_with_remap(
     let validation = validate_draft_model_for_publish(&txn, draft_model_id).await?;
 
     if !validation.can_publish {
-        let messages: Vec<String> = validation
+        let blocking: Vec<AppValidationIssue> = validation
             .issues
             .iter()
             .filter(|i| i.severity == "error")
-            .map(|i| i.message.clone())
+            .cloned()
             .collect();
-        return Err(AppError::ValidationFailed(messages));
+        return Err(org_validation_failed_issues(blocking));
     }
 
     let now = Utc::now().to_rfc3339();
 
-    // ── Step 2: build and execute the remap plan ──────────────────────────
-    let remap_plan = build_type_remap_plan(&txn, draft_model_id).await?;
+    // ── Step 2: resolve prior active model ───────────────────────────────
+    let active_row = txn
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM org_structure_models WHERE status = 'active' LIMIT 1".to_string(),
+        ))
+        .await?;
 
-    for remap in &remap_plan {
+    let old_active_model_id: Option<i64> = match active_row {
+        Some(row) => Some(
+            row.try_get("", "id")
+                .map_err(|e| decode_err("id", e))?,
+        ),
+        None => None,
+    };
+
+    let mut effective_remap_count: i64 = 0;
+
+    if let Some(old_model_id) = old_active_model_id {
+        // ── Step 3a: build active→draft node map from origin_node_id ─────
+        let clone_rows = txn
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id AS draft_id, origin_node_id AS active_id \
+                 FROM org_nodes \
+                 WHERE structure_model_id = ? \
+                   AND origin_node_id IS NOT NULL \
+                   AND deleted_at IS NULL",
+                [draft_model_id.into()],
+            ))
+            .await?;
+
+        let mut remap: HashMap<i64, i64> = HashMap::new(); // active_id → draft_id
+        for row in &clone_rows {
+            let draft_id: i64 = row
+                .try_get("", "draft_id")
+                .map_err(|e| decode_err("draft_id", e))?;
+            let active_id: i64 = row
+                .try_get("", "active_id")
+                .map_err(|e| decode_err("active_id", e))?;
+            remap.insert(active_id, draft_id);
+        }
+        effective_remap_count = remap.len() as i64;
+
+        // ── Step 3b: detect unmapped active nodes with live ops refs ──────
+        let unmapped = collect_unmapped_active_nodes_with_ops_refs(
+            &txn,
+            draft_model_id,
+            old_model_id,
+        )
+        .await?;
+        if !unmapped.is_empty() {
+            let issues: Vec<AppValidationIssue> = unmapped
+                .into_iter()
+                .map(|u| {
+                    AppValidationIssue::error_with_related(
+                        "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS",
+                        format!(
+                            "'{}' is still used by live data but is missing from this draft. \
+                             Repair the draft copies, or detach those links before publishing.",
+                            u.node_name
+                        ),
+                        Some(u.node_id),
+                        issue_params(&[
+                            ("nodeName", u.node_name.clone()),
+                            ("opsRefCount", u.ops_ref_count.to_string()),
+                        ]),
+                    )
+                })
+                .collect();
+            return Err(org_validation_failed_issues(issues));
+        }
+
+        // ── Step 3c: remap all ops FKs ───────────────────────────────────
+        for (old_id, new_id) in &remap {
+            remap_node_ops_fks(&txn, *old_id, *new_id, &now).await?;
+        }
+
+        // ── Step 3d: soft-delete all nodes in the old active model ────────
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE org_nodes \
-             SET node_type_id = ?, row_version = row_version + 1, updated_at = ? \
-             WHERE node_type_id = ? AND deleted_at IS NULL",
-            [
-                remap.new_type_id.into(),
-                now.clone().into(),
-                remap.old_type_id.into(),
-            ],
+             SET deleted_at = ?, updated_at = ?, row_version = row_version + 1 \
+             WHERE structure_model_id = ? AND deleted_at IS NULL",
+            [now.clone().into(), now.clone().into(), old_model_id.into()],
+        ))
+        .await?;
+
+        // ── Step 3e: supersede the old active model ───────────────────────
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE org_structure_models \
+             SET status = 'superseded', superseded_at = ?, updated_at = ? \
+             WHERE id = ?",
+            [now.clone().into(), now.clone().into(), old_model_id.into()],
         ))
         .await?;
     }
-
-    // ── Step 3: supersede the current active model ────────────────────────
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "UPDATE org_structure_models \
-         SET status = 'superseded', superseded_at = ?, updated_at = ? \
-         WHERE status = 'active'",
-        [now.clone().into(), now.clone().into()],
-    ))
-    .await?;
 
     // ── Step 4: activate the draft model ──────────────────────────────────
     txn.execute(Statement::from_sql_and_values(
@@ -588,9 +926,20 @@ pub async fn publish_model_with_remap(
         [
             now.clone().into(),
             actor_id.into(),
-            now.into(),
+            now.clone().into(),
             draft_model_id.into(),
         ],
+    ))
+    .await?;
+
+    // ── Step 5: clear origin_node_id on the newly active nodes ────────────
+    // They are now the live tree; the origin reference is no longer meaningful.
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE org_nodes \
+         SET origin_node_id = NULL, updated_at = ?, row_version = row_version + 1 \
+         WHERE structure_model_id = ? AND origin_node_id IS NOT NULL AND deleted_at IS NULL",
+        [now.clone().into(), draft_model_id.into()],
     ))
     .await?;
 
@@ -598,13 +947,13 @@ pub async fn publish_model_with_remap(
 
     tracing::info!(
         model_id = draft_model_id,
-        remap_count = remap_plan.len(),
+        remap_count = effective_remap_count,
         actor = actor_id,
-        "org structure model published with remap"
+        first_publish = old_active_model_id.is_none(),
+        "org structure model published with atomic promote"
     );
 
-    // Return the validation result with the actual remap count from the plan.
     let mut result = validation;
-    result.remap_count = remap_plan.len() as i64;
+    result.remap_count = effective_remap_count;
     Ok(result)
 }

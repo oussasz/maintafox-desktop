@@ -1,9 +1,12 @@
 //! Org node lifecycle service.
 //!
 //! Org nodes are the operational instances of the tenant's configured hierarchy.
-//! Each node has a type from the active structure model, a position in the tree
+//! Each node has a type from a structure model, a position in the tree
 //! (tracked via `ancestor_path` and `depth`), and optimistic-concurrency control
 //! via `row_version`.
+//!
+//! Each node is scoped to a `structure_model_id`. Production queries filter
+//! by the active model. Designer draft queries work against a draft model's nodes.
 //!
 //! Lifecycle operations:
 //!   `create_org_node`           → insert with computed path/depth
@@ -14,6 +17,8 @@
 //! All mutating operations run inside a SQL transaction.
 
 use crate::errors::{AppError, AppResult};
+use crate::org::fail::{fail, fail_params};
+use crate::org::model_scope;
 use chrono::Utc;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement,
@@ -48,6 +53,8 @@ pub struct OrgNode {
     pub row_version: i64,
     pub origin_machine_id: Option<String>,
     pub last_synced_checkpoint: Option<String>,
+    pub structure_model_id: i64,
+    pub origin_node_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +82,9 @@ pub struct CreateOrgNodePayload {
     pub effective_from: Option<String>,
     pub erp_reference: Option<String>,
     pub notes: Option<String>,
+    /// The structure model this node belongs to. Must match the parent's model
+    /// (if a parent is provided) and the node type's model.
+    pub structure_model_id: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -119,7 +129,8 @@ const NODE_SELECT_COLS: &str = r"
     n.status, n.effective_from, n.effective_to,
     n.erp_reference, n.notes,
     n.created_at, n.updated_at, n.deleted_at,
-    n.row_version, n.origin_machine_id, n.last_synced_checkpoint
+    n.row_version, n.origin_machine_id, n.last_synced_checkpoint,
+    n.structure_model_id, n.origin_node_id
 ";
 
 fn map_node(row: &QueryResult) -> AppResult<OrgNode> {
@@ -188,29 +199,18 @@ fn map_node(row: &QueryResult) -> AppResult<OrgNode> {
         last_synced_checkpoint: row
             .try_get::<Option<String>>("", "last_synced_checkpoint")
             .map_err(|e| decode_err("last_synced_checkpoint", e))?,
+        structure_model_id: row
+            .try_get::<i64>("", "structure_model_id")
+            .map_err(|e| decode_err("structure_model_id", e))?,
+        origin_node_id: row
+            .try_get::<Option<i64>>("", "origin_node_id")
+            .map_err(|e| decode_err("origin_node_id", e))?,
     })
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-/// Return the id of the currently active structure model.
-async fn get_active_model_id(db: &impl ConnectionTrait) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT id FROM org_structure_models WHERE status = 'active' LIMIT 1".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec![
-                "no active org structure model exists".to_string(),
-            ])
-        })?;
-    row.try_get::<i64>("", "id")
-        .map_err(|e| decode_err("id", e))
-}
-
-/// Validate a parent–child node type pair against the active model's rules.
+/// Validate a parent–child node type pair against the given model's rules.
 async fn assert_parent_child_allowed(
     db: &impl ConnectionTrait,
     model_id: i64,
@@ -228,9 +228,10 @@ async fn assert_parent_child_allowed(
         .expect("COUNT always returns a row");
     let cnt: i64 = row.try_get("", "cnt").unwrap_or(0);
     if cnt == 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "parent-child node type combination is not allowed by the active model".to_string(),
-        ]));
+        return Err(fail(
+            "ORG_PARENT_CHILD_NOT_ALLOWED",
+            "This parent-child node type combination is not allowed by the structure model.",
+        ));
     }
     Ok(())
 }
@@ -254,7 +255,7 @@ async fn fetch_node(db: &impl ConnectionTrait, node_id: i64) -> AppResult<OrgNod
     map_node(&row)
 }
 
-/// Fetch node type flags for a node type within the active model.
+/// Fetch node type flags for a node type within the given model.
 async fn fetch_node_type_flags(
     db: &impl ConnectionTrait,
     model_id: i64,
@@ -270,9 +271,10 @@ async fn fetch_node_type_flags(
         ))
         .await?
         .ok_or_else(|| {
-            AppError::ValidationFailed(vec![format!(
-                "node type {node_type_id} does not belong to the active structure model or is inactive"
-            )])
+            fail(
+                "ORG_NODE_TYPE_NOT_IN_MODEL",
+                "The selected node type is not available in this structure model or is inactive.",
+            )
         })?;
     Ok(NodeTypeFlags {
         is_root_type: i64_to_bool(
@@ -293,8 +295,9 @@ struct NodeTypeFlags {
 
 // ─── Service functions ────────────────────────────────────────────────────────
 
-/// Return the full org tree with denormalized node-type info and child counts.
-/// Only returns non-deleted nodes. Sorted by `ancestor_path ASC, name ASC`.
+/// Return the full org tree for the **active** structure model with denormalized
+/// node-type info and child counts. Only non-deleted nodes. Sorted by
+/// `ancestor_path ASC, name ASC`.
 pub async fn list_active_org_tree(db: &DatabaseConnection) -> AppResult<Vec<OrgTreeRow>> {
     let sql = format!(
         "SELECT {NODE_SELECT_COLS},
@@ -310,6 +313,9 @@ pub async fn list_active_org_tree(db: &DatabaseConnection) -> AppResult<Vec<OrgT
          FROM org_nodes n
          JOIN org_node_types t ON t.id = n.node_type_id
          WHERE n.deleted_at IS NULL
+           AND n.structure_model_id = (
+               SELECT id FROM org_structure_models WHERE status = 'active' LIMIT 1
+           )
          ORDER BY n.ancestor_path ASC, n.name ASC"
     );
     let rows = db
@@ -363,10 +369,10 @@ pub async fn get_org_node_by_id(db: &DatabaseConnection, node_id: i64) -> AppRes
 /// Create an org node. Runs inside a transaction.
 ///
 /// Validation:
-/// - `code` non-empty, trimmed, unique across active nodes
-/// - `node_type_id` must belong to the active structure model
+/// - `code` non-empty, trimmed, unique across active nodes **within the same structure model**
+/// - `node_type_id` must belong to `payload.structure_model_id`
 /// - root nodes: type must be `is_root_type`, depth = 0, path = `/{id}/`
-/// - child nodes: parent must exist, parent-child pair must be allowed
+/// - child nodes: parent must exist **in the same structure model**, parent-child pair allowed
 /// - `cost_center_code` requires `can_carry_cost_center` on the node type
 pub async fn create_org_node(
     db: &DatabaseConnection,
@@ -375,38 +381,50 @@ pub async fn create_org_node(
 ) -> AppResult<OrgNode> {
     let code = payload.code.trim().to_string();
     if code.is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "node code must not be empty".to_string(),
-        ]));
+        return Err(fail(
+            "ORG_NODE_CODE_EMPTY",
+            "Node code must not be empty.",
+        ));
+    }
+
+    model_scope::assert_structural_edit_allowed_for_model(db, payload.structure_model_id).await?;
+    if payload.structure_model_id <= 0 {
+        return Err(fail(
+            "ORG_STRUCTURE_MODEL_REQUIRED",
+            "A structure model is required when creating an org node.",
+        ));
     }
 
     let txn = db.begin().await?;
 
-    // Check code uniqueness across non-deleted nodes
+    // Code uniqueness scoped to this structure model among non-deleted nodes
     let dup_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM org_nodes WHERE code = ? AND deleted_at IS NULL",
-            [code.clone().into()],
+            "SELECT COUNT(*) AS cnt FROM org_nodes \
+             WHERE code = ? AND structure_model_id = ? AND deleted_at IS NULL",
+            [code.clone().into(), payload.structure_model_id.into()],
         ))
         .await?
         .expect("COUNT always returns a row");
     let dup_count: i64 = dup_row.try_get("", "cnt").unwrap_or(0);
     if dup_count > 0 {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "node code '{code}' already exists"
-        )]));
+        return Err(fail_params(
+            "ORG_DUPLICATE_CODE",
+            format!("Node code '{code}' already exists in this structure model."),
+            &[("nodeCode", code)],
+        ));
     }
 
-    // Resolve active model and validate node type
-    let model_id = get_active_model_id(&txn).await?;
-    let flags = fetch_node_type_flags(&txn, model_id, payload.node_type_id).await?;
+    // Validate node type belongs to the given structure model
+    let flags = fetch_node_type_flags(&txn, payload.structure_model_id, payload.node_type_id).await?;
 
     // Validate cost_center_code against capability flag
     if payload.cost_center_code.is_some() && !flags.can_carry_cost_center {
-        return Err(AppError::ValidationFailed(vec![
-            "this node type cannot carry a cost center code".to_string(),
-        ]));
+        return Err(fail(
+            "ORG_NODE_TYPE_NO_COST_CENTER",
+            "This node type cannot carry a cost center code.",
+        ));
     }
 
     // Compute depth and ancestor_path based on parent
@@ -414,21 +432,35 @@ pub async fn create_org_node(
         if let Some(pid) = payload.parent_id {
             // Child node
             if flags.is_root_type {
-                return Err(AppError::ValidationFailed(vec![
-                    "a root node type cannot be created as a child node".to_string(),
-                ]));
+                return Err(fail(
+                    "ORG_ROOT_TYPE_AS_CHILD",
+                    "A root node type cannot be created as a child node.",
+                ));
             }
             let parent = fetch_node(&txn, pid).await?;
+            // Parent must be in the same structure model
+            if parent.structure_model_id != payload.structure_model_id {
+                return Err(fail(
+                    "ORG_NODE_WRONG_MODEL",
+                    "The parent node belongs to a different structure model than this node.",
+                ));
+            }
             // Validate parent-child type pair
-            assert_parent_child_allowed(&txn, model_id, parent.node_type_id, payload.node_type_id)
-                .await?;
+            assert_parent_child_allowed(
+                &txn,
+                payload.structure_model_id,
+                parent.node_type_id,
+                payload.node_type_id,
+            )
+            .await?;
             (parent.depth + 1, parent.ancestor_path.clone(), Some(pid))
         } else {
             // Root node — type must be is_root_type
             if !flags.is_root_type {
-                return Err(AppError::ValidationFailed(vec![
-                    "only root node types can be created without a parent".to_string(),
-                ]));
+                return Err(fail(
+                    "ORG_ROOT_ONLY_WITHOUT_PARENT",
+                    "Only root node types can be created without a parent.",
+                ));
             }
             (0, String::new(), None)
         };
@@ -443,8 +475,9 @@ pub async fn create_org_node(
           (sync_id, code, name, node_type_id, parent_id,
            ancestor_path, depth, description, cost_center_code,
            external_reference, status, effective_from, effective_to,
-           erp_reference, notes, created_at, updated_at, row_version)
-          VALUES (?, ?, ?, ?, ?, '/', ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?, ?, 1)",
+           erp_reference, notes, created_at, updated_at, row_version,
+           structure_model_id, origin_node_id)
+          VALUES (?, ?, ?, ?, ?, '/', ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?, ?, 1, ?, NULL)",
         [
             sync_id.clone().into(),
             code.into(),
@@ -460,6 +493,7 @@ pub async fn create_org_node(
             payload.notes.into(),
             now.clone().into(),
             now.into(),
+            payload.structure_model_id.into(),
         ],
     ))
     .await?;
@@ -509,20 +543,28 @@ pub async fn update_org_node_metadata(
 ) -> AppResult<OrgNode> {
     let node = fetch_node(db, payload.node_id).await?;
     if node.row_version != payload.expected_row_version {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "row version mismatch: expected {}, actual {}",
-            payload.expected_row_version, node.row_version
-        )]));
+        return Err(fail_params(
+            "ORG_VERSION_CONFLICT",
+            format!(
+                "Row version mismatch: expected {}, actual {}.",
+                payload.expected_row_version, node.row_version
+            ),
+            &[
+                ("expectedVersion", payload.expected_row_version.to_string()),
+                ("actualVersion", node.row_version.to_string()),
+            ],
+        ));
     }
 
     // If cost_center_code is being set, verify the node type allows it
+    // Use the node's own structure_model_id (not always the active model)
     if let Some(Some(_)) = &payload.cost_center_code {
-        let model_id = get_active_model_id(db).await?;
-        let flags = fetch_node_type_flags(db, model_id, node.node_type_id).await?;
+        let flags = fetch_node_type_flags(db, node.structure_model_id, node.node_type_id).await?;
         if !flags.can_carry_cost_center {
-            return Err(AppError::ValidationFailed(vec![
-                "this node type cannot carry a cost center code".to_string(),
-            ]));
+            return Err(fail(
+                "ORG_NODE_TYPE_NO_COST_CENTER",
+                "This node type cannot carry a cost center code.",
+            ));
         }
     }
 
@@ -582,9 +624,10 @@ pub async fn update_org_node_metadata(
         .await?;
 
     if result.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "concurrent modification detected — row version mismatch".to_string(),
-        ]));
+        return Err(fail(
+            "ORG_CONCURRENT_MODIFICATION",
+            "Concurrent modification detected — row version mismatch.",
+        ));
     }
 
     fetch_node(db, payload.node_id).await
@@ -596,7 +639,8 @@ pub async fn update_org_node_metadata(
 /// - Reject stale `row_version`
 /// - Reject moving a node under itself or any descendant
 /// - Reject root-to-child transitions when type is `is_root_type`
-/// - Validate new parent-child pair against active model rules
+/// - Validate new parent-child pair against the node's structure model rules
+/// - New parent must be in the same structure model as the node
 /// - Recompute `ancestor_path` and `depth` for the moved node and all descendants
 pub async fn move_org_node(
     db: &DatabaseConnection,
@@ -607,13 +651,21 @@ pub async fn move_org_node(
 
     let node = fetch_node(&txn, payload.node_id).await?;
     if node.row_version != payload.expected_row_version {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "row version mismatch: expected {}, actual {}",
-            payload.expected_row_version, node.row_version
-        )]));
+        return Err(fail_params(
+            "ORG_VERSION_CONFLICT",
+            format!(
+                "Row version mismatch: expected {}, actual {}.",
+                payload.expected_row_version, node.row_version
+            ),
+            &[
+                ("expectedVersion", payload.expected_row_version.to_string()),
+                ("actualVersion", node.row_version.to_string()),
+            ],
+        ));
     }
 
-    let model_id = get_active_model_id(&txn).await?;
+    let model_id = node.structure_model_id;
+    model_scope::assert_structural_edit_allowed_for_model(&txn, model_id).await?;
     let flags = fetch_node_type_flags(&txn, model_id, node.node_type_id).await?;
 
     // Compute new parent context
@@ -621,30 +673,41 @@ pub async fn move_org_node(
         if let Some(new_pid) = payload.new_parent_id {
             // Reject root-type → child transition
             if flags.is_root_type {
-                return Err(AppError::ValidationFailed(vec![
-                    "a root node type cannot be moved under a parent".to_string(),
-                ]));
+                return Err(fail(
+                    "ORG_MOVE_ROOT_UNDER_PARENT",
+                    "A root node type cannot be moved under a parent.",
+                ));
             }
 
             // Reject moving under self
             if new_pid == payload.node_id {
-                return Err(AppError::ValidationFailed(vec![
-                    "cannot move a node under itself".to_string(),
-                ]));
+                return Err(fail(
+                    "ORG_MOVE_CYCLE",
+                    "Cannot move a node under itself.",
+                ));
             }
 
             let new_parent = fetch_node(&txn, new_pid).await?;
+
+            // New parent must be in the same structure model
+            if new_parent.structure_model_id != model_id {
+                return Err(fail(
+                    "ORG_NODE_WRONG_MODEL",
+                    "The target parent node belongs to a different structure model.",
+                ));
+            }
 
             // Reject moving under a descendant — the new parent's ancestor_path
             // must not contain this node's id segment
             let self_segment = format!("/{}/", payload.node_id);
             if new_parent.ancestor_path.contains(&self_segment) {
-                return Err(AppError::ValidationFailed(vec![
-                    "cannot move a node under one of its own descendants".to_string(),
-                ]));
+                return Err(fail(
+                    "ORG_MOVE_CYCLE",
+                    "Cannot move a node under one of its own descendants.",
+                ));
             }
 
-            // Validate parent-child type pair
+            // Validate parent-child type pair against node's model
             assert_parent_child_allowed(
                 &txn,
                 model_id,
@@ -661,9 +724,10 @@ pub async fn move_org_node(
         } else {
             // Moving to root
             if !flags.is_root_type {
-                return Err(AppError::ValidationFailed(vec![
-                    "only root node types can be moved to the root level".to_string(),
-                ]));
+                return Err(fail(
+                    "ORG_MOVE_ROOT_ONLY",
+                    "Only root node types can be moved to the root level.",
+                ));
             }
             (0, String::new(), None)
         };
@@ -695,13 +759,19 @@ pub async fn move_org_node(
     .await?;
 
     // Update all descendants: rewrite ancestor_path prefix and adjust depth.
-    // Descendants are identified by ancestor_path LIKE '{old_path}%' AND id != self.
+    // Descendants are identified by ancestor_path LIKE '{old_path}%' within the
+    // same structure model (draft/active trees can share identical path strings).
     let descendants = txn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, ancestor_path, depth FROM org_nodes \
-             WHERE ancestor_path LIKE ? AND id != ? AND deleted_at IS NULL",
-            [format!("{old_path}%").into(), payload.node_id.into()],
+             WHERE ancestor_path LIKE ? AND id != ? AND deleted_at IS NULL \
+               AND structure_model_id = ?",
+            [
+                format!("{old_path}%").into(),
+                payload.node_id.into(),
+                model_id.into(),
+            ],
         ))
         .await?;
 
@@ -759,27 +829,41 @@ pub async fn deactivate_org_node(
 
     let node = fetch_node(&txn, node_id).await?;
     if node.row_version != expected_row_version {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "row version mismatch: expected {expected_row_version}, actual {}",
-            node.row_version
-        )]));
+        return Err(fail_params(
+            "ORG_VERSION_CONFLICT",
+            format!(
+                "Row version mismatch: expected {expected_row_version}, actual {}.",
+                node.row_version
+            ),
+            &[
+                ("expectedVersion", expected_row_version.to_string()),
+                ("actualVersion", node.row_version.to_string()),
+            ],
+        ));
     }
 
-    // Reject if active descendants exist
+    model_scope::assert_structural_edit_allowed_for_model(&txn, node.structure_model_id).await?;
+
+    // Reject if active descendants exist (scoped to this node's structure model)
     let child_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COUNT(*) AS cnt FROM org_nodes \
-             WHERE parent_id = ? AND status = 'active' AND deleted_at IS NULL",
-            [node_id.into()],
+             WHERE parent_id = ? AND structure_model_id = ? \
+               AND status = 'active' AND deleted_at IS NULL",
+            [node_id.into(), node.structure_model_id.into()],
         ))
         .await?
         .expect("COUNT always returns a row");
     let active_children: i64 = child_row.try_get("", "cnt").unwrap_or(0);
     if active_children > 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "cannot deactivate a node that has active child nodes".to_string(),
-        ]));
+        return Err(fail_params(
+            "ORG_HAS_ACTIVE_CHILDREN",
+            format!(
+                "Cannot deactivate a node that has {active_children} active child node(s)."
+            ),
+            &[("count", active_children.to_string())],
+        ));
     }
 
     // Reject if active responsibility assignments exist
@@ -794,10 +878,13 @@ pub async fn deactivate_org_node(
         .expect("COUNT always returns a row");
     let active_responsibilities: i64 = resp_row.try_get("", "cnt").unwrap_or(0);
     if active_responsibilities > 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "cannot deactivate a node with active responsibility assignments — end them first"
-                .to_string(),
-        ]));
+        return Err(fail_params(
+            "ORG_HAS_ACTIVE_RESPONSIBILITIES",
+            format!(
+                "Cannot deactivate a node with {active_responsibilities} active responsibility assignment(s) — end them first."
+            ),
+            &[("count", active_responsibilities.to_string())],
+        ));
     }
 
     let now = Utc::now().to_rfc3339();
@@ -819,9 +906,10 @@ pub async fn deactivate_org_node(
         .await?;
 
     if result.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "concurrent modification detected — row version mismatch".to_string(),
-        ]));
+        return Err(fail(
+            "ORG_CONCURRENT_MODIFICATION",
+            "Concurrent modification detected — row version mismatch.",
+        ));
     }
 
     let deactivated = fetch_node(&txn, node_id).await?;
@@ -831,3 +919,9 @@ pub async fn deactivate_org_node(
 
     Ok(deactivated)
 }
+
+// ─── Re-export model_scope helpers used by IPC handlers ───────────────────────
+
+/// Expose `get_active_model_id` from model_scope for use in IPC command handlers
+/// that need to scope operational queries to the active model.
+pub use model_scope::get_active_model_id;

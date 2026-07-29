@@ -4,36 +4,10 @@
 
 import { useTranslation } from "react-i18next";
 
+import { diStatusToI18nKey } from "@/components/di/status-meta";
+import { formatPersonLabel } from "@/lib/display";
 import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { DiTransitionRow } from "@shared/ipc-types";
-
-type DiStatusKey =
-  | "new"
-  | "inReview"
-  | "approved"
-  | "rejected"
-  | "inProgress"
-  | "resolved"
-  | "closed"
-  | "cancelled";
-
-function statusToI18nKey(s: string): DiStatusKey {
-  const map: Record<string, DiStatusKey> = {
-    none: "new",
-    submitted: "new",
-    pending_review: "inReview",
-    returned_for_clarification: "inReview",
-    rejected: "rejected",
-    screened: "inReview",
-    awaiting_approval: "inReview",
-    approved_for_planning: "approved",
-    deferred: "inReview",
-    converted_to_work_order: "inProgress",
-    closed_as_non_executable: "closed",
-    archived: "closed",
-  };
-  return map[s] ?? "new";
-}
 
 interface DiStateTransitionListProps {
   transitions: DiTransitionRow[];
@@ -75,15 +49,15 @@ export function DiStateTransitionList({ transitions }: DiStateTransitionListProp
                 <td className="px-3 py-2">
                   {row.from_status === "none"
                     ? t("stateLog.actionLabel.none")
-                    : t(`status.${statusToI18nKey(row.from_status)}` as "status.new")}
+                    : t(`status.${diStatusToI18nKey(row.from_status)}` as "status.new")}
                 </td>
                 <td className="px-3 py-2">
-                  {t(`status.${statusToI18nKey(row.to_status)}` as "status.new")}
+                  {t(`status.${diStatusToI18nKey(row.to_status)}` as "status.new")}
                 </td>
                 <td className="px-3 py-2 text-text-primary">{eventLabel}</td>
                 <td className="px-3 py-2 text-muted-foreground">
                   {row.actor_id != null
-                    ? t("auditTimeline.actorUser", { id: row.actor_id })
+                    ? formatPersonLabel(row.actor_display_name)
                     : t("auditTimeline.actorSystem")}
                 </td>
               </tr>

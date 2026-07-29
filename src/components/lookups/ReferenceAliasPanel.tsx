@@ -18,6 +18,14 @@ import {
 } from "@/components/lookups/reference-table-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -59,12 +67,15 @@ interface EditAliasRow {
 
 interface ReferenceAliasPanelProps {
   value: ReferenceValue;
+  /** Value mutation allowed by governance + ref.manage (from parent capabilities). */
+  canMutate: boolean;
   onClose: () => void;
 }
 
-export function ReferenceAliasPanel({ value, onClose }: ReferenceAliasPanelProps) {
+export function ReferenceAliasPanel({ value, canMutate, onClose }: ReferenceAliasPanelProps) {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
+  const canMutateAliases = canMutate && can("ref.manage");
 
   const [aliases, setAliases] = useState<ReferenceAlias[]>([]);
   const [loading, setLoading] = useState(false);
@@ -78,6 +89,7 @@ export function ReferenceAliasPanel({ value, onClose }: ReferenceAliasPanelProps
     is_preferred: false,
   });
   const [newRow, setNewRow] = useState<NewAliasRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ReferenceAlias | null>(null);
 
   // ── Load aliases ─────────────────────────────────────────────────────────
 
@@ -158,10 +170,12 @@ export function ReferenceAliasPanel({ value, onClose }: ReferenceAliasPanelProps
     }
   };
 
-  const handleDelete = async (aliasId: number) => {
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
     setSaving(true);
     try {
-      await deleteReferenceAlias(aliasId);
+      await deleteReferenceAlias(deleteTarget.id);
+      setDeleteTarget(null);
       await loadAliases();
     } catch (err) {
       setError(toErrorMessage(err));
@@ -179,7 +193,7 @@ export function ReferenceAliasPanel({ value, onClose }: ReferenceAliasPanelProps
           {t("alias.title", { code: value.code, label: value.label })}
         </h4>
         <div className="flex items-center gap-2">
-          {can("ref.manage") && (
+          {canMutateAliases && (
             <Button
               variant="outline"
               size="sm"
@@ -422,7 +436,7 @@ export function ReferenceAliasPanel({ value, onClose }: ReferenceAliasPanelProps
                       </div>
                     ) : (
                       <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
-                        {can("ref.manage") && (
+                        {canMutateAliases && (
                           <>
                             <Button
                               variant="ghost"
@@ -437,7 +451,7 @@ export function ReferenceAliasPanel({ value, onClose }: ReferenceAliasPanelProps
                               variant="ghost"
                               size="icon"
                               className={refTableIconButtonClass()}
-                              onClick={() => void handleDelete(a.id)}
+                              onClick={() => setDeleteTarget(a)}
                               disabled={saving}
                               aria-label={t("alias.delete")}
                             >
@@ -454,6 +468,38 @@ export function ReferenceAliasPanel({ value, onClose }: ReferenceAliasPanelProps
           </tbody>
         </table>
       )}
+
+      <Dialog
+        open={deleteTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("alias.deleteTitle")}</DialogTitle>
+            <DialogDescription>
+              {t("alias.deleteDescription", { label: deleteTarget?.alias_label ?? "" })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={saving}
+            >
+              {t("editor.cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleDelete()}
+              disabled={saving}
+            >
+              {t("alias.delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

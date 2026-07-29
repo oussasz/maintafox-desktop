@@ -501,7 +501,7 @@ Renders a collapsible card above the main view for users with `di.review` permis
 Follows UX-DW-001 pattern. Large dialog (`max-w-3xl`).
 
 **Layout:**
-1. **Conversion banner** — `DI-0001 → OT-0001` (code preview)
+1. **Conversion notice** — DI code shown; WO code assigned only on convert (no preview)
 2. **DI info card** — Code, title, type, priority, status badges
 3. **Equipment info** — Designation, entity, location
 4. **Requester info** — Name, position, department

@@ -15,6 +15,8 @@ import { useTranslation } from "react-i18next";
 
 import { OnlinePresenceIndicator } from "@/components/admin/OnlinePresenceIndicator";
 import { DataTable } from "@/components/data/DataTable";
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
+import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { PersonnelPickerCombobox } from "@/components/personnel/PersonnelCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1081,7 +1083,8 @@ export function UserListPanel() {
   const [roles, setRoles] = useState<RoleWithPermissions[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filters
+  // Filters — searchInput is immediate UI; search is debounced (via SmartFilterBar)
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState<string>("all");
   const [modeFilter, setModeFilter] = useState<string>("all");
@@ -1311,41 +1314,55 @@ export function UserListPanel() {
 
   return (
     <div className="space-y-4">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <Input
-          placeholder={t("users.search", "Rechercher un utilisateur…")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-9 w-64"
-        />
-
-        <Select value={activeFilter} onValueChange={setActiveFilter}>
-          <SelectTrigger className="h-9 w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t("users.filter.all", "Tous")}</SelectItem>
-            <SelectItem value="active">{t("users.filter.active", "Actifs")}</SelectItem>
-            <SelectItem value="inactive">{t("users.filter.inactive", "Inactifs")}</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select value={modeFilter} onValueChange={setModeFilter}>
-          <SelectTrigger className="h-9 w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t("users.filter.allModes", "Tous modes")}</SelectItem>
-            <SelectItem value="local">{t("users.filter.local", "Local")}</SelectItem>
-            <SelectItem value="sso">{t("users.filter.sso", "SSO")}</SelectItem>
-            <SelectItem value="hybrid">{t("users.filter.hybrid", "Hybride")}</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <div className="ml-auto">
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <SmartFilterBar
+              searchPlaceholder={t("users.search", "Rechercher un utilisateur…")}
+              searchValue={searchInput}
+              onSearchInputChange={setSearchInput}
+              onSearchChange={setSearch}
+              filters={
+                [
+                  {
+                    id: "active",
+                    kind: "select",
+                    label: t("users.filter.statusLabel", "Statut"),
+                    options: [
+                      { value: "active", label: t("users.filter.active", "Actifs") },
+                      { value: "inactive", label: t("users.filter.inactive", "Inactifs") },
+                    ],
+                    value: activeFilter === "all" ? null : activeFilter,
+                    onChange: (v) => setActiveFilter(v ?? "all"),
+                    allLabel: t("users.filter.all", "Tous"),
+                  },
+                  {
+                    id: "mode",
+                    kind: "select",
+                    label: t("users.filter.modeLabel", "Mode"),
+                    options: [
+                      { value: "local", label: t("users.filter.local", "Local") },
+                      { value: "sso", label: t("users.filter.sso", "SSO") },
+                      { value: "hybrid", label: t("users.filter.hybrid", "Hybride") },
+                    ],
+                    value: modeFilter === "all" ? null : modeFilter,
+                    onChange: (v) => setModeFilter(v ?? "all"),
+                    allLabel: t("users.filter.allModes", "Tous modes"),
+                  },
+                ] satisfies SmartFilterDef[]
+              }
+              resultCount={users.length}
+              onReset={() => {
+                setSearchInput("");
+                setSearch("");
+                setActiveFilter("all");
+                setModeFilter("all");
+              }}
+              className="border-0 px-0 py-0"
+            />
+          </div>
           {can("adm.users") && (
-            <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Button size="sm" className="shrink-0 mt-0.5" onClick={() => setShowCreate(true)}>
               <Plus className="mr-1.5 h-4 w-4" />
               {t("users.create", "Nouvel utilisateur")}
             </Button>

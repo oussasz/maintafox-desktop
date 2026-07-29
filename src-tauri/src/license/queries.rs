@@ -69,13 +69,7 @@ pub async fn evaluate_permission_matrix(
     let activation = activation::queries::get_machine_activation_status(db).await?;
     let fingerprint = crate::auth::device::derive_device_fingerprint().unwrap_or_else(|_| "unknown".to_string());
     let mut trust = crate::auth::device::get_device_trust(db, user_id, &fingerprint).await?;
-    let mut trust_state = if trust.as_ref().is_some_and(|t| t.is_revoked) {
-        "revoked"
-    } else if trust.is_some() {
-        "trusted"
-    } else {
-        "untrusted"
-    };
+    let mut trust_state = crate::auth::device::trust_state_label(trust.as_ref()).to_string();
     let policy_pending = is_policy_sync_pending(db).await?;
 
     let mut decision = LicenseEnforcementDecision {
@@ -86,7 +80,7 @@ pub async fn evaluate_permission_matrix(
         reason: None,
         entitlement_state: entitlement.effective_state.clone(),
         activation_state: activation.revocation_state.clone(),
-        trust_state: trust_state.to_string(),
+        trust_state: trust_state.clone(),
     };
 
     if capability_class != "read" {
@@ -105,14 +99,8 @@ pub async fn evaluate_permission_matrix(
         if trust.is_none() && crate::auth::device::is_network_available() {
             crate::auth::device::register_device_trust(db, user_id, &fingerprint, None).await?;
             trust = crate::auth::device::get_device_trust(db, user_id, &fingerprint).await?;
-            trust_state = if trust.as_ref().is_some_and(|t| t.is_revoked) {
-                "revoked"
-            } else if trust.is_some() {
-                "trusted"
-            } else {
-                "untrusted"
-            };
-            decision.trust_state = trust_state.to_string();
+            trust_state = crate::auth::device::trust_state_label(trust.as_ref()).to_string();
+            decision.trust_state = trust_state.clone();
         }
         if trust_state != "trusted" {
             decision.allowed = false;
@@ -194,18 +182,19 @@ pub async fn enforce_permission_matrix(
 
 pub async fn get_license_status_view(db: &DatabaseConnection, user_id: i32) -> AppResult<LicenseStatusView> {
     let entitlement = entitlements::queries::get_entitlement_summary(db).await?;
-    let activation = activation::queries::get_machine_activation_status(db).await?;
+    let machine_activation = activation::queries::get_machine_activation_status(db).await?;
+    let (product_activation_state, license_edition) =
+        crate::commands::product_license::product_activation_view_fields(db).await?;
     let fingerprint = crate::auth::device::derive_device_fingerprint().unwrap_or_else(|_| "unknown".to_string());
     let trust = crate::auth::device::get_device_trust(db, user_id, &fingerprint).await?;
-    let trust_state = if trust.as_ref().is_some_and(|t| t.is_revoked) {
-        "revoked"
-    } else if trust.is_some() {
-        "trusted"
-    } else {
-        "untrusted"
-    };
+    let trust_state = crate::auth::device::trust_state_label(trust.as_ref()).to_string();
     let policy_sync_pending = is_policy_sync_pending(db).await?;
     let pending_writes = pending_local_writes(db).await?;
+    let active_meta = entitlements::queries::peek_active_envelope_meta(db).await?;
+    let (envelope_id, verification_result) = match active_meta {
+        Some((id, _tier, verification)) => (Some(id), Some(verification)),
+        None => (entitlement.envelope_id.clone(), None),
+    };
 
     let action_row = db
         .query_one(Statement::from_sql_and_values(
@@ -234,20 +223,43 @@ pub async fn get_license_status_view(db: &DatabaseConnection, user_id: i32) -> A
         "License is revoked. Contact your administrator to reactivate and refresh policy.".to_string()
     } else if entitlement.effective_state == "suspended" {
         "License is suspended. Read-only mode is active until admin reactivation.".to_string()
-    } else if activation.revocation_state == "pending_revocation" {
-        "Activation revocation is pending and will be enforced on reconnect.".to_string()
-    } else if activation.revocation_state == "revoked" {
+    } else if matches!(
+        product_activation_state.as_str(),
+        "denied_revoked"
+            | "denied_expired"
+            | "denied_slot_limit"
+            | "denied_force_update_required"
+            | "denied_invalid"
+    ) {
+        format!("Product activation is '{product_activation_state}'. Re-activate or contact support.")
+    } else if product_activation_state == "degraded_api_unavailable" {
+        "Product activation is degraded (control plane unavailable). Retry policy refresh when online."
+            .to_string()
+    } else if product_activation_state == "pending_online_validation" {
+        "Product activation is pending online validation.".to_string()
+    } else if machine_activation.revocation_state == "pending_revocation" {
+        "Machine activation revocation is pending and will be enforced on reconnect.".to_string()
+    } else if machine_activation.revocation_state == "revoked" {
         "Machine activation is revoked. Rebind/reactivate this device with your admin.".to_string()
     } else if trust_state != "trusted" {
         "Device trust is not established. Complete online bootstrap on a trusted device.".to_string()
-    } else {
+    } else if product_activation_state == "active" {
         "License is healthy. Full operations are allowed.".to_string()
+    } else {
+        format!("Product activation is '{product_activation_state}'. Complete activation to finish licensing.")
     };
+
+    let recent_traces = list_license_trace_events(db, Some(6), None).await.unwrap_or_default();
 
     Ok(LicenseStatusView {
         entitlement_state: entitlement.effective_state,
-        activation_state: activation.revocation_state,
-        trust_state: trust_state.to_string(),
+        activation_state: product_activation_state,
+        machine_activation_state: machine_activation.revocation_state,
+        trust_state,
+        license_edition,
+        entitlement_tier: entitlement.tier,
+        envelope_id,
+        verification_result,
         policy_sync_pending,
         pending_local_writes: pending_writes,
         last_admin_action,
@@ -259,6 +271,7 @@ pub async fn get_license_status_view(db: &DatabaseConnection, user_id: i32) -> A
             "contact_admin".to_string(),
             "request_reactivation_or_rebind".to_string(),
         ],
+        recent_traces,
     })
 }
 

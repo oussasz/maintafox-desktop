@@ -27,7 +27,7 @@ permission/audit/analytics readiness layer.
 This file addresses PRD §6.5 requirements for:
 
 - [x] Core entity `work_orders` with all PRD-listed fields:
-      id, code (WOR-XXXX), type_id, status_id, equipment_id, component_id (nullable),
+      id, code (OT-XXXX), type_id, status_id, equipment_id, component_id (nullable),
       location_id (nullable), requester_id, source_di_id, entity_id, planner_id, approver_id,
       assigned_group_id, primary_responsible_id, urgency_id, title, description,
       planned_start, planned_end, scheduled_at, actual_start, actual_end,
@@ -56,7 +56,7 @@ This file addresses PRD §6.5 requirements for:
   drives all state movement. No raw status string write bypasses the guard.
 - **`wo_state_transition_log` is append-only.** Every status change writes a row; no update
   or delete command targets this table.
-- **WO code is unique, uppercase, non-recycled.** Format `WOR-NNNN`. Sequence never reused.
+- **WO code is unique, uppercase, non-recycled.** Format `OT-NNNN`. Sequence never reused.
 - **No hard delete for WOs beyond draft.** A WO in any status other than `draft` is cancelled
   or archived; delete is blocked and returns an error. Draft WOs may be deleted by `ot.admin`.
 - **Optimistic concurrency via `row_version`.** All mutation commands check `expected_row_version`.
@@ -201,7 +201,7 @@ INSERT INTO delay_reason_codes (code, label, category) VALUES
 -- FULL work_orders TABLE --
 CREATE TABLE work_orders (
   id                          INTEGER PRIMARY KEY AUTOINCREMENT,
-  code                        TEXT    NOT NULL UNIQUE,     -- WOR-0001
+  code                        TEXT    NOT NULL UNIQUE,     -- OT-0001
   -- Classification
   type_id                     INTEGER NOT NULL REFERENCES work_order_types(id),
   status_id                   INTEGER NOT NULL REFERENCES work_order_statuses(id),
@@ -352,9 +352,9 @@ I) `WoMacroState` enum: Open, Executing, Completed, Closed, Cancelled
    with as_str() / try_from().
 
 J) `generate_wo_code(pool: &SqlitePool) -> Result<String, sqlx::Error>`
-   SELECT COALESCE(MAX(CAST(SUBSTR(code,5) AS INT)),0)+1 FROM work_orders
-   WHERE code LIKE 'WOR-%';
-   Return "WOR-" + zero-padded 4 digits.
+   SELECT COALESCE(MAX(CAST(SUBSTR(code,4) AS INT)),0)+1 FROM work_orders
+   WHERE code GLOB 'OT-[0-9]*';
+   Return "OT-" + zero-padded 4 digits.
 
 K) `WorkOrder` struct matching all DDL columns.
 
@@ -373,7 +373,7 @@ ACCEPTANCE CRITERIA
 - Transition table matches PRD §6.5 exactly
 - guard_wo_transition returns error for any non-listed pair
 - Closed and Cancelled have empty allowed_transitions
-- generate_wo_code returns WOR-0001 on first call in empty DB
+- generate_wo_code returns OT-0001 on first call in empty DB
 - Migration migrates work_order_stubs rows before dropping the table
 ```
 
@@ -478,7 +478,7 @@ STEP 3 - PATCH src-tauri/src/lib.rs (or main.rs)
 
 ACCEPTANCE CRITERIA
 - cargo check passes
-- create_wo returns WOR-0001 on first call
+- create_wo returns OT-0001 on first call
 - list_wo filters work for status, equipment, entity, search
 - cancel_wo with empty cancel_reason returns validation error
 - update_wo_draft on a non-draft WO returns error

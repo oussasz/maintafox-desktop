@@ -355,11 +355,21 @@ function SessionTimeIndicator({ expiresAt }: { expiresAt: string | null }) {
 function DeviceTrustBadge({ status }: { status: DeviceTrustStatus }) {
   const { t } = useTranslation("shell");
 
-  if (status.status === "trusted") {
+  // Same canonical label as License Enforcement (`trust_state` from trusted_devices).
+  if (status.trust_state === "trusted") {
     return (
       <span className="flex items-center gap-1.5 text-xs text-status-success">
         <Shield className="h-3 w-3" />
         {t("device.trusted")}
+      </span>
+    );
+  }
+
+  if (status.trust_state === "revoked") {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-status-danger">
+        <ShieldAlert className="h-3 w-3" />
+        {t("device.untrusted")}
       </span>
     );
   }

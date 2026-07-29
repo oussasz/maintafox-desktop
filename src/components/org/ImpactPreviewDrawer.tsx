@@ -31,33 +31,85 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useStepUp } from "@/hooks/use-step-up";
+import { deactivateOrgNode, moveOrgNode } from "@/services/org-node-service";
 import { useOrgDesignerStore } from "@/stores/org-designer-store";
+import { useOrgNodeStore } from "@/stores/org-node-store";
+import { formatOrgIpcError } from "@/utils/errors";
+import { formatOrgValidationIssue } from "@/lib/format-org-validation-issue";
 
 export function ImpactPreviewDrawer() {
   const { t } = useTranslation("org");
+  const { withStepUp, StepUpDialogElement } = useStepUp();
   const preview = useOrgDesignerStore((s) => s.preview);
+  const previewPayload = useOrgDesignerStore((s) => s.previewPayload);
   const previewOpen = useOrgDesignerStore((s) => s.previewOpen);
   const previewLoading = useOrgDesignerStore((s) => s.previewLoading);
   const closePreview = useOrgDesignerStore((s) => s.closePreview);
+  const loadSnapshot = useOrgDesignerStore((s) => s.loadSnapshot);
+  const selectedNode = useOrgNodeStore((s) => s.selectedNode);
+  const refreshSelectedNodeContext = useOrgNodeStore((s) => s.refreshSelectedNodeContext);
 
   const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
 
   const hasBlockers = (preview?.blockers.length ?? 0) > 0;
   const hasWarnings = (preview?.warnings.length ?? 0) > 0;
-  const confirmDisabled = hasBlockers || (hasWarnings && !warningsAcknowledged);
+  const confirmDisabled =
+    hasBlockers || (hasWarnings && !warningsAcknowledged) || confirming;
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
       closePreview();
       setWarningsAcknowledged(false);
+      setConfirmError(null);
     }
   };
 
-  const handleConfirm = () => {
-    // S3 does not implement the final mutation — that is deferred to the
-    // respective action modules. Close the drawer for now.
-    closePreview();
-    setWarningsAcknowledged(false);
+  const handleConfirm = async () => {
+    if (!preview || !previewPayload || hasBlockers) return;
+    setConfirmError(null);
+    setConfirming(true);
+    try {
+      if (preview.action === "MoveNode") {
+        if (previewPayload.new_parent_id == null) {
+          setConfirmError(t("preview.moveRequiresParent"));
+          return;
+        }
+        const rowVersion = selectedNode?.row_version;
+        if (rowVersion == null || selectedNode?.id !== preview.subject_node_id) {
+          setConfirmError(t("preview.staleNodeContext"));
+          return;
+        }
+        await withStepUp(() =>
+          moveOrgNode({
+            node_id: preview.subject_node_id,
+            new_parent_id: previewPayload.new_parent_id,
+            expected_row_version: rowVersion,
+          }),
+        );
+      } else if (preview.action === "DeactivateNode") {
+        const rowVersion = selectedNode?.row_version;
+        if (rowVersion == null || selectedNode?.id !== preview.subject_node_id) {
+          setConfirmError(t("preview.staleNodeContext"));
+          return;
+        }
+        await withStepUp(() => deactivateOrgNode(preview.subject_node_id, rowVersion));
+      } else {
+        setConfirmError(t("preview.actionNotSupported"));
+        return;
+      }
+
+      closePreview();
+      setWarningsAcknowledged(false);
+      void loadSnapshot();
+      void refreshSelectedNodeContext();
+    } catch (err) {
+      setConfirmError(formatOrgIpcError(err));
+    } finally {
+      setConfirming(false);
+    }
   };
 
   const actionLabel = preview ? t(`preview.actionLabel.${preview.action}`) : "";
@@ -70,17 +122,14 @@ export function ImpactPreviewDrawer() {
           <SheetDescription>{actionLabel}</SheetDescription>
         </SheetHeader>
 
-        {/* Loading */}
         {previewLoading && (
           <div className="flex flex-1 items-center justify-center">
             <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
           </div>
         )}
 
-        {/* Preview content */}
         {preview && !previewLoading && (
           <div className="flex-1 overflow-y-auto space-y-5 py-2">
-            {/* Impact summary */}
             <section className="space-y-2">
               <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wider">
                 {t("preview.impactSummary")}
@@ -109,7 +158,6 @@ export function ImpactPreviewDrawer() {
               </div>
             </section>
 
-            {/* Blockers */}
             {hasBlockers && (
               <section className="space-y-2">
                 <h4 className="text-xs font-semibold text-status-danger uppercase tracking-wider flex items-center gap-1.5">
@@ -117,19 +165,18 @@ export function ImpactPreviewDrawer() {
                   {t("preview.blockers")}
                 </h4>
                 <ul className="space-y-1.5" role="list" aria-label={t("preview.blockers")}>
-                  {preview.blockers.map((b, i) => (
+                  {preview.blockers.map((issue, i) => (
                     <li
                       key={i}
                       className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-text-primary"
                     >
-                      {b}
+                      {formatOrgValidationIssue(issue, t)}
                     </li>
                   ))}
                 </ul>
               </section>
             )}
 
-            {/* Warnings */}
             {hasWarnings && (
               <section className="space-y-2">
                 <h4 className="text-xs font-semibold text-status-warning uppercase tracking-wider flex items-center gap-1.5">
@@ -137,17 +184,16 @@ export function ImpactPreviewDrawer() {
                   {t("preview.warnings")}
                 </h4>
                 <ul className="space-y-1.5" role="list" aria-label={t("preview.warnings")}>
-                  {preview.warnings.map((w, i) => (
+                  {preview.warnings.map((issue, i) => (
                     <li
                       key={i}
                       className="rounded-md border border-status-warning/30 bg-status-warning/10 px-3 py-2 text-sm text-text-primary"
                     >
-                      {w}
+                      {formatOrgValidationIssue(issue, t)}
                     </li>
                   ))}
                 </ul>
 
-                {/* Acknowledge checkbox (only when no blockers) */}
                 {!hasBlockers && (
                   <label className="flex items-center gap-2 cursor-pointer pt-1">
                     <input
@@ -166,7 +212,6 @@ export function ImpactPreviewDrawer() {
 
             <Separator />
 
-            {/* Dependency placeholders */}
             <section className="space-y-2">
               <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
                 <ExternalLink className="h-3.5 w-3.5" />
@@ -179,23 +224,44 @@ export function ImpactPreviewDrawer() {
                     className="flex items-center justify-between rounded-md border border-surface-border px-3 py-2"
                   >
                     <div className="space-y-0.5">
-                      <span className="text-sm text-text-primary capitalize">{dep.domain}</span>
-                      {dep.note && <p className="text-[11px] text-text-muted">{dep.note}</p>}
+                      <span className="text-sm text-text-primary capitalize">
+                        {t(`preview.dependencyDomain.${dep.domain}`, {
+                          defaultValue: dep.domain.replace(/_/g, " "),
+                        })}
+                      </span>
+                      {(dep.note || dep.status === "unavailable") && (
+                        <p className="text-[11px] text-text-muted">
+                          {t(`preview.dependencyNote.${dep.domain}`, {
+                            defaultValue:
+                              dep.note ??
+                              t("preview.dependencyUnavailable", {
+                                defaultValue: "Impact details for this area are not available yet.",
+                              }),
+                          })}
+                        </p>
+                      )}
                     </div>
                     <Badge
                       variant={dep.status === "unavailable" ? "outline" : "secondary"}
                       className="text-[10px] shrink-0"
                     >
-                      {dep.status}
+                      {t(`preview.dependencyStatus.${dep.status}`, {
+                        defaultValue: dep.status,
+                      })}
                     </Badge>
                   </div>
                 ))}
               </div>
             </section>
+
+            {confirmError && (
+              <p className="text-xs text-status-danger" role="alert">
+                {confirmError}
+              </p>
+            )}
           </div>
         )}
 
-        {/* Footer */}
         {preview && !previewLoading && (
           <SheetFooter className="border-t border-surface-border pt-4">
             <Button variant="outline" onClick={() => handleOpenChange(false)}>
@@ -203,11 +269,13 @@ export function ImpactPreviewDrawer() {
             </Button>
             <Button
               disabled={confirmDisabled}
-              onClick={handleConfirm}
+              onClick={() => void handleConfirm()}
               className="gap-1.5"
               variant={hasBlockers ? "outline" : "default"}
             >
-              {hasBlockers ? (
+              {confirming ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : hasBlockers ? (
                 <>
                   <ShieldAlert className="h-3.5 w-3.5" />
                   {t("preview.blocked")}
@@ -221,12 +289,11 @@ export function ImpactPreviewDrawer() {
             </Button>
           </SheetFooter>
         )}
+        {StepUpDialogElement}
       </SheetContent>
     </Sheet>
   );
 }
-
-// ── Internal helper ───────────────────────────────────────────────────────────
 
 function SummaryCard({
   icon,

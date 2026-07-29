@@ -20,6 +20,7 @@ pub struct DiChangeEvent {
     pub di_id: Option<i64>,
     pub action: String,
     pub actor_id: Option<i64>,
+    pub actor_display_name: Option<String>,
     pub acted_at: String,
     pub summary: Option<String>,
     pub details_json: Option<String>,
@@ -112,11 +113,14 @@ pub async fn list_di_change_events(
 ) -> crate::errors::AppResult<Vec<DiChangeEvent>> {
     let rows = DiChangeEvent::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r"SELECT id, di_id, action, actor_id, acted_at, summary, details_json,
-                 requires_step_up, apply_result
-            FROM di_change_events
-           WHERE di_id = ?
-           ORDER BY acted_at ASC, id ASC
+        r"SELECT e.id, e.di_id, e.action, e.actor_id,
+                 COALESCE(ua.display_name, ua.username) AS actor_display_name,
+                 e.acted_at, e.summary, e.details_json,
+                 e.requires_step_up, e.apply_result
+            FROM di_change_events e
+            LEFT JOIN user_accounts ua ON ua.id = e.actor_id
+           WHERE e.di_id = ?
+           ORDER BY e.acted_at ASC, e.id ASC
            LIMIT ?",
         [di_id.into(), limit.into()],
     ))
@@ -144,19 +148,19 @@ pub async fn list_all_change_events(
     let mut values: Vec<sea_orm::Value> = Vec::new();
 
     if let Some(ref action) = filter.action {
-        conditions.push("action = ?".to_string());
+        conditions.push("e.action = ?".to_string());
         values.push(action.clone().into());
     }
     if let Some(actor_id) = filter.actor_id {
-        conditions.push("actor_id = ?".to_string());
+        conditions.push("e.actor_id = ?".to_string());
         values.push(actor_id.into());
     }
     if let Some(ref date_from) = filter.date_from {
-        conditions.push("acted_at >= ?".to_string());
+        conditions.push("e.acted_at >= ?".to_string());
         values.push(date_from.clone().into());
     }
     if let Some(ref date_to) = filter.date_to {
-        conditions.push("acted_at <= ?".to_string());
+        conditions.push("e.acted_at <= ?".to_string());
         values.push(date_to.clone().into());
     }
 
@@ -170,11 +174,14 @@ pub async fn list_all_change_events(
     values.push(offset.into());
 
     let sql = format!(
-        r"SELECT id, di_id, action, actor_id, acted_at, summary, details_json,
-                 requires_step_up, apply_result
-            FROM di_change_events
+        r"SELECT e.id, e.di_id, e.action, e.actor_id,
+                 COALESCE(ua.display_name, ua.username) AS actor_display_name,
+                 e.acted_at, e.summary, e.details_json,
+                 e.requires_step_up, e.apply_result
+            FROM di_change_events e
+            LEFT JOIN user_accounts ua ON ua.id = e.actor_id
            {where_clause}
-           ORDER BY acted_at DESC, id DESC
+           ORDER BY e.acted_at DESC, e.id DESC
            LIMIT ? OFFSET ?"
     );
 

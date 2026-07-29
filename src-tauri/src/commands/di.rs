@@ -127,6 +127,12 @@ pub async fn create_di(
     if input.origin_type.trim().is_empty() {
         errors.push("Le type d'origine est obligatoire.".into());
     }
+    if input.request_type.trim().is_empty() {
+        errors.push("Le type de demande est obligatoire.".into());
+    }
+    if input.symptom_code_id.is_none() {
+        errors.push("Le symptôme est obligatoire.".into());
+    }
 
     // Validate asset_id resolves
     let asset_exists = state
@@ -158,6 +164,34 @@ pub async fn create_di(
             "Nœud organisationnel introuvable (org_node_id={}).",
             input.org_node_id
         ));
+    }
+
+    // Early catalog checks so the command returns a single ValidationFailed batch
+    // when basic fields + catalog membership both fail (queries also enforce).
+    if errors.is_empty() {
+        match crate::di::reference_catalog::validate_di_origin_code(&state.db, &input.origin_type)
+            .await
+        {
+            Ok(_) => {}
+            Err(AppError::ValidationFailed(mut catalog_errors)) => errors.append(&mut catalog_errors),
+            Err(other) => return Err(other),
+        }
+        match crate::di::reference_catalog::validate_di_request_type(&state.db, &input.request_type)
+            .await
+        {
+            Ok(_) => {}
+            Err(AppError::ValidationFailed(mut catalog_errors)) => errors.append(&mut catalog_errors),
+            Err(other) => return Err(other),
+        }
+        if let Some(sid) = input.symptom_code_id {
+            match crate::di::reference_catalog::validate_di_symptom_id(&state.db, sid).await {
+                Ok(()) => {}
+                Err(AppError::ValidationFailed(mut catalog_errors)) => {
+                    errors.append(&mut catalog_errors)
+                }
+                Err(other) => return Err(other),
+            }
+        }
     }
 
     if !errors.is_empty() {
@@ -446,7 +480,57 @@ pub async fn reactivate_di(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// K) get_di_review_events — requires di.view
+// K) close_di_as_non_executable — requires di.approve
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn close_di_as_non_executable(
+    mut input: review::DiCloseNonExecutableInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::di::domain::InterventionRequest> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "di.approve", PermissionScope::Global);
+    input.actor_id = i64::from(user.user_id);
+    let di = review::close_di_as_non_executable(&state.db, input).await?;
+    audit::record_di_change_event(&state.db, audit::DiAuditInput {
+        di_id: Some(di.id),
+        action: "closed_non_executable".into(),
+        actor_id: Some(i64::from(user.user_id)),
+        summary: Some("DI closed as non-executable".into()),
+        details_json: None,
+        requires_step_up: false,
+        apply_result: "applied".into(),
+    }).await;
+    Ok(di)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// L) archive_di — requires di.approve
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn archive_di(
+    mut input: review::DiArchiveInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::di::domain::InterventionRequest> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "di.approve", PermissionScope::Global);
+    input.actor_id = i64::from(user.user_id);
+    let di = review::archive_di(&state.db, input).await?;
+    audit::record_di_change_event(&state.db, audit::DiAuditInput {
+        di_id: Some(di.id),
+        action: "archived".into(),
+        actor_id: Some(i64::from(user.user_id)),
+        summary: Some("DI archived".into()),
+        details_json: None,
+        requires_step_up: false,
+        apply_result: "applied".into(),
+    }).await;
+    Ok(di)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// M) get_di_review_events — requires di.view
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -518,6 +602,74 @@ pub async fn upload_di_attachment(
     };
 
     attachments::save_di_attachment(&state.db, &app_data_dir, input).await
+}
+
+#[tauri::command]
+pub async fn upload_di_attachment_from_path(
+    app: tauri::AppHandle,
+    di_id: i64,
+    source_path: String,
+    attachment_type: Option<String>,
+    notes: Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<attachments::DiAttachment> {
+    let user = require_session!(state);
+
+    let current_di = queries::get_intervention_request(&state.db, di_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "InterventionRequest".into(),
+            id: di_id.to_string(),
+        })?;
+
+    let is_owner = current_di.submitter_id == i64::from(user.user_id);
+    if is_owner {
+        let has_own = crate::auth::rbac::check_permission(
+            &state.db,
+            user.user_id,
+            "di.create.own",
+            &PermissionScope::Global,
+        )
+        .await?;
+        if !has_own {
+            require_permission!(state, &user, "di.review", PermissionScope::Global);
+        }
+    } else {
+        require_permission!(state, &user, "di.review", PermissionScope::Global);
+    }
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+
+    attachments::save_di_attachment_from_path(
+        &state.db,
+        &app_data_dir,
+        di_id,
+        &source_path,
+        attachment_type.as_deref().unwrap_or(""),
+        notes,
+        i64::from(user.user_id),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn read_di_attachment_preview(
+    app: tauri::AppHandle,
+    attachment_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<attachments::DiAttachmentPreview> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "di.view", PermissionScope::Global);
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+
+    attachments::read_di_attachment_preview(&state.db, &app_data_dir, attachment_id).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -900,8 +1052,8 @@ mod tests {
              VALUES (1, 'nt-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'))".to_string()
         )).await.expect("node_type");
         db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at) \
-             VALUES (1, 'on-001', 'SITE-001', 'Test Site', 1, 'active', datetime('now'), datetime('now'))".to_string()
+            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
+             VALUES (1, 'on-001', 'SITE-001', 'Test Site', 1, 'active', datetime('now'), datetime('now'), 1)".to_string()
         )).await.expect("org_node");
         db.execute(Statement::from_string(DbBackend::Sqlite,
             "INSERT INTO reference_domains (id, code, name, structure_type, governance_level, is_extendable, created_at, updated_at) \
@@ -923,6 +1075,10 @@ mod tests {
             .await.expect("q").expect("user").try_get::<i64>("", "id").expect("id");
 
         // Create DI
+        let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(&db, "vibration")
+            .await
+            .expect("lookup")
+            .expect("seeded");
         let di = crate::di::queries::create_intervention_request(
             &db,
             crate::di::queries::DiCreateInput {
@@ -931,7 +1087,8 @@ mod tests {
                 title: "Pump vibration".into(),
                 description: "Excessive vibration on pump P-101".into(),
                 origin_type: "operator".into(),
-                symptom_code_id: None,
+            request_type: "repair".to_string(),
+                symptom_code_id: Some(symptom_id),
                 impact_level: "unknown".into(),
                 production_impact: false,
                 safety_flag: false,
@@ -993,6 +1150,8 @@ mod tests {
             "reactivate_di",
             "get_di_review_events",
             "upload_di_attachment",
+            "upload_di_attachment_from_path",
+            "read_di_attachment_preview",
             "list_di_attachments",
             "delete_di_attachment",
             "convert_di_to_wo",
@@ -1005,7 +1164,7 @@ mod tests {
         ];
         let unique: std::collections::HashSet<&str> = fns.iter().copied().collect();
         assert_eq!(fns.len(), unique.len(), "All DI command names must be unique");
-        assert_eq!(fns.len(), 22, "Expected exactly 22 DI commands (incl. triage_submitted_di + get_di_stats)");
+        assert_eq!(fns.len(), 24, "Expected exactly 24 DI commands (incl. path upload + preview)");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1243,6 +1402,10 @@ mod tests {
     }
 
     async fn create_test_di(db: &sea_orm::DatabaseConnection) -> crate::di::domain::InterventionRequest {
+        let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+            .await
+            .expect("lookup")
+            .expect("seeded");
         crate::di::queries::create_intervention_request(
             db,
             crate::di::queries::DiCreateInput {
@@ -1252,6 +1415,7 @@ mod tests {
                 title: "Test DI for verification".into(),
                 description: "Verification test DI".into(),
                 origin_type: "operator".into(),
+            request_type: "repair".to_string(),
                 reported_urgency: "high".into(),
                 observed_at: None,
                 impact_level: "medium".into(),
@@ -1259,7 +1423,7 @@ mod tests {
                 safety_flag: false,
                 environmental_flag: false,
                 quality_flag: false,
-                symptom_code_id: None,
+                symptom_code_id: Some(symptom_id),
                 source_inspection_anomaly_id: None,
             },
         )

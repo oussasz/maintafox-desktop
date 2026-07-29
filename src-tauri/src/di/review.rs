@@ -83,6 +83,22 @@ pub struct DiReactivateInput {
     pub notes: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct DiCloseNonExecutableInput {
+    pub di_id: i64,
+    pub actor_id: i64,
+    pub expected_row_version: i64,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DiArchiveInput {
+    pub di_id: i64,
+    pub actor_id: i64,
+    pub expected_row_version: i64,
+    pub notes: Option<String>,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DiReviewEvent — row from di_review_events
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -100,6 +116,8 @@ pub struct DiReviewEvent {
     pub notes: Option<String>,
     pub sla_target_hours: Option<i64>,
     pub sla_deadline: Option<String>,
+    pub sla_resolution_target_hours: Option<i64>,
+    pub sla_resolution_deadline: Option<String>,
     pub step_up_used: bool,
 }
 
@@ -110,17 +128,35 @@ pub struct DiReviewEvent {
 /// All columns from `intervention_requests` for SELECT reuse (aliased as `ir`).
 const IR_COLS: &str = "\
     ir.id, ir.code, ir.asset_id, ir.sub_asset_ref, ir.org_node_id, \
-    ir.status, ir.title, ir.description, ir.origin_type, ir.symptom_code_id, \
+    ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
     ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
     ir.observed_at, ir.submitted_at, \
     ir.review_team_id, ir.reviewer_id, ir.screened_at, ir.approved_at, \
     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
     ir.converted_to_wo_id, ir.converted_at, \
+    ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
+    ir.sla_escalation_threshold_hours, ir.sla_response_deadline, ir.sla_resolution_deadline, \
+    ir.sla_response_breach_notified_at, ir.sla_resolution_breach_notified_at, \
     ir.reviewer_note, ir.classification_code_id, \
     ir.is_recurrence_flag, ir.recurrence_di_id, \
     ir.source_inspection_anomaly_id, \
     ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
+
+/// Display enrichment columns (must be paired with `IR_JOINS`).
+const IR_JOIN_COLS: &str = "\
+    eq.asset_id_code AS asset_code, eq.name AS asset_label, \
+    org.code AS org_node_code, org.name AS org_node_label, \
+    COALESCE(us.display_name, us.username) AS submitter_display_name, \
+    COALESCE(urv.display_name, urv.username) AS reviewer_display_name, \
+    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title";
+
+const IR_JOINS: &str = "\
+    LEFT JOIN equipment eq ON eq.id = ir.asset_id \
+    LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
+    LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
+    LEFT JOIN user_accounts urv ON urv.id = ir.reviewer_id \
+    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Row mapping
@@ -167,6 +203,14 @@ fn map_review_event(row: &QueryResult) -> AppResult<DiReviewEvent> {
         sla_deadline: row
             .try_get::<Option<String>>("", "sla_deadline")
             .map_err(|e| decode_err("sla_deadline", e))?,
+        sla_resolution_target_hours: row
+            .try_get::<Option<i64>>("", "sla_resolution_target_hours")
+            .ok()
+            .flatten(),
+        sla_resolution_deadline: row
+            .try_get::<Option<String>>("", "sla_resolution_deadline")
+            .ok()
+            .flatten(),
         step_up_used: row
             .try_get::<i64>("", "step_up_used")
             .map_err(|e| decode_err("step_up_used", e))?
@@ -186,7 +230,12 @@ async fn load_di_with_status(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {IR_COLS} FROM intervention_requests ir WHERE ir.id = ?"),
+            &format!(
+                "SELECT {IR_COLS}, {IR_JOIN_COLS} \
+                 FROM intervention_requests ir \
+                 {IR_JOINS} \
+                 WHERE ir.id = ?"
+            ),
             [di_id.into()],
         ))
         .await?
@@ -216,14 +265,17 @@ async fn insert_review_event(
     notes: Option<&str>,
     sla_target_hours: Option<i64>,
     sla_deadline: Option<&str>,
+    sla_resolution_target_hours: Option<i64>,
+    sla_resolution_deadline: Option<&str>,
     step_up_used: bool,
 ) -> AppResult<()> {
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_review_events \
             (di_id, event_type, actor_id, acted_at, from_status, to_status, \
-             reason_code, notes, sla_target_hours, sla_deadline, step_up_used) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             reason_code, notes, sla_target_hours, sla_deadline, \
+             sla_resolution_target_hours, sla_resolution_deadline, step_up_used) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             di_id.into(),
             event_type.into(),
@@ -241,6 +293,12 @@ async fn insert_review_event(
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<i64>)),
             sla_deadline
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            sla_resolution_target_hours
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            sla_resolution_deadline
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
             i64::from(step_up_used).into(),
@@ -309,7 +367,12 @@ async fn refetch_di(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {IR_COLS} FROM intervention_requests ir WHERE ir.id = ?"),
+            &format!(
+                "SELECT {IR_COLS}, {IR_JOIN_COLS} \
+                 FROM intervention_requests ir \
+                 {IR_JOINS} \
+                 WHERE ir.id = ?"
+            ),
             [di_id.into()],
         ))
         .await?
@@ -332,7 +395,9 @@ pub async fn screen_di(
     let txn = db.begin().await?;
 
     // 1. Load and validate both transitions upfront
-    let (_di, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
 
     guard_transition(&current_status, &DiStatus::Screened).map_err(|e| {
         AppError::ValidationFailed(vec![e])
@@ -418,8 +483,10 @@ pub async fn screen_di(
         DiStatus::Screened.as_str(),
         None,
         input.reviewer_note.as_deref(),
-        None,
-        None,
+        snap.response_target_hours,
+        snap.response_deadline.as_deref(),
+        snap.resolution_target_hours,
+        snap.resolution_deadline.as_deref(),
         false,
     )
     .await?;
@@ -435,8 +502,10 @@ pub async fn screen_di(
         DiStatus::AwaitingApproval.as_str(),
         None,
         None,
-        None,
-        None,
+        snap.response_target_hours,
+        snap.response_deadline.as_deref(),
+        snap.resolution_target_hours,
+        snap.resolution_deadline.as_deref(),
         false,
     )
     .await?;
@@ -491,7 +560,9 @@ pub async fn return_di_for_clarification(
     }
 
     let txn = db.begin().await?;
-    let (_, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
 
     guard_transition(&current_status, &DiStatus::ReturnedForClarification).map_err(|e| {
         AppError::ValidationFailed(vec![e])
@@ -533,8 +604,10 @@ pub async fn return_di_for_clarification(
         to_str,
         None,
         Some(&input.reviewer_note),
-        None,
-        None,
+        snap.response_target_hours,
+        snap.response_deadline.as_deref(),
+        snap.resolution_target_hours,
+        snap.resolution_deadline.as_deref(),
         false,
     )
     .await?;
@@ -574,7 +647,9 @@ pub async fn reject_di(
     }
 
     let txn = db.begin().await?;
-    let (_, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
 
     guard_transition(&current_status, &DiStatus::Rejected).map_err(|e| {
         AppError::ValidationFailed(vec![e])
@@ -622,8 +697,10 @@ pub async fn reject_di(
         to_str,
         Some(&input.reason_code),
         input.notes.as_deref(),
-        None,
-        None,
+        snap.response_target_hours,
+        snap.response_deadline.as_deref(),
+        snap.resolution_target_hours,
+        snap.resolution_deadline.as_deref(),
         false,
     )
     .await?;
@@ -657,7 +734,9 @@ pub async fn approve_di_for_planning(
     input: DiApproveInput,
 ) -> AppResult<InterventionRequest> {
     let txn = db.begin().await?;
-    let (_, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
 
     guard_transition(&current_status, &DiStatus::ApprovedForPlanning).map_err(|e| {
         AppError::ValidationFailed(vec![e])
@@ -703,8 +782,10 @@ pub async fn approve_di_for_planning(
         to_str,
         None,
         input.notes.as_deref(),
-        None,
-        None,
+        snap.response_target_hours,
+        snap.response_deadline.as_deref(),
+        snap.resolution_target_hours,
+        snap.resolution_deadline.as_deref(),
         true, // step_up_used — enforced at IPC layer
     )
     .await?;
@@ -760,7 +841,9 @@ pub async fn defer_di(
     }
 
     let txn = db.begin().await?;
-    let (_, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
 
     guard_transition(&current_status, &DiStatus::Deferred).map_err(|e| {
         AppError::ValidationFailed(vec![e])
@@ -800,8 +883,10 @@ pub async fn defer_di(
         to_str,
         Some(&input.reason_code),
         input.notes.as_deref(),
-        None,
-        None,
+        snap.response_target_hours,
+        snap.response_deadline.as_deref(),
+        snap.resolution_target_hours,
+        snap.resolution_deadline.as_deref(),
         false,
     )
     .await?;
@@ -834,7 +919,9 @@ pub async fn reactivate_deferred_di(
     input: DiReactivateInput,
 ) -> AppResult<InterventionRequest> {
     let txn = db.begin().await?;
-    let (_, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
 
     guard_transition(&current_status, &DiStatus::AwaitingApproval).map_err(|e| {
         AppError::ValidationFailed(vec![e])
@@ -873,8 +960,10 @@ pub async fn reactivate_deferred_di(
         to_str,
         None,
         input.notes.as_deref(),
-        None,
-        None,
+        snap.response_target_hours,
+        snap.response_deadline.as_deref(),
+        snap.resolution_target_hours,
+        snap.resolution_deadline.as_deref(),
         false,
     )
     .await?;
@@ -899,6 +988,166 @@ pub async fn reactivate_deferred_di(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// G) close_di_as_non_executable — ApprovedForPlanning → ClosedAsNonExecutable
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub async fn close_di_as_non_executable(
+    db: &DatabaseConnection,
+    input: DiCloseNonExecutableInput,
+) -> AppResult<InterventionRequest> {
+    let txn = db.begin().await?;
+    let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
+
+    guard_transition(&current_status, &DiStatus::ClosedAsNonExecutable)
+        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let result = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET \
+                status = 'closed_as_non_executable', \
+                closed_at = ?, \
+                reviewer_id = ?, \
+                reviewer_note = COALESCE(?, reviewer_note), \
+                row_version = row_version + 1, \
+                updated_at = ? \
+             WHERE id = ? AND row_version = ?",
+            [
+                now.clone().into(),
+                input.actor_id.into(),
+                input
+                    .notes
+                    .clone()
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                now.clone().into(),
+                input.di_id.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    check_concurrency(result.rows_affected())?;
+
+    let from_str = current_status.as_str();
+    let to_str = DiStatus::ClosedAsNonExecutable.as_str();
+
+    insert_review_event(
+        &txn,
+        input.di_id,
+        "closed_non_executable",
+        input.actor_id,
+        &now,
+        from_str,
+        to_str,
+        None,
+        input.notes.as_deref(),
+        snap.response_target_hours,
+        snap.response_deadline.as_deref(),
+        snap.resolution_target_hours,
+        snap.resolution_deadline.as_deref(),
+        false,
+    )
+    .await?;
+
+    insert_transition_log(
+        &txn,
+        input.di_id,
+        from_str,
+        to_str,
+        "close_non_executable",
+        input.actor_id,
+        &now,
+        None,
+        input.notes.as_deref(),
+    )
+    .await?;
+
+    let updated = refetch_di(&txn, input.di_id).await?;
+    txn.commit().await?;
+    Ok(updated)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// H) archive_di — terminal states → Archived
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub async fn archive_di(
+    db: &DatabaseConnection,
+    input: DiArchiveInput,
+) -> AppResult<InterventionRequest> {
+    let txn = db.begin().await?;
+    let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
+
+    guard_transition(&current_status, &DiStatus::Archived)
+        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let result = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET \
+                status = 'archived', \
+                archived_at = ?, \
+                row_version = row_version + 1, \
+                updated_at = ? \
+             WHERE id = ? AND row_version = ?",
+            [
+                now.clone().into(),
+                now.clone().into(),
+                input.di_id.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    check_concurrency(result.rows_affected())?;
+
+    let from_str = current_status.as_str();
+    let to_str = DiStatus::Archived.as_str();
+
+    insert_review_event(
+        &txn,
+        input.di_id,
+        "archived",
+        input.actor_id,
+        &now,
+        from_str,
+        to_str,
+        None,
+        input.notes.as_deref(),
+        snap.response_target_hours,
+        snap.response_deadline.as_deref(),
+        snap.resolution_target_hours,
+        snap.resolution_deadline.as_deref(),
+        false,
+    )
+    .await?;
+
+    insert_transition_log(
+        &txn,
+        input.di_id,
+        from_str,
+        to_str,
+        "archive",
+        input.actor_id,
+        &now,
+        None,
+        input.notes.as_deref(),
+    )
+    .await?;
+
+    let updated = refetch_di(&txn, input.di_id).await?;
+    txn.commit().await?;
+    Ok(updated)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // G) get_review_events — read-only query
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -910,7 +1159,8 @@ pub async fn get_review_events(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, di_id, event_type, actor_id, acted_at, from_status, to_status, \
-                    reason_code, notes, sla_target_hours, sla_deadline, step_up_used \
+                    reason_code, notes, sla_target_hours, sla_deadline, \
+                    sla_resolution_target_hours, sla_resolution_deadline, step_up_used \
              FROM di_review_events \
              WHERE di_id = ? \
              ORDER BY acted_at ASC, id ASC",

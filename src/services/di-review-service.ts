@@ -9,7 +9,9 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  DiArchiveInput,
   DiApproveInput,
+  DiCloseNonExecutableInput,
   DiDeferInput,
   DiReactivateInput,
   DiRejectInput,
@@ -31,6 +33,7 @@ const InterventionRequestSchema = z.object({
   title: z.string(),
   description: z.string(),
   origin_type: z.string(),
+  request_type: z.string().default("repair"),
   symptom_code_id: z.number().nullable(),
   impact_level: z.string(),
   production_impact: z.boolean(),
@@ -51,6 +54,14 @@ const InterventionRequestSchema = z.object({
   archived_at: z.string().nullable(),
   converted_to_wo_id: z.number().nullable(),
   converted_at: z.string().nullable(),
+  sla_rule_id: z.number().nullable().optional(),
+  sla_target_response_hours: z.number().nullable().optional(),
+  sla_target_resolution_hours: z.number().nullable().optional(),
+  sla_escalation_threshold_hours: z.number().nullable().optional(),
+  sla_response_deadline: z.string().nullable().optional(),
+  sla_resolution_deadline: z.string().nullable().optional(),
+  sla_response_breach_notified_at: z.string().nullable().optional(),
+  sla_resolution_breach_notified_at: z.string().nullable().optional(),
   reviewer_note: z.string().nullable(),
   classification_code_id: z.number().nullable(),
   is_recurrence_flag: z.boolean(),
@@ -60,6 +71,14 @@ const InterventionRequestSchema = z.object({
   submitter_id: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+  asset_code: z.string().nullable().optional(),
+  asset_label: z.string().nullable().optional(),
+  org_node_code: z.string().nullable().optional(),
+  org_node_label: z.string().nullable().optional(),
+  submitter_display_name: z.string().nullable().optional(),
+  reviewer_display_name: z.string().nullable().optional(),
+  converted_to_wo_code: z.string().nullable().optional(),
+  converted_to_wo_title: z.string().nullable().optional(),
 });
 
 const DiReviewEventSchema = z.object({
@@ -74,6 +93,8 @@ const DiReviewEventSchema = z.object({
   notes: z.string().nullable(),
   sla_target_hours: z.number().nullable(),
   sla_deadline: z.string().nullable(),
+  sla_resolution_target_hours: z.number().nullable().optional(),
+  sla_resolution_deadline: z.string().nullable().optional(),
   step_up_used: z.boolean(),
 });
 
@@ -152,6 +173,26 @@ export async function deferDi(input: DiDeferInput): Promise<InterventionRequest>
 export async function reactivateDi(input: DiReactivateInput): Promise<InterventionRequest> {
   try {
     const raw = await invoke<unknown>("reactivate_di", { input });
+    return InterventionRequestSchema.parse(raw) as InterventionRequest;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+export async function closeDiAsNonExecutable(
+  input: DiCloseNonExecutableInput,
+): Promise<InterventionRequest> {
+  try {
+    const raw = await invoke<unknown>("close_di_as_non_executable", { input });
+    return InterventionRequestSchema.parse(raw) as InterventionRequest;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+export async function archiveDi(input: DiArchiveInput): Promise<InterventionRequest> {
+  try {
+    const raw = await invoke<unknown>("archive_di", { input });
     return InterventionRequestSchema.parse(raw) as InterventionRequest;
   } catch (err) {
     rethrowIfVersionConflict(err);

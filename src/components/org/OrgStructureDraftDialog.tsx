@@ -22,7 +22,7 @@ import {
   createOrgStructureModel,
   forkOrgDraftFromPublished,
 } from "@/services/org-service";
-import { toErrorMessage } from "@/utils/errors";
+import { formatOrgIpcError } from "@/utils/errors";
 
 export type OrgStructureDraftDialogVariant = "bootstrap" | "fork";
 
@@ -66,7 +66,7 @@ export function OrgStructureDraftDialog({
       onOpenChange(false);
       onSuccess();
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(formatOrgIpcError(e));
     } finally {
       setSubmitting(false);
     }
@@ -154,7 +154,7 @@ export function AbandonOrgDraftDialog({
       onOpenChange(false);
       onSuccess();
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(formatOrgIpcError(e));
     } finally {
       setSubmitting(false);
     }

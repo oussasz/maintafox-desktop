@@ -17,9 +17,11 @@
 //!   `documents` — governed document link references (File 02, Sprint S3)
 
 pub mod bindings;
+pub mod decommission;
 pub mod documents;
 pub mod governance;
 pub mod health;
+pub mod history;
 pub mod hierarchy;
 pub mod identity;
 pub mod import;
@@ -29,6 +31,8 @@ pub mod photos;
 pub mod search;
 pub mod taxonomy_reference;
 
+#[cfg(test)]
+mod decommission_tests;
 #[cfg(test)]
 mod documents_tests;
 #[cfg(test)]
@@ -44,9 +48,11 @@ mod meters_tests;
 
 // Re-export most-used types at module root for clean import in command handlers.
 pub use bindings::AssetBindingSummary;
+pub use decommission::DecommissionAssetPayload;
 pub use documents::{AssetDocumentLink, UpsertDocumentLinkPayload};
 pub use governance::{ConflictCategory, NormalizedImportRow, ValidationMessage, ValidationOutcome};
 pub use hierarchy::{AssetHierarchyRow, LinkAssetPayload};
+pub use history::{AssetHistoryEvent, AssetHistoryQuery, AssetHistorySummary};
 pub use identity::{Asset, CreateAssetPayload, UpdateAssetIdentityPayload};
 pub use import::{ApplyPolicy, ApplyResult, ImportBatchSummary, ImportEvent, ImportPreview, ImportPreviewRow};
 pub use lifecycle::{AssetLifecycleEvent, RecordLifecycleEventPayload};

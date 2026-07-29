@@ -398,7 +398,7 @@ pub async fn validate_import_batch(
     }
 
     let domain = domains::get_reference_domain(db, batch.domain_id).await?;
-    let is_protected = domain.governance_level == "protected_analytical";
+    let is_protected = crate::reference::governance::requires_analytical_protection(&domain);
 
     // Load staging rows.
     let staging_rows = db

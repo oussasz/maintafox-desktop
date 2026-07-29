@@ -42,7 +42,7 @@ mod tests {
 
     /// Helper: create a published model with root + child types and one root node.
     /// Returns (root_node_id, root_type_id, child_type_id).
-    async fn setup_with_root_node(db: &sea_orm::DatabaseConnection) -> (i64, i32, i32) {
+    async fn setup_with_root_node(db: &sea_orm::DatabaseConnection) -> (i64, i64, i32, i32) {
         let model = structure_model::create_model(
             db,
             CreateStructureModelPayload {
@@ -123,13 +123,14 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model.id as i64,
             },
             1,
         )
         .await
         .expect("create root node");
 
-        (root_node.id, root_type.id, child_type.id)
+        (root_node.id, model.id as i64, root_type.id, child_type.id)
     }
 
     // ── V1 — Responsibility exclusivity ───────────────────────────────────
@@ -137,7 +138,7 @@ mod tests {
     #[tokio::test]
     async fn v1_overlapping_responsibility_rejected_then_handover_succeeds() {
         let db = setup().await;
-        let (node_id, _, _) = setup_with_root_node(&db).await;
+        let (node_id, _, _, _) = setup_with_root_node(&db).await;
 
         // First assignment succeeds
         let first = responsibilities::assign_responsibility(
@@ -207,7 +208,7 @@ mod tests {
     #[tokio::test]
     async fn v2_both_person_and_team_set_fails() {
         let db = setup().await;
-        let (node_id, _, _) = setup_with_root_node(&db).await;
+        let (node_id, _, _, _) = setup_with_root_node(&db).await;
 
         let err = responsibilities::assign_responsibility(
             &db,
@@ -234,7 +235,7 @@ mod tests {
     #[tokio::test]
     async fn v2_neither_person_nor_team_set_fails() {
         let db = setup().await;
-        let (node_id, _, _) = setup_with_root_node(&db).await;
+        let (node_id, _, _, _) = setup_with_root_node(&db).await;
 
         let err = responsibilities::assign_responsibility(
             &db,
@@ -263,7 +264,7 @@ mod tests {
     #[tokio::test]
     async fn v3_second_primary_binding_clears_previous() {
         let db = setup().await;
-        let (node_id, _, _) = setup_with_root_node(&db).await;
+        let (node_id, _, _, _) = setup_with_root_node(&db).await;
 
         // First primary binding
         let first = entity_bindings::upsert_entity_binding(
@@ -343,7 +344,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_external_id_across_nodes_rejected() {
         let db = setup().await;
-        let (node_id, root_type_id, _) = setup_with_root_node(&db).await;
+        let (node_id, model_id, root_type_id, _) = setup_with_root_node(&db).await;
 
         // Create a second root node
         let node_b = nodes::create_org_node(
@@ -359,6 +360,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -411,7 +413,7 @@ mod tests {
     #[tokio::test]
     async fn list_responsibilities_respects_include_inactive_flag() {
         let db = setup().await;
-        let (node_id, _, _) = setup_with_root_node(&db).await;
+        let (node_id, _, _, _) = setup_with_root_node(&db).await;
 
         let assignment = responsibilities::assign_responsibility(
             &db,
@@ -452,7 +454,7 @@ mod tests {
     #[tokio::test]
     async fn empty_responsibility_type_rejected() {
         let db = setup().await;
-        let (node_id, _, _) = setup_with_root_node(&db).await;
+        let (node_id, _, _, _) = setup_with_root_node(&db).await;
 
         let err = responsibilities::assign_responsibility(
             &db,
@@ -481,7 +483,7 @@ mod tests {
     #[tokio::test]
     async fn expire_binding_sets_valid_to() {
         let db = setup().await;
-        let (node_id, _, _) = setup_with_root_node(&db).await;
+        let (node_id, _, _, _) = setup_with_root_node(&db).await;
 
         let binding = entity_bindings::upsert_entity_binding(
             &db,

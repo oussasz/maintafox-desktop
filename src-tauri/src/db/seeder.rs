@@ -264,6 +264,14 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         false,
     )
     .await?;
+    seed_domain(db, "inventory.supplier_status", "Statut fournisseur", "system", false, false).await?;
+    seed_domain(db, "inventory.replenishment_policy", "Politique de réapprovisionnement", "system", false, false).await?;
+    seed_domain(db, "inventory.demand_source_type", "Type de source de demande", "system", false, false).await?;
+    seed_domain(db, "inventory.purchase_priority", "Priorité achat", "system", false, false).await?;
+    seed_domain(db, "inventory.equivalence_type", "Type d'équivalence article", "system", false, false).await?;
+    seed_domain(db, "inventory.document_link_purpose", "Objet lien document inventaire", "system", false, false).await?;
+    seed_domain(db, "inventory.abc_class", "Classe ABC article", "system", false, false).await?;
+    seed_domain(db, "inventory.xyz_class", "Classe XYZ article", "system", false, false).await?;
     seed_domain(
         db,
         "org.responsibility_type",
@@ -1490,6 +1498,83 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         seed_value(db, d, "CONFLICT", "Conflit", "Conflit", "Conflict", None, 4, true).await?;
     }
 
+    // inventory.supplier_status
+    {
+        let d = get_domain_id(db, "inventory.supplier_status").await?;
+        seed_value(db, d, "PREFERRED", "Préféré", "Préféré", "Preferred", Some("#198754"), 1, true).await?;
+        seed_value(db, d, "APPROVED", "Approuvé", "Approuvé", "Approved", Some("#0d6efd"), 2, true).await?;
+        seed_value(db, d, "UNDER_EVALUATION", "En évaluation", "En évaluation", "Under evaluation", Some("#ffc107"), 3, true).await?;
+        seed_value(db, d, "BLOCKED", "Bloqué", "Bloqué", "Blocked", Some("#dc3545"), 4, true).await?;
+    }
+
+    // inventory.replenishment_policy
+    {
+        let d = get_domain_id(db, "inventory.replenishment_policy").await?;
+        seed_value(db, d, "MIN_MAX", "Min/Max", "Min/Max", "Min/Max", None, 1, true).await?;
+        seed_value(db, d, "FIXED_QTY", "Quantité fixe", "Quantité fixe", "Fixed quantity", None, 2, true).await?;
+        seed_value(db, d, "ORDER_UP_TO", "Commande jusqu'à", "Commande jusqu'à", "Order up to", None, 3, true).await?;
+        seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 4, true).await?;
+        seed_value(db, d, "KANBAN", "Kanban", "Kanban", "Kanban", None, 5, true).await?;
+        seed_value(db, d, "EMERGENCY_ONLY", "Urgence uniquement", "Urgence uniquement", "Emergency only", None, 6, true).await?;
+        seed_value(db, d, "REPAIR_ONLY", "Réparation uniquement", "Réparation uniquement", "Repair only", None, 7, true).await?;
+        seed_value(db, d, "VENDOR_MANAGED", "Géré fournisseur", "Géré fournisseur", "Vendor managed", None, 8, true).await?;
+    }
+
+    // inventory.demand_source_type
+    {
+        let d = get_domain_id(db, "inventory.demand_source_type").await?;
+        seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 1, true).await?;
+        seed_value(db, d, "REORDER", "Réapprovisionnement", "Réapprovisionnement", "Reorder", None, 2, true).await?;
+        seed_value(db, d, "WORK_ORDER", "Ordre de travail", "Ordre de travail", "Work order", None, 3, true).await?;
+        seed_value(db, d, "WORK_ORDER_PART", "Pièce OT", "Pièce OT", "WO part", None, 4, true).await?;
+        seed_value(db, d, "REPAIRABLE", "Réparable", "Réparable", "Repairable", None, 5, true).await?;
+        seed_value(db, d, "STOCK_COUNT", "Inventaire", "Inventaire", "Stock count", None, 6, true).await?;
+        seed_value(db, d, "PM", "Maintenance préventive", "Maintenance préventive", "Preventive maintenance", None, 7, true).await?;
+    }
+
+    // inventory.purchase_priority
+    {
+        let d = get_domain_id(db, "inventory.purchase_priority").await?;
+        seed_value(db, d, "EMERGENCY", "Urgence", "Urgence", "Emergency", Some("#dc3545"), 1, true).await?;
+        seed_value(db, d, "HIGH", "Haute", "Haute", "High", Some("#fd7e14"), 2, true).await?;
+        seed_value(db, d, "NORMAL", "Normale", "Normale", "Normal", None, 3, true).await?;
+        seed_value(db, d, "LOW", "Basse", "Basse", "Low", Some("#6c757d"), 4, true).await?;
+    }
+
+    // inventory.equivalence_type
+    {
+        let d = get_domain_id(db, "inventory.equivalence_type").await?;
+        seed_value(db, d, "DIRECT", "Remplacement direct", "Remplacement direct", "Direct replacement", None, 1, true).await?;
+        seed_value(db, d, "FUNCTIONAL", "Équivalent fonctionnel", "Équivalent fonctionnel", "Functional equivalent", None, 2, true).await?;
+        seed_value(db, d, "UPGRADE", "Amélioration", "Amélioration", "Upgrade", None, 3, true).await?;
+    }
+
+    // inventory.document_link_purpose
+    {
+        let d = get_domain_id(db, "inventory.document_link_purpose").await?;
+        seed_value(db, d, "DATASHEET", "Fiche technique", "Fiche technique", "Datasheet", None, 1, true).await?;
+        seed_value(db, d, "CERTIFICATE", "Certificat", "Certificat", "Certificate", None, 2, true).await?;
+        seed_value(db, d, "INVOICE", "Facture", "Facture", "Invoice", None, 3, true).await?;
+        seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 4, true).await?;
+        seed_value(db, d, "PHOTO", "Photo", "Photo", "Photo", None, 5, true).await?;
+    }
+
+    // inventory.abc_class
+    {
+        let d = get_domain_id(db, "inventory.abc_class").await?;
+        seed_value(db, d, "A", "A – Critique (80%)", "A – Critique (80%)", "A – Critical (80%)", Some("#dc3545"), 1, true).await?;
+        seed_value(db, d, "B", "B – Important (95%)", "B – Important (95%)", "B – Important (95%)", Some("#ffc107"), 2, true).await?;
+        seed_value(db, d, "C", "C – Courant", "C – Courant", "C – Standard", Some("#198754"), 3, true).await?;
+    }
+
+    // inventory.xyz_class
+    {
+        let d = get_domain_id(db, "inventory.xyz_class").await?;
+        seed_value(db, d, "X", "X – Régulier", "X – Régulier", "X – Regular", Some("#0d6efd"), 1, true).await?;
+        seed_value(db, d, "Y", "Y – Variable", "Y – Variable", "Y – Variable", Some("#ffc107"), 2, true).await?;
+        seed_value(db, d, "Z", "Z – Irrégulier", "Z – Irrégulier", "Z – Irregular", Some("#dc3545"), 3, true).await?;
+    }
+
     // org.responsibility_type
     {
         let d = get_domain_id(db, "org.responsibility_type").await?;
@@ -1637,10 +1722,13 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     ))
     .await?;
 
-    // ── 5. Seed bootstrap admin account ───────────────────────────────────
+    // ── 5. Ensure admin roles grant RAM analyze permissions (RBAC drift backfill) ─
+    ensure_admin_ram_permissions(db).await?;
+
+    // ── 6. Seed bootstrap admin account ───────────────────────────────────
     seed_admin_account(db).await?;
 
-    // ── 6. Seed default application settings ──────────────────────────────
+    // ── 7. Seed default application settings ──────────────────────────────
     seed_default_settings(db).await?;
 
     tracing::info!("seeder::complete — system seed version {} applied", SEED_SCHEMA_VERSION);
@@ -2505,6 +2593,23 @@ async fn assign_permission_by_name(
 ///
 /// Safety: checks for existing admin and skips if present — will not
 /// overwrite an existing admin account or its password.
+/// Idempotent backfill: Administrator/Superadmin must hold ram.analyze (added post-seed in some DBs).
+async fn ensure_admin_ram_permissions(db: &DatabaseConnection) -> AppResult<()> {
+    db.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        r"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
+         SELECT r.id, p.id, strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         FROM roles r
+         CROSS JOIN permissions p
+         WHERE r.deleted_at IS NULL
+           AND r.name IN ('Administrator', 'Superadmin')
+           AND p.name IN ('ram.analyze', 'ram.manage', 'ram.export')"
+            .to_string(),
+    ))
+    .await?;
+    Ok(())
+}
+
 async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
     use crate::auth::password::hash_password;
 
@@ -2518,6 +2623,12 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
 
     if existing.is_some() {
         tracing::debug!("seeder::admin_account already exists, ensuring role assignment");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET is_admin = 1 WHERE username = 'admin' AND is_active = 1",
+            [],
+        ))
+        .await?;
         // Even if the admin exists, ensure the Administrator role is assigned
         ensure_admin_role_assignment(db).await?;
         return Ok(());

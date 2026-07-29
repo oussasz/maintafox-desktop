@@ -8,9 +8,9 @@
  * V3 - Tree interaction (indentation, search, selection → inspector update)
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 // ── Service mocks ─────────────────────────────────────────────────────────────
 
@@ -65,6 +65,7 @@ const emptySnapshot: OrgDesignerSnapshot = {
   active_model_version: null,
   draft_model_id: null,
   draft_model_version: null,
+  display_model_id: null,
   nodes: [],
 };
 
@@ -73,6 +74,7 @@ const threeNodeSnapshot: OrgDesignerSnapshot = {
   active_model_version: 3,
   draft_model_id: null,
   draft_model_version: null,
+  display_model_id: 1,
   nodes: [
     {
       node_id: 1,
@@ -151,6 +153,7 @@ function resetDesignerStore() {
     typeFilter: null,
     selectedNodeId: null,
     preview: null,
+    previewPayload: null,
     previewOpen: false,
     loading: false,
     previewLoading: false,
@@ -164,6 +167,10 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
   beforeEach(() => {
     resetDesignerStore();
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // ── V1 — Empty-state rendering ────────────────────────────────────────────
@@ -210,13 +217,16 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
         expect(screen.getByText("designer.title")).toBeInTheDocument();
       });
 
-      // Model version badge with interpolation
-      expect(screen.getByText("designer.modelVersion::version=3")).toBeInTheDocument();
+      // Active-only workspace surfaces the fork CTA (no draft / no mode tabs)
+      expect(screen.getByText("lifecycle.publishedNoDraft")).toBeInTheDocument();
 
-      // Filter headings
-      expect(screen.getByText("designer.filters")).toBeInTheDocument();
+      // Filter labels (SmartFilterBar in tree panel)
       expect(screen.getByText("designer.statusFilter")).toBeInTheDocument();
       expect(screen.getByText("designer.typeFilter")).toBeInTheDocument();
+
+      // Property panel chrome
+      expect(screen.getByText("designer.inspectorTab")).toBeInTheDocument();
+      expect(screen.getByLabelText("designer.propertyPanel.collapse")).toBeInTheDocument();
 
       // Model summary section
       expect(screen.getByText("designer.modelSummary")).toBeInTheDocument();
@@ -292,6 +302,7 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
     });
 
     it("filters rows by search text (code match)", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
       mockGetOrgDesignerSnapshot.mockResolvedValueOnce(threeNodeSnapshot);
 
       render(<OrganizationDesignerPage />);
@@ -302,14 +313,19 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
 
       const searchInput = screen.getByPlaceholderText("designer.searchPlaceholder");
       fireEvent.change(searchInput, { target: { value: "TEAM" } });
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
 
       // Only the Electrical Team row should remain
       expect(screen.queryByText("Site Alpha")).not.toBeInTheDocument();
       expect(screen.queryByText("Maintenance Dept")).not.toBeInTheDocument();
       expect(screen.getByText("Electrical Team")).toBeInTheDocument();
+      vi.useRealTimers();
     });
 
     it("filters rows by search text (name match)", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
       mockGetOrgDesignerSnapshot.mockResolvedValueOnce(threeNodeSnapshot);
 
       render(<OrganizationDesignerPage />);
@@ -320,9 +336,13 @@ describe("Supervisor Verification — Sprint S2 Org Designer UI", () => {
 
       const searchInput = screen.getByPlaceholderText("designer.searchPlaceholder");
       fireEvent.change(searchInput, { target: { value: "Electrical" } });
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
 
       expect(screen.queryByText("Site Alpha")).not.toBeInTheDocument();
       expect(screen.getByText("Electrical Team")).toBeInTheDocument();
+      vi.useRealTimers();
     });
 
     it("selects a row on click and updates the inspector", async () => {

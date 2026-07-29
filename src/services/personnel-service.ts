@@ -31,9 +31,6 @@ import type {
   Position,
   SkillMatrixRow,
   SkillsMatrixFilter,
-  ScheduleClass,
-  ScheduleClassWithDetails,
-  ScheduleDetail,
   TeamCapacityFilter,
   TeamCapacitySummaryRow,
   SuccessionRiskRow,
@@ -84,7 +81,7 @@ export const PersonnelSchema = z.object({
   primary_entity_id: z.number().nullable(),
   primary_team_id: z.number().nullable(),
   supervisor_id: z.number().nullable(),
-  home_schedule_id: z.number().nullable(),
+  home_schedule_reference_value_id: z.number().nullable(),
   availability_status: z.string(),
   hire_date: z.string().nullable(),
   termination_date: z.string().nullable(),
@@ -119,30 +116,6 @@ export const PositionSchema = z.object({
   is_active: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
-});
-
-export const ScheduleClassSchema = z.object({
-  id: z.number(),
-  name: z.string(),
-  shift_pattern_code: z.string(),
-  is_continuous: z.number(),
-  nominal_hours_per_day: z.number(),
-  is_active: z.number(),
-  created_at: z.string(),
-});
-
-export const ScheduleDetailSchema = z.object({
-  id: z.number(),
-  schedule_class_id: z.number(),
-  day_of_week: z.number(),
-  shift_start: z.string(),
-  shift_end: z.string(),
-  is_rest_day: z.number(),
-});
-
-export const ScheduleClassWithDetailsSchema = z.object({
-  class: ScheduleClassSchema,
-  details: z.array(ScheduleDetailSchema),
 });
 
 export const PersonnelRateCardSchema = z.object({
@@ -486,15 +459,6 @@ export async function createPosition(
   return p as Position;
 }
 
-export async function listScheduleClasses(): Promise<ScheduleClassWithDetails[]> {
-  const rows = await invokeParsed(
-    "list_schedule_classes",
-    undefined,
-    z.array(ScheduleClassWithDetailsSchema),
-  );
-  return rows as ScheduleClassWithDetails[];
-}
-
 export async function listRateCards(personnelId: number): Promise<PersonnelRateCard[]> {
   const rows = await invokeParsed(
     "list_rate_cards",
@@ -765,6 +729,3 @@ export async function exportWorkforceReportCsv(
   const csvPayload = await invokeParsed("export_workforce_report_csv", { reportKind }, z.string());
   return csvPayload;
 }
-
-// Re-export schedule row types for consumers that need them without importing ipc-types
-export type { ScheduleClass, ScheduleDetail, ScheduleClassWithDetails };

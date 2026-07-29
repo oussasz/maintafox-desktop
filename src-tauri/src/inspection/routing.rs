@@ -145,13 +145,20 @@ pub async fn route_inspection_anomaly_to_di(
         _ => "high",
     };
 
+    let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(
+        db,
+        &a.anomaly_type,
+    )
+    .await?;
+
     let di_in = DiCreateInput {
         asset_id,
         org_node_id,
         title,
         description,
         origin_type: "inspection".into(),
-        symptom_code_id: None,
+            request_type: "repair".to_string(),
+        symptom_code_id: Some(symptom_code_id),
         impact_level: "medium".into(),
         production_impact: false,
         safety_flag: a.severity >= 4,

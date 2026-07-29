@@ -41,7 +41,7 @@ mod tests {
 
     /// Helper: create a draft model, add a root type + child type + rule, publish.
     /// Returns (root_type_id, child_type_id).
-    async fn setup_published_model(db: &sea_orm::DatabaseConnection) -> (i32, i32) {
+    async fn setup_published_model(db: &sea_orm::DatabaseConnection) -> (i64, i32, i32) {
         let model = structure_model::create_model(
             db,
             CreateStructureModelPayload {
@@ -124,7 +124,7 @@ mod tests {
             .await
             .expect("publish model");
 
-        (root_type.id, child_type.id)
+        (model.id as i64, root_type.id, child_type.id)
     }
 
     // ── V1 — Root creation path check ─────────────────────────────────────
@@ -132,7 +132,7 @@ mod tests {
     #[tokio::test]
     async fn v1_create_root_node_has_depth_0_and_correct_path() {
         let db = setup().await;
-        let (root_type_id, _) = setup_published_model(&db).await;
+        let (model_id, root_type_id, _) = setup_published_model(&db).await;
 
         let root = nodes::create_org_node(
             &db,
@@ -147,6 +147,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -165,7 +166,7 @@ mod tests {
     #[tokio::test]
     async fn v2_create_child_node_increments_depth_and_appends_path() {
         let db = setup().await;
-        let (root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
 
         let root = nodes::create_org_node(
             &db,
@@ -180,6 +181,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -199,6 +201,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -226,7 +229,7 @@ mod tests {
     #[tokio::test]
     async fn v3_move_node_under_descendant_is_rejected() {
         let db = setup().await;
-        let (root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
 
         let root = nodes::create_org_node(
             &db,
@@ -241,6 +244,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -260,6 +264,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -279,6 +284,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -311,7 +317,7 @@ mod tests {
     #[tokio::test]
     async fn v4_stale_row_version_rejected_on_update() {
         let db = setup().await;
-        let (root_type_id, _) = setup_published_model(&db).await;
+        let (model_id, root_type_id, _) = setup_published_model(&db).await;
 
         let root = nodes::create_org_node(
             &db,
@@ -326,6 +332,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -382,7 +389,7 @@ mod tests {
     #[tokio::test]
     async fn v5_deactivate_node_with_active_child_is_rejected() {
         let db = setup().await;
-        let (root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
 
         let root = nodes::create_org_node(
             &db,
@@ -397,6 +404,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -416,6 +424,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -438,7 +447,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_code_is_rejected() {
         let db = setup().await;
-        let (root_type_id, _) = setup_published_model(&db).await;
+        let (model_id, root_type_id, _) = setup_published_model(&db).await;
 
         nodes::create_org_node(
             &db,
@@ -453,6 +462,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -472,6 +482,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -490,7 +501,7 @@ mod tests {
     #[tokio::test]
     async fn cost_center_on_non_carrying_type_rejected() {
         let db = setup().await;
-        let (root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
 
         let root = nodes::create_org_node(
             &db,
@@ -505,6 +516,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -525,6 +537,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -543,7 +556,7 @@ mod tests {
     #[tokio::test]
     async fn move_node_rewrites_descendant_paths() {
         let db = setup().await;
-        let (root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
 
         let root_a = nodes::create_org_node(
             &db,
@@ -558,6 +571,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -577,6 +591,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -596,6 +611,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -615,6 +631,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )

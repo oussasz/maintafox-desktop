@@ -1,8 +1,8 @@
 //! Supervisor verification tests for Phase 2 SP03 File 01 Sprint S1.
 //!
-//! V1 — Domain uniqueness: duplicate domain code rejected
-//! V2 — PRD type enforcement: unknown structure_type rejected
-//! V3 — Governance-level enforcement: unknown governance_level rejected
+//! V1 â€” Domain uniqueness: duplicate domain code rejected
+//! V2 â€” PRD type enforcement: unknown structure_type rejected
+//! V3 â€” Governance-level enforcement: unknown governance_level rejected
 
 #[cfg(test)]
 mod tests {
@@ -43,15 +43,16 @@ mod tests {
     fn valid_payload() -> CreateReferenceDomainPayload {
         CreateReferenceDomainPayload {
             code: "FAILURE_CLASS".to_string(),
-            name: "Classes de défaillance".to_string(),
+            name: "Classes de dÃ©faillance".to_string(),
             structure_type: "hierarchical".to_string(),
             governance_level: "protected_analytical".to_string(),
+            governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(false),
             validation_rules_json: None,
         }
     }
 
-    // ── V1 — Domain uniqueness ────────────────────────────────────────────
+    // â”€â”€ V1 â€” Domain uniqueness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[tokio::test]
     async fn v1_create_domain_then_duplicate_code_rejected() {
@@ -108,7 +109,7 @@ mod tests {
 
         let mut payload2 = valid_payload();
         payload2.code = "EQUIPMENT_FAMILY".to_string();
-        payload2.name = "Familles d'équipements".to_string();
+        payload2.name = "Familles d'Ã©quipements".to_string();
         payload2.structure_type = "hierarchical".to_string();
         payload2.governance_level = "tenant_managed".to_string();
 
@@ -162,7 +163,7 @@ mod tests {
         }
     }
 
-    // ── V2 — PRD type enforcement ─────────────────────────────────────────
+    // â”€â”€ V2 â€” PRD type enforcement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[tokio::test]
     async fn v2_unknown_structure_type_rejected() {
@@ -197,6 +198,7 @@ mod tests {
                 name: format!("Test domain {i}"),
                 structure_type: (*st).to_string(),
                 governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
                 is_extendable: Some(true),
                 validation_rules_json: None,
             };
@@ -214,7 +216,7 @@ mod tests {
         let db = setup().await;
 
         let mut payload = valid_payload();
-        payload.structure_type = "FLAT".to_string(); // wrong case — must be lowercase
+        payload.structure_type = "FLAT".to_string(); // wrong case â€” must be lowercase
 
         let err = domains::create_reference_domain(&db, payload, 1)
             .await
@@ -235,6 +237,7 @@ mod tests {
             name: None,
             structure_type: Some("graph".to_string()),
             governance_level: None,
+            governance_category: None,
             is_extendable: None,
             validation_rules_json: None,
         };
@@ -246,7 +249,7 @@ mod tests {
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
 
-    // ── V3 — Governance-level enforcement ─────────────────────────────────
+    // â”€â”€ V3 â€” Governance-level enforcement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[tokio::test]
     async fn v3_unknown_governance_level_rejected() {
@@ -281,6 +284,7 @@ mod tests {
                 name: format!("Test gov domain {i}"),
                 structure_type: "flat".to_string(),
                 governance_level: (*gl).to_string(),
+                governance_category: None,
                 is_extendable: Some(true),
                 validation_rules_json: None,
             };
@@ -319,6 +323,7 @@ mod tests {
             name: None,
             structure_type: None,
             governance_level: Some("admin_only".to_string()),
+            governance_category: None,
             is_extendable: None,
             validation_rules_json: None,
         };
@@ -330,7 +335,7 @@ mod tests {
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
 
-    // ── Additional edge-case coverage ─────────────────────────────────────
+    // â”€â”€ Additional edge-case coverage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[tokio::test]
     async fn update_domain_partial_fields() {
@@ -344,6 +349,7 @@ mod tests {
             name: Some("Updated Name".to_string()),
             structure_type: None,
             governance_level: None,
+            governance_category: None,
             is_extendable: Some(true),
             validation_rules_json: None,
         };
@@ -367,6 +373,7 @@ mod tests {
             name: Some("Ghost".to_string()),
             structure_type: None,
             governance_level: None,
+            governance_category: None,
             is_extendable: None,
             validation_rules_json: None,
         };
@@ -506,7 +513,7 @@ mod tests {
         // Insert a value
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO reference_values (set_id, code, label) VALUES (?, 'MECH', 'Mécanique')",
+            "INSERT INTO reference_values (set_id, code, label) VALUES (?, 'MECH', 'MÃ©canique')",
             [set_id.into()],
         ))
         .await

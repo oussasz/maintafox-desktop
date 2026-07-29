@@ -1,21 +1,36 @@
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach } from "vitest";
 
 import { useSession } from "@/hooks/use-session";
+import { useSessionStore } from "@/store/session-store";
 import { mockInvoke, fixtures } from "@/test/mocks/tauri";
 
 describe("useSession", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    useSessionStore.getState().resetForTests();
   });
 
   it("fetches session info on mount", async () => {
     mockInvoke.mockResolvedValueOnce(fixtures.noSession);
     const { result } = renderHook(() => useSession());
 
-    await act(async () => {});
-    expect(mockInvoke).toHaveBeenCalledWith("get_session_info");
+    await waitFor(() => expect(result.current.hasBootstrapped).toBe(true));
+    expect(mockInvoke).toHaveBeenCalledWith("get_session_info", undefined);
     expect(result.current.info?.is_authenticated).toBe(false);
+  });
+
+  it("shares one session across multiple hook instances", async () => {
+    mockInvoke.mockResolvedValueOnce(fixtures.authenticatedSession);
+
+    const first = renderHook(() => useSession());
+    const second = renderHook(() => useSession());
+
+    await waitFor(() => expect(first.result.current.hasBootstrapped).toBe(true));
+    expect(second.result.current.info?.is_authenticated).toBe(true);
+    expect(second.result.current.info?.username).toBe(first.result.current.info?.username);
+    // One shared bootstrap — not one get_session_info per hook instance.
+    expect(mockInvoke.mock.calls.filter((c) => c[0] === "get_session_info")).toHaveLength(1);
   });
 
   it("login updates session info", async () => {
@@ -24,7 +39,7 @@ describe("useSession", () => {
       .mockResolvedValueOnce({ session_info: fixtures.authenticatedSession }); // login response
 
     const { result } = renderHook(() => useSession());
-    await act(async () => {});
+    await waitFor(() => expect(result.current.hasBootstrapped).toBe(true));
 
     await act(async () => {
       await result.current.login({ username: "admin", password: "Admin#2026!" });
@@ -40,7 +55,7 @@ describe("useSession", () => {
       .mockRejectedValueOnce(new Error("Identifiant ou mot de passe invalide."));
 
     const { result } = renderHook(() => useSession());
-    await act(async () => {});
+    await waitFor(() => expect(result.current.hasBootstrapped).toBe(true));
 
     await act(async () => {
       try {
@@ -63,7 +78,7 @@ describe("useSession", () => {
       });
 
     const { result } = renderHook(() => useSession());
-    await act(async () => {});
+    await waitFor(() => expect(result.current.hasBootstrapped).toBe(true));
 
     await act(async () => {
       try {
@@ -84,7 +99,7 @@ describe("useSession", () => {
       .mockResolvedValueOnce(undefined); // logout
 
     const { result } = renderHook(() => useSession());
-    await act(async () => {});
+    await waitFor(() => expect(result.current.hasBootstrapped).toBe(true));
 
     await act(async () => {
       await result.current.logout();

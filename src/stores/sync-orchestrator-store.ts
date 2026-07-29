@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { i18n } from "@/i18n/config";
+import { isModuleCapabilityAllowed, parseCapabilityMap } from "@/lib/module-capability";
+import { getEntitlementSummary } from "@/services/entitlement-service";
 import {
   computeRetryDelayMs,
   defaultRetryPolicy,
@@ -25,7 +27,8 @@ import {
 import { exchangeControlPlaneSyncRound } from "@/services/sync-vps-transport-service";
 import { useAppStore } from "@/store/app-store";
 import { pushAppToast } from "@/store/app-toast-store";
-import { toErrorMessage } from "@/utils/errors";
+import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
+import { extractIpcErrorCode, toErrorMessage } from "@/utils/errors";
 import type {
   ReplaySyncFailuresInput,
   ResolveSyncConflictInput,
@@ -33,6 +36,54 @@ import type {
 } from "@shared/ipc-types";
 
 type TimelineSeverity = "info" | "warning" | "error";
+
+/** True when the active entitlement explicitly allows the sync module (or soft-allows via empty map). */
+async function resolveSyncCapabilityEnabled(): Promise<boolean> {
+  try {
+    const summary = await getEntitlementSummary();
+    const map = parseCapabilityMap(summary.capability_map_json);
+    return isModuleCapabilityAllowed(map, "sync.view");
+  } catch {
+    // Without a readable entitlement summary, do not start automatic sync cycles.
+    return false;
+  }
+}
+
+function isSyncCapabilityDeniedError(err: unknown): boolean {
+  if ((extractIpcErrorCode(err) ?? "").toUpperCase() !== "PERMISSION_DENIED") {
+    return false;
+  }
+  const msg = toErrorMessage(err).toLowerCase();
+  return (
+    msg.includes("entitlement capability blocked: sync") ||
+    msg.includes("capability 'sync' blocked") ||
+    msg.includes('capability "sync" blocked')
+  );
+}
+
+function enterSyncUnlicensedIdle(correlationId: string, mode: SyncRunMode, detail?: string) {
+  clearSchedulerTimer();
+  clearHeartbeatTimer();
+  useSyncOrchestratorStore.setState((state) => {
+    const timeline = pushTimeline(state.timeline, {
+      correlationId,
+      severity: "info",
+      mode,
+      event: "sync_not_licensed",
+      message: detail ?? "Sync capability is disabled for this entitlement; orchestrator idle.",
+    });
+    reflectAppSyncState("idle", state.pendingBacklog, state.lastSuccessAt, null, null, 0);
+    return {
+      syncCapabilityEnabled: false,
+      runtimeState: "idle" as const,
+      blockerReason: null,
+      lastError: null,
+      nextScheduledAt: null,
+      retry: { attempt: 0, nextRetryAt: null, lastError: null },
+      timeline,
+    };
+  });
+}
 
 export interface SyncTimelineEvent {
   id: string;
@@ -88,6 +139,8 @@ export interface SyncDiagnosticsExport {
 
 interface SyncOrchestratorState {
   initialized: boolean;
+  /** False when entitlement capability map disables sync (expected on Core). */
+  syncCapabilityEnabled: boolean;
   runtimeState: SyncRuntimeState;
   activeMode: SyncRunMode;
   blockerReason: string | null;
@@ -191,9 +244,23 @@ async function executeSyncRun(mode: SyncRunMode) {
   const correlationId = newCorrelationId();
   let orchestrator = useSyncOrchestratorStore.getState();
 
+  // Re-check entitlement each run so Core (sync:false) stays idle without exchange spam.
+  const capabilityEnabled = await resolveSyncCapabilityEnabled();
+  if (!capabilityEnabled) {
+    enterSyncUnlicensedIdle(correlationId, mode);
+    return;
+  }
+  if (!orchestrator.syncCapabilityEnabled) {
+    useSyncOrchestratorStore.setState({ syncCapabilityEnabled: true });
+    orchestrator = useSyncOrchestratorStore.getState();
+  }
+
   // Automatic recovery: after retry budget is exhausted, heartbeat/background used to fail instantly
   // forever. Skip duplicate runs for a cooldown, then grant a fresh budget without user action.
   const autoModes: SyncRunMode[] = ["heartbeat_refresh", "background", "bootstrap_restore"];
+  if (autoModes.includes(mode) && !isSessionActiveForBackgroundWork()) {
+    return;
+  }
   if (
     autoModes.includes(mode) &&
     orchestrator.retry.attempt >= orchestrator.retryPolicy.maxAttempts
@@ -357,6 +424,14 @@ async function executeSyncRun(mode: SyncRunMode) {
     });
     useSyncOrchestratorStore.getState().scheduleNext();
   } catch (error) {
+    if (isSyncCapabilityDeniedError(error)) {
+      enterSyncUnlicensedIdle(
+        correlationId,
+        mode,
+        "Sync capability denied by entitlement; orchestrator idle.",
+      );
+      return;
+    }
     const message = redactSecrets(toErrorMessage(error));
     if (message.includes("SYNC_EXCHANGE_TIMEOUT")) {
       pushAppToast({
@@ -423,6 +498,7 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
   persist(
     (set, get) => ({
       initialized: false,
+      syncCapabilityEnabled: true,
       runtimeState: "idle",
       activeMode: "background",
       blockerReason: null,
@@ -457,56 +533,69 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
 
       initialize: () => {
         if (get().initialized) return;
-        set((state) => {
-          const runtimeState = normalizeRuntimeStateAfterRestart(state.runtimeState);
-          const clearedTerminalError = state.runtimeState === "error";
-          return {
-            initialized: true,
-            runtimeState,
-            retry: { attempt: 0, nextRetryAt: null, lastError: null },
-            lastError: clearedTerminalError ? null : state.lastError,
-            timeline: pushTimeline(state.timeline, {
-              correlationId: newCorrelationId(),
-              severity: "info",
-              mode: "bootstrap_restore",
-              event: "orchestrator_initialized",
-              message: "Sync orchestrator initialized from persisted state.",
-            }),
-          };
-        });
-        {
-          const s = get();
-          reflectAppSyncState(
-            s.runtimeState,
-            s.pendingBacklog,
-            s.lastSuccessAt,
-            s.lastError,
-            s.blockerReason,
-            s.retry.attempt,
+        set({ initialized: true });
+        void (async () => {
+          const enabled = await resolveSyncCapabilityEnabled();
+          if (!enabled) {
+            enterSyncUnlicensedIdle(
+              newCorrelationId(),
+              "bootstrap_restore",
+              "Sync capability is disabled for this entitlement; orchestrator idle.",
+            );
+            return;
+          }
+
+          set((state) => {
+            const runtimeState = normalizeRuntimeStateAfterRestart(state.runtimeState);
+            const clearedTerminalError = state.runtimeState === "error";
+            return {
+              syncCapabilityEnabled: true,
+              runtimeState,
+              retry: { attempt: 0, nextRetryAt: null, lastError: null },
+              lastError: clearedTerminalError ? null : state.lastError,
+              timeline: pushTimeline(state.timeline, {
+                correlationId: newCorrelationId(),
+                severity: "info",
+                mode: "bootstrap_restore",
+                event: "orchestrator_initialized",
+                message: "Sync orchestrator initialized from persisted state.",
+              }),
+            };
+          });
+          {
+            const s = get();
+            reflectAppSyncState(
+              s.runtimeState,
+              s.pendingBacklog,
+              s.lastSuccessAt,
+              s.lastError,
+              s.blockerReason,
+              s.retry.attempt,
+            );
+          }
+          if (typeof window !== "undefined" && !onlineHandlerBound) {
+            window.addEventListener("online", () => {
+              useAppStore.getState().setOnline(true);
+              set({ offlineSince: null });
+              void get().runSyncNow("heartbeat_refresh");
+            });
+            window.addEventListener("offline", () => {
+              useAppStore.getState().setOnline(false);
+              set((state) => ({
+                offlineSince: state.offlineSince ?? nowIso(),
+              }));
+            });
+            onlineHandlerBound = true;
+          }
+          clearHeartbeatTimer();
+          heartbeatTimer = setInterval(
+            () => {
+              void get().runSyncNow("heartbeat_refresh");
+            },
+            Math.max(15, get().policy.heartbeatIntervalSeconds) * 1000,
           );
-        }
-        if (typeof window !== "undefined" && !onlineHandlerBound) {
-          window.addEventListener("online", () => {
-            useAppStore.getState().setOnline(true);
-            set({ offlineSince: null });
-            void get().runSyncNow("heartbeat_refresh");
-          });
-          window.addEventListener("offline", () => {
-            useAppStore.getState().setOnline(false);
-            set((state) => ({
-              offlineSince: state.offlineSince ?? nowIso(),
-            }));
-          });
-          onlineHandlerBound = true;
-        }
-        clearHeartbeatTimer();
-        heartbeatTimer = setInterval(
-          () => {
-            void get().runSyncNow("heartbeat_refresh");
-          },
-          Math.max(15, get().policy.heartbeatIntervalSeconds) * 1000,
-        );
-        void get().runSyncNow("bootstrap_restore");
+          void get().runSyncNow("bootstrap_restore");
+        })();
       },
 
       shutdown: () => {
@@ -527,6 +616,10 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
       },
 
       scheduleNext: (delayMs?: number) => {
+        if (!get().syncCapabilityEnabled) {
+          clearSchedulerTimer();
+          return;
+        }
         clearSchedulerTimer();
         const policyDelayMs = Math.max(10, get().policy.schedulerIntervalSeconds) * 1000;
         const effectiveDelayMs = Math.max(500, delayMs ?? policyDelayMs);

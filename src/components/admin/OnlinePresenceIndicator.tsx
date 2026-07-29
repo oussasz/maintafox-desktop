@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
-import { invoke } from "@/lib/ipc-invoke";
+import { invokeSilent } from "@/lib/ipc-invoke";
+import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { getUserPresence } from "@/services/rbac-service";
+import { useSessionStore } from "@/store/session-store";
 import type { UserPresence } from "@shared/ipc-types";
 
-// â”€â”€ Presence cache (module-level, shared across all instances) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Presence cache (module-level, shared across all instances) ──────────────
 
 const CACHE_TTL_MS = 30_000;
 const cachedPresence: Map<number, UserPresence> = new Map();
@@ -28,7 +30,7 @@ async function fetchPresence(userIds: number[]): Promise<void> {
       }
       cacheTimestamp = Date.now();
     } catch {
-      // IPC failure â€” leave cache stale, will retry on next interval
+      // IPC failure — leave cache stale, will retry on next interval
     } finally {
       pendingFetch = null;
     }
@@ -37,7 +39,7 @@ async function fetchPresence(userIds: number[]): Promise<void> {
   return pendingFetch;
 }
 
-// â”€â”€ Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Component ───────────────────────────────────────────────────────────────
 
 interface OnlinePresenceIndicatorProps {
   userId: number;
@@ -62,11 +64,26 @@ const STATUS_COLORS: Record<string, string> = {
 export function OnlinePresenceIndicator({ userId, size = "sm" }: OnlinePresenceIndicatorProps) {
   const [status, setStatus] = useState<string>("offline");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const authenticated = useSessionStore((s) => s.info?.is_authenticated === true);
+  const locked = useSessionStore((s) => s.info?.is_locked === true);
 
   useEffect(() => {
+    if (!authenticated || locked) {
+      setStatus("offline");
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      return;
+    }
+
     const update = async () => {
-      // Touch current user's session so presence stays fresh
-      invoke("touch_session").catch(() => {});
+      if (!isSessionActiveForBackgroundWork()) {
+        setStatus("offline");
+        return;
+      }
+      // Touch current user's session so presence stays fresh (silent — never AuthLock).
+      void invokeSilent("touch_session").catch(() => {});
       await fetchPresence([userId]);
       const cached = cachedPresence.get(userId);
       setStatus(cached?.status ?? "offline");
@@ -77,7 +94,7 @@ export function OnlinePresenceIndicator({ userId, size = "sm" }: OnlinePresenceI
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [userId]);
+  }, [userId, authenticated, locked]);
 
   return (
     <span

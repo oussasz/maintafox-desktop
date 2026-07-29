@@ -36,6 +36,8 @@ export interface DataTableProps<TData, TValue> {
   pageSize?: number;
   /** Callback when a row is clicked */
   onRowClick?: (row: TData) => void;
+  /** Highlight selected row (e.g. registry two-pane selection) */
+  isRowSelected?: (row: TData) => boolean;
   /** Show a loading skeleton instead of data */
   isLoading?: boolean;
   /** Number of skeleton rows to display when loading (default: 5) */
@@ -75,6 +77,7 @@ export function DataTable<TData, TValue>({
   searchPlaceholder,
   pageSize = 10,
   onRowClick,
+  isRowSelected,
   isLoading = false,
   skeletonRows = 5,
   className,
@@ -155,11 +158,16 @@ export function DataTable<TData, TValue>({
                 <SkeletonRow key={i} colCount={columns.length} />
               ))
             ) : table.getRowModel().rows.length > 0 ? (
-              table.getRowModel().rows.map((row) => (
+              table.getRowModel().rows.map((row) => {
+                const selected = isRowSelected?.(row.original) ?? row.getIsSelected();
+                return (
                 <TableRow
                   key={row.id}
-                  data-state={row.getIsSelected() ? "selected" : undefined}
-                  className={cn(onRowClick && "cursor-pointer")}
+                  data-state={selected ? "selected" : undefined}
+                  className={cn(
+                    onRowClick && "cursor-pointer",
+                    selected && "bg-muted",
+                  )}
                   onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                 >
                   {row.getVisibleCells().map((cell) => (
@@ -168,7 +176,8 @@ export function DataTable<TData, TValue>({
                     </TableCell>
                   ))}
                 </TableRow>
-              ))
+              );
+              })
             ) : (
               <TableRow>
                 <TableCell colSpan={columns.length} className="h-24 text-center text-text-muted">

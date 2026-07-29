@@ -20,6 +20,7 @@ pub struct WoChangeEvent {
     pub wo_id: Option<i64>,
     pub action: String,
     pub actor_id: Option<i64>,
+    pub actor_display_name: Option<String>,
     pub acted_at: String,
     pub summary: Option<String>,
     pub details_json: Option<String>,
@@ -113,11 +114,14 @@ pub async fn list_wo_change_events(
 ) -> crate::errors::AppResult<Vec<WoChangeEvent>> {
     let rows = WoChangeEvent::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        r"SELECT id, wo_id, action, actor_id, acted_at, summary, details_json,
-                 requires_step_up, apply_result
-            FROM wo_change_events
-           WHERE wo_id = ?
-           ORDER BY acted_at ASC, id ASC
+        r"SELECT e.id, e.wo_id, e.action, e.actor_id,
+                 COALESCE(ua.display_name, ua.username) AS actor_display_name,
+                 e.acted_at, e.summary, e.details_json,
+                 e.requires_step_up, e.apply_result
+            FROM wo_change_events e
+            LEFT JOIN user_accounts ua ON ua.id = e.actor_id
+           WHERE e.wo_id = ?
+           ORDER BY e.acted_at ASC, e.id ASC
            LIMIT ?",
         [wo_id.into(), limit.into()],
     ))
@@ -145,23 +149,23 @@ pub async fn list_all_wo_change_events(
     let mut values: Vec<sea_orm::Value> = Vec::new();
 
     if let Some(ref action) = filter.action {
-        conditions.push("action = ?".to_string());
+        conditions.push("e.action = ?".to_string());
         values.push(action.clone().into());
     }
     if let Some(actor_id) = filter.actor_id {
-        conditions.push("actor_id = ?".to_string());
+        conditions.push("e.actor_id = ?".to_string());
         values.push(actor_id.into());
     }
     if let Some(ref date_from) = filter.date_from {
-        conditions.push("acted_at >= ?".to_string());
+        conditions.push("e.acted_at >= ?".to_string());
         values.push(date_from.clone().into());
     }
     if let Some(ref date_to) = filter.date_to {
-        conditions.push("acted_at <= ?".to_string());
+        conditions.push("e.acted_at <= ?".to_string());
         values.push(date_to.clone().into());
     }
     if let Some(wo_id) = filter.wo_id {
-        conditions.push("wo_id = ?".to_string());
+        conditions.push("e.wo_id = ?".to_string());
         values.push(wo_id.into());
     }
 
@@ -175,11 +179,14 @@ pub async fn list_all_wo_change_events(
     values.push(offset.into());
 
     let sql = format!(
-        r"SELECT id, wo_id, action, actor_id, acted_at, summary, details_json,
-                 requires_step_up, apply_result
-            FROM wo_change_events
+        r"SELECT e.id, e.wo_id, e.action, e.actor_id,
+                 COALESCE(ua.display_name, ua.username) AS actor_display_name,
+                 e.acted_at, e.summary, e.details_json,
+                 e.requires_step_up, e.apply_result
+            FROM wo_change_events e
+            LEFT JOIN user_accounts ua ON ua.id = e.actor_id
            {where_clause}
-           ORDER BY acted_at DESC, id DESC
+           ORDER BY e.acted_at DESC, e.id DESC
            LIMIT ? OFFSET ?"
     );
 

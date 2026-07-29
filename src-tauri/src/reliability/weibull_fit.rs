@@ -58,9 +58,9 @@ pub fn fit_weibull_mle(times: &[f64]) -> Option<(f64, f64)> {
             break;
         }
         if g > 0.0 {
-            hi = mid;
-        } else {
             lo = mid;
+        } else {
+            hi = mid;
         }
         if (hi - lo) < 1e-12 {
             break;
@@ -170,6 +170,21 @@ pub fn fit_weibull_with_ci(times: &[f64]) -> WeibullFitResult {
     }
 }
 
+/// Fixed $n=10$ inter-arrivées (h) from $\mathrm{Weibull}(\beta=2,\eta=500)$ via
+/// $t_i = \eta(-\ln(1-u_i))^{1/\beta}$ with $u_i = i/(n+1)$, $i=1,\ldots,n$.
+pub const VALIDATION_WEIBULL_SAMPLE: [f64; 10] = [
+    154.361_734_089_382_48,
+    223.981_414_107_371_42,
+    282.158_524_201_615_53,
+    336.149_194_459_490_45,
+    389.273_619_569_293_3,
+    443.975_607_540_625_5,
+    502.891_865_036_232_16,
+    569.930_474_735_791_9,
+    652.830_010_844_788_3,
+    774.256_945_851_693_7,
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +194,19 @@ mod tests {
         let t = vec![80.0, 95.0, 100.0, 105.0, 120.0];
         let (b, e) = fit_weibull_mle(&t).expect("mle");
         assert!(b > 0.0 && e > 0.0 && b.is_finite() && e.is_finite());
+    }
+
+    #[test]
+    fn weibull_mle_validation_sample_matches_thesis() {
+        let times: Vec<f64> = VALIDATION_WEIBULL_SAMPLE.to_vec();
+        let (beta, eta) = fit_weibull_mle(&times).expect("mle");
+        let fit = fit_weibull_with_ci(&times);
+        let nll = neg_log_likelihood(&times, beta, eta);
+        assert!((beta - 2.5417).abs() < 0.02, "beta hat {beta}");
+        assert!((eta - 489.30).abs() < 2.0, "eta hat {eta}");
+        assert!(fit.adequate_sample);
+        assert!(nll.is_finite() && nll > 0.0);
+        assert!(fit.beta_ci_low < 2.0 && fit.beta_ci_high > 2.0);
+        assert!(fit.eta_ci_low < 500.0 && fit.eta_ci_high > 500.0);
     }
 }

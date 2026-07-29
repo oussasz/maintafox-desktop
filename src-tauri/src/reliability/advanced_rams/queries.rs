@@ -8,9 +8,11 @@ use crate::settings;
 use crate::reliability::advanced_rams::domain::{
     CreateFmecaAnalysisInput, CreateRcmStudyInput, FmecaAnalysesFilter, FmecaAnalysis, FmecaItem,
     FmecaItemWithContext, FmecaItemsEquipmentFilter, FmecaSeverityOccurrenceMatrix, FmecaSoCell,
-    RamIshikawaDiagram, RamIshikawaDiagramsFilter, ReliabilityRulIndicator, RcmDecision, RcmStudiesFilter,
-    RcmStudy, UpdateFmecaAnalysisInput, UpdateRcmStudyInput, UpsertFmecaItemInput, UpsertRamIshikawaDiagramInput,
-    UpsertRcmDecisionInput, WeibullFitRecord, WeibullFitRunInput,
+    RamIshikawaDiagram, RamIshikawaDiagramsFilter, ReliabilityRulIndicator, RcmDecision, RcmStudiesFilter, RcmStudy,
+    SuggestedPartForFailure, SuggestedPartsForFailureInput,
+    UpdateFmecaAnalysisInput, UpdateRcmStudyInput, UpsertFmecaItemInput, UpsertRamIshikawaDiagramInput,
+    UpsertRcmDecisionInput, WeibullCurvePoint, WeibullDashboardInput, WeibullDashboardPayload, WeibullFitRecord,
+    WeibullFitRunInput, WeibullPmMarker,
 };
 use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 use crate::reliability::queries::evaluate_reliability_analysis_input;
@@ -58,6 +60,7 @@ pub async fn run_and_store_weibull_fit(
     user_id: Option<i32>,
     input: WeibullFitRunInput,
 ) -> AppResult<WeibullFitRecord> {
+    let include_censored = input.include_censored.unwrap_or(false);
     let mut sql = String::from(
         "SELECT COALESCE(failed_at, detected_at, created_at) AS ts
          FROM failure_events WHERE equipment_id = ?",
@@ -83,7 +86,22 @@ pub async fn run_and_store_weibull_fit(
         }
     }
     let gaps = inter_arrival_hours_from_events(&ts);
-    let fit = fit_weibull_with_ci(&gaps);
+    let mut fit_points = gaps.clone();
+    if include_censored {
+        let ref_end = input
+            .period_end
+            .as_deref()
+            .map(parse_ts)
+            .transpose()?
+            .unwrap_or_else(Utc::now);
+        if let Some(last) = ts.last().copied() {
+            let tail_h = (ref_end - last).num_milliseconds() as f64 / 3_600_000.0;
+            if tail_h.is_finite() && tail_h > 0.0 {
+                fit_points.push(tail_h);
+            }
+        }
+    }
+    let fit = fit_weibull_with_ci(&fit_points);
     let inter_json = serde_json::to_string(&gaps).unwrap_or_else(|_| "[]".to_string());
     let now = Utc::now().to_rfc3339();
     let uid = user_id.map(i64::from);
@@ -122,7 +140,11 @@ pub async fn run_and_store_weibull_fit(
             el.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
             eh.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
             adequate.into(),
-            fit.message.clone().into(),
+            if include_censored {
+                format!("{} [include_censored=true]", fit.message).into()
+            } else {
+                fit.message.clone().into()
+            },
             now.clone().into(),
             uid.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
         ],
@@ -202,6 +224,59 @@ fn validate_sod(s: i64, o: i64, d: i64) -> AppResult<()> {
                 "{name} must be 1-10, got {v}"
             )]));
         }
+    }
+    Ok(())
+}
+
+async fn ensure_work_failure_modes_published_and_active_exists(db: &DatabaseConnection) -> AppResult<()> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c
+             FROM reference_values rv
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE UPPER(TRIM(rd.code)) = UPPER(TRIM('WORK.FAILURE_MODES'))
+               AND rs.status = 'published'
+               AND rv.is_active = 1",
+            [],
+        ))
+        .await?;
+    let count: i64 = row
+        .ok_or_else(|| AppError::SyncError("WORK.FAILURE_MODES published count missing.".into()))?
+        .try_get("", "c")
+        .map_err(|e| decode_err("work_failure_modes_published_count", e))?;
+    if count <= 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "GATE_FMECA_REFERENCE_MODES_NOT_PUBLISHED".into(),
+        ]));
+    }
+    Ok(())
+}
+
+async fn ensure_failure_mode_id_governed(db: &DatabaseConnection, failure_mode_id: i64) -> AppResult<()> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c
+             FROM reference_values rv
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE rv.id = ?
+               AND rv.is_active = 1
+               AND rs.status = 'published'
+               AND UPPER(TRIM(rd.code)) = UPPER(TRIM('WORK.FAILURE_MODES'))",
+            [failure_mode_id.into()],
+        ))
+        .await?;
+    let count: i64 = row
+        .ok_or_else(|| AppError::SyncError("governed failure mode check missing.".into()))?
+        .try_get("", "c")
+        .map_err(|e| decode_err("governed_failure_mode_count", e))?;
+    if count <= 0 {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "GATE_FMECA_FAILURE_MODE_NOT_GOVERNED:failure_mode_id={failure_mode_id}"
+        )]));
     }
     Ok(())
 }
@@ -385,6 +460,10 @@ pub async fn list_fmeca_items(db: &DatabaseConnection, analysis_id: i64) -> AppR
 
 pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemInput) -> AppResult<FmecaItem> {
     validate_sod(input.severity, input.occurrence, input.detectability)?;
+    ensure_work_failure_modes_published_and_active_exists(db).await?;
+    if let Some(failure_mode_id) = input.failure_mode_id {
+        ensure_failure_mode_id_governed(db, failure_mode_id).await?;
+    }
     let rpn = input.severity * input.occurrence * input.detectability;
     let now = Utc::now().to_rfc3339();
     let ff = input.functional_failure.clone().unwrap_or_default();
@@ -843,6 +922,108 @@ fn weibull_residual_median_hours(beta: f64, eta: f64, t: f64) -> Option<f64> {
     Some(x.max(0.0))
 }
 
+fn build_weibull_curve_points(
+    beta: f64,
+    eta: f64,
+    beta_low: Option<f64>,
+    beta_high: Option<f64>,
+    eta_low: Option<f64>,
+    eta_high: Option<f64>,
+    t_max: f64,
+    n: usize,
+) -> Vec<WeibullCurvePoint> {
+    let bl = beta_low.unwrap_or(beta).max(0.0001);
+    let bh = beta_high.unwrap_or(beta).max(0.0001);
+    let el = eta_low.unwrap_or(eta).max(0.0001);
+    let eh = eta_high.unwrap_or(eta).max(0.0001);
+    let m = n.max(10);
+    let mut out = Vec::with_capacity(m + 1);
+    for i in 0..=m {
+        let t = (t_max * i as f64) / m as f64;
+        let r = weibull_r(beta, eta, t).unwrap_or(0.0);
+        let r_a = weibull_r(bl, el, t).unwrap_or(r);
+        let r_b = weibull_r(bh, eh, t).unwrap_or(r);
+        let r_low = r_a.min(r_b).clamp(0.0, 1.0);
+        let r_high = r_a.max(r_b).clamp(0.0, 1.0);
+        out.push(WeibullCurvePoint { t, r, r_low, r_high });
+    }
+    out
+}
+
+async fn industrial_beta_reference_for_equipment_class(
+    db: &DatabaseConnection,
+    class_code: Option<String>,
+) -> AppResult<(Option<f64>, Option<String>)> {
+    let Some(code) = class_code else {
+        return Ok((None, None));
+    };
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT beta_reference, standard_code, source_document, revision_tag
+             FROM reliability_beta_benchmarks
+             WHERE UPPER(TRIM(equipment_class_code)) = UPPER(TRIM(?)) AND is_active = 1
+             ORDER BY id DESC
+             LIMIT 1",
+            [code.into()],
+        ))
+        .await?;
+    let Some(r) = row else {
+        return Ok((None, None));
+    };
+    let beta_reference: f64 = r
+        .try_get("", "beta_reference")
+        .map_err(|e| decode_err("beta_reference", e))?;
+    let standard_code: String = r
+        .try_get("", "standard_code")
+        .map_err(|e| decode_err("standard_code", e))?;
+    let source_document: String = r
+        .try_get("", "source_document")
+        .map_err(|e| decode_err("source_document", e))?;
+    let revision_tag: Option<String> = r
+        .try_get("", "revision_tag")
+        .map_err(|e| decode_err("revision_tag", e))?;
+    let source = if let Some(rev) = revision_tag {
+        format!("{standard_code} / {source_document} / {rev}")
+    } else {
+        format!("{standard_code} / {source_document}")
+    };
+    Ok((Some(beta_reference), Some(source)))
+}
+
+async fn load_reliability_dashboard_policy(db: &DatabaseConnection) -> AppResult<(f64, f64, String)> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT danger_threshold_r, pm_threshold_r, pm_label
+             FROM reliability_dashboard_policies
+             WHERE scope_code = 'global'
+             LIMIT 1",
+            [],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::SyncError(
+                "Missing reliability_dashboard_policies row for scope_code='global'".into(),
+            )
+        })?;
+    let danger_threshold_r: f64 = row
+        .try_get("", "danger_threshold_r")
+        .map_err(|e| decode_err("danger_threshold_r", e))?;
+    let pm_threshold_r: f64 = row
+        .try_get("", "pm_threshold_r")
+        .map_err(|e| decode_err("pm_threshold_r", e))?;
+    let pm_label: String = row
+        .try_get("", "pm_label")
+        .map_err(|e| decode_err("pm_label", e))?;
+    if !(0.0..=1.0).contains(&danger_threshold_r) || !(0.0..1.0).contains(&pm_threshold_r) {
+        return Err(AppError::ValidationFailed(vec![
+            "reliability_dashboard_policies.danger_threshold_r must be in [0.0, 1.0], pm_threshold_r in (0.0, 1.0)".into(),
+        ]));
+    }
+    Ok((danger_threshold_r, pm_threshold_r, pm_label))
+}
+
 async fn sum_spare_stock_for_work_order(db: &DatabaseConnection, wo_id: i64) -> AppResult<f64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -906,9 +1087,92 @@ pub async fn get_fmeca_severity_occurrence_matrix(
             });
         }
     }
+
+    let ref_count_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c
+             FROM reference_values rv
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE UPPER(TRIM(rd.code)) = UPPER(TRIM('WORK.FAILURE_MODES'))
+               AND rs.status = 'published'
+               AND rv.is_active = 1",
+            [],
+        ))
+        .await?;
+    let reference_modes_published_count: i64 = ref_count_row
+        .ok_or_else(|| AppError::SyncError("reference mode count missing.".into()))?
+        .try_get("", "c")
+        .map_err(|e| decode_err("reference_mode_count", e))?;
+
+    let fmeca_link_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c
+             FROM fmeca_items fi
+             INNER JOIN fmeca_analyses fa ON fa.id = fi.analysis_id
+             WHERE fa.equipment_id = ? AND fi.failure_mode_id IS NOT NULL",
+            [equipment_id.into()],
+        ))
+        .await?;
+    let fmeca_mode_links_count: i64 = fmeca_link_row
+        .ok_or_else(|| AppError::SyncError("fmeca mode link count missing.".into()))?
+        .try_get("", "c")
+        .map_err(|e| decode_err("fmeca_mode_links_count", e))?;
+
+    let orphan_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c
+             FROM fmeca_items fi
+             INNER JOIN fmeca_analyses fa ON fa.id = fi.analysis_id
+             LEFT JOIN reference_values rv ON rv.id = fi.failure_mode_id
+             LEFT JOIN reference_sets rs ON rs.id = rv.set_id
+             LEFT JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE fa.equipment_id = ? AND fi.failure_mode_id IS NOT NULL
+               AND (
+                 rv.id IS NULL
+                 OR rs.status <> 'published'
+                 OR UPPER(TRIM(rd.code)) <> UPPER(TRIM('WORK.FAILURE_MODES'))
+               )",
+            [equipment_id.into()],
+        ))
+        .await?;
+    let fmeca_orphan_mode_links_count: i64 = orphan_row
+        .ok_or_else(|| AppError::SyncError("fmeca orphan mode count missing.".into()))?
+        .try_get("", "c")
+        .map_err(|e| decode_err("fmeca_orphan_mode_links_count", e))?;
+
+    let reference_domain_ready = reference_modes_published_count > 0;
+    let (warning_code, warning_message) = if !reference_domain_ready && fmeca_mode_links_count > 0 {
+        (
+            Some("reference_modes_missing_published_set".to_string()),
+            Some(
+                "FMECA has linked failure modes but WORK.FAILURE_MODES has no published active values. Publish reference values to restore governance consistency."
+                    .to_string(),
+            ),
+        )
+    } else if fmeca_orphan_mode_links_count > 0 {
+        (
+            Some("fmeca_mode_links_orphaned".to_string()),
+            Some(
+                "Some FMECA failure_mode_id links are orphaned/outside published WORK.FAILURE_MODES.".to_string(),
+            ),
+        )
+    } else {
+        (None, None)
+    };
+
     Ok(FmecaSeverityOccurrenceMatrix {
         equipment_id,
         cells,
+        reference_domain_ready,
+        reference_modes_published_count,
+        fmeca_mode_links_count,
+        fmeca_orphan_mode_links_count,
+        warning_code,
+        warning_message,
     })
 }
 
@@ -990,6 +1254,59 @@ pub async fn list_fmeca_items_for_equipment(
     Ok(out)
 }
 
+fn map_suggested_part_for_failure(row: &sea_orm::QueryResult) -> AppResult<SuggestedPartForFailure> {
+    Ok(SuggestedPartForFailure {
+        article_id: row.try_get("", "article_id").map_err(|e| decode_err("article_id", e))?,
+        article_code: row
+            .try_get("", "article_code")
+            .map_err(|e| decode_err("article_code", e))?,
+        article_name: row
+            .try_get("", "article_name")
+            .map_err(|e| decode_err("article_name", e))?,
+        suggested_quantity: row
+            .try_get("", "suggested_quantity")
+            .map_err(|e| decode_err("suggested_quantity", e))?,
+        priority: row.try_get("", "priority").map_err(|e| decode_err("priority", e))?,
+        notes: row.try_get::<Option<String>>("", "notes").map_err(|e| decode_err("notes", e))?,
+        stock_on_hand: row
+            .try_get("", "stock_on_hand")
+            .map_err(|e| decode_err("stock_on_hand", e))?,
+        stock_available: row
+            .try_get("", "stock_available")
+            .map_err(|e| decode_err("stock_available", e))?,
+    })
+}
+
+pub async fn get_suggested_parts_for_failure(
+    db: &DatabaseConnection,
+    input: SuggestedPartsForFailureInput,
+) -> AppResult<Vec<SuggestedPartForFailure>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT
+                a.id AS article_id,
+                a.article_code AS article_code,
+                a.article_name AS article_name,
+                COALESCE(SUM(fip.quantity_hint), 0.0) AS suggested_quantity,
+                MIN(fip.priority) AS priority,
+                GROUP_CONCAT(DISTINCT NULLIF(TRIM(fip.notes), '')) AS notes,
+                COALESCE(SUM(sb.on_hand_qty), 0.0) AS stock_on_hand,
+                COALESCE(SUM(sb.available_qty), 0.0) AS stock_available
+             FROM fmeca_analyses fa
+             INNER JOIN fmeca_items fi ON fi.analysis_id = fa.id
+             INNER JOIN fmeca_item_parts fip ON fip.fmeca_item_id = fi.id
+             INNER JOIN articles a ON a.id = fip.article_id
+             LEFT JOIN stock_balances sb ON sb.article_id = a.id
+             WHERE fa.equipment_id = ? AND fi.failure_mode_id = ?
+             GROUP BY a.id, a.article_code, a.article_name
+             ORDER BY priority ASC, suggested_quantity DESC, a.article_name ASC",
+            [input.equipment_id.into(), input.failure_mode_id.into()],
+        ))
+        .await?;
+    rows.iter().map(map_suggested_part_for_failure).collect()
+}
+
 pub async fn get_reliability_rul_indicator(
     db: &DatabaseConnection,
     equipment_id: i64,
@@ -1053,6 +1370,148 @@ pub async fn get_reliability_rul_indicator(
             "t = {:.1} h (exposure hours from maintenance / operating profile); R(t) and RUL from Weibull fit (β={:.4}, η={:.1} h).",
             t_eff, beta, eta
         ),
+    })
+}
+
+pub async fn get_weibull_dashboard_payload(
+    db: &DatabaseConnection,
+    input: WeibullDashboardInput,
+) -> AppResult<WeibullDashboardPayload> {
+    let include_censored = input.include_censored.unwrap_or(false);
+    let t_offset_hours = input.t_offset_hours.unwrap_or(0.0);
+    let t_offset_hours = if t_offset_hours.is_finite() {
+        t_offset_hours
+    } else {
+        0.0
+    };
+    let (danger_threshold_r, pm_threshold_r, pm_label) = load_reliability_dashboard_policy(db).await?;
+
+    let end = Utc::now();
+    let start = end - Duration::days(365);
+    let ev = evaluate_reliability_analysis_input(
+        db,
+        RefreshReliabilityKpiSnapshotInput {
+            equipment_id: input.equipment_id,
+            period_start: start.to_rfc3339(),
+            period_end: end.to_rfc3339(),
+            min_sample_n: Some(1),
+            repeat_lookback_days: None,
+        },
+    )
+    .await?;
+    let t_base = ev.exposure_hours.max(0.0);
+    let t_effective = (t_base + t_offset_hours).max(0.0);
+
+    let fit = get_latest_weibull_fit_for_equipment(db, input.equipment_id).await?;
+    let fit = fit.and_then(|f| {
+        if f.beta.unwrap_or(0.0) > 0.0 && f.eta.unwrap_or(0.0) > 0.0 {
+            Some(f)
+        } else {
+            None
+        }
+    });
+    let Some(main_fit) = fit else {
+        return Ok(WeibullDashboardPayload {
+            equipment_id: input.equipment_id,
+            include_censored,
+            comparison_equipment_id: input.comparison_equipment_id,
+            t_offset_hours,
+            t_effective_hours: t_effective,
+            beta_actual: None,
+            beta_industrial_standard: None,
+            beta_industrial_source: None,
+            eta_hours: None,
+            points: Vec::new(),
+            comparison_points: Vec::new(),
+            pm_marker: None,
+            r_live: None,
+            rul_live_hours: None,
+            danger_threshold_r,
+            pm_threshold_r,
+        });
+    };
+
+    let beta = main_fit.beta.unwrap_or(0.0);
+    let eta = main_fit.eta.unwrap_or(0.0);
+    let t_max = (eta * 4.0).max(t_effective * 1.3).max(1.0);
+    let points = build_weibull_curve_points(
+        beta,
+        eta,
+        main_fit.beta_ci_low,
+        main_fit.beta_ci_high,
+        main_fit.eta_ci_low,
+        main_fit.eta_ci_high,
+        t_max,
+        120,
+    );
+
+    let pm_t = eta * (-(pm_threshold_r).ln()).powf(1.0 / beta.max(0.0001));
+    let pm_marker = weibull_r(beta, eta, pm_t).map(|r| WeibullPmMarker {
+        t: pm_t,
+        r,
+        label: pm_label,
+    });
+
+    let comparison_points = if let Some(cmp_id) = input.comparison_equipment_id {
+        if cmp_id > 0 && cmp_id != input.equipment_id {
+            if let Some(cmp_fit) = get_latest_weibull_fit_for_equipment(db, cmp_id).await? {
+                if cmp_fit.beta.unwrap_or(0.0) > 0.0 && cmp_fit.eta.unwrap_or(0.0) > 0.0 {
+                    build_weibull_curve_points(
+                        cmp_fit.beta.unwrap_or(0.0),
+                        cmp_fit.eta.unwrap_or(0.0),
+                        cmp_fit.beta_ci_low,
+                        cmp_fit.beta_ci_high,
+                        cmp_fit.eta_ci_low,
+                        cmp_fit.eta_ci_high,
+                        t_max,
+                        120,
+                    )
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let class_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT ec.code AS class_code
+             FROM equipment e
+             LEFT JOIN equipment_classes ec ON ec.id = e.class_id
+             WHERE e.id = ?",
+            [input.equipment_id.into()],
+        ))
+        .await?;
+    let class_code = class_row
+        .and_then(|r| r.try_get::<Option<String>>("", "class_code").ok())
+        .flatten();
+    let (beta_standard, beta_standard_source) =
+        industrial_beta_reference_for_equipment_class(db, class_code).await?;
+
+    Ok(WeibullDashboardPayload {
+        equipment_id: input.equipment_id,
+        include_censored,
+        comparison_equipment_id: input.comparison_equipment_id,
+        t_offset_hours,
+        t_effective_hours: t_effective,
+        beta_actual: Some(beta),
+        beta_industrial_standard: beta_standard,
+        beta_industrial_source: beta_standard_source,
+        eta_hours: Some(eta),
+        points,
+        comparison_points,
+        pm_marker,
+        r_live: weibull_r(beta, eta, t_effective),
+        rul_live_hours: weibull_residual_median_hours(beta, eta, t_effective),
+        danger_threshold_r,
+        pm_threshold_r,
     })
 }
 

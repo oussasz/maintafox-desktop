@@ -1,4 +1,5 @@
 //! Gap 06 sprint 03 — regression tests for close-out, integrity detectors, analytics contract.
+//! Updated for Option B lifecycle (8 statuses).
 
 #[cfg(test)]
 mod tests {
@@ -8,15 +9,17 @@ mod tests {
     use crate::analytics_contract::list_contract_versions;
     use crate::data_integrity::detectors::run_data_integrity_detectors;
     use crate::errors::AppError;
-    use crate::wo::closeout::{self, SaveFailureDetailInput, SaveVerificationInput, WoCloseInput};
+    use crate::wo::closeout::{
+        self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput,
+    };
     use crate::wo::costs;
     use crate::wo::domain::WoCreateInput;
-    use crate::wo::execution::{
-        self, WoAssignInput, WoMechCompleteInput, WoPlanInput, WoStartInput,
-    };
+    use crate::wo::execution::{self, WoAssignInput, WoMechCompleteInput, WoPlanInput, WoStartInput};
     use crate::wo::labor::{self, AddLaborInput};
     use crate::wo::parts::{self, AddPartInput};
     use crate::wo::queries;
+    use crate::wo::workflow::actions::mark_ready::{mark_wo_ready, WoMarkReadyInput};
+    use crate::wo::workflow::actions::submit::{submit_wo, WoSubmitInput};
 
     async fn setup() -> sea_orm::DatabaseConnection {
         let db = Database::connect("sqlite::memory:")
@@ -57,7 +60,7 @@ mod tests {
         let now = chrono::Utc::now().to_rfc3339();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO user_accounts \
+            "INSERT OR IGNORE INTO user_accounts \
              (sync_id, username, display_name, identity_mode, password_hash, \
               is_active, is_admin, force_password_change, \
               failed_login_attempts, created_at, updated_at, row_version) \
@@ -79,14 +82,107 @@ mod tests {
         row.try_get::<i64>("", "id").unwrap()
     }
 
+    async fn seed_test_equipment(db: &sea_orm::DatabaseConnection) {
+        // Ensure org scaffolding for installed_at_node_id FK
+        let _ = db
+            .execute(Statement::from_string(
+                DbBackend::Sqlite,
+                "INSERT OR IGNORE INTO org_structure_models \
+                 (id, sync_id, version_number, status, created_at, updated_at) \
+                 VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
+                    .to_string(),
+            ))
+            .await;
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO org_node_types \
+             (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+             VALUES (1, 'test-type-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));"
+                .to_string(),
+        ))
+        .await
+        .expect("insert org_node_types");
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO org_nodes \
+             (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
+             VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
+                     datetime('now'), datetime('now'), 1);"
+                .to_string(),
+        ))
+        .await
+        .expect("insert org_nodes");
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO equipment \
+             (id, sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+              created_at, updated_at) \
+             VALUES (1, 'test-eq-gap06-001', 'EQ-GAP06-001', 'Gap06 Test Equipment', \
+                     'active_in_service', 1, datetime('now'), datetime('now'));"
+                .to_string(),
+        ))
+        .await
+        .expect("insert test equipment");
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET installed_at_node_id = 1 \
+             WHERE id = 1 AND installed_at_node_id IS NULL;"
+                .to_string(),
+        ))
+        .await
+        .expect("ensure installed_at_node_id");
+    }
+
+    /// Seed failure coding + RCA required before `complete_wo_mechanically` for corrective/emergency WOs.
+    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+        let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+            .await
+            .expect("lookup symptom")
+            .expect("seeded DI.SYMPTOM vibration");
+
+        closeout::save_failure_detail(
+            db,
+            SaveFailureDetailInput {
+                wo_id,
+                symptom_id: Some(symptom_id),
+                failure_mode_id: None,
+                failure_cause_id: None,
+                failure_effect_id: None,
+                is_temporary_repair: false,
+                is_permanent_repair: true,
+                cause_not_determined: true,
+                notes: Some("Test failure detail notes for RAMS complete gate".into()),
+            },
+        )
+        .await
+        .expect("seed_rams_for_complete: save_failure_detail");
+
+        closeout::update_wo_rca(
+            db,
+            UpdateWoRcaInput {
+                wo_id,
+                root_cause_summary: Some("Test root cause".into()),
+                corrective_action_summary: Some("Test corrective action".into()),
+            },
+        )
+        .await
+        .expect("seed_rams_for_complete: update_wo_rca");
+    }
+
+    /// Create a WO and advance it to in_progress via the Option B lifecycle.
     async fn create_wo_in_progress(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
+        seed_test_equipment(db).await;
         let actor = admin_id(db).await;
 
         let wo = queries::create_work_order(
             db,
             WoCreateInput {
                 type_code: "corrective".into(),
-                equipment_id: None,
+                equipment_id: Some(1),
                 location_id: None,
                 source_di_id: None,
                 source_inspection_anomaly_id: None,
@@ -111,14 +207,26 @@ mod tests {
         .expect("create WO");
 
         let wo_id = wo.id;
-        let mut rv = wo.row_version;
 
+        // submit: draft → planning
+        let wo = submit_wo(
+            db,
+            WoSubmitInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("submit_wo");
+
+        // plan (non-status save)
         let wo = execution::plan_wo(
             db,
             WoPlanInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
                 planner_id: actor,
                 planned_start: "2026-04-10T08:00:00Z".into(),
                 planned_end: "2026-04-10T16:00:00Z".into(),
@@ -129,26 +237,14 @@ mod tests {
         )
         .await
         .expect("plan_wo");
-        rv = wo.row_version;
 
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE work_orders SET status_id = \
-             (SELECT id FROM work_order_statuses WHERE code = 'ready_to_schedule'), \
-             row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-             WHERE id = ?",
-            [wo_id.into()],
-        ))
-        .await
-        .expect("advance to ready_to_schedule");
-        rv += 1;
-
+        // assign (non-status save)
         let wo = execution::assign_wo(
             db,
             WoAssignInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
                 assigned_group_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
@@ -156,14 +252,26 @@ mod tests {
         )
         .await
         .expect("assign_wo");
-        rv = wo.row_version;
 
+        // mark ready: planning → ready
+        let wo = mark_wo_ready(
+            db,
+            WoMarkReadyInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("mark_wo_ready");
+
+        // start: ready → in_progress
         let wo = execution::start_wo(
             db,
             WoStartInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
             },
         )
         .await
@@ -172,7 +280,10 @@ mod tests {
         (wo_id, wo.row_version)
     }
 
-    async fn advance_to_technically_verified(
+    /// Advance from in_progress to completed+verified (all quality gates satisfied).
+    /// In Option B: save_verification does NOT change WO status — stays completed.
+    /// Returns updated row_version.
+    async fn advance_to_completed_verified(
         db: &sea_orm::DatabaseConnection,
         wo_id: i64,
         rv: i64,
@@ -200,6 +311,8 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
+        seed_rams_for_complete(db, wo_id).await;
+
         let wo = execution::complete_wo_mechanically(
             db,
             WoMechCompleteInput {
@@ -215,31 +328,10 @@ mod tests {
         .expect("complete_wo_mechanically");
         let rv = wo.row_version;
 
-        closeout::save_failure_detail(
-            db,
-            SaveFailureDetailInput {
-                wo_id,
-                symptom_id: None,
-                failure_mode_id: None,
-                failure_cause_id: None,
-                failure_effect_id: None,
-                is_temporary_repair: false,
-                is_permanent_repair: true,
-                cause_not_determined: true,
-                notes: Some("Test failure detail notes for cnd path".into()),
-            },
-        )
-        .await
-        .expect("save_failure_detail");
+        // WO is now completed
+        assert_eq!(wo.status_code.as_deref(), Some("completed"));
 
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE work_orders SET root_cause_summary = ? WHERE id = ?",
-            ["Root cause text for gap06.".into(), wo_id.into()],
-        ))
-        .await
-        .expect("set root_cause_summary");
-
+        // save_verification: stamps technically_verified_at, status stays completed
         let (_ver, wo) = closeout::save_verification(
             db,
             SaveVerificationInput {
@@ -255,11 +347,68 @@ mod tests {
         .await
         .expect("save_verification");
 
+        assert_eq!(wo.status_code.as_deref(), Some("completed"));
+
         wo.row_version
     }
 
-    /// Ensures at least one mode and one cause row exist (lookup seed may be empty in minimal DBs).
     async fn ensure_failure_mode_and_cause_ids(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
+        // Ensure a governed WORK.FAILURE_MODES value exists (close gate checks reference_values).
+        let mode_id: i64 = match db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT rv.id AS id \
+                 FROM reference_values rv \
+                 INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+                 INNER JOIN reference_domains rd ON rd.id = rs.domain_id \
+                 WHERE UPPER(TRIM(rd.code)) = UPPER(TRIM('WORK.FAILURE_MODES')) \
+                   AND rs.status = 'published' AND rv.is_active = 1 \
+                 ORDER BY rv.id LIMIT 1"
+                    .to_string(),
+            ))
+            .await
+            .expect("mode query")
+        {
+            Some(row) => row.try_get("", "id").unwrap(),
+            None => {
+                let set_id: i64 = db
+                    .query_one(Statement::from_string(
+                        DbBackend::Sqlite,
+                        "SELECT rs.id AS id \
+                         FROM reference_sets rs \
+                         INNER JOIN reference_domains rd ON rd.id = rs.domain_id \
+                         WHERE UPPER(TRIM(rd.code)) = UPPER(TRIM('WORK.FAILURE_MODES')) \
+                         ORDER BY rs.id LIMIT 1"
+                            .to_string(),
+                    ))
+                    .await
+                    .expect("set q")
+                    .expect("WORK.FAILURE_MODES set")
+                    .try_get("", "id")
+                    .unwrap();
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO reference_values \
+                     (set_id, parent_id, code, label, description, color_hex, sort_order, is_active, metadata_json) \
+                     VALUES (?, NULL, 'GAP06_M', 'Gap06 mode', NULL, NULL, 1, 1, NULL)",
+                    [set_id.into()],
+                ))
+                .await
+                .expect("ins mode rv");
+                db.query_one(Statement::from_string(
+                    DbBackend::Sqlite,
+                    "SELECT id FROM reference_values WHERE code = 'GAP06_M' ORDER BY id DESC LIMIT 1"
+                        .to_string(),
+                ))
+                .await
+                .expect("mode id q")
+                .expect("mode id")
+                .try_get("", "id")
+                .unwrap()
+            }
+        };
+
+        // Mirror into failure_codes so FK on work_order_failure_details.failure_mode_id accepts it.
         let hid: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
@@ -270,74 +419,49 @@ mod tests {
             .expect("hierarchy")
             .try_get("", "id")
             .unwrap();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO failure_codes \
+             (id, entity_sync_id, hierarchy_id, parent_id, code, label, code_type, is_active, row_version) \
+             VALUES (?, 'fc:gap06:mode', ?, NULL, 'GAP06_M', 'Gap06 mode', 'mode', 1, 1)",
+            [mode_id.into(), hid.into()],
+        ))
+        .await
+        .expect("ins mode fc");
 
-        let mode_ct: i64 = db
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) AS c FROM failure_codes WHERE code_type = 'mode'".to_string(),
-            ))
-            .await
-            .expect("c1")
-            .unwrap()
-            .try_get("", "c")
-            .unwrap();
-        if mode_ct == 0 {
-            db.execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO failure_codes \
-                 (entity_sync_id, hierarchy_id, parent_id, code, label, code_type, is_active, row_version) \
-                 VALUES ('fc:gap06:mode', ?, NULL, 'GAP06_M', 'Gap06 mode', 'mode', 1, 1)",
-                [hid.into()],
-            ))
-            .await
-            .expect("ins mode");
-        }
-
-        let cause_ct: i64 = db
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) AS c FROM failure_codes WHERE code_type IN ('cause','mechanism')"
-                    .to_string(),
-            ))
-            .await
-            .expect("c2")
-            .unwrap()
-            .try_get("", "c")
-            .unwrap();
-        if cause_ct == 0 {
-            db.execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO failure_codes \
-                 (entity_sync_id, hierarchy_id, parent_id, code, label, code_type, is_active, row_version) \
-                 VALUES ('fc:gap06:cause', ?, NULL, 'GAP06_C', 'Gap06 cause', 'cause', 1, 1)",
-                [hid.into()],
-            ))
-            .await
-            .expect("ins cause");
-        }
-
-        let mid: i64 = db
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT id FROM failure_codes WHERE code_type = 'mode' LIMIT 1".to_string(),
-            ))
-            .await
-            .expect("qm")
-            .expect("mode")
-            .try_get("", "id")
-            .unwrap();
-        let cid: i64 = db
+        let cause_id: i64 = match db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
                 "SELECT id FROM failure_codes WHERE code_type IN ('cause','mechanism') LIMIT 1"
                     .to_string(),
             ))
             .await
-            .expect("qc")
-            .expect("cause")
-            .try_get("", "id")
-            .unwrap();
-        (mid, cid)
+            .expect("cause q")
+        {
+            Some(row) => row.try_get("", "id").unwrap(),
+            None => {
+                db.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO failure_codes \
+                     (entity_sync_id, hierarchy_id, parent_id, code, label, code_type, is_active, row_version) \
+                     VALUES ('fc:gap06:cause', ?, NULL, 'GAP06_C', 'Gap06 cause', 'cause', 1, 1)",
+                    [hid.into()],
+                ))
+                .await
+                .expect("ins cause");
+                db.query_one(Statement::from_string(
+                    DbBackend::Sqlite,
+                    "SELECT id FROM failure_codes WHERE code = 'GAP06_C' LIMIT 1".to_string(),
+                ))
+                .await
+                .expect("cause id q")
+                .expect("cause")
+                .try_get("", "id")
+                .unwrap()
+            }
+        };
+
+        (mode_id, cause_id)
     }
 
     #[tokio::test]
@@ -345,7 +469,7 @@ mod tests {
         let db = setup().await;
         let actor = admin_id(&db).await;
         let (wo_id, rv) = create_wo_in_progress(&db).await;
-        let rv = advance_to_technically_verified(&db, wo_id, rv).await;
+        let rv = advance_to_completed_verified(&db, wo_id, rv).await;
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -428,6 +552,39 @@ mod tests {
             .await
             .expect("service");
 
+        let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(&db, "vibration")
+            .await
+            .expect("lookup symptom")
+            .expect("seeded DI.SYMPTOM vibration");
+
+        closeout::save_failure_detail(
+            &db,
+            SaveFailureDetailInput {
+                wo_id,
+                symptom_id: Some(symptom_id),
+                failure_mode_id: Some(mode_id),
+                failure_cause_id: Some(cause_id),
+                failure_effect_id: None,
+                is_temporary_repair: false,
+                is_permanent_repair: true,
+                cause_not_determined: false,
+                notes: Some("coded".into()),
+            },
+        )
+        .await
+        .expect("failure detail");
+
+        closeout::update_wo_rca(
+            &db,
+            UpdateWoRcaInput {
+                wo_id,
+                root_cause_summary: Some("Misalignment led to bearing wear.".into()),
+                corrective_action_summary: Some("Realign and replace bearing.".into()),
+            },
+        )
+        .await
+        .expect("rca");
+
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
@@ -443,31 +600,7 @@ mod tests {
         .expect("mech");
         let rv = wo.row_version;
 
-        closeout::save_failure_detail(
-            &db,
-            SaveFailureDetailInput {
-                wo_id,
-                symptom_id: None,
-                failure_mode_id: Some(mode_id),
-                failure_cause_id: Some(cause_id),
-                failure_effect_id: None,
-                is_temporary_repair: false,
-                is_permanent_repair: true,
-                cause_not_determined: false,
-                notes: Some("coded".into()),
-            },
-        )
-        .await
-        .expect("failure detail");
-
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE work_orders SET root_cause_summary = ? WHERE id = ?",
-            ["Misalignment led to bearing wear.".into(), wo_id.into()],
-        ))
-        .await
-        .expect("rca");
-
+        // save_verification: stays on completed
         let (_ver, wo) = closeout::save_verification(
             &db,
             SaveVerificationInput {
@@ -483,6 +616,8 @@ mod tests {
         .await
         .expect("verify");
         let rv = wo.row_version;
+
+        assert_eq!(wo.status_code.as_deref(), Some("completed"));
 
         let closed = closeout::close_wo(
             &db,
@@ -536,8 +671,7 @@ mod tests {
         let rows = list_contract_versions(&db).await.expect("list");
         assert!(!rows.is_empty(), "seeded contract version expected");
         assert!(
-            rows.iter()
-                .any(|r| r.contract_id == "closeout_to_reliability_v1"),
+            rows.iter().any(|r| r.contract_id == "closeout_to_reliability_v1"),
             "default contract id missing"
         );
     }

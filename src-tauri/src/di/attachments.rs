@@ -231,6 +231,160 @@ pub async fn save_di_attachment(
     map_attachment(&row)
 }
 
+/// Save a DI attachment by copying from a filesystem path (equipment-photo style).
+pub async fn save_di_attachment_from_path(
+    db: &impl ConnectionTrait,
+    app_data_dir: &Path,
+    di_id: i64,
+    source_path: &str,
+    attachment_type: &str,
+    notes: Option<String>,
+    uploaded_by_id: i64,
+) -> AppResult<DiAttachment> {
+    let src = Path::new(source_path);
+    if !src.is_file() {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Fichier introuvable : {source_path}"
+        )]));
+    }
+
+    let meta = std::fs::metadata(src).map_err(|e| {
+        AppError::Internal(anyhow::anyhow!("metadata for DI attachment source: {e}"))
+    })?;
+    if meta.len() as usize > MAX_FILE_SIZE_BYTES {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Fichier trop volumineux (max {} Mo).",
+            MAX_FILE_SIZE_BYTES / (1024 * 1024)
+        )]));
+    }
+
+    let file_bytes = std::fs::read(src).map_err(|e| {
+        AppError::Internal(anyhow::anyhow!("read DI attachment source: {e}"))
+    })?;
+
+    let file_name = src
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("attachment")
+        .to_string();
+
+    let mime_type = mime_from_path(src);
+
+    let att_type = if attachment_type.trim().is_empty() {
+        if mime_type.starts_with("image/") {
+            "photo".to_string()
+        } else if mime_type == "application/pdf" {
+            "pdf".to_string()
+        } else {
+            "other".to_string()
+        }
+    } else {
+        attachment_type.trim().to_string()
+    };
+
+    save_di_attachment(
+        db,
+        app_data_dir,
+        DiAttachmentInput {
+            di_id,
+            file_name,
+            file_bytes,
+            mime_type,
+            attachment_type: att_type,
+            notes,
+            uploaded_by_id,
+        },
+    )
+    .await
+}
+
+fn mime_from_path(path: &Path) -> String {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png".into(),
+        Some("jpg") | Some("jpeg") => "image/jpeg".into(),
+        Some("webp") => "image/webp".into(),
+        Some("gif") => "image/gif".into(),
+        Some("pdf") => "application/pdf".into(),
+        Some("txt") => "text/plain".into(),
+        Some("doc") => "application/msword".into(),
+        Some("docx") => {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into()
+        }
+        Some("xls") => "application/vnd.ms-excel".into(),
+        Some("xlsx") => {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into()
+        }
+        _ => "application/octet-stream".into(),
+    }
+}
+
+/// Inline preview for image attachments (`data:` URL) — mirrors asset photos.
+#[derive(Debug, Clone, Serialize)]
+pub struct DiAttachmentPreview {
+    pub mime_type: String,
+    pub data_base64: String,
+}
+
+pub async fn read_di_attachment_preview(
+    db: &impl ConnectionTrait,
+    app_data_dir: &Path,
+    attachment_id: i64,
+) -> AppResult<DiAttachmentPreview> {
+    use base64::{engine::general_purpose::STANDARD as B64_ENGINE, Engine as _};
+
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT relative_path, mime_type FROM di_attachments WHERE id = ?",
+            [attachment_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "DiAttachment".into(),
+            id: attachment_id.to_string(),
+        })?;
+
+    let relative_path: String = row
+        .try_get("", "relative_path")
+        .map_err(|e| decode_err("relative_path", e))?;
+    let mime_type: String = row
+        .try_get("", "mime_type")
+        .map_err(|e| decode_err("mime_type", e))?;
+
+    if !mime_type.starts_with("image/") {
+        return Err(AppError::ValidationFailed(vec![
+            "Aperçu disponible uniquement pour les images.".into(),
+        ]));
+    }
+
+    let abs = app_data_dir.join(&relative_path);
+    if !abs.is_file() {
+        return Err(AppError::NotFound {
+            entity: "DiAttachmentFile".into(),
+            id: relative_path,
+        });
+    }
+
+    let bytes = std::fs::read(&abs).map_err(|e| {
+        AppError::Internal(anyhow::anyhow!("read DI attachment preview: {e}"))
+    })?;
+    if bytes.len() > MAX_FILE_SIZE_BYTES {
+        return Err(AppError::ValidationFailed(vec![
+            "Fichier trop volumineux pour l'aperçu.".into(),
+        ]));
+    }
+
+    Ok(DiAttachmentPreview {
+        mime_type,
+        data_base64: B64_ENGINE.encode(bytes),
+    })
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // B) list_di_attachments
 // ═══════════════════════════════════════════════════════════════════════════════

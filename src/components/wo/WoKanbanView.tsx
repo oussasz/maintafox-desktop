@@ -22,9 +22,7 @@ import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useSession } from "@/hooks/use-session";
 import { cn } from "@/lib/utils";
-import { useWoStore } from "@/stores/wo-store";
 import type { WorkOrder } from "@shared/ipc-types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -32,42 +30,42 @@ import type { WorkOrder } from "@shared/ipc-types";
 const PAGE_SIZE = 20;
 
 /**
- * status_code → macro_state mapping.
- * Derived from work_order_statuses seeded data (migration 021).
+ * Option B status_code → column id mapping.
+ * Legacy codes from old data are mapped to nearest equivalent for display.
  */
-const STATUS_TO_MACRO: Record<string, string> = {
-  draft: "open",
-  awaiting_approval: "open",
-  planned: "open",
-  ready_to_schedule: "open",
-  assigned: "open",
-  waiting_for_prerequisite: "open",
+const STATUS_TO_COLUMN: Record<string, string> = {
+  // Option B
+  draft: "draft",
+  planning: "planning",
+  ready: "ready",
   in_progress: "executing",
   on_hold: "executing",
+  completed: "completed",
+  closed: "closed",
+  cancelled: "cancelled",
+  // Legacy fallbacks
+  awaiting_approval: "planning",
+  planned: "planning",
+  ready_to_schedule: "ready",
+  assigned: "ready",
+  waiting_for_prerequisite: "executing",
   paused: "executing",
   mechanically_complete: "completed",
   technically_verified: "completed",
-  closed: "closed",
-  cancelled: "cancelled",
 };
 
 /**
- * allowed_transitions mirrors the Rust domain guard_wo_transition table.
+ * Allowed drag transitions for Option B lifecycle.
  * Each key = from_status; value = valid to_statuses.
- * Used to validate drag before any invoke call.
+ * Validation only — the detail dialog handles the actual IPC call.
  */
 const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  draft: ["awaiting_approval", "planned", "cancelled"],
-  awaiting_approval: ["planned", "cancelled"],
-  planned: ["ready_to_schedule", "cancelled"],
-  ready_to_schedule: ["assigned", "waiting_for_prerequisite", "cancelled"],
-  assigned: ["waiting_for_prerequisite", "in_progress", "cancelled"],
-  waiting_for_prerequisite: ["assigned", "in_progress", "cancelled"],
-  in_progress: ["paused", "on_hold", "mechanically_complete", "cancelled"],
+  draft: ["planning", "cancelled"],
+  planning: ["ready", "cancelled"],
+  ready: ["in_progress", "planning", "cancelled"],
+  in_progress: ["on_hold", "completed", "cancelled"],
   on_hold: ["in_progress", "cancelled"],
-  paused: ["in_progress", "cancelled"],
-  mechanically_complete: ["technically_verified"],
-  technically_verified: ["closed", "in_progress"],
+  completed: ["closed"],
   closed: [],
   cancelled: [],
 };
@@ -75,7 +73,7 @@ const ALLOWED_TRANSITIONS: Record<string, string[]> = {
 // ── Column definitions ────────────────────────────────────────────────────────
 
 interface ColumnDef {
-  id: string; // macro_state value
+  id: string;
   labelKey: string;
   headerClass: string;
   emptyKey: string;
@@ -83,10 +81,22 @@ interface ColumnDef {
 
 const COLUMNS: ColumnDef[] = [
   {
-    id: "open",
-    labelKey: "kanban.columnOpen",
+    id: "draft",
+    labelKey: "kanban.columnDraft",
+    headerClass: "bg-gray-50 border-gray-200 text-gray-700",
+    emptyKey: "kanban.emptyDraft",
+  },
+  {
+    id: "planning",
+    labelKey: "kanban.columnPlanning",
     headerClass: "bg-blue-50 border-blue-200 text-blue-800",
-    emptyKey: "kanban.emptyOpen",
+    emptyKey: "kanban.emptyPlanning",
+  },
+  {
+    id: "ready",
+    labelKey: "kanban.columnReady",
+    headerClass: "bg-indigo-50 border-indigo-200 text-indigo-800",
+    emptyKey: "kanban.emptyReady",
   },
   {
     id: "executing",
@@ -302,8 +312,6 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
   const [toasts, setToasts] = useState<InlineToast[]>([]);
   const toastCounter = useRef(0);
   const draggedWo = useRef<WorkOrder | null>(null);
-  const { info: session } = useSession();
-  const assignWorkOrder = useWoStore((s) => s.assignWorkOrder);
 
   const addToast = useCallback((message: string) => {
     const id = ++toastCounter.current;
@@ -311,11 +319,11 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
   }, []);
 
-  // Group items by macro_state
+  // Group items by column id
   const grouped = new Map<string, WorkOrder[]>(COLUMNS.map((c) => [c.id, []]));
   for (const wo of items) {
-    const macro = STATUS_TO_MACRO[wo.status_code ?? "draft"] ?? "open";
-    grouped.get(macro)?.push(wo);
+    const col = STATUS_TO_COLUMN[wo.status_code ?? "draft"] ?? "draft";
+    grouped.get(col)?.push(wo);
   }
 
   const handleDragStart = useCallback((e: React.DragEvent, wo: WorkOrder) => {
@@ -325,21 +333,20 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
   }, []);
 
   const handleDrop = useCallback(
-    (e: React.DragEvent, targetMacroState: string) => {
+    (e: React.DragEvent, targetColumnId: string) => {
       e.preventDefault();
       const wo = draggedWo.current;
       draggedWo.current = null;
       if (!wo) return;
 
-      const fromMacro = STATUS_TO_MACRO[wo.status_code ?? "draft"] ?? "open";
-      if (fromMacro === targetMacroState) return; // dropped on same column
+      const fromColumn = STATUS_TO_COLUMN[wo.status_code ?? "draft"] ?? "draft";
+      if (fromColumn === targetColumnId) return;
 
-      // Determine target status candidates for the target macro_state
-      const targetStatuses = Object.entries(STATUS_TO_MACRO)
-        .filter(([, macro]) => macro === targetMacroState)
+      // Determine which target status codes live in the target column
+      const targetStatuses = Object.entries(STATUS_TO_COLUMN)
+        .filter(([, col]) => col === targetColumnId)
         .map(([s]) => s);
 
-      // Check if ANY transition from current status_code to ANY target status is valid
       const currentStatus = wo.status_code ?? "draft";
       const validTargets = (ALLOWED_TRANSITIONS[currentStatus] ?? []).filter((to) =>
         targetStatuses.includes(to),
@@ -350,35 +357,16 @@ export function WoKanbanView({ items, onCardClick }: WoKanbanViewProps) {
           t("kanban.transitionNotAllowed", {
             code: wo.code,
             from: currentStatus.replace(/_/g, " "),
-            to: COLUMNS.find((c) => c.id === targetMacroState)?.id ?? targetMacroState,
+            to: COLUMNS.find((c) => c.id === targetColumnId)?.id ?? targetColumnId,
           }),
         );
         return;
       }
 
-      // For an "open" drop targeting "assigned", invoke assignWorkOrder if we have a responsible.
-      // For other valid transitions, open the WO detail dialog to let the user apply the correct action.
-      // This keeps the Kanban "visual only" for complex transitions and direct for assign.
-      if (
-        targetMacroState === "open" &&
-        validTargets.includes("assigned") &&
-        wo.primary_responsible_id &&
-        session?.user_id
-      ) {
-        void assignWorkOrder({
-          wo_id: wo.id,
-          actor_id: session.user_id,
-          expected_row_version: wo.row_version,
-          primary_responsible_id: wo.primary_responsible_id,
-        }).catch((err: unknown) => {
-          addToast(String(err));
-        });
-      } else {
-        // Open detail dialog to execute the transition with full context
-        onCardClick(wo);
-      }
+      // All Option B transitions require full context — open the detail dialog.
+      onCardClick(wo);
     },
-    [addToast, assignWorkOrder, onCardClick, session?.user_id, t],
+    [addToast, onCardClick, t],
   );
 
   return (

@@ -173,6 +173,11 @@ async fn load_scope_permissions(
     user_id: i32,
     scope: &PermissionScope,
 ) -> AppResult<HashSet<String>> {
+    if user_has_elevated_admin_access(db, user_id).await? {
+        let all = get_all_permissions(db).await?;
+        return Ok(all.into_iter().map(|p| p.name).collect());
+    }
+
     let now = chrono::Utc::now().to_rfc3339();
 
     let (scope_type_filter, scope_ref_filter): (Option<&str>, Option<String>) = match scope {
@@ -221,9 +226,39 @@ async fn load_scope_permissions(
     Ok(perms)
 }
 
+/// True when the account is a bootstrap/system admin or holds Administrator/Superadmin.
+pub async fn user_has_elevated_admin_access(db: &DatabaseConnection, user_id: i32) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"SELECT
+                COALESCE((SELECT is_admin FROM user_accounts WHERE id = ? AND is_active = 1), 0) AS is_admin,
+                (SELECT COUNT(*)
+                 FROM user_scope_assignments usa
+                 INNER JOIN roles r ON r.id = usa.role_id
+                 WHERE usa.user_id = ?
+                   AND usa.deleted_at IS NULL
+                   AND r.deleted_at IS NULL
+                   AND r.name IN ('Administrator', 'Superadmin')) AS admin_role_cnt",
+            [user_id.into(), user_id.into()],
+        ))
+        .await?;
+
+    let Some(row) = row else {
+        return Ok(false);
+    };
+    let is_admin: i32 = row.try_get("", "is_admin").unwrap_or(0);
+    let admin_role_cnt: i64 = row.try_get("", "admin_role_cnt").unwrap_or(0);
+    Ok(is_admin == 1 || admin_role_cnt > 0)
+}
+
 /// Load all effective permissions for a user (for frontend pre-loading).
 /// Returns only the permissions the user currently holds via active role assignments.
 pub async fn get_user_permissions(db: &DatabaseConnection, user_id: i32) -> AppResult<Vec<PermissionRecord>> {
+    if user_has_elevated_admin_access(db, user_id).await? {
+        return get_all_permissions(db).await;
+    }
+
     let now = chrono::Utc::now().to_rfc3339();
 
     let rows = db
@@ -240,6 +275,32 @@ pub async fn get_user_permissions(db: &DatabaseConnection, user_id: i32) -> AppR
              AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?)
            ORDER BY p.name",
             [user_id.into(), now.clone().into(), now.into()],
+        ))
+        .await?;
+
+    let perms = rows
+        .into_iter()
+        .map(|r| PermissionRecord {
+            name: r.try_get("", "name").unwrap_or_default(),
+            description: r.try_get("", "description").unwrap_or_default(),
+            category: r.try_get("", "category").unwrap_or_default(),
+            is_dangerous: r.try_get::<i32>("", "is_dangerous").unwrap_or(0) == 1,
+            requires_step_up: r.try_get::<i32>("", "requires_step_up").unwrap_or(0) == 1,
+        })
+        .collect();
+
+    Ok(perms)
+}
+
+/// Load every permission in the catalog (for system-admin accounts).
+pub async fn get_all_permissions(db: &DatabaseConnection) -> AppResult<Vec<PermissionRecord>> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            r"SELECT name, description, category, is_dangerous, requires_step_up
+               FROM permissions
+               ORDER BY name"
+                .to_string(),
         ))
         .await?;
 

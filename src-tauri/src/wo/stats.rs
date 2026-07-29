@@ -66,12 +66,12 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
     };
 
     // ── In-progress count ─────────────────────────────────────────────────
-    let in_progress = count_by_macro_state(db, &["in_progress", "paused"]).await?;
+    let in_progress = count_by_macro_state(db, &["in_progress", "on_hold"]).await?;
 
-    // ── Completed count (mechanically_complete + technically_verified + closed) ──
+    // ── Completed count (completed + closed) ──
     let completed = count_by_macro_state(
         db,
-        &["mechanically_complete", "technically_verified", "closed"],
+        &["completed", "closed"],
     )
     .await?;
 

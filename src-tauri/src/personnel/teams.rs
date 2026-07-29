@@ -54,7 +54,7 @@ pub async fn list_team_capacity_summary(
             SELECT date(work_date, '+1 day') FROM dates WHERE work_date < date(?)
          ),
          base_personnel AS (
-            SELECT p.id, p.primary_team_id, p.home_schedule_id
+            SELECT p.id, p.primary_team_id, p.home_schedule_reference_value_id
             FROM personnel p
             WHERE {}
          ),
@@ -62,7 +62,7 @@ pub async fn list_team_capacity_summary(
             SELECT
                 bp.id AS personnel_id,
                 bp.primary_team_id,
-                bp.home_schedule_id,
+                bp.home_schedule_reference_value_id,
                 d.work_date,
                 ((CAST(strftime('%w', d.work_date) AS INTEGER) + 6) % 7) + 1 AS day_of_week
             FROM base_personnel bp
@@ -99,7 +99,7 @@ pub async fn list_team_capacity_summary(
                 ), 0) AS blocked_minutes
             FROM person_days pd
             LEFT JOIN schedule_details sd
-              ON sd.schedule_class_id = pd.home_schedule_id
+              ON sd.reference_value_id = pd.home_schedule_reference_value_id
              AND sd.day_of_week = pd.day_of_week
          )
          SELECT

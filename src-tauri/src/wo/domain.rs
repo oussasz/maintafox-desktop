@@ -1,137 +1,19 @@
-//! WO domain types, state machine, and code generation.
+//! WO domain types and code generation.
 //!
-//! Phase 2 - Sub-phase 05 - File 01 - Sprint S1.
-//!
-//! Implements the full 12-state PRD §6.5 workflow:
-//!   Draft → Awaiting Approval → Planned → Ready To Schedule → Assigned →
-//!   Waiting For Prerequisite → In Progress → Paused → Mechanically Complete →
-//!   Technically Verified → Closed; any pre-close state → Cancelled
-//!
-//! The state machine is enforced in Rust — the frontend never decides validity
-//! of a transition. `guard_wo_transition` is the single authority.
+//! Lifecycle SSOT lives in `wo::workflow` (Option B):
+//!   Draft → Planning → Ready → In Progress ↔ On Hold → Completed → Closed
+//!   (+ Cancelled from any non-closed).
 
 use crate::errors::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// WoStatus — PRD §6.5 exact 12-state enum
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// All legal states for a work order, per PRD §6.5.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum WoStatus {
-    Draft,
-    AwaitingApproval,
-    Planned,
-    ReadyToSchedule,
-    Assigned,
-    WaitingForPrerequisite,
-    InProgress,
-    Paused,
-    MechanicallyComplete,
-    TechnicallyVerified,
-    Closed,
-    Cancelled,
-}
-
-impl WoStatus {
-    /// Database-persisted snake_case representation.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Draft => "draft",
-            Self::AwaitingApproval => "awaiting_approval",
-            Self::Planned => "planned",
-            Self::ReadyToSchedule => "ready_to_schedule",
-            Self::Assigned => "assigned",
-            Self::WaitingForPrerequisite => "waiting_for_prerequisite",
-            Self::InProgress => "in_progress",
-            Self::Paused => "paused",
-            Self::MechanicallyComplete => "mechanically_complete",
-            Self::TechnicallyVerified => "technically_verified",
-            Self::Closed => "closed",
-            Self::Cancelled => "cancelled",
-        }
-    }
-
-    /// Parse from the DB-stored snake_case string.
-    pub fn try_from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "draft" => Ok(Self::Draft),
-            "awaiting_approval" => Ok(Self::AwaitingApproval),
-            "planned" => Ok(Self::Planned),
-            "ready_to_schedule" => Ok(Self::ReadyToSchedule),
-            "assigned" => Ok(Self::Assigned),
-            "waiting_for_prerequisite" => Ok(Self::WaitingForPrerequisite),
-            "in_progress" => Ok(Self::InProgress),
-            "paused" => Ok(Self::Paused),
-            "mechanically_complete" => Ok(Self::MechanicallyComplete),
-            "technically_verified" => Ok(Self::TechnicallyVerified),
-            "closed" => Ok(Self::Closed),
-            "cancelled" => Ok(Self::Cancelled),
-            other => Err(format!("Unknown WO status: '{other}'")),
-        }
-    }
-
-    /// Exact PRD §6.5 transition table. No additions, no omissions.
-    pub fn allowed_transitions(&self) -> &'static [WoStatus] {
-        match self {
-            Self::Draft => &[Self::AwaitingApproval, Self::Planned, Self::Cancelled],
-            Self::AwaitingApproval => &[Self::Planned, Self::Cancelled],
-            Self::Planned => &[Self::ReadyToSchedule, Self::Cancelled],
-            Self::ReadyToSchedule => &[Self::Assigned, Self::Cancelled],
-            Self::Assigned => &[
-                Self::WaitingForPrerequisite,
-                Self::InProgress,
-                Self::Cancelled,
-            ],
-            Self::WaitingForPrerequisite => &[
-                Self::Assigned,
-                Self::InProgress,
-                Self::Cancelled,
-            ],
-            Self::InProgress => &[
-                Self::Paused,
-                Self::MechanicallyComplete,
-                Self::Cancelled,
-            ],
-            Self::Paused => &[Self::InProgress, Self::Cancelled],
-            Self::MechanicallyComplete => &[
-                Self::TechnicallyVerified,
-                Self::InProgress,
-                Self::Cancelled,
-            ],
-            Self::TechnicallyVerified => &[Self::Closed],
-            Self::Closed => &[],
-            Self::Cancelled => &[],
-        }
-    }
-
-    /// Terminal states: no further transitions allowed.
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Closed | Self::Cancelled)
-    }
-
-    /// Active execution states (on the shop floor).
-    pub fn is_executing(&self) -> bool {
-        matches!(self, Self::InProgress | Self::Paused)
-    }
-
-    /// Whether transitioning FROM this state to Closed requires step-up
-    /// reauthentication (closure quality gate).
-    pub fn requires_step_up_for_close(&self) -> bool {
-        matches!(self, Self::TechnicallyVerified)
-    }
-}
-
-impl std::fmt::Display for WoStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+pub use crate::wo::workflow::{
+    assert_action_allowed, guard_wo_transition, WoAction, WoStatus,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// WoMacroState — PRD §6.5 macro grouping
+// WoMacroState — dashboard / filter grouping
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// High-level grouping for WO statuses used in dashboards and filters.
@@ -170,24 +52,6 @@ impl WoMacroState {
 impl std::fmt::Display for WoMacroState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// State machine guard
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Validate that transitioning from `from` to `to` is allowed by the PRD §6.5
-/// transition table. Returns `Err` with a descriptive message on illegal moves.
-pub fn guard_wo_transition(from: &WoStatus, to: &WoStatus) -> Result<(), String> {
-    if from.allowed_transitions().contains(to) {
-        Ok(())
-    } else {
-        Err(format!(
-            "Illegal WO state transition: '{}' -> '{}'",
-            from.as_str(),
-            to.as_str()
-        ))
     }
 }
 
@@ -243,6 +107,7 @@ pub struct WorkOrder {
     pub active_labor_hours: Option<f64>,
     pub total_waiting_hours: Option<f64>,
     pub downtime_hours: Option<f64>,
+    pub planned_downtime_hours: Option<f64>,
     // Cost accumulators
     pub labor_cost: Option<f64>,
     pub parts_cost: Option<f64>,
@@ -296,6 +161,16 @@ pub struct WorkOrder {
     pub planner_username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub responsible_username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub planner_display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub responsible_display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_di_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_di_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_di_status: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -500,6 +375,9 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         downtime_hours: row
             .try_get::<Option<f64>>("", "downtime_hours")
             .map_err(|e| decode_err("downtime_hours", e))?,
+        planned_downtime_hours: row
+            .try_get::<Option<f64>>("", "planned_downtime_hours")
+            .unwrap_or(None),
         labor_cost: row
             .try_get::<Option<f64>>("", "labor_cost")
             .map_err(|e| decode_err("labor_cost", e))?,
@@ -589,6 +467,11 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         asset_label: row.try_get::<Option<String>>("", "asset_label").unwrap_or(None),
         planner_username: row.try_get::<Option<String>>("", "planner_username").unwrap_or(None),
         responsible_username: row.try_get::<Option<String>>("", "responsible_username").unwrap_or(None),
+        planner_display_name: row.try_get::<Option<String>>("", "planner_display_name").unwrap_or(None),
+        responsible_display_name: row.try_get::<Option<String>>("", "responsible_display_name").unwrap_or(None),
+        source_di_code: row.try_get::<Option<String>>("", "source_di_code").unwrap_or(None),
+        source_di_title: row.try_get::<Option<String>>("", "source_di_title").unwrap_or(None),
+        source_di_status: row.try_get::<Option<String>>("", "source_di_status").unwrap_or(None),
     })
 }
 
@@ -629,15 +512,23 @@ pub fn map_wo_transition_row(row: &QueryResult) -> AppResult<WoTransitionRow> {
 // WO code generator
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Generate the next unique WO code in the format `WOR-NNNN`.
+/// Generate the next unique WO code in the format `OT-NNNN`.
+///
 /// Reads the current max sequence from the database and increments.
 /// The code is never recycled after deletion or cancellation.
-pub async fn generate_wo_code(db: &DatabaseConnection) -> AppResult<String> {
+///
+/// Pass a transaction connection when allocating + inserting in one txn
+/// (same pattern as [`crate::personnel::domain::generate_personnel_code`]).
+pub async fn generate_wo_code(db: &impl ConnectionTrait) -> AppResult<String> {
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT COALESCE(MAX(CAST(SUBSTR(code, 5) AS INTEGER)), 0) + 1 AS next_seq \
-             FROM work_orders WHERE code LIKE 'WOR-%'"
+            // Only count canonical OT-<digits> codes so legacy/demo leftovers
+            // never poison the sequence (migration remaps those to OT-NNNN).
+            "SELECT COALESCE(MAX(CAST(SUBSTR(code, 4) AS INTEGER)), 0) + 1 AS next_seq \
+             FROM work_orders \
+             WHERE code GLOB 'OT-[0-9]*' \
+               AND SUBSTR(code, 4) GLOB '[0-9]*'"
                 .to_string(),
         ))
         .await?
@@ -651,7 +542,7 @@ pub async fn generate_wo_code(db: &DatabaseConnection) -> AppResult<String> {
         .try_get::<i64>("", "next_seq")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("WO code decode error: {e}")))?;
 
-    Ok(format!("WOR-{next_seq:04}"))
+    Ok(format!("OT-{next_seq:04}"))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -668,19 +559,15 @@ mod tests {
     fn test_all_status_round_trip() {
         let all = [
             WoStatus::Draft,
-            WoStatus::AwaitingApproval,
-            WoStatus::Planned,
-            WoStatus::ReadyToSchedule,
-            WoStatus::Assigned,
-            WoStatus::WaitingForPrerequisite,
+            WoStatus::Planning,
+            WoStatus::Ready,
             WoStatus::InProgress,
-            WoStatus::Paused,
-            WoStatus::MechanicallyComplete,
-            WoStatus::TechnicallyVerified,
+            WoStatus::OnHold,
+            WoStatus::Completed,
             WoStatus::Closed,
             WoStatus::Cancelled,
         ];
-        assert_eq!(all.len(), 12, "PRD §6.5 requires exactly 12 states");
+        assert_eq!(all.len(), 8, "Option B requires exactly 8 statuses");
 
         for status in &all {
             let s = status.as_str();
@@ -701,30 +588,22 @@ mod tests {
     #[test]
     fn test_all_valid_forward_transitions() {
         let cases = [
-            (WoStatus::Draft, WoStatus::AwaitingApproval),
-            (WoStatus::Draft, WoStatus::Planned),
+            (WoStatus::Draft, WoStatus::Planning),
             (WoStatus::Draft, WoStatus::Cancelled),
-            (WoStatus::AwaitingApproval, WoStatus::Planned),
-            (WoStatus::AwaitingApproval, WoStatus::Cancelled),
-            (WoStatus::Planned, WoStatus::ReadyToSchedule),
-            (WoStatus::Planned, WoStatus::Cancelled),
-            (WoStatus::ReadyToSchedule, WoStatus::Assigned),
-            (WoStatus::ReadyToSchedule, WoStatus::Cancelled),
-            (WoStatus::Assigned, WoStatus::WaitingForPrerequisite),
-            (WoStatus::Assigned, WoStatus::InProgress),
-            (WoStatus::Assigned, WoStatus::Cancelled),
-            (WoStatus::WaitingForPrerequisite, WoStatus::Assigned),
-            (WoStatus::WaitingForPrerequisite, WoStatus::InProgress),
-            (WoStatus::WaitingForPrerequisite, WoStatus::Cancelled),
-            (WoStatus::InProgress, WoStatus::Paused),
-            (WoStatus::InProgress, WoStatus::MechanicallyComplete),
+            (WoStatus::Planning, WoStatus::Ready),
+            (WoStatus::Planning, WoStatus::Cancelled),
+            (WoStatus::Ready, WoStatus::InProgress),
+            (WoStatus::Ready, WoStatus::Planning),
+            (WoStatus::Ready, WoStatus::Cancelled),
+            (WoStatus::InProgress, WoStatus::OnHold),
+            (WoStatus::InProgress, WoStatus::Completed),
             (WoStatus::InProgress, WoStatus::Cancelled),
-            (WoStatus::Paused, WoStatus::InProgress),
-            (WoStatus::Paused, WoStatus::Cancelled),
-            (WoStatus::MechanicallyComplete, WoStatus::TechnicallyVerified),
-            (WoStatus::MechanicallyComplete, WoStatus::InProgress),
-            (WoStatus::MechanicallyComplete, WoStatus::Cancelled),
-            (WoStatus::TechnicallyVerified, WoStatus::Closed),
+            (WoStatus::OnHold, WoStatus::InProgress),
+            (WoStatus::OnHold, WoStatus::Cancelled),
+            (WoStatus::Completed, WoStatus::Closed),
+            (WoStatus::Completed, WoStatus::InProgress),
+            (WoStatus::Completed, WoStatus::Planning),
+            (WoStatus::Completed, WoStatus::Cancelled),
         ];
 
         for (from, to) in &cases {
@@ -741,14 +620,13 @@ mod tests {
     fn test_invalid_transitions_rejected() {
         let invalid_cases = [
             (WoStatus::Draft, WoStatus::InProgress),
+            (WoStatus::Draft, WoStatus::Ready),
             (WoStatus::Draft, WoStatus::Closed),
+            (WoStatus::Planning, WoStatus::InProgress),
             (WoStatus::Closed, WoStatus::Draft),
-            (WoStatus::Closed, WoStatus::InProgress),
             (WoStatus::Cancelled, WoStatus::Draft),
-            (WoStatus::Cancelled, WoStatus::InProgress),
-            (WoStatus::TechnicallyVerified, WoStatus::Cancelled),
             (WoStatus::InProgress, WoStatus::Draft),
-            (WoStatus::Planned, WoStatus::InProgress),
+            (WoStatus::Ready, WoStatus::Completed),
         ];
 
         for (from, to) in &invalid_cases {
@@ -773,14 +651,11 @@ mod tests {
     fn test_cancelled_reachable_from_all_pre_terminal_states() {
         let pre_terminal = [
             WoStatus::Draft,
-            WoStatus::AwaitingApproval,
-            WoStatus::Planned,
-            WoStatus::ReadyToSchedule,
-            WoStatus::Assigned,
-            WoStatus::WaitingForPrerequisite,
+            WoStatus::Planning,
+            WoStatus::Ready,
             WoStatus::InProgress,
-            WoStatus::Paused,
-            WoStatus::MechanicallyComplete,
+            WoStatus::OnHold,
+            WoStatus::Completed,
         ];
 
         for status in &pre_terminal {
@@ -790,14 +665,6 @@ mod tests {
                 status.as_str()
             );
         }
-
-        // TechnicallyVerified → Closed only (no cancel)
-        assert!(
-            !WoStatus::TechnicallyVerified
-                .allowed_transitions()
-                .contains(&WoStatus::Cancelled),
-            "TechnicallyVerified should NOT allow Cancelled"
-        );
     }
 
     // ── Terminal / executing / step-up flags ──────────────────────────────
@@ -813,18 +680,18 @@ mod tests {
     #[test]
     fn test_is_executing() {
         assert!(WoStatus::InProgress.is_executing());
-        assert!(WoStatus::Paused.is_executing());
+        assert!(WoStatus::OnHold.is_executing());
         assert!(!WoStatus::Draft.is_executing());
-        assert!(!WoStatus::Assigned.is_executing());
-        assert!(!WoStatus::MechanicallyComplete.is_executing());
+        assert!(!WoStatus::Ready.is_executing());
+        assert!(!WoStatus::Completed.is_executing());
     }
 
     #[test]
     fn test_requires_step_up_for_close() {
-        assert!(WoStatus::TechnicallyVerified.requires_step_up_for_close());
+        assert!(WoStatus::Completed.requires_step_up_for_close());
         assert!(!WoStatus::Draft.requires_step_up_for_close());
         assert!(!WoStatus::InProgress.requires_step_up_for_close());
-        assert!(!WoStatus::MechanicallyComplete.requires_step_up_for_close());
+        assert!(!WoStatus::Ready.requires_step_up_for_close());
     }
 
     // ── Macro state round-trip ────────────────────────────────────────────

@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 
-import { invoke } from "@/lib/ipc-invoke";
+import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
   AdminChangeEventDetail,
   AdminEventFilter,
@@ -70,9 +70,13 @@ export const StepUpResponseSchema = z.object({
  * Fetch the effective permission set for the currently authenticated user.
  * Called after login to populate the `usePermissions` hook so that
  * `<PermissionGate>` can work without round-tripping for every check.
+ *
+ * Uses invokeSilent: AUTH_ERROR must not open AuthLockLayer (that remount /
+ * shell race previously wiped nav to Dashboard/Profile/Notifications only).
+ * PermissionProvider owns retry + cache preservation.
  */
 export async function getMyPermissions(): Promise<PermissionRecord[]> {
-  const raw = await invoke<unknown[]>("get_my_permissions");
+  const raw = await invokeSilent<unknown[]>("get_my_permissions");
   return z.array(PermissionRecordSchema).parse(raw);
 }
 
@@ -114,7 +118,7 @@ const UserPresenceSchema = z.object({
 });
 
 export async function getUserPresence(userIds: number[]): Promise<UserPresence[]> {
-  const raw = await invoke<unknown[]>("get_user_presence", { userIds });
+  const raw = await invokeSilent<unknown[]>("get_user_presence", { userIds });
   return z.array(UserPresenceSchema).parse(raw);
 }
 

@@ -8,11 +8,20 @@
  */
 
 import type { TFunction } from "i18next";
-import { ArrowRight, CheckCircle2, Loader2, Printer, TriangleAlert } from "lucide-react";
+import { CheckCircle2, Loader2, Printer, TriangleAlert } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 
 import { StepUpDialog } from "@/components/auth/StepUpDialog";
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import {
+  fetchDiSymptomLabel,
+  loadDiOriginLabelMap,
+  resolveDiOriginLabel,
+  useDiReferenceLabels,
+} from "@/components/di/di-reference-labels";
+import { DI_STATUS_STYLE, diStatusToI18nKey } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,6 +37,12 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
+import {
+  formatAssetLabel,
+  formatOrgNodeLabel,
+  formatPersonLabel,
+} from "@/lib/display";
+import { convertDiToWo } from "@/services/di-conversion-service";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { intlLocaleForLanguage } from "@/utils/format-date";
@@ -42,22 +57,12 @@ const URGENCY_STYLE: Record<string, string> = {
   low: "bg-green-100 text-green-800",
 };
 
-const STATUS_STYLE: Record<string, string> = {
-  pending_review: "bg-amber-100 text-amber-800",
-  screened: "bg-sky-100 text-sky-800",
-  awaiting_approval: "bg-yellow-100 text-yellow-800",
-};
-
 function esc(v: string): string {
   return v
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
-
-function generateWoCodePreview(diCode: string): string {
-  return diCode.replace(/^DI-/, "OT-");
 }
 
 // ── Print ───────────────────────────────────────────────────────────────────
@@ -68,8 +73,9 @@ function printApprovalSheet(
   note: string,
   t: TFunction<"di">,
   locale: string,
+  originLabel: string,
+  symptomLabel: string,
 ) {
-  const woCode = generateWoCodePreview(di.code);
   const now = new Date().toLocaleString(locale);
   const fmt = (iso: string) => {
     try {
@@ -113,10 +119,15 @@ function printApprovalSheet(
     <tr><th>${t("approvalPrint.thTitle")}</th><td>${esc(di.title)}</td></tr>
     <tr><th>${t("approvalPrint.thStatus")}</th><td>${esc(di.status)}</td></tr>
     <tr><th>${t("approvalPrint.thPriority")}</th><td>${esc(di.reported_urgency)}</td></tr>
-    <tr><th>${t("approvalPrint.thOrigin")}</th><td>${esc(di.origin_type)}</td></tr>
+    <tr><th>${t("approvalPrint.thOrigin")}</th><td>${esc(originLabel)}</td></tr>
+    ${
+      symptomLabel
+        ? `<tr><th>${t("detail.fields.symptom")}</th><td>${esc(symptomLabel)}</td></tr>`
+        : ""
+    }
     <tr><th>${t("approvalPrint.thImpact")}</th><td>${esc(di.impact_level)}</td></tr>
-    <tr><th>${t("approvalPrint.thAsset")}</th><td>#${di.asset_id}</td></tr>
-    <tr><th>${t("approvalPrint.thOrg")}</th><td>#${di.org_node_id}</td></tr>
+    <tr><th>${t("approvalPrint.thAsset")}</th><td>${esc(formatAssetLabel(di.asset_code, di.asset_label))}</td></tr>
+    <tr><th>${t("approvalPrint.thOrg")}</th><td>${esc(formatOrgNodeLabel(di.org_node_code, di.org_node_label))}</td></tr>
     <tr><th>${t("approvalPrint.thSubmitted")}</th><td>${esc(fmt(di.submitted_at))}</td></tr>
     <tr><th>${t("approvalPrint.thDescription")}</th><td>${esc(di.description)}</td></tr>
     ${
@@ -127,12 +138,12 @@ function printApprovalSheet(
     ${note ? `<tr><th>${t("approvalPrint.thApprovalNote")}</th><td>${esc(note)}</td></tr>` : ""}
   </table>
 
-  <div class="conversion">${t("approvalPrint.conversion", { from: esc(di.code), to: esc(woCode) })}</div>
+  <div class="conversion">${t("approvalPrint.conversion", { from: esc(di.code) })}</div>
 
   <div class="signatures">
     <div class="sig-box">
       <p><strong>${t("approvalPrint.sigDeclarant")}</strong></p>
-      <p>#${di.submitter_id}</p>
+      <p>${esc(formatPersonLabel(di.submitter_display_name))}</p>
       <br/><br/>
       <p>${t("print.signatureLine")}</p>
     </div>
@@ -167,10 +178,13 @@ function printApprovalSheet(
 
 export function DiApprovalDialog() {
   const { t, i18n } = useTranslation("di");
+  const navigate = useNavigate();
   const dateLocale = intlLocaleForLanguage(i18n.language);
+  const { originLabel, symptomLabel } = useDiReferenceLabels({ includeSymptoms: true });
   const di = useDiReviewStore((s) => s.approvalDi);
   const closeApproval = useDiReviewStore((s) => s.closeApproval);
   const approve = useDiReviewStore((s) => s.approve);
+  const closeAsNonExecutable = useDiReviewStore((s) => s.closeAsNonExecutable);
   const saving = useDiReviewStore((s) => s.saving);
   const storeError = useDiReviewStore((s) => s.error);
   const { info } = useSession();
@@ -179,15 +193,28 @@ export function DiApprovalDialog() {
   const [showStepUp, setShowStepUp] = useState(false);
   const [conversionResult, setConversionResult] = useState<{
     converted: boolean;
+    woId: number | null;
     woCode: string | null;
     conversionError: string | null;
   } | null>(null);
+  const [retryRowVersion, setRetryRowVersion] = useState<number | null>(null);
 
   const loadDis = useDiStore((s) => s.loadDis);
 
   const open = di !== null;
-  const woCodePreview = di ? generateWoCodePreview(di.code) : "";
   const approverName = info?.display_name ?? info?.username ?? "";
+
+  const handoffToWorkOrder = useCallback(
+    (woId: number) => {
+      setConversionResult(null);
+      setNote("");
+      setShowStepUp(false);
+      setRetryRowVersion(null);
+      closeApproval();
+      navigate(`/work-orders?openWo=${woId}`);
+    },
+    [closeApproval, navigate],
+  );
 
   // Step 1: user clicks "Approve" → show step-up dialog
   const handleApproveClick = useCallback(() => {
@@ -207,38 +234,110 @@ export function DiApprovalDialog() {
       });
       // Refresh DI list so Kanban updates
       void loadDis();
-      if (result.converted) {
-        // Show success with actual WO code, then auto-close after delay
-        setConversionResult(result);
-        setTimeout(() => {
-          setConversionResult(null);
-          setNote("");
-          closeApproval();
-        }, 3000);
-      } else {
-        // Approval succeeded but conversion failed — show warning, keep dialog open
-        setConversionResult(result);
+      if (result.converted && result.woId != null && result.woId > 0) {
+        handoffToWorkOrder(result.woId);
+        return;
       }
+      if (result.converted) {
+        setConversionResult({
+          converted: false,
+          woId: null,
+          woCode: result.woCode,
+          conversionError: t(
+            "review.conversionMissingWoId",
+            "Conversion réussie mais identifiant OT manquant — ouvrez le module Ordres de travail manuellement.",
+          ),
+        });
+        setRetryRowVersion(result.approvedRowVersion);
+        return;
+      }
+      // Approval succeeded but conversion failed — show warning, keep dialog open
+      setConversionResult({
+        converted: false,
+        woId: result.woId,
+        woCode: result.woCode,
+        conversionError: result.conversionError,
+      });
+      setRetryRowVersion(result.approvedRowVersion);
     } catch {
       // error is set in store; dialog stays open so user can retry
     }
-  }, [di, approve, info, note, closeApproval, loadDis]);
+  }, [di, approve, info, note, handoffToWorkOrder, loadDis, t]);
+
+  const handleRetryConversion = useCallback(async () => {
+    if (!di || retryRowVersion == null) return;
+    try {
+      const result = await convertDiToWo({
+        diId: di.id,
+        expectedRowVersion: retryRowVersion,
+        ...(note ? { conversionNotes: note } : {}),
+      });
+      void loadDis();
+      if (result.wo_id > 0) {
+        handoffToWorkOrder(result.wo_id);
+        return;
+      }
+      setConversionResult({
+        converted: true,
+        woId: result.wo_id,
+        woCode: result.wo_code,
+        conversionError: null,
+      });
+      setRetryRowVersion(result.di.row_version);
+    } catch (err) {
+      setConversionResult({
+        converted: false,
+        woId: null,
+        woCode: null,
+        conversionError: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [di, handoffToWorkOrder, loadDis, note, retryRowVersion]);
+
+  const handleCloseNeed = useCallback(async () => {
+    if (!di) return;
+    try {
+      await closeAsNonExecutable(di.id, di.row_version, note || null);
+      void loadDis();
+      setNote("");
+      setShowStepUp(false);
+      setConversionResult(null);
+      setRetryRowVersion(null);
+      closeApproval();
+    } catch {
+      // storeError already set by review store
+    }
+  }, [closeAsNonExecutable, closeApproval, di, loadDis, note]);
 
   const handleStepUpCancel = useCallback(() => {
     setShowStepUp(false);
   }, []);
 
   const handlePrint = useCallback(() => {
-    if (di) {
-      const tPrint = i18n.getFixedT(i18n.language, "di");
-      printApprovalSheet(di, approverName, note, tPrint, intlLocaleForLanguage(i18n.language));
-    }
+    if (!di) return;
+    const tPrint = i18n.getFixedT(i18n.language, "di");
+    void (async () => {
+      const [originMap, symptomText] = await Promise.all([
+        loadDiOriginLabelMap(),
+        fetchDiSymptomLabel(di.symptom_code_id),
+      ]);
+      printApprovalSheet(
+        di,
+        approverName,
+        note,
+        tPrint,
+        intlLocaleForLanguage(i18n.language),
+        resolveDiOriginLabel(originMap, di.origin_type),
+        symptomText,
+      );
+    })();
   }, [di, approverName, note, i18n]);
 
   const handleClose = useCallback(() => {
     setNote("");
     setShowStepUp(false);
     setConversionResult(null);
+    setRetryRowVersion(null);
     closeApproval();
   }, [closeApproval]);
 
@@ -263,11 +362,12 @@ export function DiApprovalDialog() {
           <Separator />
 
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-            {/* Conversion banner */}
-            <div className="flex items-center justify-center gap-3 rounded-lg bg-green-50 border border-green-200 py-3 px-4">
-              <span className="font-mono font-bold text-green-800">{di.code}</span>
-              <ArrowRight className="h-4 w-4 text-green-600" />
-              <span className="font-mono font-bold text-green-800">{woCodePreview}</span>
+            {/* Conversion notice — WO code is assigned only on convert */}
+            <div className="rounded-lg bg-green-50 border border-green-200 py-3 px-4 space-y-1">
+              <p className="text-center font-mono font-bold text-green-800">{di.code}</p>
+              <p className="text-center text-sm text-green-700">
+                {t("review.woCodeAssignedOnConvert")}
+              </p>
             </div>
 
             {/* DI info card */}
@@ -276,11 +376,18 @@ export function DiApprovalDialog() {
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-sm text-muted-foreground">{di.code}</span>
                   <span className="font-semibold text-sm">{di.title}</span>
+                  <LinkedEntityBadge
+                    entity="work_order"
+                    code={conversionResult?.woCode ?? di.converted_to_wo_code}
+                    entityId={conversionResult?.woId ?? di.converted_to_wo_id}
+                    title={di.converted_to_wo_title}
+                    className="text-[10px] px-1.5 py-0"
+                  />
                   <Badge
                     variant="outline"
-                    className={`text-[10px] border-0 ml-auto ${STATUS_STYLE[di.status] ?? "bg-gray-100"}`}
+                    className={`text-[10px] border-0 ml-auto ${DI_STATUS_STYLE[di.status] ?? "bg-gray-100"}`}
                   >
-                    {di.status}
+                    {t(`status.${diStatusToI18nKey(di.status)}` as const)}
                   </Badge>
                   <Badge
                     variant="outline"
@@ -294,22 +401,34 @@ export function DiApprovalDialog() {
                 <div className="grid grid-cols-3 gap-2 text-xs">
                   <div>
                     <span className="text-muted-foreground">{t("detail.fields.asset")}:</span>{" "}
-                    <span className="font-medium">#{di.asset_id}</span>
+                    <span className="font-medium">
+                      {formatAssetLabel(di.asset_code, di.asset_label)}
+                    </span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">{t("detail.fields.orgNode")}:</span>{" "}
-                    <span className="font-medium">#{di.org_node_id}</span>
+                    <span className="font-medium">
+                      {formatOrgNodeLabel(di.org_node_code, di.org_node_label)}
+                    </span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">{t("detail.fields.origin")}:</span>{" "}
-                    <span className="font-medium">{di.origin_type}</span>
+                    <span className="font-medium">{originLabel(di.origin_type)}</span>
                   </div>
+                  {di.symptom_code_id != null && (
+                    <div>
+                      <span className="text-muted-foreground">{t("detail.fields.symptom")}:</span>{" "}
+                      <span className="font-medium">{symptomLabel(di.symptom_code_id)}</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Requester */}
                 <div className="text-xs">
                   <span className="text-muted-foreground">{t("detail.fields.reportedBy")}:</span>{" "}
-                  <span className="font-medium">#{di.submitter_id}</span>
+                  <span className="font-medium">
+                    {formatPersonLabel(di.submitter_display_name)}
+                  </span>
                   <span className="ml-4 text-muted-foreground">
                     {t("detail.fields.reportedAt")}:
                   </span>{" "}
@@ -359,7 +478,7 @@ export function DiApprovalDialog() {
                 <span className="text-muted-foreground">{t("review.approver")}:</span>
                 <span className="font-medium">{approverName}</span>
                 <span className="ml-auto text-muted-foreground">
-                  {new Date().toLocaleString("fr-FR")}
+                  {new Date().toLocaleString(dateLocale)}
                 </span>
               </CardContent>
             </Card>
@@ -401,6 +520,18 @@ export function DiApprovalDialog() {
                     )}
                   </p>
                   <p className="text-xs mt-1">{conversionResult.conversionError}</p>
+                  {retryRowVersion != null && (
+                    <div className="mt-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void handleRetryConversion()}
+                        className="h-7"
+                      >
+                        {t("review.retryConversion")}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -417,15 +548,22 @@ export function DiApprovalDialog() {
               <Button variant="outline" size="sm" onClick={handleClose}>
                 {t("form.cancel")}
               </Button>
-              <Button
-                size="sm"
-                onClick={handleApproveClick}
-                disabled={saving}
-                className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
-              >
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {t("review.approveAndConvert")}
-              </Button>
+              {di.status === "awaiting_approval" && (
+                <Button
+                  size="sm"
+                  onClick={handleApproveClick}
+                  disabled={saving}
+                  className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+                >
+                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {t("review.approveAndConvert")}
+                </Button>
+              )}
+              {di.status === "approved_for_planning" && (
+                <Button size="sm" variant="outline" onClick={() => void handleCloseNeed()}>
+                  {t("action.cancelNeed")}
+                </Button>
+              )}
             </div>
           </DialogFooter>
         </DialogContent>

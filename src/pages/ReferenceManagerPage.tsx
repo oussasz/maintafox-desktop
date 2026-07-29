@@ -3,30 +3,27 @@
  *
  * Two-pane workspace for governing reference domains, sets, and values.
  * Left: DomainBrowserPanel (domain → set hierarchy).
- * Right: Value editor area (empty state until a set is selected;
- *        ValueEditorTable patched in by File 02, Sprint S4).
- *
- * Phase 2 – Sub-phase 03 – Sprint S4 (GAP REF-01).
+ * Right: ReferenceValueEditor (real domains) or synthetic adapter hosts.
  */
 
 import { AlertTriangle, Database, Download, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { PermissionGate } from "@/components/PermissionGate";
+import { InventoryArticleFamilyHost } from "@/components/lookups/adapters/InventoryArticleFamilyHost";
+import { InventoryTaxCategoryHost } from "@/components/lookups/adapters/InventoryTaxCategoryHost";
+import { WorkOrderPrioritiesHost } from "@/components/lookups/adapters/WorkOrderPrioritiesHost";
+import { WorkOrderStatusesHost } from "@/components/lookups/adapters/WorkOrderStatusesHost";
+import { WorkOrderTypesHost } from "@/components/lookups/adapters/WorkOrderTypesHost";
 import { DomainBrowserPanel } from "@/components/lookups/DomainBrowserPanel";
-import { InventoryArticleFamilyManagerPanel } from "@/components/lookups/InventoryArticleFamilyManagerPanel";
-import { InventoryTaxCategoryManagerPanel } from "@/components/lookups/InventoryTaxCategoryManagerPanel";
 import { ReferenceImportWizard } from "@/components/lookups/ReferenceImportWizard";
 import { ReferenceValueEditor } from "@/components/lookups/ReferenceValueEditor";
-import { WorkOrderPrioritiesManagerPanel } from "@/components/lookups/WorkOrderPrioritiesManagerPanel";
-import { WorkOrderStatusesManagerPanel } from "@/components/lookups/WorkOrderStatusesManagerPanel";
-import { WorkOrderTypesManagerPanel } from "@/components/lookups/WorkOrderTypesManagerPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { mfLayout } from "@/design-system/tokens";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useReferenceCapabilities } from "@/hooks/use-reference-capabilities";
 import { createDraftReferenceSet } from "@/services/reference-service";
 import {
   INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
@@ -43,6 +40,22 @@ import {
 } from "@/stores/reference-manager-store";
 import { refreshWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { refreshWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
+
+const SYNTHETIC_REF_SELECTIONS: ReadonlyArray<readonly [number, number]> = [
+  [INVENTORY_ARTICLE_FAMILY_DOMAIN_ID, INVENTORY_ARTICLE_FAMILY_SET_ID],
+  [INVENTORY_TAX_CATEGORY_DOMAIN_ID, INVENTORY_TAX_CATEGORY_SET_ID],
+  [WORK_ORDER_TYPES_DOMAIN_ID, WORK_ORDER_TYPES_SET_ID],
+  [WORK_ORDER_PRIORITIES_DOMAIN_ID, WORK_ORDER_PRIORITIES_SET_ID],
+  [WORK_ORDER_STATUSES_DOMAIN_ID, WORK_ORDER_STATUSES_SET_ID],
+];
+
+function isSyntheticRefSelection(
+  domainId: number | null,
+  setId: number | null,
+): boolean {
+  if (domainId == null || setId == null) return false;
+  return SYNTHETIC_REF_SELECTIONS.some(([d, s]) => d === domainId && s === setId);
+}
 
 // ── Status label key mapping (shared with DomainBrowserPanel) ─────────────
 
@@ -71,6 +84,7 @@ export function ReferenceManagerPage() {
   const setsMap = useReferenceManagerStore((s) => s.setsMap);
   const loadDomains = useReferenceManagerStore((s) => s.loadDomains);
   const loadSetsForDomain = useReferenceManagerStore((s) => s.loadSetsForDomain);
+  const selectSet = useReferenceManagerStore((s) => s.selectSet);
 
   const [importOpen, setImportOpen] = useState(false);
 
@@ -88,6 +102,15 @@ export function ReferenceManagerPage() {
       ? setsMap[selectedDomainId]?.find((s) => s.id === selectedSetId)
       : null;
 
+  const { caps: selectedCaps } = useReferenceCapabilities(
+    selectedDomainId,
+    selectedSetId,
+    selectedSet?.status ?? null,
+  );
+  const canImportValues = Boolean(
+    selectedCaps?.can_create_value && can("ref.manage") && selectedDomainId != null && selectedDomainId > 0,
+  );
+
   // ── Callbacks ───────────────────────────────────────────────────────────
 
   const handleRefresh = useCallback(() => {
@@ -102,13 +125,14 @@ export function ReferenceManagerPage() {
   const handleCreateDraftSet = useCallback(
     async (domainId: number) => {
       try {
-        await createDraftReferenceSet(domainId);
-        void loadSetsForDomain(domainId);
+        const draft = await createDraftReferenceSet(domainId);
+        await loadSetsForDomain(domainId);
+        selectSet(draft.id, domainId);
       } catch {
         // Error handled by store / toast in future iteration
       }
     },
-    [loadSetsForDomain],
+    [loadSetsForDomain, selectSet],
   );
 
   // ── Permission gate ─────────────────────────────────────────────────────
@@ -174,7 +198,8 @@ export function ReferenceManagerPage() {
                 <span className="text-text-secondary truncate">{selectedDomain.name}</span>
               </>
             )}
-            {selectedSet && (
+            {selectedSet &&
+              selectedDomain?.governance_category !== "operational_dictionary" && (
               <>
                 <Separator orientation="vertical" className="h-4 mx-1" />
                 <span className="text-text-secondary">v{selectedSet.version_no}</span>
@@ -201,7 +226,7 @@ export function ReferenceManagerPage() {
 
         {/* Action buttons */}
         <div className={mfLayout.moduleHeaderActions}>
-          <PermissionGate permission="ref.manage">
+          {canImportValues ? (
             <Button
               variant="outline"
               size="sm"
@@ -210,22 +235,13 @@ export function ReferenceManagerPage() {
               disabled={
                 !selectedDomainId ||
                 !selectedSetId ||
-                (selectedDomainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID &&
-                  selectedSetId === INVENTORY_ARTICLE_FAMILY_SET_ID) ||
-                (selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
-                  selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID) ||
-                (selectedDomainId === WORK_ORDER_TYPES_DOMAIN_ID &&
-                  selectedSetId === WORK_ORDER_TYPES_SET_ID) ||
-                (selectedDomainId === WORK_ORDER_PRIORITIES_DOMAIN_ID &&
-                  selectedSetId === WORK_ORDER_PRIORITIES_SET_ID) ||
-                (selectedDomainId === WORK_ORDER_STATUSES_DOMAIN_ID &&
-                  selectedSetId === WORK_ORDER_STATUSES_SET_ID)
+                isSyntheticRefSelection(selectedDomainId, selectedSetId)
               }
             >
               <Download className="h-3.5 w-3.5" />
               {t("page.import")}
             </Button>
-          </PermissionGate>
+          ) : null}
           <Button
             variant="outline"
             size="sm"
@@ -248,19 +264,19 @@ export function ReferenceManagerPage() {
         <main className="flex-1 min-w-0">
           {selectedDomainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID &&
           selectedSetId === INVENTORY_ARTICLE_FAMILY_SET_ID ? (
-            <InventoryArticleFamilyManagerPanel />
+            <InventoryArticleFamilyHost />
           ) : selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
             selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID ? (
-            <InventoryTaxCategoryManagerPanel />
+            <InventoryTaxCategoryHost />
           ) : selectedDomainId === WORK_ORDER_TYPES_DOMAIN_ID &&
             selectedSetId === WORK_ORDER_TYPES_SET_ID ? (
-            <WorkOrderTypesManagerPanel />
+            <WorkOrderTypesHost />
           ) : selectedDomainId === WORK_ORDER_PRIORITIES_DOMAIN_ID &&
             selectedSetId === WORK_ORDER_PRIORITIES_SET_ID ? (
-            <WorkOrderPrioritiesManagerPanel />
+            <WorkOrderPrioritiesHost />
           ) : selectedDomainId === WORK_ORDER_STATUSES_DOMAIN_ID &&
             selectedSetId === WORK_ORDER_STATUSES_SET_ID ? (
-            <WorkOrderStatusesManagerPanel />
+            <WorkOrderStatusesHost />
           ) : selectedSetId && selectedDomainId ? (
             <ReferenceValueEditor setId={selectedSetId} domainId={selectedDomainId} />
           ) : (
@@ -277,26 +293,7 @@ export function ReferenceManagerPage() {
       {/* Import wizard */}
       {selectedDomainId &&
         selectedSetId &&
-        !(
-          selectedDomainId === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID &&
-          selectedSetId === INVENTORY_ARTICLE_FAMILY_SET_ID
-        ) &&
-        !(
-          selectedDomainId === INVENTORY_TAX_CATEGORY_DOMAIN_ID &&
-          selectedSetId === INVENTORY_TAX_CATEGORY_SET_ID
-        ) &&
-        !(
-          selectedDomainId === WORK_ORDER_TYPES_DOMAIN_ID &&
-          selectedSetId === WORK_ORDER_TYPES_SET_ID
-        ) &&
-        !(
-          selectedDomainId === WORK_ORDER_PRIORITIES_DOMAIN_ID &&
-          selectedSetId === WORK_ORDER_PRIORITIES_SET_ID
-        ) &&
-        !(
-          selectedDomainId === WORK_ORDER_STATUSES_DOMAIN_ID &&
-          selectedSetId === WORK_ORDER_STATUSES_SET_ID
-        ) && (
+        !isSyntheticRefSelection(selectedDomainId, selectedSetId) && (
           <ReferenceImportWizard
             domainId={selectedDomainId}
             targetSetId={selectedSetId}

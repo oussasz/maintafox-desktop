@@ -1,8 +1,8 @@
 //! Supervisor verification tests for Phase 2 SP03 File 02 Sprint S1.
 //!
-//! V1 — Protected delete block: in-use value in protected domain cannot be deleted.
-//! V2 — Allowed non-protected delete: unused value in tenant domain can be deleted.
-//! V3 — Deactivate fallback: protected in-use value can be deactivated.
+//! V1 â€” Protected delete block: in-use value in protected domain cannot be deleted.
+//! V2 â€” Allowed non-protected delete: unused value in tenant domain can be deleted.
+//! V3 â€” Deactivate fallback: protected in-use value can be deactivated.
 
 #[cfg(test)]
 mod tests {
@@ -46,6 +46,7 @@ mod tests {
             name: "Familles d'equipement".to_string(),
             structure_type: "hierarchical".to_string(),
             governance_level: "protected_analytical".to_string(),
+            governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(false),
             validation_rules_json: None,
         };
@@ -62,6 +63,7 @@ mod tests {
             name: "Tags personnalises".to_string(),
             structure_type: "flat".to_string(),
             governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(true),
             validation_rules_json: None,
         };
@@ -119,9 +121,9 @@ mod tests {
         .expect("seed equipment_classes row");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V1 — Protected delete block
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V1 â€” Protected delete block
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v1_protected_domain_blocks_delete_of_in_use_value() {
@@ -181,15 +183,15 @@ mod tests {
         .await
         .expect("create value");
 
-        // Deletion should pass — no usage found
+        // Deletion should pass â€” no usage found
         protected::assert_can_delete_value(&db, val.id)
             .await
             .expect("unused value in protected domain should be deletable");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V2 — Allowed non-protected delete
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V2 â€” Allowed non-protected delete
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v2_tenant_domain_allows_delete_of_unused_value() {
@@ -205,7 +207,7 @@ mod tests {
         .await
         .expect("create value");
 
-        // No downstream usage — delete should pass
+        // No downstream usage â€” delete should pass
         protected::assert_can_delete_value(&db, val.id)
             .await
             .expect("unused tenant value should be deletable");
@@ -222,6 +224,7 @@ mod tests {
             name: "Classification tenant".to_string(),
             structure_type: "hierarchical".to_string(),
             governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(true),
             validation_rules_json: None,
         };
@@ -250,9 +253,9 @@ mod tests {
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V3 — Deactivate fallback
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V3 â€” Deactivate fallback
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v3_protected_in_use_value_can_be_deactivated() {
@@ -311,9 +314,9 @@ mod tests {
         assert!(!deactivated.is_active);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Supplementary — is_protected_domain check
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // Supplementary â€” is_protected_domain check
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn is_protected_domain_returns_correct_flag() {
@@ -336,9 +339,9 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Supplementary — has_migration_map
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // Supplementary â€” has_migration_map
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn has_migration_map_false_when_no_mapping() {

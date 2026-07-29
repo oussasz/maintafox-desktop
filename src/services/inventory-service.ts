@@ -24,6 +24,7 @@ import type {
   InventoryStateEvent,
   InventoryReleaseReservationInput,
   InventoryReorderRecommendation,
+  InventoryReplenishmentRecommendation,
   InventoryReserveInput,
   InventoryReturnInput,
   InventoryStockAdjustInput,
@@ -38,11 +39,15 @@ import type {
   ProcurementRequisitionLine,
   ProcurementSupplier,
   PurchaseOrder,
+  PurchaseOrderDetail,
   PurchaseOrderLine,
   ReceiveGoodsInput,
   RepairableOrder,
+  RepairableOrderDetail,
+  RepairVsReplaceResult,
   ReverseInventoryCountSessionInput,
   RunInventoryReconciliationInput,
+  StockImpactProjection,
   StockLocation,
   StockReservation,
   StockReservationFilter,
@@ -58,6 +63,28 @@ import type {
   UpdateWarehouseInput,
   ValuationCostResult,
   Warehouse,
+  // Supplier types
+  InventorySupplier,
+  InventorySupplierInput,
+  SupplierArticleSource,
+  SupplierArticleSourceInput,
+  SupplierContact,
+  SupplierContactInput,
+  SupplierPrice,
+  SupplierPriceInput,
+  SupplierPurchaseHistoryRow,
+  SupplierScorecard,
+  // Article / procurement analytics
+  ArticleEquivalent,
+  ArticleEquivalentInput,
+  ArticlePurchaseHistoryRow,
+  ProcurementDashboardSummary,
+  ProcurementAlert,
+  ArticleConsumptionMonth,
+  ArticleRepairableHistory,
+  InventoryDocumentLink,
+  InventoryDocumentLinkInput,
+  WoMaterialReadiness,
 } from "@shared/ipc-types";
 
 const ArticleFamilySchema = z.object({
@@ -125,8 +152,10 @@ const InventoryArticleSchema = z.object({
   procurement_category_label: z.string().nullable(),
   preferred_warehouse_id: z.number().nullable(),
   preferred_warehouse_code: z.string().nullable(),
+  preferred_warehouse_name: z.string().nullable(),
   preferred_location_id: z.number().nullable(),
   preferred_location_code: z.string().nullable(),
+  preferred_location_name: z.string().nullable(),
   min_stock: z.number(),
   max_stock: z.number().nullable(),
   reorder_point: z.number(),
@@ -162,8 +191,10 @@ const InventoryStockBalanceSchema = z.object({
   article_name: z.string(),
   warehouse_id: z.number(),
   warehouse_code: z.string(),
+  warehouse_name: z.string().nullable(),
   location_id: z.number(),
   location_code: z.string(),
+  location_name: z.string().nullable(),
   on_hand_qty: z.number(),
   reserved_qty: z.number(),
   available_qty: z.number(),
@@ -199,11 +230,14 @@ const StockReservationSchema = z.object({
   article_name: z.string(),
   warehouse_id: z.number(),
   warehouse_code: z.string(),
+  warehouse_name: z.string().nullable(),
   location_id: z.number(),
   location_code: z.string(),
+  location_name: z.string().nullable(),
   source_type: z.string(),
   source_id: z.number().nullable(),
   source_ref: z.string().nullable(),
+  work_order_code: z.string().nullable(),
   quantity_reserved: z.number(),
   quantity_issued: z.number(),
   status: z.string(),
@@ -221,15 +255,18 @@ const InventoryTransactionSchema = z.object({
   article_name: z.string(),
   warehouse_id: z.number(),
   warehouse_code: z.string(),
+  warehouse_name: z.string().nullable(),
   location_id: z.number(),
   location_code: z.string(),
+  location_name: z.string().nullable(),
   reservation_id: z.number().nullable(),
   movement_type: z.string(),
   quantity: z.number(),
   source_type: z.string(),
   source_id: z.number().nullable(),
   source_ref: z.string().nullable(),
-  reason: z.string().nullable(),
+  reason_code: z.string().nullable(),
+  notes: z.string().nullable(),
   performed_by_id: z.number().nullable(),
   performed_at: z.string(),
 });
@@ -257,12 +294,253 @@ const ProcurementSupplierSchema = z.object({
   is_active: z.number(),
 });
 
+const InventorySupplierSchema = z.object({
+  id: z.number(),
+  code: z.string(),
+  name: z.string(),
+  external_company_id: z.number().nullable(),
+  status_code: z.string(),
+  payment_terms_code: z.string().nullable(),
+  currency_value_id: z.number().nullable(),
+  incoterms_code: z.string().nullable(),
+  default_lead_time_days: z.number().nullable(),
+  default_buyer_person_id: z.number().nullable(),
+  is_active: z.number(),
+  row_version: z.number(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const SupplierArticleSourceSchema = z.object({
+  id: z.number(),
+  supplier_id: z.number(),
+  supplier_code: z.string(),
+  supplier_name: z.string(),
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  is_preferred: z.number(),
+  priority: z.number(),
+  lead_time_days: z.number().nullable(),
+  unit_price_hint: z.number().nullable(),
+  min_order_qty: z.number().nullable(),
+  supplier_article_code: z.string().nullable(),
+  is_active: z.number(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  last_price: z.number().nullable(),
+  avg_price: z.number().nullable(),
+  last_purchase_at: z.string().nullable(),
+  currency_value_id: z.number().nullable(),
+  currency_label: z.string().nullable(),
+  risk_level: z.string().nullable(),
+});
+
+const SupplierPriceSchema = z.object({
+  id: z.number(),
+  supplier_id: z.number(),
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  unit_price: z.number(),
+  currency_value_id: z.number().nullable(),
+  price_unit_value_id: z.number().nullable(),
+  min_order_qty: z.number().nullable(),
+  valid_from: z.string(),
+  valid_to: z.string().nullable(),
+  is_active: z.number(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const SupplierRecentDeliverySchema = z.object({
+  received_at: z.string().nullable(),
+  po_number: z.string(),
+  article_code: z.string(),
+  article_name: z.string(),
+  ordered_qty: z.number().nullable(),
+  accepted_qty: z.number(),
+  rejected_qty: z.number(),
+  actual_lead_time_days: z.number().nullable(),
+});
+
+const SupplierScorecardSchema = z.object({
+  supplier_id: z.number(),
+  supplier_code: z.string(),
+  supplier_name: z.string(),
+  on_time_delivery_pct: z.number().nullable(),
+  avg_lead_time_days: z.number().nullable(),
+  delivery_accuracy_pct: z.number().nullable(),
+  avg_price: z.number().nullable(),
+  open_po_count: z.number(),
+  completed_po_count: z.number(),
+  last_purchase_at: z.string().nullable(),
+  rejected_pct: z.number().nullable(),
+  risk_level: z.string(),
+  last_deliveries: z.array(SupplierRecentDeliverySchema),
+});
+
+const SupplierContactSchema = z.object({
+  id: z.number(),
+  supplier_id: z.number(),
+  contact_name: z.string(),
+  contact_role: z.string().nullable(),
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
+  is_primary: z.number(),
+  created_at: z.string(),
+});
+
+const SupplierPurchaseHistoryRowSchema = z.object({
+  purchase_order_id: z.number(),
+  po_number: z.string(),
+  ordered_at: z.string().nullable(),
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  ordered_qty: z.number(),
+  unit_price: z.number().nullable(),
+  status: z.string(),
+});
+
+const ArticleEquivalentSchema = z.object({
+  id: z.number(),
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  equivalent_article_id: z.number(),
+  equivalent_code: z.string(),
+  equivalent_name: z.string(),
+  equivalence_type: z.string(),
+  notes: z.string().nullable(),
+  is_bidirectional: z.number(),
+  created_at: z.string(),
+});
+
+const InventoryReplenishmentRecommendationSchema = z.object({
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  warehouse_id: z.number(),
+  warehouse_code: z.string(),
+  min_stock: z.number(),
+  reorder_point: z.number(),
+  max_stock: z.number().nullable(),
+  on_hand_qty: z.number(),
+  reserved_qty: z.number(),
+  available_qty: z.number(),
+  suggested_reorder_qty: z.number(),
+  trigger_type: z.string(),
+  suggestion_type: z.string(),
+  suggested_supplier_id: z.number().nullable(),
+  suggested_supplier_name: z.string().nullable(),
+  estimated_cost: z.number().nullable(),
+  expected_arrival: z.string().nullable(),
+  reason: z.string().nullable(),
+  transfer_options: z.array(
+    z.object({
+      warehouse_id: z.number(),
+      warehouse_code: z.string(),
+      available_qty: z.number(),
+    }),
+  ),
+});
+
+const ProcurementAlertSchema = z.object({
+  kind: z.string(),
+  severity: z.string(),
+  title: z.string(),
+  detail: z.string().nullable(),
+  entity_type: z.string().nullable(),
+  entity_id: z.number().nullable(),
+  entity_code: z.string().nullable(),
+});
+
+const ArticleConsumptionMonthSchema = z.object({
+  year_month: z.string(),
+  issued_qty: z.number(),
+});
+
+const ArticlePurchaseHistoryRowSchema = z.object({
+  purchase_order_id: z.number(),
+  po_number: z.string(),
+  ordered_at: z.string().nullable(),
+  supplier_id: z.number().nullable(),
+  supplier_name: z.string().nullable(),
+  unit_price: z.number().nullable(),
+  ordered_qty: z.number(),
+  received_qty: z.number(),
+  status: z.string(),
+});
+
+const ProcurementDashboardSummarySchema = z.object({
+  open_requisitions: z.number(),
+  pending_approval_pos: z.number(),
+  open_pos: z.number(),
+  overdue_pos: z.number(),
+  pending_receipts: z.number(),
+  low_stock_articles: z.number(),
+  critical_low_stock_articles: z.number(),
+  repairables_in_repair: z.number(),
+  active_suppliers_count: z.number(),
+  receiving_today_count: z.number(),
+});
+
+const ArticleRepairableHistorySchema = z.object({
+  order_id: z.number(),
+  order_code: z.string(),
+  quantity: z.number(),
+  status: z.string(),
+  reason: z.string().nullable(),
+  repair_cost: z.number().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const InventoryDocumentLinkSchema = z.object({
+  id: z.number(),
+  entity_type: z.string(),
+  entity_id: z.number(),
+  document_ref: z.string(),
+  link_purpose: z.string(),
+  is_primary: z.number(),
+  valid_from: z.string(),
+  valid_to: z.string().nullable(),
+  created_by_id: z.number().nullable(),
+  created_at: z.string(),
+});
+
+const WoPartShortageSchema = z.object({
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  requested_qty: z.number(),
+  available_qty: z.number(),
+  shortage_qty: z.number(),
+  preferred_location_id: z.number().nullable(),
+});
+
+const WoMaterialReadinessSchema = z.object({
+  work_order_id: z.number(),
+  work_order_code: z.string(),
+  total_parts: z.number(),
+  available_parts: z.number(),
+  reserved_parts: z.number(),
+  missing_parts: z.number(),
+  ready_pct: z.number(),
+  reserved_pct: z.number(),
+  expected_arrival: z.string().nullable(),
+  is_fully_available: z.boolean(),
+  shortages: z.array(WoPartShortageSchema),
+});
+
 const ProcurementRequisitionSchema = z.object({
   id: z.number(),
   req_number: z.string(),
   demand_source_type: z.string(),
   demand_source_id: z.number().nullable(),
   demand_source_ref: z.string().nullable(),
+  purchase_priority: z.string().nullable(),
   status: z.string(),
   posting_state: z.string(),
   posting_error: z.string().nullable(),
@@ -291,6 +569,8 @@ const PurchaseOrderSchema = z.object({
   id: z.number(),
   po_number: z.string(),
   requisition_id: z.number().nullable(),
+  supplier_id: z.number().nullable(),
+  supplier_name: z.string().nullable(),
   supplier_company_id: z.number().nullable(),
   supplier_company_name: z.string().nullable(),
   status: z.string(),
@@ -300,6 +580,7 @@ const PurchaseOrderSchema = z.object({
   ordered_at: z.string().nullable(),
   approved_by_id: z.number().nullable(),
   approved_at: z.string().nullable(),
+  expected_delivery_date: z.string().nullable(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -320,8 +601,26 @@ const PurchaseOrderLineSchema = z.object({
   demand_source_ref: z.string().nullable(),
   source_reservation_id: z.number().nullable(),
   status: z.string(),
+  remaining_qty: z.number(),
+  line_total: z.number().nullable(),
+  work_order_id: z.number().nullable(),
+  work_order_code: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
+});
+
+const StockImpactProjectionSchema = z.object({
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  warehouse_id: z.number().nullable(),
+  warehouse_code: z.string().nullable(),
+  current_on_hand: z.number(),
+  reserved_qty: z.number(),
+  available_qty: z.number(),
+  incoming_open_po_qty: z.number(),
+  delta_qty: z.number(),
+  projected_on_hand: z.number(),
 });
 
 const GoodsReceiptSchema = z.object({
@@ -370,10 +669,35 @@ const RepairableOrderSchema = z.object({
   linked_reservation_id: z.number().nullable(),
   status: z.string(),
   reason: z.string().nullable(),
+  serial_number: z.string().nullable(),
+  vendor_supplier_id: z.number().nullable(),
+  vendor_supplier_code: z.string().nullable(),
+  vendor_supplier_name: z.string().nullable(),
+  sent_at: z.string().nullable(),
+  returned_at: z.string().nullable(),
+  warranty_active: z.number(),
+  warranty_until: z.string().nullable(),
+  repair_cost: z.number().nullable(),
+  work_order_id: z.number().nullable(),
+  work_order_code: z.string().nullable(),
   created_by_id: z.number().nullable(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+});
+
+const RepairableHistoryStatsSchema = z.object({
+  repair_count: z.number(),
+  avg_cost: z.number().nullable(),
+  avg_turnaround_days: z.number().nullable(),
+});
+
+const RepairVsReplaceResultSchema = z.object({
+  repair_cost: z.number().nullable(),
+  replacement_cost: z.number().nullable(),
+  threshold_ratio: z.number(),
+  recommendation: z.enum(["REPAIR", "REPLACE", "REVIEW", "INSUFFICIENT_DATA"]),
+  reason: z.string().nullable(),
 });
 
 const InventoryStateEventSchema = z.object({
@@ -386,6 +710,24 @@ const InventoryStateEventSchema = z.object({
   reason: z.string().nullable(),
   note: z.string().nullable(),
   changed_at: z.string(),
+});
+
+const PurchaseOrderDetailSchema = z.object({
+  order: PurchaseOrderSchema,
+  lines: z.array(PurchaseOrderLineSchema),
+  goods_receipts: z.array(GoodsReceiptSchema),
+  state_events: z.array(InventoryStateEventSchema),
+  document_links: z.array(InventoryDocumentLinkSchema),
+  grand_total: z.number().nullable(),
+  grand_total_partial: z.boolean(),
+});
+
+const RepairableOrderDetailSchema = z.object({
+  order: RepairableOrderSchema,
+  state_events: z.array(InventoryStateEventSchema),
+  document_links: z.array(InventoryDocumentLinkSchema),
+  history_stats: RepairableHistoryStatsSchema,
+  repair_vs_replace: RepairVsReplaceResultSchema,
 });
 
 const InventoryCountSessionSchema = z.object({
@@ -781,6 +1123,34 @@ export function listInventoryPurchaseOrderLines(
   );
 }
 
+export function getInventoryPurchaseOrderDetail(
+  purchaseOrderId: number,
+): Promise<PurchaseOrderDetail> {
+  return invokeParsed(
+    "get_inventory_purchase_order_detail",
+    { purchaseOrderId },
+    PurchaseOrderDetailSchema,
+  );
+}
+
+export function projectInventoryStockImpact(params: {
+  articleId: number;
+  warehouseId?: number | null;
+  deltaQty: number;
+  includeOpenPoQty?: boolean;
+}): Promise<StockImpactProjection> {
+  return invokeParsed(
+    "project_inventory_stock_impact",
+    {
+      articleId: params.articleId,
+      warehouseId: params.warehouseId ?? null,
+      deltaQty: params.deltaQty,
+      includeOpenPoQty: params.includeOpenPoQty ?? false,
+    },
+    StockImpactProjectionSchema,
+  );
+}
+
 export function receiveInventoryPurchaseOrderGoods(
   input: ReceiveGoodsInput,
 ): Promise<GoodsReceipt> {
@@ -826,6 +1196,26 @@ export function listInventoryRepairableOrders(): Promise<RepairableOrder[]> {
     "list_inventory_repairable_orders",
     undefined,
     z.array(RepairableOrderSchema),
+  );
+}
+
+export function getInventoryRepairableOrderDetail(
+  orderId: number,
+): Promise<RepairableOrderDetail> {
+  return invokeParsed(
+    "get_inventory_repairable_order_detail",
+    { orderId },
+    RepairableOrderDetailSchema,
+  );
+}
+
+export function evaluateInventoryRepairVsReplace(
+  orderId: number,
+): Promise<RepairVsReplaceResult> {
+  return invokeParsed(
+    "evaluate_inventory_repair_vs_replace",
+    { orderId },
+    RepairVsReplaceResultSchema,
   );
 }
 
@@ -913,5 +1303,268 @@ export function listInventoryReconciliationFindings(
     "list_inventory_reconciliation_findings",
     { runId },
     z.array(InventoryReconciliationFindingSchema),
+  );
+}
+
+// ── Supplier functions ────────────────────────────────────────────────────────
+
+export function listInventorySuppliers(): Promise<InventorySupplier[]> {
+  return invokeParsed("list_inventory_suppliers", undefined, z.array(InventorySupplierSchema));
+}
+
+export function getInventorySupplier(supplierId: number): Promise<InventorySupplier> {
+  return invokeParsed("get_inventory_supplier", { supplierId }, InventorySupplierSchema);
+}
+
+export function upsertInventorySupplier(
+  supplierId: number | null | undefined,
+  expectedRowVersion: number | null | undefined,
+  input: InventorySupplierInput,
+): Promise<InventorySupplier> {
+  return invokeParsed(
+    "upsert_inventory_supplier",
+    { supplierId: supplierId ?? null, expectedRowVersion: expectedRowVersion ?? null, input },
+    InventorySupplierSchema,
+  );
+}
+
+export function deactivateInventorySupplier(
+  supplierId: number,
+  expectedRowVersion: number,
+): Promise<InventorySupplier> {
+  return invokeParsed(
+    "deactivate_inventory_supplier",
+    { supplierId, expectedRowVersion },
+    InventorySupplierSchema,
+  );
+}
+
+export function listSupplierArticleSources(
+  supplierId?: number | null,
+  articleId?: number | null,
+): Promise<SupplierArticleSource[]> {
+  return invokeParsed(
+    "list_supplier_article_sources",
+    { supplierId: supplierId ?? null, articleId: articleId ?? null },
+    z.array(SupplierArticleSourceSchema),
+  );
+}
+
+export function upsertSupplierArticleSource(
+  input: SupplierArticleSourceInput,
+): Promise<SupplierArticleSource> {
+  return invokeParsed("upsert_supplier_article_source", { input }, SupplierArticleSourceSchema);
+}
+
+export function deleteSupplierArticleSource(sourceId: number): Promise<void> {
+  return invoke("delete_supplier_article_source", { sourceId });
+}
+
+export function listSupplierPrices(
+  supplierId: number,
+  articleId?: number | null,
+): Promise<SupplierPrice[]> {
+  return invokeParsed(
+    "list_supplier_prices",
+    { supplierId, articleId: articleId ?? null },
+    z.array(SupplierPriceSchema),
+  );
+}
+
+export function upsertSupplierPrice(
+  priceId: number | null | undefined,
+  input: SupplierPriceInput,
+): Promise<SupplierPrice> {
+  return invokeParsed(
+    "upsert_supplier_price",
+    { priceId: priceId ?? null, input },
+    SupplierPriceSchema,
+  );
+}
+
+export function getInventorySupplierScorecard(supplierId: number): Promise<SupplierScorecard> {
+  return invokeParsed(
+    "get_inventory_supplier_scorecard",
+    { supplierId },
+    SupplierScorecardSchema,
+  );
+}
+
+// ── Supplier contacts ────────────────────────────────────────────────────────
+
+export function listSupplierContacts(supplierId: number): Promise<SupplierContact[]> {
+  return invokeParsed("list_supplier_contacts", { supplierId }, z.array(SupplierContactSchema));
+}
+
+export function upsertSupplierContact(
+  contactId: number | null | undefined,
+  input: SupplierContactInput,
+): Promise<SupplierContact> {
+  return invokeParsed(
+    "upsert_supplier_contact",
+    { contactId: contactId ?? null, input },
+    SupplierContactSchema,
+  );
+}
+
+export function deleteSupplierContact(contactId: number): Promise<void> {
+  return invoke("delete_supplier_contact", { contactId });
+}
+
+export function listSupplierPurchaseHistory(
+  supplierId: number,
+  limit?: number | null,
+): Promise<SupplierPurchaseHistoryRow[]> {
+  return invokeParsed(
+    "list_supplier_purchase_history",
+    { supplierId, limit: limit ?? null },
+    z.array(SupplierPurchaseHistoryRowSchema),
+  );
+}
+
+// ── Article equivalents ──────────────────────────────────────────────────────
+
+export function listInventoryArticleEquivalents(articleId: number): Promise<ArticleEquivalent[]> {
+  return invokeParsed(
+    "list_inventory_article_equivalents",
+    { articleId },
+    z.array(ArticleEquivalentSchema),
+  );
+}
+
+export function upsertInventoryArticleEquivalent(
+  input: ArticleEquivalentInput,
+): Promise<ArticleEquivalent> {
+  return invokeParsed("upsert_inventory_article_equivalent", { input }, ArticleEquivalentSchema);
+}
+
+export function deleteInventoryArticleEquivalent(equivalentId: number): Promise<void> {
+  return invoke("delete_inventory_article_equivalent", { equivalentId });
+}
+
+// ── Purchase history ─────────────────────────────────────────────────────────
+
+export function listInventoryArticlePurchaseHistory(
+  articleId: number,
+): Promise<ArticlePurchaseHistoryRow[]> {
+  return invokeParsed(
+    "list_inventory_article_purchase_history",
+    { articleId },
+    z.array(ArticlePurchaseHistoryRowSchema),
+  );
+}
+
+// ── Replenishment ─────────────────────────────────────────────────────────────
+
+export function evaluateInventoryReplenishment(
+  warehouseId?: number | null,
+): Promise<InventoryReplenishmentRecommendation[]> {
+  return invokeParsed(
+    "evaluate_inventory_replenishment",
+    { warehouseId: warehouseId ?? null },
+    z.array(InventoryReplenishmentRecommendationSchema),
+  );
+}
+
+export function calculateInventoryAbc(): Promise<number> {
+  return invokeParsed("calculate_inventory_abc", undefined, z.number());
+}
+
+export function calculateInventoryXyz(): Promise<number> {
+  return invokeParsed("calculate_inventory_xyz", undefined, z.number());
+}
+
+// ── Procurement dashboard ─────────────────────────────────────────────────────
+
+export function getProcurementDashboardSummary(): Promise<ProcurementDashboardSummary> {
+  return invokeParsed(
+    "get_procurement_dashboard_summary",
+    undefined,
+    ProcurementDashboardSummarySchema,
+  );
+}
+
+export function getProcurementAlerts(): Promise<ProcurementAlert[]> {
+  return invokeParsed("get_procurement_alerts", undefined, z.array(ProcurementAlertSchema));
+}
+
+export function getArticleConsumptionMonthly(
+  articleId: number,
+  months?: number | null,
+): Promise<ArticleConsumptionMonth[]> {
+  return invokeParsed(
+    "get_article_consumption_monthly",
+    { articleId, months: months ?? null },
+    z.array(ArticleConsumptionMonthSchema),
+  );
+}
+
+// ── Repairable history ────────────────────────────────────────────────────────
+
+export function getInventoryArticleRepairableHistory(
+  articleId: number,
+): Promise<ArticleRepairableHistory[]> {
+  return invokeParsed(
+    "get_inventory_article_repairable_history",
+    { articleId },
+    z.array(ArticleRepairableHistorySchema),
+  );
+}
+
+// ── Document links ────────────────────────────────────────────────────────────
+
+export function listInventoryDocumentLinks(
+  entityType: string,
+  entityId: number,
+): Promise<InventoryDocumentLink[]> {
+  return invokeParsed(
+    "list_inventory_document_links",
+    { entityType, entityId },
+    z.array(InventoryDocumentLinkSchema),
+  );
+}
+
+export function upsertInventoryDocumentLink(
+  input: InventoryDocumentLinkInput,
+): Promise<InventoryDocumentLink> {
+  return invokeParsed("upsert_inventory_document_link", { input }, InventoryDocumentLinkSchema);
+}
+
+// ── WO material readiness ─────────────────────────────────────────────────────
+
+export function checkWoPartStockAvailability(workOrderId: number): Promise<WoMaterialReadiness> {
+  return invokeParsed(
+    "check_wo_part_stock_availability",
+    { workOrderId },
+    WoMaterialReadinessSchema,
+  );
+}
+
+export function createProcurementRequisitionFromWoPart(
+  workOrderId: number,
+  articleId: number,
+  requestedQty: number,
+  preferredLocationId?: number | null,
+): Promise<ProcurementRequisition> {
+  return invokeParsed(
+    "create_procurement_requisition_from_wo_part",
+    {
+      workOrderId,
+      articleId,
+      requestedQty,
+      preferredLocationId: preferredLocationId ?? null,
+    },
+    ProcurementRequisitionSchema,
+  );
+}
+
+export function suggestInventoryInternalTransfer(
+  articleId: number,
+  targetWarehouseId: number,
+): Promise<InventoryStockBalance[]> {
+  return invokeParsed(
+    "suggest_inventory_internal_transfer",
+    { articleId, targetWarehouseId },
+    z.array(InventoryStockBalanceSchema),
   );
 }

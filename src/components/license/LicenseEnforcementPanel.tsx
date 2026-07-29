@@ -8,33 +8,43 @@ import {
   applyAdminLicenseAction,
   applyLicensingCompromiseResponse,
   getLicenseEnforcementStatus,
-  listLicenseTraceEvents,
 } from "@/services/license-service";
-import type { ApplyAdminLicenseActionInput, LicenseStatusView, LicenseTraceEvent } from "@shared/ipc-types";
+import type { ApplyAdminLicenseActionInput, LicenseStatusView } from "@shared/ipc-types";
 
 const ACTIONS: ReadonlyArray<ApplyAdminLicenseActionInput["action"]> = ["suspend", "revoke", "reactivate"];
 
 function stateTone(state: string): "default" | "secondary" | "destructive" | "outline" {
-  if (state === "active" || state === "trusted") return "secondary";
-  if (state === "revoked" || state === "suspended") return "destructive";
+  if (state === "active" || state === "trusted" || state === "verified" || state === "soft_accepted") {
+    return "secondary";
+  }
+  if (
+    state === "revoked" ||
+    state === "suspended" ||
+    state.startsWith("denied_") ||
+    state === "invalid_signature" ||
+    state === "untrusted"
+  ) {
+    return "destructive";
+  }
   return "outline";
 }
 
+/**
+ * Settings License Enforcement panel.
+ * Single SoT: `getLicenseEnforcementStatus` → canonical `LicenseStatusView` (no parallel stores).
+ */
 export function LicenseEnforcementPanel() {
   const [status, setStatus] = useState<LicenseStatusView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<ApplyAdminLicenseActionInput["action"] | null>(null);
-  const [traceEvents, setTraceEvents] = useState<LicenseTraceEvent[]>([]);
   const [compromiseLoading, setCompromiseLoading] = useState(false);
 
   const reload = async () => {
     setLoading(true);
     try {
       const next = await getLicenseEnforcementStatus();
-      const traces = await listLicenseTraceEvents(6, null);
       setStatus(next);
-      setTraceEvents(traces);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load license status.");
@@ -60,7 +70,8 @@ export function LicenseEnforcementPanel() {
         action,
         reason: `Operator action from settings panel: ${action}`,
         expected_entitlement_state: status?.entitlement_state ?? null,
-        expected_activation_state: status?.activation_state ?? null,
+        // Admin concurrency checks machine contract state, not product activation.
+        expected_activation_state: status?.machine_activation_state ?? null,
       });
       await reload();
     } catch (err) {
@@ -87,6 +98,8 @@ export function LicenseEnforcementPanel() {
     }
   };
 
+  const traces = status?.recent_traces ?? [];
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -109,6 +122,14 @@ export function LicenseEnforcementPanel() {
                 Trust: {status.trust_state}
               </Badge>
               {status.policy_sync_pending && <Badge variant="outline">Policy Sync Pending</Badge>}
+              {status.license_edition && (
+                <Badge variant="outline">Edition: {status.license_edition}</Badge>
+              )}
+              {status.verification_result && (
+                <Badge variant={stateTone(status.verification_result)}>
+                  Envelope: {status.verification_result}
+                </Badge>
+              )}
             </div>
 
             <div className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-secondary">
@@ -117,10 +138,16 @@ export function LicenseEnforcementPanel() {
 
             <div className="grid gap-1 text-sm text-text-muted">
               <span>Pending local writes: {status.pending_local_writes}</span>
+              {status.envelope_id && <span>Active envelope: {status.envelope_id}</span>}
+              {status.machine_activation_state !== "not_activated" && (
+                <span>Machine activation: {status.machine_activation_state}</span>
+              )}
               {status.last_admin_action && (
                 <span>
                   Last admin action: {status.last_admin_action} at{" "}
-                  {status.last_admin_action_at ? new Date(status.last_admin_action_at).toLocaleString() : "unknown"}
+                  {status.last_admin_action_at
+                    ? new Date(status.last_admin_action_at).toLocaleString()
+                    : "unknown"}
                 </span>
               )}
             </div>
@@ -161,11 +188,11 @@ export function LicenseEnforcementPanel() {
               </div>
             </div>
 
-            {traceEvents.length > 0 && (
+            {traces.length > 0 && (
               <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
                 <div className="mb-2 text-xs font-semibold text-text-secondary">Recent immutable traces</div>
                 <div className="space-y-1 text-xs text-text-muted">
-                  {traceEvents.map((trace) => (
+                  {traces.map((trace) => (
                     <div key={trace.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span className="font-medium text-text-secondary">{trace.event_type}</span>
                       <span>{trace.outcome}</span>

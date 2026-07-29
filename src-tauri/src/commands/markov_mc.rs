@@ -11,7 +11,7 @@ use crate::reliability::markov_mc::domain::{
 use crate::reliability::markov_mc::queries;
 use crate::reliability::markov_mc::GuardrailFlags;
 use crate::state::AppState;
-use crate::{require_permission, require_session};
+use crate::{require_permission, require_permission_allowing_system_admin, require_session};
 
 #[tauri::command]
 pub async fn get_ram_advanced_guardrails(state: State<'_, AppState>) -> AppResult<GuardrailFlags> {
@@ -63,7 +63,7 @@ pub async fn delete_mc_model(id: i64, state: State<'_, AppState>) -> AppResult<(
 #[tauri::command]
 pub async fn evaluate_mc_model(id: i64, state: State<'_, AppState>) -> AppResult<McModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.analyze", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "ram.analyze", PermissionScope::Global);
     queries::evaluate_mc_model(&state.db, id).await
 }
 
@@ -109,6 +109,6 @@ pub async fn delete_markov_model(id: i64, state: State<'_, AppState>) -> AppResu
 #[tauri::command]
 pub async fn evaluate_markov_model(id: i64, state: State<'_, AppState>) -> AppResult<MarkovModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.analyze", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "ram.analyze", PermissionScope::Global);
     queries::evaluate_markov_model(&state.db, id).await
 }

@@ -1,8 +1,8 @@
 //! Supervisor verification tests for Phase 2 SP03 File 03 Sprint S3.
 //!
-//! V1 — Legacy alias continuity (old term finds value via legacy alias)
-//! V2 — Locale ranking (preferred alias in locale ranks above non-preferred)
-//! V3 — Canonical precedence (exact code match always ranks first)
+//! V1 â€” Legacy alias continuity (old term finds value via legacy alias)
+//! V2 â€” Locale ranking (preferred alias in locale ranks above non-preferred)
+//! V3 â€” Canonical precedence (exact code match always ranks first)
 
 #[cfg(test)]
 mod tests {
@@ -48,6 +48,7 @@ mod tests {
                 name: "Search Test Domain".to_string(),
                 structure_type: "flat".to_string(),
                 governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
                 is_extendable: Some(true),
                 validation_rules_json: None,
             },
@@ -116,9 +117,9 @@ mod tests {
         .expect("create alias");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V1 — Legacy alias continuity
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V1 â€” Legacy alias continuity
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v1_legacy_alias_finds_renamed_value() {
@@ -157,7 +158,7 @@ mod tests {
         // Unrelated alias for val_b
         add_alias(&db, val_b, "Robinet a tournant", "fr", "legacy", true).await;
 
-        // Search "Vanne ancienne" — only val_a should match via alias
+        // Search "Vanne ancienne" â€” only val_a should match via alias
         let results = search::search_reference_values(&db, &domain_code, "Vanne ancienne", "fr", 10)
             .await
             .expect("search");
@@ -166,9 +167,9 @@ mod tests {
         assert_eq!(results[0].value_id, val_a);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V2 — Locale ranking
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V2 â€” Locale ranking
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v2_preferred_alias_ranks_above_non_preferred() {
@@ -180,7 +181,7 @@ mod tests {
         // Preferred alias in fr
         add_alias(&db, val_id, "Moteur electrique", "fr", "search", true).await;
         // Non-preferred alias in fr
-        add_alias(&db, val_id, "Moteur electrique triphasé", "fr", "search", false).await;
+        add_alias(&db, val_id, "Moteur electrique triphasÃ©", "fr", "search", false).await;
 
         // Both contain "Moteur electrique" but preferred should win
         let results = search::search_reference_values(
@@ -212,7 +213,7 @@ mod tests {
         // en alias using same term on val_en (unusual but valid)
         add_alias(&db, val_en, "Palier", "en", "search", true).await;
 
-        // Search "Palier" in locale fr — val_fr should rank higher
+        // Search "Palier" in locale fr â€” val_fr should rank higher
         let results = search::search_reference_values(
             &db, &domain_code, "Palier", "fr", 10,
         )
@@ -228,9 +229,9 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V3 — Canonical precedence
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V3 â€” Canonical precedence
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v3_exact_code_ranks_first() {
@@ -243,7 +244,7 @@ mod tests {
         // Create an alias "PUMP_HP" on val_alias (label matches the CODE of val_code)
         add_alias(&db, val_alias, "PUMP_HP", "fr", "import", true).await;
 
-        // Search "PUMP_HP" — canonical code should beat alias
+        // Search "PUMP_HP" â€” canonical code should beat alias
         let results = search::search_reference_values(
             &db, &domain_code, "PUMP_HP", "fr", 10,
         )
@@ -267,7 +268,7 @@ mod tests {
         // Alias matches exact label of val_label
         add_alias(&db, val_alias, "Compresseur centrifuge", "fr", "search", true).await;
 
-        // Search "Compresseur centrifuge" — canonical label should beat alias
+        // Search "Compresseur centrifuge" â€” canonical label should beat alias
         let results = search::search_reference_values(
             &db, &domain_code, "Compresseur centrifuge", "fr", 10,
         )
@@ -280,9 +281,9 @@ mod tests {
         assert!(results[0].rank > results[1].rank);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Additional coverage
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn empty_query_returns_empty() {

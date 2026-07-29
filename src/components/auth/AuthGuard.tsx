@@ -3,6 +3,7 @@ import { Link, Navigate, Outlet } from "react-router-dom";
 
 import { PermissionProvider } from "@/contexts/PermissionContext";
 import { useSession } from "@/hooks/use-session";
+import { clearPermissionCache } from "@/lib/permission-cache";
 import { ForcePasswordChangePage } from "@/pages/auth/ForcePasswordChangePage";
 import { LockScreen } from "@/pages/auth/LockScreen";
 import { logout as authLogout, unlockSessionWithPin } from "@/services/auth-service";
@@ -18,8 +19,9 @@ import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
  * 4. ForcePasswordChangePage — if authenticated but must change password
  * 5. <Outlet /> — normal authenticated state → ShellLayout renders
  *
- * Each sub-screen receives callbacks that trigger a session refresh,
- * causing AuthGuard to re-evaluate and potentially show a different screen.
+ * PermissionProvider is kept on a single branch for authenticated shell and
+ * auth-interceptor shell preservation so a lock transition does not remount
+ * it and wipe in-memory permissions.
  */
 export function AuthGuard() {
   const session = useSession();
@@ -51,6 +53,7 @@ export function AuthGuard() {
 
   const handleLogout = useCallback(async () => {
     await authLogout();
+    clearPermissionCache();
     // After logout, session.info becomes UNAUTHENTICATED on next render
     await session.refresh();
   }, [session]);
@@ -83,25 +86,22 @@ export function AuthGuard() {
     );
   }
 
-  // 3. Not authenticated — redirect to login
-  if (!info?.is_authenticated) {
-    // If the centralized auth interceptor is open, keep the current route mounted so in-memory
-    // form state isn't destroyed by an automatic redirect to /login.
-    if (isAuthLockOpen) {
-      return <Outlet />;
-    }
+  // 3. Not authenticated and no interceptor shell — redirect to login
+  if (!info?.is_authenticated && !isAuthLockOpen) {
     return <Navigate to="/login" replace />;
   }
 
-  // 4. Force password change required
-  if (info.force_password_change) {
+  // 4. Force password change required (authenticated only)
+  if (info?.is_authenticated && info.force_password_change) {
     return <ForcePasswordChangePage onComplete={handleForceChange} />;
   }
 
-  const warnDays = info.password_expires_in_days;
-  const showPasswordWarning = typeof warnDays === "number" && warnDays <= 14;
+  const warnDays = info?.password_expires_in_days;
+  const showPasswordWarning =
+    info?.is_authenticated === true && typeof warnDays === "number" && warnDays <= 14;
 
-  // 5. Normal authenticated state — wrap with PermissionProvider
+  // 5. Authenticated shell, or interceptor preserving shell without a session.
+  //    One PermissionProvider branch so lock/auth flips do not remount and wipe perms.
   return (
     <PermissionProvider>
       <>

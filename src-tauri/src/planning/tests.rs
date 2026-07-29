@@ -175,7 +175,7 @@ async fn get_any_team_id(db: &DatabaseConnection) -> i64 {
         DbBackend::Sqlite,
         "INSERT INTO org_nodes (
             sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
-            created_at, updated_at, row_version
+            created_at, updated_at, row_version, structure_model_id
          ) VALUES (
             'planning-test-team',
             'TEAM-PLN',
@@ -187,7 +187,8 @@ async fn get_any_team_id(db: &DatabaseConnection) -> i64 {
             'active',
             '2026-01-01T00:00:00Z',
             '2026-01-01T00:00:00Z',
-            1
+            1,
+            (SELECT id FROM org_structure_models WHERE sync_id = 'planning-test-structure')
          )",
         [],
     ))

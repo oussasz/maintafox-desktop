@@ -1,8 +1,8 @@
 //! Supervisor verification tests for Phase 2 SP03 File 01 Sprint S3.
 //!
-//! V1 — Value code uniqueness within a set
-//! V2 — Hierarchy cycle detection and parent validation
-//! V3 — Draft-only mutation guard (published sets immutable)
+//! V1 â€” Value code uniqueness within a set
+//! V2 â€” Hierarchy cycle detection and parent validation
+//! V3 â€” Draft-only mutation guard (published sets immutable)
 
 #[cfg(test)]
 mod tests {
@@ -46,6 +46,7 @@ mod tests {
             name: "Failure Classes".to_string(),
             structure_type: "hierarchical".to_string(),
             governance_level: "protected_analytical".to_string(),
+            governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(false),
             validation_rules_json: None,
         };
@@ -80,21 +81,21 @@ mod tests {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V1 — Value code uniqueness within a set
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V1 â€” Value code uniqueness within a set
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v1_create_value_succeeds() {
         let db = setup().await;
         let (_dom, set_id) = setup_draft_set(&db).await;
 
-        let v = values::create_value(&db, value_payload(set_id, "MECH", "Mécanique"), 1)
+        let v = values::create_value(&db, value_payload(set_id, "MECH", "MÃ©canique"), 1)
             .await
             .expect("first value");
 
         assert_eq!(v.code, "MECH");
-        assert_eq!(v.label, "Mécanique");
+        assert_eq!(v.label, "MÃ©canique");
         assert!(v.is_active);
         assert!(v.parent_id.is_none());
     }
@@ -104,11 +105,11 @@ mod tests {
         let db = setup().await;
         let (_dom, set_id) = setup_draft_set(&db).await;
 
-        values::create_value(&db, value_payload(set_id, "ELEC", "Électrique"), 1)
+        values::create_value(&db, value_payload(set_id, "ELEC", "Ã‰lectrique"), 1)
             .await
             .expect("first");
 
-        let err = values::create_value(&db, value_payload(set_id, "ELEC", "Électrique 2"), 1)
+        let err = values::create_value(&db, value_payload(set_id, "ELEC", "Ã‰lectrique 2"), 1)
             .await
             .expect_err("duplicate code");
 
@@ -120,7 +121,7 @@ mod tests {
         let db = setup().await;
         let (domain_id, set1_id) = setup_draft_set(&db).await;
 
-        values::create_value(&db, value_payload(set1_id, "MECH", "Mécanique"), 1)
+        let v1 = values::create_value(&db, value_payload(set1_id, "MECH", "MÃ©canique"), 1)
             .await
             .expect("set1");
 
@@ -132,11 +133,19 @@ mod tests {
             .await
             .expect("draft v2");
 
-        let v = values::create_value(&db, value_payload(set2.id, "MECH", "Mécanique v2"), 1)
+        // Clone-from-published: MECH already present with a new id
+        let cloned = values::list_values(&db, set2.id)
             .await
-            .expect("same code in set2");
+            .expect("list cloned");
+        let mech = cloned.iter().find(|v| v.code == "MECH").expect("cloned MECH");
+        assert_ne!(mech.id, v1.id, "cloned value must have a new id");
+        assert_eq!(mech.label, "MÃ©canique");
 
-        assert_eq!(v.code, "MECH");
+        // Distinct code still allowed on the draft
+        let v = values::create_value(&db, value_payload(set2.id, "ELEC", "Ã‰lectrique"), 1)
+            .await
+            .expect("new code in set2");
+        assert_eq!(v.code, "ELEC");
     }
 
     #[tokio::test]
@@ -194,9 +203,9 @@ mod tests {
         assert_eq!(list[1].code, "ZEBRA"); // sort_order 2
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V2 — Hierarchy cycle detection and parent validation
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V2 â€” Hierarchy cycle detection and parent validation
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v2_create_with_parent() {
@@ -277,7 +286,7 @@ mod tests {
         let db = setup().await;
         let (_dom, set_id) = setup_draft_set(&db).await;
 
-        // Create A → B hierarchy
+        // Create A â†’ B hierarchy
         let a = values::create_value(&db, value_payload(set_id, "A", "Node A"), 1)
             .await
             .expect("A");
@@ -286,10 +295,10 @@ mod tests {
         bp.parent_id = Some(a.id);
         let b = values::create_value(&db, bp, 1).await.expect("B");
 
-        // Try moving A under B → cycle A→B→A
+        // Try moving A under B â†’ cycle Aâ†’Bâ†’A
         let err = values::move_value_parent(&db, a.id, Some(b.id), 1)
             .await
-            .expect_err("cycle A→B→A");
+            .expect_err("cycle Aâ†’Bâ†’A");
 
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
@@ -299,7 +308,7 @@ mod tests {
         let db = setup().await;
         let (_dom, set_id) = setup_draft_set(&db).await;
 
-        // Create A → B → C chain
+        // Create A â†’ B â†’ C chain
         let a = values::create_value(&db, value_payload(set_id, "A", "A"), 1)
             .await
             .expect("A");
@@ -312,7 +321,7 @@ mod tests {
         cp.parent_id = Some(b.id);
         let c = values::create_value(&db, cp, 1).await.expect("C");
 
-        // Try moving A under C → cycle A→B→C→A
+        // Try moving A under C â†’ cycle Aâ†’Bâ†’Câ†’A
         let err = values::move_value_parent(&db, a.id, Some(c.id), 1)
             .await
             .expect_err("deep cycle");
@@ -364,9 +373,9 @@ mod tests {
         assert_eq!(moved.parent_id, Some(b.id));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V3 — Draft-only mutation guard (published sets immutable)
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V3 â€” Draft-only mutation guard (published sets immutable)
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v3_create_value_in_published_set_rejected() {
@@ -459,9 +468,9 @@ mod tests {
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Edge cases
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn edge_update_partial_fields() {
@@ -562,14 +571,14 @@ mod tests {
         assert_eq!(v.metadata_json.as_deref(), Some(r#"{"key": "value"}"#));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V3 — Permission split (ref.view / ref.manage / ref.publish)
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V3 â€” Permission split (ref.view / ref.manage / ref.publish)
     //
     // Follows the V7 pattern from import_tests.rs:
     //   - seed data provides roles & permissions
-    //   - manually INSERT user_scope_assignments to bind user → role
+    //   - manually INSERT user_scope_assignments to bind user â†’ role
     //   - call rbac::check_permission() directly to verify access
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     /// Assigns a user to a role by name at tenant scope.
     async fn assign_role(db: &sea_orm::DatabaseConnection, user_id: i32, role_name: &str) {

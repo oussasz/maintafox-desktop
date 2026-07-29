@@ -2,12 +2,18 @@
  * asset-search-store.ts
  *
  * Zustand store for asset search query state and result management.
- * Maintains filter criteria, result list, and selected result independently
- * from the main asset-store (which manages CRUD and hierarchy context).
+ * Maintains filter criteria, result list, tree expand state, and selected
+ * result independently from the main asset-store (CRUD / hierarchy).
  */
 
 import { create } from "zustand";
 
+import {
+  buildEquipmentForest,
+  collectAncestorIdsToReveal,
+  collectExpandableIds,
+  pruneExpandedIds,
+} from "@/components/assets/tree/equipment-tree-model";
 import {
   searchAssets,
   suggestAssetCodes,
@@ -20,13 +26,29 @@ import type { AssetSearchFilters, AssetSearchResult, AssetSuggestion } from "@sh
 
 const DEFAULT_FILTERS: AssetSearchFilters = {
   query: null,
-  classCodes: null,
-  familyCodes: null,
-  statusCodes: null,
-  orgNodeIds: null,
-  includeDecommissioned: false,
+  class_codes: null,
+  family_codes: null,
+  status_codes: null,
+  org_node_ids: null,
+  include_decommissioned: false,
   limit: 100,
 };
+
+function applyResultsToExpandState(
+  results: AssetSearchResult[],
+  previousExpanded: Set<number>,
+  query: string | null | undefined,
+): Set<number> {
+  const forest = buildEquipmentForest(results);
+  let next = pruneExpandedIds(previousExpanded, forest);
+  const trimmed = query?.trim() ?? "";
+  if (trimmed.length > 0) {
+    for (const id of collectAncestorIdsToReveal(forest)) {
+      next.add(id);
+    }
+  }
+  return next;
+}
 
 // ── Store interface ───────────────────────────────────────────────────────────
 
@@ -36,6 +58,8 @@ interface AssetSearchStoreState {
   selectedResultId: number | null;
   loading: boolean;
   error: string | null;
+  /** Expanded parent asset ids for the list tree (session until page refresh). */
+  expandedIds: Set<number>;
 
   /** Execute search with current filters. */
   runSearch: () => Promise<void>;
@@ -45,6 +69,9 @@ interface AssetSearchStoreState {
   clearFilters: () => Promise<void>;
   /** Set the selected result by asset id (or null to deselect). */
   selectAsset: (assetId: number | null) => void;
+  toggleExpanded: (assetId: number) => void;
+  expandAll: () => void;
+  collapseAll: () => void;
   /** Suggest asset codes for typeahead. */
   suggestCodes: (prefix: string) => Promise<AssetSuggestion[]>;
   /** Suggest asset names for typeahead. */
@@ -59,13 +86,17 @@ export const useAssetSearchStore = create<AssetSearchStoreState>()((set, get) =>
   selectedResultId: null,
   loading: false,
   error: null,
+  expandedIds: new Set(),
 
   runSearch: async () => {
-    const { filters } = get();
+    const { filters, expandedIds } = get();
     set({ loading: true, error: null });
     try {
       const results = await searchAssets(filters);
-      set({ results });
+      set({
+        results,
+        expandedIds: applyResultsToExpandState(results, expandedIds, filters.query),
+      });
     } catch (err) {
       set({
         results: [],
@@ -79,10 +110,14 @@ export const useAssetSearchStore = create<AssetSearchStoreState>()((set, get) =>
   updateFilters: async (partial) => {
     const current = get().filters;
     const merged = { ...current, ...partial };
+    const { expandedIds } = get();
     set({ filters: merged, loading: true, error: null });
     try {
       const results = await searchAssets(merged);
-      set({ results });
+      set({
+        results,
+        expandedIds: applyResultsToExpandState(results, expandedIds, merged.query),
+      });
     } catch (err) {
       set({
         results: [],
@@ -95,10 +130,14 @@ export const useAssetSearchStore = create<AssetSearchStoreState>()((set, get) =>
 
   clearFilters: async () => {
     const fresh = { ...DEFAULT_FILTERS };
+    const { expandedIds } = get();
     set({ filters: fresh, selectedResultId: null, loading: true, error: null });
     try {
       const results = await searchAssets(fresh);
-      set({ results });
+      set({
+        results,
+        expandedIds: applyResultsToExpandState(results, expandedIds, fresh.query),
+      });
     } catch (err) {
       set({
         results: [],
@@ -111,6 +150,22 @@ export const useAssetSearchStore = create<AssetSearchStoreState>()((set, get) =>
 
   selectAsset: (assetId) => {
     set({ selectedResultId: assetId });
+  },
+
+  toggleExpanded: (assetId) => {
+    const next = new Set(get().expandedIds);
+    if (next.has(assetId)) next.delete(assetId);
+    else next.add(assetId);
+    set({ expandedIds: next });
+  },
+
+  expandAll: () => {
+    const forest = buildEquipmentForest(get().results);
+    set({ expandedIds: new Set(collectExpandableIds(forest)) });
+  },
+
+  collapseAll: () => {
+    set({ expandedIds: new Set() });
   },
 
   suggestCodes: async (prefix) => {

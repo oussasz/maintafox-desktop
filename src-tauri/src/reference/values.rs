@@ -2,20 +2,20 @@
 //!
 //! Phase 2 - Sub-phase 03 - File 01 - Sprint S3.
 //!
-//! Provides governed CRUD for `reference_values` within a draft set:
+//! Provides governed CRUD for `reference_values`:
 //!   - code uniqueness within a set
 //!   - hierarchy cycle detection for hierarchical domains
 //!   - parent-belongs-to-same-set validation
 //!   - deactivation guard for protected analytical domains
 //!
-//! Values can only be mutated in draft sets. Published and superseded sets
-//! are immutable (enforced via `sets::assert_set_is_draft`).
+//! Mutation permission is decided by `crate::reference::governance`
+//! (Compat phase: draft-only manager mutate; Category B operational create).
 
 use crate::errors::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 
-use super::sets;
+use super::{domains, sets};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,6 +51,18 @@ pub struct CreateReferenceValuePayload {
     pub semantic_tag: Option<String>,
     pub external_code: Option<String>,
     pub metadata_json: Option<String>,
+}
+
+/// Payload for operational create into the latest published set of a
+/// tenant-managed extendable domain (form "create from dropdown" path).
+#[derive(Debug, Deserialize)]
+pub struct CreateOperationalReferenceValuePayload {
+    pub domain_code: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub parent_id: Option<i64>,
+    /// Optional explicit code; when omitted, generated from the label.
+    pub code: Option<String>,
 }
 
 /// Payload for updating a reference value. Only provided fields are changed.
@@ -182,6 +194,67 @@ fn validate_label(label: &str) -> AppResult<()> {
 
 fn normalize_code(code: &str) -> String {
     code.trim().to_ascii_uppercase()
+}
+
+fn strip_diacritics(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| match c {
+            'à' | 'á' | 'â' | 'ä' | 'ã' | 'å' | 'ā' => 'a',
+            'À' | 'Á' | 'Â' | 'Ä' | 'Ã' | 'Å' | 'Ā' => 'A',
+            'ç' | 'ć' | 'č' => 'c',
+            'Ç' | 'Ć' | 'Č' => 'C',
+            'è' | 'é' | 'ê' | 'ë' | 'ē' => 'e',
+            'È' | 'É' | 'Ê' | 'Ë' | 'Ē' => 'E',
+            'ì' | 'í' | 'î' | 'ï' | 'ī' => 'i',
+            'Ì' | 'Í' | 'Î' | 'Ï' | 'Ī' => 'I',
+            'ñ' | 'ń' => 'n',
+            'Ñ' | 'Ń' => 'N',
+            'ò' | 'ó' | 'ô' | 'ö' | 'õ' | 'ō' => 'o',
+            'Ò' | 'Ó' | 'Ô' | 'Ö' | 'Õ' | 'Ō' => 'O',
+            'ù' | 'ú' | 'û' | 'ü' | 'ū' => 'u',
+            'Ù' | 'Ú' | 'Û' | 'Ü' | 'Ū' => 'U',
+            'ý' | 'ÿ' => 'y',
+            'Ý' => 'Y',
+            other => other,
+        })
+        .collect()
+}
+
+/// Deterministic uppercase snake code from a human label.
+pub fn code_from_label(label: &str) -> AppResult<String> {
+    let ascii = strip_diacritics(label.trim());
+    let mut out = String::new();
+    let mut prev_underscore = false;
+    for c in ascii.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_uppercase());
+            prev_underscore = false;
+        } else if !prev_underscore && !out.is_empty() {
+            out.push('_');
+            prev_underscore = true;
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    if out.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "Impossible de générer un code à partir du libellé. Utilisez des lettres ou chiffres."
+                .into(),
+        ]));
+    }
+    if !out.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+        out = format!("V_{out}");
+    }
+    if out.len() > 64 {
+        out.truncate(64);
+        while out.ends_with('_') {
+            out.pop();
+        }
+    }
+    validate_code(&out)?;
+    Ok(out)
 }
 
 fn allows_cross_domain_parent(child_domain_code: &str, parent_domain_code: &str) -> bool {
@@ -332,9 +405,10 @@ pub async fn create_value(
     payload: CreateReferenceValuePayload,
     _actor_id: i64,
 ) -> AppResult<ReferenceValue> {
-    // Verify set exists and is draft
+    // Verify set exists and mutation is allowed by governance policy.
     let set = sets::get_reference_set(db, payload.set_id).await?;
-    sets::assert_set_is_draft(&set)?;
+    let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
 
     let code = normalize_code(&payload.code);
     validate_code(&code)?;
@@ -392,7 +466,140 @@ pub async fn create_value(
             ))
         })?;
 
-    map_value(&row)
+    let created = map_value(&row)?;
+    crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created)
+        .await?;
+    Ok(created)
+}
+
+/// Creates a reference value in the latest **published** set of an
+/// Operational Dictionary (Category B) domain. Used by form
+/// "create from dropdown" for immediate usability.
+///
+/// Permission is decided solely by `governance` policy (not raw
+/// `governance_level` / `is_extendable` checks).
+///
+/// Does not invent domains or sets. Fails loudly when governance does not allow
+/// operational extension or when no published set exists.
+pub async fn create_operational_value(
+    db: &DatabaseConnection,
+    payload: CreateOperationalReferenceValuePayload,
+    _actor_id: i64,
+) -> AppResult<ReferenceValue> {
+    let domain_code = normalize_code(&payload.domain_code);
+    if domain_code.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "Le code de domaine est obligatoire.".into(),
+        ]));
+    }
+
+    let domain_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM reference_domains WHERE UPPER(TRIM(code)) = ?",
+            [domain_code.clone().into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "ReferenceDomain".into(),
+            id: domain_code.clone(),
+        })?;
+
+    let domain_id: i64 = domain_row
+        .try_get("", "id")
+        .map_err(|e| decode_err("domain.id", e))?;
+    let domain = domains::get_reference_domain(db, domain_id).await?;
+    crate::reference::governance::assert_allows_operational_create(&domain)?;
+
+    let published = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM reference_sets \
+             WHERE domain_id = ? AND status = 'published' \
+             ORDER BY version_no DESC LIMIT 1",
+            [domain_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "Aucun jeu publié pour le domaine '{domain_code}'. \
+                 Publiez un jeu dans Données de référence avant d'ajouter des valeurs."
+            )])
+        })?;
+    let set_id: i64 = published
+        .try_get("", "id")
+        .map_err(|e| decode_err("set.id", e))?;
+
+    validate_label(&payload.label)?;
+    let code = if let Some(ref raw) = payload.code {
+        let c = normalize_code(raw);
+        validate_code(&c)?;
+        c
+    } else {
+        code_from_label(&payload.label)?
+    };
+
+    if let Some(pid) = payload.parent_id {
+        validate_parent(db, set_id, pid).await?;
+    }
+
+    let sort_order_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_sort \
+             FROM reference_values WHERE set_id = ?",
+            [set_id.into()],
+        ))
+        .await?;
+    let next_sort: i64 = sort_order_row
+        .map(|r| r.try_get::<i64>("", "next_sort").unwrap_or(1))
+        .unwrap_or(1);
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO reference_values \
+             (set_id, parent_id, code, label, description, sort_order, \
+              color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
+         VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, 1, NULL)",
+        [
+            set_id.into(),
+            payload.parent_id.into(),
+            code.clone().into(),
+            payload.label.trim().to_string().into(),
+            payload.description.into(),
+            next_sort.into(),
+        ],
+    ))
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            AppError::ValidationFailed(vec![format!(
+                "Le code '{code}' existe déjà dans le jeu publié de '{domain_code}'."
+            )])
+        } else {
+            AppError::Database(e)
+        }
+    })?;
+
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &format!(
+                "SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"
+            ),
+            [set_id.into(), code.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "reference_values row missing after operational insert"
+            ))
+        })?;
+
+    let created = map_value(&row)?;
+    crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created)
+        .await?;
+    Ok(created)
 }
 
 /// Updates a reference value. Only provided (Some) fields are changed.
@@ -405,7 +612,8 @@ pub async fn update_value(
 ) -> AppResult<ReferenceValue> {
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
-    sets::assert_set_is_draft(&set)?;
+    let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
 
     let mut sets_clause: Vec<String> = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
@@ -465,8 +673,9 @@ pub async fn update_value(
     get_value_by_id(db, value_id).await
 }
 
-/// Deactivates a reference value (soft-disable). The set must be in draft status.
+/// Deactivates a reference value (soft-disable).
 ///
+/// Mutation permission is decided by `governance` policy.
 /// Protected analytical domains block hard deletion; deactivation is the
 /// governed alternative. Full usage-check enforcement is in File 04.
 pub async fn deactivate_value(
@@ -476,7 +685,8 @@ pub async fn deactivate_value(
 ) -> AppResult<ReferenceValue> {
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
-    sets::assert_set_is_draft(&set)?;
+    let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
 
     if !existing.is_active {
         return Err(AppError::ValidationFailed(vec![
@@ -494,9 +704,38 @@ pub async fn deactivate_value(
     get_value_by_id(db, value_id).await
 }
 
+/// Reactivates a previously deactivated reference value.
+///
+/// Same mutation gate as `deactivate_value`.
+pub async fn reactivate_value(
+    db: &DatabaseConnection,
+    value_id: i64,
+    _actor_id: i64,
+) -> AppResult<ReferenceValue> {
+    let existing = get_value_by_id(db, value_id).await?;
+    let set = sets::get_reference_set(db, existing.set_id).await?;
+    let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
+
+    if existing.is_active {
+        return Err(AppError::ValidationFailed(vec![
+            "Cette valeur est déjà active.".into(),
+        ]));
+    }
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE reference_values SET is_active = 1 WHERE id = ?",
+        [value_id.into()],
+    ))
+    .await?;
+
+    get_value_by_id(db, value_id).await
+}
+
 /// Moves a value to a new parent within the same set.
 /// Validates: parent in same set, no hierarchy cycle.
-/// The set must be in draft status.
+/// Mutation permission is decided by `governance` policy.
 pub async fn move_value_parent(
     db: &DatabaseConnection,
     value_id: i64,
@@ -505,7 +744,8 @@ pub async fn move_value_parent(
 ) -> AppResult<ReferenceValue> {
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
-    sets::assert_set_is_draft(&set)?;
+    let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
 
     if let Some(pid) = new_parent_id {
         // Cannot parent to self

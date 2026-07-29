@@ -25,6 +25,7 @@ function makeDi(overrides: Partial<InterventionRequest> = {}): InterventionReque
     title: "Fuite pompe",
     description: "Fuite détectée",
     origin_type: "operator",
+    request_type: "repair",
     symptom_code_id: null,
     impact_level: "minor",
     production_impact: false,

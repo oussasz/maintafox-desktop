@@ -54,14 +54,25 @@
       "closedAt": "Date de clôture",
       "conclusion": "Conclusion",
       "origin": "Origine",
+      "requestType": "Type de demande",
+      "symptom": "Symptôme",
       "asset": "Équipement",
       "orgNode": "Nœud org.",
       "impact": "Impact",
-      "production": "Production"
+      "production": "Production",
+      "slaStatus": "Statut SLA",
+      "slaResponseDeadline": "Échéance réponse SLA",
+      "slaResolutionDeadline": "Échéance résolution SLA",
+      "slaResponseElapsed": "Temps réponse écoulé",
+      "slaResolutionElapsed": "Temps résolution écoulé",
+      "slaResponseRemaining": "Temps réponse restant",
+      "slaResolutionRemaining": "Temps résolution restant",
+      "hoursValue": "{{hours}} h"
     },
     "tabs": {
       "attachments": "Pièces jointes",
       "stateLog": "Historique des statuts",
+      "review": "Revue",
       "activity": "Journal d'activité"
     }
   },
@@ -69,7 +80,8 @@
     "section": {
       "requester": "Déclarant",
       "equipment": "Équipement",
-      "general": "Informations générales"
+      "general": "Informations générales",
+      "media": "Photos et pièces jointes"
     },
     "subject": {
       "label": "Objet",
@@ -85,13 +97,19 @@
     },
     "equipmentSearch": "Rechercher un équipement...",
     "priority": {
-      "label": "Priorité"
+      "label": "Priorité",
+      "placeholder": "Sélectionnez une priorité"
     },
     "observedAt": {
       "label": "Date de constatation"
     },
     "originType": {
-      "label": "Origine"
+      "label": "Origine",
+      "placeholder": "Sélectionnez une origine"
+    },
+    "requestType": {
+      "label": "Type de demande",
+      "placeholder": "Sélectionnez un type de demande"
     },
     "symptom": {
       "label": "Symptôme",
@@ -99,7 +117,25 @@
       "searchPlaceholder": "Rechercher un symptôme..."
     },
     "impactLevel": {
-      "label": "Niveau d'impact"
+      "label": "Niveau d'impact",
+      "placeholder": "Sélectionnez un niveau d'impact"
+    },
+    "pictures": {
+      "label": "Photos",
+      "empty": "Aucune photo",
+      "hint": "Ajoutez des photos de l'équipement ou du problème. Même sélecteur que la galerie équipement.",
+      "primary": "Principale",
+      "remove": "Retirer",
+      "add": "Ajouter des photos"
+    },
+    "attachments": {
+      "label": "Fichiers joints",
+      "empty": "Aucun fichier",
+      "add": "Ajouter un fichier",
+      "remove": "Retirer"
+    },
+    "media": {
+      "partialUploadFailed": "{{failed}} fichier(s) sur {{total}} n'ont pas pu être téléversé(s). Vous pouvez réessayer depuis le détail de la demande."
     },
     "safetyFlag": {
       "label": "Enjeu sécurité"
@@ -136,6 +172,7 @@
       "descriptionRequired": "La description est requise",
       "equipmentRequired": "L'équipement est requis",
       "originRequired": "L'origine est requise",
+      "requestTypeRequired": "Le type de demande est requis",
       "symptomRequired": "Le symptôme est requis",
       "urgencyRequired": "La priorité est requise",
       "impactRequired": "Le niveau d'impact est requis",
@@ -147,6 +184,9 @@
   },
   "status": {
     "new": "Nouvelle",
+    "pendingReview": "En attente de tri",
+    "awaitingApproval": "En attente d'approbation",
+    "needsClarification": "Besoin de précisions",
     "inReview": "En examen",
     "approved": "Approuvée",
     "rejected": "Rejetée",
@@ -168,7 +208,11 @@
     "assignTo": "Assigner à",
     "convertToWO": "Convertir en OT",
     "close": "Clôturer",
-    "addComment": "Ajouter un commentaire"
+    "addComment": "Ajouter un commentaire",
+    "print": "Imprimer",
+    "resubmit": "Soumettre à nouveau",
+    "cancelNeed": "Annuler le besoin",
+    "archive": "Archiver"
   },
   "empty": {
     "list": "Aucune demande d'intervention.",
@@ -209,7 +253,38 @@
     },
     "save": "Enregistrer",
     "saving": "Enregistrement…",
-    "close": "Fermer"
+    "close": "Fermer",
+    "status": {
+      "on_track": "On Track",
+      "at_risk": "At Risk",
+      "breached": "Breached",
+      "completed": "Completed",
+      "none": "—"
+    }
+  },
+  "reviewTimeline": {
+    "empty": "Aucun événement de revue enregistré.",
+    "slaTarget": "Cible SLA",
+    "slaDeadline": "Échéance SLA",
+    "slaResolutionTarget": "Cible résolution SLA",
+    "slaResolutionDeadline": "Échéance résolution SLA",
+    "hours": "{{hours}} h",
+    "breachHint": "Échéance SLA dépassée au moment de l'événement",
+    "actor": "Par",
+    "systemActor": "Système",
+    "eventType": {
+      "sla_initialized": "SLA initialized",
+      "screened": "Trié",
+      "advanced_to_approval": "Transmis pour approbation",
+      "returned_for_clarification": "Renvoyé pour clarification",
+      "rejected": "Rejeté",
+      "approved": "Approuvé",
+      "deferred": "Différé",
+      "reactivated": "Réactivé",
+      "converted": "Converti",
+      "closed_non_executable": "Clôturé non exécutable",
+      "archived": "Archivé"
+    }
   },
   "stateLog": {
     "empty": "Aucun changement d'état enregistré.",
@@ -235,6 +310,9 @@
       "rejected": "Rejeté",
       "approved": "Approuvé",
       "deferred": "Reporté",
+      "re_submitted": "Re-soumission",
+      "close_non_executable": "Clôturée non exécutable",
+      "archive": "Archivage",
       "none": "—"
     },
     "unknownAction": "Événement : {{action}}"
@@ -247,7 +325,7 @@
     "resultBlocked": "Bloqué",
     "resultPartial": "Partiel",
     "stepUp": "Rehaussement",
-    "actorUser": "Utilisateur n°{{id}}",
+    "actorUser": "{{name}}",
     "actorSystem": "Système",
     "actionLabel": {
       "submit": "Prise en compte (déclarant)",
@@ -259,6 +337,9 @@
       "rejected": "Rejeté",
       "approved": "Approuvé",
       "converted": "Conversion",
+      "re_submitted": "Re-soumise",
+      "closed_non_executable": "Clôturée non exécutable",
+      "archived": "Archivée",
       "blocked": "Bloqué"
     }
   },
@@ -275,7 +356,9 @@
   },
   "kanban": {
     "colSubmitted": "Soumises / entrée",
-    "colReview": "En revue",
+    "colPendingReview": "En attente de tri",
+    "colAwaitingApproval": "En attente d'approbation",
+    "colNeedsClarification": "Besoin de précisions",
     "colApproved": "Approuvées / planifiées",
     "colWork": "En travaux",
     "colClosed": "Clôturées"
@@ -304,6 +387,7 @@
     "urgencyReported": "Urgence déclarée",
     "urgencyValidated": "Urgence validée",
     "origin": "Origine",
+    "symptom": "Symptôme",
     "impactLevel": "Niveau d'impact",
     "createdAt": "Créée le",
     "submittedAt": "Soumise le",
@@ -313,6 +397,7 @@
     "observedOn": "Observée le",
     "declarant": "Déclarant",
     "convertedToWo": "Convertie en OT",
+    "convertedToWoTitle": "Titre de l\u2019OT",
     "convertedAt": "Date de conversion",
     "flagSafety": "Sécurité",
     "flagEnv": "Environnement",
@@ -340,7 +425,7 @@
     "thDescription": "Description",
     "thReviewerNote": "Note de revue",
     "thApprovalNote": "Note d'approbation",
-    "conversion": "Transférée vers l'OT : {{from}} → {{to}}",
+    "conversion": "Transfert vers OT — code attribué à la conversion (depuis {{from}})",
     "sigDeclarant": "Déclarant",
     "sigApprover": "Approbateur",
     "sigResp": "Responsable maintenance",
@@ -362,6 +447,7 @@
     "view": "Voir le détail",
     "returnAction": "Renvoyer",
     "approvalTitle": "Approuver & Convertir en OT",
+    "woCodeAssignedOnConvert": "Le code OT sera attribué à la conversion",
     "approvalNote": "Note d'approbation",
     "approvalNotePlaceholder": "Note optionnelle pour le dossier d'approbation…",
     "approver": "Approbateur",
@@ -381,13 +467,16 @@
     "clarificationNotePlaceholder": "Décrivez les informations nécessaires…",
     "clarificationRequired": "La note de clarification est requise",
     "returnInfo": "La DI sera renvoyée au déclarant.",
-    "screenAction": "Valider le tri"
+    "screenAction": "Valider le tri",
+    "retryConversion": "Réessayer la conversion"
   },
   "dashboard": {
     "total": "Total",
     "pending": "En attente",
     "inProgress": "En cours",
     "slaCompliance": "SLA respecté",
+    "slaBreached": "SLA dépassé",
+    "slaMet": "SLA respectés",
     "closedThisMonth": "Clôturées (mois)",
     "overdue": "En retard",
     "safetyIssues": "Enjeux sécurité",

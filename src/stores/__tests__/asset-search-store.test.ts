@@ -28,8 +28,10 @@ function makeResult(overrides: Partial<AssetSearchResult> = {}): AssetSearchResu
     class_name: "Pompe",
     family_code: "ROTATING",
     family_name: "Équipement Rotatif",
+    subfamily_code: null,
+    subfamily_name: null,
     criticality_code: "HIGH",
-    status_code: "ACTIVE",
+    status_code: "ACTIVE_IN_SERVICE",
     org_node_id: 1,
     org_node_name: "Usine Principale",
     parent_asset_id: null,
@@ -51,7 +53,7 @@ const pmp002 = makeResult({
   sync_id: "bbb-222",
   asset_code: "PMP-002",
   asset_name: "Pompe Secondaire",
-  status_code: "STANDBY",
+  status_code: "IN_STOCK",
   row_version: 1,
 });
 const vlv001 = makeResult({
@@ -63,7 +65,7 @@ const vlv001 = makeResult({
   class_name: "Vanne",
   family_code: "STATIC",
   family_name: "Équipement Statique",
-  status_code: "ACTIVE",
+  status_code: "ACTIVE_IN_SERVICE",
   row_version: 1,
 });
 
@@ -71,17 +73,18 @@ function resetStore() {
   useAssetSearchStore.setState({
     filters: {
       query: null,
-      classCodes: null,
-      familyCodes: null,
-      statusCodes: null,
-      orgNodeIds: null,
-      includeDecommissioned: false,
+      class_codes: null,
+      family_codes: null,
+      status_codes: null,
+      org_node_ids: null,
+      include_decommissioned: false,
       limit: 100,
     },
     results: [],
     selectedResultId: null,
     loading: false,
     error: null,
+    expandedIds: new Set(),
   });
 }
 
@@ -103,11 +106,11 @@ describe("V1 — Code-priority search", () => {
     expect(mockInvoke).toHaveBeenCalledWith("search_assets", {
       filters: {
         query: "PMP-001",
-        classCodes: null,
-        familyCodes: null,
-        statusCodes: null,
-        orgNodeIds: null,
-        includeDecommissioned: false,
+        class_codes: null,
+        family_codes: null,
+        status_codes: null,
+        org_node_ids: null,
+        include_decommissioned: false,
         limit: 100,
       },
     });
@@ -144,18 +147,18 @@ describe("V2 — Multi-filter search", () => {
     mockInvoke.mockResolvedValueOnce([pmp001]);
 
     await useAssetSearchStore.getState().updateFilters({
-      classCodes: ["PUMP"],
-      statusCodes: ["ACTIVE"],
+      class_codes: ["PUMP"],
+      status_codes: ["ACTIVE_IN_SERVICE"],
     });
 
     expect(mockInvoke).toHaveBeenCalledWith("search_assets", {
       filters: {
         query: null,
-        classCodes: ["PUMP"],
-        statusCodes: ["ACTIVE"],
-        familyCodes: null,
-        orgNodeIds: null,
-        includeDecommissioned: false,
+        class_codes: ["PUMP"],
+        status_codes: ["ACTIVE_IN_SERVICE"],
+        family_codes: null,
+        org_node_ids: null,
+        include_decommissioned: false,
         limit: 100,
       },
     });
@@ -163,7 +166,7 @@ describe("V2 — Multi-filter search", () => {
     const state = useAssetSearchStore.getState();
     expect(state.results).toHaveLength(1);
     expect(state.results[0]?.class_code).toBe("PUMP");
-    expect(state.results[0]?.status_code).toBe("ACTIVE");
+    expect(state.results[0]?.status_code).toBe("ACTIVE_IN_SERVICE");
     expect(state.error).toBeNull();
   });
 
@@ -172,18 +175,18 @@ describe("V2 — Multi-filter search", () => {
 
     await useAssetSearchStore.getState().updateFilters({
       query: "PMP",
-      classCodes: ["PUMP"],
-      statusCodes: ["ACTIVE"],
+      class_codes: ["PUMP"],
+      status_codes: ["ACTIVE_IN_SERVICE"],
     });
 
     expect(mockInvoke).toHaveBeenCalledWith("search_assets", {
       filters: {
         query: "PMP",
-        classCodes: ["PUMP"],
-        statusCodes: ["ACTIVE"],
-        familyCodes: null,
-        orgNodeIds: null,
-        includeDecommissioned: false,
+        class_codes: ["PUMP"],
+        status_codes: ["ACTIVE_IN_SERVICE"],
+        family_codes: null,
+        org_node_ids: null,
+        include_decommissioned: false,
         limit: 100,
       },
     });
@@ -197,8 +200,8 @@ describe("V2 — Multi-filter search", () => {
     // First: apply filters
     mockInvoke.mockResolvedValueOnce([pmp001]);
     await useAssetSearchStore.getState().updateFilters({
-      classCodes: ["PUMP"],
-      statusCodes: ["ACTIVE"],
+      class_codes: ["PUMP"],
+      status_codes: ["ACTIVE_IN_SERVICE"],
     });
 
     // Then: clear
@@ -206,8 +209,8 @@ describe("V2 — Multi-filter search", () => {
     await useAssetSearchStore.getState().clearFilters();
 
     const state = useAssetSearchStore.getState();
-    expect(state.filters.classCodes).toBeNull();
-    expect(state.filters.statusCodes).toBeNull();
+    expect(state.filters.class_codes).toBeNull();
+    expect(state.filters.status_codes).toBeNull();
     expect(state.filters.query).toBeNull();
     expect(state.results).toHaveLength(3);
     expect(state.selectedResultId).toBeNull();
@@ -266,5 +269,43 @@ describe("V3 — Empty-state behavior", () => {
 
     useAssetSearchStore.getState().selectAsset(null);
     expect(useAssetSearchStore.getState().selectedResultId).toBeNull();
+  });
+});
+
+// ── Tree expand state ─────────────────────────────────────────────────────────
+
+describe("Tree expand state", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    resetStore();
+  });
+
+  const parent = makeResult({ id: 10, asset_code: "COMP", parent_asset_id: null });
+  const child = makeResult({
+    id: 11,
+    sync_id: "child",
+    asset_code: "REG",
+    parent_asset_id: 10,
+  });
+
+  it("toggleExpanded / expandAll / collapseAll", async () => {
+    mockInvoke.mockResolvedValueOnce([parent, child]);
+    await useAssetSearchStore.getState().runSearch();
+
+    useAssetSearchStore.getState().toggleExpanded(10);
+    expect(useAssetSearchStore.getState().expandedIds.has(10)).toBe(true);
+
+    useAssetSearchStore.getState().collapseAll();
+    expect(useAssetSearchStore.getState().expandedIds.size).toBe(0);
+
+    useAssetSearchStore.getState().expandAll();
+    expect(useAssetSearchStore.getState().expandedIds.has(10)).toBe(true);
+  });
+
+  it("auto-expands ancestors when query is active", async () => {
+    mockInvoke.mockResolvedValueOnce([parent, child]);
+    await useAssetSearchStore.getState().updateFilters({ query: "REG" });
+
+    expect(useAssetSearchStore.getState().expandedIds.has(10)).toBe(true);
   });
 });

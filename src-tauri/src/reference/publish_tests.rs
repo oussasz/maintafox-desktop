@@ -1,8 +1,8 @@
 //! Supervisor verification tests for Phase 2 SP03 File 04 Sprint S1.
 //!
-//! V1 — Blocked publish (validation blockers prevent publish)
-//! V2 — Impact preview requirement (protected domain without preview → blocked)
-//! V3 — Successful publish transition (validated set publishes and supersedes prior)
+//! V1 â€” Blocked publish (validation blockers prevent publish)
+//! V2 â€” Impact preview requirement (protected domain without preview â†’ blocked)
+//! V3 â€” Successful publish transition (validated set publishes and supersedes prior)
 
 #[cfg(test)]
 mod tests {
@@ -52,6 +52,7 @@ mod tests {
                 name: "Publish Tenant Domain".to_string(),
                 structure_type: "flat".to_string(),
                 governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
                 is_extendable: Some(true),
                 validation_rules_json: None,
             },
@@ -100,6 +101,7 @@ mod tests {
                 name: "Publish Protected Domain".to_string(),
                 structure_type: "flat".to_string(),
                 governance_level: "protected_analytical".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
                 is_extendable: Some(false),
                 validation_rules_json: None,
             },
@@ -139,9 +141,9 @@ mod tests {
         (domain.id, set.id)
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V1 — Blocked publish
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V1 â€” Blocked publish
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v1_publish_blocked_when_set_not_validated() {
@@ -154,6 +156,7 @@ mod tests {
                 name: "Draft Domain".to_string(),
                 structure_type: "flat".to_string(),
                 governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
                 is_extendable: Some(true),
                 validation_rules_json: None,
             },
@@ -166,7 +169,7 @@ mod tests {
             .await
             .expect("create draft set");
 
-        // Try publishing a draft set → must fail.
+        // Try publishing a draft set â†’ must fail.
         let readiness = publish::compute_publish_readiness(&db, set.id)
             .await
             .expect("readiness");
@@ -195,6 +198,7 @@ mod tests {
                 name: "Deactivation Domain".to_string(),
                 structure_type: "flat".to_string(),
                 governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
                 is_extendable: Some(true),
                 validation_rules_json: None,
             },
@@ -259,6 +263,7 @@ mod tests {
                 name: "No Report Domain".to_string(),
                 structure_type: "flat".to_string(),
                 governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
                 is_extendable: Some(true),
                 validation_rules_json: None,
             },
@@ -291,16 +296,16 @@ mod tests {
         );
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V2 — Impact preview requirement
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V2 â€” Impact preview requirement
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v2_protected_domain_requires_impact_preview() {
         let db = setup().await;
         let (_domain_id, set_id) = setup_validated_protected_set(&db).await;
 
-        // Without impact preview → not ready.
+        // Without impact preview â†’ not ready.
         let readiness = publish::compute_publish_readiness(&db, set_id)
             .await
             .expect("readiness");
@@ -381,9 +386,9 @@ mod tests {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V3 — Successful publish transition
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V3 â€” Successful publish transition
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v3_publish_succeeds_and_supersedes_prior_set() {
@@ -399,10 +404,18 @@ mod tests {
         assert!(result_v1.set.published_at.is_some());
         assert!(result_v1.superseded_set_id.is_none(), "no prior set to supersede");
 
-        // Create V2, validate, and publish.
+        // Create V2 (cloned from published VAL_A), add VAL_B, validate, and publish.
         let set_v2 = sets::create_draft_set(&db, domain_id, 1)
             .await
             .expect("create V2");
+
+        let cloned = values::list_values(&db, set_v2.id)
+            .await
+            .expect("list V2");
+        assert!(
+            cloned.iter().any(|v| v.code == "VAL_A"),
+            "V2 draft must clone VAL_A from published"
+        );
 
         values::create_value(
             &db,

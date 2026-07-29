@@ -12,6 +12,7 @@
 //! Bindings are never deleted; they are expired by setting `valid_to`.
 
 use crate::errors::{AppError, AppResult};
+use crate::org::fail::{fail, fail_params};
 use chrono::Utc;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait,
@@ -145,34 +146,16 @@ pub async fn upsert_entity_binding(
     let external_id = payload.external_id.trim().to_string();
 
     if binding_type.is_empty() || external_system.is_empty() || external_id.is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "binding_type, external_system, and external_id must all be non-empty".to_string(),
-        ]));
+        return Err(fail(
+            "ORG_BINDING_FIELDS_REQUIRED",
+            "Binding type, external system, and external ID must all be provided.",
+        ));
     }
+
+    // Node must exist in the active (production) tree and be status=active
+    crate::org::model_scope::assert_org_node_active(db, payload.node_id).await?;
 
     let txn = db.begin().await?;
-
-    // Verify node exists and is not deleted
-    let node_row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT status FROM org_nodes WHERE id = ? AND deleted_at IS NULL",
-            [payload.node_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "org_node".to_string(),
-            id: payload.node_id.to_string(),
-        })?;
-    let node_status: String = node_row
-        .try_get("", "status")
-        .map_err(|e| decode_err("status", e))?;
-    if node_status == "inactive" {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "node {} is inactive — bindings cannot be added to deactivated nodes",
-            payload.node_id
-        )]));
-    }
 
     // Check tenant-wide uniqueness of active (external_system, external_id)
     let dup_row = txn
@@ -186,9 +169,16 @@ pub async fn upsert_entity_binding(
         .expect("COUNT always returns a row");
     let dup_count: i64 = dup_row.try_get("", "cnt").unwrap_or(0);
     if dup_count > 0 {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "an active binding for ({external_system}, {external_id}) already exists"
-        )]));
+        return Err(fail_params(
+            "ORG_BINDING_DUPLICATE",
+            format!(
+                "An active binding for ({external_system}, {external_id}) already exists."
+            ),
+            &[
+                ("externalSystem", external_system),
+                ("externalId", external_id),
+            ],
+        ));
     }
 
     // If primary, clear previous primary for same (node_id, binding_type, external_system)
@@ -282,9 +272,11 @@ pub async fn expire_entity_binding(
     // Validate valid_to >= valid_from when both are present
     if let (Some(ref from), Some(ref to)) = (&existing.valid_from, &valid_to) {
         if to < from {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "valid_to ({to}) cannot be earlier than valid_from ({from})"
-            )]));
+            return Err(fail_params(
+                "ORG_INVALID_DATE_RANGE",
+                format!("End date ({to}) cannot be earlier than start date ({from})."),
+                &[("validTo", to.clone()), ("validFrom", from.clone())],
+            ));
         }
     }
 

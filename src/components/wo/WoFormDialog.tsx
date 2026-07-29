@@ -15,9 +15,16 @@ export function WoFormDialog() {
   const { t } = useTranslation("ot");
   const showCreateForm = useWoStore((s) => s.showCreateForm);
   const editingWo = useWoStore((s) => s.editingWo);
+  const createPrefillAsset = useWoStore((s) => s.createPrefillAsset);
+  const createPrefillEquipmentId = useWoStore((s) => s.createPrefillEquipmentId);
   const closeCreateForm = useWoStore((s) => s.closeCreateForm);
 
   const isEdit = editingWo !== null;
+  const formKey = showCreateForm
+    ? editingWo
+      ? `e-${editingWo.id}`
+      : `new-${createPrefillEquipmentId ?? "blank"}`
+    : "closed";
 
   return (
     <Dialog
@@ -33,12 +40,16 @@ export function WoFormDialog() {
         <DialogHeader>
           <DialogTitle>{isEdit ? t("page.titleEdit") : t("page.titleNew")}</DialogTitle>
         </DialogHeader>
-        <WoCreateForm
-          key={showCreateForm ? (editingWo ? `e-${editingWo.id}` : "new") : "closed"}
-          initial={editingWo}
-          onSubmitted={() => closeCreateForm()}
-          onCancel={() => closeCreateForm()}
-        />
+        {showCreateForm ? (
+          <WoCreateForm
+            key={formKey}
+            initial={editingWo}
+            prefillAsset={createPrefillAsset}
+            prefillEquipmentId={createPrefillEquipmentId}
+            onSubmitted={() => closeCreateForm()}
+            onCancel={() => closeCreateForm()}
+          />
+        ) : null}
       </DialogContent>
     </Dialog>
   );

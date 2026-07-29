@@ -16,13 +16,17 @@
  * Phase 2 – Sub-phase 04 – Sprint S4.
  */
 
-import { Calendar, Check, ClipboardCheck, Printer, RotateCcw, Shield, User, X } from "lucide-react";
+import { Archive, Calendar, Check, ClipboardCheck, Printer, RotateCcw, Shield, User, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
 import { DiDetailPanel } from "@/components/di/DiDetailPanel";
 import { printDiFiche } from "@/components/di/DiPrintFiche";
+import { DiSlaStatusBadge } from "@/components/di/DiSlaStatusBadge";
+import { DI_STATUS_STYLE, TERMINAL_DI_STATES, diStatusToI18nKey } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -36,26 +40,17 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
+import {
+  formatAssetLabel,
+  formatOrgNodeLabel,
+  formatOrDash,
+  formatPersonLabel,
+} from "@/lib/display";
+import { getSlaStatus } from "@/services/di-conversion-service";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
-import type { DiTransitionRow, InterventionRequest } from "@shared/ipc-types";
-
-// ── Status → badge style mapping ────────────────────────────────────────────
-
-const STATUS_STYLE: Record<string, string> = {
-  submitted: "bg-blue-100 text-blue-800",
-  pending_review: "bg-amber-100 text-amber-800",
-  returned_for_clarification: "bg-orange-100 text-orange-800",
-  rejected: "bg-red-100 text-red-700",
-  screened: "bg-sky-100 text-sky-800",
-  awaiting_approval: "bg-yellow-100 text-yellow-800",
-  approved_for_planning: "bg-green-100 text-green-800",
-  deferred: "bg-gray-100 text-gray-600",
-  converted_to_work_order: "bg-emerald-100 text-emerald-800",
-  closed_as_non_executable: "bg-slate-100 text-slate-600",
-  archived: "bg-neutral-100 text-neutral-500",
-};
+import type { DiSlaStatus, DiTransitionRow, InterventionRequest } from "@shared/ipc-types";
 
 const URGENCY_STYLE: Record<string, string> = {
   low: "bg-green-100 text-green-800",
@@ -63,33 +58,6 @@ const URGENCY_STYLE: Record<string, string> = {
   high: "bg-orange-100 text-orange-800",
   critical: "bg-red-100 text-red-700",
 };
-
-type DiStatusKey =
-  | "new"
-  | "inReview"
-  | "approved"
-  | "rejected"
-  | "inProgress"
-  | "resolved"
-  | "closed"
-  | "cancelled";
-
-function statusToI18nKey(s: string): DiStatusKey {
-  const map: Record<string, DiStatusKey> = {
-    submitted: "new",
-    pending_review: "inReview",
-    returned_for_clarification: "inReview",
-    rejected: "rejected",
-    screened: "inReview",
-    awaiting_approval: "inReview",
-    approved_for_planning: "approved",
-    deferred: "inReview",
-    converted_to_work_order: "inProgress",
-    closed_as_non_executable: "closed",
-    archived: "closed",
-  };
-  return map[s] ?? "new";
-}
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -103,8 +71,10 @@ interface DiDetailDialogProps {
 
 // ── Statuses that can be acted on ───────────────────────────────────────────
 
-const SCREENABLE = new Set(["pending_review", "returned_for_clarification"]);
+const SCREENABLE = new Set(["pending_review"]);
 const APPROVABLE = new Set(["awaiting_approval"]);
+const REJECTABLE = new Set(["pending_review", "screened", "awaiting_approval"]);
+const RETURNABLE = new Set(["pending_review"]);
 const REVIEWABLE = new Set([
   "submitted",
   "pending_review",
@@ -118,6 +88,9 @@ const REVIEWABLE = new Set([
 export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialogProps) {
   const { t, i18n } = useTranslation("di");
   const dateLocale = intlLocaleForLanguage(i18n.language);
+  const { originLabel, requestTypeLabel, symptomLabel } = useDiReferenceLabels({
+    includeSymptoms: true,
+  });
   const { can } = usePermissions();
   const { info } = useSession();
   const triageSubmittedDi = useDiStore((s) => s.triageSubmittedDi);
@@ -126,8 +99,29 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
   const openRejection = useDiReviewStore((s) => s.openRejection);
   const openReturn = useDiReviewStore((s) => s.openReturn);
   const screen = useDiReviewStore((s) => s.screen);
+  const closeAsNonExecutable = useDiReviewStore((s) => s.closeAsNonExecutable);
+  const archiveDi = useDiReviewStore((s) => s.archive);
   const [screenError, setScreenError] = useState<string | null>(null);
   const [triageError, setTriageError] = useState<string | null>(null);
+  const [slaStatus, setSlaStatus] = useState<DiSlaStatus | null>(null);
+
+  useEffect(() => {
+    if (!open || !di) {
+      setSlaStatus(null);
+      return;
+    }
+    let cancelled = false;
+    void getSlaStatus(di.id)
+      .then((status) => {
+        if (!cancelled) setSlaStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setSlaStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, di]);
 
   const handleScreen = useCallback(async () => {
     if (!di) return;
@@ -180,25 +174,63 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
     }
   }, [di, triageSubmittedDi]);
 
+  const handleCloseAsNonExecutable = useCallback(async () => {
+    if (!di) return;
+    setScreenError(null);
+    try {
+      await closeAsNonExecutable(di.id, di.row_version, null);
+      window.dispatchEvent(new Event("mf:di-triage-refresh"));
+      window.dispatchEvent(new Event("mf:dashboard-kpis-refresh"));
+    } catch (e) {
+      setScreenError(e instanceof Error ? e.message : String(e));
+    }
+  }, [closeAsNonExecutable, di]);
+
+  const handleArchive = useCallback(async () => {
+    if (!di) return;
+    setScreenError(null);
+    try {
+      await archiveDi(di.id, di.row_version, null);
+      window.dispatchEvent(new Event("mf:di-triage-refresh"));
+      window.dispatchEvent(new Event("mf:dashboard-kpis-refresh"));
+    } catch (e) {
+      setScreenError(e instanceof Error ? e.message : String(e));
+    }
+  }, [archiveDi, di]);
+
   if (!di) return null;
 
-  const statusKey = statusToI18nKey(di.status);
+  const statusKey = diStatusToI18nKey(di.status);
   const canUseReviewQueueActions = can("di.review") && REVIEWABLE.has(di.status);
   const canRunScreen = (can("di.screen") || can("di.review")) && SCREENABLE.has(di.status);
+  const canReturnForClarification = can("di.review") && RETURNABLE.has(di.status);
+  const canRejectInReview = can("di.review") && REJECTABLE.has(di.status);
+  const canApproveForPlanning = can("di.approve") && APPROVABLE.has(di.status);
+  const canCloseNeed = can("di.approve") && di.status === "approved_for_planning";
+  const canArchive =
+    (can("di.approve") || can("di.admin")) &&
+    (di.status === "rejected" ||
+      di.status === "converted_to_work_order" ||
+      di.status === "closed_as_non_executable");
+  const canResubmitAsAuthor =
+    di.status === "returned_for_clarification" &&
+    info?.user_id != null &&
+    info.user_id === di.submitter_id &&
+    can("di.create.own");
   const canTriageToReviewQueue =
     di.status === "submitted" &&
     (can("di.screen") || can("di.review")) &&
-    info?.user_id != null &&
-    info.user_id !== di.submitter_id;
+    info?.user_id != null;
   const canUploadAttachment =
     info != null &&
+    !TERMINAL_DI_STATES.has(di.status) &&
     ((info.user_id === di.submitter_id && can("di.create.own")) || can("di.review"));
-  const canDeleteAttachment = can("di.admin");
+  const canDeleteAttachment = can("di.admin") && !TERMINAL_DI_STATES.has(di.status);
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <DialogContent
-        className="max-w-3xl max-h-[85vh] flex flex-col p-0 gap-0"
+        className="w-full max-w-5xl max-h-[90vh] flex flex-col p-0 gap-0"
         onPointerDownOutside={(e) => e.preventDefault()}
       >
         {/* ── Header ──────────────────────────────────────────────────── */}
@@ -221,10 +253,18 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
             <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
               <Badge
                 variant="outline"
-                className={`text-xs border-0 ${STATUS_STYLE[di.status] ?? "bg-gray-100"}`}
+                className={`text-xs border-0 ${DI_STATUS_STYLE[di.status] ?? "bg-gray-100"}`}
               >
                 {t(`status.${statusKey}` as const)}
               </Badge>
+              <LinkedEntityBadge
+                entity="work_order"
+                code={di.converted_to_wo_code}
+                entityId={di.converted_to_wo_id}
+                title={di.converted_to_wo_title}
+                className="text-xs"
+              />
+              <DiSlaStatusBadge status={slaStatus?.status ?? null} className="text-xs" />
               {di.safety_flag && (
                 <Badge variant="destructive" className="text-xs gap-1">
                   <Shield className="h-3 w-3" />
@@ -254,7 +294,7 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
               <InfoRow
                 icon={<User className="h-3 w-3" />}
                 label={t("detail.fields.reportedBy")}
-                value={`#${di.submitter_id}`}
+                value={formatPersonLabel(di.submitter_display_name)}
               />
               <InfoRow
                 label={t("detail.fields.priority")}
@@ -267,11 +307,74 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                   </Badge>
                 }
               />
-              <InfoRow label={t("detail.fields.origin")} value={di.origin_type} />
-              <InfoRow label={t("detail.fields.asset")} value={`#${di.asset_id}`} />
-              <InfoRow label={t("detail.fields.orgNode")} value={`#${di.org_node_id}`} />
+              <InfoRow label={t("detail.fields.origin")} value={originLabel(di.origin_type)} />
+              <InfoRow
+                label={t("detail.fields.requestType")}
+                value={requestTypeLabel(di.request_type)}
+              />
+              {di.symptom_code_id != null && (
+                <InfoRow
+                  label={t("detail.fields.symptom")}
+                  value={symptomLabel(di.symptom_code_id)}
+                />
+              )}
+              <InfoRow
+                label={t("detail.fields.asset")}
+                value={formatAssetLabel(di.asset_code, di.asset_label)}
+              />
+              <InfoRow
+                label={t("detail.fields.orgNode")}
+                value={formatOrgNodeLabel(di.org_node_code, di.org_node_label)}
+              />
               {di.production_impact && (
                 <InfoRow label={t("detail.fields.impact")} value={t("detail.fields.production")} />
+              )}
+              {slaStatus?.sla_deadline && (
+                <InfoRow
+                  label={t("detail.fields.slaResponseDeadline")}
+                  value={formatDiDate(slaStatus.sla_deadline, dateLocale)}
+                />
+              )}
+              {slaStatus?.resolution_deadline && (
+                <InfoRow
+                  label={t("detail.fields.slaResolutionDeadline")}
+                  value={formatDiDate(slaStatus.resolution_deadline, dateLocale)}
+                />
+              )}
+              {slaStatus?.response_elapsed_hours != null && (
+                <InfoRow
+                  label={t("detail.fields.slaResponseElapsed")}
+                  value={t("detail.fields.hoursValue", {
+                    hours: Math.round(slaStatus.response_elapsed_hours * 10) / 10,
+                  })}
+                />
+              )}
+              {slaStatus?.resolution_elapsed_hours != null && (
+                <InfoRow
+                  label={t("detail.fields.slaResolutionElapsed")}
+                  value={t("detail.fields.hoursValue", {
+                    hours: Math.round(slaStatus.resolution_elapsed_hours * 10) / 10,
+                  })}
+                />
+              )}
+              {slaStatus?.response_remaining_hours != null && (
+                <InfoRow
+                  label={t("detail.fields.slaResponseRemaining")}
+                  value={t("detail.fields.hoursValue", {
+                    hours: Math.round(slaStatus.response_remaining_hours * 10) / 10,
+                  })}
+                />
+              )}
+              {slaStatus?.resolution_remaining_hours != null && (
+                <InfoRow
+                  label={t("detail.fields.slaResolutionRemaining")}
+                  value={t("detail.fields.hoursValue", {
+                    hours: Math.round(slaStatus.resolution_remaining_hours * 10) / 10,
+                  })}
+                />
+              )}
+              {slaStatus && !slaStatus.status && (
+                <InfoRow label={t("detail.fields.slaStatus")} value={formatOrDash(null)} />
               )}
             </CardContent>
           </Card>
@@ -292,11 +395,13 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
             <Button
               variant="outline"
               size="sm"
-              onClick={() => printDiFiche(di)}
+              onClick={() => {
+                void printDiFiche(di);
+              }}
               className="gap-1.5"
             >
               <Printer className="h-3.5 w-3.5" />
-              {t("review.print")}
+              {t("action.print")}
             </Button>
           </div>
           <div className="flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
@@ -311,6 +416,18 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                 {t("triage.acceptForReview")}
               </Button>
             )}
+            {canResubmitAsAuthor && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-sky-700 hover:text-sky-800 hover:bg-sky-50"
+                disabled={triageSaving}
+                onClick={() => void handleTriageAccept()}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {t("action.resubmit")}
+              </Button>
+            )}
             {canRunScreen && (
               <Button
                 variant="outline"
@@ -323,7 +440,7 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                 {t("review.screenAction")}
               </Button>
             )}
-            {canUseReviewQueueActions && APPROVABLE.has(di.status) && (
+            {canApproveForPlanning && (
               <Button
                 size="sm"
                 className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
@@ -334,31 +451,58 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                 {t("action.approve")}
               </Button>
             )}
-            {canUseReviewQueueActions && di.status !== "submitted" && (
+            {canCloseNeed && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-slate-700 hover:text-slate-800 hover:bg-slate-50"
+                onClick={() => void handleCloseAsNonExecutable()}
+              >
+                <X className="h-3.5 w-3.5" />
+                {t("action.cancelNeed")}
+              </Button>
+            )}
+            {canArchive && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => void handleArchive()}
+              >
+                <Archive className="h-3.5 w-3.5" />
+                {t("action.archive")}
+              </Button>
+            )}
+            {(canReturnForClarification || canRejectInReview) && (
               <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                  onClick={handleReturn}
-                  title={t("review.returnAction")}
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  {t("review.returnAction")}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50"
-                  onClick={handleReject}
-                  title={t("action.reject")}
-                >
-                  <X className="h-3.5 w-3.5" />
-                  {t("action.reject")}
-                </Button>
+                {canReturnForClarification && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                    onClick={handleReturn}
+                    title={t("review.returnAction")}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    {t("review.returnAction")}
+                  </Button>
+                )}
+                {canRejectInReview && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50"
+                    onClick={handleReject}
+                    title={t("action.reject")}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    {t("action.reject")}
+                  </Button>
+                )}
               </>
             )}
             <Button variant="outline" size="sm" onClick={onClose} className="gap-1.5">
+              <X className="h-3.5 w-3.5" />
               {t("detail.close")}
             </Button>
           </div>

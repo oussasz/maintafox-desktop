@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
+import { formatPersonLabel } from "@/lib/display";
 import { useDiReviewStore } from "@/stores/di-review-store";
 
 // ── Component ───────────────────────────────────────────────────────────────
@@ -84,7 +85,8 @@ export function DiReturnDialog() {
               <span className="font-semibold truncate">{di.title}</span>
             </div>
             <div className="text-xs text-muted-foreground">
-              {t("detail.fields.reportedBy")}: #{di.submitter_id}
+              {t("detail.fields.reportedBy")}:{" "}
+              {formatPersonLabel(di.submitter_display_name)}
             </div>
           </div>
 

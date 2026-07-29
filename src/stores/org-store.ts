@@ -14,7 +14,7 @@ import {
   listOrgNodeTypes,
   listOrgRelationshipRules,
 } from "@/services/org-service";
-import { toErrorMessage } from "@/utils/errors";
+import { formatOrgIpcError } from "@/utils/errors";
 import type { OrgNodeType, OrgRelationshipRule, OrgStructureModel } from "@shared/ipc-types";
 
 interface OrgConfigState {
@@ -52,7 +52,7 @@ export const useOrgStore = create<OrgConfigState>()((set) => ({
       }
     } catch (err) {
       set({
-        error: toErrorMessage(err),
+        error: formatOrgIpcError(err),
       });
     } finally {
       set({ loading: false });

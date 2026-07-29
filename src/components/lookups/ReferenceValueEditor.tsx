@@ -1,15 +1,9 @@
 /**
- * ReferenceValueEditor.tsx
- *
- * Right pane of ReferenceManagerPage. Editable DataTable for reference
- * values within the selected set — inline create, edit, delete with
- * pagination, permission gates, and protected-domain awareness.
- *
- * Phase 2 – Sub-phase 03 – File 02 – Sprint S4 (GAP REF-03).
+ * ReferenceValueEditor — container for real reference domains.
+ * Chrome lives in ReferenceValueTable; governance wiring stays here.
  */
 
 import {
-  AlertTriangle,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -21,33 +15,46 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { PermissionGate } from "@/components/PermissionGate";
 import { PublishReadinessPanel } from "@/components/lookups/PublishReadinessPanel";
 import { ReferenceAliasPanel } from "@/components/lookups/ReferenceAliasPanel";
 import { ReferenceColorSwatchHex } from "@/components/lookups/ReferenceColorSwatchHex";
+import { SchedulePatternDialog } from "@/components/lookups/SchedulePatternPanel";
+import {
+  ReferenceValueTable,
+  ReferenceValueTableBody,
+  ReferenceValueTableCell,
+  ReferenceValueTableGrid,
+  ReferenceValueTableHead,
+  ReferenceValueTableHeadCell,
+  ReferenceValueTableRow,
+} from "@/components/lookups/ReferenceValueTable";
 import {
   REF_TABLE_ACTIONS_GROUP_CLASS,
+  REF_TABLE_BADGE_CLASS,
+  REF_TABLE_EMPTY_ACTIONS_MARK,
+  REF_TABLE_TITLE_CLASS,
+  refTableHeaderAddButtonClass,
   refTableIconButtonClass,
 } from "@/components/lookups/reference-table-ui";
+import { resolveReferenceValueColumns } from "@/components/lookups/reference-value-columns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { usePermissions } from "@/hooks/use-permissions";
-import { isReferenceDomainProtected } from "@/lib/reference-domain-ui";
-import { listReferenceValues } from "@/services/reference-service";
+import { useReferenceCapabilities } from "@/hooks/use-reference-capabilities";
+import { governanceCategoryLabelKey, preferredWorkingSet, publishedReadOnlyBannerKey } from "@/lib/reference-governance-ui";
+import {
+  createDraftReferenceSet,
+  discardDraftReferenceSet,
+  listReferenceValues,
+  moveReferenceValueParent,
+} from "@/services/reference-service";
 import { useReferenceGovernanceStore } from "@/stores/reference-governance-store";
 import { useReferenceManagerStore } from "@/stores/reference-manager-store";
+import { toErrorMessage } from "@/utils/errors";
 import type { CreateReferenceValuePayload, ReferenceValue } from "@shared/ipc-types";
-
-// ── Constants ─────────────────────────────────────────────────────────────────
+import type { KeyboardEvent } from "react";
 
 const PAGE_SIZE = 50;
 
@@ -61,16 +68,12 @@ function isSystemReferenceRow(metadataJson: string | null): boolean {
   }
 }
 
-// ── Inline edit row state ─────────────────────────────────────────────────────
-
 interface EditRowState {
   code: string;
   label: string;
   description: string;
   parentId: number | null;
 }
-
-// ── Component ─────────────────────────────────────────────────────────────────
 
 interface ReferenceValueEditorProps {
   setId: number;
@@ -80,8 +83,6 @@ interface ReferenceValueEditorProps {
 export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorProps) {
   const { t } = useTranslation("reference");
   const { can } = usePermissions();
-
-  // ── Store bindings ───────────────────────────────────────────────────────
 
   const values = useReferenceGovernanceStore((s) => s.values);
   const valuesLoading = useReferenceGovernanceStore((s) => s.valuesLoading);
@@ -93,23 +94,37 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   const saveValue = useReferenceGovernanceStore((s) => s.saveValue);
   const addValue = useReferenceGovernanceStore((s) => s.addValue);
   const removeValue = useReferenceGovernanceStore((s) => s.removeValue);
+  const setValueActive = useReferenceGovernanceStore((s) => s.setValueActive);
   const setEditingValueId = useReferenceGovernanceStore((s) => s.setEditingValueId);
   const setNewValueDraft = useReferenceGovernanceStore((s) => s.setNewValueDraft);
 
   const domains = useReferenceManagerStore((s) => s.domains);
   const setsMap = useReferenceManagerStore((s) => s.setsMap);
   const loadSetsForDomain = useReferenceManagerStore((s) => s.loadSetsForDomain);
+  const selectSet = useReferenceManagerStore((s) => s.selectSet);
 
   const domain = domains.find((d) => d.id === domainId);
   const refSet = setsMap[domainId]?.find((s) => s.id === setId);
   const isDraft = refSet?.status === "draft";
-  const isProtected = domain ? isReferenceDomainProtected(domain) : false;
-  /** System-locked domains (is_extendable = false): catalog is view-only in the UI. */
-  const domainLocked = domain ? !domain.is_extendable : false;
-
-  // ── Local state ──────────────────────────────────────────────────────────
+  const setStatus = refSet?.status ?? null;
+  const { caps } = useReferenceCapabilities(domainId, setId, setStatus);
+  const canManage = can("ref.manage");
+  const canCreateValue = Boolean(caps?.can_create_value && canManage);
+  const canUpdateValue = Boolean(caps?.can_update_value && canManage);
+  const canDeactivateValue = Boolean(caps?.can_deactivate_value && canManage);
+  const canCreateDraftSet = Boolean(caps?.can_create_draft_set && canManage);
+  const canDiscardDraftSet = Boolean(caps?.can_discard_draft_set && canManage);
+  const canShowPublishPanel = Boolean(caps?.can_publish && isDraft && refSet);
+  const showReadOnlyBanner =
+    Boolean(caps) &&
+    !caps!.can_create_value &&
+    (setStatus === "published" || setStatus === "superseded");
+  const isAnalyticalProtected = Boolean(caps?.requires_analytical_protection);
 
   const [page, setPage] = useState(0);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [discardingDraft, setDiscardingDraft] = useState(false);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [editRow, setEditRow] = useState<EditRowState>({
     code: "",
     label: "",
@@ -124,22 +139,18 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   });
   const [deleteTarget, setDeleteTarget] = useState<ReferenceValue | null>(null);
   const [aliasValueId, setAliasValueId] = useState<number | null>(null);
+  const [patternValueId, setPatternValueId] = useState<number | null>(null);
   const [sortField, setSortField] = useState<"code" | "label" | "is_active">("code");
   const [sortAsc, setSortAsc] = useState(true);
   const [parentCandidates, setParentCandidates] = useState<ReferenceValue[]>([]);
-  const parentDomainCodeByChild: Record<string, string> = {
-    "EQUIPMENT.FAMILY": "EQUIPMENT.CLASS",
-    "EQUIPMENT.SUBFAMILY": "EQUIPMENT.FAMILY",
-  };
-  const parentDomainCode = domain ? parentDomainCodeByChild[domain.code] : undefined;
-  const parentDomain = parentDomainCode
-    ? (domains.find((d) => d.code === parentDomainCode) ?? null)
+  const columnFlags = useMemo(() => resolveReferenceValueColumns(domain), [domain]);
+  const { showParent, showSchedule, crossDomainParentCode, sameSetHierarchy } = columnFlags;
+  const parentDomain = crossDomainParentCode
+    ? (domains.find((d) => d.code === crossDomainParentCode) ?? null)
     : null;
   const parentSetId = parentDomain
     ? (setsMap[parentDomain.id]?.find((s) => s.status === "published")?.id ?? null)
     : null;
-
-  // ── Load values on set selection ─────────────────────────────────────────
 
   useEffect(() => {
     void loadValues(setId);
@@ -147,6 +158,14 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   }, [setId, loadValues]);
 
   useEffect(() => {
+    if (!showParent) {
+      setParentCandidates([]);
+      return;
+    }
+    if (sameSetHierarchy) {
+      setParentCandidates(values.filter((r) => r.is_active));
+      return;
+    }
     if (!parentDomain) {
       setParentCandidates([]);
       return;
@@ -154,11 +173,10 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     if (!setsMap[parentDomain.id]?.length) {
       void loadSetsForDomain(parentDomain.id);
     }
-  }, [parentDomain, setsMap, loadSetsForDomain]);
+  }, [showParent, sameSetHierarchy, values, parentDomain, setsMap, loadSetsForDomain]);
 
   useEffect(() => {
-    if (!parentSetId) {
-      setParentCandidates([]);
+    if (!showParent || sameSetHierarchy || !parentSetId) {
       return;
     }
     let cancelled = false;
@@ -176,9 +194,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     return () => {
       cancelled = true;
     };
-  }, [parentSetId]);
-
-  // ── Sorted + paginated values ────────────────────────────────────────────
+  }, [showParent, sameSetHierarchy, parentSetId]);
 
   const sortedValues = useMemo(() => {
     const sorted = [...values].sort((a, b) => {
@@ -204,8 +220,6 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   const totalPages = Math.max(1, Math.ceil(sortedValues.length / PAGE_SIZE));
   const pagedValues = sortedValues.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-  // ── Inline edit handlers ─────────────────────────────────────────────────
-
   const startEdit = useCallback(
     (v: ReferenceValue) => {
       setEditingValueId(v.id);
@@ -215,25 +229,44 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
         description: v.description ?? "",
         parentId: v.parent_id ?? null,
       });
+      setAliasValueId(null);
+      if (showSchedule) {
+        setPatternValueId(v.id);
+      }
     },
-    [setEditingValueId],
+    [setEditingValueId, showSchedule],
   );
 
   const cancelEdit = useCallback(() => {
     setEditingValueId(null);
+    setPatternValueId(null);
   }, [setEditingValueId]);
 
   const commitEdit = useCallback(
     async (valueId: number) => {
-      await saveValue(valueId, {
-        label: editRow.label,
-        description: editRow.description || null,
-      });
+      const existing = values.find((v) => v.id === valueId);
+      try {
+        await saveValue(valueId, {
+          label: editRow.label,
+          description: editRow.description || null,
+        });
+        if (
+          showParent &&
+          existing &&
+          (existing.parent_id ?? null) !== (editRow.parentId ?? null)
+        ) {
+          const moved = await moveReferenceValueParent(valueId, editRow.parentId);
+          useReferenceGovernanceStore.setState((s) => ({
+            values: s.values.map((v) => (v.id === valueId ? moved : v)),
+          }));
+        }
+        setPatternValueId(null);
+      } catch {
+        // Error already stored in governance store
+      }
     },
-    [saveValue, editRow],
+    [saveValue, editRow, values, showParent],
   );
-
-  // ── New row handlers ─────────────────────────────────────────────────────
 
   const startNewRow = useCallback(() => {
     setNewValueDraft({});
@@ -256,15 +289,49 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     await addValue(payload);
   }, [addValue, setId, newRow]);
 
-  // ── Delete handler ───────────────────────────────────────────────────────
-
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     await removeValue(deleteTarget.id);
     setDeleteTarget(null);
   }, [removeValue, deleteTarget]);
 
-  // ── Sort toggle ──────────────────────────────────────────────────────────
+  const handleCreateDraft = useCallback(async () => {
+    if (!canCreateDraftSet || creatingDraft) return;
+    setCreatingDraft(true);
+    try {
+      const draft = await createDraftReferenceSet(domainId);
+      await loadSetsForDomain(domainId);
+      selectSet(draft.id, domainId);
+    } catch (err) {
+      useReferenceGovernanceStore.setState({ error: toErrorMessage(err) });
+    } finally {
+      setCreatingDraft(false);
+    }
+  }, [canCreateDraftSet, creatingDraft, domainId, loadSetsForDomain, selectSet]);
+
+  const handleDiscardDraft = useCallback(async () => {
+    if (!canDiscardDraftSet || discardingDraft) return;
+    setDiscardingDraft(true);
+    try {
+      await discardDraftReferenceSet(setId);
+      setDiscardConfirmOpen(false);
+      await loadSetsForDomain(domainId);
+      const sets = useReferenceManagerStore.getState().setsMap[domainId] ?? [];
+      const published = preferredWorkingSet(sets);
+      if (published) {
+        selectSet(published.id, domainId);
+      } else {
+        useReferenceManagerStore.setState({
+          selectedDomainId: domainId,
+          selectedSetId: null,
+        });
+      }
+    } catch (err) {
+      useReferenceGovernanceStore.setState({ error: toErrorMessage(err) });
+    } finally {
+      setDiscardingDraft(false);
+    }
+  }, [canDiscardDraftSet, discardingDraft, setId, domainId, loadSetsForDomain, selectSet]);
 
   const toggleSort = (field: "code" | "label" | "is_active") => {
     if (sortField === field) {
@@ -275,10 +342,8 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     }
   };
 
-  // ── Keyboard handler for inline edit rows ────────────────────────────────
-
   const handleEditKeyDown = useCallback(
-    (e: React.KeyboardEvent, valueId: number) => {
+    (e: KeyboardEvent, valueId: number) => {
       if (e.key === "Enter") {
         e.preventDefault();
         void commitEdit(valueId);
@@ -290,7 +355,7 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
   );
 
   const handleNewKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+    (e: KeyboardEvent) => {
       if (e.key === "Enter") {
         e.preventDefault();
         void commitNewRow();
@@ -301,408 +366,505 @@ export function ReferenceValueEditor({ setId, domainId }: ReferenceValueEditorPr
     [commitNewRow, cancelNewRow],
   );
 
-  // ── Alias panel ──────────────────────────────────────────────────────────
-
   const aliasValue = aliasValueId ? values.find((v) => v.id === aliasValueId) : null;
+  const patternValue = patternValueId ? values.find((v) => v.id === patternValueId) : null;
 
-  // ── Loading state ────────────────────────────────────────────────────────
-
-  if (valuesLoading && values.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex h-full flex-col">
-      {/* ── Publish readiness (draft sets only) ─────────────────────────── */}
-      {isDraft && refSet && <PublishReadinessPanel setId={setId} isProtected={!!isProtected} />}
-
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-semibold text-text-primary truncate">{domain?.name}</span>
-          {refSet && (
-            <Badge
-              variant={refSet.status === "published" ? "default" : "secondary"}
-              className="text-[10px]"
-            >
-              v{refSet.version_no} — {refSet.status}
-            </Badge>
-          )}
-          {isProtected && (
-            <Badge variant="outline" className="text-[10px] text-status-warning">
-              {t("editor.protected")}
-            </Badge>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <PermissionGate permission="ref.manage">
+  const banner = (
+    <>
+      {showReadOnlyBanner ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border bg-surface-1 px-4 py-3">
+          <p className="text-sm text-text-secondary">
+            {String(t(publishedReadOnlyBannerKey(setStatus ?? "published", canCreateDraftSet)))}
+          </p>
+          {canCreateDraftSet ? (
             <Button
-              variant="outline"
+              variant="default"
               size="sm"
-              className="gap-1.5"
-              onClick={startNewRow}
-              disabled={!!newValueDraft || savingValue || domainLocked}
+              className="gap-1.5 shrink-0"
+              disabled={creatingDraft}
+              onClick={() => void handleCreateDraft()}
             >
               <Plus className="h-3.5 w-3.5" />
-              {t("editor.addValue")}
+              {creatingDraft
+                ? t("governance.readOnly.creatingDraft")
+                : t("governance.readOnly.createDraft")}
             </Button>
-          </PermissionGate>
+          ) : null}
         </div>
-      </div>
-
-      {/* ── Error banner ────────────────────────────────────────────────── */}
-      {error && (
-        <div className="px-4 py-2 bg-red-50 dark:bg-red-950/20 text-sm text-status-danger flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          {error}
+      ) : null}
+      {caps?.is_read_only && !showReadOnlyBanner ? (
+        <div className="border-b border-surface-border bg-surface-1 px-4 py-3 text-sm text-text-secondary">
+          {t("governance.readOnly.systemCatalog")}
         </div>
-      )}
+      ) : null}
+    </>
+  );
 
-      {/* ── Table ───────────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-auto">
-        {values.length === 0 && !newValueDraft ? (
-          <div className="flex h-full items-center justify-center p-6">
-            <div className="text-center space-y-2">
-              <p className="text-sm text-text-muted">{t("editor.emptyState")}</p>
-            </div>
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-surface-0 border-b border-surface-border z-10">
-              <tr>
-                <th
-                  className="px-3 py-2 text-left font-medium text-text-muted cursor-pointer select-none"
-                  onClick={() => toggleSort("code")}
-                  onKeyDown={(e) => e.key === "Enter" && toggleSort("code")}
-                >
-                  {t("editor.colCode")} {sortField === "code" && (sortAsc ? "↑" : "↓")}
-                </th>
-                <th
-                  className="px-3 py-2 text-left font-medium text-text-muted cursor-pointer select-none"
-                  onClick={() => toggleSort("label")}
-                  onKeyDown={(e) => e.key === "Enter" && toggleSort("label")}
-                >
-                  {t("editor.colLabel")} {sortField === "label" && (sortAsc ? "↑" : "↓")}
-                </th>
-                <th className="px-3 py-2 text-left font-medium text-text-muted">
-                  {t("editor.colDescription")}
-                </th>
-                <th className="px-3 py-2 text-left font-medium text-text-muted">
-                  {t("editor.colParent")}
-                </th>
-                {showColorColumn ? (
-                  <th className="px-3 py-2 text-left align-middle font-medium text-text-muted">
-                    {t("editor.colColor")}
-                  </th>
-                ) : null}
-                <th
-                  className="px-3 py-2 text-left font-medium text-text-muted cursor-pointer select-none"
-                  onClick={() => toggleSort("is_active")}
-                  onKeyDown={(e) => e.key === "Enter" && toggleSort("is_active")}
-                >
-                  {t("editor.colStatus")} {sortField === "is_active" && (sortAsc ? "↑" : "↓")}
-                </th>
-                <th className="px-3 py-2 text-right align-middle font-medium text-text-muted">
-                  {t("editor.colActions")}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {/* ── New value row ──────────────────────────────────────── */}
-              {newValueDraft && (
-                <tr className="bg-primary/5 border-b border-surface-border">
-                  <td className="px-3 py-1.5">
-                    <Input
-                      value={newRow.code}
-                      onChange={(e) => setNewRow({ ...newRow, code: e.target.value })}
-                      onKeyDown={handleNewKeyDown}
-                      placeholder={t("editor.codePlaceholder")}
-                      className="h-7 text-sm"
-                      autoFocus
-                    />
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <Input
-                      value={newRow.label}
-                      onChange={(e) => setNewRow({ ...newRow, label: e.target.value })}
-                      onKeyDown={handleNewKeyDown}
-                      placeholder={t("editor.labelPlaceholder")}
-                      className="h-7 text-sm"
-                    />
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <Input
-                      value={newRow.description}
-                      onChange={(e) => setNewRow({ ...newRow, description: e.target.value })}
-                      onKeyDown={handleNewKeyDown}
-                      placeholder={t("editor.descriptionPlaceholder")}
-                      className="h-7 text-sm"
-                    />
-                  </td>
-                  <td className="px-3 py-1.5">
-                    {parentSetId ? (
-                      <select
-                        value={newRow.parentId == null ? "" : String(newRow.parentId)}
-                        onChange={(e) =>
-                          setNewRow({
-                            ...newRow,
-                            parentId: e.target.value ? Number(e.target.value) : null,
-                          })
-                        }
-                        className="h-7 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
-                      >
-                        <option value="">{t("editor.none")}</option>
-                        {parentCandidates.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.code} — {p.label}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="text-text-muted">—</span>
-                    )}
-                  </td>
-                  {showColorColumn ? (
-                    <td className="px-3 py-1.5 align-middle text-text-muted text-sm">—</td>
-                  ) : null}
-                  <td className="px-3 py-1.5">
-                    <Badge variant="secondary" className="text-[10px]">
-                      {t("editor.statusNew")}
-                    </Badge>
-                  </td>
-                  <td className="px-3 py-1.5 text-right align-middle">
-                    <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className={refTableIconButtonClass()}
-                        onClick={() => void commitNewRow()}
-                        disabled={savingValue || !newRow.code.trim() || !newRow.label.trim()}
-                      >
-                        <Check className="h-3.5 w-3.5 text-status-success" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className={refTableIconButtonClass()}
-                        onClick={cancelNewRow}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              )}
-
-              {/* ── Value rows ─────────────────────────────────────────── */}
-              {pagedValues.map((v) => {
-                const isEditing = editingValueId === v.id;
-                const parentValue = v.parent_id
-                  ? (values.find((p) => p.id === v.parent_id) ??
-                    parentValuesById.get(v.parent_id) ??
-                    null)
-                  : null;
-                const isSystemRow = isSystemReferenceRow(v.metadata_json);
-                const showPencil = can("ref.manage") && !domainLocked;
-                const showTrash = can("ref.manage") && !domainLocked && !isSystemRow;
-
-                return (
-                  <tr
-                    key={v.id}
-                    className={`border-b border-surface-border hover:bg-surface-1 ${
-                      isEditing ? "bg-primary/5" : ""
-                    } ${aliasValueId === v.id ? "ring-1 ring-inset ring-primary/30" : ""}`}
+  return (
+    <>
+      <ReferenceValueTable
+        loading={valuesLoading && values.length === 0}
+        error={error}
+        aboveHeader={
+          canShowPublishPanel && refSet ? (
+            <PublishReadinessPanel setId={setId} isProtected={isAnalyticalProtected} />
+          ) : null
+        }
+        title={
+          <>
+            <span className={REF_TABLE_TITLE_CLASS}>{domain?.name}</span>
+            {refSet ? (
+              <Badge
+                variant={refSet.status === "published" ? "default" : "secondary"}
+                className={REF_TABLE_BADGE_CLASS}
+              >
+                v{refSet.version_no} —{" "}
+                {t(`browser.status.${refSet.status}` as "browser.status.draft", {
+                  defaultValue: refSet.status,
+                })}
+              </Badge>
+            ) : null}
+            {caps?.category ? (
+              <Badge variant="outline" className={REF_TABLE_BADGE_CLASS}>
+                {String(t(governanceCategoryLabelKey(caps.category)))}
+              </Badge>
+            ) : null}
+            {isAnalyticalProtected ? (
+              <Badge variant="outline" className={`${REF_TABLE_BADGE_CLASS} text-status-warning`}>
+                {t("editor.protected")}
+              </Badge>
+            ) : null}
+          </>
+        }
+        toolbar={
+          <>
+            {canDiscardDraftSet ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-status-danger border-status-danger/40 hover:bg-status-danger/10"
+                disabled={discardingDraft}
+                onClick={() => setDiscardConfirmOpen(true)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {discardingDraft
+                  ? t("governance.readOnly.discardingDraft")
+                  : t("governance.readOnly.discardDraft")}
+              </Button>
+            ) : null}
+            {canCreateValue ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className={refTableHeaderAddButtonClass()}
+                onClick={startNewRow}
+                disabled={!!newValueDraft || savingValue}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("editor.addValue")}
+              </Button>
+            ) : null}
+          </>
+        }
+        banner={banner}
+        emptyLabel={t("editor.emptyState")}
+        showEmpty={values.length === 0 && !newValueDraft}
+        footer={
+          <>
+            {aliasValue ? (
+              <div className="border-t border-surface-border">
+                <ReferenceAliasPanel
+                  value={aliasValue}
+                  canMutate={canUpdateValue}
+                  onClose={() => setAliasValueId(null)}
+                />
+              </div>
+            ) : null}
+            {totalPages > 1 ? (
+              <div className="flex items-center justify-between border-t border-surface-border px-4 py-2">
+                <span className="text-xs text-text-muted">
+                  {t("editor.pageInfo", {
+                    start: page * PAGE_SIZE + 1,
+                    end: Math.min((page + 1) * PAGE_SIZE, sortedValues.length),
+                    total: sortedValues.length,
+                  })}
+                </span>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => setPage(Math.max(0, page - 1))}
+                    disabled={page === 0}
                   >
-                    <td className="px-3 py-1.5">
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
+                    disabled={page >= totalPages - 1}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </>
+        }
+        confirm={
+          deleteTarget
+            ? {
+                open: true,
+                title: t("editor.deleteTitle"),
+                description: t("editor.deleteDescription", { label: deleteTarget.label }),
+                confirmLabel: t("editor.deactivate"),
+                cancelLabel: t("editor.cancel"),
+                destructive: true,
+                busy: savingValue,
+                hint: !deleteTarget.is_active ? t("editor.alreadyInactive") : null,
+                onOpenChange: (open) => {
+                  if (!open) setDeleteTarget(null);
+                },
+                onConfirm: () => void confirmDelete(),
+              }
+            : discardConfirmOpen
+              ? {
+                  open: true,
+                  title: t("governance.readOnly.discardDraftTitle"),
+                  description: t("governance.readOnly.discardDraftDescription"),
+                  confirmLabel: discardingDraft
+                    ? t("governance.readOnly.discardingDraft")
+                    : t("governance.readOnly.discardDraft"),
+                  cancelLabel: t("editor.cancel"),
+                  destructive: true,
+                  busy: discardingDraft,
+                  onOpenChange: setDiscardConfirmOpen,
+                  onConfirm: () => void handleDiscardDraft(),
+                }
+              : null
+        }
+      >
+        <ReferenceValueTableGrid>
+          <ReferenceValueTableHead>
+            <tr>
+              <ReferenceValueTableHeadCell
+                sortable
+                onSort={() => toggleSort("code")}
+              >
+                {t("editor.colCode")} {sortField === "code" && (sortAsc ? "↑" : "↓")}
+              </ReferenceValueTableHeadCell>
+              <ReferenceValueTableHeadCell
+                sortable
+                onSort={() => toggleSort("label")}
+              >
+                {t("editor.colLabel")} {sortField === "label" && (sortAsc ? "↑" : "↓")}
+              </ReferenceValueTableHeadCell>
+              <ReferenceValueTableHeadCell>{t("editor.colDescription")}</ReferenceValueTableHeadCell>
+              {showSchedule ? (
+                <ReferenceValueTableHeadCell>
+                  {t("schedulePattern.column")}
+                </ReferenceValueTableHeadCell>
+              ) : null}
+              {showParent ? (
+                <ReferenceValueTableHeadCell>{t("editor.colParent")}</ReferenceValueTableHeadCell>
+              ) : null}
+              {showColorColumn ? (
+                <ReferenceValueTableHeadCell>{t("editor.colColor")}</ReferenceValueTableHeadCell>
+              ) : null}
+              <ReferenceValueTableHeadCell
+                sortable
+                onSort={() => toggleSort("is_active")}
+              >
+                {t("editor.colStatus")} {sortField === "is_active" && (sortAsc ? "↑" : "↓")}
+              </ReferenceValueTableHeadCell>
+              <ReferenceValueTableHeadCell align="right">
+                {t("editor.colActions")}
+              </ReferenceValueTableHeadCell>
+            </tr>
+          </ReferenceValueTableHead>
+          <ReferenceValueTableBody>
+            {newValueDraft ? (
+              <ReferenceValueTableRow highlighted>
+                <ReferenceValueTableCell>
+                  <Input
+                    value={newRow.code}
+                    onChange={(e) => setNewRow({ ...newRow, code: e.target.value })}
+                    onKeyDown={handleNewKeyDown}
+                    placeholder={t("editor.codePlaceholder")}
+                    className="h-7 text-sm"
+                    autoFocus
+                  />
+                </ReferenceValueTableCell>
+                <ReferenceValueTableCell>
+                  <Input
+                    value={newRow.label}
+                    onChange={(e) => setNewRow({ ...newRow, label: e.target.value })}
+                    onKeyDown={handleNewKeyDown}
+                    placeholder={t("editor.labelPlaceholder")}
+                    className="h-7 text-sm"
+                  />
+                </ReferenceValueTableCell>
+                <ReferenceValueTableCell>
+                  <Input
+                    value={newRow.description}
+                    onChange={(e) => setNewRow({ ...newRow, description: e.target.value })}
+                    onKeyDown={handleNewKeyDown}
+                    placeholder={t("editor.descriptionPlaceholder")}
+                    className="h-7 text-sm"
+                  />
+                </ReferenceValueTableCell>
+                {showSchedule ? (
+                  <ReferenceValueTableCell className="text-xs text-text-muted">
+                    —
+                  </ReferenceValueTableCell>
+                ) : null}
+                {showParent ? (
+                  <ReferenceValueTableCell>
+                    <select
+                      value={newRow.parentId == null ? "" : String(newRow.parentId)}
+                      onChange={(e) =>
+                        setNewRow({
+                          ...newRow,
+                          parentId: e.target.value ? Number(e.target.value) : null,
+                        })
+                      }
+                      className="h-7 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
+                    >
+                      <option value="">{t("editor.none")}</option>
+                      {parentCandidates.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.code} — {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </ReferenceValueTableCell>
+                ) : null}
+                {showColorColumn ? (
+                  <ReferenceValueTableCell>
+                    <span className="text-sm text-text-muted">—</span>
+                  </ReferenceValueTableCell>
+                ) : null}
+                <ReferenceValueTableCell>
+                  <Badge variant="secondary" className={REF_TABLE_BADGE_CLASS}>
+                    {t("editor.statusNew")}
+                  </Badge>
+                </ReferenceValueTableCell>
+                <ReferenceValueTableCell align="right">
+                  <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={refTableIconButtonClass()}
+                      onClick={() => void commitNewRow()}
+                      disabled={savingValue || !newRow.code.trim() || !newRow.label.trim()}
+                    >
+                      <Check className="h-3.5 w-3.5 text-status-success" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={refTableIconButtonClass()}
+                      onClick={cancelNewRow}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </ReferenceValueTableCell>
+              </ReferenceValueTableRow>
+            ) : null}
+
+            {pagedValues.map((v) => {
+              const isEditing = editingValueId === v.id;
+              const parentValue = v.parent_id
+                ? (values.find((p) => p.id === v.parent_id) ??
+                  parentValuesById.get(v.parent_id) ??
+                  null)
+                : null;
+              const isSystemRow = isSystemReferenceRow(v.metadata_json);
+              const showPencil = canUpdateValue;
+              const showTrash = canDeactivateValue && !isSystemRow && v.is_active;
+
+              return (
+                <ReferenceValueTableRow
+                  key={v.id}
+                  highlighted={isEditing}
+                  className={
+                    aliasValueId === v.id || patternValueId === v.id
+                      ? "ring-1 ring-inset ring-primary/30"
+                      : undefined
+                  }
+                >
+                  <ReferenceValueTableCell>
+                    {isEditing ? (
+                      <Input value={editRow.code} disabled className="h-7 bg-surface-1 text-sm" />
+                    ) : (
+                      <span className="font-mono text-xs">{v.code}</span>
+                    )}
+                  </ReferenceValueTableCell>
+                  <ReferenceValueTableCell>
+                    {isEditing ? (
+                      <Input
+                        value={editRow.label}
+                        onChange={(e) => setEditRow({ ...editRow, label: e.target.value })}
+                        onKeyDown={(e) => handleEditKeyDown(e, v.id)}
+                        className="h-7 text-sm"
+                        autoFocus
+                      />
+                    ) : (
+                      <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-2">
+                        <span className="min-w-0">{v.label}</span>
+                        {canUpdateValue ? (
+                          <button
+                            type="button"
+                            className="shrink-0 text-left text-xs font-medium text-primary underline-offset-2 hover:underline"
+                            onClick={() => {
+                              setAliasValueId(aliasValueId === v.id ? null : v.id);
+                              if (aliasValueId !== v.id) setPatternValueId(null);
+                            }}
+                          >
+                            {t("editor.aliases")}
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
+                  </ReferenceValueTableCell>
+                  <ReferenceValueTableCell>
+                    {isEditing ? (
+                      <Input
+                        value={editRow.description}
+                        onChange={(e) => setEditRow({ ...editRow, description: e.target.value })}
+                        onKeyDown={(e) => handleEditKeyDown(e, v.id)}
+                        className="h-7 text-sm"
+                      />
+                    ) : (
+                      <span className="inline-block max-w-[200px] truncate text-xs text-text-muted">
+                        {v.description ?? "—"}
+                      </span>
+                    )}
+                  </ReferenceValueTableCell>
+                  {showSchedule ? (
+                    <ReferenceValueTableCell className="text-xs text-text-muted">
+                      —
+                    </ReferenceValueTableCell>
+                  ) : null}
+                  {showParent ? (
+                    <ReferenceValueTableCell className="text-xs text-text-muted">
                       {isEditing ? (
-                        <Input value={editRow.code} disabled className="h-7 text-sm bg-surface-1" />
+                        <select
+                          value={editRow.parentId == null ? "" : String(editRow.parentId)}
+                          onChange={(e) =>
+                            setEditRow({
+                              ...editRow,
+                              parentId: e.target.value ? Number(e.target.value) : null,
+                            })
+                          }
+                          className="h-7 w-full rounded-md border border-surface-border bg-surface-0 px-2 text-sm"
+                        >
+                          <option value="">{t("editor.none")}</option>
+                          {parentCandidates
+                            .filter((p) => p.id !== v.id)
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.code} — {p.label}
+                              </option>
+                            ))}
+                        </select>
+                      ) : parentValue ? (
+                        parentValue.code
                       ) : (
-                        <span className="font-mono text-xs">{v.code}</span>
+                        "—"
                       )}
-                    </td>
-                    <td className="px-3 py-1.5">
-                      {isEditing ? (
-                        <Input
-                          value={editRow.label}
-                          onChange={(e) => setEditRow({ ...editRow, label: e.target.value })}
-                          onKeyDown={(e) => handleEditKeyDown(e, v.id)}
-                          className="h-7 text-sm"
-                          autoFocus
-                        />
-                      ) : (
-                        <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-2">
-                          <span className="min-w-0">{v.label}</span>
-                          {can("ref.manage") ? (
-                            <button
-                              type="button"
-                              className="shrink-0 text-left text-xs font-medium text-primary underline-offset-2 hover:underline"
-                              onClick={() => setAliasValueId(aliasValueId === v.id ? null : v.id)}
-                            >
-                              {t("editor.aliases")}
-                            </button>
-                          ) : null}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-3 py-1.5">
-                      {isEditing ? (
-                        <Input
-                          value={editRow.description}
-                          onChange={(e) => setEditRow({ ...editRow, description: e.target.value })}
-                          onKeyDown={(e) => handleEditKeyDown(e, v.id)}
-                          className="h-7 text-sm"
-                        />
-                      ) : (
-                        <span className="text-text-muted text-xs truncate max-w-[200px] inline-block">
-                          {v.description ?? "—"}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-1.5 text-text-muted text-xs">
-                      {parentValue ? parentValue.code : "—"}
-                    </td>
-                    {showColorColumn ? (
-                      <td className="px-3 py-1.5 align-middle">
-                        <ReferenceColorSwatchHex color={v.color_hex} />
-                      </td>
-                    ) : null}
-                    <td className="px-3 py-1.5 align-middle">
-                      <Badge
-                        variant={v.is_active ? "default" : "secondary"}
-                        className="text-[10px]"
-                      >
-                        {v.is_active ? t("editor.statusActive") : t("editor.statusInactive")}
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-1.5 text-right align-middle">
-                      {isEditing ? (
-                        <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
+                    </ReferenceValueTableCell>
+                  ) : null}
+                  {showColorColumn ? (
+                    <ReferenceValueTableCell>
+                      <ReferenceColorSwatchHex color={v.color_hex} />
+                    </ReferenceValueTableCell>
+                  ) : null}
+                  <ReferenceValueTableCell>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={v.is_active}
+                        onCheckedChange={(next) => void setValueActive(v.id, next)}
+                        disabled={savingValue || !canDeactivateValue || isSystemRow}
+                        aria-label={t("editor.colStatus")}
+                      />
+                      <span className="text-sm text-text-muted">
+                        {v.is_active
+                          ? t("editor.statusActive")
+                          : t("editor.statusInactive")}
+                      </span>
+                    </div>
+                  </ReferenceValueTableCell>
+                  <ReferenceValueTableCell align="right">
+                    {isEditing ? (
+                      <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={refTableIconButtonClass()}
+                          onClick={() => void commitEdit(v.id)}
+                          disabled={savingValue}
+                        >
+                          <Check className="h-3.5 w-3.5 text-status-success" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={refTableIconButtonClass()}
+                          onClick={cancelEdit}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ) : showPencil || showTrash ? (
+                      <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
+                        {showPencil ? (
                           <Button
+                            type="button"
                             variant="ghost"
                             size="icon"
                             className={refTableIconButtonClass()}
-                            onClick={() => void commitEdit(v.id)}
-                            disabled={savingValue}
+                            aria-label={t("editor.edit")}
+                            onClick={() => startEdit(v)}
                           >
-                            <Check className="h-3.5 w-3.5 text-status-success" />
+                            <Pencil className="h-3.5 w-3.5" />
                           </Button>
+                        ) : null}
+                        {showTrash ? (
                           <Button
+                            type="button"
                             variant="ghost"
                             size="icon"
                             className={refTableIconButtonClass()}
-                            onClick={cancelEdit}
+                            aria-label={t("editor.deactivate")}
+                            onClick={() => setDeleteTarget(v)}
                           >
-                            <X className="h-3.5 w-3.5" />
+                            <Trash2 className="h-3.5 w-3.5" />
                           </Button>
-                        </div>
-                      ) : (
-                        <div className={REF_TABLE_ACTIONS_GROUP_CLASS}>
-                          {showPencil ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className={refTableIconButtonClass()}
-                              aria-label={t("editor.edit")}
-                              onClick={() => startEdit(v)}
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                          ) : null}
-                          {showTrash ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className={refTableIconButtonClass()}
-                              aria-label={t("editor.deactivate")}
-                              onClick={() => setDeleteTarget(v)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          ) : null}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* ── Alias panel (expanded below table) ──────────────────────────── */}
-      {aliasValue && (
-        <div className="border-t border-surface-border">
-          <ReferenceAliasPanel value={aliasValue} onClose={() => setAliasValueId(null)} />
-        </div>
-      )}
-
-      {/* ── Pagination ──────────────────────────────────────────────────── */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between px-4 py-2 border-t border-surface-border">
-          <span className="text-xs text-text-muted">
-            {t("editor.pageInfo", {
-              current: page + 1,
-              total: totalPages,
-              count: sortedValues.length,
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-text-muted">{REF_TABLE_EMPTY_ACTIONS_MARK}</span>
+                    )}
+                  </ReferenceValueTableCell>
+                </ReferenceValueTableRow>
+              );
             })}
-          </span>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={() => setPage(Math.max(0, page - 1))}
-              disabled={page === 0}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
-              disabled={page >= totalPages - 1}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
+          </ReferenceValueTableBody>
+        </ReferenceValueTableGrid>
+      </ReferenceValueTable>
 
-      {/* ── Delete confirmation dialog ──────────────────────────────────── */}
-      <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("editor.deleteTitle")}</DialogTitle>
-            <DialogDescription>
-              {t("editor.deleteDescription", { code: deleteTarget?.code })}
-            </DialogDescription>
-          </DialogHeader>
-          {!deleteTarget?.is_active && (
-            <p className="text-xs text-text-muted">{t("editor.alreadyInactive")}</p>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={savingValue}>
-              {t("editor.cancel")}
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => void confirmDelete()}
-              disabled={savingValue}
-            >
-              {t("editor.deactivate")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+      <SchedulePatternDialog
+        value={patternValue ?? null}
+        open={patternValue != null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setPatternValueId(null);
+        }}
+        canMutate={canUpdateValue}
+      />
+    </>
   );
 }

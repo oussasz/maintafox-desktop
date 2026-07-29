@@ -158,7 +158,7 @@ async fn conflict_routing_creates_operator_review_records() {
             entity_sync_id: "wo-sync-conflict-1".to_string(),
             operation: "update".to_string(),
             row_version: 2,
-            payload_json: r#"{"status":"planned"}"#.to_string(),
+            payload_json: r#"{"status":"planning"}"#.to_string(),
             origin_machine_id: Some("machine-z".to_string()),
         },
     )

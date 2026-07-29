@@ -107,6 +107,15 @@ pub struct SessionManager {
     pub current: Option<LocalSession>,
 }
 
+/// Outcome of [`SessionManager::require_active_user`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequireSessionFailure {
+    /// No session, or hard expiry passed.
+    MissingOrExpired,
+    /// Session exists but is idle-locked (or manually locked).
+    IdleLocked,
+}
+
 impl SessionManager {
     pub const fn new() -> Self {
         Self { current: None }
@@ -117,6 +126,26 @@ impl SessionManager {
         self.current
             .as_ref()
             .is_some_and(|s| !s.is_expired() && !s.is_idle_locked())
+    }
+
+    /// Validate the in-memory session for a protected IPC command.
+    ///
+    /// On success, refreshes `last_activity_at` (idle-lock prevention) and returns
+    /// a clone of the authenticated user.
+    pub fn require_active_user(&mut self) -> Result<AuthenticatedUser, RequireSessionFailure> {
+        match &self.current {
+            None => return Err(RequireSessionFailure::MissingOrExpired),
+            Some(session) if session.is_expired() => {
+                return Err(RequireSessionFailure::MissingOrExpired);
+            }
+            Some(session) if session.is_idle_locked() => {
+                return Err(RequireSessionFailure::IdleLocked);
+            }
+            Some(_) => {}
+        }
+        self.touch();
+        // SAFETY: branches above guarantee a non-expired, non-idle-locked session.
+        Ok(self.current.as_ref().unwrap().user.clone())
     }
 
     /// Returns a reference to the current authenticated user, if any.
@@ -453,6 +482,38 @@ mod tests {
         mgr.lock_session();
         assert!(!mgr.is_authenticated(), "Locked session must not be 'authenticated'");
         assert!(mgr.current.as_ref().unwrap().is_locked);
+    }
+
+    #[test]
+    fn require_active_user_ok_touches_activity() {
+        let mut mgr = SessionManager::new();
+        mgr.create_session(make_user());
+        let before = mgr.current.as_ref().unwrap().last_activity_at;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let user = mgr.require_active_user().expect("active session");
+        assert_eq!(user.username, "test_user");
+        let after = mgr.current.as_ref().unwrap().last_activity_at;
+        assert!(after >= before);
+    }
+
+    #[test]
+    fn require_active_user_idle_locked() {
+        let mut mgr = SessionManager::new();
+        mgr.create_session(make_user());
+        mgr.lock_session();
+        assert_eq!(
+            mgr.require_active_user().unwrap_err(),
+            RequireSessionFailure::IdleLocked
+        );
+    }
+
+    #[test]
+    fn require_active_user_missing() {
+        let mut mgr = SessionManager::new();
+        assert_eq!(
+            mgr.require_active_user().unwrap_err(),
+            RequireSessionFailure::MissingOrExpired
+        );
     }
 
     #[test]

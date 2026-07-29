@@ -1,18 +1,32 @@
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  AddWoToolInput,
   DowntimeType,
+  MarkWoToolStatusInput,
   TaskResultCode,
   WoDelaySegment,
   WoDowntimeSegment,
   WoExecPart,
   WoExecTask,
+  WoExecutionEvent,
   WoIntervener,
   WoMechCompleteInput,
+  WoPlanAdherence,
+  WoTool,
   WorkOrder,
 } from "@shared/ipc-types";
 
 // Re-export canonical types for backward compatibility
-export type { TaskResultCode, DowntimeType, WoIntervener, WoDelaySegment, WoDowntimeSegment };
+export type {
+  TaskResultCode,
+  DowntimeType,
+  WoIntervener,
+  WoDelaySegment,
+  WoDowntimeSegment,
+  WoPlanAdherence,
+  WoExecutionEvent,
+  WoTool,
+};
 
 export interface AddLaborInput {
   wo_id: number;
@@ -136,6 +150,10 @@ export async function confirmNoParts(woId: number): Promise<void> {
   return invoke<void>("confirm_no_parts", { woId });
 }
 
+export async function unconfirmNoParts(woId: number): Promise<void> {
+  return invoke<void>("unconfirm_no_parts", { woId });
+}
+
 export async function listParts(woId: number): Promise<WoExecPart[]> {
   return invoke<WoExecPart[]>("list_wo_parts", { woId });
 }
@@ -162,12 +180,14 @@ export async function openDowntime(
   downtimeType: DowntimeType,
   actorId: number,
   comment?: string | null,
+  classificationCode?: string | null,
 ): Promise<WoDowntimeSegment> {
   return invoke<WoDowntimeSegment>("open_downtime", {
     woId,
     downtimeType,
     actorId,
     comment: comment ?? null,
+    classificationCode: classificationCode ?? null,
   });
 }
 
@@ -184,4 +204,43 @@ export async function listDelaySegments(woId: number): Promise<WoDelaySegment[]>
 
 export async function listDowntimeSegments(woId: number): Promise<WoDowntimeSegment[]> {
   return invoke<WoDowntimeSegment[]>("list_downtime_segments", { woId });
+}
+
+// ── Plan vs Actual ───────────────────────────────────────────────────────────
+
+export interface MarkPartNotUsedInput {
+  wo_part_id: number;
+  not_used_reason_id: number;
+  not_used_comment?: string | null;
+  actor_id?: number | null;
+}
+
+export async function markPartNotUsed(input: MarkPartNotUsedInput): Promise<WoExecPart> {
+  return invoke<WoExecPart>("mark_part_not_used", { input });
+}
+
+export async function getPlanAdherence(woId: number): Promise<WoPlanAdherence> {
+  return invoke<WoPlanAdherence>("get_wo_plan_adherence", { woId });
+}
+
+export async function listExecutionEvents(woId: number): Promise<WoExecutionEvent[]> {
+  return invoke<WoExecutionEvent[]>("list_wo_execution_events", { woId });
+}
+
+// ── Tools ────────────────────────────────────────────────────────────────────
+
+export async function listWoTools(woId: number): Promise<WoTool[]> {
+  return invoke<WoTool[]>("list_wo_tools", { woId });
+}
+
+export async function addWoTool(input: AddWoToolInput): Promise<WoTool> {
+  return invoke<WoTool>("add_wo_tool", { input });
+}
+
+export async function markWoToolUsed(input: MarkWoToolStatusInput): Promise<WoTool> {
+  return invoke<WoTool>("mark_wo_tool_used", { input });
+}
+
+export async function markWoToolNotUsed(input: MarkWoToolStatusInput): Promise<WoTool> {
+  return invoke<WoTool>("mark_wo_tool_not_used", { input });
 }

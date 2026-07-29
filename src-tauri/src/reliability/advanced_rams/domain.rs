@@ -5,6 +5,8 @@ pub struct WeibullFitRunInput {
     pub equipment_id: i64,
     pub period_start: Option<String>,
     pub period_end: Option<String>,
+    #[serde(default)]
+    pub include_censored: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,6 +194,12 @@ pub struct FmecaSoCell {
 pub struct FmecaSeverityOccurrenceMatrix {
     pub equipment_id: i64,
     pub cells: Vec<FmecaSoCell>,
+    pub reference_domain_ready: bool,
+    pub reference_modes_published_count: i64,
+    pub fmeca_mode_links_count: i64,
+    pub fmeca_orphan_mode_links_count: i64,
+    pub warning_code: Option<String>,
+    pub warning_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -213,6 +221,24 @@ pub struct FmecaItemWithContext {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuggestedPartsForFailureInput {
+    pub equipment_id: i64,
+    pub failure_mode_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuggestedPartForFailure {
+    pub article_id: i64,
+    pub article_code: String,
+    pub article_name: String,
+    pub suggested_quantity: f64,
+    pub priority: i64,
+    pub notes: Option<String>,
+    pub stock_on_hand: f64,
+    pub stock_available: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReliabilityRulIndicator {
     pub equipment_id: i64,
     pub weibull_beta: Option<f64>,
@@ -221,6 +247,52 @@ pub struct ReliabilityRulIndicator {
     pub predicted_rul_hours: Option<f64>,
     pub t_hours: Option<f64>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeibullDashboardInput {
+    pub equipment_id: i64,
+    #[serde(default)]
+    pub include_censored: Option<bool>,
+    #[serde(default)]
+    pub comparison_equipment_id: Option<i64>,
+    #[serde(default)]
+    pub t_offset_hours: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeibullCurvePoint {
+    pub t: f64,
+    pub r: f64,
+    pub r_low: f64,
+    pub r_high: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeibullPmMarker {
+    pub t: f64,
+    pub r: f64,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeibullDashboardPayload {
+    pub equipment_id: i64,
+    pub include_censored: bool,
+    pub comparison_equipment_id: Option<i64>,
+    pub t_offset_hours: f64,
+    pub t_effective_hours: f64,
+    pub beta_actual: Option<f64>,
+    pub beta_industrial_standard: Option<f64>,
+    pub beta_industrial_source: Option<String>,
+    pub eta_hours: Option<f64>,
+    pub points: Vec<WeibullCurvePoint>,
+    pub comparison_points: Vec<WeibullCurvePoint>,
+    pub pm_marker: Option<WeibullPmMarker>,
+    pub r_live: Option<f64>,
+    pub rul_live_hours: Option<f64>,
+    pub danger_threshold_r: f64,
+    pub pm_threshold_r: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

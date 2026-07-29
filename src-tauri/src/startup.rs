@@ -184,12 +184,14 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         return Err(crate::errors::AppError::Internal(anyhow::anyhow!(reason)));
     }
 
-    info!("startup: enforcing equipment taxonomy reference integrity (EQUIPMENT.STATUS / CRITICALITY / CLASS)");
+    info!("startup: enforcing system reference catalog integrity (EQUIPMENT / DI / PERSONNEL / WORK)");
     if let Err(e) =
-        crate::assets::taxonomy_reference::ensure_equipment_taxonomy_reference_integrity(&app_state.db)
-            .await
+        crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(
+            &app_state.db,
+        )
+        .await
     {
-        let reason = format!("Equipment taxonomy reference integrity check failed: {e}");
+        let reason = format!("System reference catalog integrity check failed: {e}");
         error!("{reason}");
         emit_event(&app, StartupEvent::Failed { reason: reason.clone() });
         window.show().ok();
@@ -203,8 +205,24 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     if let Err(e) = crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&app_state.db, 0).await {
         warn!("startup: tenant bootstrap returned error (non-fatal): {e}");
     }
+    // Idempotent heal + fail-closed check for DBs that still have NULL-scoped org nodes.
+    if let Err(e) = crate::org::model_scope::heal_null_structure_model_ids_onto_active(&app_state.db).await {
+        warn!("startup: org structure_model_id heal returned error (non-fatal): {e}");
+    } else if let Err(e) = crate::org::model_scope::assert_no_null_structure_model_ids(&app_state.db).await {
+        warn!("startup: org structure_model_id invariant violated after heal (non-fatal): {e}");
+    }
+
+    // Phase 3c removed: RAMS demo seed is DEMO-ONLY and must never run in the
+    // production app flow (startup, equipment create, login, onboarding, migrations).
+    // Explicit developer entry points only:
+    //   - seed_rams_sql_demo_data
+    //   - seed_rams_presentation_data
 
     // Phase 4: entitlement cache and offline-safe fallback state.
+    info!("startup: ensuring licensing trust keys");
+    if let Err(err) = crate::license::security::ensure_default_licensing_trust_keys(&app_state.db).await {
+        warn!("startup: licensing trust key seed failed (non-fatal): {err}");
+    }
     info!("startup: loading entitlement cache");
     if let Err(err) = crate::entitlements::queries::get_entitlement_summary(&app_state.db).await {
         warn!("startup: entitlement cache warmup failed (non-fatal): {err}");
@@ -222,6 +240,15 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
             crate::notifications::scheduler::start_notification_scheduler(scheduler_db).await;
         });
         info!("startup: notification scheduler started");
+    }
+
+    // Phase 5b: DI SLA breach poller (non-fatal)
+    {
+        let sla_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::di::sla_poller::start_di_sla_poller(sla_db).await;
+        });
+        info!("startup: DI SLA poller started");
     }
 
     {

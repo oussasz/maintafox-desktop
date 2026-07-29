@@ -291,14 +291,8 @@ pub async fn cancel_wo(
         AppError::Internal(anyhow::anyhow!("Stored WO has invalid status: {e}"))
     })?;
 
-    // Step-up required for executing states or completion states
-    if status.is_executing()
-        || matches!(
-            status,
-            crate::wo::domain::WoStatus::MechanicallyComplete
-                | crate::wo::domain::WoStatus::TechnicallyVerified
-        )
-    {
+    // Step-up required for executing or completed states
+    if status.is_executing() || matches!(status, crate::wo::domain::WoStatus::Completed) {
         let guard = state.session.read().await;
         if !guard.is_step_up_valid() {
             audit::record_wo_change_event(&state.db, audit::WoAuditInput {
@@ -344,6 +338,100 @@ pub async fn plan_wo(
         action: "planned".into(),
         actor_id: Some(i64::from(user.user_id)),
         summary: Some("Work order planned".into()),
+        details_json: None,
+        requires_step_up: false,
+        apply_result: "applied".into(),
+    }).await;
+    Ok(wo)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// F2) submit / mark ready / readiness / return / approve — ot.edit / ot.plan
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn submit_wo(
+    input: crate::wo::workflow::actions::WoSubmitInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    let wo = crate::wo::workflow::actions::submit_wo(&state.db, input).await?;
+    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
+        wo_id: Some(wo.id),
+        action: "submitted".into(),
+        actor_id: Some(i64::from(user.user_id)),
+        summary: Some("Work order submitted to planning".into()),
+        details_json: None,
+        requires_step_up: false,
+        apply_result: "applied".into(),
+    }).await;
+    Ok(wo)
+}
+
+#[tauri::command]
+pub async fn evaluate_wo_readiness(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::workflow::readiness::ReadinessReport> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.view", PermissionScope::Global);
+    crate::wo::workflow::readiness::evaluate_wo_readiness(&state.db, wo_id).await
+}
+
+#[tauri::command]
+pub async fn mark_wo_ready(
+    input: crate::wo::workflow::actions::WoMarkReadyInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    let wo = crate::wo::workflow::actions::mark_wo_ready(&state.db, input).await?;
+    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
+        wo_id: Some(wo.id),
+        action: "marked_ready".into(),
+        actor_id: Some(i64::from(user.user_id)),
+        summary: Some("Work order marked ready".into()),
+        details_json: None,
+        requires_step_up: false,
+        apply_result: "applied".into(),
+    }).await;
+    Ok(wo)
+}
+
+#[tauri::command]
+pub async fn return_to_planning(
+    input: crate::wo::workflow::actions::WoReturnToPlanningInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    let wo = crate::wo::workflow::actions::return_to_planning(&state.db, input).await?;
+    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
+        wo_id: Some(wo.id),
+        action: "returned_to_planning".into(),
+        actor_id: Some(i64::from(user.user_id)),
+        summary: Some("Work order returned to planning".into()),
+        details_json: None,
+        requires_step_up: false,
+        apply_result: "applied".into(),
+    }).await;
+    Ok(wo)
+}
+
+#[tauri::command]
+pub async fn approve_planning(
+    input: crate::wo::workflow::actions::WoApprovePlanningInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    let wo = crate::wo::workflow::actions::approve_planning(&state.db, input).await?;
+    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
+        wo_id: Some(wo.id),
+        action: "planning_approved".into(),
+        actor_id: Some(i64::from(user.user_id)),
+        summary: Some("Work order planning approved".into()),
         details_json: None,
         requires_step_up: false,
         apply_result: "applied".into(),
@@ -495,6 +583,16 @@ pub async fn complete_wo_mechanically(
     Ok(wo)
 }
 
+#[tauri::command]
+pub async fn evaluate_wo_completion_gates(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::wo::execution::WoCompletionGate>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.view", PermissionScope::Global);
+    crate::wo::execution::evaluate_completion_gates(&state.db, wo_id).await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // M) add_labor — ot.edit
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -569,6 +667,20 @@ pub async fn record_part_usage(
     parts::record_actual_usage(&state.db, wo_part_id, quantity_used, unit_cost).await
 }
 
+#[tauri::command]
+pub async fn mark_part_not_used(
+    input: parts::MarkPartNotUsedInput,
+    state: State<'_, AppState>,
+) -> AppResult<parts::WoPart> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    let mut input = input;
+    if input.actor_id.is_none() {
+        input.actor_id = Some(user.user_id.into());
+    }
+    parts::mark_part_not_used(&state.db, input).await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // R) confirm_no_parts — ot.edit
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -581,6 +693,16 @@ pub async fn confirm_no_parts(
     let user = require_session!(state);
     require_permission!(state, &user, "ot.edit", PermissionScope::Global);
     parts::confirm_no_parts_used(&state.db, wo_id, user.user_id.into()).await
+}
+
+#[tauri::command]
+pub async fn unconfirm_no_parts(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    parts::unconfirm_no_parts_used(&state.db, wo_id, user.user_id.into()).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -642,6 +764,66 @@ pub async fn list_tasks(
     tasks::list_tasks(&state.db, wo_id).await
 }
 
+#[tauri::command]
+pub async fn get_wo_plan_adherence(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::plan_adherence::WoPlanAdherence> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.view", PermissionScope::Global);
+    crate::wo::plan_adherence::get_plan_adherence(&state.db, wo_id).await
+}
+
+#[tauri::command]
+pub async fn list_wo_execution_events(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::wo::execution_log::WoExecutionEvent>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.view", PermissionScope::Global);
+    crate::wo::execution_log::list_execution_events(&state.db, wo_id).await
+}
+
+#[tauri::command]
+pub async fn list_wo_tools(
+    wo_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::wo::tools::WoTool>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.view", PermissionScope::Global);
+    crate::wo::tools::list_tools(&state.db, wo_id).await
+}
+
+#[tauri::command]
+pub async fn add_wo_tool(
+    input: crate::wo::tools::AddToolInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::tools::WoTool> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    crate::wo::tools::add_tool(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn mark_wo_tool_used(
+    tool_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::tools::WoTool> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    crate::wo::tools::mark_tool_used(&state.db, tool_id).await
+}
+
+#[tauri::command]
+pub async fn mark_wo_tool_not_used(
+    tool_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::tools::WoTool> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ot.edit", PermissionScope::Global);
+    crate::wo::tools::mark_tool_not_used(&state.db, tool_id).await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // V) open_downtime — ot.edit
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -652,6 +834,7 @@ pub async fn open_downtime(
     downtime_type: String,
     comment: Option<String>,
     actor_id: i64,
+    classification_code: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<delay::WoDowntimeSegment> {
     let user = require_session!(state);
@@ -663,6 +846,7 @@ pub async fn open_downtime(
             downtime_type,
             comment,
             actor_id,
+            classification_code,
         },
     )
     .await
@@ -920,6 +1104,7 @@ pub async fn upload_wo_attachment(
     file_bytes: Vec<u8>,
     mime_type: String,
     notes: Option<String>,
+    phase: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<attachments::WoAttachment> {
     let user = require_session!(state);
@@ -937,6 +1122,7 @@ pub async fn upload_wo_attachment(
         mime_type,
         notes,
         uploaded_by_id: i64::from(user.user_id),
+        phase,
     };
 
     let attachment = attachments::save_wo_attachment(&state.db, &app_data_dir, input).await?;

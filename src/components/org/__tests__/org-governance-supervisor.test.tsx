@@ -32,6 +32,7 @@ vi.mock("@/services/org-governance-service", () => ({
   validateOrgModelForPublish: (...args: unknown[]) => mockValidateOrgModelForPublish(...args),
   publishOrgModel: (...args: unknown[]) => mockPublishOrgModel(...args),
   listOrgChangeEvents: (...args: unknown[]) => mockListOrgChangeEvents(...args),
+  reconcileOrgDraftLineage: vi.fn().mockResolvedValue({ draft_model_id: 2, cloned_count: 1 }),
 }));
 
 const mockListOrgTree = vi.fn().mockResolvedValue([]);
@@ -49,13 +50,25 @@ vi.mock("@/services/org-node-service", () => ({
 // i18n pass-through: returns the key as text
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, opts?: Record<string, unknown>) => {
-      if (opts && "count" in opts) return `${key}::count=${opts["count"]}`;
-      if (opts && "version" in opts) return `${key}::version=${opts["version"]}`;
-      if (opts && "remapCount" in opts) return `${key}::remapCount=${opts["remapCount"]}`;
+    t: (key: string, opts?: string | Record<string, unknown>) => {
+      // i18next allows t(key, defaultValue: string) — ignore string defaults in tests
+      if (typeof opts !== "object" || opts === null) return key;
+      // Empty defaultValue means “key missing → caller should fall back”
+      if (opts["defaultValue"] === "") return key;
+      if ("count" in opts) return `${key}::count=${opts["count"]}`;
+      if ("version" in opts) return `${key}::version=${opts["version"]}`;
+      if ("remapCount" in opts) return `${key}::remapCount=${opts["remapCount"]}`;
       return key;
     },
     i18n: { language: "fr", changeLanguage: vi.fn() },
+  }),
+}));
+
+// Publish requires step-up in production; unit tests call the action directly.
+vi.mock("@/hooks/use-step-up", () => ({
+  useStepUp: () => ({
+    withStepUp: async <T,>(action: () => Promise<T>) => action(),
+    StepUpDialogElement: null,
   }),
 }));
 
@@ -82,6 +95,7 @@ const activeSnapshot: OrgDesignerSnapshot = {
   active_model_version: 3,
   draft_model_id: 2,
   draft_model_version: 1,
+  display_model_id: 1,
   nodes: [
     {
       node_id: 1,
@@ -118,15 +132,34 @@ const blockedValidation: OrgPublishValidationResult = {
       severity: "error",
       message: "Node type WORKSHOP has no mapping",
       related_id: 5,
+      params: { nodeName: "Workshop A", typeCode: "WORKSHOP" },
     },
     {
       code: "PARENT_CHILD_DRIFT",
       severity: "error",
       message: "DEPT→TEAM rule removed",
       related_id: 6,
+      params: {},
     },
   ],
   remap_count: 0,
+};
+
+const unmappedValidation: OrgPublishValidationResult = {
+  model_id: 2,
+  can_publish: false,
+  issue_count: 1,
+  blocking_count: 1,
+  issues: [
+    {
+      code: "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS",
+      severity: "error",
+      message: "active node 'demo pilot company' has ops refs but no draft clone",
+      related_id: 50,
+      params: { nodeName: "demo pilot company", opsRefCount: "3" },
+    },
+  ],
+  remap_count: 2,
 };
 
 const passValidation: OrgPublishValidationResult = {
@@ -191,6 +224,7 @@ function resetStores() {
     typeFilter: null,
     selectedNodeId: null,
     preview: null,
+    previewPayload: null,
     previewOpen: false,
     loading: false,
     previewLoading: false,
@@ -199,6 +233,7 @@ function resetStores() {
   useOrgGovernanceStore.setState({
     publishValidation: null,
     validationLoading: false,
+    reconcileLoading: false,
     auditEvents: [],
     auditLoading: false,
     error: null,
@@ -243,9 +278,40 @@ describe("Supervisor Verification — Sprint S3 Governance UI", () => {
       expect(issuesList).toBeInTheDocument();
       expect(issuesList.querySelectorAll("li").length).toBeGreaterThanOrEqual(2);
 
-      // Issue codes must be visible
-      expect(screen.getByText("MISSING_TYPE_CODE")).toBeInTheDocument();
-      expect(screen.getByText("PARENT_CHILD_DRIFT")).toBeInTheDocument();
+      // User-facing messages (technical codes are not shown as badges)
+      expect(screen.getByText("Node type WORKSHOP has no mapping")).toBeInTheDocument();
+      expect(screen.getByText("DEPT→TEAM rule removed")).toBeInTheDocument();
+      expect(
+        issuesList.querySelector('[data-issue-code="MISSING_TYPE_CODE"]'),
+      ).toBeTruthy();
+      expect(
+        issuesList.querySelector('[data-issue-code="PARENT_CHILD_DRIFT"]'),
+      ).toBeTruthy();
+    });
+
+    it("disables publish and shows repair CTA for UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS", async () => {
+      mockGetOrgDesignerSnapshot.mockResolvedValue(activeSnapshot);
+      mockValidateOrgModelForPublish.mockResolvedValue(unmappedValidation);
+      mockListOrgChangeEvents.mockResolvedValue([]);
+
+      render(<OrganizationDesignerPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText("designer.title")).toBeInTheDocument();
+      });
+      await act(async () => {
+        useOrgDesignerStore.setState({ workspaceMode: "draft" });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("publish-blockers-banner")).toBeInTheDocument();
+      });
+
+      expect(screen.getByTestId("publish-button")).toBeDisabled();
+      expect(
+        screen.getByText("active node 'demo pilot company' has ops refs but no draft clone"),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("repair-draft-lineage")).toBeInTheDocument();
     });
 
     it("enables the publish button when validation passes", async () => {
@@ -325,10 +391,10 @@ describe("Supervisor Verification — Sprint S3 Governance UI", () => {
       const rows = screen.getAllByTestId("audit-event-row");
       expect(rows).toHaveLength(3);
 
-      // Events must contain the expected change types
-      expect(screen.getByText("publish_model")).toBeInTheDocument();
-      expect(screen.getByText("move_node")).toBeInTheDocument();
-      expect(screen.getByText("update_metadata")).toBeInTheDocument();
+      // Events must contain the expected change types (i18n keys in unit tests)
+      expect(screen.getByText("audit.changeType.publish_model")).toBeInTheDocument();
+      expect(screen.getByText("audit.changeType.move_node")).toBeInTheDocument();
+      expect(screen.getByText("audit.changeType.update_metadata")).toBeInTheDocument();
     });
   });
 });

@@ -1,6 +1,6 @@
 import { z, ZodError } from "zod";
 
-import { invoke } from "@/lib/ipc-invoke";
+import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
   ApplySyncBatchInput,
   ApplySyncBatchResult,
@@ -253,18 +253,26 @@ export async function listOutboxItems(filter: ListOutboxFilter = {}): Promise<Sy
   }
 }
 
-export async function getSyncPushPayload(limit?: number): Promise<SyncPushPayload> {
+export async function getSyncPushPayload(
+  limit?: number,
+  options?: { silent?: boolean },
+): Promise<SyncPushPayload> {
   try {
-    const result = await invoke<unknown>("get_sync_push_payload", { limit });
+    const inv = options?.silent ? invokeSilent : invoke;
+    const result = await inv<unknown>("get_sync_push_payload", { limit });
     return SyncPushPayloadSchema.parse(result) as SyncPushPayload;
   } catch (err) {
     throw formatDecodeError("get_sync_push_payload", err);
   }
 }
 
-export async function applySyncBatch(input: ApplySyncBatchInput): Promise<ApplySyncBatchResult> {
+export async function applySyncBatch(
+  input: ApplySyncBatchInput,
+  options?: { silent?: boolean },
+): Promise<ApplySyncBatchResult> {
   try {
-    const result = await invoke<unknown>("apply_sync_batch", { input });
+    const inv = options?.silent ? invokeSilent : invoke;
+    const result = await inv<unknown>("apply_sync_batch", { input });
     return ApplySyncBatchResultSchema.parse(result) as ApplySyncBatchResult;
   } catch (err) {
     throw formatDecodeError("apply_sync_batch", err);

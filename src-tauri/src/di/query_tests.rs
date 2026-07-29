@@ -74,9 +74,9 @@ mod tests {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at) \
+            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
              VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
-             datetime('now'), datetime('now'));".to_string(),
+             datetime('now'), datetime('now'), 1);".to_string(),
         ))
         .await
         .expect("insert test org_node");
@@ -95,15 +95,28 @@ mod tests {
         .expect("id")
     }
 
+    async fn seeded_symptom_id(db: &sea_orm::DatabaseConnection) -> i64 {
+        crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+            .await
+            .expect("symptom lookup")
+            .expect("seeded DI.SYMPTOM vibration")
+    }
+
     /// Helper to build a standard DiCreateInput.
-    fn make_create_input(user_id: i64, title: &str, description: &str) -> DiCreateInput {
+    async fn make_create_input(
+        db: &sea_orm::DatabaseConnection,
+        user_id: i64,
+        title: &str,
+        description: &str,
+    ) -> DiCreateInput {
         DiCreateInput {
             asset_id: 1,
             org_node_id: 1,
             title: title.to_string(),
             description: description.to_string(),
             origin_type: "operator".to_string(),
-            symptom_code_id: None,
+            request_type: "repair".to_string(),
+            symptom_code_id: Some(seeded_symptom_id(db).await),
             impact_level: "unknown".to_string(),
             production_impact: false,
             safety_flag: false,
@@ -114,6 +127,42 @@ mod tests {
             source_inspection_anomaly_id: None,
             submitter_id: user_id,
         }
+    }
+
+    #[tokio::test]
+    async fn create_rejects_unknown_origin_code() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let mut input = make_create_input(&db, user_id, "Bad origin", "Desc").await;
+        input.origin_type = "not-in-catalog".to_string();
+        let err = create_intervention_request(&db, input)
+            .await
+            .expect_err("unknown origin must fail");
+        assert!(matches!(err, crate::errors::AppError::ValidationFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn create_rejects_null_symptom() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let mut input = make_create_input(&db, user_id, "No symptom", "Desc").await;
+        input.symptom_code_id = None;
+        let err = create_intervention_request(&db, input)
+            .await
+            .expect_err("null symptom must fail");
+        assert!(matches!(err, crate::errors::AppError::ValidationFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn create_rejects_unknown_symptom_id() {
+        let db = setup().await;
+        let user_id = get_user_id(&db).await;
+        let mut input = make_create_input(&db, user_id, "Bad symptom", "Desc").await;
+        input.symptom_code_id = Some(9_999_999);
+        let err = create_intervention_request(&db, input)
+            .await
+            .expect_err("unknown symptom must fail");
+        assert!(matches!(err, crate::errors::AppError::ValidationFailed(_)));
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -127,7 +176,7 @@ mod tests {
 
         let di = create_intervention_request(
             &db,
-            make_create_input(user_id, "Pump vibration alert", "Excessive vibration on pump P-101"),
+            make_create_input(&db, user_id, "Pump vibration alert", "Excessive vibration on pump P-101").await,
         )
         .await
         .expect("create_di should succeed");
@@ -150,7 +199,7 @@ mod tests {
 
         let di = create_intervention_request(
             &db,
-            make_create_input(user_id, "Test DI", "Description"),
+            make_create_input(&db, user_id, "Test DI", "Description").await,
         )
         .await
         .expect("create_di");
@@ -171,7 +220,7 @@ mod tests {
 
         let created = create_intervention_request(
             &db,
-            make_create_input(user_id, "Fetched DI", "Fetch test"),
+            make_create_input(&db, user_id, "Fetched DI", "Fetch test").await,
         )
         .await
         .expect("create_di");
@@ -184,6 +233,14 @@ mod tests {
         assert_eq!(fetched.id, created.id);
         assert_eq!(fetched.code, created.code);
         assert_eq!(fetched.title, "Fetched DI");
+        assert!(
+            fetched.submitter_display_name.is_some(),
+            "submitter_display_name must be enriched"
+        );
+        assert!(
+            fetched.asset_code.is_some() || fetched.asset_label.is_some(),
+            "asset display fields must be enriched when equipment exists"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -197,7 +254,7 @@ mod tests {
 
         let di = create_intervention_request(
             &db,
-            make_create_input(user_id, "Guard test", "Guard description"),
+            make_create_input(&db, user_id, "Guard test", "Guard description").await,
         )
         .await
         .expect("create_di");
@@ -218,6 +275,7 @@ mod tests {
                 expected_row_version: 1,
                 title: Some("New title".into()),
                 description: None,
+                request_type: None,
                 symptom_code_id: None,
                 impact_level: None,
                 production_impact: None,
@@ -245,7 +303,7 @@ mod tests {
 
         let di = create_intervention_request(
             &db,
-            make_create_input(user_id, "Original title", "Original desc"),
+            make_create_input(&db, user_id, "Original title", "Original desc").await,
         )
         .await
         .expect("create_di");
@@ -257,6 +315,7 @@ mod tests {
                 expected_row_version: 1,
                 title: Some("Updated title".into()),
                 description: None,
+                request_type: None,
                 symptom_code_id: None,
                 impact_level: None,
                 production_impact: None,
@@ -281,7 +340,7 @@ mod tests {
 
         let di = create_intervention_request(
             &db,
-            make_create_input(user_id, "RFC test", "RFC desc"),
+            make_create_input(&db, user_id, "RFC test", "RFC desc").await,
         )
         .await
         .expect("create_di");
@@ -302,6 +361,7 @@ mod tests {
                 expected_row_version: 1,
                 title: Some("Clarified title".into()),
                 description: None,
+                request_type: None,
                 symptom_code_id: None,
                 impact_level: None,
                 production_impact: None,
@@ -329,7 +389,7 @@ mod tests {
 
         let di = create_intervention_request(
             &db,
-            make_create_input(user_id, "Concurrency test", "Concurrency desc"),
+            make_create_input(&db, user_id, "Concurrency test", "Concurrency desc").await,
         )
         .await
         .expect("create_di");
@@ -342,6 +402,7 @@ mod tests {
                 expected_row_version: 1,
                 title: Some("Update 1".into()),
                 description: None,
+                request_type: None,
                 symptom_code_id: None,
                 impact_level: None,
                 production_impact: None,
@@ -363,6 +424,7 @@ mod tests {
                 expected_row_version: 1, // stale
                 title: Some("Update 2".into()),
                 description: None,
+                request_type: None,
                 symptom_code_id: None,
                 impact_level: None,
                 production_impact: None,
@@ -393,7 +455,7 @@ mod tests {
 
         let di = create_intervention_request(
             &db,
-            make_create_input(user_id, "Sequential update", "Seq desc"),
+            make_create_input(&db, user_id, "Sequential update", "Seq desc").await,
         )
         .await
         .expect("create_di");
@@ -406,6 +468,7 @@ mod tests {
                 expected_row_version: 1,
                 title: Some("V2 title".into()),
                 description: None,
+                request_type: None,
                 symptom_code_id: None,
                 impact_level: None,
                 production_impact: None,
@@ -427,6 +490,7 @@ mod tests {
                 expected_row_version: 2,
                 title: Some("V3 title".into()),
                 description: None,
+                request_type: None,
                 symptom_code_id: None,
                 impact_level: None,
                 production_impact: None,
@@ -456,21 +520,21 @@ mod tests {
         // Create 3 DIs with distinct titles
         create_intervention_request(
             &db,
-            make_create_input(user_id, "Motor overheating alert", "Motor M-200 temp above threshold"),
+            make_create_input(&db, user_id, "Motor overheating alert", "Motor M-200 temp above threshold").await,
         )
         .await
         .expect("di1");
 
         create_intervention_request(
             &db,
-            make_create_input(user_id, "Conveyor belt misalignment", "Belt CV-300 drifting"),
+            make_create_input(&db, user_id, "Conveyor belt misalignment", "Belt CV-300 drifting").await,
         )
         .await
         .expect("di2");
 
         create_intervention_request(
             &db,
-            make_create_input(user_id, "Hydraulic leak on press", "Oil pooling under press HP-400"),
+            make_create_input(&db, user_id, "Hydraulic leak on press", "Oil pooling under press HP-400").await,
         )
         .await
         .expect("di3");
@@ -499,14 +563,14 @@ mod tests {
 
         let di1 = create_intervention_request(
             &db,
-            make_create_input(user_id, "DI-A", "A"),
+            make_create_input(&db, user_id, "DI-A", "A").await,
         )
         .await
         .expect("di1");
 
         create_intervention_request(
             &db,
-            make_create_input(user_id, "DI-B", "B"),
+            make_create_input(&db, user_id, "DI-B", "B").await,
         )
         .await
         .expect("di2");
@@ -545,7 +609,7 @@ mod tests {
         for i in 0..5 {
             create_intervention_request(
                 &db,
-                make_create_input(user_id, &format!("DI {i}"), &format!("Desc {i}")),
+                make_create_input(&db, user_id, &format!("DI {i}"), &format!("Desc {i}")).await,
             )
             .await
             .expect("create");
@@ -594,14 +658,14 @@ mod tests {
         // Create 2 DIs on asset 1
         create_intervention_request(
             &db,
-            make_create_input(user_id, "Recurrence A", "First occurrence"),
+            make_create_input(&db, user_id, "Recurrence A", "First occurrence").await,
         )
         .await
         .expect("di-a");
 
         create_intervention_request(
             &db,
-            make_create_input(user_id, "Recurrence B", "Second occurrence"),
+            make_create_input(&db, user_id, "Recurrence B", "Second occurrence").await,
         )
         .await
         .expect("di-b");
@@ -632,7 +696,7 @@ mod tests {
         for i in 0..8 {
             create_intervention_request(
                 &db,
-                make_create_input(user_id, &format!("Similar {i}"), &format!("Desc {i}")),
+                make_create_input(&db, user_id, &format!("Similar {i}"), &format!("Desc {i}")).await,
             )
             .await
             .expect("create");

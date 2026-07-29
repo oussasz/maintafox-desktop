@@ -2,15 +2,18 @@
  * DiKanbanBoard.tsx
  *
  * Kanban board view for intervention requests, inspired by the web version.
- * 5 columns: Soumises → En validation → Approuvées → En travaux → Clôturées.
+ * Granular columns: Soumises → En attente de tri → En attente d'approbation
+ * → Besoin de précisions → Approuvées/planifiées → En travaux → Clôturées.
  * Cards show code, title, priority badge, origin tag, and date.
  */
 
-import { CheckCircle, ClipboardCheck, Inbox, Search, Wrench } from "lucide-react";
+import { CheckCircle, ClipboardCheck, Inbox, MessageSquareWarning, Search, Wrench } from "lucide-react";
 import type { ReactNode } from "react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
+import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatShortDate, intlLocaleForLanguage } from "@/utils/format-date";
@@ -53,6 +56,7 @@ interface DiKanbanBoardProps {
 
 export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
   const { t } = useTranslation("di");
+  const { originLabel } = useDiReferenceLabels();
 
   const columns = useMemo<KanbanColumnDef[]>(
     () => [
@@ -64,18 +68,32 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
         statuses: ["submitted"],
       },
       {
-        id: "review",
-        label: t("kanban.colReview"),
+        id: "pending_review",
+        label: t("kanban.colPendingReview"),
         icon: <Search className="h-4 w-4" />,
         headerClass: "bg-amber-50 text-amber-700 border-amber-200",
-        statuses: ["pending_review", "returned_for_clarification", "screened"],
+        statuses: ["pending_review"],
+      },
+      {
+        id: "awaiting_approval",
+        label: t("kanban.colAwaitingApproval"),
+        icon: <ClipboardCheck className="h-4 w-4" />,
+        headerClass: "bg-indigo-50 text-indigo-700 border-indigo-200",
+        statuses: ["screened", "awaiting_approval"],
+      },
+      {
+        id: "needs_clarification",
+        label: t("kanban.colNeedsClarification"),
+        icon: <MessageSquareWarning className="h-4 w-4" />,
+        headerClass: "bg-orange-50 text-orange-700 border-orange-200",
+        statuses: ["returned_for_clarification"],
       },
       {
         id: "approved",
         label: t("kanban.colApproved"),
         icon: <ClipboardCheck className="h-4 w-4" />,
         headerClass: "bg-green-50 text-green-700 border-green-200",
-        statuses: ["approved_for_planning", "awaiting_approval", "deferred"],
+        statuses: ["approved_for_planning"],
       },
       {
         id: "work",
@@ -115,6 +133,7 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
             def={col}
             items={grouped.get(col.id) ?? []}
             onCardClick={onCardClick}
+            originLabel={originLabel}
           />
         ))}
       </div>
@@ -128,10 +147,12 @@ function KanbanColumn({
   def,
   items,
   onCardClick,
+  originLabel,
 }: {
   def: KanbanColumnDef;
   items: InterventionRequest[];
   onCardClick: (di: InterventionRequest) => void;
+  originLabel: (code: string | null | undefined) => string;
 }) {
   return (
     <div className="flex flex-col min-w-[220px] max-w-[260px] flex-1 rounded-lg border bg-muted/30">
@@ -151,7 +172,14 @@ function KanbanColumn({
         {items.length === 0 ? (
           <p className="text-xs text-muted-foreground text-center py-8">—</p>
         ) : (
-          items.map((di) => <DiKanbanCard key={di.id} di={di} onClick={() => onCardClick(di)} />)
+          items.map((di) => (
+            <DiKanbanCard
+              key={di.id}
+              di={di}
+              onClick={() => onCardClick(di)}
+              originLabel={originLabel}
+            />
+          ))
         )}
       </div>
     </div>
@@ -160,7 +188,15 @@ function KanbanColumn({
 
 // ── Card ────────────────────────────────────────────────────────────────────
 
-function DiKanbanCard({ di, onClick }: { di: InterventionRequest; onClick: () => void }) {
+function DiKanbanCard({
+  di,
+  onClick,
+  originLabel,
+}: {
+  di: InterventionRequest;
+  onClick: () => void;
+  originLabel: (code: string | null | undefined) => string;
+}) {
   const { t, i18n } = useTranslation("di");
   const locale = intlLocaleForLanguage(i18n.language);
   const urgency = URGENCY_STYLE[di.reported_urgency];
@@ -202,12 +238,18 @@ function DiKanbanCard({ di, onClick }: { di: InterventionRequest; onClick: () =>
             </Badge>
           )}
 
-          {/* Origin tag */}
+          {/* Origin tag — label from DI.ORIGIN catalog */}
           <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-            {t(`form.origin.${di.origin_type}` as "form.origin.operator", {
-              defaultValue: di.origin_type,
-            })}
+            {originLabel(di.origin_type)}
           </Badge>
+
+          <LinkedEntityBadge
+            entity="work_order"
+            code={di.converted_to_wo_code}
+            entityId={di.converted_to_wo_id}
+            title={di.converted_to_wo_title}
+            className="text-[10px] px-1.5 py-0"
+          />
 
           {/* Safety flag */}
           {di.safety_flag && (

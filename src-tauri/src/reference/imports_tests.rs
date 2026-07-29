@@ -1,8 +1,8 @@
 //! Supervisor verification tests for Phase 2 SP03 File 03 Sprint S2.
 //!
-//! V1 — Row-level diagnostics (malformed rows produce row-specific errors)
-//! V2 — Protected-policy integration (protected domain imports show governance warnings)
-//! V3 — Export completeness (export includes canonical values + alias data)
+//! V1 â€” Row-level diagnostics (malformed rows produce row-specific errors)
+//! V2 â€” Protected-policy integration (protected domain imports show governance warnings)
+//! V3 â€” Export completeness (export includes canonical values + alias data)
 
 #[cfg(test)]
 mod tests {
@@ -49,6 +49,7 @@ mod tests {
                 name: "Import Test Domain".to_string(),
                 structure_type: "flat".to_string(),
                 governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
                 is_extendable: Some(true),
                 validation_rules_json: None,
             },
@@ -64,7 +65,9 @@ mod tests {
         (domain.id, set.id)
     }
 
-    /// Creates a protected_analytical flat domain + draft set, returns (domain_id, set_id).
+    /// Creates an analytically protected domain that still allows draft mutate (Compat B/C path).
+    /// Uses `governance_level=protected_analytical` so import warnings fire, with an explicit
+    /// `controlled_catalog` category so draft/publish remain allowed (Category A is read-only).
     async fn setup_protected_domain(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
         let domain = domains::create_reference_domain(
             db,
@@ -73,7 +76,8 @@ mod tests {
                 name: "Protected Import Domain".to_string(),
                 structure_type: "flat".to_string(),
                 governance_level: "protected_analytical".to_string(),
-                is_extendable: Some(false),
+            governance_category: Some("controlled_catalog".to_string()),
+                is_extendable: Some(true),
                 validation_rules_json: None,
             },
             1,
@@ -103,9 +107,9 @@ mod tests {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V1 — Row-level diagnostics
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V1 â€” Row-level diagnostics
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v1_malformed_rows_produce_row_level_errors() {
@@ -126,9 +130,9 @@ mod tests {
         let rows = vec![
             row(Some("VALID_A"), Some("Valid A")),             // valid
             row(Some("VALID_B"), Some("Valid B")),             // valid
-            row(None, Some("No Code")),                        // missing code → error
-            row(Some("lowercase"), Some("Bad Code Format")),   // invalid code → error
-            row(Some("NO_LABEL"), None),                       // missing label → error
+            row(None, Some("No Code")),                        // missing code â†’ error
+            row(Some("lowercase"), Some("Bad Code Format")),   // invalid code â†’ error
+            row(Some("NO_LABEL"), None),                       // missing label â†’ error
         ];
 
         imports::stage_import_rows(&db, batch.id, rows)
@@ -286,9 +290,9 @@ mod tests {
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V2 — Protected-policy integration
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V2 â€” Protected-policy integration
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v2_protected_domain_import_shows_governance_warnings() {
@@ -343,14 +347,14 @@ mod tests {
             .await
             .expect("validate");
 
-        assert_eq!(validated.valid_rows, 1); // NEW_CODE → valid
-        assert_eq!(validated.warning_rows, 1); // EXISTING_CODE → warning
+        assert_eq!(validated.valid_rows, 1); // NEW_CODE â†’ valid
+        assert_eq!(validated.warning_rows, 1); // EXISTING_CODE â†’ warning
 
         let preview = imports::get_import_preview(&db, batch.id)
             .await
             .expect("preview");
 
-        // First row: protected domain update → warning
+        // First row: protected domain update â†’ warning
         let prot_row = &preview.rows[0];
         assert_eq!(prot_row.validation_status, "warning");
         assert!(prot_row
@@ -360,9 +364,9 @@ mod tests {
         assert_eq!(prot_row.proposed_action.as_deref(), Some("update"));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V3 — Export completeness
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V3 â€” Export completeness
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v3_export_includes_values_and_aliases() {
@@ -441,9 +445,9 @@ mod tests {
         assert!(alias_labels.contains(&"Old name A"));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // Additional coverage: full apply workflow
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn apply_creates_and_updates_deterministically() {

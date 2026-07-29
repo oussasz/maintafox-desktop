@@ -384,7 +384,7 @@ export function InspectionsPage() {
         </div>
         {reliabilitySignals.length === 0 ? (
           <p className="mt-2 text-sm text-fg-2">
-            Aucun signal — recalculer avec des données d&apos;inspection.
+            Aucun signal — recalculer avec des données d'inspection.
           </p>
         ) : null}
       </section>
@@ -737,7 +737,7 @@ export function InspectionsPage() {
 
           <section className="rounded-lg border border-surface-3 bg-surface-1 p-4">
             <h2 className="mb-3 text-sm font-medium text-fg-1">
-              File offline (file d&apos;attente locale)
+              File offline (file d'attente locale)
             </h2>
             <div className="mb-3 flex flex-wrap items-end gap-3">
               <label className="flex min-w-[14rem] flex-col gap-1 text-xs text-fg-2">

@@ -1,4 +1,4 @@
-//! Supervisor verification tests for Phase 2 SP05 File 02.
+//! Supervisor verification tests for Phase 2 SP05 File 02 — Option B lifecycle.
 //!
 //! Sprint S1:
 //! V1 — Pause creates open delay segment.
@@ -9,9 +9,9 @@
 //!
 //! Sprint S2:
 //! V1 — Permission on complete (structural: require_permission! with ot.edit).
-//! V2 — Full execute path: plan → assign → start → add_labor → open_downtime →
+//! V2 — Full execute path: submit → plan → assign → mark_ready → start → add_labor → open_downtime →
 //!       close_downtime → confirm_no_parts → complete_wo_mechanically.
-//! V3 — Command count (structural: 25 WO entries in invoke_handler).
+//! V3 — Command count (structural: 41 WO entries in invoke_handler).
 
 #[cfg(test)]
 mod tests {
@@ -20,6 +20,7 @@ mod tests {
 
     use crate::auth::rbac::{self, PermissionScope};
     use crate::errors::AppError;
+    use crate::wo::closeout::{self, SaveFailureDetailInput, UpdateWoRcaInput};
     use crate::wo::delay::{self, OpenDowntimeInput};
     use crate::wo::domain::WoCreateInput;
     use crate::wo::execution::{
@@ -30,6 +31,8 @@ mod tests {
     use crate::wo::parts;
     use crate::wo::queries;
     use crate::wo::tasks::{self, AddTaskInput};
+    use crate::wo::workflow::actions::mark_ready::{mark_wo_ready, WoMarkReadyInput};
+    use crate::wo::workflow::actions::submit::{submit_wo, WoSubmitInput};
 
     // ═══════════════════════════════════════════════════════════════════════
     // Setup
@@ -58,7 +61,63 @@ mod tests {
         db
     }
 
-    /// Helper: get admin user id (always 1 after seed).
+    async fn resolve_delay_reason_id(db: &sea_orm::DatabaseConnection, code: &str) -> i64 {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT rv.id AS id \
+                 FROM reference_values rv \
+                 INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+                 INNER JOIN reference_domains rd ON rd.id = rs.domain_id \
+                 WHERE UPPER(TRIM(rd.code)) = 'WORK.DELAY_REASONS' \
+                   AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)) \
+                   AND rv.is_active = 1 \
+                   AND rs.status = 'published' \
+                 LIMIT 1",
+                [code.into()],
+            ))
+            .await
+            .expect("delay reason query")
+            .expect("WORK.DELAY_REASONS value must be seeded");
+        row.try_get::<i64>("", "id").expect("id")
+    }
+
+    /// Seed failure coding + RCA required before `complete_wo_mechanically` for corrective/emergency WOs.
+    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+        let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+            .await
+            .expect("lookup symptom")
+            .expect("seeded DI.SYMPTOM vibration");
+
+        closeout::save_failure_detail(
+            db,
+            SaveFailureDetailInput {
+                wo_id,
+                symptom_id: Some(symptom_id),
+                failure_mode_id: None,
+                failure_cause_id: None,
+                failure_effect_id: None,
+                is_temporary_repair: false,
+                is_permanent_repair: true,
+                cause_not_determined: true,
+                notes: Some("Test failure detail notes for RAMS complete gate".into()),
+            },
+        )
+        .await
+        .expect("seed_rams_for_complete: save_failure_detail");
+
+        closeout::update_wo_rca(
+            db,
+            UpdateWoRcaInput {
+                wo_id,
+                root_cause_summary: Some("Test root cause".into()),
+                corrective_action_summary: Some("Test corrective action".into()),
+            },
+        )
+        .await
+        .expect("seed_rams_for_complete: update_wo_rca");
+    }
+
     async fn admin_id(db: &sea_orm::DatabaseConnection) -> i64 {
         let row = db
             .query_one(Statement::from_string(
@@ -92,17 +151,73 @@ mod tests {
         .expect("insert user_scope_assignment");
     }
 
-    /// Create a WO and advance it to in_progress.
+    /// Seed a minimal equipment row (id=1) for the readiness gate.
+    async fn seed_test_equipment(db: &sea_orm::DatabaseConnection) {
+        // Ensure org scaffolding for installed_at_node_id FK
+        let _ = db
+            .execute(Statement::from_string(
+                DbBackend::Sqlite,
+                "INSERT OR IGNORE INTO org_structure_models \
+                 (id, sync_id, version_number, status, created_at, updated_at) \
+                 VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
+                    .to_string(),
+            ))
+            .await;
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO org_node_types \
+             (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+             VALUES (1, 'test-type-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));"
+                .to_string(),
+        ))
+        .await
+        .expect("insert org_node_types");
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO org_nodes \
+             (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
+             VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
+                     datetime('now'), datetime('now'), 1);"
+                .to_string(),
+        ))
+        .await
+        .expect("insert org_nodes");
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO equipment \
+             (id, sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+              created_at, updated_at) \
+             VALUES (1, 'test-eq-exec-001', 'EQ-EXEC-001', 'Exec Test Equipment', \
+                     'active_in_service', 1, datetime('now'), datetime('now'));"
+                .to_string(),
+        ))
+        .await
+        .expect("insert test equipment");
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET installed_at_node_id = 1 \
+             WHERE id = 1 AND installed_at_node_id IS NULL;"
+                .to_string(),
+        ))
+        .await
+        .expect("ensure installed_at_node_id");
+    }
+
+    /// Create a WO and advance it to in_progress via the Option B lifecycle.
     /// Returns (wo_id, row_version_after_start).
     async fn create_wo_in_progress(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
+        seed_test_equipment(db).await;
         let actor = admin_id(db).await;
 
-        // 1. Create draft WO (type_id=1 = corrective)
         let wo = queries::create_work_order(
             db,
             WoCreateInput {
                 type_code: "corrective".into(),
-                equipment_id: None,
+                equipment_id: Some(1),
                 location_id: None,
                 source_di_id: None,
                 source_inspection_anomaly_id: None,
@@ -127,15 +242,26 @@ mod tests {
         .expect("create WO");
 
         let wo_id = wo.id;
-        let mut rv = wo.row_version;
 
-        // 2. Plan: draft → planned
+        // submit: draft → planning
+        let wo = submit_wo(
+            db,
+            WoSubmitInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("submit_wo");
+
+        // plan (non-status save, stays planning)
         let wo = execution::plan_wo(
             db,
             WoPlanInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
                 planner_id: actor,
                 planned_start: "2026-04-10T08:00:00Z".into(),
                 planned_end: "2026-04-10T16:00:00Z".into(),
@@ -146,28 +272,14 @@ mod tests {
         )
         .await
         .expect("plan_wo");
-        rv = wo.row_version;
 
-        // 3. Advance planned → ready_to_schedule via direct SQL
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE work_orders SET status_id = \
-             (SELECT id FROM work_order_statuses WHERE code = 'ready_to_schedule'), \
-             row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-             WHERE id = ?",
-            [wo_id.into()],
-        ))
-        .await
-        .expect("advance to ready_to_schedule");
-        rv += 1;
-
-        // 4. Assign: ready_to_schedule → assigned
+        // assign (non-status save, stays planning)
         let wo = execution::assign_wo(
             db,
             WoAssignInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
                 assigned_group_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
@@ -175,15 +287,26 @@ mod tests {
         )
         .await
         .expect("assign_wo");
-        rv = wo.row_version;
 
-        // 5. Start: assigned → in_progress
+        // mark ready: planning → ready
+        let wo = mark_wo_ready(
+            db,
+            WoMarkReadyInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("mark_wo_ready");
+
+        // start: ready → in_progress
         let wo = execution::start_wo(
             db,
             WoStartInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
             },
         )
         .await
@@ -202,36 +325,28 @@ mod tests {
         let (wo_id, rv) = create_wo_in_progress(&db).await;
         let actor = admin_id(&db).await;
 
-        // Pause with delay_reason_id = 1 (no_parts)
+        let reason_id = resolve_delay_reason_id(&db, "no_parts").await;
         let _wo = execution::pause_wo(
             &db,
             WoPauseInput {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: rv,
-                delay_reason_id: 1,
+                delay_reason_id: reason_id,
                 comment: Some("Waiting for parts".into()),
             },
         )
         .await
         .expect("pause_wo should succeed");
 
-        // Verify delay segment
         let segments = delay::list_delay_segments(&db, wo_id)
             .await
             .expect("list_delay_segments");
 
         assert_eq!(segments.len(), 1, "exactly one delay segment after pause");
         let seg = &segments[0];
-        assert!(
-            seg.ended_at.is_none(),
-            "delay segment ended_at must be NULL (still open)"
-        );
-        assert_eq!(
-            seg.delay_reason_id,
-            Some(1),
-            "delay_reason_id must be set to 1"
-        );
+        assert!(seg.ended_at.is_none(), "delay segment ended_at must be NULL (still open)");
+        assert_eq!(seg.delay_reason_id, Some(reason_id), "delay_reason_id must match reference value");
         assert_eq!(seg.work_order_id, wo_id);
     }
 
@@ -245,21 +360,20 @@ mod tests {
         let (wo_id, rv) = create_wo_in_progress(&db).await;
         let actor = admin_id(&db).await;
 
-        // Pause
+        let reason_id = resolve_delay_reason_id(&db, "backordered").await;
         let wo = execution::pause_wo(
             &db,
             WoPauseInput {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: rv,
-                delay_reason_id: 2,
+                delay_reason_id: reason_id,
                 comment: None,
             },
         )
         .await
         .expect("pause_wo");
 
-        // Back-date the delay segment to simulate real elapsed time (1 hour ago)
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_order_delay_segments SET started_at = \
@@ -269,7 +383,6 @@ mod tests {
         .await
         .expect("backdate delay segment");
 
-        // Resume
         let wo = execution::resume_wo(
             &db,
             WoResumeInput {
@@ -281,17 +394,12 @@ mod tests {
         .await
         .expect("resume_wo");
 
-        // Verify delay segment is closed
         let segments = delay::list_delay_segments(&db, wo_id)
             .await
             .expect("list_delay_segments");
         assert_eq!(segments.len(), 1);
-        assert!(
-            segments[0].ended_at.is_some(),
-            "delay segment ended_at must be set after resume"
-        );
+        assert!(segments[0].ended_at.is_some(), "delay segment ended_at must be set after resume");
 
-        // Verify total_waiting_hours > 0 on WO
         assert!(
             wo.total_waiting_hours.unwrap_or(0.0) > 0.0,
             "total_waiting_hours should be > 0 after resume (backdate 1h): got {:?}",
@@ -307,13 +415,13 @@ mod tests {
     async fn v3_mandatory_task_gate_blocks_completion() {
         let db = setup().await;
         let actor = admin_id(&db).await;
+        seed_test_equipment(&db).await;
 
-        // Create draft WO
         let wo = queries::create_work_order(
             &db,
             WoCreateInput {
                 type_code: "corrective".into(),
-                equipment_id: None,
+                equipment_id: Some(1),
                 location_id: None,
                 source_di_id: None,
                 source_inspection_anomaly_id: None,
@@ -337,8 +445,7 @@ mod tests {
         .await
         .expect("create WO");
 
-        // Add mandatory task while still in draft
-        let _task = tasks::add_task(
+        tasks::add_task(
             &db,
             AddTaskInput {
                 wo_id: wo.id,
@@ -351,7 +458,8 @@ mod tests {
         .await
         .expect("add_task");
 
-        // Advance WO to in_progress via direct SQL (shortcut)
+        // SQL-set in_progress directly (bypasses submission flow — valid for gate-only tests
+        // since in_progress is a recognized status code after migration).
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_orders SET status_id = \
@@ -365,12 +473,12 @@ mod tests {
         .expect("advance to in_progress");
         let rv = wo.row_version + 1;
 
-        // Confirm parts so only the task gate fires
         parts::confirm_no_parts_used(&db, wo.id, actor)
             .await
             .expect("confirm_no_parts");
 
-        // Try mechanical completion — should fail
+        seed_rams_for_complete(&db, wo.id).await;
+
         let result = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
@@ -405,12 +513,13 @@ mod tests {
     async fn v4_parts_gate_blocks_completion() {
         let db = setup().await;
         let actor = admin_id(&db).await;
+        seed_test_equipment(&db).await;
 
         let wo = queries::create_work_order(
             &db,
             WoCreateInput {
                 type_code: "corrective".into(),
-                equipment_id: None,
+                equipment_id: Some(1),
                 location_id: None,
                 source_di_id: None,
                 source_inspection_anomaly_id: None,
@@ -434,7 +543,6 @@ mod tests {
         .await
         .expect("create WO");
 
-        // Advance to in_progress
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_orders SET status_id = \
@@ -448,9 +556,8 @@ mod tests {
         .expect("advance to in_progress");
         let rv = wo.row_version + 1;
 
-        // Do NOT call confirm_no_parts_used and do NOT add any parts
+        seed_rams_for_complete(&db, wo.id).await;
 
-        // Try mechanical completion
         let result = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
@@ -487,8 +594,7 @@ mod tests {
         let (wo_id, rv) = create_wo_in_progress(&db).await;
         let actor = admin_id(&db).await;
 
-        // Open a downtime segment
-        let _seg = delay::open_downtime_segment(
+        delay::open_downtime_segment(
             &db,
             OpenDowntimeInput {
                 wo_id,
@@ -500,12 +606,12 @@ mod tests {
         .await
         .expect("open_downtime_segment");
 
-        // Confirm parts so only downtime gate fires
         parts::confirm_no_parts_used(&db, wo_id, actor)
             .await
             .expect("confirm_no_parts");
 
-        // Try mechanical completion — should fail
+        seed_rams_for_complete(&db, wo_id).await;
+
         let result = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
@@ -533,20 +639,21 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Sprint S2 — V2: Full execute path
+    // Sprint S2 — V2: Full execute path (Option B)
     // ═══════════════════════════════════════════════════════════════════════
 
     #[tokio::test]
     async fn s2_v2_full_execute_path_to_mechanically_complete() {
         let db = setup().await;
+        seed_test_equipment(&db).await;
         let actor = admin_id(&db).await;
 
-        // 1. Create draft WO
+        // 1. Create draft WO with equipment
         let wo = queries::create_work_order(
             &db,
             WoCreateInput {
                 type_code: "corrective".into(),
-                equipment_id: None,
+                equipment_id: Some(1),
                 location_id: None,
                 source_di_id: None,
                 source_inspection_anomaly_id: None,
@@ -570,20 +677,28 @@ mod tests {
         .await
         .expect("create WO");
         let wo_id = wo.id;
-        let mut rv = wo.row_version;
-        assert_eq!(
-            wo.status_code.as_deref(),
-            Some("draft"),
-            "new WO must be draft"
-        );
+        assert_eq!(wo.status_code.as_deref(), Some("draft"), "new WO must be draft");
 
-        // 2. plan_wo: draft → planned
+        // 2. submit: draft → planning
+        let wo = submit_wo(
+            &db,
+            WoSubmitInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("submit_wo");
+        assert_eq!(wo.status_code.as_deref(), Some("planning"));
+
+        // 3. plan_wo (non-status save, stays planning)
         let wo = execution::plan_wo(
             &db,
             WoPlanInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
                 planner_id: actor,
                 planned_start: "2026-04-10T08:00:00Z".into(),
                 planned_end: "2026-04-10T16:00:00Z".into(),
@@ -594,29 +709,15 @@ mod tests {
         )
         .await
         .expect("plan_wo");
-        rv = wo.row_version;
-        assert_eq!(wo.status_code.as_deref(), Some("planned"));
+        assert_eq!(wo.status_code.as_deref(), Some("planning"));
 
-        // 3. Manual advance: planned → ready_to_schedule (no function for this yet)
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE work_orders SET status_id = \
-             (SELECT id FROM work_order_statuses WHERE code = 'ready_to_schedule'), \
-             row_version = row_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-             WHERE id = ?",
-            [wo_id.into()],
-        ))
-        .await
-        .expect("advance to ready_to_schedule");
-        rv += 1;
-
-        // 4. assign_wo: ready_to_schedule → assigned
+        // 4. assign_wo (non-status save, stays planning)
         let wo = execution::assign_wo(
             &db,
             WoAssignInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
                 assigned_group_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
@@ -624,24 +725,36 @@ mod tests {
         )
         .await
         .expect("assign_wo");
-        rv = wo.row_version;
-        assert_eq!(wo.status_code.as_deref(), Some("assigned"));
+        assert_eq!(wo.status_code.as_deref(), Some("planning"));
 
-        // 5. start_wo: assigned → in_progress
+        // 5. mark_wo_ready: planning → ready
+        let wo = mark_wo_ready(
+            &db,
+            WoMarkReadyInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("mark_wo_ready");
+        assert_eq!(wo.status_code.as_deref(), Some("ready"));
+
+        // 6. start_wo: ready → in_progress
         let wo = execution::start_wo(
             &db,
             WoStartInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
             },
         )
         .await
         .expect("start_wo");
-        rv = wo.row_version;
+        let mut rv = wo.row_version;
         assert_eq!(wo.status_code.as_deref(), Some("in_progress"));
 
-        // 6. add_labor (with both timestamps — auto-closes)
+        // 7. add_labor (with both timestamps — auto-closes)
         let _labor = labor::add_labor_entry(
             &db,
             AddLaborInput {
@@ -658,7 +771,7 @@ mod tests {
         .await
         .expect("add_labor");
 
-        // 7. open_downtime
+        // 8. open_downtime
         let seg = delay::open_downtime_segment(
             &db,
             OpenDowntimeInput {
@@ -671,17 +784,26 @@ mod tests {
         .await
         .expect("open_downtime");
 
-        // 8. close_downtime
+        // 9. close_downtime
         let _seg = delay::close_downtime_segment(&db, seg.id, None)
             .await
             .expect("close_downtime");
 
-        // 9. confirm_no_parts
+        // 10. confirm_no_parts
         parts::confirm_no_parts_used(&db, wo_id, actor)
             .await
             .expect("confirm_no_parts");
 
-        // 10. complete_wo_mechanically: in_progress → mechanically_complete
+        // Fetch latest rv (downtime segments may bump it)
+        let refreshed = queries::get_work_order(&db, wo_id)
+            .await
+            .expect("get_work_order")
+            .expect("WO must exist");
+        rv = refreshed.row_version;
+
+        seed_rams_for_complete(&db, wo_id).await;
+
+        // 11. complete_wo_mechanically: in_progress → completed
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
@@ -698,13 +820,10 @@ mod tests {
 
         assert_eq!(
             wo.status_code.as_deref(),
-            Some("mechanically_complete"),
-            "WO must be in mechanically_complete after full execute path"
+            Some("completed"),
+            "WO must be in 'completed' after full execute path"
         );
-        assert!(
-            wo.mechanically_completed_at.is_some(),
-            "mechanically_completed_at must be set"
-        );
+        assert!(wo.mechanically_completed_at.is_some(), "mechanically_completed_at must be set");
         assert!(
             wo.active_labor_hours.unwrap_or(0.0) > 0.0,
             "active_labor_hours must be computed from labor entries"
@@ -719,10 +838,6 @@ mod tests {
     async fn s2_v1_readonly_has_view_but_not_edit_for_complete() {
         let db = setup().await;
 
-        // Mirror existing command-layer test style: verify RBAC matrix directly.
-        // A user with Readonly role must have ot.view and must NOT have ot.edit.
-        // Since `commands::wo::complete_wo_mechanically` requires ot.edit,
-        // this implies PermissionDenied for a view-only user.
         assign_role(&db, 90, "Readonly").await;
 
         let can_view = rbac::check_permission(&db, 90, "ot.view", &PermissionScope::Global)
@@ -754,8 +869,8 @@ mod tests {
 
         assert_eq!(
             wo_lines.len(),
-            41,
-            "invoke_handler must contain exactly 41 WO commands"
+            54,
+            "invoke_handler must contain exactly 54 WO commands"
         );
 
         let mut seen = std::collections::HashSet::new();
@@ -766,9 +881,13 @@ mod tests {
             );
         }
 
-        // Ensure all 20 new S2 commands are present.
         let required_new = [
             "commands::wo::plan_wo",
+            "commands::wo::submit_wo",
+            "commands::wo::evaluate_wo_readiness",
+            "commands::wo::mark_wo_ready",
+            "commands::wo::return_to_planning",
+            "commands::wo::approve_planning",
             "commands::wo::assign_wo",
             "commands::wo::start_wo",
             "commands::wo::pause_wo",
@@ -805,14 +924,14 @@ mod tests {
     #[tokio::test]
     async fn s4_v1_shift_is_persisted_through_plan_wo() {
         let db = setup().await;
+        seed_test_equipment(&db).await;
         let actor = admin_id(&db).await;
 
-        // 1. Create draft WO with no shift
         let wo = queries::create_work_order(
             &db,
             WoCreateInput {
                 type_code: "corrective".into(),
-                equipment_id: None,
+                equipment_id: Some(1),
                 location_id: None,
                 source_di_id: None,
                 source_inspection_anomaly_id: None,
@@ -836,17 +955,27 @@ mod tests {
         .await
         .expect("create WO");
 
-        let wo_id = wo.id;
-        let rv = wo.row_version;
         assert!(wo.shift.is_none(), "new WO must have no shift");
 
-        // 2. Plan WO with shift = "nuit"
+        // submit: draft → planning (required before plan_wo in Option B)
+        let wo = submit_wo(
+            &db,
+            WoSubmitInput {
+                wo_id: wo.id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("submit_wo");
+
+        // plan_wo with shift = "nuit"
         let planned = execution::plan_wo(
             &db,
             WoPlanInput {
-                wo_id,
+                wo_id: wo.id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
                 planner_id: actor,
                 planned_start: "2026-04-10T08:00:00Z".into(),
                 planned_end: "2026-04-10T16:00:00Z".into(),
@@ -858,14 +987,9 @@ mod tests {
         .await
         .expect("plan_wo with shift");
 
-        assert_eq!(
-            planned.shift.as_deref(),
-            Some("nuit"),
-            "plan_wo response must carry shift = 'nuit'"
-        );
+        assert_eq!(planned.shift.as_deref(), Some("nuit"), "plan_wo response must carry shift = 'nuit'");
 
-        // 3. Reload from DB and verify round-trip persistence
-        let reloaded = queries::get_work_order(&db, wo_id)
+        let reloaded = queries::get_work_order(&db, wo.id)
             .await
             .expect("get_work_order")
             .expect("WO must exist after plan_wo");
@@ -878,7 +1002,7 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Sprint S4 — V2 (Rust gate): open labor entry blocks mechanical complete
+    // Sprint S4 — V2: Open labor entry blocks mechanical complete
     // ═══════════════════════════════════════════════════════════════════════
 
     #[tokio::test]
@@ -887,7 +1011,6 @@ mod tests {
         let (wo_id, rv) = create_wo_in_progress(&db).await;
         let actor = admin_id(&db).await;
 
-        // Add a labor entry with started_at but no ended_at (open entry)
         labor::add_labor_entry(
             &db,
             AddLaborInput {
@@ -904,10 +1027,11 @@ mod tests {
         .await
         .expect("add open labor entry");
 
-        // Satisfy all other gates so only the labor gate fires
         parts::confirm_no_parts_used(&db, wo_id, actor)
             .await
             .expect("confirm_no_parts");
+
+        seed_rams_for_complete(&db, wo_id).await;
 
         let result = execution::complete_wo_mechanically(
             &db,

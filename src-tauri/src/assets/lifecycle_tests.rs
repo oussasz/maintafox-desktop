@@ -123,6 +123,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model.id as i64,
             },
             1,
         )
@@ -152,8 +153,9 @@ mod tests {
             DbBackend::Sqlite,
             "INSERT INTO org_nodes \
              (sync_id, code, name, node_type_id, parent_id, status, \
-              created_at, updated_at, row_version) \
-             VALUES (?, 'SITE-002', 'Second Site', ?, NULL, 'active', ?, ?, 1)",
+              created_at, updated_at, row_version, structure_model_id) \
+             VALUES (?, 'SITE-002', 'Second Site', ?, NULL, 'active', ?, ?, 1, \
+                     (SELECT id FROM org_structure_models WHERE status = 'active' ORDER BY id DESC LIMIT 1))",
             [
                 sync_id.into(),
                 node_type_id.into(),
@@ -211,6 +213,8 @@ mod tests {
                 model: None,
                 serial_number: None,
                 maintainable_boundary: true,
+                rams_schedule_reference_value_id: None,
+                rams_utilization_factor: Some(1.0),
                 org_node_id,
                 commissioned_at: None,
             },

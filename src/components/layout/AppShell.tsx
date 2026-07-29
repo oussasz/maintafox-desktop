@@ -3,14 +3,20 @@ import { useTranslation } from "react-i18next";
 
 import { AppToastHost } from "@/components/shell/AppToastHost";
 import { useStartupBridge } from "@/hooks/use-startup-bridge";
+import { invokeSilent } from "@/lib/ipc-invoke";
+import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { cn } from "@/lib/utils";
 import { defaultNavItems } from "@/navigation/nav-registry";
 import { useAppStore } from "@/store/app-store";
+import { useSessionStore } from "@/store/session-store";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 
 import { Sidebar } from "./Sidebar";
 import { StatusBar } from "./StatusBar";
 import { TopBar } from "./TopBar";
+
+/** Keep idle-lock from firing during passive UI time (backend idle = 30 min). */
+const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 
 interface AppShellProps {
   children: ReactNode;
@@ -23,6 +29,8 @@ export function AppShell({ children }: AppShellProps) {
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const initializeSync = useSyncOrchestratorStore((s) => s.initialize);
   const shutdownSync = useSyncOrchestratorStore((s) => s.shutdown);
+  const sessionAuthenticated = useSessionStore((s) => s.info?.is_authenticated === true);
+  const sessionLocked = useSessionStore((s) => s.info?.is_locked === true);
 
   // Bridge Tauri startup events → app store
   useStartupBridge();
@@ -31,6 +39,24 @@ export function AppShell({ children }: AppShellProps) {
     initializeSync();
     return () => shutdownSync();
   }, [initializeSync, shutdownSync]);
+
+  // Shell-level activity heartbeat — covers idle UI with no authenticated IPC.
+  useEffect(() => {
+    if (!sessionAuthenticated || sessionLocked) {
+      return;
+    }
+
+    const touch = () => {
+      if (!isSessionActiveForBackgroundWork()) {
+        return;
+      }
+      void invokeSilent("touch_session").catch(() => {});
+    };
+
+    touch();
+    const id = window.setInterval(touch, SESSION_TOUCH_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [sessionAuthenticated, sessionLocked]);
 
   if (appStatus === "loading") {
     return (

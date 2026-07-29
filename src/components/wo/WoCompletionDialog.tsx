@@ -1,18 +1,15 @@
 /**
  * WoCompletionDialog.tsx
  *
- * Completion confirmation modal for a work order.
- * Pre-fills end date with now, accepts hours worked + completion report.
- * Displays pre-flight blocking errors returned by `complete_wo_mechanically`.
- *
- * Phase 2 – Sub-phase 05 – File 02 – Sprint S4.
+ * Two-step completion confirmation:
+ *   Step 1 — Completion Summary (plan vs actual adherence snapshot)
+ *   Step 2 — Completion form + readiness checklist
  */
 
-import { AlertTriangle, CheckCircle, Clock, FileText } from "lucide-react";
+import { CheckCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -25,166 +22,351 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { WoCompletionGatesChecklist } from "@/components/wo/WoCompletionGatesChecklist";
 import { useSession } from "@/hooks/use-session";
+import {
+  formatDurationMinutes,
+  hoursToMinutes,
+} from "@/lib/display";
+import { getPlanAdherence, type WoPlanAdherence } from "@/services/wo-execution-service";
+import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
-import type { WorkOrder } from "@shared/ipc-types";
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
+import type { WoCompletionGate, WorkOrder } from "@shared/ipc-types";
 
 function toDatetimeLocal(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const ERROR_ICONS: Record<string, typeof AlertTriangle> = {
-  OPEN_LABOR: Clock,
-  INCOMPLETE_TASKS: FileText,
-  MISSING_PARTS: AlertTriangle,
-  OPEN_DOWNTIME: AlertTriangle,
-};
+function CompletionSummary({
+  adherence,
+}: {
+  adherence: WoPlanAdherence | null;
+}) {
+  const { t } = useTranslation("ot");
+  const durationLabels = {
+    hours: t("execution.durationHours"),
+    minutes: t("execution.durationMinutes"),
+  };
 
-// ── Component ───────────────────────────────────────────────────────────────
+  if (!adherence) {
+    return (
+      <p className="text-sm text-muted-foreground">{t("completion.summary.loading")}</p>
+    );
+  }
+
+  const efficiency = adherence.efficiency_pct;
+  const costVar = adherence.cost_variance_pct;
+  const dtVar = adherence.downtime_variance_hours;
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("completion.summary.partsTitle")}
+        </p>
+        <p className="text-sm tabular-nums">
+          {t("completion.summary.partsLine", {
+            planned: adherence.parts_planned,
+            used: adherence.parts_used,
+            unused: adherence.parts_unused,
+            extra: adherence.parts_extra,
+          })}
+        </p>
+      </div>
+
+      <Separator />
+
+      <div className="space-y-1">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("completion.summary.tasksTitle")}
+        </p>
+        <p className="text-sm tabular-nums">
+          {t("completion.summary.tasksLine", {
+            planned: adherence.tasks_planned,
+            done: adherence.tasks_done,
+            added: adherence.tasks_added,
+            cancelled: adherence.tasks_cancelled,
+          })}
+        </p>
+      </div>
+
+      <Separator />
+
+      <div className="space-y-1">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("completion.summary.laborTitle")}
+        </p>
+        <div className="grid grid-cols-3 gap-2 text-sm">
+          <div>
+            <p className="text-xs text-muted-foreground">{t("completion.summary.planned")}</p>
+            <p className="font-medium tabular-nums">
+              {adherence.planned_hours != null
+                ? formatDurationMinutes(
+                    hoursToMinutes(adherence.planned_hours),
+                    "auto",
+                    durationLabels,
+                  )
+                : "—"}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">{t("completion.summary.actual")}</p>
+            <p className="font-medium tabular-nums">
+              {adherence.actual_hours != null
+                ? formatDurationMinutes(
+                    hoursToMinutes(adherence.actual_hours),
+                    "auto",
+                    durationLabels,
+                  )
+                : "—"}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">{t("completion.summary.efficiency")}</p>
+            <p className="font-medium tabular-nums">
+              {efficiency != null ? `${Math.round(efficiency)} %` : "—"}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <Separator />
+
+      <div className="space-y-1">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t("completion.summary.costTitle")}
+        </p>
+        <p className="text-sm font-medium tabular-nums">
+          {costVar != null ? `${costVar > 0 ? "+" : ""}${Math.round(costVar)} %` : "—"}
+        </p>
+      </div>
+
+      {(adherence.planned_downtime_hours != null || adherence.actual_downtime_hours > 0) && (
+        <>
+          <Separator />
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {t("completion.summary.downtimeTitle")}
+            </p>
+            <p className="text-sm tabular-nums">
+              {dtVar != null
+                ? `${dtVar > 0 ? "+" : ""}${formatDurationMinutes(
+                    hoursToMinutes(Math.abs(dtVar)),
+                    "auto",
+                    durationLabels,
+                  )}`
+                : formatDurationMinutes(
+                    hoursToMinutes(adherence.actual_downtime_hours),
+                    "auto",
+                    durationLabels,
+                  )}
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 interface WoCompletionDialogProps {
   wo: WorkOrder;
 }
 
+type DialogStep = "summary" | "form";
+
 export function WoCompletionDialog({ wo }: WoCompletionDialogProps) {
   const { t } = useTranslation("ot");
   const { info } = useSession();
-  const open = useWoStore((s) => s.showCompletionDialog);
-  const errors = useWoStore((s) => s.completionErrors);
-  const closeDialog = useWoStore((s) => s.closeCompletionDialog);
+  const showCompletionDialog = useWoStore((s) => s.showCompletionDialog);
+  const closeCompletionDialog = useWoStore((s) => s.closeCompletionDialog);
   const completeWorkOrder = useWoStore((s) => s.completeWorkOrder);
-  const saving = useWoStore((s) => s.saving);
+  const completionErrors = useWoStore((s) => s.completionErrors);
 
-  const [endDate, setEndDate] = useState(() => toDatetimeLocal(new Date()));
+  const [step, setStep] = useState<DialogStep>("summary");
+  const [adherence, setAdherence] = useState<WoPlanAdherence | null>(null);
+  const [adherenceLoading, setAdherenceLoading] = useState(false);
+  const [gates, setGates] = useState<WoCompletionGate[]>([]);
+  const [gatesLoading, setGatesLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [actualEnd, setActualEnd] = useState(() => toDatetimeLocal(new Date()));
   const [hoursWorked, setHoursWorked] = useState("");
   const [conclusion, setConclusion] = useState("");
 
-  // Reset form state when dialog opens or WO changes
-  useEffect(() => {
-    if (open) {
-      setEndDate(toDatetimeLocal(new Date()));
-      setHoursWorked("");
-      setConclusion("");
+  const loadGates = useCallback(async () => {
+    setGatesLoading(true);
+    try {
+      setGates(await evaluateWoCompletionGates(wo.id));
+    } catch {
+      setGates([]);
+    } finally {
+      setGatesLoading(false);
     }
-  }, [open, wo?.id]);
+  }, [wo.id]);
 
-  const actorId = info?.user_id ?? 0;
+  useEffect(() => {
+    if (!showCompletionDialog) return;
+    setStep("summary");
+    setActualEnd(toDatetimeLocal(new Date()));
+    setHoursWorked("");
+    setConclusion("");
+    setAdherenceLoading(true);
+    void getPlanAdherence(wo.id)
+      .then(setAdherence)
+      .catch(() => setAdherence(null))
+      .finally(() => setAdherenceLoading(false));
+    void loadGates();
+  }, [showCompletionDialog, wo.id, loadGates]);
+
+  useEffect(() => {
+    if (completionErrors.length > 0) {
+      setStep("form");
+      void loadGates();
+    }
+  }, [completionErrors, loadGates]);
 
   const handleSubmit = useCallback(async () => {
-    if (!actorId) return;
-    await completeWorkOrder({
-      wo_id: wo.id,
-      actor_id: actorId,
-      expected_row_version: wo.row_version,
-      actual_end: endDate || null,
-      actual_duration_hours: hoursWorked ? Number(hoursWorked) : null,
-      conclusion: conclusion || null,
-    });
-  }, [wo, actorId, endDate, hoursWorked, conclusion, completeWorkOrder]);
+    const actorId = info?.user_id;
+    if (actorId == null) return;
+    const hours = hoursWorked.trim() ? Number(hoursWorked) : null;
+    setSubmitting(true);
+    try {
+      await completeWorkOrder({
+        wo_id: wo.id,
+        actor_id: actorId,
+        expected_row_version: wo.row_version,
+        actual_end: new Date(actualEnd).toISOString(),
+        actual_duration_hours: hours != null && Number.isFinite(hours) ? hours : null,
+        conclusion: conclusion.trim() || null,
+      });
+      await loadGates();
+    } finally {
+      setSubmitting(false);
+    }
+  }, [
+    actualEnd,
+    completeWorkOrder,
+    conclusion,
+    hoursWorked,
+    info?.user_id,
+    loadGates,
+    wo.id,
+    wo.row_version,
+  ]);
+
+  const blockingCount = gates.filter((g) => g.required && !g.passed).length;
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && closeDialog()}>
-      <DialogContent className="max-w-lg" onPointerDownOutside={(e) => e.preventDefault()}>
+    <Dialog
+      open={showCompletionDialog}
+      onOpenChange={(open) => {
+        if (!open) closeCompletionDialog();
+      }}
+    >
+      <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <CheckCircle className="h-5 w-5 text-amber-600" />
-            {t("completion.title")}
+            <CheckCircle className="h-5 w-5 text-primary" />
+            {step === "summary" ? t("completion.summary.title") : t("completion.title")}
           </DialogTitle>
           <DialogDescription>
-            <span className="font-mono text-xs">{wo.code}</span>
-            {" — "}
-            {wo.title}
+            {step === "summary"
+              ? t("completion.summary.description")
+              : t("completion.description")}
           </DialogDescription>
         </DialogHeader>
 
-        <Separator />
+        {step === "summary" && (
+          <div className="space-y-3 py-2">
+            {adherenceLoading ? (
+              <p className="text-sm text-muted-foreground">{t("completion.summary.loading")}</p>
+            ) : (
+              <CompletionSummary adherence={adherence} />
+            )}
+            {!gatesLoading && gates.length > 0 && (
+              <WoCompletionGatesChecklist
+                gates={gates}
+                title={t("completion.gates.title")}
+              />
+            )}
+          </div>
+        )}
 
-        <div className="space-y-4 py-2">
-          {/* ── Pre-flight errors ─────────────────────────────────── */}
-          {errors.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold text-destructive flex items-center gap-1.5">
-                <AlertTriangle className="h-4 w-4" />
-                {t("completion.blockers")}
-              </h4>
-              {errors.map((err) => {
-                const Icon = ERROR_ICONS[err.code] ?? AlertTriangle;
-                return (
-                  <div
-                    key={err.code}
-                    className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-sm"
-                  >
-                    <Icon className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-                    <div>
-                      <Badge variant="outline" className="text-[10px] mr-1.5">
-                        {err.code}
-                      </Badge>
-                      {err.message}
-                    </div>
-                  </div>
-                );
-              })}
-              <Separator />
+        {step === "form" && (
+          <div className="space-y-4 py-2">
+            {!gatesLoading && (
+              <WoCompletionGatesChecklist
+                gates={gates}
+                title={t("completion.gates.title")}
+              />
+            )}
+
+            <div className="space-y-1">
+              <Label htmlFor="wo-complete-end">{t("completion.endDate")}</Label>
+              <Input
+                id="wo-complete-end"
+                type="datetime-local"
+                value={actualEnd}
+                onChange={(e) => setActualEnd(e.target.value)}
+              />
             </div>
+            <div className="space-y-1">
+              <Label htmlFor="wo-complete-hours">{t("completion.hoursWorked")}</Label>
+              <Input
+                id="wo-complete-hours"
+                type="number"
+                min={0}
+                step={0.25}
+                value={hoursWorked}
+                onChange={(e) => setHoursWorked(e.target.value)}
+                placeholder={t("completion.hoursPlaceholder")}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="wo-complete-report">{t("completion.report")}</Label>
+              <Textarea
+                id="wo-complete-report"
+                rows={3}
+                value={conclusion}
+                onChange={(e) => setConclusion(e.target.value)}
+                placeholder={t("completion.reportPlaceholder")}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-2">
+          {step === "summary" ? (
+            <>
+              <Button variant="outline" onClick={closeCompletionDialog}>
+                {t("execution.cancel")}
+              </Button>
+              <Button
+                onClick={() => {
+                  setStep("form");
+                  void loadGates();
+                }}
+                disabled={adherenceLoading}
+              >
+                {t("completion.summary.confirm")}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="ghost" size="sm" onClick={() => setStep("summary")}>
+                {t("completion.summary.back")}
+              </Button>
+              <Button variant="outline" onClick={closeCompletionDialog}>
+                {t("execution.cancel")}
+              </Button>
+              <Button
+                onClick={() => void handleSubmit()}
+                disabled={submitting || blockingCount > 0}
+              >
+                {t("completion.submit")}
+              </Button>
+            </>
           )}
-
-          {/* ── End date/time ─────────────────────────────────────── */}
-          <div className="space-y-1.5">
-            <Label className="text-xs">{t("completion.endDate")}</Label>
-            <Input
-              type="datetime-local"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="h-8 text-sm"
-            />
-          </div>
-
-          {/* ── Hours worked ──────────────────────────────────────── */}
-          <div className="space-y-1.5">
-            <Label className="text-xs">{t("completion.hoursWorked")}</Label>
-            <Input
-              type="number"
-              min={0}
-              step={0.5}
-              value={hoursWorked}
-              onChange={(e) => setHoursWorked(e.target.value)}
-              placeholder={t("completion.hoursPlaceholder")}
-              className="h-8 text-sm"
-            />
-          </div>
-
-          {/* ── Observations / report ─────────────────────────────── */}
-          <div className="space-y-1.5">
-            <Label className="text-xs">{t("completion.report")}</Label>
-            <Textarea
-              value={conclusion}
-              onChange={(e) => setConclusion(e.target.value)}
-              placeholder={t("completion.reportPlaceholder")}
-              rows={4}
-              className="text-sm resize-none"
-            />
-          </div>
-        </div>
-
-        <Separator />
-
-        {/* ── Footer actions ──────────────────────────────────────── */}
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <Button variant="outline" size="sm" onClick={closeDialog}>
-            {t("form.cancel")}
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => void handleSubmit()}
-            disabled={saving || !endDate}
-            className="bg-amber-600 hover:bg-amber-700 text-white gap-1.5"
-          >
-            <CheckCircle className="h-3.5 w-3.5" />
-            {t("completion.submit")}
-          </Button>
         </div>
       </DialogContent>
     </Dialog>

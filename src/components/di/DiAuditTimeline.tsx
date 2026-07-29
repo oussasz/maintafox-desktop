@@ -21,6 +21,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui";
+import { formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import { listDiChangeEvents, type DiChangeEvent } from "@/services/di-audit-service";
 import { toErrorMessage } from "@/utils/errors";
@@ -184,7 +185,7 @@ export function DiAuditTimeline({ diId }: DiAuditTimelineProps) {
 
             <p className="mt-1 text-xs text-muted-foreground">
               {evt.actor_id != null
-                ? t("auditTimeline.actorUser", { id: evt.actor_id })
+                ? formatPersonLabel(evt.actor_display_name)
                 : t("auditTimeline.actorSystem")}{" "}
               · {formatActedAt(evt.acted_at)}
             </p>

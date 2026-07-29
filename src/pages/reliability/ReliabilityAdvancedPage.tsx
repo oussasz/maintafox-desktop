@@ -10,6 +10,8 @@ import {
 } from "@/services/reliability-service";
 import type { FmecaItemWithContext, FmecaSeverityOccurrenceMatrix } from "@shared/ipc-types";
 
+import { MarkovAdvancedPanel } from "@/components/reliability/MarkovAdvancedPanel";
+
 import { useRequiredRamsEquipmentId } from "./rams-equipment-context";
 
 function cellStyle(count: number, maxCount: number, active: boolean): string {
@@ -129,6 +131,19 @@ export function ReliabilityAdvancedPage() {
 
       {err ? <p className="text-sm text-text-danger">{err}</p> : null}
       {loading ? <p className="text-xs text-text-muted">{t("advanced.loading")}</p> : null}
+      {matrix?.warning_message ? (
+        <div className="rounded-md border border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs text-text-primary">
+          <p className="font-medium">{t("advanced.referenceWarningTitle")}</p>
+          <p className="mt-1 text-text-secondary">{matrix.warning_message}</p>
+          <p className="mt-1 text-[11px] text-text-muted">
+            {t("advanced.referenceStats", {
+              published: matrix.reference_modes_published_count,
+              linked: matrix.fmeca_mode_links_count,
+              orphaned: matrix.fmeca_orphan_mode_links_count,
+            })}
+          </p>
+        </div>
+      ) : null}
 
       <div className={cn(mfCard.panelMuted, "overflow-x-auto")}>
         <p className="mb-2 text-center text-[11px] font-medium text-text-muted">
@@ -252,6 +267,8 @@ export function ReliabilityAdvancedPage() {
           </div>
         )}
       </div>
+
+      <MarkovAdvancedPanel equipmentId={equipmentId} />
     </div>
   );
 }

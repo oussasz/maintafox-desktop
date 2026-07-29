@@ -1,23 +1,101 @@
 /**
  * Governs the organization designer “view published” vs “edit draft” mode and
- * the explicit actions to create, fork, or abandon structure drafts.
+ * the explicit actions to create, fork, abandon, or publish structure drafts.
  */
 
-import { BookOpen, PenLine, Plus } from "lucide-react";
+import { BookOpen, Loader2, PenLine, Plus, Upload } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useStepUp } from "@/hooks/use-step-up";
 import { cn } from "@/lib/utils";
 import {
   isOrgStructureDesignMode,
   type OrgDesignerWorkspaceMode,
   useOrgDesignerStore,
 } from "@/stores/org-designer-store";
+import { useOrgGovernanceStore } from "@/stores/org-governance-store";
 
 import { AbandonOrgDraftDialog, OrgStructureDraftDialog } from "./OrgStructureDraftDialog";
+
+function AbandonDraftButton({ onClick }: { onClick: () => void }) {
+  const { t } = useTranslation("org");
+  return (
+    <PermissionGate permission="org.admin">
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={onClick}
+        className="text-status-danger border-status-danger/50 hover:bg-status-danger/10 hover:text-status-danger"
+      >
+        {t("lifecycle.abandonDraft")}
+      </Button>
+    </PermissionGate>
+  );
+}
+
+function PublishDraftButton({ draftModelId }: { draftModelId: number }) {
+  const { t } = useTranslation("org");
+  const { withStepUp, StepUpDialogElement } = useStepUp();
+  const validation = useOrgGovernanceStore((s) => s.publishValidation);
+  const validationLoading = useOrgGovernanceStore((s) => s.validationLoading);
+  const storeError = useOrgGovernanceStore((s) => s.error);
+  const publishModel = useOrgGovernanceStore((s) => s.publishModel);
+  const loadAuditEvents = useOrgGovernanceStore((s) => s.loadAuditEvents);
+  const loadSnapshot = useOrgDesignerStore((s) => s.loadSnapshot);
+
+  const canPublish =
+    validation?.can_publish === true && !storeError && !validationLoading;
+
+  const handlePublish = async () => {
+    try {
+      // Backend `publish_org_model` requires step-up; without withStepUp the
+      // STEP_UP_REQUIRED error is silenced (no toast) and nothing appears to happen.
+      await withStepUp(() => publishModel(draftModelId));
+      void loadSnapshot();
+      void loadAuditEvents();
+    } catch {
+      // Cancelled step-up or non-step-up failure already reflected in store error/banner.
+    }
+  };
+
+  return (
+    <>
+      <Button
+        size="sm"
+        disabled={!canPublish}
+        onClick={() => void handlePublish()}
+        className="gap-1.5"
+        data-testid="publish-button"
+      >
+        {validationLoading ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Upload className="h-3.5 w-3.5" />
+        )}
+        {t("governance.publish")}
+      </Button>
+      {StepUpDialogElement}
+    </>
+  );
+}
+
+function DraftPrimaryActions({
+  draftModelId,
+  onAbandon,
+}: {
+  draftModelId: number;
+  onAbandon: () => void;
+}) {
+  return (
+    <div className="ml-auto flex items-center gap-2 shrink-0">
+      <AbandonDraftButton onClick={onAbandon} />
+      <PublishDraftButton draftModelId={draftModelId} />
+    </div>
+  );
+}
 
 export function OrgDesignerLifecycleBar() {
   const { t } = useTranslation("org");
@@ -32,11 +110,12 @@ export function OrgDesignerLifecycleBar() {
 
   const hasActive = snapshot?.active_model_id != null;
   const hasDraft = snapshot?.draft_model_id != null;
-  const activeVersion = snapshot?.active_model_version;
+  const draftModelId = snapshot?.draft_model_id ?? null;
   const draftVersion = snapshot?.draft_model_version;
 
   const isDesign = isOrgStructureDesignMode(snapshot, workspaceMode);
   const canUseModeSwitch = hasActive && hasDraft;
+  const showDraftActions = hasDraft && isDesign && draftModelId != null;
 
   const onWorkspaceChange = (mode: OrgDesignerWorkspaceMode) => {
     setWorkspaceMode(mode);
@@ -84,35 +163,21 @@ export function OrgDesignerLifecycleBar() {
               {t("lifecycle.modeDraft", { version: draftVersion ?? "—" })}
             </button>
           </div>
-          {hasActive && (
-            <Badge variant="outline" className="text-[10px]">
-              {t("lifecycle.publishedVersionBadge", { version: activeVersion ?? "—" })}
-            </Badge>
-          )}
-          {hasDraft && (
-            <Badge variant="secondary" className="text-[10px]">
-              {t("lifecycle.draftVersionBadge", { version: draftVersion ?? "—" })}
-            </Badge>
+          {showDraftActions && draftModelId != null && (
+            <DraftPrimaryActions
+              draftModelId={draftModelId}
+              onAbandon={() => setAbandonOpen(true)}
+            />
           )}
         </div>
       )}
 
-      {/* Descriptive read-only / design status */}
-      {isDesign && hasActive && (
-        <div
-          className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-text-primary"
-          role="status"
-        >
-          {t("lifecycle.draftModeBanner")}
-        </div>
-      )}
-
-      {hasDraft && !hasActive && (
-        <div
-          className="rounded-md border border-status-warning/30 bg-status-warning/10 px-3 py-2 text-xs text-text-primary"
-          role="status"
-        >
-          {t("lifecycle.prePublishDraftOnly")}
+      {hasDraft && !hasActive && showDraftActions && draftModelId != null && (
+        <div className="flex flex-wrap justify-end gap-2">
+          <DraftPrimaryActions
+            draftModelId={draftModelId}
+            onAbandon={() => setAbandonOpen(true)}
+          />
         </div>
       )}
 
@@ -141,16 +206,6 @@ export function OrgDesignerLifecycleBar() {
             <Button size="sm" className="gap-1.5" onClick={() => setForkOpen(true)}>
               <Plus className="h-3.5 w-3.5" />
               {t("lifecycle.startVersionFromPublished")}
-            </Button>
-          </PermissionGate>
-        </div>
-      )}
-
-      {hasDraft && isDesign && (
-        <div className="flex flex-wrap gap-2 justify-end">
-          <PermissionGate permission="org.admin">
-            <Button size="sm" variant="outline" onClick={() => setAbandonOpen(true)}>
-              {t("lifecycle.abandonDraft")}
             </Button>
           </PermissionGate>
         </div>

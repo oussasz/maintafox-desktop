@@ -3,12 +3,14 @@
  */
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { ChevronDown, LayoutGrid, List, Plus, RefreshCw, Search, Users, X } from "lucide-react";
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LayoutGrid, List, Plus, RefreshCw, Users } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
+import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { AvailabilityCalendar } from "@/components/personnel/AvailabilityCalendar";
 import { PersonnelArchivePanel } from "@/components/personnel/PersonnelArchivePanel";
 import { PersonnelCard } from "@/components/personnel/PersonnelCard";
@@ -22,24 +24,8 @@ import { TrainingQualificationPanel } from "@/components/personnel/TrainingQuali
 import { WorkforceReportPanel } from "@/components/personnel/WorkforceReportPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { mfInput, mfLayout } from "@/design-system/tokens";
+import { mfLayout } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import { listPositions } from "@/services/personnel-service";
@@ -89,7 +75,6 @@ export function PersonnelPage() {
     () => (localStorage.getItem(VIEW_STORAGE_KEY) as PersonnelViewMode) || "list",
   );
   const [searchInput, setSearchInput] = useState("");
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [positions, setPositions] = useState<{ id: number; code: string; name: string }[]>([]);
   const [entityNodes, setEntityNodes] = useState<OrgDesignerNodeRow[]>([]);
@@ -119,24 +104,13 @@ export function PersonnelPage() {
     void loadLookups();
   }, [loadLookups]);
 
-  const handleSearchChange = useCallback(
-    (e: ChangeEvent<HTMLInputElement>) => {
-      const val = e.target.value;
-      setSearchInput(val);
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-      searchTimerRef.current = setTimeout(() => {
-        setFilter({ search: val.trim() || null });
-        void loadPersonnel();
-      }, 300);
+  const onSearchChange = useCallback(
+    (val: string) => {
+      setFilter({ search: val.trim() || null });
+      void loadPersonnel();
     },
     [setFilter, loadPersonnel],
   );
-
-  const clearSearch = useCallback(() => {
-    setSearchInput("");
-    setFilter({ search: null });
-    void loadPersonnel();
-  }, [setFilter, loadPersonnel]);
 
   const switchView = useCallback((v: PersonnelViewMode) => {
     setView(v);
@@ -146,37 +120,33 @@ export function PersonnelPage() {
   const selectedStatuses = filter.availability_status ?? [];
   const selectedEmployment = filter.employment_type ?? [];
 
-  const toggleStatus = useCallback(
-    (code: string, checked: boolean) => {
-      const cur = filter.availability_status ?? [];
-      const next = checked ? [...new Set([...cur, code])] : cur.filter((c) => c !== code);
-      setFilter({ availability_status: next.length ? next : null });
-      void loadPersonnel();
-    },
-    [filter.availability_status, setFilter, loadPersonnel],
-  );
-
-  const toggleEmployment = useCallback(
-    (code: string, checked: boolean) => {
-      const cur = filter.employment_type ?? [];
-      const next = checked ? [...new Set([...cur, code])] : cur.filter((c) => c !== code);
-      setFilter({ employment_type: next.length ? next : null });
-      void loadPersonnel();
-    },
-    [filter.employment_type, setFilter, loadPersonnel],
-  );
-
   const handleEntityFilter = useCallback(
-    (val: string) => {
-      setFilter({ entity_id: val === "__all__" ? null : Number(val) });
+    (val: string | null) => {
+      setFilter({ entity_id: val ? Number(val) : null });
       void loadPersonnel();
     },
     [setFilter, loadPersonnel],
   );
 
   const handlePositionFilter = useCallback(
-    (val: string) => {
-      setFilter({ position_id: val === "__all__" ? null : Number(val) });
+    (val: string | null) => {
+      setFilter({ position_id: val ? Number(val) : null });
+      void loadPersonnel();
+    },
+    [setFilter, loadPersonnel],
+  );
+
+  const handleStatusMulti = useCallback(
+    (next: string[]) => {
+      setFilter({ availability_status: next.length ? next : null });
+      void loadPersonnel();
+    },
+    [setFilter, loadPersonnel],
+  );
+
+  const handleEmploymentMulti = useCallback(
+    (next: string[]) => {
+      setFilter({ employment_type: next.length ? next : null });
       void loadPersonnel();
     },
     [setFilter, loadPersonnel],
@@ -193,6 +163,73 @@ export function PersonnelPage() {
     });
     void loadPersonnel();
   }, [setFilter, loadPersonnel]);
+
+  const entityValue = filter.entity_id != null ? String(filter.entity_id) : null;
+  const positionValue = filter.position_id != null ? String(filter.position_id) : null;
+
+  const filterDefs = useMemo<SmartFilterDef[]>(
+    () => [
+      {
+        id: "entity",
+        kind: "select",
+        label: t("filters.entity"),
+        options: entityNodes.map((n) => ({
+          value: String(n.node_id),
+          label: `${n.code} — ${n.name}`,
+        })),
+        value: entityValue,
+        onChange: handleEntityFilter,
+        allLabel: t("filters.all"),
+      },
+      {
+        id: "position",
+        kind: "select",
+        label: t("filters.position"),
+        options: positions.map((p) => ({
+          value: String(p.id),
+          label: `${p.code} — ${p.name}`,
+        })),
+        value: positionValue,
+        onChange: handlePositionFilter,
+        allLabel: t("filters.all"),
+      },
+      {
+        id: "status",
+        kind: "multi-select",
+        label: t("filters.status"),
+        options: AVAILABILITY_CODES.map((code) => ({
+          value: code,
+          label: t(`status.${code}`),
+        })),
+        value: selectedStatuses,
+        onChange: handleStatusMulti,
+      },
+      {
+        id: "employment",
+        kind: "multi-select",
+        label: t("filters.employmentType"),
+        options: EMPLOYMENT_CODES.map((code) => ({
+          value: code,
+          label: t(`employmentType.${code}`),
+        })),
+        value: selectedEmployment,
+        onChange: handleEmploymentMulti,
+      },
+    ],
+    [
+      t,
+      entityNodes,
+      positions,
+      entityValue,
+      positionValue,
+      selectedStatuses,
+      selectedEmployment,
+      handleEntityFilter,
+      handlePositionFilter,
+      handleStatusMulti,
+      handleEmploymentMulti,
+    ],
+  );
 
   const columns: ColumnDef<Personnel>[] = useMemo(
     () => [
@@ -266,15 +303,6 @@ export function PersonnelPage() {
     [t],
   );
 
-  const entityValue =
-    filter.entity_id != null && filter.entity_id !== undefined
-      ? String(filter.entity_id)
-      : "__all__";
-  const positionValue =
-    filter.position_id != null && filter.position_id !== undefined
-      ? String(filter.position_id)
-      : "__all__";
-
   return (
     <div className={mfLayout.moduleRoot}>
       {/* ── Page header (same shell as DI / OT) ───────────────────────── */}
@@ -331,121 +359,15 @@ export function PersonnelPage() {
         </div>
       </div>
 
-      {/* ── Filters ─────────────────────────────────────────────────── */}
-      <div className={mfLayout.moduleFilterBar}>
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
-          <Input
-            className={cn(mfInput.filterSearch, "max-w-sm")}
-            placeholder={t("filters.searchPlaceholder")}
-            value={searchInput}
-            onChange={handleSearchChange}
-          />
-          {searchInput ? (
-            <button
-              type="button"
-              className="absolute right-2 top-2 text-text-muted hover:text-text-primary"
-              onClick={clearSearch}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-        </div>
-
-        <Select value={entityValue} onValueChange={handleEntityFilter}>
-          <SelectTrigger className={cn(mfInput.filterSelect, "w-[200px]")}>
-            <SelectValue placeholder={t("filters.entity")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">{t("filters.all")}</SelectItem>
-            {entityNodes.map((n) => (
-              <SelectItem key={n.node_id} value={String(n.node_id)}>
-                {n.code} — {n.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={positionValue} onValueChange={handlePositionFilter}>
-          <SelectTrigger className={cn(mfInput.filterSelect, "w-[200px]")}>
-            <SelectValue placeholder={t("filters.position")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">{t("filters.all")}</SelectItem>
-            {positions.map((p) => (
-              <SelectItem key={p.id} value={String(p.id)}>
-                {p.code} — {p.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 min-w-[160px] justify-between text-sm font-normal"
-            >
-              {t("filters.status")}
-              <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-56" align="start">
-            <DropdownMenuLabel>{t("filters.status")}</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {AVAILABILITY_CODES.map((code) => (
-              <DropdownMenuCheckboxItem
-                key={code}
-                checked={selectedStatuses.includes(code)}
-                onCheckedChange={(c) => toggleStatus(code, Boolean(c))}
-                onSelect={(e) => e.preventDefault()}
-              >
-                {t(`status.${code}`)}
-              </DropdownMenuCheckboxItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 min-w-[180px] justify-between text-sm font-normal"
-            >
-              {t("filters.employmentType")}
-              <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-56" align="start">
-            <DropdownMenuLabel>{t("filters.employmentType")}</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {EMPLOYMENT_CODES.map((code) => (
-              <DropdownMenuCheckboxItem
-                key={code}
-                checked={selectedEmployment.includes(code)}
-                onCheckedChange={(c) => toggleEmployment(code, Boolean(c))}
-                onSelect={(e) => e.preventDefault()}
-              >
-                {t(`employmentType.${code}`)}
-              </DropdownMenuCheckboxItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 text-sm"
-          onClick={clearAllFilters}
-        >
-          {t("filters.clearAll")}
-        </Button>
-      </div>
+      <SmartFilterBar
+        searchPlaceholder={t("filters.searchPlaceholder")}
+        searchValue={searchInput}
+        onSearchInputChange={setSearchInput}
+        onSearchChange={onSearchChange}
+        filters={filterDefs}
+        resultCount={total}
+        onReset={clearAllFilters}
+      />
 
       {error ? (
         <div className="border-b border-destructive/20 bg-destructive/5 px-6 py-2 text-sm text-destructive">

@@ -56,4 +56,7 @@ target-agent-*/
 
 
 /PFE
+/research
 
+# Local agent recovery backups
+.tmp-phase47-backup/

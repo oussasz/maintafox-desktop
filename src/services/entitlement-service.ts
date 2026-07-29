@@ -100,6 +100,14 @@ export async function getEntitlementSummary(): Promise<EntitlementSummary> {
   }
 }
 
+/** Fired after a signed entitlement envelope is applied (activation / policy refresh). */
+export const ENTITLEMENTS_UPDATED_EVENT = "maintafox:entitlements-updated";
+
+export function notifyEntitlementsUpdated(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(ENTITLEMENTS_UPDATED_EVENT));
+}
+
 export async function checkEntitlementCapability(
   capability: string,
 ): Promise<EntitlementCapabilityCheck> {

@@ -52,6 +52,8 @@ function makeSummary(overrides: Partial<AssetBindingSummaryType> = {}): AssetBin
     linked_document_count: { status: "available", count: 3 },
     linked_iot_signal_count: { status: "not_implemented", count: null },
     linked_erp_mapping_count: { status: "not_implemented", count: null },
+    open_di_count: { status: "available", count: 0 },
+    open_wo_count: { status: "available", count: 0 },
     ...overrides,
   };
 }

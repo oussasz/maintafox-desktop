@@ -7,7 +7,7 @@
 
 import { z } from "zod";
 
-import { invoke } from "@/lib/ipc-invoke";
+import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
   Asset,
   AssetHealthScore,
@@ -30,6 +30,8 @@ export const AssetSchema = z.object({
   class_name: z.string().nullable(),
   family_code: z.string().nullable(),
   family_name: z.string().nullable(),
+  subfamily_code: z.string().nullable(),
+  subfamily_name: z.string().nullable(),
   criticality_value_id: z.number().nullable(),
   criticality_code: z.string().nullable(),
   status_code: z.string(),
@@ -37,6 +39,9 @@ export const AssetSchema = z.object({
   model: z.string().nullable(),
   serial_number: z.string().nullable(),
   maintainable_boundary: z.boolean(),
+  rams_schedule_reference_value_id: z.number().nullable(),
+  rams_schedule_reference_value_name: z.string().nullable(),
+  rams_utilization_factor: z.number(),
   org_node_id: z.number().nullable(),
   org_node_name: z.string().nullable(),
   commissioned_at: z.string().nullable(),
@@ -159,6 +164,16 @@ export async function listAssets(
 export async function getAssetById(assetId: number): Promise<Asset> {
   const raw = await invoke<unknown>("get_asset_by_id", { assetId });
   return AssetSchema.parse(raw) as Asset;
+}
+
+/** Same as `getAssetById` but without global error toasts (for optional form prefill). */
+export async function getAssetByIdSilent(assetId: number): Promise<Asset | null> {
+  try {
+    const raw = await invokeSilent<unknown>("get_asset_by_id", { assetId });
+    return AssetSchema.parse(raw) as Asset;
+  } catch {
+    return null;
+  }
 }
 
 export async function createAsset(payload: CreateAssetPayload): Promise<Asset> {

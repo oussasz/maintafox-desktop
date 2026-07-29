@@ -23,12 +23,41 @@
     "expand": "Développer",
     "collapse": "Réduire",
     "newSet": "Nouveau jeu",
+    "workingCatalog": "Catalogue de travail",
     "renameDomain": "Renommer le domaine",
+    "systemCatalogDomain": "Catalogue système (lecture seule)",
     "status": {
       "draft": "Brouillon",
       "validated": "Validé",
       "published": "Publié",
       "superseded": "Remplacé"
+    }
+  },
+  "governance": {
+    "category": {
+      "systemCatalog": "Système",
+      "operationalDictionary": "Dictionnaire opérationnel",
+      "controlledCatalog": "Catalogue contrôlé",
+      "unknown": "Catalogue"
+    },
+    "categoryShort": {
+      "systemCatalog": "Système",
+      "operationalDictionary": "Dictionnaire",
+      "controlledCatalog": "Catalogue",
+      "unknown": "Catalogue"
+    },
+    "readOnly": {
+      "published": "Cette version est publiée. Créez un brouillon pour modifier ce référentiel.",
+      "publishedProtected": "Ce référentiel est publié et protégé. Les modifications ne sont pas autorisées.",
+      "superseded": "Cette version a été remplacée. Créez un brouillon à partir de la version publiée pour modifier ce référentiel.",
+      "supersededProtected": "Cette version a été remplacée. Les modifications ne sont pas autorisées.",
+      "systemCatalog": "Ce catalogue système est en lecture seule.",
+      "createDraft": "Créer un brouillon",
+      "creatingDraft": "Création du brouillon…",
+      "discardDraft": "Abandonner le brouillon",
+      "discardingDraft": "Abandon…",
+      "discardDraftTitle": "Abandonner le brouillon ?",
+      "discardDraftDescription": "Cette action supprime définitivement le brouillon et toutes ses valeurs. Le catalogue publié n’est pas modifié."
     }
   },
   "editor": {
@@ -58,7 +87,12 @@
     "deactivate": "Désactiver",
     "save": "Enregistrer",
     "edit": "Modifier",
-    "aliases": "Alias"
+    "aliases": "Alias",
+    "disabledReason": {
+      "noPermission": "Vous n'avez pas la permission de modifier cette valeur.",
+      "systemValue": "Les valeurs système ne peuvent pas être modifiées ni supprimées.",
+      "alreadyInactive": "Cette valeur est déjà inactive."
+    }
   },
   "alias": {
     "title": "Alias – {{label}}",
@@ -73,6 +107,8 @@
     "save": "Enregistrer",
     "cancel": "Annuler",
     "delete": "Supprimer",
+    "deleteTitle": "Supprimer l'alias ?",
+    "deleteDescription": "Supprimer définitivement l'alias « {{label}} » ?",
     "edit": "Modifier",
     "preferred": "Préféré"
   },
@@ -158,7 +194,9 @@
     "lockedHint": "Priorité système (code et niveau protégés)",
     "active": "Actif",
     "inactive": "Inactif",
-    "empty": "Aucune priorité chargée."
+    "empty": "Aucune priorité chargée.",
+    "deactivateTitle": "Désactiver la priorité",
+    "deactivateDescription": "Désactiver la priorité « {{code}} » ?"
   },
   "woStatuses": {
     "panelTitle": "Statuts d'ordre de travail",
@@ -175,5 +213,119 @@
     "terminalNo": "Non",
     "lockedHint": "Code statut verrouillé (contrat moteur)",
     "empty": "Aucun statut chargé."
+  },
+  "synthetic": {
+    "published": "v1 — publié",
+    "articleFamilies": {
+      "title": "Familles d’articles de stock",
+      "add": "Ajouter une famille",
+      "empty": "Aucune famille pour le moment.",
+      "colName": "Nom",
+      "namePlaceholder": "Nom…",
+      "deactivateTitle": "Désactiver la famille",
+      "deactivateDescription": "Désactiver la famille d’articles « {{code}} » ?"
+    },
+    "taxCategories": {
+      "title": "Catégories TVA des articles de stock",
+      "add": "Ajouter une catégorie TVA",
+      "empty": "Aucune catégorie TVA pour le moment.",
+      "colFr": "FR",
+      "colEn": "EN",
+      "codePlaceholder": "TVA_20",
+      "labelPlaceholder": "TVA 20 %",
+      "frPlaceholder": "TVA 20 %",
+      "enPlaceholder": "VAT 20%",
+      "deactivateTitle": "Désactiver la catégorie TVA",
+      "deactivateDescription": "Désactiver la catégorie TVA « {{code}} » ?"
+    },
+    "woTypes": {
+      "codePlaceholder": "type_personnalise"
+    },
+    "woStatuses": {
+      "colorPlaceholder": "#RRGGBB"
+    }
+  },
+  "combobox": {
+    "searchPlaceholder": "Rechercher…",
+    "loading": "Chargement…",
+    "noneOption": "— Aucun —",
+    "parentLabel": "Parent",
+    "parentMissing": "Parent requis",
+    "parentRequired": "Sélectionnez d'abord la valeur parente.",
+    "fieldLabel": "Libellé",
+    "fieldLabelPlaceholder": "Libellé affiché",
+    "fieldDescription": "Description",
+    "fieldDescriptionPlaceholder": "Description optionnelle",
+    "labelRequired": "Le libellé est obligatoire.",
+    "createNotAllowed": "La création n'est pas autorisée pour ce référentiel.",
+    "cancel": "Annuler",
+    "save": "Enregistrer"
+  },
+  "schedulePattern": {
+    "title": "Calendrier hebdomadaire",
+    "column": "Horaire",
+    "cancel": "Annuler",
+    "close": "Fermer le modèle horaire",
+    "loading": "Chargement du modèle horaire…",
+    "saving": "Enregistrement…",
+    "save": "Enregistrer l'horaire",
+    "readOnly": "Vous n'avez pas la permission de modifier ce modèle horaire.",
+    "shiftPatternCode": "Code du modèle de poste",
+    "nominalHours": "Heures nominales / jour",
+    "isContinuous": "Continu (24h)",
+    "weekCanvas": "Semaine de travail",
+    "dayMode": "Mode du jour",
+    "day": "Jour",
+    "start": "Début",
+    "end": "Fin",
+    "restDay": "Repos",
+    "restDayLabel": "Jour de repos",
+    "dayAriaWork": "{{day}} : {{start}} à {{end}}",
+    "dayAriaRest": "{{day}} : jour de repos",
+    "mode": {
+      "work": "Jour travaillé",
+      "rest": "Jour de repos"
+    },
+    "metrics": {
+      "workingDays": "Jours travaillés",
+      "restDays": "Jours de repos",
+      "weeklyHours": "Heures hebdomadaires",
+      "dayDuration": "Durée du jour",
+      "hoursValue": "{{hours}} h"
+    },
+    "templates": {
+      "title": "Modèles",
+      "normal_day": "Journée normale",
+      "two_by_eight": "Couverture 2×8",
+      "three_by_eight": "3×8 / jour 24h",
+      "continuous_24_7": "Continu 24/7",
+      "weekend_only": "Week-end seul",
+      "personalized": "Personnalisé"
+    },
+    "validation": {
+      "generic": "Corrigez l'horaire avant d'enregistrer.",
+      "incompleteWeek": "La semaine doit contenir exactement sept jours.",
+      "missingTime": "Chaque jour travaillé nécessite une heure de début et de fin.",
+      "invalidFormat": "Les heures doivent être au format HH:mm.",
+      "identicalTimes": "Les heures de début et de fin doivent être différentes."
+    },
+    "days": {
+      "monday": "Lundi",
+      "tuesday": "Mardi",
+      "wednesday": "Mercredi",
+      "thursday": "Jeudi",
+      "friday": "Vendredi",
+      "saturday": "Samedi",
+      "sunday": "Dimanche"
+    },
+    "daysShort": {
+      "monday": "Lun",
+      "tuesday": "Mar",
+      "wednesday": "Mer",
+      "thursday": "Jeu",
+      "friday": "Ven",
+      "saturday": "Sam",
+      "sunday": "Dim"
+    }
   }
 }

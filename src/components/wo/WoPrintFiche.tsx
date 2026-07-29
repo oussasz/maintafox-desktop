@@ -13,6 +13,7 @@ import {
   type WoVerification,
 } from "@/services/wo-closeout-service";
 import { listLabor, listParts, listTasks } from "@/services/wo-execution-service";
+import { formatEntityCode, formatOrDash, formatPersonLabel } from "@/lib/display";
 import type { WoExecPart, WoExecTask, WoIntervener, WorkOrder } from "@shared/ipc-types";
 
 // ── i18n keys for the print template ────────────────────────────────────────
@@ -77,14 +78,14 @@ function buildHtml(
   const laborRows = labor
     .map(
       (l) =>
-        `<tr><td>#${l.intervener_id}</td><td>${l.skill_id != null ? `#${l.skill_id}` : "—"}</td><td>${l.hours_worked != null ? `${l.hours_worked}h` : "—"}</td></tr>`,
+        `<tr><td>${esc(formatPersonLabel(l.intervener_display_name))}</td><td>${esc(formatOrDash(l.skill_label))}</td><td>${l.hours_worked != null ? `${l.hours_worked}h` : "—"}</td></tr>`,
     )
     .join("");
 
   const partRows = parts
     .map(
       (p) =>
-        `<tr><td>${esc(p.article_ref ?? `#${p.article_id}`)}</td><td>${p.quantity_used ?? p.quantity_planned ?? "—"}</td><td>${p.unit_cost != null ? `${p.unit_cost.toFixed(2)}` : "—"}</td></tr>`,
+        `<tr><td>${esc(formatOrDash(p.article_ref ?? p.article_label))}</td><td>${p.quantity_used ?? p.quantity_planned ?? "—"}</td><td>${p.unit_cost != null ? `${p.unit_cost.toFixed(2)}` : "—"}</td></tr>`,
     )
     .join("");
 
@@ -160,7 +161,11 @@ function buildHtml(
 
   <div class="section">
     <h2>${esc(t("print.description"))}</h2>
-    ${wo.source_di_id ? `<p style="font-size:10px;margin-bottom:4px;">${esc(t("print.sourceDi"))} : <strong>DI-${wo.source_di_id}</strong></p>` : ""}
+    ${
+      wo.source_di_code
+        ? `<p style="font-size:10px;margin-bottom:4px;">${esc(t("print.sourceDi"))} : <strong>${esc(formatEntityCode(wo.source_di_code))}</strong></p>`
+        : ""
+    }
     <div class="desc">${esc(wo.description ?? "—")}</div>
   </div>
 
@@ -208,9 +213,9 @@ function buildHtml(
       ${failureDetails
         .map(
           (fd) => `
-        <tr><th style="width:35%">${esc(t("print.failureMode"))}</th><td>${fd.failure_mode_id != null ? `#${fd.failure_mode_id}` : "—"}</td></tr>
-        <tr><th>${esc(t("print.failureCause"))}</th><td>${fd.failure_cause_id != null ? `#${fd.failure_cause_id}` : "—"}</td></tr>
-        <tr><th>${esc(t("print.failureEffect"))}</th><td>${fd.failure_effect_id != null ? `#${fd.failure_effect_id}` : "—"}</td></tr>
+        <tr><th style="width:35%">${esc(t("print.failureMode"))}</th><td>${esc(formatOrDash(fd.failure_mode_label))}</td></tr>
+        <tr><th>${esc(t("print.failureCause"))}</th><td>${esc(formatOrDash(fd.failure_cause_label))}</td></tr>
+        <tr><th>${esc(t("print.failureEffect"))}</th><td>${esc(formatOrDash(fd.failure_effect_label))}</td></tr>
         <tr><th>${esc(t("print.repairType"))}</th><td>${fd.is_temporary_repair ? esc(t("print.temporary")) : fd.is_permanent_repair ? esc(t("print.permanent")) : "—"}</td></tr>
         ${fd.notes ? `<tr><th>${esc(t("print.notes"))}</th><td>${esc(fd.notes)}</td></tr>` : ""}
       `,
@@ -332,20 +337,33 @@ export async function printWoFiche(
   iframe.style.border = "0";
   iframe.setAttribute("aria-hidden", "true");
 
-  iframe.onload = () => {
-    const w = iframe.contentWindow;
-    if (!w) return;
-    w.focus();
-    w.print();
-    setTimeout(() => {
-      iframe.remove();
-    }, 1000);
-  };
-
   document.body.appendChild(iframe);
   const doc = iframe.contentDocument;
   if (!doc) return;
   doc.open();
   doc.write(html);
   doc.close();
+
+  const w = iframe.contentWindow;
+  if (!w) return;
+
+  const cleanup = () => {
+    setTimeout(() => {
+      iframe.remove();
+    }, 300);
+  };
+
+  // In desktop webviews, iframe `onload` can fire for the initial empty
+  // document before our HTML is painted, causing a blank first preview.
+  // Trigger print after the written document gets a paint frame.
+  w.requestAnimationFrame(() => {
+    w.requestAnimationFrame(() => {
+      w.focus();
+      w.print();
+    });
+  });
+
+  w.onafterprint = cleanup;
+  // Fallback cleanup if the runtime never emits `afterprint`.
+  setTimeout(cleanup, 15000);
 }

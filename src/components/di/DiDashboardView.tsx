@@ -91,6 +91,16 @@ export function DiDashboardView() {
           color={slaOk ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}
         />
         <KpiCard
+          label={t("dashboard.slaMet")}
+          value={stats.sla_met_count}
+          color="bg-green-50 text-green-700"
+        />
+        <KpiCard
+          label={t("dashboard.slaBreached")}
+          value={stats.sla_breached_count}
+          color="bg-red-50 text-red-700"
+        />
+        <KpiCard
           label={t("dashboard.closedThisMonth")}
           value={stats.closed_this_month}
           color="bg-teal-50 text-teal-700"

@@ -1,6 +1,6 @@
 import { z, ZodError } from "zod";
 
-import { invoke } from "@/lib/ipc-invoke";
+import { invokeSilent } from "@/lib/ipc-invoke";
 import { controlPlaneApiBase } from "@/services/product-license-service";
 import { applySyncBatch, getSyncPushPayload } from "@/services/sync-service";
 import type { ApplySyncBatchInput, SyncPushPayload } from "@shared/ipc-types";
@@ -138,7 +138,8 @@ function formatControlPlaneHttpErrorPayload(raw: unknown): string | null {
 export async function exchangeControlPlaneSyncRound(): Promise<void> {
   let bearer: string | null = null;
   try {
-    bearer = await invoke<string | null>("get_control_plane_activation_bearer_token");
+    // Silent: heartbeat/bootstrap must not open AuthLockLayer on transient auth gaps.
+    bearer = await invokeSilent<string | null>("get_control_plane_activation_bearer_token");
   } catch (e) {
     throw decodeError("get_control_plane_activation_bearer_token", e);
   }
@@ -146,7 +147,7 @@ export async function exchangeControlPlaneSyncRound(): Promise<void> {
     return;
   }
 
-  const push = await getSyncPushPayload(100);
+  const push = await getSyncPushPayload(100, { silent: true });
 
   const idempotencyKey = newIdempotencyKeyForExchange();
   const body = buildSyncExchangeRequestBody(push, idempotencyKey);
@@ -208,5 +209,5 @@ export async function exchangeControlPlaneSyncRound(): Promise<void> {
     policy_metadata_json: parsed.data.policy_metadata_json ?? null,
   };
 
-  await applySyncBatch(batch);
+  await applySyncBatch(batch, { silent: true });
 }

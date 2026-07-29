@@ -26,7 +26,9 @@ import {
   getDashboardKpis,
   getDashboardLayout,
 } from "@/services/dashboard-service";
+import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { useAppStore } from "@/store/app-store";
+import { useSessionStore } from "@/store/session-store";
 import {
   DASHBOARD_WIDGET_IDS,
   DASHBOARD_WIDGET_PERMISSION,
@@ -45,6 +47,8 @@ export function DashboardPage() {
   const { can, canAny } = usePermissions();
   const displayName = useAppStore((s) => s.currentUserDisplayName);
   const navigate = useNavigate();
+  const sessionAuthenticated = useSessionStore((s) => s.info?.is_authenticated === true);
+  const sessionLocked = useSessionStore((s) => s.info?.is_locked === true);
 
   const [kpis, setKpis] = useState<DashboardKpis | null>(null);
   const [layout, setLayout] = useState<DashboardLayoutV1>(DEFAULT_DASHBOARD_LAYOUT);
@@ -55,12 +59,19 @@ export function DashboardPage() {
   const kpiValidationFetchStarted = useRef(false);
 
   const loadKpis = useCallback(() => {
+    if (!isSessionActiveForBackgroundWork()) {
+      return;
+    }
     getDashboardKpis()
       .then(setKpis)
       .catch(() => setKpis(null));
   }, []);
 
   useEffect(() => {
+    if (!sessionAuthenticated || sessionLocked) {
+      return;
+    }
+
     const perf = typeof performance !== "undefined" ? performance : undefined;
     perf?.mark?.("dashboard-load-start");
     void Promise.all([getDashboardKpis(), getDashboardLayout()])
@@ -86,7 +97,7 @@ export function DashboardPage() {
 
     const interval = setInterval(loadKpis, KPI_REFRESH_MS);
     return () => clearInterval(interval);
-  }, [loadKpis]);
+  }, [loadKpis, sessionAuthenticated, sessionLocked]);
 
   useEffect(() => {
     const onRefresh = () => {

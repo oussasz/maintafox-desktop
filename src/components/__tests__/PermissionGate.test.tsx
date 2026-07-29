@@ -27,6 +27,24 @@ vi.mock("@/services/rbac-service", () => ({
   getMyPermissions: (...args: unknown[]) => mockGetMyPermissions(...args),
 }));
 
+vi.mock("@/services/auth-service", () => ({
+  getSessionInfo: vi.fn().mockResolvedValue({
+    is_authenticated: true,
+    is_locked: false,
+    user_id: 1,
+    username: "admin",
+    display_name: "Admin",
+    is_admin: true,
+    force_password_change: false,
+    expires_at: null,
+    last_activity_at: null,
+    password_expires_in_days: null,
+    pin_configured: false,
+    tenant_id: "t1",
+    token_tenant_id: "t1",
+  }),
+}));
+
 vi.mock("@/services/personnel-service", () => ({
   exportWorkforceReportCsv: vi.fn(),
   createPersonnelImportBatch: vi.fn(),

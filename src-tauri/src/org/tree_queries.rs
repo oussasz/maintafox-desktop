@@ -3,6 +3,10 @@
 //! These queries return flattened, denormalized rows suitable for the
 //! designer UI. They are read-only and never mutate data.
 //!
+//! Node rows are always scoped to a single structure model — draft when one
+//! exists (designer workspace prefers the draft), otherwise the active model.
+//! The two trees are never mixed in a single snapshot.
+//!
 //! Sub-phase 01 File 03 — Sprint S1.
 
 use crate::errors::{AppError, AppResult};
@@ -21,6 +25,8 @@ pub struct OrgDesignerNodeRow {
     pub name: String,
     pub status: String,
     pub row_version: i64,
+    pub structure_model_id: i64,
+    pub origin_node_id: Option<i64>,
     pub node_type_id: i64,
     pub node_type_code: String,
     pub node_type_label: String,
@@ -41,6 +47,9 @@ pub struct OrgDesignerSnapshot {
     /// Present when a draft model exists; enables UI to label the draft (e.g. "Draft v4").
     pub draft_model_id: Option<i64>,
     pub draft_model_version: Option<i64>,
+    /// The model whose nodes are loaded. Equals draft_model_id when a draft
+    /// exists, else active_model_id. None only when both are absent.
+    pub display_model_id: Option<i64>,
     pub nodes: Vec<OrgDesignerNodeRow>,
 }
 
@@ -82,6 +91,12 @@ fn map_designer_node(row: &QueryResult) -> AppResult<OrgDesignerNodeRow> {
         row_version: row
             .try_get::<i64>("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
+        structure_model_id: row
+            .try_get::<i64>("", "structure_model_id")
+            .map_err(|e| decode_err("structure_model_id", e))?,
+        origin_node_id: row
+            .try_get::<Option<i64>>("", "origin_node_id")
+            .map_err(|e| decode_err("origin_node_id", e))?,
         node_type_id: row
             .try_get::<i64>("", "node_type_id")
             .map_err(|e| decode_err("node_type_id", e))?,
@@ -125,9 +140,11 @@ fn map_designer_node(row: &QueryResult) -> AppResult<OrgDesignerNodeRow> {
 
 // ─── SQL fragment ─────────────────────────────────────────────────────────────
 
-/// The designer projection query. Returns one row per non-deleted node, ordered
-/// by `ancestor_path` for stable tree rendering. Counts only include active
-/// (non-expired) responsibilities and bindings.
+/// The designer projection query scoped to a single structure model.
+///
+/// Child counts are constrained to the same `structure_model_id` so that
+/// counts never bleed across model boundaries. Responsibility and binding
+/// counts are operational (model-agnostic) and stay un-scoped.
 const DESIGNER_SNAPSHOT_SQL: &str = r"
     SELECT
         n.id        AS node_id,
@@ -138,6 +155,8 @@ const DESIGNER_SNAPSHOT_SQL: &str = r"
         n.name,
         n.status,
         n.row_version,
+        n.structure_model_id,
+        n.origin_node_id,
         n.node_type_id,
         t.code      AS node_type_code,
         t.label     AS node_type_label,
@@ -148,7 +167,9 @@ const DESIGNER_SNAPSHOT_SQL: &str = r"
         t.can_receive_permits,
         (SELECT COUNT(*)
          FROM org_nodes c
-         WHERE c.parent_id = n.id AND c.deleted_at IS NULL
+         WHERE c.parent_id = n.id
+           AND c.deleted_at IS NULL
+           AND c.structure_model_id = n.structure_model_id
         ) AS child_count,
         (SELECT COUNT(*)
          FROM org_node_responsibilities r
@@ -161,19 +182,23 @@ const DESIGNER_SNAPSHOT_SQL: &str = r"
     FROM org_nodes n
     JOIN org_node_types t ON t.id = n.node_type_id
     WHERE n.deleted_at IS NULL
+      AND n.structure_model_id = ?
     ORDER BY n.ancestor_path ASC
 ";
 
 // ─── Service functions ────────────────────────────────────────────────────────
 
 /// Return the complete designer snapshot: model metadata (active, draft) and the
-/// full flattened org tree. When **no** active and **no** draft model exist, the
-/// snapshot has empty nodes. When only a draft exists (not yet first-published),
-/// node rows still project through `org_nodes` and draft-scoped `org_node_types`.
+/// flattened org tree for **one** structure model.
+///
+/// `prefer_draft`: when `Some(true)` and a draft exists, load draft nodes; when
+/// `Some(false)` or `None`, prefer the active (production) tree. If only a draft
+/// exists (pre-first-publish), the draft tree is always shown. Trees are never mixed.
 pub async fn get_org_designer_snapshot(
     db: &DatabaseConnection,
+    prefer_draft: Option<bool>,
 ) -> AppResult<OrgDesignerSnapshot> {
-    let model_row = db
+    let active_row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT id, version_number FROM org_structure_models WHERE status = 'active' LIMIT 1"
@@ -181,7 +206,7 @@ pub async fn get_org_designer_snapshot(
         ))
         .await?;
 
-    let (active_model_id, active_model_version) = match model_row {
+    let (active_model_id, active_model_version) = match active_row {
         Some(row) => {
             let mid: i64 = row
                 .try_get("", "id")
@@ -215,21 +240,29 @@ pub async fn get_org_designer_snapshot(
         None => (None, None),
     };
 
-    if active_model_id.is_none() && draft_model_id.is_none() {
+    let want_draft = prefer_draft.unwrap_or(false);
+    let display_model_id = if want_draft {
+        draft_model_id.or(active_model_id)
+    } else {
+        active_model_id.or(draft_model_id)
+    };
+
+    let Some(model_id) = display_model_id else {
         return Ok(OrgDesignerSnapshot {
             active_model_id: None,
             active_model_version: None,
             draft_model_id: None,
             draft_model_version: None,
+            display_model_id: None,
             nodes: Vec::new(),
         });
-    }
+    };
 
-    // Flattened tree: operational nodes, joined to their node type row (any model).
     let rows = db
-        .query_all(Statement::from_string(
+        .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            DESIGNER_SNAPSHOT_SQL.to_string(),
+            DESIGNER_SNAPSHOT_SQL,
+            [model_id.into()],
         ))
         .await?;
 
@@ -241,23 +274,29 @@ pub async fn get_org_designer_snapshot(
         active_model_version,
         draft_model_id,
         draft_model_version,
+        display_model_id: Some(model_id),
         nodes,
     })
 }
 
 /// Search nodes by text query, optional status filter, and optional type filter.
+///
+/// `model_id` is required and pins the search to that structure model — pass the
+/// `display_model_id` from `get_org_designer_snapshot` for consistent results.
 /// Returns designer-projection rows ordered by `ancestor_path`.
 pub async fn search_nodes(
     db: &DatabaseConnection,
     query: &str,
     status_filter: Option<&str>,
     type_filter: Option<&str>,
+    model_id: i64,
 ) -> AppResult<Vec<OrgDesignerNodeRow>> {
-    // Build dynamic WHERE clause.
-    let mut conditions = vec!["n.deleted_at IS NULL".to_string()];
-    let mut values: Vec<sea_orm::Value> = Vec::new();
+    let mut conditions = vec![
+        "n.deleted_at IS NULL".to_string(),
+        "n.structure_model_id = ?".to_string(),
+    ];
+    let mut values: Vec<sea_orm::Value> = vec![model_id.into()];
 
-    // Text search — match against code, name, or node type label.
     if !query.is_empty() {
         let pattern = format!("%{query}%");
         conditions.push(
@@ -269,13 +308,11 @@ pub async fn search_nodes(
         values.push(pattern.into());
     }
 
-    // Status filter.
     if let Some(status) = status_filter {
         conditions.push("n.status = ?".to_string());
         values.push(status.to_string().into());
     }
 
-    // Node-type filter (by type code).
     if let Some(type_code) = type_filter {
         conditions.push("t.code = ?".to_string());
         values.push(type_code.to_string().into());
@@ -293,6 +330,8 @@ pub async fn search_nodes(
             n.name,
             n.status,
             n.row_version,
+            n.structure_model_id,
+            n.origin_node_id,
             n.node_type_id,
             t.code      AS node_type_code,
             t.label     AS node_type_label,
@@ -303,7 +342,9 @@ pub async fn search_nodes(
             t.can_receive_permits,
             (SELECT COUNT(*)
              FROM org_nodes c
-             WHERE c.parent_id = n.id AND c.deleted_at IS NULL
+             WHERE c.parent_id = n.id
+               AND c.deleted_at IS NULL
+               AND c.structure_model_id = n.structure_model_id
             ) AS child_count,
             (SELECT COUNT(*)
              FROM org_node_responsibilities r

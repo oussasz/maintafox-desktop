@@ -11,6 +11,7 @@
 //!   `maintenance_owner`, `production_owner`, `hse_owner`, `planner`, `approver`
 
 use crate::errors::{AppError, AppResult};
+use crate::org::fail::{fail, fail_params};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -128,47 +129,31 @@ pub async fn assign_responsibility(
 ) -> AppResult<OrgNodeResponsibility> {
     let resp_type = payload.responsibility_type.trim().to_string();
     if resp_type.is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "responsibility_type must not be empty".to_string(),
-        ]));
+        return Err(fail(
+            "ORG_RESPONSIBILITY_TYPE_EMPTY",
+            "Responsibility type must not be empty.",
+        ));
     }
 
     // XOR: exactly one of person_id or team_id must be set
     match (payload.person_id, payload.team_id) {
         (Some(_), Some(_)) => {
-            return Err(AppError::ValidationFailed(vec![
-                "exactly one of person_id or team_id must be set, not both".to_string(),
-            ]));
+            return Err(fail(
+                "ORG_ASSIGNEE_BOTH_SET",
+                "Exactly one of person or team must be set, not both.",
+            ));
         }
         (None, None) => {
-            return Err(AppError::ValidationFailed(vec![
-                "exactly one of person_id or team_id must be set".to_string(),
-            ]));
+            return Err(fail(
+                "ORG_ASSIGNEE_REQUIRED",
+                "Exactly one of person or team must be set.",
+            ));
         }
         _ => {} // valid
     }
 
-    // Verify node exists and is active
-    let node_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT status FROM org_nodes WHERE id = ? AND deleted_at IS NULL",
-            [payload.node_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "org_node".to_string(),
-            id: payload.node_id.to_string(),
-        })?;
-    let node_status: String = node_row
-        .try_get("", "status")
-        .map_err(|e| decode_err("status", e))?;
-    if node_status != "active" {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "node {} is '{}', not 'active' — responsibilities can only be assigned to active nodes",
-            payload.node_id, node_status
-        )]));
-    }
+    // Node must exist in the active (production) tree and be status=active
+    crate::org::model_scope::assert_org_node_active(db, payload.node_id).await?;
 
     // Check for overlapping active assignment on the same (node_id, responsibility_type)
     let overlap_row = db
@@ -182,10 +167,13 @@ pub async fn assign_responsibility(
         .expect("COUNT always returns a row");
     let overlap_count: i64 = overlap_row.try_get("", "cnt").unwrap_or(0);
     if overlap_count > 0 {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "an active '{resp_type}' assignment already exists on node {} — end it before assigning a new one",
-            payload.node_id
-        )]));
+        return Err(fail_params(
+            "ORG_ASSIGNMENT_EXISTS",
+            format!(
+                "An active '{resp_type}' assignment already exists on this node — end it before assigning a new one."
+            ),
+            &[("responsibilityType", resp_type)],
+        ));
     }
 
     let now = Utc::now().to_rfc3339();
@@ -261,9 +249,11 @@ pub async fn end_responsibility_assignment(
     // Validate valid_to >= valid_from when both are present
     if let (Some(ref from), Some(ref to)) = (&assignment.valid_from, &valid_to) {
         if to < from {
-            return Err(AppError::ValidationFailed(vec![format!(
-                "valid_to ({to}) cannot be earlier than valid_from ({from})"
-            )]));
+            return Err(fail_params(
+                "ORG_INVALID_DATE_RANGE",
+                format!("End date ({to}) cannot be earlier than start date ({from})."),
+                &[("validTo", to.clone()), ("validFrom", from.clone())],
+            ));
         }
     }
 

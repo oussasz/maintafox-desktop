@@ -2,16 +2,12 @@
 //!
 //! Phase 2 - Sub-phase 03 - File 02 - Sprint S1.
 //!
-//! Enforces PRD 6.13 protected analytical domain semantics:
-//!   - Protected domains (`governance_level = 'protected_analytical'`) block
-//!     hard deletion of in-use values; deactivation or migration is required.
-//!   - Non-protected domains allow deletion when the value is not in use.
-//!   - Usage probes inspect downstream tables for active references.
-//!
-//! The probe set is designed to be extended incrementally as downstream modules
-//! (work orders, failure coding, etc.) are delivered in later sub-phases.
+//! Enforces protected analytical domain semantics via
+//! `crate::reference::governance::requires_analytical_protection`
+//! (Compat: legacy `protected_analytical` + analytical system codes).
 
 use crate::errors::{AppError, AppResult};
+use crate::reference::governance;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use super::domains;
@@ -20,13 +16,13 @@ use super::values;
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-/// Returns `true` if the domain's governance level is `protected_analytical`.
+/// Returns `true` if the domain requires analytical protection semantics.
 pub async fn is_protected_domain(
     db: &DatabaseConnection,
     domain_id: i64,
 ) -> AppResult<bool> {
     let domain = domains::get_reference_domain(db, domain_id).await?;
-    Ok(domain.governance_level == "protected_analytical")
+    Ok(governance::requires_analytical_protection(&domain))
 }
 
 /// Asserts that a reference value can be deactivated.
@@ -45,7 +41,7 @@ pub async fn assert_can_deactivate_value(
     let set = sets::get_reference_set(db, value.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
 
-    if domain.governance_level != "protected_analytical" {
+    if !governance::requires_analytical_protection(&domain) {
         // Non-protected domains: deactivation always permitted at service layer.
         return Ok(());
     }
@@ -72,7 +68,7 @@ pub async fn assert_can_delete_value(
     let set = sets::get_reference_set(db, value.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
 
-    let is_protected = domain.governance_level == "protected_analytical";
+    let is_protected = governance::requires_analytical_protection(&domain);
     let usages = collect_usage_references(db, &domain, &value).await?;
 
     if is_protected && !usages.is_empty() {

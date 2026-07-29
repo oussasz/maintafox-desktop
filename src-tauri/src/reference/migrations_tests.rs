@@ -1,8 +1,8 @@
 //! Supervisor verification tests for Phase 2 SP03 File 02 Sprint S3.
 //!
-//! V1 — Migration map presence: merge writes a mapping row.
-//! V2 — Post-migration behavior: source becomes inactive, target stays active.
-//! V3 — Dangerous action guard: merge without step-up fails.
+//! V1 â€” Migration map presence: merge writes a mapping row.
+//! V2 â€” Post-migration behavior: source becomes inactive, target stays active.
+//! V3 â€” Dangerous action guard: merge without step-up fails.
 
 #[cfg(test)]
 mod tests {
@@ -71,6 +71,7 @@ mod tests {
             name: "Classification equipement".to_string(),
             structure_type: "hierarchical".to_string(),
             governance_level: "protected_analytical".to_string(),
+            governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(false),
             validation_rules_json: None,
         };
@@ -145,9 +146,9 @@ mod tests {
         .await
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V1 — Migration map presence
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V1 â€” Migration map presence
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v1_merge_persists_migration_map_row() {
@@ -204,9 +205,9 @@ mod tests {
         assert_eq!(listed[0].id, result.migration.id);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V2 — Post-migration behavior
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V2 â€” Post-migration behavior
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v2_migrate_inactivates_source_and_keeps_target_active() {
@@ -246,9 +247,9 @@ mod tests {
         assert!(target.is_active, "persisted target must stay active");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V3 — Dangerous action guard
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V3 â€” Dangerous action guard
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v3_merge_without_step_up_fails_then_succeeds_after_step_up() {

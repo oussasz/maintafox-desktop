@@ -8,11 +8,11 @@
 //!
 //! Architecture rules:
 //!   - Files are never deleted from disk when the record is removed.
-//!   - Attachments are allowed on all non-cancelled WO states (even after closure).
+//!   - Attachments are blocked on closed/cancelled WOs (strict post-close lock).
 //!   - `relative_path` column is unique to prevent collision.
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
+use crate::wo::time::now_utc_z;
 use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -34,6 +34,7 @@ pub struct WoAttachment {
     pub uploaded_by_id: Option<i64>,
     pub uploaded_at: String,
     pub notes: Option<String>,
+    pub phase: Option<String>,
 }
 
 /// Input for saving a new WO attachment.
@@ -45,7 +46,10 @@ pub struct WoAttachmentInput {
     pub mime_type: String,
     pub notes: Option<String>,
     pub uploaded_by_id: i64,
+    pub phase: Option<String>,
 }
+
+const VALID_PHASES: &[&str] = &["before", "during", "after", "evidence"];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Constants
@@ -93,6 +97,9 @@ fn map_attachment(row: &QueryResult) -> AppResult<WoAttachment> {
         notes: row
             .try_get::<Option<String>>("", "notes")
             .map_err(|e| decode_err("notes", e))?,
+        phase: row
+            .try_get::<Option<String>>("", "phase")
+            .unwrap_or(None),
     })
 }
 
@@ -102,10 +109,10 @@ fn map_attachment(row: &QueryResult) -> AppResult<WoAttachment> {
 
 /// Save a WO attachment: write bytes to disk, then insert the DB record.
 ///
-/// WO must not be in `cancelled` state (attachments allowed even after closure).
+/// WO must remain mutable (not `closed` / `cancelled`) to accept attachments.
 ///
 /// # Errors
-/// - WO does not exist or is cancelled
+/// - WO does not exist or is closed/cancelled
 /// - File exceeds 25 MB
 /// - Invalid file name
 /// - Disk write failure
@@ -114,6 +121,15 @@ pub async fn save_wo_attachment(
     app_data_dir: &Path,
     input: WoAttachmentInput,
 ) -> AppResult<WoAttachment> {
+    // ── Validate phase ────────────────────────────────────────────────────
+    if let Some(ref phase) = input.phase {
+        if !VALID_PHASES.contains(&phase.as_str()) {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "phase invalide : '{phase}'. Valeurs autorisées : before, during, after, evidence."
+            )]));
+        }
+    }
+
     // ── Validate file size ────────────────────────────────────────────────
     if input.file_bytes.len() > MAX_FILE_SIZE_BYTES {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -133,7 +149,7 @@ pub async fn save_wo_attachment(
         ]));
     }
 
-    // ── Verify WO exists and is not cancelled ─────────────────────────────
+    // ── Verify WO exists and is mutable ───────────────────────────────────
     let wo_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -153,9 +169,9 @@ pub async fn save_wo_attachment(
         .try_get("", "status_code")
         .map_err(|e| decode_err("status_code", e))?;
 
-    if status == "cancelled" {
+    if status == "cancelled" || status == "closed" {
         return Err(AppError::ValidationFailed(vec![
-            "Impossible d'ajouter une piece jointe a un OT annule.".into(),
+            "Impossible d'ajouter une piece jointe a un OT cloture/annule.".into(),
         ]));
     }
 
@@ -174,15 +190,15 @@ pub async fn save_wo_attachment(
     std::fs::write(&absolute_path, &input.file_bytes)?;
 
     // ── Insert DB record ──────────────────────────────────────────────────
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = now_utc_z();
     let size_bytes = input.file_bytes.len() as i64;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_attachments \
             (work_order_id, file_name, relative_path, mime_type, size_bytes, \
-             uploaded_by_id, uploaded_at, notes) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             uploaded_by_id, uploaded_at, notes, phase) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             sanitized_name.to_string().into(),
@@ -195,6 +211,10 @@ pub async fn save_wo_attachment(
                 .notes
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
+            input
+                .phase
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
         ],
     ))
     .await?;
@@ -203,7 +223,9 @@ pub async fn save_wo_attachment(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT * FROM work_order_attachments WHERE relative_path = ?",
+            "SELECT id, work_order_id, file_name, relative_path, mime_type, size_bytes, \
+                    uploaded_by_id, uploaded_at, notes, phase \
+               FROM work_order_attachments WHERE relative_path = ?",
             [relative_path.into()],
         ))
         .await?
@@ -228,8 +250,10 @@ pub async fn list_wo_attachments(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT * FROM work_order_attachments \
-             WHERE work_order_id = ? ORDER BY uploaded_at DESC",
+            "SELECT id, work_order_id, file_name, relative_path, mime_type, size_bytes, \
+                    uploaded_by_id, uploaded_at, notes, phase \
+               FROM work_order_attachments \
+              WHERE work_order_id = ? ORDER BY uploaded_at DESC",
             [wo_id.into()],
         ))
         .await?;
@@ -247,6 +271,28 @@ pub async fn delete_wo_attachment_record(
     db: &impl ConnectionTrait,
     attachment_id: i64,
 ) -> AppResult<()> {
+    let state_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT wos.code AS status_code \
+             FROM work_order_attachments wa \
+             JOIN work_orders wo ON wo.id = wa.work_order_id \
+             JOIN work_order_statuses wos ON wos.id = wo.status_id \
+             WHERE wa.id = ?",
+            [attachment_id.into()],
+        ))
+        .await?;
+    if let Some(row) = state_row {
+        let status: String = row
+            .try_get("", "status_code")
+            .map_err(|e| decode_err("status_code", e))?;
+        if status == "closed" || status == "cancelled" {
+            return Err(AppError::ValidationFailed(vec![
+                "Suppression interdite: OT cloture/annule (audit trail verrouille).".into(),
+            ]));
+        }
+    }
+
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

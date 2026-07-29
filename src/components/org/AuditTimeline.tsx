@@ -65,7 +65,9 @@ export function AuditTimeline() {
                 variant={event.apply_result === "blocked" ? "destructive" : "default"}
                 className="text-[10px] px-1.5 py-0"
               >
-                {event.change_type}
+                {t(`audit.changeType.${event.change_type}`, {
+                  defaultValue: event.change_type.replace(/_/g, " "),
+                })}
               </Badge>
               {event.requires_step_up && (
                 <Badge variant="outline" className="text-[10px] px-1.5 py-0">
@@ -76,11 +78,17 @@ export function AuditTimeline() {
                 variant={event.apply_result === "applied" ? "default" : "destructive"}
                 className="text-[10px] px-1.5 py-0"
               >
-                {event.apply_result}
+                {t(`audit.applyResult.${event.apply_result}`, {
+                  defaultValue: event.apply_result,
+                })}
               </Badge>
             </div>
             <div className="text-xs text-text-muted">
-              <span>{event.entity_kind}</span>
+              <span>
+                {t(`audit.entityKind.${event.entity_kind}`, {
+                  defaultValue: event.entity_kind.replace(/_/g, " "),
+                })}
+              </span>
               {event.entity_id != null && <span className="ml-1">#{event.entity_id}</span>}
               <span className="mx-1.5">·</span>
               <time>{new Date(event.changed_at).toLocaleString()}</time>

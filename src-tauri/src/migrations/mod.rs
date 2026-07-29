@@ -110,6 +110,30 @@ mod m20260727_000109_unlock_operator_supervisor_roles;
 mod m20260728_000110_di_reference_domains;
 mod m20260729_000111_di_intake_submit_permissions;
 mod m20260730_000112_di_screen_triage_refactor;
+mod m20260731_000113_equipment_rams_profile;
+mod m20260801_000114_unify_failure_modes_reference;
+mod m20260802_000115_fmeca_item_parts_suggestions;
+mod m20260803_000116_backfill_equipment_rams_defaults;
+mod m20260804_000117_reliability_benchmarks_and_policies;
+mod m20260805_000118_closeout_fmeca_parts_policy;
+mod m20260805_000119_block_injected_runtime_exposure_in_activated_mode;
+mod m20260805_000120_closeout_fmeca_override_policy_controls;
+mod m20260608_000121_grant_ram_analyze_admin_roles;
+mod m20260806_000122_equipment_family_subfamily_refs;
+mod m20260807_000123_reference_governance_category;
+mod m20260808_000124_org_schedule_class_reference;
+mod m20260809_000125_org_nodes_structure_model_scope;
+mod m20260810_000126_heal_org_nodes_structure_model_id;
+mod m20260811_000127_org_nodes_require_structure_model_id;
+mod m20260812_000128_di_request_type;
+mod m20260813_000129_di_sla_immutable_snapshot;
+mod m20260814_000130_wo_lifecycle_redesign;
+mod m20260728_000131_work_delay_reasons_reference;
+mod m20260728_000132_wo_plan_vs_actual;
+mod m20260729_000133_unify_wo_code_prefix_ot;
+mod m20260729_000134_inventory_transaction_reason_code;
+mod m20260730_000135_inventory_procurement_maturity;
+mod m20260731_000136_supplier_contacts_po_eta_repairable;
 mod m_test;
 
 pub struct Migrator;
@@ -228,6 +252,30 @@ impl MigratorTrait for Migrator {
             Box::new(m20260728_000110_di_reference_domains::Migration),
             Box::new(m20260729_000111_di_intake_submit_permissions::Migration),
             Box::new(m20260730_000112_di_screen_triage_refactor::Migration),
+            Box::new(m20260731_000113_equipment_rams_profile::Migration),
+            Box::new(m20260801_000114_unify_failure_modes_reference::Migration),
+            Box::new(m20260802_000115_fmeca_item_parts_suggestions::Migration),
+            Box::new(m20260803_000116_backfill_equipment_rams_defaults::Migration),
+            Box::new(m20260804_000117_reliability_benchmarks_and_policies::Migration),
+            Box::new(m20260805_000118_closeout_fmeca_parts_policy::Migration),
+            Box::new(m20260805_000119_block_injected_runtime_exposure_in_activated_mode::Migration),
+            Box::new(m20260805_000120_closeout_fmeca_override_policy_controls::Migration),
+            Box::new(m20260608_000121_grant_ram_analyze_admin_roles::Migration),
+            Box::new(m20260806_000122_equipment_family_subfamily_refs::Migration),
+            Box::new(m20260807_000123_reference_governance_category::Migration),
+            Box::new(m20260808_000124_org_schedule_class_reference::Migration),
+            Box::new(m20260809_000125_org_nodes_structure_model_scope::Migration),
+            Box::new(m20260810_000126_heal_org_nodes_structure_model_id::Migration),
+            Box::new(m20260811_000127_org_nodes_require_structure_model_id::Migration),
+            Box::new(m20260812_000128_di_request_type::Migration),
+            Box::new(m20260813_000129_di_sla_immutable_snapshot::Migration),
+            Box::new(m20260814_000130_wo_lifecycle_redesign::Migration),
+            Box::new(m20260728_000131_work_delay_reasons_reference::Migration),
+            Box::new(m20260728_000132_wo_plan_vs_actual::Migration),
+            Box::new(m20260729_000133_unify_wo_code_prefix_ot::Migration),
+            Box::new(m20260729_000134_inventory_transaction_reason_code::Migration),
+            Box::new(m20260730_000135_inventory_procurement_maturity::Migration),
+            Box::new(m20260731_000136_supplier_contacts_po_eta_repairable::Migration),
             Box::new(m_test::Migration),
         ]
     }

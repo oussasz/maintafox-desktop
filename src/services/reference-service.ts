@@ -10,6 +10,7 @@ import type {
   ReferenceSet,
   ReferenceValue,
   CreateReferenceValuePayload,
+  CreateOperationalReferenceValuePayload,
   UpdateReferenceValuePayload,
   ReferenceValueMigration,
   ReferenceUsageMigrationResult,
@@ -22,6 +23,9 @@ import type {
   RefImportApplyPolicy,
   RefImportApplyResult,
   RefExportResult,
+  ReferenceGovernanceCapabilities,
+  SchedulePattern,
+  UpsertSchedulePatternPayload,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -32,6 +36,7 @@ export const ReferenceDomainSchema = z.object({
   name: z.string().min(1),
   structure_type: z.string().min(1),
   governance_level: z.string().min(1),
+  governance_category: z.string().min(1),
   is_extendable: z.boolean(),
   validation_rules_json: z.string().nullable(),
   created_at: z.string(),
@@ -83,11 +88,49 @@ export const ReferenceUsageMigrationResultSchema = z.object({
   source_deactivated: z.boolean(),
 });
 
+export const ReferenceGovernanceCapabilitiesSchema = z.object({
+  category: z.string().min(1),
+  enforcement_phase: z.string().min(1),
+  can_create_value: z.boolean(),
+  can_update_value: z.boolean(),
+  can_deactivate_value: z.boolean(),
+  can_create_draft_set: z.boolean(),
+  can_discard_draft_set: z.boolean(),
+  can_publish: z.boolean(),
+  can_operational_create: z.boolean(),
+  is_read_only: z.boolean(),
+  requires_analytical_protection: z.boolean(),
+  set_status: z.string().nullable(),
+});
+
 // â”€â”€ Domain commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listReferenceDomains(): Promise<ReferenceDomain[]> {
   const raw = await invoke<unknown[]>("list_reference_domains");
   return z.array(ReferenceDomainSchema).parse(raw);
+}
+
+export async function getReferenceGovernanceCapabilities(
+  domainId: number,
+  setId?: number | null,
+): Promise<ReferenceGovernanceCapabilities> {
+  const raw = await invoke<unknown>("get_reference_governance_capabilities", {
+    domainId,
+    setId: setId ?? null,
+  });
+  return ReferenceGovernanceCapabilitiesSchema.parse(raw);
+}
+
+/** Capability snapshot by domain code (forms / ReferenceCombobox). */
+export async function getReferenceGovernanceCapabilitiesByCode(
+  domainCode: string,
+  setId?: number | null,
+): Promise<ReferenceGovernanceCapabilities> {
+  const raw = await invoke<unknown>("get_reference_governance_capabilities_by_code", {
+    domainCode: domainCode.trim(),
+    setId: setId ?? null,
+  });
+  return ReferenceGovernanceCapabilitiesSchema.parse(raw);
 }
 
 /**
@@ -150,6 +193,10 @@ export async function createDraftReferenceSet(domainId: number): Promise<Referen
   return ReferenceSetSchema.parse(raw);
 }
 
+export async function discardDraftReferenceSet(setId: number): Promise<void> {
+  await invoke("discard_draft_reference_set", { setId });
+}
+
 export async function validateReferenceSet(setId: number): Promise<ReferenceSet> {
   const raw = await invoke<unknown>("validate_reference_set", { setId });
   return ReferenceSetSchema.parse(raw);
@@ -179,6 +226,17 @@ export async function createReferenceValue(
   return ReferenceValueSchema.parse(raw);
 }
 
+/**
+ * Create a value in the latest published set of a tenant-managed extendable domain.
+ * Used by ReferenceCombobox "create from dropdown" for immediate form usability.
+ */
+export async function createOperationalReferenceValue(
+  payload: CreateOperationalReferenceValuePayload,
+): Promise<ReferenceValue> {
+  const raw = await invoke<unknown>("create_operational_reference_value", { payload });
+  return ReferenceValueSchema.parse(raw);
+}
+
 export async function updateReferenceValue(
   valueId: number,
   payload: UpdateReferenceValuePayload,
@@ -189,6 +247,11 @@ export async function updateReferenceValue(
 
 export async function deactivateReferenceValue(valueId: number): Promise<ReferenceValue> {
   const raw = await invoke<unknown>("deactivate_reference_value", { valueId });
+  return ReferenceValueSchema.parse(raw);
+}
+
+export async function reactivateReferenceValue(valueId: number): Promise<ReferenceValue> {
+  const raw = await invoke<unknown>("reactivate_reference_value", { valueId });
   return ReferenceValueSchema.parse(raw);
 }
 
@@ -483,4 +546,34 @@ export async function governedPublishReferenceSet(setId: number): Promise<Refere
     setId,
   });
   return ReferencePublishResultSchema.parse(raw);
+}
+
+const ScheduleDayPatternSchema = z.object({
+  day_of_week: z.number().int(),
+  shift_start: z.string(),
+  shift_end: z.string(),
+  is_rest_day: z.boolean(),
+});
+
+const SchedulePatternSchema = z.object({
+  reference_value_id: z.number().int(),
+  code: z.string(),
+  label: z.string(),
+  is_active: z.boolean(),
+  shift_pattern_code: z.string(),
+  is_continuous: z.boolean(),
+  nominal_hours_per_day: z.number(),
+  details: z.array(ScheduleDayPatternSchema),
+});
+
+export async function getSchedulePattern(referenceValueId: number): Promise<SchedulePattern> {
+  const raw = await invoke<unknown>("get_schedule_pattern", { referenceValueId });
+  return SchedulePatternSchema.parse(raw);
+}
+
+export async function upsertSchedulePattern(
+  payload: UpsertSchedulePatternPayload,
+): Promise<SchedulePattern> {
+  const raw = await invoke<unknown>("upsert_schedule_pattern", { payload });
+  return SchedulePatternSchema.parse(raw);
 }

@@ -125,7 +125,7 @@ pub async fn compute_publish_readiness(
 ) -> AppResult<ReferencePublishReadiness> {
     let set = sets::get_reference_set(db, set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
-    let is_protected = domain.governance_level == "protected_analytical";
+    let is_protected = crate::reference::governance::requires_publish_impact_preview(&domain);
 
     let mut issues: Vec<ReferencePublishIssue> = Vec::new();
 
@@ -256,6 +256,10 @@ pub async fn publish_reference_set(
     set_id: i64,
     _actor_id: i64,
 ) -> AppResult<ReferencePublishResult> {
+    let set_probe = sets::get_reference_set(db, set_id).await?;
+    let domain_probe = domains::get_reference_domain(db, set_probe.domain_id).await?;
+    crate::reference::governance::assert_allows_publish(&domain_probe)?;
+
     // Run full readiness assessment.
     let readiness = compute_publish_readiness(db, set_id).await?;
 

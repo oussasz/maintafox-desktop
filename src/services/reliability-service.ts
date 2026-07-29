@@ -30,6 +30,8 @@ import type {
   UserDismissal,
   WeibullFitRunInput,
   WeibullFitRecord,
+  WeibullDashboardInput,
+  WeibullDashboardPayload,
   FmecaAnalysis,
   CreateFmecaAnalysisInput,
   UpdateFmecaAnalysisInput,
@@ -37,6 +39,8 @@ import type {
   FmecaItem,
   FmecaItemWithContext,
   FmecaItemsEquipmentFilter,
+  SuggestedPartForFailure,
+  SuggestedPartsForFailureInput,
   FmecaSeverityOccurrenceMatrix,
   Iso14224DatasetCompleteness,
   RamIshikawaDiagram,
@@ -420,6 +424,38 @@ const WeibullFitRecordSchema = z.object({
   created_by_id: z.number().nullable(),
 });
 
+const WeibullCurvePointSchema = z.object({
+  t: z.number(),
+  r: z.number(),
+  r_low: z.number(),
+  r_high: z.number(),
+});
+
+const WeibullPmMarkerSchema = z.object({
+  t: z.number(),
+  r: z.number(),
+  label: z.string(),
+});
+
+const WeibullDashboardPayloadSchema = z.object({
+  equipment_id: z.number(),
+  include_censored: z.boolean(),
+  comparison_equipment_id: z.number().nullable(),
+  t_offset_hours: z.number(),
+  t_effective_hours: z.number(),
+  beta_actual: z.number().nullable(),
+  beta_industrial_standard: z.number().nullable(),
+  beta_industrial_source: z.string().nullable(),
+  eta_hours: z.number().nullable(),
+  points: z.array(WeibullCurvePointSchema),
+  comparison_points: z.array(WeibullCurvePointSchema),
+  pm_marker: WeibullPmMarkerSchema.nullable(),
+  r_live: z.number().nullable(),
+  rul_live_hours: z.number().nullable(),
+  danger_threshold_r: z.number(),
+  pm_threshold_r: z.number(),
+});
+
 export async function runWeibullFit(input: WeibullFitRunInput): Promise<WeibullFitRecord> {
   const raw = await invoke<unknown>("run_weibull_fit", { input });
   return WeibullFitRecordSchema.parse(raw);
@@ -432,6 +468,13 @@ export async function getLatestWeibullFitForEquipment(
     equipmentId: equipment_id,
   });
   return z.union([WeibullFitRecordSchema, z.null()]).parse(raw);
+}
+
+export async function getWeibullDashboardPayload(
+  input: WeibullDashboardInput,
+): Promise<WeibullDashboardPayload> {
+  const raw = await invoke<unknown>("get_weibull_dashboard_payload", { input });
+  return WeibullDashboardPayloadSchema.parse(raw);
 }
 
 export async function getRamFmecaRpnCriticalThreshold(): Promise<number> {
@@ -517,6 +560,12 @@ const FmecaSoCellSchema = z.object({
 const FmecaSeverityOccurrenceMatrixSchema = z.object({
   equipment_id: z.number(),
   cells: z.array(FmecaSoCellSchema),
+  reference_domain_ready: z.boolean(),
+  reference_modes_published_count: z.number(),
+  fmeca_mode_links_count: z.number(),
+  fmeca_orphan_mode_links_count: z.number(),
+  warning_code: z.string().nullable(),
+  warning_message: z.string().nullable(),
 });
 
 export async function getFmecaSeverityOccurrenceMatrix(
@@ -540,6 +589,24 @@ export async function listFmecaItemsForEquipment(
 ): Promise<FmecaItemWithContext[]> {
   const raw = await invoke<unknown>("list_fmeca_items_for_equipment", { filter });
   return z.array(FmecaItemWithContextSchema).parse(raw);
+}
+
+const SuggestedPartForFailureSchema = z.object({
+  article_id: z.number(),
+  article_code: z.string(),
+  article_name: z.string(),
+  suggested_quantity: z.number(),
+  priority: z.number(),
+  notes: z.string().nullable(),
+  stock_on_hand: z.number(),
+  stock_available: z.number(),
+});
+
+export async function getSuggestedPartsForFailure(
+  input: SuggestedPartsForFailureInput,
+): Promise<SuggestedPartForFailure[]> {
+  const raw = await invoke<unknown>("get_suggested_parts_for_failure", { input });
+  return z.array(SuggestedPartForFailureSchema).parse(raw);
 }
 
 const ReliabilityRulIndicatorSchema = z.object({

@@ -33,6 +33,12 @@ pub struct WoIntervener {
     pub hours_worked: Option<f64>,
     pub hourly_rate: Option<f64>,
     pub notes: Option<String>,
+    /// COALESCE(display_name, username) from user_accounts.
+    #[serde(default)]
+    pub intervener_display_name: Option<String>,
+    /// Skill label from reference_values when skill_id is set.
+    #[serde(default)]
+    pub skill_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -84,8 +90,23 @@ fn map_intervener(row: &sea_orm::QueryResult) -> AppResult<WoIntervener> {
         notes: row
             .try_get::<Option<String>>("", "notes")
             .map_err(|e| decode_err("notes", e))?,
+        intervener_display_name: row
+            .try_get::<Option<String>>("", "intervener_display_name")
+            .unwrap_or(None),
+        skill_label: row
+            .try_get::<Option<String>>("", "skill_label")
+            .unwrap_or(None),
     })
 }
+
+const LABOR_SELECT: &str = "\
+    SELECT woi.id, woi.work_order_id, woi.intervener_id, woi.skill_id, woi.started_at, woi.ended_at, \
+    woi.hours_worked, woi.hourly_rate, woi.notes, \
+    COALESCE(ua.display_name, ua.username) AS intervener_display_name, \
+    rv.label AS skill_label \
+ FROM work_order_interveners woi \
+ LEFT JOIN user_accounts ua ON ua.id = woi.intervener_id \
+ LEFT JOIN reference_values rv ON rv.id = woi.skill_id";
 
 /// Load the WO status code for a guard check.
 async fn load_wo_status_code(
@@ -196,10 +217,7 @@ pub async fn add_labor_entry(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, work_order_id, intervener_id, skill_id, started_at, ended_at, \
-                    hours_worked, hourly_rate, notes \
-             FROM work_order_interveners \
-             WHERE rowid = last_insert_rowid()",
+            &format!("{LABOR_SELECT} WHERE woi.rowid = last_insert_rowid()"),
             [],
         ))
         .await?
@@ -223,9 +241,7 @@ pub async fn close_labor_entry(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, work_order_id, intervener_id, skill_id, started_at, ended_at, \
-                    hours_worked, hourly_rate, notes \
-             FROM work_order_interveners WHERE id = ?",
+            &format!("{LABOR_SELECT} WHERE woi.id = ?"),
             [intervener_id.into()],
         ))
         .await?
@@ -266,9 +282,7 @@ pub async fn close_labor_entry(
     let updated = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, work_order_id, intervener_id, skill_id, started_at, ended_at, \
-                    hours_worked, hourly_rate, notes \
-             FROM work_order_interveners WHERE id = ?",
+            &format!("{LABOR_SELECT} WHERE woi.id = ?"),
             [intervener_id.into()],
         ))
         .await?
@@ -290,11 +304,9 @@ pub async fn list_labor_entries(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, work_order_id, intervener_id, skill_id, started_at, ended_at, \
-                    hours_worked, hourly_rate, notes \
-             FROM work_order_interveners \
-             WHERE work_order_id = ? \
-             ORDER BY id ASC",
+            &format!(
+                "{LABOR_SELECT} WHERE woi.work_order_id = ? ORDER BY woi.id ASC"
+            ),
             [wo_id.into()],
         ))
         .await?;
@@ -326,11 +338,11 @@ pub async fn remove_labor_entry(
         .try_get::<i64>("", "work_order_id")
         .map_err(|e| decode_err("work_order_id", e))?;
 
-    // Guard: only allowed in draft, planned, or assigned
+    // Guard: only allowed in draft / planning / ready
     let status_code = load_wo_status_code(db, wo_id).await?;
     let allowed = matches!(
         status_code.as_str(),
-        "draft" | "planned" | "ready_to_schedule" | "assigned"
+        "draft" | "planning" | "ready"
     );
     if !allowed {
         return Err(AppError::ValidationFailed(vec![format!(

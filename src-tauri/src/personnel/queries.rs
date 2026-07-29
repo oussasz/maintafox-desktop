@@ -25,18 +25,18 @@ const P_JOINS: &str = "\
     LEFT JOIN org_nodes e ON e.id = p.primary_entity_id \
     LEFT JOIN org_nodes t ON t.id = p.primary_team_id \
     LEFT JOIN personnel s ON s.id = p.supervisor_id \
-    LEFT JOIN schedule_classes sc ON sc.id = p.home_schedule_id \
+    LEFT JOIN reference_values sc ON sc.id = p.home_schedule_reference_value_id \
     LEFT JOIN external_companies ec ON ec.id = p.external_company_id";
 
 const P_SELECT: &str = "\
     SELECT \
     p.id, p.employee_code, p.full_name, p.employment_type, p.position_id, p.primary_entity_id, \
-    p.primary_team_id, p.supervisor_id, p.home_schedule_id, p.availability_status, p.hire_date, \
+    p.primary_team_id, p.supervisor_id, p.home_schedule_reference_value_id, p.availability_status, p.hire_date, \
     p.termination_date, p.email, p.phone, p.photo_path, p.hr_external_id, p.external_company_id, \
     p.notes, p.row_version, p.created_at, p.updated_at, \
     pos.name AS position_name, pos.category AS position_category, \
     e.name AS entity_name, t.name AS team_name, s.full_name AS supervisor_name, \
-    sc.name AS schedule_name, ec.name AS company_name ";
+    sc.label AS schedule_name, ec.name AS company_name ";
 
 fn map_personnel_row(row: &sea_orm::QueryResult) -> AppResult<Personnel> {
     Ok(Personnel {
@@ -62,9 +62,9 @@ fn map_personnel_row(row: &sea_orm::QueryResult) -> AppResult<Personnel> {
         supervisor_id: row
             .try_get::<Option<i64>>("", "supervisor_id")
             .map_err(|e| map_err("supervisor_id", e))?,
-        home_schedule_id: row
-            .try_get::<Option<i64>>("", "home_schedule_id")
-            .map_err(|e| map_err("home_schedule_id", e))?,
+        home_schedule_reference_value_id: row
+            .try_get::<Option<i64>>("", "home_schedule_reference_value_id")
+            .map_err(|e| map_err("home_schedule_reference_value_id", e))?,
         availability_status: row
             .try_get::<String>("", "availability_status")
             .map_err(|e| map_err("availability_status", e))?,
@@ -172,19 +172,15 @@ pub async fn assert_position_exists(db: &DatabaseConnection, id: i64) -> AppResu
 }
 
 pub async fn assert_org_node_exists(db: &DatabaseConnection, id: i64) -> AppResult<()> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT 1 AS x FROM org_nodes WHERE id = ? LIMIT 1",
-            [id.into()],
-        ))
-        .await?;
-    if row.is_none() {
-        return Err(AppError::ValidationFailed(vec![format!(
+    crate::org::model_scope::assert_org_node_active(db, id).await.map_err(|e| match e {
+        AppError::NotFound { .. } => AppError::ValidationFailed(vec![format!(
             "Nœud d'organisation (id={id}) introuvable."
-        )]));
-    }
-    Ok(())
+        )]),
+        AppError::ValidationFailed(_) => AppError::ValidationFailed(vec![format!(
+            "Nœud d'organisation (id={id}) introuvable ou non publié."
+        )]),
+        other => other,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -371,11 +367,19 @@ pub async fn create_personnel(
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
+    if let Some(schedule_ref_id) = input.home_schedule_reference_value_id {
+        crate::reference::schedule_patterns::assert_schedule_reference_value_active(
+            &txn,
+            schedule_ref_id,
+        )
+        .await?;
+    }
+
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO personnel (\
             employee_code, full_name, employment_type, position_id, primary_entity_id, primary_team_id, \
-            supervisor_id, home_schedule_id, availability_status, hire_date, termination_date, \
+            supervisor_id, home_schedule_reference_value_id, availability_status, hire_date, termination_date, \
             email, phone, external_company_id, notes, row_version, created_at, updated_at\
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, NULL, ?, ?, ?, ?, 1, ?, ?)",
         [
@@ -386,7 +390,7 @@ pub async fn create_personnel(
             input.primary_entity_id.into(),
             input.primary_team_id.into(),
             input.supervisor_id.into(),
-            input.home_schedule_id.into(),
+            input.home_schedule_reference_value_id.into(),
             input.hire_date.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
             input.email.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
             input.phone.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
@@ -489,8 +493,9 @@ pub async fn update_personnel(
         sets.push("supervisor_id = ?".into());
         values.push(v.into());
     }
-    if let Some(v) = input.home_schedule_id {
-        sets.push("home_schedule_id = ?".into());
+    if let Some(v) = input.home_schedule_reference_value_id {
+        crate::reference::schedule_patterns::assert_schedule_reference_value_active(db, v).await?;
+        sets.push("home_schedule_reference_value_id = ?".into());
         values.push(v.into());
     }
     if let Some(ref s) = input.availability_status {
@@ -756,11 +761,16 @@ pub async fn create_position(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn list_schedule_classes(db: &DatabaseConnection) -> AppResult<Vec<ScheduleClassWithDetails>> {
+    // Thin adapter: ORG.SCHEDULE_CLASS reference values + schedule_details.
     let classes = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, name, shift_pattern_code, is_continuous, nominal_hours_per_day, is_active, created_at \
-             FROM schedule_classes WHERE is_active = 1 ORDER BY name ASC"
+            "SELECT rv.id, rv.label AS name, rv.code, rv.is_active, rv.metadata_json \
+             FROM reference_values rv \
+             JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+             JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE UPPER(TRIM(d.code)) = 'ORG.SCHEDULE_CLASS' AND rv.is_active = 1 \
+             ORDER BY rv.label ASC"
                 .to_string(),
         ))
         .await?;
@@ -778,32 +788,62 @@ pub async fn list_schedule_classes(db: &DatabaseConnection) -> AppResult<Vec<Sch
 }
 
 fn map_schedule_class_row(row: &sea_orm::QueryResult) -> AppResult<ScheduleClass> {
+    let code: String = row.try_get("", "code").map_err(|e| map_err("code", e))?;
+    let metadata_json: Option<String> = row
+        .try_get("", "metadata_json")
+        .map_err(|e| map_err("metadata_json", e))?;
+    let (shift_pattern_code, is_continuous, nominal_hours_per_day) =
+        parse_schedule_class_metadata(metadata_json.as_deref(), &code);
+
     Ok(ScheduleClass {
         id: row.try_get("", "id").map_err(|e| map_err("id", e))?,
         name: row.try_get("", "name").map_err(|e| map_err("name", e))?,
-        shift_pattern_code: row
-            .try_get("", "shift_pattern_code")
-            .map_err(|e| map_err("shift_pattern_code", e))?,
-        is_continuous: row
-            .try_get("", "is_continuous")
-            .map_err(|e| map_err("is_continuous", e))?,
-        nominal_hours_per_day: row
-            .try_get("", "nominal_hours_per_day")
-            .map_err(|e| map_err("nominal_hours_per_day", e))?,
+        shift_pattern_code,
+        is_continuous,
+        nominal_hours_per_day,
         is_active: row.try_get("", "is_active").map_err(|e| map_err("is_active", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| map_err("created_at", e))?,
+        // reference_values has no created_at; keep IPC field for ScheduleClass compatibility.
+        created_at: String::new(),
     })
 }
 
-async fn load_schedule_details(db: &DatabaseConnection, schedule_class_id: i64) -> AppResult<Vec<ScheduleDetail>> {
+fn parse_schedule_class_metadata(
+    raw: Option<&str>,
+    fallback_code: &str,
+) -> (String, i64, f64) {
+    #[derive(serde::Deserialize)]
+    struct Meta {
+        #[serde(default)]
+        shift_pattern_code: Option<String>,
+        #[serde(default)]
+        is_continuous: Option<bool>,
+        #[serde(default)]
+        nominal_hours_per_day: Option<f64>,
+    }
+    let parsed = raw
+        .and_then(|s| serde_json::from_str::<Meta>(s).ok())
+        .unwrap_or(Meta {
+            shift_pattern_code: None,
+            is_continuous: None,
+            nominal_hours_per_day: None,
+        });
+    (
+        parsed
+            .shift_pattern_code
+            .filter(|c| !c.trim().is_empty())
+            .unwrap_or_else(|| fallback_code.to_string()),
+        i64::from(parsed.is_continuous.unwrap_or(false)),
+        parsed.nominal_hours_per_day.unwrap_or(8.0),
+    )
+}
+
+async fn load_schedule_details(db: &DatabaseConnection, reference_value_id: i64) -> AppResult<Vec<ScheduleDetail>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, schedule_class_id, day_of_week, shift_start, shift_end, is_rest_day \
-             FROM schedule_details WHERE schedule_class_id = ? ORDER BY day_of_week ASC",
-            [schedule_class_id.into()],
+            "SELECT id, reference_value_id, day_of_week, shift_start, shift_end, is_rest_day \
+             FROM schedule_details WHERE reference_value_id = ? ORDER BY day_of_week ASC",
+            [reference_value_id.into()],
         ))
         .await?;
     let mut out = Vec::with_capacity(rows.len());
@@ -816,9 +856,9 @@ async fn load_schedule_details(db: &DatabaseConnection, schedule_class_id: i64) 
 fn map_schedule_detail_row(row: &sea_orm::QueryResult) -> AppResult<ScheduleDetail> {
     Ok(ScheduleDetail {
         id: row.try_get("", "id").map_err(|e| map_err("id", e))?,
-        schedule_class_id: row
-            .try_get("", "schedule_class_id")
-            .map_err(|e| map_err("schedule_class_id", e))?,
+        reference_value_id: row
+            .try_get("", "reference_value_id")
+            .map_err(|e| map_err("reference_value_id", e))?,
         day_of_week: row
             .try_get("", "day_of_week")
             .map_err(|e| map_err("day_of_week", e))?,

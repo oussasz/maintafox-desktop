@@ -19,10 +19,23 @@ vi.mock("@/services/org-designer-service", () => ({
     active_model_version: null,
     draft_model_id: null,
     draft_model_version: null,
+    display_model_id: null,
     nodes: [],
   }),
   searchOrgDesignerNodes: vi.fn().mockResolvedValue([]),
   previewOrgChange: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("@/services/org-node-service", () => ({
+  moveOrgNode: vi.fn(),
+  deactivateOrgNode: vi.fn().mockResolvedValue({ id: 1, row_version: 2 }),
+}));
+
+vi.mock("@/hooks/use-step-up", () => ({
+  useStepUp: () => ({
+    withStepUp: async <T,>(action: () => Promise<T>) => action(),
+    StepUpDialogElement: null,
+  }),
 }));
 
 // i18n pass-through
@@ -49,8 +62,20 @@ const blockerPreview: OrgImpactPreview = {
   active_responsibility_count: 3,
   active_binding_count: 1,
   blockers: [
-    "Node has 4 active descendants that must be deactivated first",
-    "Node has 3 active responsibilities that must be ended first",
+    {
+      code: "ORG_PREVIEW_ACTIVE_DESCENDANTS",
+      severity: "error",
+      message: "4 active descendant node(s) must be deactivated first.",
+      related_id: null,
+      params: { count: "4" },
+    },
+    {
+      code: "ORG_PREVIEW_ACTIVE_RESPONSIBILITIES",
+      severity: "error",
+      message: "3 active responsibility assignment(s) must be ended first.",
+      related_id: null,
+      params: { count: "3" },
+    },
   ],
   warnings: [],
   dependencies: [
@@ -58,13 +83,13 @@ const blockerPreview: OrgImpactPreview = {
       domain: "assets",
       status: "unavailable",
       count: null,
-      note: "Module 6.3 not yet implemented",
+      note: "Asset dependency impact is not available yet.",
     },
     {
       domain: "open_work",
       status: "unavailable",
       count: null,
-      note: "Modules 6.4/6.5 not yet implemented",
+      note: "Open work order dependency impact is not available yet.",
     },
   ],
 };
@@ -78,15 +103,27 @@ const warningOnlyPreview: OrgImpactPreview = {
   active_binding_count: 2,
   blockers: [],
   warnings: [
-    "Subtree contains 1 active responsibility that may need updating",
-    "Subtree contains 2 active external bindings",
+    {
+      code: "ORG_PREVIEW_SUBTREE_RESPONSIBILITIES",
+      severity: "warning",
+      message: "1 active responsibility assignment(s) in the affected subtree.",
+      related_id: null,
+      params: { count: "1" },
+    },
+    {
+      code: "ORG_PREVIEW_SUBTREE_BINDINGS",
+      severity: "warning",
+      message: "2 active external binding(s) in the affected subtree.",
+      related_id: null,
+      params: { count: "2" },
+    },
   ],
   dependencies: [
     {
       domain: "assets",
       status: "unavailable",
       count: null,
-      note: "Module 6.3 not yet implemented",
+      note: "Asset dependency impact is not available yet.",
     },
   ],
 };
@@ -114,6 +151,7 @@ function resetStore() {
     typeFilter: null,
     selectedNodeId: null,
     preview: null,
+    previewPayload: null,
     previewOpen: false,
     loading: false,
     previewLoading: false,
@@ -146,10 +184,10 @@ describe("ImpactPreviewDrawer — Sprint S3 smoke tests", () => {
 
       // Both blocker messages rendered
       expect(
-        screen.getByText("Node has 4 active descendants that must be deactivated first"),
+        screen.getByText("4 active descendant node(s) must be deactivated first."),
       ).toBeInTheDocument();
       expect(
-        screen.getByText("Node has 3 active responsibilities that must be ended first"),
+        screen.getByText("3 active responsibility assignment(s) must be ended first."),
       ).toBeInTheDocument();
 
       // Confirm button should show "blocked" label and be disabled
@@ -187,9 +225,11 @@ describe("ImpactPreviewDrawer — Sprint S3 smoke tests", () => {
 
       // Warning messages
       expect(
-        screen.getByText("Subtree contains 1 active responsibility that may need updating"),
+        screen.getByText("1 active responsibility assignment(s) in the affected subtree."),
       ).toBeInTheDocument();
-      expect(screen.getByText("Subtree contains 2 active external bindings")).toBeInTheDocument();
+      expect(
+        screen.getByText("2 active external binding(s) in the affected subtree."),
+      ).toBeInTheDocument();
     });
 
     it("confirm is disabled until warnings are acknowledged", () => {
@@ -259,7 +299,7 @@ describe("ImpactPreviewDrawer — Sprint S3 smoke tests", () => {
 
       const { unmount } = render(<ImpactPreviewDrawer />);
       expect(
-        screen.getByText("Node has 4 active descendants that must be deactivated first"),
+        screen.getByText("4 active descendant node(s) must be deactivated first."),
       ).toBeInTheDocument();
 
       // Close
@@ -277,7 +317,7 @@ describe("ImpactPreviewDrawer — Sprint S3 smoke tests", () => {
 
       // Old blocker text must not appear
       expect(
-        screen.queryByText("Node has 4 active descendants that must be deactivated first"),
+        screen.queryByText("4 active descendant node(s) must be deactivated first."),
       ).not.toBeInTheDocument();
 
       // No blocker section at all
@@ -333,10 +373,10 @@ describe("ImpactPreviewDrawer — Sprint S3 smoke tests", () => {
       render(<ImpactPreviewDrawer />);
 
       expect(screen.getByText("preview.dependencies")).toBeInTheDocument();
-      expect(screen.getByText("assets")).toBeInTheDocument();
-      expect(screen.getByText("open_work")).toBeInTheDocument();
-      expect(screen.getByText("Module 6.3 not yet implemented")).toBeInTheDocument();
-      expect(screen.getAllByText("unavailable").length).toBeGreaterThanOrEqual(2);
+      expect(screen.getByText("preview.dependencyDomain.assets")).toBeInTheDocument();
+      expect(screen.getByText("preview.dependencyDomain.open_work")).toBeInTheDocument();
+      expect(screen.getByText("preview.dependencyNote.assets")).toBeInTheDocument();
+      expect(screen.getAllByText("preview.dependencyStatus.unavailable").length).toBeGreaterThanOrEqual(2);
     });
   });
 

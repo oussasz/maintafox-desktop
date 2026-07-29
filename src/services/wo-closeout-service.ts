@@ -36,6 +36,9 @@ export interface WoFailureDetail {
   is_permanent_repair: boolean;
   cause_not_determined: boolean;
   notes: string | null;
+  failure_mode_label?: string | null;
+  failure_cause_label?: string | null;
+  failure_effect_label?: string | null;
 }
 
 // -- Verification --
@@ -69,6 +72,9 @@ export interface WoCloseInput {
   expected_row_version: number;
   no_downtime_attestation?: boolean | null;
   no_downtime_attestation_reason?: string | null;
+  fmeca_parts_override_reason?: string | null;
+  fmeca_parts_override_signed_by_id?: number | null;
+  fmeca_parts_override_signer_password?: string | null;
 }
 
 export interface WoReopenInput {
@@ -76,6 +82,7 @@ export interface WoReopenInput {
   actor_id: number;
   expected_row_version: number;
   reason: string;
+  target_status?: string | null;
 }
 
 export interface UpdateWoRcaInput {
@@ -115,6 +122,8 @@ export interface CostPostingHook {
 
 // -- Attachments --
 
+export type WoAttachmentPhase = "before" | "during" | "after" | "evidence";
+
 export interface WoAttachment {
   id: number;
   work_order_id: number;
@@ -125,6 +134,7 @@ export interface WoAttachment {
   uploaded_by_id: number | null;
   uploaded_at: string;
   notes: string | null;
+  phase: WoAttachmentPhase | null;
 }
 
 export interface WoAttachmentUploadInput {
@@ -132,6 +142,7 @@ export interface WoAttachmentUploadInput {
   fileName: string;
   fileBytes: number[];
   mimeType: string;
+  phase?: WoAttachmentPhase | null;
   notes?: string | null;
 }
 
@@ -269,6 +280,7 @@ export async function uploadWoAttachment(input: WoAttachmentUploadInput): Promis
     fileName: input.fileName,
     fileBytes: input.fileBytes,
     mimeType: input.mimeType,
+    phase: input.phase ?? null,
     notes: input.notes ?? null,
   });
 }

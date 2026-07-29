@@ -11,8 +11,9 @@
 //!   asset_code           → equipment.asset_id_code
 //!   asset_name           → equipment.name
 //!   class_code           → resolved via equipment_classes (equipment.class_id FK)
-//!   family_code          → validated against EQUIPMENT.FAMILY parent links to class
-//!   subfamily_code       → validated against EQUIPMENT.SUBFAMILY parent links to family
+//!                          + equipment.equipment_class_ref_id → EQUIPMENT.CLASS
+//!   family_code          → equipment.equipment_family_ref_id → EQUIPMENT.FAMILY
+//!   subfamily_code       → equipment.equipment_subfamily_ref_id → EQUIPMENT.SUBFAMILY
 //!   criticality_code     → COALESCE(reference EQUIPMENT.CRITICALITY, lookup_values via legacy FK)
 //!   status_code          → COALESCE(reference EQUIPMENT.STATUS, equipment.lifecycle_status)
 //!   org_node_id          → equipment.installed_at_node_id
@@ -43,6 +44,8 @@ pub struct Asset {
     pub class_name: Option<String>,
     pub family_code: Option<String>,
     pub family_name: Option<String>,
+    pub subfamily_code: Option<String>,
+    pub subfamily_name: Option<String>,
     pub criticality_value_id: Option<i64>,
     pub criticality_code: Option<String>,
     pub status_code: String,
@@ -50,6 +53,9 @@ pub struct Asset {
     pub model: Option<String>,
     pub serial_number: Option<String>,
     pub maintainable_boundary: bool,
+    pub rams_schedule_reference_value_id: Option<i64>,
+    pub rams_schedule_reference_value_name: Option<String>,
+    pub rams_utilization_factor: f64,
     pub org_node_id: Option<i64>,
     pub org_node_name: Option<String>,
     pub commissioned_at: Option<String>,
@@ -74,6 +80,8 @@ pub struct CreateAssetPayload {
     pub model: Option<String>,
     pub serial_number: Option<String>,
     pub maintainable_boundary: bool,
+    pub rams_schedule_reference_value_id: Option<i64>,
+    pub rams_utilization_factor: Option<f64>,
     pub org_node_id: i64,
     pub commissioned_at: Option<String>,
 }
@@ -91,6 +99,8 @@ pub struct UpdateAssetIdentityPayload {
     pub model: Option<Option<String>>,
     pub serial_number: Option<Option<String>>,
     pub maintainable_boundary: Option<bool>,
+    pub rams_schedule_reference_value_id: Option<Option<i64>>,
+    pub rams_utilization_factor: Option<f64>,
     pub commissioned_at: Option<Option<String>>,
     pub decommissioned_at: Option<Option<String>>,
 }
@@ -117,10 +127,12 @@ pub(crate) const ASSET_SELECT: &str = r"
     e.asset_id_code    AS asset_code,
     e.name             AS asset_name,
     e.class_id,
-    ec.code            AS class_code,
-    ec.name            AS class_name,
-    ef.code            AS family_code,
-    ef.name            AS family_name,
+    COALESCE(rs_class.code, ec.code) AS class_code,
+    COALESCE(rs_class.label, ec.name) AS class_name,
+    rs_fam.code        AS family_code,
+    rs_fam.label       AS family_name,
+    rs_sub.code        AS subfamily_code,
+    rs_sub.label       AS subfamily_name,
     e.criticality_value_id,
     COALESCE(rs_crit.code, lv.code) AS criticality_code,
     COALESCE(rs_stat.code, e.lifecycle_status) AS status_code,
@@ -128,6 +140,9 @@ pub(crate) const ASSET_SELECT: &str = r"
     e.model,
     e.serial_number,
     e.maintainable_boundary,
+    e.rams_schedule_reference_value_id,
+    rv_sched.label     AS rams_schedule_reference_value_name,
+    e.rams_utilization_factor,
     e.installed_at_node_id AS org_node_id,
     n.name             AS org_node_name,
     e.commissioning_date AS commissioned_at,
@@ -142,10 +157,13 @@ pub(crate) const ASSET_SELECT: &str = r"
 pub(crate) const ASSET_FROM: &str = r"
     FROM equipment e
     LEFT JOIN equipment_classes ec ON ec.id = e.class_id
-    LEFT JOIN equipment_classes ef ON ef.id = ec.parent_id
+    LEFT JOIN reference_values rs_class ON rs_class.id = e.equipment_class_ref_id
+    LEFT JOIN reference_values rs_fam ON rs_fam.id = e.equipment_family_ref_id
+    LEFT JOIN reference_values rs_sub ON rs_sub.id = e.equipment_subfamily_ref_id
     LEFT JOIN lookup_values lv     ON lv.id = e.criticality_value_id
     LEFT JOIN reference_values rs_crit ON rs_crit.id = e.equipment_criticality_ref_id
     LEFT JOIN reference_values rs_stat ON rs_stat.id = e.equipment_status_ref_id
+    LEFT JOIN reference_values rv_sched ON rv_sched.id = e.rams_schedule_reference_value_id
     LEFT JOIN org_nodes n          ON n.id  = e.installed_at_node_id
 ";
 
@@ -178,6 +196,12 @@ pub(crate) fn map_asset(row: &QueryResult) -> AppResult<Asset> {
         family_name: row
             .try_get::<Option<String>>("", "family_name")
             .map_err(|e| decode_err("family_name", e))?,
+        subfamily_code: row
+            .try_get::<Option<String>>("", "subfamily_code")
+            .map_err(|e| decode_err("subfamily_code", e))?,
+        subfamily_name: row
+            .try_get::<Option<String>>("", "subfamily_name")
+            .map_err(|e| decode_err("subfamily_name", e))?,
         criticality_value_id: row
             .try_get::<Option<i64>>("", "criticality_value_id")
             .map_err(|e| decode_err("criticality_value_id", e))?,
@@ -200,6 +224,15 @@ pub(crate) fn map_asset(row: &QueryResult) -> AppResult<Asset> {
             row.try_get::<i64>("", "maintainable_boundary")
                 .map_err(|e| decode_err("maintainable_boundary", e))?,
         ),
+        rams_schedule_reference_value_id: row
+            .try_get::<Option<i64>>("", "rams_schedule_reference_value_id")
+            .map_err(|e| decode_err("rams_schedule_reference_value_id", e))?,
+        rams_schedule_reference_value_name: row
+            .try_get::<Option<String>>("", "rams_schedule_reference_value_name")
+            .map_err(|e| decode_err("rams_schedule_reference_value_name", e))?,
+        rams_utilization_factor: row
+            .try_get::<f64>("", "rams_utilization_factor")
+            .map_err(|e| decode_err("rams_utilization_factor", e))?,
         org_node_id: row
             .try_get::<Option<i64>>("", "org_node_id")
             .map_err(|e| decode_err("org_node_id", e))?,
@@ -581,31 +614,23 @@ pub(crate) async fn validate_status_code(
     Ok(())
 }
 
-/// Validate that an org node id references an active, non-deleted org node.
+/// Validate that an org node id references a non-deleted node in the **active**
+/// (production) structure model with status = active.
 pub(crate) async fn assert_org_node_active(
     db: &impl ConnectionTrait,
     org_node_id: i64,
 ) -> AppResult<()> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT status FROM org_nodes WHERE id = ? AND deleted_at IS NULL",
-            [org_node_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "org_node".into(),
-            id: org_node_id.to_string(),
-        })?;
-    let status: String = row
-        .try_get("", "status")
-        .map_err(|e| decode_err("org_node.status", e))?;
-    if status != "active" {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Le noeud organisationnel {org_node_id} n'est pas actif (statut: {status})."
-        )]));
+    crate::org::model_scope::assert_org_node_active(db, org_node_id).await
+}
+
+fn normalize_utilization_factor(v: Option<f64>) -> AppResult<f64> {
+    let ku = v.unwrap_or(1.0);
+    if !ku.is_finite() || ku <= 0.0 || ku > 1.5 {
+        return Err(AppError::ValidationFailed(vec![
+            "Le facteur d'utilisation RAMS (K_u) doit être > 0.0 et <= 1.5.".into(),
+        ]));
     }
-    Ok(())
+    Ok(ku)
 }
 
 /// Validate that an asset code is uppercase, non-empty, and correctly formatted.
@@ -783,6 +808,14 @@ pub async fn create_asset(
 
     // ── Org node linkage guard ───────────────────────────────────────────
     assert_org_node_active(&txn, payload.org_node_id).await?;
+    if let Some(schedule_ref_id) = payload.rams_schedule_reference_value_id {
+        crate::reference::schedule_patterns::assert_schedule_reference_value_active(
+            &txn,
+            schedule_ref_id,
+        )
+        .await?;
+    }
+    let rams_utilization_factor = normalize_utilization_factor(payload.rams_utilization_factor)?;
 
     // ── Classification resolution ────────────────────────────────────────
     let (class_id, _class_parent_id) = resolve_class_code(&txn, &payload.class_code).await?;
@@ -793,6 +826,7 @@ pub async fn create_asset(
             family_ref_id = Some(validate_family_for_class_ref(&txn, family_code, class_ref_id).await?);
         }
     }
+    let mut subfamily_ref_id: Option<i64> = None;
     if let Some(ref subfamily_code) = payload.subfamily_code {
         if !subfamily_code.trim().is_empty() {
             let family_id = family_ref_id.ok_or_else(|| {
@@ -801,7 +835,8 @@ pub async fn create_asset(
                         .into(),
                 ])
             })?;
-            let _ = validate_subfamily_for_family_ref(&txn, subfamily_code, family_id).await?;
+            subfamily_ref_id =
+                Some(validate_subfamily_for_family_ref(&txn, subfamily_code, family_id).await?);
         }
     }
 
@@ -837,10 +872,12 @@ pub async fn create_asset(
           (sync_id, asset_id_code, name, class_id,
            lifecycle_status, criticality_value_id,
            equipment_status_ref_id, equipment_criticality_ref_id, equipment_class_ref_id,
+           equipment_family_ref_id, equipment_subfamily_ref_id,
            installed_at_node_id, manufacturer, model, serial_number,
-           maintainable_boundary, commissioning_date, decommissioned_at,
+           maintainable_boundary, rams_schedule_reference_value_id, rams_utilization_factor,
+           commissioning_date, decommissioned_at,
            created_at, updated_at, row_version)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
             sync_id.clone().into(),
             asset_code.into(),
@@ -851,11 +888,15 @@ pub async fn create_asset(
             status_ref_id.into(),
             criticality_ref_id.into(),
             class_ref_id.into(),
+            family_ref_id.into(),
+            subfamily_ref_id.into(),
             payload.org_node_id.into(),
             payload.manufacturer.into(),
             payload.model.into(),
             payload.serial_number.into(),
             i64::from(payload.maintainable_boundary).into(),
+            payload.rams_schedule_reference_value_id.into(),
+            rams_utilization_factor.into(),
             payload.commissioned_at.into(),
             decommissioned_at.into(),
             now.clone().into(),
@@ -986,29 +1027,64 @@ pub async fn update_asset_identity(
         }
     }
 
-    let mut effective_family_ref_id: Option<i64> = None;
+    let current_family_row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT equipment_family_ref_id FROM equipment WHERE id = ?",
+            [asset_id.into()],
+        ))
+        .await?;
+    let stored_family_ref_id: Option<i64> = current_family_row
+        .as_ref()
+        .and_then(|r| r.try_get::<Option<i64>>("", "equipment_family_ref_id").ok().flatten());
+
+    let mut effective_family_ref_id: Option<i64> = stored_family_ref_id;
+    let mut family_touched = false;
     if let Some(ref family_change) = payload.family_code {
+        family_touched = true;
         if let Some(ref family_code) = family_change {
-            let class_ref_id = effective_class_ref_id.ok_or_else(|| {
-                AppError::ValidationFailed(vec![
-                    "Sélectionnez une classe valide avant de choisir une famille.".into(),
-                ])
-            })?;
-            effective_family_ref_id =
-                Some(validate_family_for_class_ref(&txn, family_code, class_ref_id).await?);
+            let trimmed = family_code.trim();
+            if trimmed.is_empty() {
+                effective_family_ref_id = None;
+            } else {
+                let class_ref_id = effective_class_ref_id.ok_or_else(|| {
+                    AppError::ValidationFailed(vec![
+                        "Sélectionnez une classe valide avant de choisir une famille.".into(),
+                    ])
+                })?;
+                effective_family_ref_id =
+                    Some(validate_family_for_class_ref(&txn, trimmed, class_ref_id).await?);
+            }
+        } else {
+            effective_family_ref_id = None;
         }
+        sets.push("equipment_family_ref_id = ?".to_string());
+        binds.push(effective_family_ref_id.into());
     }
 
     if let Some(ref subfamily_change) = payload.subfamily_code {
-        if let Some(ref subfamily_code) = subfamily_change {
-            let family_ref_id = effective_family_ref_id.ok_or_else(|| {
-                AppError::ValidationFailed(vec![
-                    "Sélectionnez une famille valide avant de choisir une sous-famille."
-                        .into(),
-                ])
-            })?;
-            let _ = validate_subfamily_for_family_ref(&txn, subfamily_code, family_ref_id).await?;
-        }
+        let subfamily_ref_id = if let Some(ref subfamily_code) = subfamily_change {
+            let trimmed = subfamily_code.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                let family_ref_id = effective_family_ref_id.ok_or_else(|| {
+                    AppError::ValidationFailed(vec![
+                        "Sélectionnez une famille valide avant de choisir une sous-famille."
+                            .into(),
+                    ])
+                })?;
+                Some(validate_subfamily_for_family_ref(&txn, trimmed, family_ref_id).await?)
+            }
+        } else {
+            None
+        };
+        sets.push("equipment_subfamily_ref_id = ?".to_string());
+        binds.push(subfamily_ref_id.into());
+    } else if family_touched {
+        // Changing family without an explicit subfamily update clears a stale child.
+        sets.push("equipment_subfamily_ref_id = ?".to_string());
+        binds.push(sea_orm::Value::from(None::<i64>));
     }
 
     if let Some(ref crit_code) = payload.criticality_code {
@@ -1054,6 +1130,25 @@ pub async fn update_asset_identity(
     if let Some(mb) = payload.maintainable_boundary {
         sets.push("maintainable_boundary = ?".to_string());
         binds.push(i64::from(mb).into());
+    }
+    if let Some(schedule_change) = payload.rams_schedule_reference_value_id {
+        if let Some(schedule_ref_id) = schedule_change {
+            crate::reference::schedule_patterns::assert_schedule_reference_value_active(
+                &txn,
+                schedule_ref_id,
+            )
+            .await?;
+            sets.push("rams_schedule_reference_value_id = ?".to_string());
+            binds.push(schedule_ref_id.into());
+        } else {
+            sets.push("rams_schedule_reference_value_id = ?".to_string());
+            binds.push(sea_orm::Value::from(None::<i64>));
+        }
+    }
+    if let Some(ku) = payload.rams_utilization_factor {
+        let normalized = normalize_utilization_factor(Some(ku))?;
+        sets.push("rams_utilization_factor = ?".to_string());
+        binds.push(normalized.into());
     }
     if let Some(ref com_at) = payload.commissioned_at {
         sets.push("commissioning_date = ?".to_string());

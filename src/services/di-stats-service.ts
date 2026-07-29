@@ -56,6 +56,7 @@ const DiStatsPayloadSchema = z.object({
   closed_this_month: z.number(),
   overdue: z.number(),
   sla_met_count: z.number(),
+  sla_breached_count: z.number(),
   sla_total: z.number(),
   safety_issues: z.number(),
   status_distribution: z.array(DiStatusCountSchema),

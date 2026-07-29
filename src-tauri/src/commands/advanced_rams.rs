@@ -7,14 +7,15 @@ use crate::errors::AppResult;
 use crate::reliability::advanced_rams::domain::{
     CreateFmecaAnalysisInput, CreateRcmStudyInput, FmecaAnalysesFilter, FmecaAnalysis, FmecaItem,
     FmecaItemWithContext, FmecaItemsEquipmentFilter, FmecaSeverityOccurrenceMatrix, RamIshikawaDiagram,
-    RamIshikawaDiagramsFilter,
+    RamIshikawaDiagramsFilter, WeibullDashboardInput, WeibullDashboardPayload,
     ReliabilityRulIndicator, RcmDecision, RcmStudiesFilter, RcmStudy, UpdateFmecaAnalysisInput,
+    SuggestedPartForFailure, SuggestedPartsForFailureInput,
     UpdateRcmStudyInput, UpsertFmecaItemInput, UpsertRamIshikawaDiagramInput, UpsertRcmDecisionInput,
     WeibullFitRecord, WeibullFitRunInput,
 };
 use crate::reliability::advanced_rams::queries;
 use crate::state::AppState;
-use crate::{require_permission, require_session};
+use crate::{require_permission, require_permission_allowing_system_admin, require_session};
 
 #[tauri::command]
 pub async fn run_weibull_fit(
@@ -22,7 +23,7 @@ pub async fn run_weibull_fit(
     state: State<'_, AppState>,
 ) -> AppResult<WeibullFitRecord> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.analyze", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "ram.analyze", PermissionScope::Global);
     queries::run_and_store_weibull_fit(&state.db, Some(user.user_id), input).await
 }
 
@@ -35,6 +36,17 @@ pub async fn get_latest_weibull_fit_for_equipment(
     require_permission!(state, &user, "ram.view", PermissionScope::Global);
     let _ = user;
     queries::get_latest_weibull_fit_for_equipment(&state.db, equipment_id).await
+}
+
+#[tauri::command]
+pub async fn get_weibull_dashboard_payload(
+    input: WeibullDashboardInput,
+    state: State<'_, AppState>,
+) -> AppResult<WeibullDashboardPayload> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ram.view", PermissionScope::Global);
+    let _ = user;
+    queries::get_weibull_dashboard_payload(&state.db, input).await
 }
 
 #[tauri::command]
@@ -127,6 +139,17 @@ pub async fn list_fmeca_items_for_equipment(
     require_permission!(state, &user, "ram.view", PermissionScope::Global);
     let _ = user;
     queries::list_fmeca_items_for_equipment(&state.db, filter).await
+}
+
+#[tauri::command]
+pub async fn get_suggested_parts_for_failure(
+    input: SuggestedPartsForFailureInput,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<SuggestedPartForFailure>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ram.view", PermissionScope::Global);
+    let _ = user;
+    queries::get_suggested_parts_for_failure(&state.db, input).await
 }
 
 #[tauri::command]

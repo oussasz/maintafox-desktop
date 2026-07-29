@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
 use crate::reliability::analysis_input::{
-    build_input_spec_json, dataset_hash_sha256, ExposurePart, FailurePart,
+    build_input_spec_json, dataset_hash_sha256, ExposurePart, ExposureProvenance, FailurePart,
 };
 use crate::reliability::compute::{compute_reliability_kpis, KpiFailureEvent, ReliabilityKpiComputeInput};
 use crate::reliability::domain::{
@@ -16,12 +16,14 @@ use crate::reliability::domain::{
     RuntimeExposureLogsFilter, UpsertFailureEventInput, UpsertRuntimeExposureLogInput, UserDismissal,
     WoMissingFailureModeRow,
 };
+use crate::reliability::exposure_inference::infer_exposure_hours;
 use crate::reliability::sync_stage::{
     stage_failure_code, stage_failure_event, stage_failure_hierarchy, stage_reliability_kpi_snapshot,
     stage_runtime_exposure_log, stage_user_dismissal,
 };
 
-const CODE_TYPES: &[&str] = &["class", "mode", "mechanism", "cause", "effect", "remedy"];
+const FAILURE_MODES_DOMAIN_CODE: &str = "WORK.FAILURE_MODES";
+const SYNTHETIC_FAILURE_HIERARCHY_ID: i64 = 1;
 
 const WO_FAILURE_SOURCE: &str = "work_order";
 const INGEST_WO_TYPE_CODES: &[&str] = &["corrective", "emergency"];
@@ -92,16 +94,6 @@ fn opt_string(v: Option<String>) -> sea_orm::Value {
         .unwrap_or_else(|| sea_orm::Value::from(None::<String>))
 }
 
-fn validate_code_type(t: &str) -> AppResult<()> {
-    if CODE_TYPES.contains(&t) {
-        Ok(())
-    } else {
-        Err(AppError::ValidationFailed(vec![format!(
-            "code_type must be one of: {CODE_TYPES:?}"
-        )]))
-    }
-}
-
 fn validate_asset_scope_json(raw: &str) -> AppResult<()> {
     serde_json::from_str::<serde_json::Value>(raw)
         .map_err(|e| AppError::ValidationFailed(vec![format!("asset_scope JSON: {e}")]))?;
@@ -120,28 +112,65 @@ async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
 }
 
 pub async fn list_failure_hierarchies(db: &DatabaseConnection) -> AppResult<Vec<FailureHierarchy>> {
-    let rows = db
-        .query_all(Statement::from_string(
+    let domain_row = db
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, name, asset_scope, version_no, is_active, row_version
-             FROM failure_hierarchies ORDER BY id ASC"
-                .to_string(),
+            "SELECT id, code, name
+             FROM reference_domains
+             WHERE UPPER(TRIM(code)) = UPPER(TRIM(?))
+             LIMIT 1",
+            [FAILURE_MODES_DOMAIN_CODE.into()],
         ))
         .await?;
-    rows.iter().map(map_hierarchy).collect()
+    let Some(row) = domain_row else {
+        return Ok(Vec::new());
+    };
+
+    let domain_name: String = row
+        .try_get::<Option<String>>("", "name")
+        .map_err(|e| decode_err("name", e))?
+        .unwrap_or_else(|| "Failure modes".to_string());
+    Ok(vec![FailureHierarchy {
+        id: SYNTHETIC_FAILURE_HIERARCHY_ID,
+        entity_sync_id: format!("reference_domain:{FAILURE_MODES_DOMAIN_CODE}"),
+        name: domain_name,
+        asset_scope_json: "{}".to_string(),
+        version_no: 1,
+        is_active: true,
+        row_version: 1,
+    }])
 }
 
 pub async fn list_failure_codes(db: &DatabaseConnection, filter: FailureCodesFilter) -> AppResult<Vec<FailureCode>> {
+    if filter.hierarchy_id != SYNTHETIC_FAILURE_HIERARCHY_ID {
+        return Ok(Vec::new());
+    }
     let inc = i64::from(filter.include_inactive.unwrap_or(false));
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, hierarchy_id, parent_id, code, label, code_type,
-                    iso_14224_annex_ref, is_active, row_version
-             FROM failure_codes
-             WHERE hierarchy_id = ? AND (is_active = 1 OR ? = 1)
-             ORDER BY code ASC",
-            [filter.hierarchy_id.into(), inc.into()],
+            "SELECT
+                rv.id AS id,
+                ('ref_failure_mode:' || rv.id) AS entity_sync_id,
+                ? AS hierarchy_id,
+                rv.parent_id AS parent_id,
+                rv.code AS code,
+                rv.label AS label,
+                'mode' AS code_type,
+                NULL AS iso_14224_annex_ref,
+                rv.is_active AS is_active,
+                COALESCE(rs.version_no, 1) AS row_version
+             FROM reference_values rv
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE UPPER(TRIM(rd.code)) = UPPER(TRIM(?))
+               AND (rv.is_active = 1 OR ? = 1)
+             ORDER BY rv.sort_order ASC, rv.code ASC",
+            [
+                SYNTHETIC_FAILURE_HIERARCHY_ID.into(),
+                FAILURE_MODES_DOMAIN_CODE.into(),
+                inc.into(),
+            ],
         ))
         .await?;
     rows.iter().map(map_code).collect()
@@ -230,13 +259,17 @@ async fn verify_parent_hierarchy(
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT hierarchy_id FROM failure_codes WHERE id = ?",
-                [pid.into()],
+                "SELECT 1 AS present
+                 FROM reference_values rv
+                 INNER JOIN reference_sets rs ON rs.id = rv.set_id
+                 INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+                 WHERE rv.id = ? AND UPPER(TRIM(rd.code)) = UPPER(TRIM(?))",
+                [pid.into(), FAILURE_MODES_DOMAIN_CODE.into()],
             ))
             .await?
             .ok_or_else(|| AppError::ValidationFailed(vec!["parent_id not found.".into()]))?;
-        let hid: i64 = row.try_get("", "hierarchy_id").map_err(|e| decode_err("hierarchy_id", e))?;
-        if hid != hierarchy_id {
+        let _present: i64 = row.try_get("", "present").map_err(|e| decode_err("present", e))?;
+        if hierarchy_id != SYNTHETIC_FAILURE_HIERARCHY_ID {
             return Err(AppError::ValidationFailed(vec![
                 "parent_id must belong to the same hierarchy.".into(),
             ]));
@@ -246,8 +279,17 @@ async fn verify_parent_hierarchy(
 }
 
 pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpsertInput) -> AppResult<FailureCode> {
+    if input.hierarchy_id != SYNTHETIC_FAILURE_HIERARCHY_ID {
+        return Err(AppError::ValidationFailed(vec![
+            "Only unified WORK.FAILURE_MODES hierarchy is supported.".into(),
+        ]));
+    }
     let ct = input.code_type.trim().to_string();
-    validate_code_type(&ct)?;
+    if ct != "mode" {
+        return Err(AppError::ValidationFailed(vec![
+            "Only code_type='mode' is supported in unified failure modes.".into(),
+        ]));
+    }
     verify_parent_hierarchy(db, input.hierarchy_id, input.parent_id).await?;
 
     let code = input.code.trim().to_string();
@@ -263,18 +305,23 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
         let n = db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE failure_codes SET hierarchy_id = ?, parent_id = ?, code = ?, label = ?, code_type = ?,
-                 iso_14224_annex_ref = ?, is_active = ?, row_version = row_version + 1
-                 WHERE id = ? AND row_version = ?",
+                "UPDATE reference_values
+                 SET parent_id = ?, code = ?, label = ?, is_active = ?, sort_order = COALESCE(sort_order, 0)
+                 WHERE id = ?
+                   AND EXISTS (
+                      SELECT 1 FROM reference_sets rs
+                      INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+                      WHERE rs.id = reference_values.set_id
+                        AND UPPER(TRIM(rd.code)) = UPPER(TRIM(?))
+                        AND COALESCE(rs.version_no, 1) = ?
+                   )",
                 [
-                    input.hierarchy_id.into(),
                     opt_i64(input.parent_id),
                     code.clone().into(),
                     label.into(),
-                    ct.clone().into(),
-                    opt_string(input.iso_14224_annex_ref.clone()),
                     bool_to_i64(input.is_active).into(),
                     id.into(),
+                    FAILURE_MODES_DOMAIN_CODE.into(),
                     exp.into(),
                 ],
             ))
@@ -287,27 +334,66 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
         }
         db.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, hierarchy_id, parent_id, code, label, code_type,
-                    iso_14224_annex_ref, is_active, row_version
-             FROM failure_codes WHERE id = ?",
-            [id.into()],
+            "SELECT
+                rv.id AS id,
+                ('ref_failure_mode:' || rv.id) AS entity_sync_id,
+                ? AS hierarchy_id,
+                rv.parent_id AS parent_id,
+                rv.code AS code,
+                rv.label AS label,
+                'mode' AS code_type,
+                NULL AS iso_14224_annex_ref,
+                rv.is_active AS is_active,
+                COALESCE(rs.version_no, 1) AS row_version
+             FROM reference_values rv
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE rv.id = ? AND UPPER(TRIM(rd.code)) = UPPER(TRIM(?))",
+            [
+                SYNTHETIC_FAILURE_HIERARCHY_ID.into(),
+                id.into(),
+                FAILURE_MODES_DOMAIN_CODE.into(),
+            ],
         ))
         .await?
     } else {
-        let eid = format!("failure_code:{}", Uuid::new_v4());
+        let target_set = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT rs.id AS set_id
+                 FROM reference_sets rs
+                 INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+                 WHERE UPPER(TRIM(rd.code)) = UPPER(TRIM(?))
+                 ORDER BY CASE rs.status
+                    WHEN 'draft' THEN 0
+                    WHEN 'validated' THEN 1
+                    WHEN 'published' THEN 2
+                    ELSE 3
+                 END, rs.version_no DESC
+                 LIMIT 1",
+                [FAILURE_MODES_DOMAIN_CODE.into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "No reference set found for WORK.FAILURE_MODES. Create/publish one in Reference Data."
+                        .into(),
+                ])
+            })?;
+        let set_id: i64 = target_set
+            .try_get("", "set_id")
+            .map_err(|e| decode_err("set_id", e))?;
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO failure_codes (
-                entity_sync_id, hierarchy_id, parent_id, code, label, code_type, iso_14224_annex_ref, is_active, row_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            "INSERT INTO reference_values (
+                set_id, parent_id, code, label, sort_order, is_active
+            ) VALUES (?, ?, ?, ?, COALESCE((SELECT MAX(sort_order) + 1 FROM reference_values WHERE set_id = ?), 1), ?)",
             [
-                eid.into(),
-                input.hierarchy_id.into(),
+                set_id.into(),
                 opt_i64(input.parent_id),
                 code.into(),
                 label.into(),
-                ct.into(),
-                opt_string(input.iso_14224_annex_ref),
+                set_id.into(),
                 bool_to_i64(input.is_active).into(),
             ],
         ))
@@ -323,14 +409,30 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
         let new_id = last_insert_id(db).await?;
         db.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, hierarchy_id, parent_id, code, label, code_type,
-                    iso_14224_annex_ref, is_active, row_version
-             FROM failure_codes WHERE id = ?",
-            [new_id.into()],
+            "SELECT
+                rv.id AS id,
+                ('ref_failure_mode:' || rv.id) AS entity_sync_id,
+                ? AS hierarchy_id,
+                rv.parent_id AS parent_id,
+                rv.code AS code,
+                rv.label AS label,
+                'mode' AS code_type,
+                NULL AS iso_14224_annex_ref,
+                rv.is_active AS is_active,
+                COALESCE(rs.version_no, 1) AS row_version
+             FROM reference_values rv
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE rv.id = ? AND UPPER(TRIM(rd.code)) = UPPER(TRIM(?))",
+            [
+                SYNTHETIC_FAILURE_HIERARCHY_ID.into(),
+                new_id.into(),
+                FAILURE_MODES_DOMAIN_CODE.into(),
+            ],
         ))
         .await?
     }
-    .ok_or_else(|| AppError::SyncError("failure_codes row missing after upsert.".into()))?;
+    .ok_or_else(|| AppError::SyncError("reference_values row missing after failure mode upsert.".into()))?;
 
     let mapped = map_code(&row)?;
     stage_failure_code(db, &mapped).await?;
@@ -341,10 +443,26 @@ pub async fn deactivate_failure_code(db: &DatabaseConnection, input: DeactivateF
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, hierarchy_id, parent_id, code, label, code_type,
-                    iso_14224_annex_ref, is_active, row_version
-             FROM failure_codes WHERE id = ?",
-            [input.id.into()],
+            "SELECT
+                rv.id AS id,
+                ('ref_failure_mode:' || rv.id) AS entity_sync_id,
+                ? AS hierarchy_id,
+                rv.parent_id AS parent_id,
+                rv.code AS code,
+                rv.label AS label,
+                'mode' AS code_type,
+                NULL AS iso_14224_annex_ref,
+                rv.is_active AS is_active,
+                COALESCE(rs.version_no, 1) AS row_version
+             FROM reference_values rv
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE rv.id = ? AND UPPER(TRIM(rd.code)) = UPPER(TRIM(?))",
+            [
+                SYNTHETIC_FAILURE_HIERARCHY_ID.into(),
+                input.id.into(),
+                FAILURE_MODES_DOMAIN_CODE.into(),
+            ],
         ))
         .await?
         .ok_or_else(|| AppError::NotFound {
@@ -364,9 +482,17 @@ pub async fn deactivate_failure_code(db: &DatabaseConnection, input: DeactivateF
     let n = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE failure_codes SET is_active = 0, row_version = row_version + 1
-             WHERE id = ? AND row_version = ?",
-            [input.id.into(), input.expected_row_version.into()],
+            "UPDATE reference_values
+             SET is_active = 0
+             WHERE id = ?
+               AND EXISTS (
+                 SELECT 1 FROM reference_sets rs
+                 INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+                 WHERE rs.id = reference_values.set_id
+                   AND UPPER(TRIM(rd.code)) = UPPER(TRIM(?))
+                   AND COALESCE(rs.version_no, 1) = ?
+               )",
+            [input.id.into(), FAILURE_MODES_DOMAIN_CODE.into(), input.expected_row_version.into()],
         ))
         .await?
         .rows_affected();
@@ -377,13 +503,29 @@ pub async fn deactivate_failure_code(db: &DatabaseConnection, input: DeactivateF
     let updated = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, hierarchy_id, parent_id, code, label, code_type,
-                    iso_14224_annex_ref, is_active, row_version
-             FROM failure_codes WHERE id = ?",
-            [input.id.into()],
+            "SELECT
+                rv.id AS id,
+                ('ref_failure_mode:' || rv.id) AS entity_sync_id,
+                ? AS hierarchy_id,
+                rv.parent_id AS parent_id,
+                rv.code AS code,
+                rv.label AS label,
+                'mode' AS code_type,
+                NULL AS iso_14224_annex_ref,
+                rv.is_active AS is_active,
+                COALESCE(rs.version_no, 1) AS row_version
+             FROM reference_values rv
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE rv.id = ? AND UPPER(TRIM(rd.code)) = UPPER(TRIM(?))",
+            [
+                SYNTHETIC_FAILURE_HIERARCHY_ID.into(),
+                input.id.into(),
+                FAILURE_MODES_DOMAIN_CODE.into(),
+            ],
         ))
         .await?
-        .ok_or_else(|| AppError::SyncError("failure_codes missing after deactivate.".into()))?;
+        .ok_or_else(|| AppError::SyncError("reference failure mode missing after deactivate.".into()))?;
     let mapped = map_code(&updated)?;
     stage_failure_code(db, &mapped).await?;
     Ok(mapped)
@@ -671,8 +813,14 @@ async fn is_failure_mode_active_mode(db: &DatabaseConnection, mode_id: Option<i6
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT 1 AS x FROM failure_codes WHERE id = ? AND code_type = 'mode' AND is_active = 1",
-            [mid.into()],
+            "SELECT 1 AS x
+             FROM reference_values rv
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE rv.id = ?
+               AND rv.is_active = 1
+               AND UPPER(TRIM(rd.code)) = UPPER(TRIM(?))",
+            [mid.into(), FAILURE_MODES_DOMAIN_CODE.into()],
         ))
         .await?;
     Ok(row.is_some())
@@ -1135,18 +1283,8 @@ async fn kpi_refresh_core(
     let p0s = p0.to_rfc3339_opts(SecondsFormat::Secs, true);
     let p1s = p1.to_rfc3339_opts(SecondsFormat::Secs, true);
 
-    let t_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT COALESCE(SUM(value), 0.0) AS texp FROM runtime_exposure_logs
-             WHERE equipment_id = ? AND exposure_type = 'hours'
-               AND recorded_at >= ? AND recorded_at <= ?",
-            [input.equipment_id.into(), p0s.clone().into(), p1s.clone().into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("exposure sum missing.".into()))?;
-    let t_exp: f64 = t_row.try_get("", "texp").map_err(|e| decode_err("texp", e))?;
-    let t_exp = t_exp.max(0.0);
+    let exposure_computation = infer_exposure_hours(db, input.equipment_id, &p0s, &p1s).await?;
+    let t_exp = exposure_computation.hours.max(0.0);
 
     let exp_log_rows = db
         .query_all(Statement::from_sql_and_values(
@@ -1169,6 +1307,14 @@ async fn kpi_refresh_core(
             source_type: r.try_get("", "source_type").map_err(|e| decode_err("source_type", e))?,
         });
     }
+    // Persist exposure provenance in canonical dataset hash without hidden defaults.
+    exposure_parts.push(ExposurePart {
+        id: -1,
+        exposure_type: "hours".into(),
+        value: t_exp,
+        recorded_at: p1s.clone(),
+        source_type: exposure_computation.source.clone(),
+    });
 
     let fe_rows = db
         .query_all(Statement::from_sql_and_values(
@@ -1228,7 +1374,31 @@ async fn kpi_refresh_core(
         exposure_parts,
         failure_parts,
     );
-    let input_spec_json = build_input_spec_json(t_exp, computed.event_count, min_n);
+    let fallback_reason = if exposure_computation
+        .source
+        .starts_with("runtime_exposure_logs_fallback_")
+    {
+        Some(
+            exposure_computation
+                .source
+                .trim_start_matches("runtime_exposure_logs_fallback_")
+                .to_string(),
+        )
+    } else {
+        None
+    };
+    let input_spec_json = build_input_spec_json(
+        t_exp,
+        computed.event_count,
+        min_n,
+        ExposureProvenance {
+            source: exposure_computation.source.clone(),
+            schedule_reference_value_id: exposure_computation.schedule_reference_value_id,
+            utilization_factor: exposure_computation.utilization_factor,
+            last_completed_wo_closed_at: exposure_computation.last_completed_wo_closed_at.clone(),
+            fallback_reason,
+        },
+    );
     let plot_payload_json = crate::reliability::plot_payload::build_kpi_plot_payload_json(
         input.equipment_id,
         &p0s,

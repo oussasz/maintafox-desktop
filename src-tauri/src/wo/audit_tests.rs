@@ -1,4 +1,4 @@
-//! Supervisor verification tests — Phase 2 SP05 File 04 Sprint S1.
+//! Supervisor verification tests — Phase 2 SP05 File 04 Sprint S1. Option B lifecycle.
 //!
 //! V1 — Permission seed count: 8 ot.* rows after migration 026.
 //! V2 — Audit on close: successful close_wo writes row with action='closed',
@@ -15,15 +15,15 @@ mod tests {
 
     use crate::wo::audit::{self, WoAuditInput};
     use crate::wo::closeout::{
-        self, SaveFailureDetailInput, SaveVerificationInput, WoCloseInput,
+        self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput,
     };
     use crate::wo::domain::WoCreateInput;
-    use crate::wo::execution::{
-        self, WoAssignInput, WoMechCompleteInput, WoPlanInput, WoStartInput,
-    };
+    use crate::wo::execution::{self, WoAssignInput, WoMechCompleteInput, WoPlanInput, WoStartInput};
     use crate::wo::labor::{self, AddLaborInput};
     use crate::wo::parts;
     use crate::wo::queries;
+    use crate::wo::workflow::actions::mark_ready::{mark_wo_ready, WoMarkReadyInput};
+    use crate::wo::workflow::actions::submit::{submit_wo, WoSubmitInput};
 
     // ═══════════════════════════════════════════════════════════════════════
     // DB setup helpers
@@ -91,15 +91,125 @@ mod tests {
         row.try_get::<i64>("", "id").unwrap()
     }
 
-    /// Create a corrective WO and advance to in_progress. Returns (wo_id, row_version).
+    async fn seed_test_equipment(db: &sea_orm::DatabaseConnection) {
+        // Ensure org scaffolding for installed_at_node_id FK
+        let _ = db
+            .execute(Statement::from_string(
+                DbBackend::Sqlite,
+                "INSERT OR IGNORE INTO org_structure_models \
+                 (id, sync_id, version_number, status, created_at, updated_at) \
+                 VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
+                    .to_string(),
+            ))
+            .await;
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO org_node_types \
+             (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+             VALUES (1, 'test-type-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));"
+                .to_string(),
+        ))
+        .await
+        .expect("insert org_node_types");
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO org_nodes \
+             (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
+             VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
+                     datetime('now'), datetime('now'), 1);"
+                .to_string(),
+        ))
+        .await
+        .expect("insert org_nodes");
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO equipment \
+             (id, sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+              created_at, updated_at) \
+             VALUES (1, 'test-eq-audit-001', 'EQ-AUDIT-001', 'Audit Test Equipment', \
+                     'active_in_service', 1, datetime('now'), datetime('now'));"
+                .to_string(),
+        ))
+        .await
+        .expect("insert test equipment");
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "UPDATE equipment SET installed_at_node_id = 1 \
+             WHERE id = 1 AND installed_at_node_id IS NULL;"
+                .to_string(),
+        ))
+        .await
+        .expect("ensure installed_at_node_id");
+    }
+
+    /// Seed failure coding + RCA required before `complete_wo_mechanically` for corrective/emergency WOs.
+    async fn seed_rams_for_complete(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+        let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+            .await
+            .expect("lookup symptom")
+            .expect("seeded DI.SYMPTOM vibration");
+
+        closeout::save_failure_detail(
+            db,
+            SaveFailureDetailInput {
+                wo_id,
+                symptom_id: Some(symptom_id),
+                failure_mode_id: None,
+                failure_cause_id: None,
+                failure_effect_id: None,
+                is_temporary_repair: false,
+                is_permanent_repair: true,
+                cause_not_determined: true,
+                notes: Some("Test failure detail notes for RAMS complete gate".into()),
+            },
+        )
+        .await
+        .expect("seed_rams_for_complete: save_failure_detail");
+
+        closeout::update_wo_rca(
+            db,
+            UpdateWoRcaInput {
+                wo_id,
+                root_cause_summary: Some("Test root cause".into()),
+                corrective_action_summary: Some("Test corrective action".into()),
+            },
+        )
+        .await
+        .expect("seed_rams_for_complete: update_wo_rca");
+    }
+
+    /// Strip RAMS fields so close_wo quality gates can still assert missing failure coding.
+    async fn clear_rams_for_close_gate(db: &sea_orm::DatabaseConnection, wo_id: i64) {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM work_order_failure_details WHERE work_order_id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("clear failure details");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE work_orders SET root_cause_summary = NULL, corrective_action_summary = NULL WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await
+        .expect("clear root_cause_summary");
+    }
+
+    /// Create a corrective WO and advance to in_progress via Option B lifecycle.
     async fn wo_in_progress(db: &sea_orm::DatabaseConnection) -> (i64, i64) {
+        seed_test_equipment(db).await;
         let actor = admin_id(db).await;
 
         let wo = queries::create_work_order(
             db,
             WoCreateInput {
                 type_code: "corrective".into(),
-                equipment_id: None,
+                equipment_id: Some(1),
                 location_id: None,
                 source_di_id: None,
                 source_inspection_anomaly_id: None,
@@ -124,14 +234,26 @@ mod tests {
         .expect("create_work_order");
 
         let wo_id = wo.id;
-        let mut rv = wo.row_version;
 
+        // submit: draft → planning
+        let wo = submit_wo(
+            db,
+            WoSubmitInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("submit_wo");
+
+        // plan (non-status save)
         let wo = execution::plan_wo(
             db,
             WoPlanInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
                 planner_id: actor,
                 planned_start: "2026-04-10T08:00:00Z".into(),
                 planned_end: "2026-04-10T12:00:00Z".into(),
@@ -142,27 +264,14 @@ mod tests {
         )
         .await
         .expect("plan_wo");
-        rv = wo.row_version;
 
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE work_orders SET \
-             status_id = (SELECT id FROM work_order_statuses WHERE code = 'ready_to_schedule'), \
-             row_version = row_version + 1, \
-             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-             WHERE id = ?",
-            [wo_id.into()],
-        ))
-        .await
-        .expect("advance to ready_to_schedule");
-        rv += 1;
-
+        // assign (non-status save)
         let wo = execution::assign_wo(
             db,
             WoAssignInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
                 assigned_group_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
@@ -170,14 +279,26 @@ mod tests {
         )
         .await
         .expect("assign_wo");
-        rv = wo.row_version;
 
+        // mark ready: planning → ready
+        let wo = mark_wo_ready(
+            db,
+            WoMarkReadyInput {
+                wo_id,
+                actor_id: actor,
+                expected_row_version: wo.row_version,
+            },
+        )
+        .await
+        .expect("mark_wo_ready");
+
+        // start: ready → in_progress
         let wo = execution::start_wo(
             db,
             WoStartInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
             },
         )
         .await
@@ -186,8 +307,9 @@ mod tests {
         (wo_id, wo.row_version)
     }
 
-    /// Advance from in_progress → technically_verified with all quality gate data satisfied.
-    async fn advance_to_technically_verified(
+    /// Advance from in_progress to completed+verified with all quality gate data.
+    /// In Option B, save_verification does NOT change WO status — stays completed.
+    async fn advance_to_completed_verified(
         db: &sea_orm::DatabaseConnection,
         wo_id: i64,
         rv: i64,
@@ -215,6 +337,8 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
+        seed_rams_for_complete(db, wo_id).await;
+
         let wo = execution::complete_wo_mechanically(
             db,
             WoMechCompleteInput {
@@ -230,31 +354,9 @@ mod tests {
         .expect("complete_wo_mechanically");
         let rv = wo.row_version;
 
-        closeout::save_failure_detail(
-            db,
-            SaveFailureDetailInput {
-                wo_id,
-                symptom_id: None,
-                failure_mode_id: None,
-                failure_cause_id: None,
-                failure_effect_id: None,
-                is_temporary_repair: false,
-                is_permanent_repair: true,
-                cause_not_determined: true,
-                notes: Some("Audit test failure detail".into()),
-            },
-        )
-        .await
-        .expect("save_failure_detail");
+        assert_eq!(wo.status_code.as_deref(), Some("completed"));
 
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE work_orders SET root_cause_summary = ? WHERE id = ?",
-            ["Audit test root cause".into(), wo_id.into()],
-        ))
-        .await
-        .expect("set root_cause_summary");
-
+        // save_verification: stays on completed
         let (_ver, wo) = closeout::save_verification(
             db,
             SaveVerificationInput {
@@ -270,6 +372,8 @@ mod tests {
         .await
         .expect("save_verification");
 
+        assert_eq!(wo.status_code.as_deref(), Some("completed"));
+
         wo.row_version
     }
 
@@ -277,8 +381,6 @@ mod tests {
     // V1 — Permission seed count
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// After migration 026, `SELECT COUNT(*) FROM permissions WHERE name LIKE 'ot.%'`
-    /// must return exactly 8.
     #[tokio::test]
     async fn v1_ot_permission_seed_count_is_8() {
         let db = setup().await;
@@ -296,7 +398,6 @@ mod tests {
         assert_eq!(cnt, 8, "expected 8 ot.* permissions, got {cnt}");
     }
 
-    /// Cross-check that each specific permission name is present.
     #[tokio::test]
     async fn v1_ot_permission_names_correct() {
         let db = setup().await;
@@ -323,23 +424,14 @@ mod tests {
     // V2 — Audit on close
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Successful close_wo writes exactly 1 wo_change_events row with
-    /// action='closed', apply_result='applied', requires_step_up=1.
     #[tokio::test]
     async fn v2_successful_close_writes_audit_row() {
         let db = setup().await;
         let actor = admin_id(&db).await;
 
         let (wo_id, rv) = wo_in_progress(&db).await;
-        let rv = advance_to_technically_verified(&db, wo_id, rv).await;
+        let rv = advance_to_completed_verified(&db, wo_id, rv).await;
 
-        // Record the audit event manually (mirrors what commands/wo.rs does)
-        let _wo = queries::get_work_order(&db, wo_id)
-            .await
-            .expect("get_work_order")
-            .expect("wo should exist");
-
-        // Call close_wo
         let close_result = closeout::close_wo(
             &db,
             WoCloseInput {
@@ -353,7 +445,6 @@ mod tests {
 
         assert!(close_result.is_ok(), "close_wo must succeed: {:?}", close_result);
 
-        // Simulate the audit event that commands/wo.rs writes on success
         audit::record_wo_change_event(
             &db,
             WoAuditInput {
@@ -368,7 +459,6 @@ mod tests {
         )
         .await;
 
-        // Verify the audit row
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -386,17 +476,15 @@ mod tests {
         let apply_result: String = row.try_get("", "apply_result").unwrap();
         let requires_step_up: i32 = row.try_get("", "requires_step_up").unwrap();
 
-        assert_eq!(action, "closed", "action must be 'closed'");
-        assert_eq!(apply_result, "applied", "apply_result must be 'applied'");
-        assert_eq!(requires_step_up, 1, "requires_step_up must be 1 (true) for close");
+        assert_eq!(action, "closed");
+        assert_eq!(apply_result, "applied");
+        assert_eq!(requires_step_up, 1);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
     // V3 — Blocked close audit
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// When close_wo fails the quality gate, a wo_change_events row is written
-    /// with apply_result='blocked' and details_json containing the error list.
     #[tokio::test]
     async fn v3_blocked_close_writes_audit_row_with_details_json() {
         let db = setup().await;
@@ -404,7 +492,6 @@ mod tests {
 
         let (wo_id, rv) = wo_in_progress(&db).await;
 
-        // Add labor so the labor gate passes
         labor::add_labor_entry(
             &db,
             AddLaborInput {
@@ -425,6 +512,8 @@ mod tests {
             .await
             .expect("confirm_no_parts");
 
+        seed_rams_for_complete(&db, wo_id).await;
+
         let wo = execution::complete_wo_mechanically(
             &db,
             WoMechCompleteInput {
@@ -439,29 +528,18 @@ mod tests {
         .await
         .expect("complete_wo_mechanically");
 
-        // Force WO to technically_verified without saving failure detail or root cause
-        // This ensures close_wo quality gate will fire
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE work_orders SET \
-             status_id = (SELECT id FROM work_order_statuses WHERE code = 'technically_verified'), \
-             technically_verified_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), \
-             row_version = row_version + 1, \
-             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') \
-             WHERE id = ?",
-            [wo_id.into()],
-        ))
-        .await
-        .expect("advance to technically_verified");
-        let rv = wo.row_version + 1;
+        assert_eq!(wo.status_code.as_deref(), Some("completed"));
 
-        // close_wo — must fail; quality gate fires for missing failure detail + root_cause
+        // Strip RAMS so close quality gate fires (no failure detail / root cause / verification).
+        clear_rams_for_close_gate(&db, wo_id).await;
+
+        // close_wo quality gate must fire.
         let close_result = closeout::close_wo(
             &db,
             WoCloseInput {
                 wo_id,
                 actor_id: actor,
-                expected_row_version: rv,
+                expected_row_version: wo.row_version,
                 ..Default::default()
             },
         )
@@ -474,12 +552,11 @@ mod tests {
         };
         assert!(!errors.is_empty(), "errors list must be non-empty");
 
-        // Simulate the audit event that commands/wo.rs writes on quality gate failure
         let details = serde_json::json!({ "quality_gate_errors": errors }).to_string();
         audit::record_wo_change_event(
             &db,
             WoAuditInput {
-                wo_id: None, // not available when close_wo returns Err
+                wo_id: None,
                 action: "closed".into(),
                 actor_id: Some(actor),
                 summary: Some("Close blocked: quality gate failed".into()),
@@ -490,7 +567,6 @@ mod tests {
         )
         .await;
 
-        // Verify the blocked audit row
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -522,17 +598,14 @@ mod tests {
     // V4 — Fire-and-log
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Drop wo_change_events from the DB; call close_wo; the primary workflow
-    /// must still succeed — audit failure must NOT surface to the caller.
     #[tokio::test]
     async fn v4_fire_and_log_audit_failure_does_not_block_primary_workflow() {
         let db = setup().await;
         let actor = admin_id(&db).await;
 
         let (wo_id, rv) = wo_in_progress(&db).await;
-        let rv = advance_to_technically_verified(&db, wo_id, rv).await;
+        let rv = advance_to_completed_verified(&db, wo_id, rv).await;
 
-        // Drop wo_change_events to simulate a catastrophic audit storage failure
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "DROP TABLE IF EXISTS wo_change_events;".to_string(),
@@ -540,7 +613,6 @@ mod tests {
         .await
         .expect("drop wo_change_events");
 
-        // Primary workflow: close_wo must still succeed
         let close_result = closeout::close_wo(
             &db,
             WoCloseInput {
@@ -559,13 +631,9 @@ mod tests {
         );
 
         let wo = close_result.unwrap();
-        assert_eq!(
-            wo.status_code.as_deref(),
-            Some("closed"),
-            "WO must reach 'closed' status despite audit table being absent"
-        );
+        assert_eq!(wo.status_code.as_deref(), Some("closed"));
 
-        // Now verify fire-and-log: record_wo_change_event with missing table does NOT panic/error
+        // fire-and-log: record_wo_change_event with missing table must NOT panic
         audit::record_wo_change_event(
             &db,
             WoAuditInput {
@@ -579,6 +647,6 @@ mod tests {
             },
         )
         .await;
-        // If we reach here without panic, fire-and-log semantics are confirmed
+        // Reaching here confirms fire-and-log semantics
     }
 }

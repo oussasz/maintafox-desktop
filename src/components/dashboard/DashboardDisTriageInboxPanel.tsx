@@ -10,6 +10,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { formatPersonLabel } from "@/lib/display";
 import { listDis } from "@/services/di-service";
 import { toErrorMessage } from "@/utils/errors";
 import { intlLocaleForLanguage } from "@/utils/format-date";
@@ -122,8 +123,11 @@ export function DashboardDisTriageInboxPanel() {
                     {di.code}
                   </span>
                   <span className="truncate min-w-0 flex-1 font-medium">{di.title}</span>
-                  <span className="text-muted-foreground shrink-0 w-[60px] text-right">
-                    #{di.submitter_id}
+                  <span
+                    className="text-muted-foreground shrink-0 max-w-[120px] truncate text-right"
+                    title={formatPersonLabel(di.submitter_display_name)}
+                  >
+                    {formatPersonLabel(di.submitter_display_name)}
                   </span>
                   <span className="text-muted-foreground shrink-0 w-[80px] text-right">
                     {formatShortDate(di.submitted_at)}

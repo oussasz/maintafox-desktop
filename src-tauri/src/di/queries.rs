@@ -48,6 +48,7 @@ pub struct DiTransitionRow {
     pub to_status: String,
     pub action: String,
     pub actor_id: Option<i64>,
+    pub actor_display_name: Option<String>,
     pub reason_code: Option<String>,
     pub notes: Option<String>,
     pub acted_at: String,
@@ -71,6 +72,9 @@ pub struct DiCreateInput {
     pub title: String,
     pub description: String,
     pub origin_type: String,
+    /// Category A `DI.REQUEST_TYPE` code. Defaults to `repair` when omitted.
+    #[serde(default = "default_request_type")]
+    pub request_type: String,
     pub symptom_code_id: Option<i64>,
     pub impact_level: String,
     pub production_impact: bool,
@@ -84,7 +88,11 @@ pub struct DiCreateInput {
     pub source_inspection_anomaly_id: Option<i64>,
 }
 
-/// Supervisor triage: move a `submitted` DI into the review queue (`pending_review`).
+fn default_request_type() -> String {
+    crate::di::reference_catalog::DEFAULT_DI_REQUEST_TYPE.to_string()
+}
+
+/// Supervisor triage/resubmission: move a DI into the review queue (`pending_review`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct DiTriageSubmittedInput {
     pub di_id: i64,
@@ -98,6 +106,7 @@ pub struct DiDraftUpdateInput {
     pub expected_row_version: i64,
     pub title: Option<String>,
     pub description: Option<String>,
+    pub request_type: Option<String>,
     pub symptom_code_id: Option<Option<i64>>,
     pub impact_level: Option<String>,
     pub production_impact: Option<bool>,
@@ -115,17 +124,35 @@ pub struct DiDraftUpdateInput {
 /// All columns from `intervention_requests` for SELECT reuse.
 const IR_COLS: &str = "\
     ir.id, ir.code, ir.asset_id, ir.sub_asset_ref, ir.org_node_id, \
-    ir.status, ir.title, ir.description, ir.origin_type, ir.symptom_code_id, \
+    ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
     ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
     ir.observed_at, ir.submitted_at, \
     ir.review_team_id, ir.reviewer_id, ir.screened_at, ir.approved_at, \
     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
     ir.converted_to_wo_id, ir.converted_at, \
+    ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
+    ir.sla_escalation_threshold_hours, ir.sla_response_deadline, ir.sla_resolution_deadline, \
+    ir.sla_response_breach_notified_at, ir.sla_resolution_breach_notified_at, \
     ir.reviewer_note, ir.classification_code_id, \
     ir.is_recurrence_flag, ir.recurrence_di_id, \
     ir.source_inspection_anomaly_id, \
     ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
+
+/// Display enrichment columns (must be paired with `IR_JOINS`).
+const IR_JOIN_COLS: &str = "\
+    eq.asset_id_code AS asset_code, eq.name AS asset_label, \
+    org.code AS org_node_code, org.name AS org_node_label, \
+    COALESCE(us.display_name, us.username) AS submitter_display_name, \
+    COALESCE(ur.display_name, ur.username) AS reviewer_display_name, \
+    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title";
+
+const IR_JOINS: &str = "\
+    LEFT JOIN equipment eq ON eq.id = ir.asset_id \
+    LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
+    LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
+    LEFT JOIN user_accounts ur ON ur.id = ir.reviewer_id \
+    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Row mappers
@@ -154,6 +181,9 @@ fn map_transition_row(row: &QueryResult) -> AppResult<DiTransitionRow> {
         actor_id: row
             .try_get::<Option<i64>>("", "actor_id")
             .map_err(|e| decode_err("actor_id", e))?,
+        actor_display_name: row
+            .try_get::<Option<String>>("", "actor_display_name")
+            .map_err(|e| decode_err("actor_display_name", e))?,
         reason_code: row
             .try_get::<Option<String>>("", "reason_code")
             .map_err(|e| decode_err("reason_code", e))?,
@@ -279,8 +309,9 @@ pub async fn list_intervention_requests(
     let offset = filter.offset.max(0);
 
     let data_sql = format!(
-        "SELECT {IR_COLS} \
+        "SELECT {IR_COLS}, {IR_JOIN_COLS} \
          FROM intervention_requests ir \
+         {IR_JOINS} \
          WHERE {where_sql} \
          ORDER BY ir.submitted_at DESC \
          LIMIT {row_limit} OFFSET {offset}"
@@ -312,7 +343,12 @@ pub async fn get_intervention_request(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {IR_COLS} FROM intervention_requests ir WHERE ir.id = ?"),
+            &format!(
+                "SELECT {IR_COLS}, {IR_JOIN_COLS} \
+                 FROM intervention_requests ir \
+                 {IR_JOINS} \
+                 WHERE ir.id = ?"
+            ),
             [id.into()],
         ))
         .await?;
@@ -334,10 +370,13 @@ pub async fn get_di_transition_log(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, from_status, to_status, action, actor_id, reason_code, notes, acted_at \
-             FROM di_state_transition_log \
-             WHERE di_id = ? \
-             ORDER BY acted_at ASC",
+            "SELECT t.id, t.from_status, t.to_status, t.action, t.actor_id, \
+                    COALESCE(ua.display_name, ua.username) AS actor_display_name, \
+                    t.reason_code, t.notes, t.acted_at \
+             FROM di_state_transition_log t \
+             LEFT JOIN user_accounts ua ON ua.id = t.actor_id \
+             WHERE t.di_id = ? \
+             ORDER BY t.acted_at ASC",
             [di_id.into()],
         ))
         .await?;
@@ -397,10 +436,22 @@ pub async fn create_intervention_request(
     db: &DatabaseConnection,
     input: DiCreateInput,
 ) -> AppResult<InterventionRequest> {
-    if input.origin_type.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "Le type d'origine est obligatoire.".into(),
-        ]));
+    // Catalog membership (Category B) — same philosophy as equipment taxonomy.
+    let origin_type = crate::di::reference_catalog::validate_di_origin_code(
+        db,
+        &input.origin_type,
+    )
+    .await?;
+    let request_type = crate::di::reference_catalog::validate_di_request_type(
+        db,
+        &input.request_type,
+    )
+    .await?;
+    let symptom_code_id =
+        crate::di::reference_catalog::require_di_symptom_id(db, input.symptom_code_id).await?;
+
+    if input.org_node_id != 0 {
+        crate::org::model_scope::assert_org_node_active(db, input.org_node_id).await?;
     }
 
     let code = generate_di_code(db).await?;
@@ -409,19 +460,20 @@ pub async fn create_intervention_request(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO intervention_requests (\
-            code, asset_id, org_node_id, status, title, description, origin_type, \
+            code, asset_id, org_node_id, status, title, description, origin_type, request_type, \
             symptom_code_id, impact_level, production_impact, safety_flag, \
             environmental_flag, quality_flag, reported_urgency, observed_at, \
             submitted_at, submitter_id, source_inspection_anomaly_id, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             code.clone().into(),
             input.asset_id.into(),
             input.org_node_id.into(),
             input.title.into(),
             input.description.into(),
-            input.origin_type.into(),
-            input.symptom_code_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
+            origin_type.into(),
+            request_type.into(),
+            symptom_code_id.into(),
             input.impact_level.into(),
             (i64::from(input.production_impact)).into(),
             (i64::from(input.safety_flag)).into(),
@@ -458,7 +510,12 @@ pub async fn create_intervention_request(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {IR_COLS} FROM intervention_requests ir WHERE ir.code = ?"),
+            &format!(
+                "SELECT {IR_COLS}, {IR_JOIN_COLS} \
+                 FROM intervention_requests ir \
+                 {IR_JOINS} \
+                 WHERE ir.code = ?"
+            ),
             [code.clone().into()],
         ))
         .await?
@@ -475,7 +532,37 @@ pub async fn create_intervention_request(
         DbBackend::Sqlite,
         "INSERT INTO di_state_transition_log (di_id, from_status, to_status, action, actor_id, acted_at) \
          VALUES (?, 'none', 'submitted', 'intake_submitted', ?, ?)",
-        [di.id.into(), di.submitter_id.into(), now.into()],
+        [di.id.into(), di.submitter_id.into(), now.clone().into()],
+    ))
+    .await?;
+
+    // Freeze immutable SLA on the DI, then persist full audit snapshot.
+    let di = super::sla::freeze_sla_on_di(db, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO di_review_events \
+            (di_id, event_type, actor_id, acted_at, from_status, to_status, \
+             reason_code, notes, sla_target_hours, sla_deadline, \
+             sla_resolution_target_hours, sla_resolution_deadline, step_up_used) \
+         VALUES (?, 'sla_initialized', ?, ?, 'none', 'submitted', NULL, NULL, ?, ?, ?, ?, 0)",
+        [
+            di.id.into(),
+            di.submitter_id.into(),
+            now.into(),
+            snap.response_target_hours
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            snap.response_deadline
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            snap.resolution_target_hours
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            snap.resolution_deadline
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+        ],
     ))
     .await?;
 
@@ -526,13 +613,26 @@ pub async fn update_di_draft_fields(
         sets.push("description = ?".into());
         values.push(description.clone().into());
     }
+    if let Some(ref request_type) = input.request_type {
+        let validated =
+            crate::di::reference_catalog::validate_di_request_type(db, request_type).await?;
+        sets.push("request_type = ?".into());
+        values.push(validated.into());
+    }
     if let Some(ref symptom_code_id) = input.symptom_code_id {
-        sets.push("symptom_code_id = ?".into());
-        values.push(
-            symptom_code_id
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<i64>)),
-        );
+        match symptom_code_id {
+            None => {
+                return Err(AppError::ValidationFailed(vec![
+                    "Le symptôme est obligatoire.".into(),
+                ]));
+            }
+            Some(id) => {
+                // Validate only when writing a new value (legacy rows keep existing id until changed).
+                crate::di::reference_catalog::validate_di_symptom_id(db, *id).await?;
+                sets.push("symptom_code_id = ?".into());
+                values.push((*id).into());
+            }
+        }
     }
     if let Some(ref impact_level) = input.impact_level {
         sets.push("impact_level = ?".into());
@@ -617,7 +717,7 @@ pub async fn update_di_draft_fields(
 // G) triage_submitted_di — Submitted → PendingReview (supervisor / planner triage)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Move a DI from `submitted` to `pending_review` (admission to the validation queue after triage).
+/// Move a DI from `submitted` or `returned_for_clarification` to `pending_review`.
 pub async fn triage_submitted_di(
     db: &DatabaseConnection,
     input: DiTriageSubmittedInput,
@@ -634,9 +734,13 @@ pub async fn triage_submitted_di(
         AppError::Internal(anyhow::anyhow!("Stored DI has invalid status: {e}"))
     })?;
 
-    if status != DiStatus::Submitted {
+    if !matches!(
+        status,
+        DiStatus::Submitted | DiStatus::ReturnedForClarification
+    ) {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Seules les demandes au statut « soumis » peuvent être triées vers la revue. \
+            "Seules les demandes au statut « soumis » ou « retourné pour clarification » \
+             peuvent être (re)soumises vers la revue. \
              Statut actuel : '{}'.",
             current.status
         )]));
@@ -679,9 +783,13 @@ pub async fn triage_submitted_di(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
             input.di_id.into(),
-            DiStatus::Submitted.as_str().into(),
+            status.as_str().into(),
             DiStatus::PendingReview.as_str().into(),
-            "triage_accept".into(),
+            if status == DiStatus::ReturnedForClarification {
+                "re_submitted".into()
+            } else {
+                "triage_accept".into()
+            },
             actor_id.into(),
             sea_orm::Value::from(None::<String>),
             sea_orm::Value::from(None::<String>),

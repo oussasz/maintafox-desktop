@@ -62,7 +62,7 @@ async fn seed_budget_fixture_org(db: &DatabaseConnection) {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO org_nodes
-            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, created_at, updated_at, row_version)
+            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, created_at, updated_at, row_version, structure_model_id)
          VALUES (
             'budget-site',
             'SITE-BGT',
@@ -74,7 +74,8 @@ async fn seed_budget_fixture_org(db: &DatabaseConnection) {
             'active',
             '2026-01-01T00:00:00Z',
             '2026-01-01T00:00:00Z',
-            1
+            1,
+            (SELECT id FROM org_structure_models WHERE sync_id = 'budget-structure')
          )",
         [],
     ))

@@ -170,14 +170,20 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
     .expect("reference_values");
 }
 
-fn di_create_input(submitter_id: i64) -> DiCreateInput {
+async fn di_create_input(db: &sea_orm::DatabaseConnection, submitter_id: i64) -> DiCreateInput {
     DiCreateInput {
         asset_id: 1,
         org_node_id: 1,
         title: "Obs DI".to_string(),
         description: "Observability chain".to_string(),
         origin_type: "operator".to_string(),
-        symptom_code_id: None,
+            request_type: "repair".to_string(),
+        symptom_code_id: Some(
+            crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+                .await
+                .expect("lookup")
+                .expect("seeded"),
+        ),
         impact_level: "unknown".to_string(),
         production_impact: false,
         safety_flag: false,
@@ -191,7 +197,7 @@ fn di_create_input(submitter_id: i64) -> DiCreateInput {
 }
 
 async fn advance_di_to_approved(db: &DatabaseConnection, user_id: i64) -> (i64, i64) {
-    let di = create_intervention_request(db, di_create_input(user_id))
+    let di = create_intervention_request(db, di_create_input(&db, user_id).await)
         .await
         .expect("create DI");
 

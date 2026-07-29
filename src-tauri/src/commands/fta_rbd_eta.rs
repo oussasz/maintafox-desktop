@@ -11,7 +11,7 @@ use crate::reliability::fta_rbd_eta::domain::{
 };
 use crate::reliability::fta_rbd_eta::queries;
 use crate::state::AppState;
-use crate::{require_permission, require_session};
+use crate::{require_permission, require_permission_allowing_system_admin, require_session};
 
 #[tauri::command]
 pub async fn list_fta_models(filter: FtaModelsFilter, state: State<'_, AppState>) -> AppResult<Vec<FtaModel>> {
@@ -46,7 +46,7 @@ pub async fn delete_fta_model(id: i64, state: State<'_, AppState>) -> AppResult<
 #[tauri::command]
 pub async fn evaluate_fta_model(id: i64, state: State<'_, AppState>) -> AppResult<FtaModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.analyze", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "ram.analyze", PermissionScope::Global);
     queries::evaluate_fta_model(&state.db, id).await
 }
 
@@ -83,7 +83,7 @@ pub async fn delete_rbd_model(id: i64, state: State<'_, AppState>) -> AppResult<
 #[tauri::command]
 pub async fn evaluate_rbd_model(id: i64, state: State<'_, AppState>) -> AppResult<RbdModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.analyze", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "ram.analyze", PermissionScope::Global);
     queries::evaluate_rbd_model(&state.db, id).await
 }
 
@@ -129,6 +129,6 @@ pub async fn delete_event_tree_model(id: i64, state: State<'_, AppState>) -> App
 #[tauri::command]
 pub async fn evaluate_event_tree_model(id: i64, state: State<'_, AppState>) -> AppResult<EventTreeModel> {
     let user = require_session!(state);
-    require_permission!(state, &user, "ram.analyze", PermissionScope::Global);
+    require_permission_allowing_system_admin!(state, &user, "ram.analyze", PermissionScope::Global);
     queries::evaluate_event_tree_model(&state.db, id).await
 }

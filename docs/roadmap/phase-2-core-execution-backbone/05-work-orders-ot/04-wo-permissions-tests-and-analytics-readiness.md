@@ -242,7 +242,7 @@ test_wo_04_cancelled_reachability
   mechanically_complete. Assert true for all 9.
 
 test_wo_05_wo_code_generation
-  Create 3 WOs; codes must be WOR-0001, WOR-0002, WOR-0003 with no gaps.
+  Create 3 WOs; codes must be OT-0001, OT-0002, OT-0003 with no gaps.
 
 --- UNIT TESTS: Execution Gates ---
 
@@ -294,7 +294,7 @@ test_wo_14_full_wo_lifecycle
 
   Phase A — Create WO from DI:
     Create a DI (mock); create WO with source_di_id set.
-    Assert status = draft, code = WOR-0001, source_di_id = DI.id.
+    Assert status = draft, code = OT-0001, source_di_id = DI.id.
 
   Phase B — Plan:
     call plan_wo. Assert status = planned, planned_start set.

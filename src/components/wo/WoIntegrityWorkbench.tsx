@@ -202,7 +202,10 @@ function FindingRow({
         </Badge>
         <span className="font-mono text-[10px] text-text-muted">{row.finding_code}</span>
         <span className="text-text-muted">
-          {row.domain} · {row.record_class} #{row.record_id}
+          {t("integrity.diagnosticTarget", {
+            domain: row.domain,
+            recordClass: row.record_class,
+          })}
         </span>
       </div>
       <pre className="text-[10px] bg-surface-muted/50 p-2 rounded overflow-x-auto max-h-32">

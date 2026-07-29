@@ -20,7 +20,9 @@
 pub mod audit;
 pub mod entity_bindings;
 pub mod equipment_assignment;
+pub mod fail;
 pub mod impact_preview;
+pub mod model_scope;
 pub mod node_types;
 pub mod nodes;
 pub mod relationship_rules;
@@ -29,6 +31,8 @@ pub mod structure_model;
 pub mod tree_queries;
 pub mod validation;
 
+#[cfg(test)]
+mod model_scope_tests;
 #[cfg(test)]
 mod node_types_tests;
 #[cfg(test)]

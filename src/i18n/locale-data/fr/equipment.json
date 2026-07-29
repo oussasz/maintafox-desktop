@@ -85,6 +85,75 @@
     "reportFault": "Signaler une panne",
     "createDI": "Créer une demande d'intervention"
   },
+  "actions": {
+    "createWo": "Créer un OT",
+    "createDi": "Créer une DI",
+    "history": "Historique",
+    "more": "Plus d'actions"
+  },
+  "history": {
+    "tabs": {
+      "details": "Détails",
+      "history": "Historique"
+    },
+    "summary": {
+      "title": "Vie de l'équipement",
+      "created": "Créé",
+      "age": "Âge",
+      "wo": "OT",
+      "pm": "PM",
+      "failures": "Pannes",
+      "availability": "Disponibilité",
+      "ageYm": "{{years}}a {{months}}m",
+      "ageM": "{{months}}m",
+      "ageD": "{{days}}j"
+    },
+    "today": "Aujourd'hui",
+    "empty": "Aucun événement d'historique sur cette période.",
+    "searchPlaceholder": "Rechercher dans l'historique...",
+    "loading": "Chargement de l'historique...",
+    "open": "Ouvrir",
+    "eventTypes": {
+      "asset_created": "Création",
+      "asset_updated": "Modification",
+      "decommissioned": "Déclassement",
+      "assignment_changed": "Affectation",
+      "location_changed": "Emplacement",
+      "org_changed": "Organisation",
+      "parent_changed": "Parent",
+      "child_changed": "Enfant",
+      "wo_created": "OT créé",
+      "wo_started": "OT démarré",
+      "wo_closed": "OT fermé",
+      "di_created": "DI créée",
+      "di_closed": "DI clôturée",
+      "pm_scheduled": "PM planifié",
+      "pm_executed": "PM exécuté",
+      "inspection_recorded": "Inspection",
+      "failure_recorded": "Panne",
+      "meter_reading": "Compteur",
+      "document_linked": "Document",
+      "photo_added": "Photo"
+    },
+    "filters": {
+      "types": {
+        "all": "Tous",
+        "ot": "OT",
+        "di": "DI",
+        "pm": "PM",
+        "inspection": "Inspection",
+        "documents": "Documents",
+        "failures": "Pannes"
+      },
+      "periods": {
+        "today": "Aujourd'hui",
+        "last_7_days": "7 jours",
+        "last_30_days": "30 jours",
+        "this_year": "Cette année",
+        "all": "Tout"
+      }
+    }
+  },
   "empty": {
     "list": "Aucun équipement trouvé.",
     "listHint": "Créez votre premier équipement ou ajustez les filtres.",
@@ -122,14 +191,46 @@
     "title": "Créer un actif",
     "description": "Créer un nouvel actif et l'affecter à un nœud d'organisation.",
     "catalogLoadFailed": "Impossible de charger le référentiel ou l'arborescence d'organisation. Vérifiez la connexion et réessayez.",
+    "orgTreeLoadFailed": "Impossible de charger l'arborescence d'organisation.",
+    "referenceCatalogLoadFailed": "Impossible de charger les données de référence.",
     "validation": {
       "referenceRequired": "Sélectionnez la classe, la criticité et le statut dans le référentiel.",
       "orgRequired": "Sélectionnez un nœud d'organisation."
+    },
+    "sections": {
+      "identification": "Identification",
+      "classification": "Classification",
+      "organization": "Organisation",
+      "technical": "Technique / Fabricant",
+      "lifecycle": "Cycle de vie",
+      "images": "Images",
+      "attachments": "Pièces jointes",
+      "rams": "RAMS (avancé)",
+      "ramsDescription": "Paramètres optionnels d'exposition basés sur le planning pour la fiabilité."
+    },
+    "images": {
+      "add": "Ajouter des images",
+      "empty": "Aucune image en attente",
+      "hint": "Choisissez des images sur le disque. Le glisser-déposer peut basculer vers le sélecteur de fichiers sur le bureau.",
+      "primary": "Principale",
+      "remove": "Supprimer",
+      "partialUploadFailed": "Actif créé, mais certaines photos n'ont pas pu être téléversées. Vous pouvez réessayer depuis la galerie de l'actif.",
+      "uploadFailedCount": "{{failed}} photo(s) sur {{total}} n'ont pas pu être téléversée(s)."
+    },
+    "attachments": {
+      "deferred": "Les pièces jointes seront disponibles après la création de l'actif.",
+      "empty": "Aucune pièce jointe",
+      "add": "Ajouter un fichier",
+      "remove": "Supprimer"
     },
     "selectCriticality": "Sélectionner la criticité",
     "selectClass": "Sélectionner la classe d'équipement",
     "selectFamilyOptional": "Famille (optionnel)",
     "selectSubfamilyOptional": "Sous-famille (optionnel)",
+    "selectScheduleClass": "Sélectionner la classe horaire",
+    "fields": {
+      "ramsScheduleClass": "Horaire d'exploitation (classe horaire)"
+    },
     "selectStatus": "Sélectionner le statut de cycle de vie",
     "selectOrg": "Sélectionner le nœud d'organisation",
     "familyNone": "— Aucune —",
@@ -143,7 +244,7 @@
     "clearParent": "Effacer le parent",
     "descriptionLabel": "Description",
     "maintainableBoundary": "Frontière maintenable",
-    "submit": "Créer"
+    "submit": "Créer un actif"
   },
   "editForm": {
     "button": "Modifier",
@@ -154,12 +255,22 @@
     "unsavedTitle": "Modifications non enregistrées",
     "unsavedDescription": "Vous avez des modifications non enregistrées. Voulez-vous continuer l'édition ou les abandonner ?",
     "keepEditing": "Continuer l'édition",
-    "discardChanges": "Abandonner les modifications"
+    "discardChanges": "Abandonner les modifications",
+    "imagesEmpty": "Aucune photo",
+    "imagesHint": "Téléversez des photos pour cet actif. Le glisser-déposer peut basculer vers le sélecteur de fichiers sur le bureau."
+  },
+  "validation": {
+    "fieldRequired": "Ce champ est obligatoire."
   },
   "tree": {
     "search": "Rechercher dans l'arbre",
     "empty": "Aucun actif correspondant dans l'arbre.",
-    "ariaLabel": "Arbre des actifs"
+    "ariaLabel": "Arbre des actifs",
+    "expandAll": "Tout développer",
+    "collapseAll": "Tout réduire",
+    "expand": "Développer",
+    "collapse": "Réduire",
+    "childCount": "{{count}} sous-actifs"
   },
   "contextMenu": {
     "addChild": "Ajouter un sous-actif",
@@ -171,7 +282,25 @@
   "qr": {
     "button": "Code QR",
     "download": "Télécharger",
-    "print": "Imprimer"
+    "print": "Imprimer",
+    "dialogTitle": "Code QR de l'actif",
+    "scanHint": "Scannez pour ouvrir cet actif dans Maintafox.",
+    "scanId": "ID actif",
+    "expand": "Agrandir le code QR",
+    "collapse": "Réduire le code QR",
+    "classLabel": "Classe",
+    "siteLabel": "Site",
+    "companyLabel": "Société",
+    "downloadPng": "Télécharger PNG",
+    "printLabel": "Imprimer",
+    "close": "Fermer",
+    "export": {
+      "savedTitle": "QR téléchargé avec succès.",
+      "failedTitle": "Échec de l'export",
+      "openFolder": "Ouvrir le dossier",
+      "printStartedTitle": "Boîte de dialogue d'impression ouverte",
+      "printStartedDescription": "Utilisez la boîte de dialogue système dans la fenêtre temporaire. L'application principale reste ouverte."
+    }
   },
   "binding": {
     "title": "Liaisons inter-modules",
@@ -261,9 +390,8 @@
     "iotWarning": "seront déliés",
     "docInfo": "restent archivés",
     "statuses": {
-      "retired": "Retiré",
-      "scrapped": "Mis au rebut",
-      "transferred": "Transféré"
+      "decommissioned": "Mis hors service",
+      "scrapped": "Mis au rebut"
     }
   },
   "health": {

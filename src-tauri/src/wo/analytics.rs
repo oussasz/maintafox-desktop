@@ -139,12 +139,20 @@ pub async fn get_wo_analytics_snapshot(
             id: wo_id.to_string(),
         })?;
 
-    // ── Guard: must be closed or technically_verified ──────────────────────
+    // ── Guard: must be closed or technically verified (Option B keeps status=completed) ──
     let status_code: String = row
         .try_get::<String>("", "status_code")
         .map_err(|e| decode_err("status_code", e))?;
+    let technically_verified_at: Option<String> = row
+        .try_get::<Option<String>>("", "technically_verified_at")
+        .map_err(|e| decode_err("technically_verified_at", e))?;
+    let is_technically_verified = matches!(status_code.as_str(), "technically_verified")
+        || technically_verified_at
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
 
-    if !matches!(status_code.as_str(), "closed" | "technically_verified") {
+    if status_code != "closed" && !is_technically_verified {
         return Err(AppError::ValidationFailed(vec![format!(
             "Le snapshot analytique n'est disponible que pour les OT clotures ou verifies \
              techniquement. Statut actuel : '{status_code}'."
@@ -249,9 +257,7 @@ pub async fn get_wo_analytics_snapshot(
         mechanically_completed_at: row
             .try_get::<Option<String>>("", "mechanically_completed_at")
             .map_err(|e| decode_err("mechanically_completed_at", e))?,
-        technically_verified_at: row
-            .try_get::<Option<String>>("", "technically_verified_at")
-            .map_err(|e| decode_err("technically_verified_at", e))?,
+        technically_verified_at,
         closed_at: row
             .try_get::<Option<String>>("", "closed_at")
             .map_err(|e| decode_err("closed_at", e))?,

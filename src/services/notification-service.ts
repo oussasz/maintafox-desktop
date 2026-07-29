@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { invoke } from "@/lib/ipc-invoke";
+import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 
 const NotificationSummarySchema = z.object({
   id: z.number(),
@@ -57,7 +57,7 @@ export async function listNotifications(
 }
 
 export async function getUnreadCount(): Promise<number> {
-  return invoke<number>("get_unread_count");
+  return invokeSilent<number>("get_unread_count");
 }
 
 export async function markNotificationRead(notification_id: number): Promise<void> {

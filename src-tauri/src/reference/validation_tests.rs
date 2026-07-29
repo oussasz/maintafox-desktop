@@ -1,8 +1,8 @@
 //! Supervisor verification tests for Phase 2 SP03 File 02 Sprint S2.
 //!
-//! V1 — Duplicate code detection: duplicate codes produce a blocking issue.
-//! V2 — Cycle detection: hierarchy cycles produce a blocking issue.
-//! V3 — Validation persistence: report rows are persisted and retrievable.
+//! V1 â€” Duplicate code detection: duplicate codes produce a blocking issue.
+//! V2 â€” Cycle detection: hierarchy cycles produce a blocking issue.
+//! V3 â€” Validation persistence: report rows are persisted and retrievable.
 
 #[cfg(test)]
 mod tests {
@@ -46,6 +46,7 @@ mod tests {
             name: "Classes de defaillance".to_string(),
             structure_type: "hierarchical".to_string(),
             governance_level: "protected_analytical".to_string(),
+            governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(false),
             validation_rules_json: None,
         };
@@ -62,6 +63,7 @@ mod tests {
             name: "Tags personnalises".to_string(),
             structure_type: "flat".to_string(),
             governance_level: "tenant_managed".to_string(),
+                governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(true),
             validation_rules_json: None,
         };
@@ -98,9 +100,9 @@ mod tests {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V1 — Duplicate code detection
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V1 â€” Duplicate code detection
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v1_duplicate_code_produces_blocking_issue() {
@@ -180,7 +182,7 @@ mod tests {
             .await
             .expect("create");
 
-        // Case-variant duplicate — passes DB unique index but fails validation
+        // Case-variant duplicate â€” passes DB unique index but fails validation
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO reference_values (set_id, code, label, is_active) VALUES (?, 'code_a', 'A dup', 1)",
@@ -189,7 +191,7 @@ mod tests {
         .await
         .expect("inject case-variant duplicate");
 
-        // Attempt to validate the set — should fail
+        // Attempt to validate the set â€” should fail
         let err = sets::validate_set(&db, set_id, 1)
             .await
             .expect_err("validate_set should reject blocking issues");
@@ -212,9 +214,9 @@ mod tests {
         assert_eq!(set.status, "draft", "set should remain draft after failed validation");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V2 — Cycle detection
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V2 â€” Cycle detection
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v2_hierarchy_cycle_produces_blocking_issue() {
@@ -222,7 +224,7 @@ mod tests {
         let domain_id = setup_protected_domain(&db).await;
         let set_id = setup_draft_set(&db, domain_id).await;
 
-        // Create A → B chain
+        // Create A â†’ B chain
         let a = values::create_value(&db, value_payload(set_id, "NODE_A", "A"), 1)
             .await
             .expect("A");
@@ -265,7 +267,7 @@ mod tests {
         let domain_id = setup_protected_domain(&db).await;
         let set_id = setup_draft_set(&db, domain_id).await;
 
-        // Create A → B → C chain
+        // Create A â†’ B â†’ C chain
         let a = values::create_value(&db, value_payload(set_id, "X", "X"), 1)
             .await
             .expect("X");
@@ -276,7 +278,7 @@ mod tests {
         cp.parent_id = Some(b.id);
         let c = values::create_value(&db, cp, 1).await.expect("Z");
 
-        // Inject cycle: A → C (so A→B→C→A)
+        // Inject cycle: A â†’ C (so Aâ†’Bâ†’Câ†’A)
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE reference_values SET parent_id = ? WHERE id = ?",
@@ -298,9 +300,9 @@ mod tests {
         assert!(cycle_count >= 2, "deep cycle should flag multiple members, got {cycle_count}");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // V3 — Validation persistence
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // V3 â€” Validation persistence
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn v3_validation_report_persisted() {
@@ -407,9 +409,9 @@ mod tests {
         assert!(!issues.is_empty(), "report_json should contain issues");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Supplementary — additional check coverage
-    // ═══════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // Supplementary â€” additional check coverage
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     #[tokio::test]
     async fn missing_label_detected() {
@@ -550,11 +552,14 @@ mod tests {
         let db = setup().await;
 
         // Create domain with external_code_pattern validation rule.
+        // Must be Category C so draft-set creation is allowed (erp_synced
+        // without an explicit category derives to system_catalog / A).
         let payload = CreateReferenceDomainPayload {
             code: "ERP_CODES".to_string(),
             name: "Codes ERP".to_string(),
             structure_type: "external_code_set".to_string(),
             governance_level: "erp_synced".to_string(),
+            governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(true),
             validation_rules_json: Some(
                 r#"{"external_code_pattern": "^SAP-[0-9]{4}$"}"#.to_string(),

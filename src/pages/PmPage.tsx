@@ -1,6 +1,7 @@
 import { Filter, Play, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { Badge } from "@/components/ui/badge";
@@ -26,11 +27,11 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { invoke } from "@/lib/ipc-invoke";
 import { listInventoryArticles } from "@/services/inventory-service";
-import { listPersonnelSkillReferenceValues } from "@/services/personnel-service";
 import {
   createDraftReferenceSet,
   createReferenceDomain,
   createReferenceValue,
+  listPublishedReferenceValuesByDomainCode,
   listReferenceDomains,
   listReferenceSets,
   listReferenceValues,
@@ -453,10 +454,27 @@ export function PmPage() {
   const [deletePlanDialogOpen, setDeletePlanDialogOpen] = useState(false);
   const [deleteVersionDialogOpen, setDeleteVersionDialogOpen] = useState(false);
   const [deleteVersionTarget, setDeleteVersionTarget] = useState<PmPlanVersion | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
     void loadPlans();
   }, [loadPlans]);
+
+  useEffect(() => {
+    const raw = searchParams.get("planId");
+    if (!raw) return;
+    const id = Number(raw);
+    if (!Number.isFinite(id) || id <= 0) return;
+    void selectPlan(id);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("planId");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, selectPlan, setSearchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -466,7 +484,7 @@ export function PmPage() {
       try {
         const [articles, skills, domains] = await Promise.all([
           listInventoryArticles({ search: null }),
-          listPersonnelSkillReferenceValues(),
+          listPublishedReferenceValuesByDomainCode("PERSONNEL.SKILLS"),
           listReferenceDomains(),
         ]);
         if (cancelled) return;
@@ -481,6 +499,7 @@ export function PmPage() {
         setPartOptions(articleOptions);
 
         const skillOpts = skills
+          .filter((row) => row.is_active)
           .map((row) => ({
             value: row.code,
             label: `${row.code} - ${row.label}`,

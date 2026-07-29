@@ -20,10 +20,10 @@ import {
 import { usePermissions } from "@/hooks/use-permissions";
 import type { WorkOrder } from "@shared/ipc-types";
 
-// ── Status sets ─────────────────────────────────────────────────────────────
+// ── Status sets — Option B lifecycle ────────────────────────────────────────
 
-const EDITABLE_STATES = new Set(["draft", "planned"]);
-const STARTABLE_STATES = new Set(["assigned", "waiting_for_prerequisite"]);
+const EDITABLE_STATES = new Set(["draft", "planning"]);
+const STARTABLE_STATES = new Set(["ready"]);
 const COMPLETABLE_STATES = new Set(["in_progress"]);
 const CANCELLABLE_DENY = new Set(["closed", "cancelled"]);
 
@@ -58,8 +58,8 @@ export function WoContextMenu({
   const { can } = usePermissions();
 
   const canEdit = can("ot.edit") && EDITABLE_STATES.has(wo.status_code ?? "");
-  const canStart = can("ot.execute") && STARTABLE_STATES.has(wo.status_code ?? "");
-  const canComplete = can("ot.execute") && COMPLETABLE_STATES.has(wo.status_code ?? "");
+  const canStart = can("ot.edit") && STARTABLE_STATES.has(wo.status_code ?? "");
+  const canComplete = can("ot.edit") && COMPLETABLE_STATES.has(wo.status_code ?? "");
   const canCancel = can("ot.close") && !CANCELLABLE_DENY.has(wo.status_code ?? "");
 
   return (

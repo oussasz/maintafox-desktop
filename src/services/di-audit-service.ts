@@ -16,6 +16,7 @@ const DiChangeEventSchema = z.object({
   di_id: z.number().nullable(),
   action: z.string(),
   actor_id: z.number().nullable(),
+  actor_display_name: z.string().nullable().optional(),
   acted_at: z.string(),
   summary: z.string().nullable(),
   details_json: z.string().nullable(),

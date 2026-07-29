@@ -12,57 +12,51 @@ import { Loader2, Search, X } from "lucide-react";
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { DiAttachmentPanel } from "@/components/di/DiAttachmentPanel";
+import {
+  EntityFormAttachments,
+  EntityFormImageUploader,
+  orderImagesForUpload,
+  pickEntityFormFiles,
+  pickEntityFormImages,
+  type EntityFormAttachmentItem,
+  type EntityFormFileItem,
+  type EntityFormImageItem,
+} from "@/components/entity-form";
 import { FormField } from "@/components/ui/FormField";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
+import { assetToSearchResult } from "@/lib/asset-to-search-result";
 import { searchAssets } from "@/services/asset-search-service";
-import { listPublishedReferenceValuesByDomainCode } from "@/services/reference-service";
+import { getAssetById, getAssetByIdSilent } from "@/services/asset-service";
+import { uploadDiAttachmentFromPath } from "@/services/di-attachment-service";
 import { useDiStore } from "@/stores/di-store";
 import type {
   AssetSearchResult,
   DiCreateInput,
-  DiImpactLevel,
-  DiOriginType,
-  DiUrgency,
   InterventionRequest,
 } from "@shared/ipc-types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const ORIGIN_TYPES: DiOriginType[] = [
-  "operator",
-  "technician",
-  "inspection",
-  "pm",
-  "iot",
-  "quality",
-  "hse",
-  "production",
-  "external",
-];
-const URGENCY_LEVELS: DiUrgency[] = ["low", "medium", "high", "critical"];
-const IMPACT_LEVELS: DiImpactLevel[] = ["unknown", "none", "minor", "major", "critical"];
-type RefOption = { id: number; code: string; label: string };
-
 const TITLE_MAX = 100;
 const DESC_MAX = 1000;
+const DEFAULT_REQUEST_TYPE = "repair";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface DiCreateFormProps {
   initial: InterventionRequest | null;
+  /** Prefill equipment snapshot when creating from asset context. */
+  prefillAsset?: AssetSearchResult | null;
+  /** Legacy id-only prefill (e.g. deep links). */
+  prefillEquipmentId?: number | null;
   onSubmitted: (di: InterventionRequest) => void;
   onCancel: () => void;
 }
@@ -73,6 +67,7 @@ interface FormErrors {
   title?: string;
   description?: string;
   origin_type?: string;
+  request_type?: string;
   reported_urgency?: string;
   impact_level?: string;
   symptom_code_id?: string;
@@ -84,6 +79,7 @@ function validate(
     title: string;
     description: string;
     origin_type: string;
+    request_type: string;
     reported_urgency: string;
     impact_level: string;
     symptomCodeId: number | null;
@@ -95,6 +91,7 @@ function validate(
   if (!fields.title.trim()) errors.title = t("form.validation.titleRequired");
   if (!fields.description.trim()) errors.description = t("form.validation.descriptionRequired");
   if (!fields.origin_type) errors.origin_type = t("form.validation.originRequired");
+  if (!fields.request_type) errors.request_type = t("form.validation.requestTypeRequired");
   if (!fields.reported_urgency) errors.reported_urgency = t("form.validation.urgencyRequired");
   if (!fields.impact_level) errors.impact_level = t("form.validation.impactRequired");
   if (!fields.symptomCodeId) errors.symptom_code_id = t("form.validation.symptomRequired");
@@ -104,7 +101,13 @@ function validate(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormProps) {
+export function DiCreateForm({
+  initial,
+  prefillAsset = null,
+  prefillEquipmentId = null,
+  onSubmitted,
+  onCancel,
+}: DiCreateFormProps) {
   const { t } = useTranslation("di");
   const { info } = useSession();
   const saving = useDiStore((s) => s.saving);
@@ -113,6 +116,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
   const updateDraft = useDiStore((s) => s.updateDraft);
 
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
 
   const isEdit = initial !== null;
 
@@ -121,21 +125,21 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
   const [title, setTitle] = useState(initial?.title ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [originType, setOriginType] = useState<string>(initial?.origin_type ?? "");
+  const [requestType, setRequestType] = useState<string>(
+    initial?.request_type ?? DEFAULT_REQUEST_TYPE,
+  );
   const [urgency, setUrgency] = useState<string>(initial?.reported_urgency ?? "");
   const [impactLevel, setImpactLevel] = useState<string>(initial?.impact_level ?? "");
   const [symptomCodeId, setSymptomCodeId] = useState<number | null>(
     initial?.symptom_code_id ?? null,
   );
-  const [symptomSearch, setSymptomSearch] = useState("");
-  const [originOptions, setOriginOptions] = useState<RefOption[]>([]);
-  const [priorityOptions, setPriorityOptions] = useState<RefOption[]>([]);
-  const [impactOptions, setImpactOptions] = useState<RefOption[]>([]);
-  const [symptomOptions, setSymptomOptions] = useState<RefOption[]>([]);
   const [observedAt, setObservedAt] = useState(initial?.observed_at ?? "");
   const [safetyFlag, setSafetyFlag] = useState(initial?.safety_flag ?? false);
   const [environmentalFlag, setEnvironmentalFlag] = useState(initial?.environmental_flag ?? false);
   const [qualityFlag, setQualityFlag] = useState(initial?.quality_flag ?? false);
   const [productionImpact, setProductionImpact] = useState(initial?.production_impact ?? false);
+  const [pendingPhotos, setPendingPhotos] = useState<EntityFormImageItem[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<EntityFormFileItem[]>([]);
 
   // Equipment combobox state
   const [selectedAsset, setSelectedAsset] = useState<AssetSearchResult | null>(null);
@@ -143,7 +147,6 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
   const [assetResults, setAssetResults] = useState<AssetSearchResult[]>([]);
   const [assetSearching, setAssetSearching] = useState(false);
   const [showAssetDropdown, setShowAssetDropdown] = useState(false);
-  const [loadingRefs, setLoadingRefs] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -155,60 +158,40 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
 
   useEffect(() => {
     if (initial?.asset_id && !selectedAsset) {
-      void searchAssets({ query: null, limit: 1 }).then((results) => {
-        const match = results.find((a) => a.id === initial.asset_id);
-        if (match) setSelectedAsset(match);
-      });
+      void getAssetById(initial.asset_id)
+        .then((asset) => setSelectedAsset(assetToSearchResult(asset)))
+        .catch(() => {
+          /* Missing asset — user can search manually */
+        });
     }
   }, [initial, selectedAsset]);
 
+  // ── New DI: one-shot pre-fill from asset context ──────────────────────
+
+  const prefillConsumedRef = useRef(false);
   useEffect(() => {
+    if (isEdit) return;
+    if (prefillConsumedRef.current) return;
+
+    if (prefillAsset) {
+      prefillConsumedRef.current = true;
+      setSelectedAsset(prefillAsset);
+      return;
+    }
+
+    if (prefillEquipmentId == null || prefillEquipmentId <= 0) {
+      return;
+    }
+
+    prefillConsumedRef.current = true;
     let cancelled = false;
-    setLoadingRefs(true);
-    void Promise.all([
-      listPublishedReferenceValuesByDomainCode("DI.ORIGIN"),
-      listPublishedReferenceValuesByDomainCode("DI.PRIORITY"),
-      listPublishedReferenceValuesByDomainCode("DI.IMPACT_LEVEL"),
-      listPublishedReferenceValuesByDomainCode("DI.SYMPTOM"),
-    ])
-      .then(([origins, priorities, impacts, symptoms]) => {
-        if (cancelled) return;
-        setOriginOptions(
-          origins.map((v) => ({
-            id: v.id,
-            code: v.code,
-            label: v.label,
-          })),
-        );
-        setPriorityOptions(
-          priorities.map((v) => ({
-            id: v.id,
-            code: v.code,
-            label: v.label,
-          })),
-        );
-        setImpactOptions(
-          impacts.map((v) => ({
-            id: v.id,
-            code: v.code,
-            label: v.label,
-          })),
-        );
-        setSymptomOptions(
-          symptoms.map((v) => ({
-            id: v.id,
-            code: v.code,
-            label: v.label,
-          })),
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingRefs(false);
-      });
+    void getAssetByIdSilent(prefillEquipmentId).then((asset) => {
+      if (!cancelled && asset) setSelectedAsset(assetToSearchResult(asset));
+    });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isEdit, prefillAsset, prefillEquipmentId]);
 
   // ── Equipment search with debounce ────────────────────────────────────
 
@@ -226,7 +209,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
         const results = await searchAssets({
           query,
           limit: 20,
-          includeDecommissioned: false,
+          include_decommissioned: false,
         });
         setAssetResults(results);
         setShowAssetDropdown(true);
@@ -268,6 +251,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           title,
           description,
           origin_type: originType,
+          request_type: requestType,
           reported_urgency: urgency,
           impact_level: impactLevel,
           symptomCodeId: symptomCodeId,
@@ -275,7 +259,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
         },
         (key) => t(key as never),
       ),
-    [title, description, originType, urgency, impactLevel, symptomCodeId, selectedAsset, t],
+    [title, description, originType, requestType, urgency, impactLevel, symptomCodeId, selectedAsset, t],
   );
 
   const isValid = Object.keys(currentErrors).length === 0;
@@ -299,6 +283,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
         "title",
         "description",
         "origin_type",
+        "request_type",
         "reported_urgency",
         "impact_level",
         "symptom_code_id",
@@ -322,6 +307,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           expected_row_version: initial.row_version,
           title,
           description,
+          request_type: requestType,
           impact_level: impactLevel,
           symptom_code_id: symptomCodeId,
           production_impact: productionImpact,
@@ -331,8 +317,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           reported_urgency: urgency,
           observed_at: observedAt || null,
         });
-        // Return updated DI (reload from store after updateDraft)
-        onSubmitted({ ...initial, title, description });
+        onSubmitted({ ...initial, title, description, request_type: requestType });
       } else {
         const input: DiCreateInput = {
           asset_id: selectedAsset.id,
@@ -340,6 +325,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           title: title.trim(),
           description: description.trim(),
           origin_type: originType,
+          request_type: requestType,
           symptom_code_id: symptomCodeId,
           impact_level: impactLevel,
           production_impact: productionImpact,
@@ -352,6 +338,48 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           submitter_id: info.user_id,
         };
         const di = await submitNewDi(input);
+
+        const photos = orderImagesForUpload(pendingPhotos).filter((p) => Boolean(p.path));
+        const files = pendingFiles.filter((f) => Boolean(f.path));
+        if (photos.length > 0 || files.length > 0) {
+          setUploadingMedia(true);
+          let failed = 0;
+          try {
+            for (const photo of photos) {
+              try {
+                await uploadDiAttachmentFromPath({
+                  diId: di.id,
+                  sourcePath: photo.path!,
+                  attachmentType: "photo",
+                });
+              } catch {
+                failed += 1;
+              }
+            }
+            for (const file of files) {
+              try {
+                await uploadDiAttachmentFromPath({
+                  diId: di.id,
+                  sourcePath: file.path,
+                  attachmentType: null,
+                });
+              } catch {
+                failed += 1;
+              }
+            }
+          } finally {
+            setUploadingMedia(false);
+          }
+          if (failed > 0) {
+            setSubmitError(
+              t("form.media.partialUploadFailed", {
+                failed,
+                total: photos.length + files.length,
+              }),
+            );
+          }
+        }
+
         onSubmitted(di);
       }
     } catch (err) {
@@ -368,6 +396,7 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
     title,
     description,
     originType,
+    requestType,
     urgency,
     impactLevel,
     symptomCodeId,
@@ -376,24 +405,25 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
     environmentalFlag,
     qualityFlag,
     productionImpact,
+    pendingPhotos,
+    pendingFiles,
     submitNewDi,
     updateDraft,
     onSubmitted,
     t,
   ]);
 
-  const filteredSymptoms = useMemo(() => {
-    const q = symptomSearch.trim().toLowerCase();
-    if (!q) return symptomOptions;
-    return symptomOptions.filter(
-      (s) => s.label.toLowerCase().includes(q) || s.code.toLowerCase().includes(q),
-    );
-  }, [symptomOptions, symptomSearch]);
+  const busy = saving || uploadingMedia;
 
-  const selectedSymptom = useMemo(
-    () => symptomOptions.find((s) => s.id === symptomCodeId) ?? null,
-    [symptomOptions, symptomCodeId],
-  );
+  const attachmentListItems: EntityFormAttachmentItem[] = pendingFiles.map((f) => ({
+    id: f.id,
+    name: f.name,
+  }));
+
+  const handleAddFiles = useCallback(async () => {
+    const picked = await pickEntityFormFiles();
+    if (picked.length > 0) setPendingFiles((prev) => [...prev, ...picked]);
+  }, []);
 
   // ── Render ────────────────────────────────────────────────────────────
 
@@ -525,26 +555,39 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           error={fieldError("origin_type")}
           required
         >
-          <Select
-            value={originType}
-            onValueChange={(v) => {
-              setOriginType(v);
+          <ReferenceCombobox
+            id="origin_type"
+            referenceType="di.origin"
+            value={originType || null}
+            onChange={(code) => {
+              setOriginType(code ?? "");
               markTouched("origin_type");
             }}
-          >
-            <SelectTrigger id="origin_type">
-              <SelectValue placeholder="—" />
-            </SelectTrigger>
-            <SelectContent>
-              {(originOptions.length > 0 ? originOptions.map((o) => o.code) : ORIGIN_TYPES).map(
-                (o) => (
-                  <SelectItem key={o} value={o}>
-                    {originOptions.find((rv) => rv.code === o)?.label ?? t(`form.origin.${o}`)}
-                  </SelectItem>
-                ),
-              )}
-            </SelectContent>
-          </Select>
+            allowClear={false}
+            placeholder={t("form.originType.placeholder")}
+            aria-invalid={Boolean(fieldError("origin_type"))}
+          />
+        </FormField>
+
+        <FormField
+          name="request_type"
+          label={t("form.requestType.label")}
+          error={fieldError("request_type")}
+          required
+        >
+          <ReferenceCombobox
+            id="request_type"
+            referenceType="di.request_type"
+            value={requestType || null}
+            onChange={(code) => {
+              setRequestType(code ?? DEFAULT_REQUEST_TYPE);
+              markTouched("request_type");
+            }}
+            allowClear={false}
+            allowCreate={false}
+            placeholder={t("form.requestType.placeholder")}
+            aria-invalid={Boolean(fieldError("request_type"))}
+          />
         </FormField>
 
         <FormField
@@ -553,36 +596,19 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           error={fieldError("symptom_code_id")}
           required
         >
-          <div className="space-y-2">
-            <Input
-              id="symptom_search"
-              placeholder={t("form.symptom.searchPlaceholder")}
-              value={symptomSearch}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setSymptomSearch(e.target.value)}
-            />
-            <Select
-              value={symptomCodeId !== null ? String(symptomCodeId) : ""}
-              onValueChange={(v) => {
-                setSymptomCodeId(v ? Number(v) : null);
-                markTouched("symptom_code_id");
-              }}
-            >
-              <SelectTrigger id="symptom_code_id">
-                <SelectValue
-                  placeholder={loadingRefs ? t("lookup.loading") : t("form.symptom.placeholder")}
-                >
-                  {selectedSymptom?.label}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {filteredSymptoms.map((s) => (
-                  <SelectItem key={s.id} value={String(s.id)}>
-                    {s.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <ReferenceCombobox
+            id="symptom_code_id"
+            referenceType="di.symptom"
+            valueMode="id"
+            value={symptomCodeId != null ? String(symptomCodeId) : null}
+            onChange={(idStr) => {
+              setSymptomCodeId(idStr ? Number(idStr) : null);
+              markTouched("symptom_code_id");
+            }}
+            allowClear={false}
+            placeholder={t("form.symptom.placeholder")}
+            aria-invalid={Boolean(fieldError("symptom_code_id"))}
+          />
         </FormField>
 
         {/* Urgency */}
@@ -592,27 +618,19 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           error={fieldError("reported_urgency")}
           required
         >
-          <Select
-            value={urgency}
-            onValueChange={(v) => {
-              setUrgency(v);
+          <ReferenceCombobox
+            id="reported_urgency"
+            referenceType="di.priority"
+            value={urgency || null}
+            onChange={(code) => {
+              setUrgency(code ?? "");
               markTouched("reported_urgency");
             }}
-          >
-            <SelectTrigger id="reported_urgency">
-              <SelectValue placeholder="—" />
-            </SelectTrigger>
-            <SelectContent>
-              {(priorityOptions.length > 0
-                ? priorityOptions.map((u) => u.code)
-                : URGENCY_LEVELS
-              ).map((u) => (
-                <SelectItem key={u} value={u}>
-                  {priorityOptions.find((rv) => rv.code === u)?.label ?? t(`priority.${u}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            allowClear={false}
+            allowCreate={false}
+            placeholder={t("form.priority.placeholder")}
+            aria-invalid={Boolean(fieldError("reported_urgency"))}
+          />
         </FormField>
 
         {/* Impact level */}
@@ -622,26 +640,19 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
           error={fieldError("impact_level")}
           required
         >
-          <Select
-            value={impactLevel}
-            onValueChange={(v) => {
-              setImpactLevel(v);
+          <ReferenceCombobox
+            id="impact_level"
+            referenceType="di.impact"
+            value={impactLevel || null}
+            onChange={(code) => {
+              setImpactLevel(code ?? "");
               markTouched("impact_level");
             }}
-          >
-            <SelectTrigger id="impact_level">
-              <SelectValue placeholder="—" />
-            </SelectTrigger>
-            <SelectContent>
-              {(impactOptions.length > 0 ? impactOptions.map((l) => l.code) : IMPACT_LEVELS).map(
-                (l) => (
-                  <SelectItem key={l} value={l}>
-                    {impactOptions.find((rv) => rv.code === l)?.label ?? t(`form.impact.${l}`)}
-                  </SelectItem>
-                ),
-              )}
-            </SelectContent>
-          </Select>
+            allowClear={false}
+            allowCreate={false}
+            placeholder={t("form.impactLevel.placeholder")}
+            aria-invalid={Boolean(fieldError("impact_level"))}
+          />
         </FormField>
 
         {/* Description */}
@@ -714,6 +725,50 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
         </div>
       </section>
 
+      <Separator />
+
+      {/* ── Media: pictures + attachments ───────────────────────────── */}
+      <section className="space-y-4">
+        <h3 className="text-sm font-semibold text-text-primary mb-1">
+          {t("form.section.media")}
+        </h3>
+
+        {isEdit && initial ? (
+          <DiAttachmentPanel diId={initial.id} canUpload={true} canDelete={false} />
+        ) : (
+          <>
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-text-secondary">{t("form.pictures.label")}</p>
+              <EntityFormImageUploader
+                items={pendingPhotos}
+                onChange={setPendingPhotos}
+                onPickFiles={pickEntityFormImages}
+                disabled={busy}
+                uploading={uploadingMedia}
+                emptyLabel={t("form.pictures.empty")}
+                hintLabel={t("form.pictures.hint")}
+                primaryLabel={t("form.pictures.primary")}
+                removeLabel={t("form.pictures.remove")}
+                addLabel={t("form.pictures.add")}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-text-secondary">{t("form.attachments.label")}</p>
+              <EntityFormAttachments
+                items={attachmentListItems}
+                onAdd={() => void handleAddFiles()}
+                onRemove={(id) => setPendingFiles((prev) => prev.filter((f) => f.id !== id))}
+                disabled={busy}
+                emptyLabel={t("form.attachments.empty")}
+                addLabel={t("form.attachments.add")}
+                removeLabel={t("form.attachments.remove")}
+              />
+            </div>
+          </>
+        )}
+      </section>
+
       {/* ── Error banner ────────────────────────────────────────────── */}
       {(submitError || storeError) && (
         <div className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-sm text-status-danger">
@@ -723,14 +778,14 @@ export function DiCreateForm({ initial, onSubmitted, onCancel }: DiCreateFormPro
 
       {/* ── Footer ───────────────────────────────────────────────────── */}
       <div className="flex items-center justify-end gap-2 pt-2 border-t border-surface-border">
-        <Button variant="outline" onClick={onCancel} disabled={saving}>
+        <Button variant="outline" onClick={onCancel} disabled={busy}>
           {t("form.cancel")}
         </Button>
         <Button
           onClick={() => void handleSubmit()}
-          disabled={saving || (!isValid && touched.size > 0)}
+          disabled={busy || (!isValid && touched.size > 0)}
         >
-          {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+          {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
           {isEdit ? t("form.update") : t("form.submit")}
         </Button>
       </div>

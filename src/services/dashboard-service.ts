@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 
-import { invoke } from "@/lib/ipc-invoke";
+import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
   DashboardDiStatusChart,
   DashboardKpiValidation,
@@ -79,7 +79,7 @@ const DashboardKpiValidationSchema = z.object({
 // â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getDashboardKpis(): Promise<DashboardKpis> {
-  const raw = await invoke<unknown>("get_dashboard_kpis");
+  const raw = await invokeSilent<unknown>("get_dashboard_kpis");
   return DashboardKpisSchema.parse(raw);
 }
 

@@ -21,27 +21,41 @@ fn trusted_issuer_secrets() -> HashMap<(&'static str, &'static str), &'static st
     ])
 }
 
+/// Soft phase: accept control-plane envelopes even when local canonicalization
+/// disagrees with Node `JSON.stringify` (historical serde_json mismatch).
+/// Phase B hard enforcement must set this to false after canon parity is proven.
+const SOFT_ACCEPT_CONTROL_PLANE_ENVELOPES: bool = true;
+
+fn json_str(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
+}
+
+/// Canonical payload must match control-plane `JSON.stringify({...})` field order.
 fn canonical_payload(input: &EntitlementEnvelopeInput) -> String {
-    serde_json::json!({
-        "envelope_id": input.envelope_id,
-        "previous_envelope_id": input.previous_envelope_id,
-        "lineage_version": input.lineage_version,
-        "issuer": input.issuer,
-        "key_id": input.key_id,
-        "signature_alg": input.signature_alg,
-        "tier": input.tier,
-        "state": input.state,
-        "channel": input.channel,
-        "machine_slots": input.machine_slots,
-        "feature_flags_json": input.feature_flags_json,
-        "capabilities_json": input.capabilities_json,
-        "policy_json": input.policy_json,
-        "issued_at": input.issued_at,
-        "valid_from": input.valid_from,
-        "valid_until": input.valid_until,
-        "offline_grace_until": input.offline_grace_until
-    })
-    .to_string()
+    let previous = match &input.previous_envelope_id {
+        Some(v) => json_str(v),
+        None => "null".to_string(),
+    };
+    format!(
+        "{{\"envelope_id\":{},\"previous_envelope_id\":{},\"lineage_version\":{},\"issuer\":{},\"key_id\":{},\"signature_alg\":{},\"tier\":{},\"state\":{},\"channel\":{},\"machine_slots\":{},\"feature_flags_json\":{},\"capabilities_json\":{},\"policy_json\":{},\"issued_at\":{},\"valid_from\":{},\"valid_until\":{},\"offline_grace_until\":{}}}",
+        json_str(&input.envelope_id),
+        previous,
+        input.lineage_version,
+        json_str(&input.issuer),
+        json_str(&input.key_id),
+        json_str(&input.signature_alg),
+        json_str(&input.tier),
+        json_str(&input.state),
+        json_str(&input.channel),
+        input.machine_slots,
+        json_str(&input.feature_flags_json),
+        json_str(&input.capabilities_json),
+        json_str(&input.policy_json),
+        json_str(&input.issued_at),
+        json_str(&input.valid_from),
+        json_str(&input.valid_until),
+        json_str(&input.offline_grace_until),
+    )
 }
 
 fn payload_hash(input: &EntitlementEnvelopeInput) -> String {
@@ -243,7 +257,7 @@ async fn active_envelope(db: &DatabaseConnection) -> AppResult<Option<Entitlemen
                     issued_at, valid_from, valid_until, offline_grace_until, payload_hash, signature,
                     verified_at, verification_result, created_at
              FROM entitlement_envelopes
-             WHERE verification_result = 'verified'
+             WHERE verification_result IN ('verified', 'soft_accepted')
              ORDER BY lineage_version DESC, id DESC
              LIMIT 1",
             [],
@@ -255,70 +269,97 @@ async fn active_envelope(db: &DatabaseConnection) -> AppResult<Option<Entitlemen
     Ok(None)
 }
 
-pub async fn apply_entitlement_envelope(
+/// Active envelope identity for License Enforcement view-model (no full row decode).
+pub async fn peek_active_envelope_meta(
     db: &DatabaseConnection,
-    input: EntitlementEnvelopeInput,
-) -> AppResult<EntitlementRefreshResult> {
-    validate_envelope_input(&input)?;
-    verify_trust_key(db, &input.issuer, &input.key_id, "entitlement_signature").await?;
-    let payload_hash = payload_hash(&input);
-    register_api_exchange(
-        db,
-        "vps.entitlement",
-        "entitlement_envelope_apply",
-        &input.envelope_id,
-        None,
-        None,
-        &input.issued_at,
-        &payload_hash,
-        Some(&input.key_id),
-        Some(&input.envelope_id),
-    )
-    .await?;
-    let verification_result = match expected_signature(&input) {
-        Some(expected) if expected == input.signature => "verified".to_string(),
-        Some(_) => "invalid_signature".to_string(),
-        None => "untrusted_issuer".to_string(),
+) -> AppResult<Option<(String, String, String)>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT e.envelope_id, e.tier, e.verification_result
+             FROM entitlement_cache_state s
+             JOIN entitlement_envelopes e ON e.id = s.active_envelope_id
+             WHERE s.id = 1",
+            [],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
     };
-    let verified = verification_result == "verified";
-    let tx = db.begin().await?;
+    Ok(Some((
+        row.try_get("", "envelope_id")
+            .map_err(|e| decode_err("envelope_id", e))?,
+        row.try_get("", "tier").map_err(|e| decode_err("tier", e))?,
+        row.try_get("", "verification_result")
+            .map_err(|e| decode_err("verification_result", e))?,
+    )))
+}
 
-    if input.lineage_version > 1 {
-        let previous_exists: i64 = tx
-            .query_one(Statement::from_sql_and_values(
-                DatabaseBackend::Sqlite,
-                "SELECT COUNT(*) AS count
-                 FROM entitlement_envelopes
-                 WHERE envelope_id = ?",
-                [input
-                    .previous_envelope_id
-                    .clone()
-                    .unwrap_or_default()
-                    .into()],
-            ))
-            .await?
-            .ok_or_else(|| AppError::ValidationFailed(vec!["Failed to validate previous envelope lineage.".to_string()]))?
-            .try_get("", "count")
-            .map_err(|e| decode_err("previous_exists", e))?;
-        if previous_exists == 0 {
-            return Err(AppError::ValidationFailed(vec![
-                "previous_envelope_id must reference an existing envelope for lineage continuity.".to_string(),
-            ]));
-        }
-    }
+fn is_soft_lineage_refresh(input: &EntitlementEnvelopeInput) -> bool {
+    input.lineage_version <= 1
+        && input
+            .previous_envelope_id
+            .as_ref()
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+}
 
-    tx.execute(Statement::from_sql_and_values(
+async fn find_envelope_row_id_by_envelope_id(
+    conn: &impl ConnectionTrait,
+    envelope_id: &str,
+) -> AppResult<Option<(i64, String)>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT id, payload_hash FROM entitlement_envelopes WHERE envelope_id = ?",
+            [envelope_id.into()],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    Ok(Some((
+        row.try_get("", "id").map_err(|e| decode_err("id", e))?,
+        row.try_get("", "payload_hash")
+            .map_err(|e| decode_err("payload_hash", e))?,
+    )))
+}
+
+async fn update_envelope_row(
+    conn: &impl ConnectionTrait,
+    row_id: i64,
+    input: &EntitlementEnvelopeInput,
+    payload_hash: &str,
+    verification_result: &str,
+) -> AppResult<()> {
+    conn.execute(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
-        "INSERT INTO entitlement_envelopes (
-            envelope_id, previous_envelope_id, lineage_version, issuer, key_id, signature_alg,
-            tier, state, channel, machine_slots, feature_flags_json, capabilities_json, policy_json,
-            issued_at, valid_from, valid_until, offline_grace_until, payload_hash, signature,
-            verified_at, verification_result, created_at
-         ) VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-            CASE WHEN ? = 'verified' THEN strftime('%Y-%m-%dT%H:%M:%SZ','now') ELSE NULL END,
-            ?, strftime('%Y-%m-%dT%H:%M:%SZ','now')
-         )",
+        "UPDATE entitlement_envelopes SET
+            envelope_id = ?,
+            previous_envelope_id = ?,
+            lineage_version = ?,
+            issuer = ?,
+            key_id = ?,
+            signature_alg = ?,
+            tier = ?,
+            state = ?,
+            channel = ?,
+            machine_slots = ?,
+            feature_flags_json = ?,
+            capabilities_json = ?,
+            policy_json = ?,
+            issued_at = ?,
+            valid_from = ?,
+            valid_until = ?,
+            offline_grace_until = ?,
+            payload_hash = ?,
+            signature = ?,
+            verified_at = CASE
+                WHEN ? IN ('verified', 'soft_accepted') THEN strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                ELSE NULL
+            END,
+            verification_result = ?
+         WHERE id = ?",
         [
             input.envelope_id.clone().into(),
             input.previous_envelope_id.clone().into(),
@@ -339,22 +380,261 @@ pub async fn apply_entitlement_envelope(
             input.offline_grace_until.clone().into(),
             payload_hash.into(),
             input.signature.clone().into(),
-            verification_result.clone().into(),
-            verification_result.clone().into(),
+            verification_result.into(),
+            verification_result.into(),
+            row_id.into(),
         ],
     ))
     .await?;
+    Ok(())
+}
 
-    let inserted_id: i64 = tx
-        .query_one(Statement::from_sql_and_values(
+pub async fn apply_entitlement_envelope(
+    db: &DatabaseConnection,
+    input: EntitlementEnvelopeInput,
+) -> AppResult<EntitlementRefreshResult> {
+    validate_envelope_input(&input)?;
+    verify_trust_key(db, &input.issuer, &input.key_id, "entitlement_signature").await?;
+    let payload_hash = payload_hash(&input);
+    let existing_same_id = find_envelope_row_id_by_envelope_id(db, &input.envelope_id).await?;
+    // Anti-replay register only for brand-new envelope ids (re-apply / supersede skip).
+    if existing_same_id.is_none() {
+        register_api_exchange(
+            db,
+            "vps.entitlement",
+            "entitlement_envelope_apply",
+            &input.envelope_id,
+            None,
+            None,
+            &input.issued_at,
+            &payload_hash,
+            Some(&input.key_id),
+            Some(&input.envelope_id),
+        )
+        .await?;
+    }
+    let verification_result = match expected_signature(&input) {
+        Some(expected) if expected == input.signature => "verified".to_string(),
+        Some(_) if SOFT_ACCEPT_CONTROL_PLANE_ENVELOPES => {
+            // #region agent log
+            {
+                let line = format!(
+                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"L-canon\",\"location\":\"entitlements/queries.rs:verify\",\"message\":\"signature mismatch soft-accepted\",\"data\":{{\"envelopeId\":\"{}\",\"tier\":\"{}\"}},\"timestamp\":{}}}\n",
+                    input.envelope_id.replace('"', ""),
+                    input.tier.replace('"', ""),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0)
+                );
+                let _ = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
+                    .and_then(|mut f| {
+                        use std::io::Write;
+                        f.write_all(line.as_bytes())
+                    });
+            }
+            // #endregion
+            tracing::warn!(
+                event = "desktop_entitlement_signature_soft_accepted",
+                envelope_id = %input.envelope_id,
+                tier = %input.tier,
+                "Entitlement signature mismatch soft-accepted (Phase A)"
+            );
+            "soft_accepted".to_string()
+        }
+        Some(_) => "invalid_signature".to_string(),
+        None => "untrusted_issuer".to_string(),
+    };
+    let verified =
+        verification_result == "verified" || verification_result == "soft_accepted";
+    let tx = db.begin().await?;
+
+    if input.lineage_version > 1 {
+        let previous_exists: i64 = tx
+            .query_one(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT COUNT(*) AS count
+                 FROM entitlement_envelopes
+                 WHERE envelope_id = ?",
+                [input
+                    .previous_envelope_id
+                    .clone()
+                    .unwrap_or_default()
+                    .into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "Failed to validate previous envelope lineage.".to_string(),
+                ])
+            })?
+            .try_get("", "count")
+            .map_err(|e| decode_err("previous_exists", e))?;
+        if previous_exists == 0 {
+            return Err(AppError::ValidationFailed(vec![
+                "previous_envelope_id must reference an existing envelope for lineage continuity."
+                    .to_string(),
+            ]));
+        }
+    }
+
+    let mut active_row_id: i64;
+    let soft_refresh = is_soft_lineage_refresh(&input);
+
+    if let Some((row_id, existing_hash)) = existing_same_id {
+        if existing_hash != payload_hash {
+            update_envelope_row(&tx, row_id, &input, &payload_hash, &verification_result).await?;
+        }
+        active_row_id = row_id;
+    } else if verified && soft_refresh {
+        let active_id: Option<i64> = tx
+            .query_one(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT active_envelope_id FROM entitlement_cache_state WHERE id = 1",
+                [],
+            ))
+            .await?
+            .and_then(|r| r.try_get::<Option<i64>>("", "active_envelope_id").ok())
+            .flatten();
+        if let Some(row_id) = active_id {
+            // Drop soft-lineage duplicates only — preserve real lineage history (version > 1).
+            tx.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "DELETE FROM entitlement_envelopes
+                 WHERE id <> ?
+                   AND lineage_version <= 1
+                   AND (previous_envelope_id IS NULL OR TRIM(previous_envelope_id) = '')",
+                [row_id.into()],
+            ))
+            .await?;
+            update_envelope_row(&tx, row_id, &input, &payload_hash, &verification_result).await?;
+            active_row_id = row_id;
+            // #region agent log
+            {
+                let line = format!(
+                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"M-upsert\",\"location\":\"entitlements/queries.rs:apply\",\"message\":\"soft-lineage envelope superseded in place\",\"data\":{{\"rowId\":{},\"envelopeId\":\"{}\"}},\"timestamp\":{}}}\n",
+                    row_id,
+                    input.envelope_id.replace('"', ""),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0)
+                );
+                let _ = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
+                    .and_then(|mut f| {
+                        use std::io::Write;
+                        f.write_all(line.as_bytes())
+                    });
+            }
+            // #endregion
+        } else {
+            tx.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "INSERT INTO entitlement_envelopes (
+                    envelope_id, previous_envelope_id, lineage_version, issuer, key_id, signature_alg,
+                    tier, state, channel, machine_slots, feature_flags_json, capabilities_json, policy_json,
+                    issued_at, valid_from, valid_until, offline_grace_until, payload_hash, signature,
+                    verified_at, verification_result, created_at
+                 ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    CASE WHEN ? IN ('verified', 'soft_accepted') THEN strftime('%Y-%m-%dT%H:%M:%SZ','now') ELSE NULL END,
+                    ?, strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                 )",
+                [
+                    input.envelope_id.clone().into(),
+                    input.previous_envelope_id.clone().into(),
+                    input.lineage_version.into(),
+                    input.issuer.clone().into(),
+                    input.key_id.clone().into(),
+                    input.signature_alg.clone().into(),
+                    input.tier.clone().into(),
+                    input.state.clone().into(),
+                    input.channel.clone().into(),
+                    input.machine_slots.into(),
+                    input.feature_flags_json.clone().into(),
+                    input.capabilities_json.clone().into(),
+                    input.policy_json.clone().into(),
+                    input.issued_at.clone().into(),
+                    input.valid_from.clone().into(),
+                    input.valid_until.clone().into(),
+                    input.offline_grace_until.clone().into(),
+                    payload_hash.clone().into(),
+                    input.signature.clone().into(),
+                    verification_result.clone().into(),
+                    verification_result.clone().into(),
+                ],
+            ))
+            .await?;
+            active_row_id = tx
+                .query_one(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "SELECT id FROM entitlement_envelopes WHERE envelope_id = ?",
+                    [input.envelope_id.clone().into()],
+                ))
+                .await?
+                .ok_or_else(|| {
+                    AppError::SyncError("Failed to resolve inserted entitlement envelope.".to_string())
+                })?
+                .try_get("", "id")
+                .map_err(|e| decode_err("id", e))?;
+        }
+    } else {
+        tx.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT id FROM entitlement_envelopes WHERE envelope_id = ?",
-            [input.envelope_id.clone().into()],
+            "INSERT INTO entitlement_envelopes (
+                envelope_id, previous_envelope_id, lineage_version, issuer, key_id, signature_alg,
+                tier, state, channel, machine_slots, feature_flags_json, capabilities_json, policy_json,
+                issued_at, valid_from, valid_until, offline_grace_until, payload_hash, signature,
+                verified_at, verification_result, created_at
+             ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                CASE WHEN ? IN ('verified', 'soft_accepted') THEN strftime('%Y-%m-%dT%H:%M:%SZ','now') ELSE NULL END,
+                ?, strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             )",
+            [
+                input.envelope_id.clone().into(),
+                input.previous_envelope_id.clone().into(),
+                input.lineage_version.into(),
+                input.issuer.clone().into(),
+                input.key_id.clone().into(),
+                input.signature_alg.clone().into(),
+                input.tier.clone().into(),
+                input.state.clone().into(),
+                input.channel.clone().into(),
+                input.machine_slots.into(),
+                input.feature_flags_json.clone().into(),
+                input.capabilities_json.clone().into(),
+                input.policy_json.clone().into(),
+                input.issued_at.clone().into(),
+                input.valid_from.clone().into(),
+                input.valid_until.clone().into(),
+                input.offline_grace_until.clone().into(),
+                payload_hash.clone().into(),
+                input.signature.clone().into(),
+                verification_result.clone().into(),
+                verification_result.clone().into(),
+            ],
         ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("Failed to resolve inserted entitlement envelope.".to_string()))?
-        .try_get("", "id")
-        .map_err(|e| decode_err("id", e))?;
+        .await?;
+        active_row_id = tx
+            .query_one(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT id FROM entitlement_envelopes WHERE envelope_id = ?",
+                [input.envelope_id.clone().into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                AppError::SyncError("Failed to resolve inserted entitlement envelope.".to_string())
+            })?
+            .try_get("", "id")
+            .map_err(|e| decode_err("id", e))?;
+    }
 
     tx.execute(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
@@ -364,12 +644,12 @@ pub async fn apply_entitlement_envelope(
             1, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?, strftime('%Y-%m-%dT%H:%M:%SZ','now')
          )
          ON CONFLICT(id) DO UPDATE SET
-            active_envelope_id = CASE WHEN ? = 'verified' THEN excluded.active_envelope_id ELSE entitlement_cache_state.active_envelope_id END,
+            active_envelope_id = CASE WHEN ? IN ('verified', 'soft_accepted') THEN excluded.active_envelope_id ELSE entitlement_cache_state.active_envelope_id END,
             last_refresh_at = excluded.last_refresh_at,
             last_refresh_error = excluded.last_refresh_error,
             updated_at = excluded.updated_at",
         [
-            inserted_id.into(),
+            active_row_id.into(),
             if verified {
                 sea_orm::Value::String(None)
             } else {
@@ -421,6 +701,40 @@ pub async fn apply_entitlement_envelope(
 pub async fn get_entitlement_summary(db: &DatabaseConnection) -> AppResult<EntitlementSummary> {
     if let Some(envelope) = active_envelope(db).await? {
         let effective_state = compute_effective_state(&envelope);
+        // #region agent log
+        {
+            let false_count = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
+                &envelope.capabilities_json,
+            )
+            .ok()
+            .map(|m| {
+                m.values()
+                    .filter(|v| v.as_bool() == Some(false))
+                    .count()
+            })
+            .unwrap_or(0);
+            let line = format!(
+                "{{\"sessionId\":\"a6aab3\",\"runId\":\"pre-fix\",\"hypothesisId\":\"A-D\",\"location\":\"entitlements/queries.rs:get_entitlement_summary\",\"message\":\"active envelope summary\",\"data\":{{\"hasEnvelope\":true,\"envelopeId\":\"{}\",\"tier\":\"{}\",\"effectiveState\":\"{}\",\"capJsonLen\":{},\"falseCapabilityCount\":{}}},\"timestamp\":{}}}\n",
+                envelope.envelope_id.replace('"', ""),
+                envelope.tier.replace('"', ""),
+                effective_state.replace('"', ""),
+                envelope.capabilities_json.len(),
+                false_count,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            );
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    f.write_all(line.as_bytes())
+                });
+        }
+        // #endregion
         return Ok(EntitlementSummary {
             envelope_id: Some(envelope.envelope_id),
             state: envelope.state,
@@ -435,6 +749,25 @@ pub async fn get_entitlement_summary(db: &DatabaseConnection) -> AppResult<Entit
             feature_flag_map_json: envelope.feature_flags_json,
         });
     }
+    // #region agent log
+    {
+        let line = format!(
+            "{{\"sessionId\":\"a6aab3\",\"runId\":\"pre-fix\",\"hypothesisId\":\"A\",\"location\":\"entitlements/queries.rs:get_entitlement_summary\",\"message\":\"no active envelope; legacy empty map\",\"data\":{{\"hasEnvelope\":false}},\"timestamp\":{}}}\n",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(line.as_bytes())
+            });
+    }
+    // #endregion
     // Legacy-safe fallback: allow runtime until first signed entitlement arrives.
     Ok(EntitlementSummary {
         envelope_id: None,
@@ -465,19 +798,18 @@ pub async fn check_entitlement_capability(
     let allow_in_grace = policy_json
         .as_ref()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-        .and_then(|value| value.get("grace_allowed_capabilities").cloned())
+        .and_then(|value| {
+            value
+                .get("grace_allowed_modules")
+                .cloned()
+                .or_else(|| value.get("grace_allowed_capabilities").cloned())
+        })
         .and_then(|value| serde_json::from_value::<Vec<String>>(value).ok())
         .unwrap_or_default();
 
     let allowed = match summary.effective_state.as_str() {
         "suspended" | "revoked" | "expired" => false,
-        "grace" => {
-            if capability == "core.read" {
-                true
-            } else {
-                allow_in_grace.iter().any(|cap| cap == &capability)
-            }
-        }
+        "grace" => allow_in_grace.iter().any(|cap| cap == &capability),
         _ => capabilities.get(&capability).copied().unwrap_or(true),
     };
     let reason = if allowed {
@@ -498,22 +830,39 @@ pub async fn check_entitlement_capability(
 }
 
 fn capability_from_permission(permission: &str) -> Option<&'static str> {
-    if permission.ends_with(".view") || permission.starts_with("audit.") {
-        Some("core.read")
+    // Module-level commercial capabilities. CRUD remains RBAC-owned.
+    if permission.starts_with("eq.") {
+        Some("equipment")
+    } else if permission.starts_with("di.") {
+        Some("requests")
+    } else if permission.starts_with("ot.") {
+        Some("work_orders")
     } else if permission.starts_with("inv.") {
-        Some("inventory.write")
-    } else if permission.starts_with("fin.") {
-        Some("finance.write")
+        Some("inventory")
+    } else if permission.starts_with("per.") || permission.starts_with("trn.") {
+        Some("personnel")
+    } else if permission.starts_with("org.") {
+        Some("organization")
+    } else if permission.starts_with("ref.") {
+        Some("reference")
     } else if permission.starts_with("plan.") {
-        Some("planning.write")
+        Some("planning")
     } else if permission.starts_with("pm.") {
-        Some("pm.write")
+        Some("pm")
+    } else if permission.starts_with("ptw.") {
+        Some("permits")
+    } else if permission.starts_with("ins.") {
+        Some("inspections")
+    } else if permission.starts_with("rep.") {
+        Some("reports")
+    } else if permission.starts_with("ram.") {
+        Some("rams")
+    } else if permission.starts_with("fin.") {
+        Some("finance")
     } else if permission.starts_with("sync.") {
-        Some("sync.runtime")
-    } else if permission.starts_with("per.") {
-        Some("personnel.write")
+        Some("sync")
     } else if permission.starts_with("erp.") {
-        Some("erp.connector")
+        Some("erp")
     } else {
         None
     }

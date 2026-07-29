@@ -5,6 +5,8 @@ import { useNavigate } from "react-router-dom";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfCard } from "@/design-system/tokens";
+import { usePermissions } from "@/hooks/use-permissions";
+import { seedRamsPresentationData } from "@/services/diagnostics-service";
 import {
   getRamEquipmentQualityBadge,
   iso14224FailureDatasetCompleteness,
@@ -17,6 +19,7 @@ import {
   listRamDataQualityIssues,
   listReliabilityKpiSnapshots,
   listRuntimeExposureLogs,
+  refreshReliabilityKpiSnapshot,
 } from "@/services/reliability-service";
 
 import { useRequiredRamsEquipmentId } from "./rams-equipment-context";
@@ -69,10 +72,15 @@ function miniCells(cells: MetricCell[]) {
 export function ReliabilityFoundationPage() {
   const { t } = useTranslation("reliability");
   const navigate = useNavigate();
+  const { can } = usePermissions();
+  const canSeedPresentation = can("adm.settings");
   const equipmentId = useRequiredRamsEquipmentId();
 
   const [activeTab, setActiveTab] = useState<FoundationTab>("quality");
   const [loading, setLoading] = useState(false);
+  const [kpiRefreshing, setKpiRefreshing] = useState(false);
+  const [presentationSeeding, setPresentationSeeding] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [qualityBadge, setQualityBadge] = useState<Awaited<
@@ -155,6 +163,87 @@ export function ReliabilityFoundationPage() {
 
   const latestKpi = kpiSnapshots[0] ?? null;
 
+  const onRefreshKpiSnapshot = async () => {
+    setKpiRefreshing(true);
+    setError(null);
+    setStatusMessage(null);
+    try {
+      const end = new Date();
+      const start = new Date(end);
+      start.setMonth(start.getMonth() - 12);
+      const snap = await refreshReliabilityKpiSnapshot({
+        equipment_id: equipmentId,
+        period_start: start.toISOString(),
+        period_end: end.toISOString(),
+        min_sample_n: 5,
+        repeat_lookback_days: 30,
+      });
+      setStatusMessage(
+        t("foundation.kpiRefreshDone", {
+          events: snap.event_count,
+          hours: snap.analysis_input_spec_json
+            ? (() => {
+                try {
+                  const parsed = JSON.parse(snap.analysis_input_spec_json) as {
+                    exposure_hours?: number;
+                  };
+                  return parsed.exposure_hours?.toFixed(1) ?? "—";
+                } catch {
+                  return "—";
+                }
+              })()
+            : "—",
+        }),
+      );
+      await refreshAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setKpiRefreshing(false);
+    }
+  };
+
+  const onSeedPresentation = async () => {
+    // DEMO ONLY — explicit button click; never triggered by mount / refreshAll.
+    if (!canSeedPresentation) {
+      setError(t("foundation.presentationSeedPermission"));
+      return;
+    }
+    setPresentationSeeding(true);
+    setError(null);
+    setStatusMessage(null);
+    try {
+      const report = await seedRamsPresentationData({
+        equipment_id: equipmentId,
+        months_back: 12,
+        failure_count: 8,
+      });
+      if (report.errors.length > 0) {
+        setError(report.errors.join(" · "));
+      }
+      setStatusMessage(
+        report.skipped
+          ? t("foundation.presentationSeedSkipped")
+          : t("foundation.presentationSeedDone", {
+              wo: report.work_orders_created,
+              beta: report.weibull_beta?.toFixed(3) ?? "—",
+              eta: report.weibull_eta?.toFixed(1) ?? "—",
+              markov: report.markov_model_id ?? "—",
+            }),
+      );
+      if (report.warnings.length > 0) {
+        setStatusMessage((prev) =>
+          [prev, report.warnings.join(" · ")].filter(Boolean).join(" · "),
+        );
+      }
+      await refreshAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPresentationSeeding(false);
+    }
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface-0 text-sm text-text-primary">
       <div className="border-b border-surface-border px-4 py-3">
@@ -174,6 +263,7 @@ export function ReliabilityFoundationPage() {
           </button>
         </div>
         {error ? <p className="mt-2 text-xs text-status-danger">{error}</p> : null}
+        {statusMessage ? <p className="mt-2 text-xs text-text-secondary">{statusMessage}</p> : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-4">
@@ -473,6 +563,27 @@ export function ReliabilityFoundationPage() {
           </TabsContent>
 
           <TabsContent value="kpis" className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={kpiRefreshing || loading}
+                onClick={() => void onRefreshKpiSnapshot()}
+                className="rounded-md border border-surface-border bg-surface-1 px-3 py-1.5 text-xs hover:bg-surface-2 disabled:opacity-40"
+              >
+                {kpiRefreshing ? t("foundation.kpiRefreshing") : t("foundation.kpiRefresh")}
+              </button>
+              <button
+                type="button"
+                disabled={!canSeedPresentation || presentationSeeding || loading}
+                title={!canSeedPresentation ? t("foundation.presentationSeedPermission") : undefined}
+                onClick={() => void onSeedPresentation()}
+                className="rounded-md border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-text-primary hover:bg-primary/15 disabled:opacity-40"
+              >
+                {presentationSeeding
+                  ? t("foundation.presentationSeeding")
+                  : t("foundation.presentationSeed")}
+              </button>
+            </div>
             <div className="grid gap-3 lg:grid-cols-2">
               <section className={mfCard.panel}>
                 <div className="mb-2 flex items-center gap-2">

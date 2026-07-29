@@ -45,6 +45,23 @@ type FlowPersist = {
 };
 
 const SPEC_VERSION = 1;
+const FISHBONE_EFFECT_ID = "effect";
+const FISHBONE_SPINE_START_ID = "spine_start";
+const FISHBONE_SPINE_END_ID = "spine_end";
+const FISHBONE_CATEGORIES = [
+  "cat_machine",
+  "cat_method",
+  "cat_material",
+  "cat_manpower",
+  "cat_measurement",
+  "cat_nature",
+] as const;
+const FISHBONE_TOP = new Set<string>(["cat_machine", "cat_method", "cat_material"]);
+const FISHBONE_SPINE_Y = 500;
+
+function isFishboneHelperNode(id: string): boolean {
+  return id.startsWith("spine_");
+}
 
 function labelFromNode(node: Node): string {
   const d = node.data;
@@ -59,6 +76,9 @@ function isPromotableNodeId(id: string): boolean {
     return false;
   }
   if (id.startsWith("cat_")) {
+    return false;
+  }
+  if (isFishboneHelperNode(id)) {
     return false;
   }
   return true;
@@ -79,20 +99,212 @@ function isViewport(v: unknown): v is Viewport {
   );
 }
 
+function getNodeLabel(node: Node | undefined, fallback: string): string {
+  if (!node?.data || typeof node.data !== "object") {
+    return fallback;
+  }
+  const raw = (node.data as Record<string, unknown>)["label"];
+  if (typeof raw === "string" && raw.trim() !== "") {
+    return raw;
+  }
+  return fallback;
+}
+
+function applyFishboneLayout(nodes: Node[], edges: Edge[], t: (k: string) => string): Node[] {
+  const byId = new Map(nodes.map((n) => [n.id, n] as const));
+  const positions: Record<string, { x: number; y: number }> = {
+    [FISHBONE_SPINE_START_ID]: { x: 0, y: FISHBONE_SPINE_Y },
+    [FISHBONE_SPINE_END_ID]: { x: 1000, y: FISHBONE_SPINE_Y },
+    effect: { x: 1000, y: 470 },
+    cat_machine: { x: 160, y: 300 },
+    cat_method: { x: 340, y: 300 },
+    cat_material: { x: 520, y: 300 },
+    cat_manpower: { x: 160, y: 700 },
+    cat_measurement: { x: 340, y: 700 },
+    cat_nature: { x: 520, y: 700 },
+    spine_cat_machine: { x: 360, y: FISHBONE_SPINE_Y },
+    spine_cat_method: { x: 540, y: FISHBONE_SPINE_Y },
+    spine_cat_material: { x: 720, y: FISHBONE_SPINE_Y },
+    spine_cat_manpower: { x: 360, y: FISHBONE_SPINE_Y },
+    spine_cat_measurement: { x: 540, y: FISHBONE_SPINE_Y },
+    spine_cat_nature: { x: 720, y: FISHBONE_SPINE_Y },
+  };
+
+  const baseLabels: Record<string, string> = {
+    effect: t("governance.effect"),
+    cat_machine: t("governance.categories.machine"),
+    cat_method: t("governance.categories.method"),
+    cat_material: t("governance.categories.material"),
+    cat_manpower: t("governance.categories.manpower"),
+    cat_measurement: t("governance.categories.measurement"),
+    cat_nature: t("governance.categories.motherNature"),
+  };
+
+  const nextById = new Map<string, Node>();
+  const fallbackPos = { x: 0, y: FISHBONE_SPINE_Y };
+  const getPos = (id: string) => positions[id] ?? fallbackPos;
+  const spineHelpers: Node[] = [
+    {
+      id: FISHBONE_SPINE_START_ID,
+      type: "default",
+      position: getPos(FISHBONE_SPINE_START_ID),
+      data: { label: "" },
+      draggable: false,
+      selectable: false,
+      style: { width: 1, height: 1, opacity: 0, border: "none", background: "transparent" },
+    },
+    {
+      id: FISHBONE_SPINE_END_ID,
+      type: "default",
+      position: getPos(FISHBONE_SPINE_END_ID),
+      data: { label: "" },
+      draggable: false,
+      selectable: false,
+      style: { width: 1, height: 1, opacity: 0, border: "none", background: "transparent" },
+    },
+  ];
+  for (const helper of spineHelpers) {
+    nextById.set(helper.id, helper);
+  }
+
+  for (const catId of FISHBONE_CATEGORIES) {
+    const spineId = `spine_${catId}`;
+    nextById.set(spineId, {
+      id: spineId,
+      type: "default",
+      position: getPos(spineId),
+      data: { label: "" },
+      draggable: false,
+      selectable: false,
+      style: { width: 1, height: 1, opacity: 0, border: "none", background: "transparent" },
+    });
+  }
+
+  for (const id of [FISHBONE_EFFECT_ID, ...FISHBONE_CATEGORIES]) {
+    const existing = byId.get(id);
+    const p = getPos(id);
+    nextById.set(id, {
+      id,
+      type: "default",
+      position: p,
+      data: { label: getNodeLabel(existing, baseLabels[id] ?? "") },
+    });
+  }
+
+  const orderedCauseIds = new Map<string, string[]>();
+  for (const catId of FISHBONE_CATEGORIES) {
+    orderedCauseIds.set(catId, []);
+  }
+  for (const e of edges) {
+    if (!orderedCauseIds.has(e.source)) {
+      continue;
+    }
+    if (e.target === FISHBONE_EFFECT_ID) {
+      continue;
+    }
+    if (!byId.has(e.target)) {
+      continue;
+    }
+    const arr = orderedCauseIds.get(e.source);
+    if (arr && !arr.includes(e.target)) {
+      arr.push(e.target);
+    }
+  }
+
+  for (const catId of FISHBONE_CATEGORIES) {
+    const catPos = getPos(catId);
+    const causes = orderedCauseIds.get(catId) ?? [];
+    const isTop = FISHBONE_TOP.has(catId);
+    causes.forEach((causeId, idx) => {
+      const existing = byId.get(causeId);
+      if (!existing) {
+        return;
+      }
+      const rank = idx + 1;
+      const x = catPos.x - 85 - idx * 38;
+      const y = isTop ? catPos.y - rank * 50 : catPos.y + rank * 50;
+      nextById.set(causeId, { ...existing, position: { x, y } });
+    });
+  }
+
+  for (const n of nodes) {
+    if (!nextById.has(n.id)) {
+      nextById.set(n.id, n);
+    }
+  }
+  return Array.from(nextById.values());
+}
+
+function buildFishboneEdges(nodes: Node[], edges: Edge[]): Edge[] {
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const out: Edge[] = [
+    {
+      id: "spine_main",
+      source: FISHBONE_SPINE_START_ID,
+      target: FISHBONE_SPINE_END_ID,
+      type: "straight",
+      style: { strokeWidth: 4 },
+      selectable: false,
+      focusable: false,
+    },
+  ];
+
+  const uniqueEdge = new Set<string>(["spine_main"]);
+  for (const catId of FISHBONE_CATEGORIES) {
+    const anchorId = `spine_${catId}`;
+    if (!nodeIds.has(catId) || !nodeIds.has(anchorId)) {
+      continue;
+    }
+    const id = `rib_${catId}`;
+    out.push({
+      id,
+      source: catId,
+      target: anchorId,
+      type: "straight",
+      style: { strokeWidth: 2 },
+    });
+    uniqueEdge.add(id);
+  }
+
+  for (const e of edges) {
+    if (!nodeIds.has(e.source) || !nodeIds.has(e.target)) {
+      continue;
+    }
+    if (e.target === FISHBONE_EFFECT_ID) {
+      continue;
+    }
+    if (isFishboneHelperNode(e.source) || isFishboneHelperNode(e.target)) {
+      continue;
+    }
+    const id = `cause_${e.source}_${e.target}`;
+    if (uniqueEdge.has(id)) {
+      continue;
+    }
+    out.push({
+      ...e,
+      id,
+      type: "straight",
+      style: { strokeWidth: 1.6 },
+    });
+    uniqueEdge.add(id);
+  }
+  return out;
+}
+
 function buildDefaultFlow(t: (k: string) => string): FlowPersist {
   const problem: Node = {
-    id: "effect",
+    id: FISHBONE_EFFECT_ID,
     type: "default",
-    position: { x: 520, y: 220 },
+    position: { x: 980, y: 260 },
     data: { label: t("governance.effect") },
   };
   const cats: { id: string; label: string; x: number; y: number }[] = [
-    { id: "cat_machine", label: t("governance.categories.machine"), x: 40, y: 40 },
-    { id: "cat_method", label: t("governance.categories.method"), x: 180, y: 20 },
-    { id: "cat_material", label: t("governance.categories.material"), x: 320, y: 40 },
-    { id: "cat_manpower", label: t("governance.categories.manpower"), x: 40, y: 360 },
-    { id: "cat_measurement", label: t("governance.categories.measurement"), x: 220, y: 400 },
-    { id: "cat_nature", label: t("governance.categories.motherNature"), x: 380, y: 360 },
+    { id: "cat_machine", label: t("governance.categories.machine"), x: 280, y: 130 },
+    { id: "cat_method", label: t("governance.categories.method"), x: 500, y: 130 },
+    { id: "cat_material", label: t("governance.categories.material"), x: 720, y: 130 },
+    { id: "cat_manpower", label: t("governance.categories.manpower"), x: 280, y: 390 },
+    { id: "cat_measurement", label: t("governance.categories.measurement"), x: 500, y: 390 },
+    { id: "cat_nature", label: t("governance.categories.motherNature"), x: 720, y: 390 },
   ];
   const branchNodes: Node[] = cats.map((c) => ({
     id: c.id,
@@ -105,9 +317,10 @@ function buildDefaultFlow(t: (k: string) => string): FlowPersist {
     id: `e_${c.id}`,
     source: c.id,
     target: problem.id,
-    type: "smoothstep",
+    type: "straight",
   }));
-  return { nodes, edges };
+  const fishNodes = applyFishboneLayout(nodes, edges, t);
+  return { nodes: fishNodes, edges: buildFishboneEdges(fishNodes, edges) };
 }
 
 function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
@@ -143,8 +356,11 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
         try {
           const parsed = JSON.parse(row.flow_json) as { spec_version?: number } & FlowPersist;
           if (parsed.nodes?.length) {
-            setNodes(parsed.nodes);
-            setEdges(parsed.edges ?? []);
+            const sourceEdges = parsed.edges ?? [];
+            const nextNodes = applyFishboneLayout(parsed.nodes, sourceEdges, t);
+            const nextEdges = buildFishboneEdges(nextNodes, sourceEdges);
+            setNodes(nextNodes);
+            setEdges(nextEdges);
             const vp = parsed.viewport;
             setLoadedViewport(isViewport(vp) ? vp : null);
             viewportRef.current = isViewport(vp) ? vp : { x: 0, y: 0, zoom: 1 };
@@ -186,7 +402,7 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
   }, [load]);
 
   const onConnect = useCallback(
-    (c: Connection) => setEdges((eds) => addEdge({ ...c, type: "smoothstep" }, eds)),
+    (c: Connection) => setEdges((eds) => addEdge({ ...c, type: "straight", style: { strokeWidth: 1.6 } }, eds)),
     [setEdges],
   );
 
@@ -222,8 +438,10 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
         data: { label },
       };
       nextNodes = [...nodes, n];
-      nextEdges = [...edges, { id: `e_${id}`, source: categoryId, target: id, type: "smoothstep" }];
+      nextEdges = [...edges, { id: `e_${id}`, source: categoryId, target: id, type: "straight" }];
     }
+    nextNodes = applyFishboneLayout(nextNodes, nextEdges, t);
+    nextEdges = buildFishboneEdges(nextNodes, nextEdges);
     setNodes(nextNodes);
     setEdges(nextEdges);
     setCauseOpen(false);
@@ -408,7 +626,7 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
           {saving ? "…" : t("governance.save")}
         </button>
       </div>
-      <div className={cn(mfCard.insetCanvas, "min-h-[420px]")}>
+      <div className={cn(mfCard.insetCanvas, "h-[860px] min-h-[860px]")}>
         <ReactFlow
           key={flowMountKey}
           nodes={nodes}

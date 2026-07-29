@@ -1,4 +1,4 @@
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait, Value};
 
 use crate::errors::{AppError, AppResult};
 use crate::inventory::domain::{
@@ -6,9 +6,10 @@ use crate::inventory::domain::{
     CreateStockLocationInput, CreateWarehouseInput, InventoryIssueInput, InventoryReleaseReservationInput,
     InventoryReorderRecommendation, InventoryReserveInput, InventoryReturnInput, InventoryStockAdjustInput,
     InventoryStockBalance, InventoryStockFilter, InventoryTaxCategory, InventoryTaxCategoryInput, InventoryTransaction,
-    InventoryTransactionFilter, InventoryTransferInput, StockLocation, StockReservation, StockReservationFilter,
-    UpdateArticleFamilyInput, UpdateStockLocationInput, UpdateWarehouseInput, Warehouse,
+    InventoryTransactionFilter, InventoryTransferInput, StockImpactProjection, StockLocation, StockReservation,
+    StockReservationFilter, UpdateArticleFamilyInput, UpdateStockLocationInput, UpdateWarehouseInput, Warehouse,
 };
+use crate::inventory::procurement::record_state_event;
 
 fn parse_bool_to_i64(value: Option<bool>, default_true: bool) -> i64 {
     match value {
@@ -1010,9 +1011,18 @@ pub async fn list_articles(
                    COALESCE(tx.code, '') AS tax_category_code,
                    COALESCE(tx.label, '') AS tax_category_label,
                    a.procurement_category_value_id, pc.code AS procurement_category_code, pc.label AS procurement_category_label,
-                   a.preferred_warehouse_id, pw.code AS preferred_warehouse_code,
-                   a.preferred_location_id, pl.code AS preferred_location_code,
-                   a.min_stock, a.max_stock, a.reorder_point, a.safety_stock, a.is_active, a.row_version, a.created_at, a.updated_at
+                   a.preferred_warehouse_id, pw.code AS preferred_warehouse_code, pw.name AS preferred_warehouse_name,
+                   a.preferred_location_id, pl.code AS preferred_location_code, pl.name AS preferred_location_name,
+                   a.min_stock, a.max_stock, a.reorder_point, a.safety_stock,
+                   a.manufacturer_name, a.manufacturer_part_number, a.oem_part_number,
+                   a.replenishment_policy_code, a.economic_order_qty, a.minimum_order_qty, a.maximum_order_qty,
+                   a.order_multiple_qty, a.lead_time_days, a.review_period_days,
+                   a.abc_class_code, a.xyz_class_code,
+                   COALESCE(a.is_critical_spare, 0) AS is_critical_spare,
+                   COALESCE(a.requires_expiration, 0) AS requires_expiration,
+                   a.shelf_life_days,
+                   COALESCE(a.requires_batch_tracking, 0) AS requires_batch_tracking,
+                   a.is_active, a.row_version, a.created_at, a.updated_at
             FROM articles a
             LEFT JOIN article_families af ON af.id = a.family_id
             JOIN lookup_values u ON u.id = a.unit_value_id
@@ -1042,9 +1052,18 @@ pub async fn list_articles(
                    COALESCE(tx.code, '') AS tax_category_code,
                    COALESCE(tx.label, '') AS tax_category_label,
                    a.procurement_category_value_id, pc.code AS procurement_category_code, pc.label AS procurement_category_label,
-                   a.preferred_warehouse_id, pw.code AS preferred_warehouse_code,
-                   a.preferred_location_id, pl.code AS preferred_location_code,
-                   a.min_stock, a.max_stock, a.reorder_point, a.safety_stock, a.is_active, a.row_version, a.created_at, a.updated_at
+                   a.preferred_warehouse_id, pw.code AS preferred_warehouse_code, pw.name AS preferred_warehouse_name,
+                   a.preferred_location_id, pl.code AS preferred_location_code, pl.name AS preferred_location_name,
+                   a.min_stock, a.max_stock, a.reorder_point, a.safety_stock,
+                   a.manufacturer_name, a.manufacturer_part_number, a.oem_part_number,
+                   a.replenishment_policy_code, a.economic_order_qty, a.minimum_order_qty, a.maximum_order_qty,
+                   a.order_multiple_qty, a.lead_time_days, a.review_period_days,
+                   a.abc_class_code, a.xyz_class_code,
+                   COALESCE(a.is_critical_spare, 0) AS is_critical_spare,
+                   COALESCE(a.requires_expiration, 0) AS requires_expiration,
+                   a.shelf_life_days,
+                   COALESCE(a.requires_batch_tracking, 0) AS requires_batch_tracking,
+                   a.is_active, a.row_version, a.created_at, a.updated_at
             FROM articles a
             LEFT JOIN article_families af ON af.id = a.family_id
             JOIN lookup_values u ON u.id = a.unit_value_id
@@ -1087,12 +1106,30 @@ pub async fn list_articles(
                 procurement_category_label: row.try_get("", "procurement_category_label")?,
                 preferred_warehouse_id: row.try_get("", "preferred_warehouse_id")?,
                 preferred_warehouse_code: row.try_get("", "preferred_warehouse_code")?,
+                preferred_warehouse_name: row.try_get("", "preferred_warehouse_name")?,
                 preferred_location_id: row.try_get("", "preferred_location_id")?,
                 preferred_location_code: row.try_get("", "preferred_location_code")?,
+                preferred_location_name: row.try_get("", "preferred_location_name")?,
                 min_stock: row.try_get("", "min_stock")?,
                 max_stock: row.try_get("", "max_stock")?,
                 reorder_point: row.try_get("", "reorder_point")?,
                 safety_stock: row.try_get("", "safety_stock")?,
+                manufacturer_name: row.try_get("", "manufacturer_name").ok().flatten(),
+                manufacturer_part_number: row.try_get("", "manufacturer_part_number").ok().flatten(),
+                oem_part_number: row.try_get("", "oem_part_number").ok().flatten(),
+                replenishment_policy_code: row.try_get("", "replenishment_policy_code").ok().flatten(),
+                economic_order_qty: row.try_get("", "economic_order_qty").ok().flatten(),
+                minimum_order_qty: row.try_get("", "minimum_order_qty").ok().flatten(),
+                maximum_order_qty: row.try_get("", "maximum_order_qty").ok().flatten(),
+                order_multiple_qty: row.try_get("", "order_multiple_qty").ok().flatten(),
+                lead_time_days: row.try_get("", "lead_time_days").ok().flatten(),
+                review_period_days: row.try_get("", "review_period_days").ok().flatten(),
+                abc_class_code: row.try_get("", "abc_class_code").ok().flatten(),
+                xyz_class_code: row.try_get("", "xyz_class_code").ok().flatten(),
+                is_critical_spare: row.try_get("", "is_critical_spare").unwrap_or(0),
+                requires_expiration: row.try_get("", "requires_expiration").unwrap_or(0),
+                shelf_life_days: row.try_get("", "shelf_life_days").ok().flatten(),
+                requires_batch_tracking: row.try_get("", "requires_batch_tracking").unwrap_or(0),
                 is_active: row.try_get("", "is_active")?,
                 row_version: row.try_get("", "row_version")?,
                 created_at: row.try_get("", "created_at")?,
@@ -1177,27 +1214,71 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
             article_code, article_name, family_id, unit_value_id, criticality_value_id,
             stocking_type_value_id, tax_category_value_id, procurement_category_value_id,
             preferred_warehouse_id, preferred_location_id,
-            min_stock, max_stock, reorder_point, safety_stock, is_active
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            min_stock, max_stock, reorder_point, safety_stock,
+            manufacturer_name, manufacturer_part_number, oem_part_number,
+            replenishment_policy_code, economic_order_qty, minimum_order_qty, maximum_order_qty,
+            order_multiple_qty, lead_time_days, review_period_days,
+            abc_class_code, xyz_class_code,
+            is_critical_spare, requires_expiration, shelf_life_days, requires_batch_tracking,
+            is_active
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             code.clone().into(),
             name.into(),
-            input.family_id.into(),
+            input.family_id.map_or(Value::BigInt(None), Value::from),
             input.unit_value_id.into(),
-            input.criticality_value_id.into(),
+            input.criticality_value_id.map_or(Value::BigInt(None), Value::from),
             input.stocking_type_value_id.into(),
             input.tax_category_value_id.into(),
-            input.procurement_category_value_id.into(),
-            input.preferred_warehouse_id.into(),
-            input.preferred_location_id.into(),
+            input.procurement_category_value_id.map_or(Value::BigInt(None), Value::from),
+            input.preferred_warehouse_id.map_or(Value::BigInt(None), Value::from),
+            input.preferred_location_id.map_or(Value::BigInt(None), Value::from),
             input.min_stock.into(),
-            input.max_stock.into(),
+            input.max_stock.map_or(Value::Double(None), Value::from),
             input.reorder_point.into(),
             input.safety_stock.into(),
+            input.manufacturer_name.clone().map_or(Value::String(None), Value::from),
+            input.manufacturer_part_number.clone().map_or(Value::String(None), Value::from),
+            input.oem_part_number.clone().map_or(Value::String(None), Value::from),
+            input.replenishment_policy_code.clone().map_or(Value::String(None), Value::from),
+            input.economic_order_qty.map_or(Value::Double(None), Value::from),
+            input.minimum_order_qty.map_or(Value::Double(None), Value::from),
+            input.maximum_order_qty.map_or(Value::Double(None), Value::from),
+            input.order_multiple_qty.map_or(Value::Double(None), Value::from),
+            input.lead_time_days.map_or(Value::BigInt(None), Value::from),
+            input.review_period_days.map_or(Value::BigInt(None), Value::from),
+            input.abc_class_code.clone().map_or(Value::String(None), Value::from),
+            input.xyz_class_code.clone().map_or(Value::String(None), Value::from),
+            (input.is_critical_spare.unwrap_or(false) as i64).into(),
+            (input.requires_expiration.unwrap_or(false) as i64).into(),
+            input.shelf_life_days.map_or(Value::BigInt(None), Value::from),
+            (input.requires_batch_tracking.unwrap_or(false) as i64).into(),
             is_active.into(),
         ],
     ))
     .await?;
+
+    let id_row = tx
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT last_insert_rowid() AS id".to_string(),
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read created article id")))?;
+    let article_id: i64 = id_row.try_get("", "id")?;
+
+    record_state_event(
+        &tx,
+        "ARTICLE",
+        article_id,
+        None,
+        "CREATED",
+        None,
+        Some("article.created"),
+        Some(&format!("Article {code} created")),
+    )
+    .await?;
+
     tx.commit().await?;
 
     let mut rows = list_articles(
@@ -1208,7 +1289,7 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
     )
     .await?;
 
-    rows.retain(|r| r.article_code == code);
+    rows.retain(|r| r.id == article_id);
     rows.into_iter()
         .next()
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created article not found")))
@@ -1273,6 +1354,32 @@ pub async fn update_article(
     }
     let is_active = parse_bool_to_i64(input.is_active, true);
 
+    let before_code_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT article_code FROM articles WHERE id = ?",
+            [article_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "InventoryArticle".to_string(),
+            id: article_id.to_string(),
+        })?;
+    let before_code: String = before_code_row.try_get("", "article_code")?;
+    let before = list_articles(
+        db,
+        InventoryArticleFilter {
+            search: Some(before_code.clone()),
+        },
+    )
+    .await?
+    .into_iter()
+    .find(|a| a.id == article_id)
+    .ok_or_else(|| AppError::NotFound {
+        entity: "InventoryArticle".to_string(),
+        id: article_id.to_string(),
+    })?;
+
     let conflicting = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1305,25 +1412,57 @@ pub async fn update_article(
                  max_stock = ?,
                  reorder_point = ?,
                  safety_stock = ?,
+                 manufacturer_name = ?,
+                 manufacturer_part_number = ?,
+                 oem_part_number = ?,
+                 replenishment_policy_code = ?,
+                 economic_order_qty = ?,
+                 minimum_order_qty = ?,
+                 maximum_order_qty = ?,
+                 order_multiple_qty = ?,
+                 lead_time_days = ?,
+                 review_period_days = ?,
+                 abc_class_code = ?,
+                 xyz_class_code = ?,
+                 is_critical_spare = ?,
+                 requires_expiration = ?,
+                 shelf_life_days = ?,
+                 requires_batch_tracking = ?,
                  is_active = ?,
                  row_version = row_version + 1,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE id = ? AND row_version = ?",
             [
                 code.clone().into(),
-                name.into(),
-                input.family_id.into(),
+                name.clone().into(),
+                input.family_id.map_or(Value::BigInt(None), Value::from),
                 input.unit_value_id.into(),
-                input.criticality_value_id.into(),
+                input.criticality_value_id.map_or(Value::BigInt(None), Value::from),
                 input.stocking_type_value_id.into(),
                 input.tax_category_value_id.into(),
-                input.procurement_category_value_id.into(),
-                input.preferred_warehouse_id.into(),
-                input.preferred_location_id.into(),
+                input.procurement_category_value_id.map_or(Value::BigInt(None), Value::from),
+                input.preferred_warehouse_id.map_or(Value::BigInt(None), Value::from),
+                input.preferred_location_id.map_or(Value::BigInt(None), Value::from),
                 input.min_stock.into(),
-                input.max_stock.into(),
+                input.max_stock.map_or(Value::Double(None), Value::from),
                 input.reorder_point.into(),
                 input.safety_stock.into(),
+                input.manufacturer_name.clone().map_or(Value::String(None), Value::from),
+                input.manufacturer_part_number.clone().map_or(Value::String(None), Value::from),
+                input.oem_part_number.clone().map_or(Value::String(None), Value::from),
+                input.replenishment_policy_code.clone().map_or(Value::String(None), Value::from),
+                input.economic_order_qty.map_or(Value::Double(None), Value::from),
+                input.minimum_order_qty.map_or(Value::Double(None), Value::from),
+                input.maximum_order_qty.map_or(Value::Double(None), Value::from),
+                input.order_multiple_qty.map_or(Value::Double(None), Value::from),
+                input.lead_time_days.map_or(Value::BigInt(None), Value::from),
+                input.review_period_days.map_or(Value::BigInt(None), Value::from),
+                input.abc_class_code.clone().map_or(Value::String(None), Value::from),
+                input.xyz_class_code.clone().map_or(Value::String(None), Value::from),
+                (input.is_critical_spare.unwrap_or(false) as i64).into(),
+                (input.requires_expiration.unwrap_or(false) as i64).into(),
+                input.shelf_life_days.map_or(Value::BigInt(None), Value::from),
+                (input.requires_batch_tracking.unwrap_or(false) as i64).into(),
                 is_active.into(),
                 article_id.into(),
                 expected_row_version.into(),
@@ -1336,6 +1475,9 @@ pub async fn update_article(
             "Article update failed (not found or stale row_version).".to_string(),
         ]));
     }
+
+    record_article_field_changes(&tx, article_id, &before, &input, &code, &name, is_active).await?;
+
     tx.commit().await?;
 
     let rows = list_articles(
@@ -1351,6 +1493,144 @@ pub async fn update_article(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("updated article not found")))
 }
 
+async fn record_article_field_changes<C: ConnectionTrait>(
+    db: &C,
+    article_id: i64,
+    before: &InventoryArticle,
+    input: &InventoryArticleInput,
+    new_code: &str,
+    new_name: &str,
+    new_is_active: i64,
+) -> AppResult<()> {
+    let mut changes: Vec<(&str, String)> = Vec::new();
+
+    if before.article_code != new_code {
+        changes.push((
+            "field.article_code",
+            format!("{} → {}", before.article_code, new_code),
+        ));
+    }
+    if before.article_name != new_name {
+        changes.push((
+            "field.article_name",
+            format!("{} → {}", before.article_name, new_name),
+        ));
+    }
+    if before.family_id != input.family_id {
+        let from = before
+            .family_name
+            .clone()
+            .or_else(|| before.family_code.clone())
+            .unwrap_or_else(|| "—".to_string());
+        changes.push(("field.family", format!("{from} → updated")));
+    }
+    if before.unit_value_id != input.unit_value_id {
+        changes.push((
+            "field.unit",
+            format!("{} → updated", before.unit_label),
+        ));
+    }
+    if before.criticality_value_id != input.criticality_value_id {
+        let from = before
+            .criticality_label
+            .clone()
+            .or_else(|| before.criticality_code.clone())
+            .unwrap_or_else(|| "—".to_string());
+        changes.push(("field.criticality", format!("{from} → updated")));
+    }
+    if before.stocking_type_value_id != input.stocking_type_value_id {
+        changes.push((
+            "field.stocking_type",
+            format!("{} → updated", before.stocking_type_label),
+        ));
+    }
+    if before.tax_category_value_id != input.tax_category_value_id {
+        changes.push((
+            "field.tax_category",
+            format!("{} → updated", before.tax_category_label),
+        ));
+    }
+    if before.procurement_category_value_id != input.procurement_category_value_id {
+        let from = before
+            .procurement_category_label
+            .clone()
+            .or_else(|| before.procurement_category_code.clone())
+            .unwrap_or_else(|| "—".to_string());
+        changes.push(("field.procurement_category", format!("{from} → updated")));
+    }
+    if before.preferred_warehouse_id != input.preferred_warehouse_id {
+        let from = before
+            .preferred_warehouse_code
+            .clone()
+            .unwrap_or_else(|| "—".to_string());
+        changes.push(("field.preferred_warehouse", format!("{from} → updated")));
+    }
+    if before.preferred_location_id != input.preferred_location_id {
+        let from = before
+            .preferred_location_code
+            .clone()
+            .unwrap_or_else(|| "—".to_string());
+        changes.push(("field.preferred_location", format!("{from} → updated")));
+    }
+    if (before.min_stock - input.min_stock).abs() > f64::EPSILON {
+        changes.push((
+            "field.min_stock",
+            format!("{} → {}", before.min_stock, input.min_stock),
+        ));
+    }
+    if before.max_stock != input.max_stock {
+        changes.push((
+            "field.max_stock",
+            format!(
+                "{} → {}",
+                opt_f64(before.max_stock),
+                opt_f64(input.max_stock)
+            ),
+        ));
+    }
+    if (before.reorder_point - input.reorder_point).abs() > f64::EPSILON {
+        changes.push((
+            "field.reorder_point",
+            format!("{} → {}", before.reorder_point, input.reorder_point),
+        ));
+    }
+    if (before.safety_stock - input.safety_stock).abs() > f64::EPSILON {
+        changes.push((
+            "field.safety_stock",
+            format!("{} → {}", before.safety_stock, input.safety_stock),
+        ));
+    }
+    if before.is_active != new_is_active {
+        changes.push((
+            "field.is_active",
+            format!("{} → {}", before.is_active, new_is_active),
+        ));
+    }
+
+    if changes.is_empty() {
+        return Ok(());
+    }
+
+    for (reason, note) in changes {
+        record_state_event(
+            db,
+            "ARTICLE",
+            article_id,
+            Some("UPDATED"),
+            "UPDATED",
+            None,
+            Some(reason),
+            Some(&note),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn opt_f64(v: Option<f64>) -> String {
+    v.map(|n| n.to_string()).unwrap_or_else(|| "—".to_string())
+}
+
 pub async fn list_stock_balances(
     db: &DatabaseConnection,
     filter: InventoryStockFilter,
@@ -1358,8 +1638,8 @@ pub async fn list_stock_balances(
     let mut sql = String::from(
         r#"
         SELECT sb.id, sb.article_id, a.article_code, a.article_name,
-               sb.warehouse_id, w.code AS warehouse_code,
-               sb.location_id, sl.code AS location_code,
+               sb.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
+               sb.location_id, sl.code AS location_code, sl.name AS location_name,
                sb.on_hand_qty, sb.reserved_qty, sb.available_qty, sb.updated_at
         FROM stock_balances sb
         JOIN articles a ON a.id = sb.article_id
@@ -1401,8 +1681,10 @@ pub async fn list_stock_balances(
                 article_name: row.try_get("", "article_name")?,
                 warehouse_id: row.try_get("", "warehouse_id")?,
                 warehouse_code: row.try_get("", "warehouse_code")?,
+                warehouse_name: row.try_get("", "warehouse_name")?,
                 location_id: row.try_get("", "location_id")?,
                 location_code: row.try_get("", "location_code")?,
+                location_name: row.try_get("", "location_name")?,
                 on_hand_qty: row.try_get("", "on_hand_qty")?,
                 reserved_qty: row.try_get("", "reserved_qty")?,
                 available_qty: row.try_get("", "available_qty")?,
@@ -1422,8 +1704,10 @@ pub async fn list_stock_balances(
           a.article_name,
           sl.warehouse_id,
           w.code AS warehouse_code,
+          w.name AS warehouse_name,
           sl.id AS location_id,
           sl.code AS location_code,
+          sl.name AS location_name,
           0.0 AS on_hand_qty,
           0.0 AS reserved_qty,
           0.0 AS available_qty,
@@ -1484,8 +1768,10 @@ pub async fn list_stock_balances(
             article_name: row.try_get("", "article_name")?,
             warehouse_id: row.try_get("", "warehouse_id")?,
             warehouse_code: row.try_get("", "warehouse_code")?,
+            warehouse_name: row.try_get("", "warehouse_name")?,
             location_id: row.try_get("", "location_id")?,
             location_code: row.try_get("", "location_code")?,
+            location_name: row.try_get("", "location_name")?,
             on_hand_qty: row.try_get("", "on_hand_qty")?,
             reserved_qty: row.try_get("", "reserved_qty")?,
             available_qty: row.try_get("", "available_qty")?,
@@ -1513,7 +1799,6 @@ pub async fn adjust_stock(
         ]));
     }
     let source_type = "MANUAL_ADJUSTMENT".to_string();
-    let source_ref = input.reason.clone();
 
     let tx = db.begin().await?;
     let warehouse_id = ensure_active_mutation_context(&tx, input.article_id, input.location_id).await?;
@@ -1525,6 +1810,26 @@ pub async fn adjust_stock(
             "Adjustment would produce negative stock.".to_string(),
         ]));
     }
+
+    // Critical spare guard: block adjustments that would leave on_hand = 0
+    if next_on_hand == 0.0 {
+        let critical_row = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COALESCE(is_critical_spare, 0) AS is_critical_spare FROM articles WHERE id = ?",
+                [input.article_id.into()],
+            ))
+            .await?;
+        if let Some(row) = critical_row {
+            let is_critical: i64 = row.try_get("", "is_critical_spare").unwrap_or(0);
+            if is_critical == 1 {
+                return Err(AppError::ValidationFailed(vec![
+                    "Cannot reduce on-hand to 0 for a critical spare.".to_string(),
+                ]));
+            }
+        }
+    }
+
     upsert_balance(
         &tx,
         input.article_id,
@@ -1549,8 +1854,9 @@ pub async fn adjust_stock(
         input.delta_qty.abs(),
         &source_type,
         None,
-        source_ref.as_deref(),
-        input.reason.as_deref(),
+        input.source_ref.as_deref(),
+        input.reason_code.as_deref(),
+        input.notes.as_deref(),
     )
     .await?;
 
@@ -1703,14 +2009,15 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
     source_type: &str,
     source_id: Option<i64>,
     source_ref: Option<&str>,
-    reason: Option<&str>,
+    reason_code: Option<&str>,
+    notes: Option<&str>,
 ) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_transactions (
              article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
-             source_type, source_id, source_ref, reason, performed_by_id, performed_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+             source_type, source_id, source_ref, reason_code, reason, performed_by_id, performed_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
         [
             article_id.into(),
             warehouse_id.into(),
@@ -1721,7 +2028,8 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
             source_type.to_string().into(),
             source_id.into(),
             source_ref.map(|v| v.to_string()).into(),
-            reason.map(|v| v.to_string()).into(),
+            reason_code.map(|v| v.to_string()).into(),
+            notes.map(|v| v.to_string()).into(),
         ],
     ))
     .await?;
@@ -1737,8 +2045,8 @@ async fn load_balance(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT sb.id, sb.article_id, a.article_code, a.article_name,
-                    sb.warehouse_id, w.code AS warehouse_code,
-                    sb.location_id, sl.code AS location_code,
+                    sb.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
+                    sb.location_id, sl.code AS location_code, sl.name AS location_name,
                     sb.on_hand_qty, sb.reserved_qty, sb.available_qty, sb.updated_at
              FROM stock_balances sb
              JOIN articles a ON a.id = sb.article_id
@@ -1757,8 +2065,10 @@ async fn load_balance(
         article_name: row.try_get("", "article_name")?,
         warehouse_id: row.try_get("", "warehouse_id")?,
         warehouse_code: row.try_get("", "warehouse_code")?,
+        warehouse_name: row.try_get("", "warehouse_name")?,
         location_id: row.try_get("", "location_id")?,
         location_code: row.try_get("", "location_code")?,
+        location_name: row.try_get("", "location_name")?,
         on_hand_qty: row.try_get("", "on_hand_qty")?,
         reserved_qty: row.try_get("", "reserved_qty")?,
         available_qty: row.try_get("", "available_qty")?,
@@ -1771,15 +2081,17 @@ async fn load_reservation_by_id<C: ConnectionTrait>(db: &C, reservation_id: i64)
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT r.id, r.article_id, a.article_code, a.article_name,
-                    r.warehouse_id, w.code AS warehouse_code,
-                    r.location_id, sl.code AS location_code,
+                    r.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
+                    r.location_id, sl.code AS location_code, sl.name AS location_name,
                     r.source_type, r.source_id, r.source_ref,
+                    CASE WHEN r.source_type IN ('WORK_ORDER','WORK_ORDER_PART') THEN COALESCE(wo.code, r.source_ref) ELSE NULL END AS work_order_code,
                     r.quantity_reserved, r.quantity_issued, r.status, r.notes,
                     r.created_by_id, r.created_at, r.updated_at, r.released_at
              FROM stock_reservations r
              JOIN articles a ON a.id = r.article_id
              JOIN warehouses w ON w.id = r.warehouse_id
              JOIN stock_locations sl ON sl.id = r.location_id
+             LEFT JOIN work_orders wo ON wo.id = r.source_id AND r.source_type IN ('WORK_ORDER','WORK_ORDER_PART')
              WHERE r.id = ?",
             [reservation_id.into()],
         ))
@@ -1795,11 +2107,14 @@ async fn load_reservation_by_id<C: ConnectionTrait>(db: &C, reservation_id: i64)
         article_name: row.try_get("", "article_name")?,
         warehouse_id: row.try_get("", "warehouse_id")?,
         warehouse_code: row.try_get("", "warehouse_code")?,
+        warehouse_name: row.try_get("", "warehouse_name")?,
         location_id: row.try_get("", "location_id")?,
         location_code: row.try_get("", "location_code")?,
+        location_name: row.try_get("", "location_name")?,
         source_type: row.try_get("", "source_type")?,
         source_id: row.try_get("", "source_id")?,
         source_ref: row.try_get("", "source_ref")?,
+        work_order_code: row.try_get("", "work_order_code").ok().flatten(),
         quantity_reserved: row.try_get("", "quantity_reserved")?,
         quantity_issued: row.try_get("", "quantity_issued")?,
         status: row.try_get("", "status")?,
@@ -1884,6 +2199,7 @@ pub async fn reserve_stock(
         &input.source_type,
         input.source_id,
         input.source_ref.as_deref(),
+        None,
         input.notes.as_deref(),
     )
     .await?;
@@ -1965,6 +2281,7 @@ pub async fn issue_reserved_stock(
         &tx_source_type,
         input.source_id.or(reservation.source_id),
         input.source_ref.as_deref().or(reservation.source_ref.as_deref()),
+        None,
         input.notes.as_deref(),
     )
     .await?;
@@ -2035,6 +2352,7 @@ pub async fn return_reserved_stock(
         &reservation.source_type,
         reservation.source_id,
         reservation.source_ref.as_deref(),
+        None,
         input.notes.as_deref(),
     )
     .await?;
@@ -2093,6 +2411,7 @@ pub(crate) async fn release_stock_reservation_with_connection<C: ConnectionTrait
             &reservation.source_type,
             reservation.source_id,
             reservation.source_ref.as_deref(),
+            None,
             notes,
         )
         .await?;
@@ -2176,6 +2495,7 @@ pub async fn transfer_stock(
         &source_type,
         input.source_id,
         input.source_ref.as_deref(),
+        None,
         input.notes.as_deref(),
     )
     .await?;
@@ -2190,6 +2510,7 @@ pub async fn transfer_stock(
         &source_type,
         input.source_id,
         input.source_ref.as_deref(),
+        None,
         input.notes.as_deref(),
     )
     .await?;
@@ -2206,15 +2527,17 @@ pub async fn list_reservations(
 ) -> AppResult<Vec<StockReservation>> {
     let mut sql = String::from(
         "SELECT r.id, r.article_id, a.article_code, a.article_name,
-                r.warehouse_id, w.code AS warehouse_code,
-                r.location_id, sl.code AS location_code,
+                r.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
+                r.location_id, sl.code AS location_code, sl.name AS location_name,
                 r.source_type, r.source_id, r.source_ref,
+                CASE WHEN r.source_type IN ('WORK_ORDER','WORK_ORDER_PART') THEN COALESCE(wo.code, r.source_ref) ELSE NULL END AS work_order_code,
                 r.quantity_reserved, r.quantity_issued, r.status, r.notes,
                 r.created_by_id, r.created_at, r.updated_at, r.released_at
          FROM stock_reservations r
          JOIN articles a ON a.id = r.article_id
          JOIN warehouses w ON w.id = r.warehouse_id
          JOIN stock_locations sl ON sl.id = r.location_id
+         LEFT JOIN work_orders wo ON wo.id = r.source_id AND r.source_type IN ('WORK_ORDER','WORK_ORDER_PART')
          WHERE 1=1",
     );
     let mut values: Vec<sea_orm::Value> = Vec::new();
@@ -2256,11 +2579,14 @@ pub async fn list_reservations(
                 article_name: row.try_get("", "article_name")?,
                 warehouse_id: row.try_get("", "warehouse_id")?,
                 warehouse_code: row.try_get("", "warehouse_code")?,
+                warehouse_name: row.try_get("", "warehouse_name")?,
                 location_id: row.try_get("", "location_id")?,
                 location_code: row.try_get("", "location_code")?,
+                location_name: row.try_get("", "location_name")?,
                 source_type: row.try_get("", "source_type")?,
                 source_id: row.try_get("", "source_id")?,
                 source_ref: row.try_get("", "source_ref")?,
+                work_order_code: row.try_get("", "work_order_code").ok().flatten(),
                 quantity_reserved: row.try_get("", "quantity_reserved")?,
                 quantity_issued: row.try_get("", "quantity_issued")?,
                 status: row.try_get("", "status")?,
@@ -2280,11 +2606,11 @@ pub async fn list_transactions(
 ) -> AppResult<Vec<InventoryTransaction>> {
     let mut sql = String::from(
         "SELECT t.id, t.article_id, a.article_code, a.article_name,
-                t.warehouse_id, w.code AS warehouse_code,
-                t.location_id, sl.code AS location_code,
+                t.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
+                t.location_id, sl.code AS location_code, sl.name AS location_name,
                 t.reservation_id, t.movement_type, t.quantity,
                 t.source_type, t.source_id, t.source_ref,
-                t.reason, t.performed_by_id, t.performed_at
+                t.reason_code, t.reason, t.performed_by_id, t.performed_at
          FROM inventory_transactions t
          JOIN articles a ON a.id = t.article_id
          JOIN warehouses w ON w.id = t.warehouse_id
@@ -2332,15 +2658,18 @@ pub async fn list_transactions(
                 article_name: row.try_get("", "article_name")?,
                 warehouse_id: row.try_get("", "warehouse_id")?,
                 warehouse_code: row.try_get("", "warehouse_code")?,
+                warehouse_name: row.try_get("", "warehouse_name")?,
                 location_id: row.try_get("", "location_id")?,
                 location_code: row.try_get("", "location_code")?,
+                location_name: row.try_get("", "location_name")?,
                 reservation_id: row.try_get("", "reservation_id")?,
                 movement_type: row.try_get("", "movement_type")?,
                 quantity: row.try_get("", "quantity")?,
                 source_type: row.try_get("", "source_type")?,
                 source_id: row.try_get("", "source_id")?,
                 source_ref: row.try_get("", "source_ref")?,
-                reason: row.try_get("", "reason")?,
+                reason_code: row.try_get("", "reason_code")?,
+                notes: row.try_get("", "reason")?,
                 performed_by_id: row.try_get("", "performed_by_id")?,
                 performed_at: row.try_get("", "performed_at")?,
             })
@@ -2424,4 +2753,910 @@ pub async fn evaluate_reorder(
     }
 
     Ok(recommendations)
+}
+
+pub async fn evaluate_replenishment(
+    db: &DatabaseConnection,
+    warehouse_id: Option<i64>,
+) -> AppResult<Vec<crate::inventory::domain::InventoryReplenishmentRecommendation>> {
+    let base = evaluate_reorder(db, warehouse_id).await?;
+
+    let mut result = Vec::new();
+    for r in base {
+        let reason = match r.trigger_type.as_str() {
+            "reorder_point" => Some("Below reorder point".to_string()),
+            "min_stock" => Some("Below minimum stock".to_string()),
+            other => Some(format!("Replenishment trigger: {other}")),
+        };
+
+        let transfer_balances = suggest_internal_transfer(db, r.article_id, r.warehouse_id).await?;
+        let transfer_options: Vec<crate::inventory::domain::ReplenishmentTransferOption> =
+            transfer_balances
+                .into_iter()
+                .map(|b| crate::inventory::domain::ReplenishmentTransferOption {
+                    warehouse_id: b.warehouse_id,
+                    warehouse_code: b.warehouse_code,
+                    available_qty: b.available_qty,
+                })
+                .collect();
+        let suggestion_type = if transfer_options.is_empty() {
+            "PURCHASE".to_string()
+        } else {
+            "TRANSFER".to_string()
+        };
+
+        // Resolve preferred supplier for this article
+        let sup_row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT sas.supplier_id, s.name AS supplier_name,
+                        COALESCE(sas.lead_time_days, s.default_lead_time_days) AS lead_time_days,
+                        sas.unit_price_hint
+                 FROM inventory_supplier_article_sources sas
+                 JOIN inventory_suppliers s ON s.id = sas.supplier_id
+                 WHERE sas.article_id = ? AND sas.is_active = 1 AND s.is_active = 1
+                   AND s.status_code <> 'BLOCKED'
+                 ORDER BY sas.is_preferred DESC, sas.priority ASC
+                 LIMIT 1",
+                [r.article_id.into()],
+            ))
+            .await
+            .ok()
+            .flatten();
+
+        let (suggested_supplier_id, suggested_supplier_name, estimated_cost, expected_arrival) =
+            if let Some(row) = sup_row {
+                let sid: Option<i64> = row.try_get("", "supplier_id").ok();
+                let sname: Option<String> = row.try_get("", "supplier_name").ok().flatten();
+                let price: Option<f64> = row.try_get("", "unit_price_hint").ok().flatten();
+                let lt_days: Option<i64> = row.try_get("", "lead_time_days").ok().flatten();
+                let cost = price.map(|p| p * r.suggested_reorder_qty);
+                let arrival = lt_days.map(|d| {
+                    let dt = chrono::Utc::now() + chrono::Duration::days(d);
+                    dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+                });
+                (sid, sname, cost, arrival)
+            } else {
+                (None, None, None, None)
+            };
+
+        result.push(crate::inventory::domain::InventoryReplenishmentRecommendation {
+            article_id: r.article_id,
+            article_code: r.article_code,
+            article_name: r.article_name,
+            warehouse_id: r.warehouse_id,
+            warehouse_code: r.warehouse_code,
+            min_stock: r.min_stock,
+            reorder_point: r.reorder_point,
+            max_stock: r.max_stock,
+            on_hand_qty: r.on_hand_qty,
+            reserved_qty: r.reserved_qty,
+            available_qty: r.available_qty,
+            suggested_reorder_qty: r.suggested_reorder_qty,
+            trigger_type: r.trigger_type,
+            suggestion_type,
+            suggested_supplier_id,
+            suggested_supplier_name,
+            estimated_cost,
+            expected_arrival,
+            reason,
+            transfer_options,
+        });
+    }
+    Ok(result)
+}
+
+pub async fn calculate_abc_classification(db: &DatabaseConnection) -> AppResult<i64> {
+    let a_pct: f64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT CAST(setting_value_json AS REAL) AS v FROM app_settings WHERE setting_key = 'procurement.abc_a_pct' LIMIT 1".to_string(),
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<f64>>("", "v").ok().flatten())
+        .unwrap_or(80.0);
+    let b_pct: f64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT CAST(setting_value_json AS REAL) AS v FROM app_settings WHERE setting_key = 'procurement.abc_b_pct' LIMIT 1".to_string(),
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<f64>>("", "v").ok().flatten())
+        .unwrap_or(95.0);
+
+    // Compute consumption value per article from inventory_transactions over last 12 months
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT t.article_id, COALESCE(SUM(t.quantity), 0) AS total_issued
+             FROM inventory_transactions t
+             WHERE t.movement_type IN ('ISSUE','ADJUST_OUT','GR_ACCEPT')
+               AND t.performed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-12 months')
+             GROUP BY t.article_id
+             ORDER BY total_issued DESC"
+                .to_string(),
+        ))
+        .await
+        .unwrap_or_default();
+
+    let total: f64 = rows.iter().map(|r| r.try_get::<f64>("", "total_issued").unwrap_or(0.0)).sum();
+    if total == 0.0 {
+        return Ok(0);
+    }
+
+    let mut cumulative = 0.0;
+    let mut updated_count = 0i64;
+    for row in &rows {
+        let article_id: i64 = row.try_get("", "article_id").unwrap_or(0);
+        let qty: f64 = row.try_get("", "total_issued").unwrap_or(0.0);
+        cumulative += qty;
+        let pct = cumulative / total * 100.0;
+        let class = if pct <= a_pct { "A" } else if pct <= b_pct { "B" } else { "C" };
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE articles SET abc_class_code = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+            [class.into(), article_id.into()],
+        ))
+        .await
+        .ok();
+        updated_count += 1;
+    }
+    Ok(updated_count)
+}
+
+pub async fn calculate_xyz_classification(db: &DatabaseConnection) -> AppResult<i64> {
+    let x_cv_max: f64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT CAST(setting_value_json AS REAL) AS v FROM app_settings WHERE setting_key = 'procurement.xyz_x_cv_max' LIMIT 1".to_string(),
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<f64>>("", "v").ok().flatten())
+        .unwrap_or(0.5);
+    let y_cv_max: f64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT CAST(setting_value_json AS REAL) AS v FROM app_settings WHERE setting_key = 'procurement.xyz_y_cv_max' LIMIT 1".to_string(),
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<f64>>("", "v").ok().flatten())
+        .unwrap_or(1.0);
+
+    // Monthly demand variability (CV = stddev/mean)
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT t.article_id,
+                    AVG(monthly_qty) AS mean_qty,
+                    -- SQLite doesn't have stddev, approximate with variance manually
+                    COUNT(*) AS period_count,
+                    SUM(monthly_qty * monthly_qty) AS sum_sq,
+                    SUM(monthly_qty) AS sum_qty
+             FROM (
+               SELECT article_id,
+                      strftime('%Y-%m', performed_at) AS month,
+                      SUM(quantity) AS monthly_qty
+               FROM inventory_transactions
+               WHERE movement_type IN ('ISSUE','ADJUST_OUT')
+                 AND performed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-12 months')
+               GROUP BY article_id, strftime('%Y-%m', performed_at)
+             ) t
+             GROUP BY t.article_id
+             HAVING COUNT(*) >= 2"
+                .to_string(),
+        ))
+        .await
+        .unwrap_or_default();
+
+    let mut updated_count = 0i64;
+    for row in &rows {
+        let article_id: i64 = row.try_get("", "article_id").unwrap_or(0);
+        let n: f64 = row.try_get::<i64>("", "period_count").unwrap_or(1) as f64;
+        let sum_sq: f64 = row.try_get("", "sum_sq").unwrap_or(0.0);
+        let sum_qty: f64 = row.try_get("", "sum_qty").unwrap_or(0.0);
+        let mean = sum_qty / n;
+        let variance = if n > 1.0 { (sum_sq / n) - (mean * mean) } else { 0.0 };
+        let stddev = variance.max(0.0).sqrt();
+        let cv = if mean > 0.0 { stddev / mean } else { 0.0 };
+        let class = if cv <= x_cv_max { "X" } else if cv <= y_cv_max { "Y" } else { "Z" };
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE articles SET xyz_class_code = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+            [class.into(), article_id.into()],
+        ))
+        .await
+        .ok();
+        updated_count += 1;
+    }
+    Ok(updated_count)
+}
+
+pub async fn list_article_equivalents(
+    db: &DatabaseConnection,
+    article_id: i64,
+) -> AppResult<Vec<crate::inventory::domain::ArticleEquivalent>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT ae.id, ae.article_id, a1.article_code, a1.article_name,
+                    ae.equivalent_article_id, a2.article_code AS equivalent_code, a2.article_name AS equivalent_name,
+                    ae.equivalence_type, ae.notes, ae.is_bidirectional, ae.created_at
+             FROM inventory_article_equivalents ae
+             JOIN articles a1 ON a1.id = ae.article_id
+             JOIN articles a2 ON a2.id = ae.equivalent_article_id
+             WHERE ae.article_id = ? OR (ae.equivalent_article_id = ? AND ae.is_bidirectional = 1)
+             ORDER BY ae.equivalence_type ASC, a2.article_code ASC",
+            [article_id.into(), article_id.into()],
+        ))
+        .await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(crate::inventory::domain::ArticleEquivalent {
+                id: row.try_get("", "id")?,
+                article_id: row.try_get("", "article_id")?,
+                article_code: row.try_get("", "article_code")?,
+                article_name: row.try_get("", "article_name")?,
+                equivalent_article_id: row.try_get("", "equivalent_article_id")?,
+                equivalent_code: row.try_get("", "equivalent_code")?,
+                equivalent_name: row.try_get("", "equivalent_name")?,
+                equivalence_type: row.try_get("", "equivalence_type")?,
+                notes: row.try_get("", "notes")?,
+                is_bidirectional: row.try_get("", "is_bidirectional")?,
+                created_at: row.try_get("", "created_at")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn upsert_article_equivalent(
+    db: &DatabaseConnection,
+    input: crate::inventory::domain::ArticleEquivalentInput,
+) -> AppResult<crate::inventory::domain::ArticleEquivalent> {
+    if input.article_id == input.equivalent_article_id {
+        return Err(AppError::ValidationFailed(vec![
+            "An article cannot be equivalent to itself.".to_string(),
+        ]));
+    }
+    let allowed = ["DIRECT", "FUNCTIONAL", "UPGRADE"];
+    if !allowed.contains(&input.equivalence_type.as_str()) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "equivalence_type must be one of: DIRECT, FUNCTIONAL, UPGRADE."
+        )]));
+    }
+    let is_bidirectional = input.is_bidirectional.unwrap_or(true) as i64;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO inventory_article_equivalents
+            (article_id, equivalent_article_id, equivalence_type, notes, is_bidirectional, created_at)
+         VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+         ON CONFLICT(article_id, equivalent_article_id) DO UPDATE SET
+            equivalence_type = excluded.equivalence_type,
+            notes = excluded.notes,
+            is_bidirectional = excluded.is_bidirectional",
+        [
+            input.article_id.into(),
+            input.equivalent_article_id.into(),
+            input.equivalence_type.into(),
+            input.notes.map_or(Value::String(None), Value::from),
+            is_bidirectional.into(),
+        ],
+    ))
+    .await?;
+
+    let equivalents = list_article_equivalents(db, input.article_id).await?;
+    equivalents
+        .into_iter()
+        .find(|e| e.equivalent_article_id == input.equivalent_article_id)
+        .ok_or_else(|| AppError::ValidationFailed(vec!["Failed to retrieve equivalent.".to_string()]))
+}
+
+pub async fn delete_article_equivalent(
+    db: &DatabaseConnection,
+    equivalent_id: i64,
+) -> AppResult<()> {
+    let exists = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM inventory_article_equivalents WHERE id = ?",
+            [equivalent_id.into()],
+        ))
+        .await?;
+    if exists.is_none() {
+        return Err(AppError::NotFound {
+            entity: "inventory_article_equivalents".to_string(),
+            id: equivalent_id.to_string(),
+        });
+    }
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM inventory_article_equivalents WHERE id = ?",
+        [equivalent_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+pub async fn list_article_purchase_history(
+    db: &DatabaseConnection,
+    article_id: i64,
+) -> AppResult<Vec<crate::inventory::domain::ArticlePurchaseHistoryRow>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT po.id AS purchase_order_id, po.po_number, po.ordered_at,
+                    po.supplier_id, s.name AS supplier_name,
+                    pol.unit_price, pol.ordered_qty, pol.received_qty, pol.status
+             FROM purchase_order_lines pol
+             JOIN purchase_orders po ON po.id = pol.purchase_order_id
+             LEFT JOIN inventory_suppliers s ON s.id = po.supplier_id
+             WHERE pol.article_id = ?
+             ORDER BY po.ordered_at DESC NULLS LAST, po.id DESC",
+            [article_id.into()],
+        ))
+        .await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(crate::inventory::domain::ArticlePurchaseHistoryRow {
+                purchase_order_id: row.try_get("", "purchase_order_id")?,
+                po_number: row.try_get("", "po_number")?,
+                ordered_at: row.try_get("", "ordered_at").ok().flatten(),
+                supplier_id: row.try_get("", "supplier_id").ok().flatten(),
+                supplier_name: row.try_get("", "supplier_name").ok().flatten(),
+                unit_price: row.try_get("", "unit_price").ok().flatten(),
+                ordered_qty: row.try_get("", "ordered_qty")?,
+                received_qty: row.try_get("", "received_qty")?,
+                status: row.try_get("", "status")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn get_procurement_dashboard_summary(
+    db: &DatabaseConnection,
+) -> AppResult<crate::inventory::domain::ProcurementDashboardSummary> {
+    let row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT
+                (SELECT COUNT(*) FROM procurement_requisitions WHERE status NOT IN ('APPROVED','CLOSED','CANCELLED','PARTIALLY_RECEIVED')) AS open_requisitions,
+                (SELECT COUNT(*) FROM purchase_orders WHERE status = 'SUBMITTED') AS pending_approval_pos,
+                (SELECT COUNT(*) FROM purchase_orders WHERE status IN ('DRAFT','APPROVED','PARTIALLY_RECEIVED')) AS open_pos,
+                (SELECT COUNT(*) FROM purchase_orders
+                 WHERE status IN ('APPROVED','PARTIALLY_RECEIVED')
+                   AND expected_delivery_date IS NOT NULL
+                   AND expected_delivery_date < strftime('%Y-%m-%dT%H:%M:%SZ','now')) AS overdue_pos,
+                (SELECT COUNT(*) FROM purchase_orders WHERE status IN ('APPROVED','PARTIALLY_RECEIVED')) AS pending_receipts,
+                (SELECT COUNT(DISTINCT a.id) FROM articles a
+                 JOIN stock_balances sb ON sb.article_id = a.id
+                 WHERE a.is_active = 1 AND sb.available_qty <= a.reorder_point AND a.reorder_point > 0) AS low_stock_articles,
+                (SELECT COUNT(DISTINCT a.id) FROM articles a
+                 JOIN stock_balances sb ON sb.article_id = a.id
+                 WHERE a.is_active = 1 AND COALESCE(a.is_critical_spare, 0) = 1
+                   AND sb.available_qty <= a.min_stock) AS critical_low_stock_articles,
+                (SELECT COUNT(*) FROM repairable_orders
+                 WHERE status IN ('REQUESTED','RELEASED','SENT_FOR_REPAIR','RETURNED_FROM_REPAIR')) AS repairables_in_repair,
+                (SELECT COUNT(*) FROM inventory_suppliers
+                 WHERE is_active = 1 AND status_code <> 'BLOCKED') AS active_suppliers_count,
+                (SELECT COUNT(*) FROM purchase_orders
+                 WHERE status IN ('APPROVED','PARTIALLY_RECEIVED')
+                   AND expected_delivery_date IS NOT NULL
+                   AND date(expected_delivery_date) = date('now')) AS receiving_today_count"
+                .to_string(),
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("dashboard summary query failed")))?;
+    Ok(crate::inventory::domain::ProcurementDashboardSummary {
+        open_requisitions: row.try_get("", "open_requisitions").unwrap_or(0),
+        pending_approval_pos: row.try_get("", "pending_approval_pos").unwrap_or(0),
+        open_pos: row.try_get("", "open_pos").unwrap_or(0),
+        overdue_pos: row.try_get("", "overdue_pos").unwrap_or(0),
+        pending_receipts: row.try_get("", "pending_receipts").unwrap_or(0),
+        low_stock_articles: row.try_get("", "low_stock_articles").unwrap_or(0),
+        critical_low_stock_articles: row.try_get("", "critical_low_stock_articles").unwrap_or(0),
+        repairables_in_repair: row.try_get("", "repairables_in_repair").unwrap_or(0),
+        active_suppliers_count: row.try_get("", "active_suppliers_count").unwrap_or(0),
+        receiving_today_count: row.try_get("", "receiving_today_count").unwrap_or(0),
+    })
+}
+
+/// Operational alerts for the procurement dashboard. Top 3 per kind.
+pub async fn get_procurement_alerts(
+    db: &DatabaseConnection,
+) -> AppResult<Vec<crate::inventory::domain::ProcurementAlert>> {
+    let mut alerts = Vec::new();
+
+    let critical_rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT a.id, a.article_code, a.article_name,
+                    COALESCE(SUM(sb.available_qty), 0) AS available_qty, a.min_stock
+             FROM articles a
+             JOIN stock_balances sb ON sb.article_id = a.id
+             WHERE a.is_active = 1 AND COALESCE(a.is_critical_spare, 0) = 1
+               AND a.min_stock > 0
+             GROUP BY a.id
+             HAVING available_qty <= a.min_stock
+             ORDER BY available_qty ASC
+             LIMIT 3"
+                .to_string(),
+        ))
+        .await
+        .unwrap_or_default();
+    for row in critical_rows {
+        let code: String = row.try_get("", "article_code").unwrap_or_default();
+        let name: String = row.try_get("", "article_name").unwrap_or_default();
+        let avail: f64 = row.try_get("", "available_qty").unwrap_or(0.0);
+        let min_stock: f64 = row.try_get("", "min_stock").unwrap_or(0.0);
+        alerts.push(crate::inventory::domain::ProcurementAlert {
+            kind: "CRITICAL_STOCK".to_string(),
+            severity: "high".to_string(),
+            title: format!("Critical stock: {code}"),
+            detail: Some(format!("{name} available {avail} ≤ min {min_stock}")),
+            entity_type: Some("ARTICLE".to_string()),
+            entity_id: row.try_get("", "id").ok(),
+            entity_code: Some(code),
+        });
+    }
+
+    let late_rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id, po_number, expected_delivery_date
+             FROM purchase_orders
+             WHERE status IN ('APPROVED','PARTIALLY_RECEIVED')
+               AND expected_delivery_date IS NOT NULL
+               AND expected_delivery_date < strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             ORDER BY expected_delivery_date ASC
+             LIMIT 3"
+                .to_string(),
+        ))
+        .await
+        .unwrap_or_default();
+    for row in late_rows {
+        let po_number: String = row.try_get("", "po_number").unwrap_or_default();
+        let eta: Option<String> = row.try_get("", "expected_delivery_date").ok().flatten();
+        alerts.push(crate::inventory::domain::ProcurementAlert {
+            kind: "LATE_PO".to_string(),
+            severity: "high".to_string(),
+            title: format!("Late PO: {po_number}"),
+            detail: eta.map(|d| format!("Expected {d}")),
+            entity_type: Some("PURCHASE_ORDER".to_string()),
+            entity_id: row.try_get("", "id").ok(),
+            entity_code: Some(po_number),
+        });
+    }
+
+    let repair_rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT ro.id, ro.order_code, ro.sent_at, a.article_code,
+                    COALESCE(s.default_lead_time_days, a.lead_time_days, 14) AS lead_sla_days
+             FROM repairable_orders ro
+             JOIN articles a ON a.id = ro.article_id
+             LEFT JOIN inventory_suppliers s ON s.id = ro.vendor_supplier_id
+             WHERE ro.status = 'SENT_FOR_REPAIR'
+               AND ro.sent_at IS NOT NULL
+               AND datetime(ro.sent_at, '+' || COALESCE(s.default_lead_time_days, a.lead_time_days, 14) || ' days')
+                   < strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             ORDER BY ro.sent_at ASC
+             LIMIT 3"
+                .to_string(),
+        ))
+        .await
+        .unwrap_or_default();
+    for row in repair_rows {
+        let code: String = row.try_get("", "order_code").unwrap_or_default();
+        let article: String = row.try_get("", "article_code").unwrap_or_default();
+        let sla: i64 = row.try_get("", "lead_sla_days").unwrap_or(14);
+        alerts.push(crate::inventory::domain::ProcurementAlert {
+            kind: "REPAIRABLE_OVERDUE".to_string(),
+            severity: "medium".to_string(),
+            title: format!("Repair overdue: {code}"),
+            detail: Some(format!("{article} past {sla}-day lead SLA")),
+            entity_type: Some("REPAIRABLE_ORDER".to_string()),
+            entity_id: row.try_get("", "id").ok(),
+            entity_code: Some(code),
+        });
+    }
+
+    let supplier_rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT s.id, s.code, s.name, s.default_lead_time_days,
+                    (SELECT COUNT(*) FROM goods_receipt_lines grl
+                     JOIN purchase_order_lines pol ON pol.id = grl.po_line_id
+                     JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                     WHERE po.supplier_id = s.id) AS total_lines,
+                    (SELECT SUM(CASE
+                          WHEN po.expected_delivery_date IS NOT NULL
+                           AND date(COALESCE(gr.received_at, grl.created_at)) <= date(po.expected_delivery_date)
+                           AND grl.accepted_qty >= COALESCE(grl.ordered_qty, pol.ordered_qty)
+                          THEN 1
+                          WHEN po.expected_delivery_date IS NULL
+                           AND grl.accepted_qty >= COALESCE(grl.ordered_qty, pol.ordered_qty)
+                          THEN 1 ELSE 0 END)
+                     FROM goods_receipt_lines grl
+                     JOIN purchase_order_lines pol ON pol.id = grl.po_line_id
+                     JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                     LEFT JOIN goods_receipts gr ON gr.id = grl.goods_receipt_id
+                     WHERE po.supplier_id = s.id) AS on_time_lines,
+                    (SELECT AVG(grl.actual_lead_time_days)
+                     FROM goods_receipt_lines grl
+                     JOIN purchase_order_lines pol ON pol.id = grl.po_line_id
+                     JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                     WHERE po.supplier_id = s.id) AS avg_lead_time,
+                    (SELECT SUM(COALESCE(grl.accepted_qty, 0) + COALESCE(grl.rejected_qty, 0))
+                     FROM goods_receipt_lines grl
+                     JOIN purchase_order_lines pol ON pol.id = grl.po_line_id
+                     JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                     WHERE po.supplier_id = s.id) AS total_received,
+                    (SELECT SUM(COALESCE(grl.rejected_qty, 0))
+                     FROM goods_receipt_lines grl
+                     JOIN purchase_order_lines pol ON pol.id = grl.po_line_id
+                     JOIN purchase_orders po ON po.id = pol.purchase_order_id
+                     WHERE po.supplier_id = s.id) AS total_rejected
+             FROM inventory_suppliers s
+             WHERE s.is_active = 1 AND s.status_code <> 'BLOCKED'"
+                .to_string(),
+        ))
+        .await
+        .unwrap_or_default();
+
+    let mut high_risk = Vec::new();
+    for row in supplier_rows {
+        let total: i64 = row.try_get("", "total_lines").unwrap_or(0);
+        if total <= 0 {
+            continue;
+        }
+        let on_time: i64 = row.try_get("", "on_time_lines").unwrap_or(0);
+        let avg_lt: Option<f64> = row.try_get("", "avg_lead_time").ok().flatten();
+        let total_recv: f64 = row.try_get("", "total_received").unwrap_or(0.0);
+        let total_rej: f64 = row.try_get("", "total_rejected").unwrap_or(0.0);
+        let otif = Some(on_time as f64 / total as f64 * 100.0);
+        let rejected = if total_recv > 0.0 {
+            Some(total_rej / total_recv * 100.0)
+        } else {
+            None
+        };
+        let promised: Option<i64> = row.try_get("", "default_lead_time_days").ok().flatten();
+        let risk = crate::inventory::suppliers::compute_supplier_risk_level(
+            otif, rejected, avg_lt, promised,
+        );
+        if risk.as_deref() == Some("HIGH") {
+            let code: String = row.try_get("", "code").unwrap_or_default();
+            let name: String = row.try_get("", "name").unwrap_or_default();
+            high_risk.push(crate::inventory::domain::ProcurementAlert {
+                kind: "SUPPLIER_DELAY".to_string(),
+                severity: "medium".to_string(),
+                title: format!("High-risk supplier: {code}"),
+                detail: Some(name),
+                entity_type: Some("SUPPLIER".to_string()),
+                entity_id: row.try_get("", "id").ok(),
+                entity_code: Some(code),
+            });
+        }
+    }
+    high_risk.truncate(3);
+    alerts.extend(high_risk);
+
+    Ok(alerts)
+}
+
+pub async fn get_article_consumption_monthly(
+    db: &DatabaseConnection,
+    article_id: i64,
+    months: Option<i64>,
+) -> AppResult<Vec<crate::inventory::domain::ArticleConsumptionMonth>> {
+    let months = months.unwrap_or(12).clamp(1, 36);
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT strftime('%Y-%m', t.performed_at) AS year_month,
+                    COALESCE(SUM(ABS(t.quantity)), 0) AS issued_qty
+             FROM inventory_transactions t
+             WHERE t.article_id = ?
+               AND t.movement_type IN ('ISSUE','ADJUST_OUT')
+               AND t.performed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)
+             GROUP BY year_month
+             ORDER BY year_month ASC",
+            [
+                article_id.into(),
+                format!("-{} months", months).into(),
+            ],
+        ))
+        .await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(crate::inventory::domain::ArticleConsumptionMonth {
+                year_month: row.try_get("", "year_month")?,
+                issued_qty: row.try_get("", "issued_qty")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn get_article_repairable_history(
+    db: &DatabaseConnection,
+    article_id: i64,
+) -> AppResult<Vec<crate::inventory::domain::ArticleRepairableHistory>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, order_code, quantity, status, reason,
+                    COALESCE(repair_cost, NULL) AS repair_cost, created_at, updated_at
+             FROM repairable_orders
+             WHERE article_id = ?
+             ORDER BY created_at DESC",
+            [article_id.into()],
+        ))
+        .await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(crate::inventory::domain::ArticleRepairableHistory {
+                order_id: row.try_get("", "id")?,
+                order_code: row.try_get("", "order_code")?,
+                quantity: row.try_get("", "quantity")?,
+                status: row.try_get("", "status")?,
+                reason: row.try_get("", "reason").ok().flatten(),
+                repair_cost: row.try_get("", "repair_cost").ok().flatten(),
+                created_at: row.try_get("", "created_at")?,
+                updated_at: row.try_get("", "updated_at")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn list_inventory_document_links(
+    db: &DatabaseConnection,
+    entity_type: &str,
+    entity_id: i64,
+) -> AppResult<Vec<crate::inventory::domain::InventoryDocumentLink>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, entity_type, entity_id, document_ref, link_purpose, is_primary,
+                    valid_from, valid_to, created_by_id, created_at
+             FROM inventory_document_links
+             WHERE entity_type = ? AND entity_id = ?
+             ORDER BY is_primary DESC, created_at DESC",
+            [entity_type.into(), entity_id.into()],
+        ))
+        .await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(crate::inventory::domain::InventoryDocumentLink {
+                id: row.try_get("", "id")?,
+                entity_type: row.try_get("", "entity_type")?,
+                entity_id: row.try_get("", "entity_id")?,
+                document_ref: row.try_get("", "document_ref")?,
+                link_purpose: row.try_get("", "link_purpose")?,
+                is_primary: row.try_get("", "is_primary")?,
+                valid_from: row.try_get("", "valid_from")?,
+                valid_to: row.try_get("", "valid_to").ok().flatten(),
+                created_by_id: row.try_get("", "created_by_id").ok().flatten(),
+                created_at: row.try_get("", "created_at")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn upsert_inventory_document_link(
+    db: &DatabaseConnection,
+    input: crate::inventory::domain::InventoryDocumentLinkInput,
+) -> AppResult<crate::inventory::domain::InventoryDocumentLink> {
+    const ALLOWED_ENTITY_TYPES: &[&str] = &["SUPPLIER", "PURCHASE_ORDER", "REPAIRABLE_ORDER", "ARTICLE"];
+    let entity_type = input.entity_type.trim().to_uppercase();
+    if !ALLOWED_ENTITY_TYPES.contains(&entity_type.as_str()) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Unsupported document entity_type '{entity_type}'. Allowed: SUPPLIER, PURCHASE_ORDER, REPAIRABLE_ORDER, ARTICLE."
+        )]));
+    }
+    if input.document_ref.trim().is_empty() {
+        return Err(AppError::ValidationFailed(vec!["document_ref is required.".to_string()]));
+    }
+    if input.link_purpose.trim().is_empty() {
+        return Err(AppError::ValidationFailed(vec!["link_purpose is required.".to_string()]));
+    }
+    let is_primary = input.is_primary.unwrap_or(false) as i64;
+    let valid_from = input.valid_from.clone().unwrap_or_else(|| {
+        chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    });
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO inventory_document_links
+            (entity_type, entity_id, document_ref, link_purpose, is_primary, valid_from, valid_to, created_by_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+        [
+            entity_type.into(),
+            input.entity_id.into(),
+            input.document_ref.clone().into(),
+            input.link_purpose.clone().into(),
+            is_primary.into(),
+            valid_from.into(),
+            input.valid_to.clone().map_or(Value::String(None), Value::from),
+            input.created_by_id.map_or(Value::BigInt(None), Value::from),
+        ],
+    ))
+    .await?;
+    let id: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT last_insert_rowid() AS id".to_string(),
+        ))
+        .await?
+        .ok_or_else(|| AppError::ValidationFailed(vec!["Failed to create document link.".to_string()]))?
+        .try_get("", "id")?;
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, entity_type, entity_id, document_ref, link_purpose, is_primary,
+                    valid_from, valid_to, created_by_id, created_at
+             FROM inventory_document_links WHERE id = ?",
+            [id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "inventory_document_links".to_string(),
+            id: id.to_string(),
+        })?;
+    Ok(crate::inventory::domain::InventoryDocumentLink {
+        id: row.try_get("", "id")?,
+        entity_type: row.try_get("", "entity_type")?,
+        entity_id: row.try_get("", "entity_id")?,
+        document_ref: row.try_get("", "document_ref")?,
+        link_purpose: row.try_get("", "link_purpose")?,
+        is_primary: row.try_get("", "is_primary")?,
+        valid_from: row.try_get("", "valid_from")?,
+        valid_to: row.try_get("", "valid_to").ok().flatten(),
+        created_by_id: row.try_get("", "created_by_id").ok().flatten(),
+        created_at: row.try_get("", "created_at")?,
+    })
+}
+
+/// Projects the stock position of an article after a hypothetical quantity change,
+/// optionally scoped to one warehouse and optionally counting quantity still due on open POs.
+///
+/// Open PO quantity is attributed to a warehouse through the requisition line's preferred
+/// location, the only destination known before goods receipt; lines with no declared
+/// destination are therefore only counted in the company-wide (unscoped) projection.
+pub async fn project_stock_impact(
+    db: &DatabaseConnection,
+    article_id: i64,
+    warehouse_id: Option<i64>,
+    delta_qty: f64,
+    include_open_po_qty: bool,
+) -> AppResult<StockImpactProjection> {
+    if !delta_qty.is_finite() {
+        return Err(AppError::ValidationFailed(vec!["delta_qty must be a finite number.".to_string()]));
+    }
+
+    let mut balance_sql = String::from(
+        "SELECT a.article_code, a.article_name,
+                COALESCE(SUM(sb.on_hand_qty), 0.0) AS on_hand_qty,
+                COALESCE(SUM(sb.reserved_qty), 0.0) AS reserved_qty,
+                COALESCE(SUM(sb.available_qty), 0.0) AS available_qty
+         FROM articles a
+         LEFT JOIN stock_balances sb ON sb.article_id = a.id",
+    );
+    let mut balance_values: Vec<Value> = Vec::new();
+    if let Some(warehouse_id) = warehouse_id {
+        balance_sql.push_str(" AND sb.warehouse_id = ?");
+        balance_values.push(warehouse_id.into());
+    }
+    balance_sql.push_str(" WHERE a.id = ? GROUP BY a.id");
+    balance_values.push(article_id.into());
+
+    let balance_row = db
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, balance_sql, balance_values))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "articles".to_string(),
+            id: article_id.to_string(),
+        })?;
+
+    let warehouse_code: Option<String> = match warehouse_id {
+        Some(warehouse_id) => {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT code FROM warehouses WHERE id = ?",
+                    [warehouse_id.into()],
+                ))
+                .await?
+                .ok_or_else(|| AppError::NotFound {
+                    entity: "warehouses".to_string(),
+                    id: warehouse_id.to_string(),
+                })?;
+            Some(row.try_get("", "code")?)
+        }
+        None => None,
+    };
+
+    let incoming_open_po_qty = if include_open_po_qty {
+        let mut sql = String::from(
+            "SELECT COALESCE(SUM(pol.ordered_qty - pol.received_qty), 0.0) AS incoming_qty
+             FROM purchase_order_lines pol
+             JOIN purchase_orders po ON po.id = pol.purchase_order_id
+             LEFT JOIN procurement_requisition_lines rl ON rl.id = pol.requisition_line_id
+             LEFT JOIN stock_locations dest ON dest.id = rl.preferred_location_id
+             WHERE pol.article_id = ?
+               AND pol.status = 'OPEN'
+               AND pol.ordered_qty > pol.received_qty
+               AND po.status IN ('DRAFT', 'SUBMITTED', 'APPROVED', 'PARTIALLY_RECEIVED')",
+        );
+        let mut values: Vec<Value> = vec![article_id.into()];
+        if let Some(warehouse_id) = warehouse_id {
+            sql.push_str(" AND dest.warehouse_id = ?");
+            values.push(warehouse_id.into());
+        }
+        db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+            .await?
+            .and_then(|row| row.try_get::<f64>("", "incoming_qty").ok())
+            .unwrap_or(0.0)
+    } else {
+        0.0
+    };
+
+    let current_on_hand: f64 = balance_row.try_get("", "on_hand_qty")?;
+
+    Ok(StockImpactProjection {
+        article_id,
+        article_code: balance_row.try_get("", "article_code")?,
+        article_name: balance_row.try_get("", "article_name")?,
+        warehouse_id,
+        warehouse_code,
+        current_on_hand,
+        reserved_qty: balance_row.try_get("", "reserved_qty")?,
+        available_qty: balance_row.try_get("", "available_qty")?,
+        incoming_open_po_qty,
+        delta_qty,
+        projected_on_hand: current_on_hand + delta_qty + incoming_open_po_qty,
+    })
+}
+
+pub async fn suggest_internal_transfer(
+    db: &DatabaseConnection,
+    article_id: i64,
+    target_warehouse_id: i64,
+) -> AppResult<Vec<InventoryStockBalance>> {
+    // Find warehouses with surplus for this article (available > max_stock or available > reorder_point)
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT sb.id, sb.article_id, a.article_code, a.article_name,
+                    sb.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
+                    sb.location_id, sl.code AS location_code, sl.name AS location_name,
+                    sb.on_hand_qty, sb.reserved_qty, sb.available_qty, sb.updated_at
+             FROM stock_balances sb
+             JOIN articles a ON a.id = sb.article_id
+             JOIN warehouses w ON w.id = sb.warehouse_id
+             JOIN stock_locations sl ON sl.id = sb.location_id
+             WHERE sb.article_id = ?
+               AND sb.warehouse_id <> ?
+               AND sb.available_qty > a.reorder_point
+               AND w.is_active = 1
+             ORDER BY sb.available_qty DESC",
+            [article_id.into(), target_warehouse_id.into()],
+        ))
+        .await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(InventoryStockBalance {
+                id: row.try_get("", "id")?,
+                article_id: row.try_get("", "article_id")?,
+                article_code: row.try_get("", "article_code")?,
+                article_name: row.try_get("", "article_name")?,
+                warehouse_id: row.try_get("", "warehouse_id")?,
+                warehouse_code: row.try_get("", "warehouse_code")?,
+                warehouse_name: row.try_get("", "warehouse_name")?,
+                location_id: row.try_get("", "location_id")?,
+                location_code: row.try_get("", "location_code")?,
+                location_name: row.try_get("", "location_name")?,
+                on_hand_qty: row.try_get("", "on_hand_qty")?,
+                reserved_qty: row.try_get("", "reserved_qty")?,
+                available_qty: row.try_get("", "available_qty")?,
+                updated_at: row.try_get("", "updated_at")?,
+            })
+        })
+        .collect()
 }

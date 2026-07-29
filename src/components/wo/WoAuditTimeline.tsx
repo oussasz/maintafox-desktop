@@ -25,6 +25,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
+import { formatPersonLabel } from "@/lib/display";
 import { cn } from "@/lib/utils";
 import { listWoChangeEvents, type WoChangeEvent } from "@/services/wo-audit-service";
 import { toErrorMessage } from "@/utils/errors";
@@ -204,7 +205,10 @@ export function WoAuditTimeline({ woId }: WoAuditTimelineProps) {
             {evt.summary && <p className="mt-1 text-sm text-muted-foreground">{evt.summary}</p>}
 
             <p className="mt-1 text-xs text-muted-foreground">
-              {evt.actor_id != null ? t("audit.user", { id: evt.actor_id }) : t("audit.system")} ·{" "}
+              {evt.actor_id != null
+                ? formatPersonLabel(evt.actor_display_name)
+                : t("audit.system")}{" "}
+              ·{" "}
               {formatActedAt(evt.acted_at, i18n.language)}
             </p>
           </div>

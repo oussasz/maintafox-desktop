@@ -5,6 +5,7 @@ export interface ToastMessage {
   title: string;
   description?: string;
   variant?: "default" | "destructive" | "success";
+  durationMs?: number;
 }
 
 let toastCounter = 0;
@@ -15,10 +16,12 @@ export function useToast() {
   const toast = useCallback((msg: Omit<ToastMessage, "id">) => {
     const id = `toast-${++toastCounter}`;
     setToasts((prev) => [...prev, { ...msg, id }]);
-    // Auto-dismiss after 4 seconds
+    const duration =
+      msg.durationMs ??
+      (msg.variant === "success" ? 8000 : msg.variant === "destructive" ? 6000 : 4000);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    }, duration);
   }, []);
 
   const dismiss = useCallback((id: string) => {

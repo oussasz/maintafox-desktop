@@ -96,6 +96,33 @@ pub async fn verify_trust_key(
     Ok(())
 }
 
+/// Idempotent seed for VPS entitlement/activation trust keys (migration may be missing on older DBs).
+pub async fn ensure_default_licensing_trust_keys(db: &impl ConnectionTrait) -> AppResult<()> {
+    let now = Utc::now().to_rfc3339();
+    for (issuer, key_id, purpose) in [
+        ("maintafox-vps", "key-v1", "entitlement_signature"),
+        ("maintafox-vps", "key-rotated-v2", "entitlement_signature"),
+        ("maintafox-vps", "activation-v1", "activation_signature"),
+        ("maintafox-vps", "admin-policy-v1", "admin_policy_action"),
+    ] {
+        db.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "INSERT OR IGNORE INTO licensing_trust_keys
+             (issuer, key_id, purpose, is_active, is_compromised, created_at, updated_at)
+             VALUES (?, ?, ?, 1, 0, ?, ?)",
+            [
+                issuer.into(),
+                key_id.into(),
+                purpose.into(),
+                now.clone().into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+    }
+    Ok(())
+}
+
 pub async fn register_api_exchange(
     db: &impl ConnectionTrait,
     channel: &str,

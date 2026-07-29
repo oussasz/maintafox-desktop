@@ -9,7 +9,9 @@ import { create } from "zustand";
 
 import { convertDiToWo } from "@/services/di-conversion-service";
 import {
+  archiveDi,
   approveDi,
+  closeDiAsNonExecutable,
   deferDi,
   getDiReviewEvents,
   reactivateDi,
@@ -34,8 +36,10 @@ import type {
 export interface ApproveResult {
   approved: boolean;
   converted: boolean;
+  woId: number | null;
   woCode: string | null;
   conversionError: string | null;
+  approvedRowVersion: number;
 }
 
 interface DiReviewStoreState {
@@ -67,6 +71,8 @@ interface DiReviewStoreState {
   approve: (input: DiApproveInput) => Promise<ApproveResult>;
   defer: (input: DiDeferInput) => Promise<void>;
   reactivate: (input: DiReactivateInput) => Promise<void>;
+  closeAsNonExecutable: (diId: number, expectedRowVersion: number, notes?: string | null) => Promise<void>;
+  archive: (diId: number, expectedRowVersion: number, notes?: string | null) => Promise<void>;
 }
 
 export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
@@ -164,6 +170,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
       const updated = await approveDi(input);
       // Chain conversion: create WO from the approved DI
       let converted = false;
+      let woId: number | null = null;
       let woCode: string | null = null;
       let conversionError: string | null = null;
       try {
@@ -173,6 +180,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
           conversionNotes: input.notes ?? "",
         });
         converted = true;
+        woId = result.wo_id;
         woCode = result.wo_code;
         // Re-fetch the DI to get the post-conversion state
         try {
@@ -187,7 +195,14 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
         set({ activeReviewDi: updated });
       }
       await get().loadReviewQueue();
-      return { approved: true, converted, woCode, conversionError };
+      return {
+        approved: true,
+        converted,
+        woId,
+        woCode,
+        conversionError,
+        approvedRowVersion: updated.row_version,
+      };
     } catch (err) {
       set({ error: toErrorMessage(err) });
       throw err;
@@ -214,6 +229,44 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const updated = await reactivateDi(input);
+      set({ activeReviewDi: updated });
+      await get().loadReviewQueue();
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  closeAsNonExecutable: async (diId, expectedRowVersion, notes) => {
+    set({ saving: true, error: null });
+    try {
+      const updated = await closeDiAsNonExecutable({
+        di_id: diId,
+        actor_id: 0,
+        expected_row_version: expectedRowVersion,
+        notes: notes ?? null,
+      });
+      set({ activeReviewDi: updated });
+      await get().loadReviewQueue();
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  archive: async (diId, expectedRowVersion, notes) => {
+    set({ saving: true, error: null });
+    try {
+      const updated = await archiveDi({
+        di_id: diId,
+        actor_id: 0,
+        expected_row_version: expectedRowVersion,
+        notes: notes ?? null,
+      });
       set({ activeReviewDi: updated });
       await get().loadReviewQueue();
     } catch (err) {

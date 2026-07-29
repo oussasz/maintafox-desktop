@@ -105,6 +105,7 @@ mod tests {
             "title",
             "description",
             "origin_type",
+            "request_type",
             "symptom_code_id",
             "impact_level",
             "production_impact",
@@ -125,6 +126,14 @@ mod tests {
             "archived_at",
             "converted_to_wo_id",
             "converted_at",
+            "sla_rule_id",
+            "sla_target_response_hours",
+            "sla_target_resolution_hours",
+            "sla_escalation_threshold_hours",
+            "sla_response_deadline",
+            "sla_resolution_deadline",
+            "sla_response_breach_notified_at",
+            "sla_resolution_breach_notified_at",
             "reviewer_note",
             "classification_code_id",
             "is_recurrence_flag",
@@ -501,9 +510,9 @@ mod tests {
         if org_exists.is_none() {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at) \
+                "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
                  VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', ?, 'active', \
-                 datetime('now'), datetime('now'))",
+                 datetime('now'), datetime('now'), 1)",
                 [type_id.into()],
             ))
             .await

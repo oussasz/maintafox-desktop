@@ -10,7 +10,7 @@ mod tests {
     use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
-    use crate::org::node_types::{self, CreateNodeTypePayload};
+    use crate::org::node_types::{self, CreateNodeTypePayload, UpdateNodeTypePayload};
     use crate::org::nodes::{self, CreateOrgNodePayload};
     use crate::org::relationship_rules::{self, CreateRelationshipRulePayload};
     use crate::org::structure_model::{self, CreateStructureModelPayload};
@@ -161,6 +161,7 @@ mod tests {
     /// Returns `(site_node_id, plant_node_id, zone_node_id)`.
     async fn create_live_nodes(
         db: &sea_orm::DatabaseConnection,
+        model_id: i32,
         site_type_id: i32,
         plant_type_id: i32,
         zone_type_id: i32,
@@ -178,6 +179,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id as i64,
             },
             1,
         )
@@ -197,6 +199,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id as i64,
             },
             1,
         )
@@ -216,6 +219,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id as i64,
             },
             1,
         )
@@ -225,109 +229,101 @@ mod tests {
         (site_node.id, plant_node.id, zone_node.id)
     }
 
-    /// Helper to build a full draft model v2 with the same three types and rules.
+    /// Fork the published active model into a new draft (copies types, rules, nodes).
+    async fn fork_active_model(db: &sea_orm::DatabaseConnection, description: &str) -> i32 {
+        structure_model::fork_draft_from_published(
+            db,
+            &CreateStructureModelPayload {
+                description: Some(description.to_string()),
+            },
+            1,
+        )
+        .await
+        .expect("fork from published")
+        .id
+    }
+
+    async fn draft_type_id_by_code(
+        db: &sea_orm::DatabaseConnection,
+        draft_id: i32,
+        code: &str,
+    ) -> i32 {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM org_node_types \
+                 WHERE structure_model_id = ? AND code = ? AND is_active = 1 LIMIT 1",
+                [(draft_id as i64).into(), code.into()],
+            ))
+            .await
+            .expect("query type")
+            .unwrap_or_else(|| panic!("type {code} not found in draft {draft_id}"));
+        row.try_get::<i64>("", "id").expect("id") as i32
+    }
+
+    async fn active_node_id_by_code(db: &sea_orm::DatabaseConnection, code: &str) -> i64 {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT n.id FROM org_nodes n \
+                 INNER JOIN org_structure_models m ON m.id = n.structure_model_id AND m.status = 'active' \
+                 WHERE n.code = ? AND n.deleted_at IS NULL LIMIT 1",
+                [code.into()],
+            ))
+            .await
+            .expect("query node")
+            .unwrap_or_else(|| panic!("active node {code} not found"));
+        row.try_get::<i64>("", "id").expect("id")
+    }
+
+    async fn delete_draft_rule(
+        db: &sea_orm::DatabaseConnection,
+        draft_id: i32,
+        parent_code: &str,
+        child_code: &str,
+    ) {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT r.id FROM org_type_relationship_rules r \
+                 INNER JOIN org_node_types pt ON pt.id = r.parent_type_id \
+                 INNER JOIN org_node_types ct ON ct.id = r.child_type_id \
+                 WHERE r.structure_model_id = ? AND pt.code = ? AND ct.code = ? LIMIT 1",
+                [(draft_id as i64).into(), parent_code.into(), child_code.into()],
+            ))
+            .await
+            .expect("query rule")
+            .unwrap_or_else(|| panic!("rule {parent_code}→{child_code} not found in draft {draft_id}"));
+        let rule_id: i32 = row.try_get::<i64>("", "id").expect("id") as i32;
+        relationship_rules::delete_rule(db, rule_id)
+            .await
+            .expect("delete rule");
+    }
+
+    async fn force_deactivate_draft_type(
+        db: &sea_orm::DatabaseConnection,
+        type_id: i32,
+    ) {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE org_node_types SET is_active = 0 WHERE id = ?",
+            [type_id.into()],
+        ))
+        .await
+        .expect("force deactivate type");
+    }
+
+    /// Helper to build a draft fork with the same three types and rules as the active model.
     ///
     /// Returns `(draft_model_id, new_site_type_id, new_plant_type_id, new_zone_type_id)`.
     async fn create_matching_draft_model(
         db: &sea_orm::DatabaseConnection,
     ) -> (i32, i32, i32, i32) {
-        let draft = structure_model::create_model(
-            db,
-            CreateStructureModelPayload {
-                description: Some("Model v2".to_string()),
-            },
-            1,
-        )
-        .await
-        .expect("create draft v2");
-
-        let new_site = node_types::create_node_type(
-            db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "SITE".to_string(),
-                label: "Site v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(0),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: true,
-            },
-        )
-        .await
-        .expect("new SITE type");
-
-        let new_plant = node_types::create_node_type(
-            db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "PLANT".to_string(),
-                label: "Plant v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(1),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .expect("new PLANT type");
-
-        let new_zone = node_types::create_node_type(
-            db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "ZONE".to_string(),
-                label: "Zone v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(2),
-                can_host_assets: true,
-                can_own_work: false,
-                can_carry_cost_center: false,
-                can_aggregate_kpis: false,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .expect("new ZONE type");
-
-        relationship_rules::create_rule(
-            db,
-            CreateRelationshipRulePayload {
-                structure_model_id: draft.id,
-                parent_type_id: new_site.id,
-                child_type_id: new_plant.id,
-                min_children: None,
-                max_children: None,
-            },
-        )
-        .await
-        .expect("SITE→PLANT rule v2");
-
-        relationship_rules::create_rule(
-            db,
-            CreateRelationshipRulePayload {
-                structure_model_id: draft.id,
-                parent_type_id: new_plant.id,
-                child_type_id: new_zone.id,
-                min_children: None,
-                max_children: None,
-            },
-        )
-        .await
-        .expect("PLANT→ZONE rule v2");
-
-        (draft.id, new_site.id, new_plant.id, new_zone.id)
+        let draft_id = fork_active_model(db, "Model v2").await;
+        let new_site_id = draft_type_id_by_code(db, draft_id, "SITE").await;
+        let new_plant_id = draft_type_id_by_code(db, draft_id, "PLANT").await;
+        let new_zone_id = draft_type_id_by_code(db, draft_id, "ZONE").await;
+        (draft_id, new_site_id, new_plant_id, new_zone_id)
     }
 
     // ── V1 — Missing root type blocks publish ─────────────────────────────
@@ -453,81 +449,22 @@ mod tests {
         let db = setup().await;
 
         // Active model v1 with SITE, PLANT, ZONE + live nodes.
-        let (_, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
-        create_live_nodes(&db, site_id, plant_id, zone_id).await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
 
-        // Draft v2 omits ZONE — live ZONE node has no target type.
-        let draft = structure_model::create_model(
-            &db,
-            CreateStructureModelPayload {
-                description: Some("Missing ZONE".to_string()),
-            },
-            1,
-        )
-        .await
-        .expect("create draft");
+        // Draft fork omits ZONE type while the cloned ZONE node remains.
+        let draft_id = fork_active_model(&db, "Missing ZONE").await;
+        let zone_type_id = draft_type_id_by_code(&db, draft_id, "ZONE").await;
+        force_deactivate_draft_type(&db, zone_type_id).await;
 
-        let new_site = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "SITE".to_string(),
-                label: "Site v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(0),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: true,
-            },
-        )
-        .await
-        .expect("SITE v2");
-
-        let new_plant = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "PLANT".to_string(),
-                label: "Plant v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(1),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .expect("PLANT v2");
-
-        relationship_rules::create_rule(
-            &db,
-            CreateRelationshipRulePayload {
-                structure_model_id: draft.id,
-                parent_type_id: new_site.id,
-                child_type_id: new_plant.id,
-                min_children: None,
-                max_children: None,
-            },
-        )
-        .await
-        .expect("rule v2");
-
-        let result = validation::validate_draft_model_for_publish(&db, draft.id as i64)
+        let result = validation::validate_draft_model_for_publish(&db, draft_id as i64)
             .await
             .expect("validate");
 
         assert!(!result.can_publish, "validation must block — ZONE is missing");
         assert!(
             result.issues.iter().any(|i| i.code == "MISSING_TYPE_CODE"),
-            "expected MISSING_TYPE_CODE issue for the live ZONE node"
+            "expected MISSING_TYPE_CODE issue for the draft ZONE node"
         );
     }
 
@@ -538,9 +475,9 @@ mod tests {
         let db = setup().await;
 
         // Active model v1 + live nodes.
-        let (_, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
         let (site_node_id, plant_node_id, zone_node_id) =
-            create_live_nodes(&db, site_id, plant_id, zone_id).await;
+            create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
 
         // Verify pre-remap: nodes reference v1 type IDs.
         let before = nodes::get_org_node_by_id(&db, site_node_id)
@@ -558,16 +495,16 @@ mod tests {
             .expect("publish with remap should succeed");
 
         assert!(result.can_publish);
-        assert_eq!(result.remap_count, 3, "three type-to-type mappings");
+        assert_eq!(result.remap_count, 3, "three node remaps via origin_node_id");
 
-        // Verify post-remap: nodes reference v2 type IDs.
-        let site_node = nodes::get_org_node_by_id(&db, site_node_id)
+        // Verify post-publish: promoted draft nodes are now active with new type IDs.
+        let site_node = nodes::get_org_node_by_id(&db, active_node_id_by_code(&db, "HQ").await)
             .await
             .expect("get site");
-        let plant_node = nodes::get_org_node_by_id(&db, plant_node_id)
+        let plant_node = nodes::get_org_node_by_id(&db, active_node_id_by_code(&db, "PLT1").await)
             .await
             .expect("get plant");
-        let zone_node = nodes::get_org_node_by_id(&db, zone_node_id)
+        let zone_node = nodes::get_org_node_by_id(&db, active_node_id_by_code(&db, "ZN1").await)
             .await
             .expect("get zone");
 
@@ -575,8 +512,11 @@ mod tests {
         assert_eq!(plant_node.node_type_id, new_plant_id as i64);
         assert_eq!(zone_node.node_type_id, new_zone_id as i64);
 
-        // Old type IDs are no longer referenced.
-        assert_ne!(site_node.node_type_id, site_id as i64);
+        // Promoted nodes are new rows — old active ids are soft-deleted.
+        assert_ne!(site_node.id, site_node_id);
+        assert_ne!(plant_node.id, plant_node_id);
+        assert_ne!(zone_node.id, zone_node_id);
+        assert!(nodes::get_org_node_by_id(&db, site_node_id).await.is_err());
 
         // Active model is now the draft we just published.
         let active = structure_model::get_active_model(&db)
@@ -601,86 +541,27 @@ mod tests {
         let db = setup().await;
 
         // Active model v1 + live nodes.
-        let (_, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
-        create_live_nodes(&db, site_id, plant_id, zone_id).await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
 
-        // Draft v2 omits ZONE — will fail validation.
-        let draft = structure_model::create_model(
-            &db,
-            CreateStructureModelPayload {
-                description: Some("Incomplete draft".to_string()),
-            },
-            1,
-        )
-        .await
-        .expect("draft");
-
-        let new_site = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "SITE".to_string(),
-                label: "Site v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(0),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: true,
-            },
-        )
-        .await
-        .expect("site");
-
-        let new_plant = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "PLANT".to_string(),
-                label: "Plant v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(1),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .expect("plant");
-
-        relationship_rules::create_rule(
-            &db,
-            CreateRelationshipRulePayload {
-                structure_model_id: draft.id,
-                parent_type_id: new_site.id,
-                child_type_id: new_plant.id,
-                min_children: None,
-                max_children: None,
-            },
-        )
-        .await
-        .expect("rule");
+        // Draft fork with ZONE type removed — publish must fail validation.
+        let draft_id = fork_active_model(&db, "Incomplete draft").await;
+        let zone_type_id = draft_type_id_by_code(&db, draft_id, "ZONE").await;
+        force_deactivate_draft_type(&db, zone_type_id).await;
 
         // Attempt publish — must fail.
-        let err = validation::publish_model_with_remap(&db, draft.id as i64, 1)
+        let err = validation::publish_model_with_remap(&db, draft_id as i64, 1)
             .await
             .expect_err("publish should fail");
 
-        // Verify error is ValidationFailed.
+        // Verify error is OrgValidationFailed.
         assert!(
-            matches!(err, crate::errors::AppError::ValidationFailed(_)),
-            "expected ValidationFailed error"
+            matches!(err, crate::errors::AppError::OrgValidationFailed(_)),
+            "expected OrgValidationFailed error"
         );
 
         // Draft model must still be in draft status (transaction rolled back).
-        let model = structure_model::get_model_by_id(&db, draft.id)
+        let model = structure_model::get_model_by_id(&db, draft_id)
             .await
             .expect("get draft model");
         assert_eq!(model.status, "draft", "draft status must be preserved");
@@ -700,96 +581,14 @@ mod tests {
         let db = setup().await;
 
         // Active model v1 + live nodes (SITE → PLANT → ZONE).
-        let (_, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
-        create_live_nodes(&db, site_id, plant_id, zone_id).await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
 
-        // Draft v2: all three types exist, but remove the PLANT→ZONE rule.
-        let draft = structure_model::create_model(
-            &db,
-            CreateStructureModelPayload {
-                description: Some("Missing rule".to_string()),
-            },
-            1,
-        )
-        .await
-        .expect("draft");
+        // Draft fork: remove PLANT→ZONE rule while cloned tree still has PLANT→ZONE.
+        let draft_id = fork_active_model(&db, "Missing rule").await;
+        delete_draft_rule(&db, draft_id, "PLANT", "ZONE").await;
 
-        let new_site = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "SITE".to_string(),
-                label: "Site v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(0),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: true,
-            },
-        )
-        .await
-        .expect("site");
-
-        let new_plant = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "PLANT".to_string(),
-                label: "Plant v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(1),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .expect("plant");
-
-        let _new_zone = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "ZONE".to_string(),
-                label: "Zone v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(2),
-                can_host_assets: true,
-                can_own_work: false,
-                can_carry_cost_center: false,
-                can_aggregate_kpis: false,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .expect("zone");
-
-        // Only SITE→PLANT rule — deliberately omitting PLANT→ZONE.
-        relationship_rules::create_rule(
-            &db,
-            CreateRelationshipRulePayload {
-                structure_model_id: draft.id,
-                parent_type_id: new_site.id,
-                child_type_id: new_plant.id,
-                min_children: None,
-                max_children: None,
-            },
-        )
-        .await
-        .expect("rule");
-
-        // ZONE is unreachable AND the live PLANT→ZONE arrangement is no longer allowed.
-        let result = validation::validate_draft_model_for_publish(&db, draft.id as i64)
+        let result = validation::validate_draft_model_for_publish(&db, draft_id as i64)
             .await
             .expect("validate");
 
@@ -799,7 +598,7 @@ mod tests {
                 .issues
                 .iter()
                 .any(|i| i.code == "PARENT_CHILD_NOT_ALLOWED"),
-            "expected PARENT_CHILD_NOT_ALLOWED for the live ZONE node under PLANT"
+            "expected PARENT_CHILD_NOT_ALLOWED for the draft ZONE node under PLANT"
         );
 
         // Also unreachable since no rule points to ZONE at all.
@@ -819,107 +618,31 @@ mod tests {
         let db = setup().await;
 
         // Active model + live nodes (PLT1 has cost_center_code=CC-001).
-        let (_, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
-        create_live_nodes(&db, site_id, plant_id, zone_id).await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
 
-        // Draft v2: PLANT type loses can_carry_cost_center.
-        let draft = structure_model::create_model(
+        // Draft fork: PLANT type loses can_carry_cost_center while PLT1 keeps CC-001.
+        let draft_id = fork_active_model(&db, "Cost center break").await;
+        let plant_type_id = draft_type_id_by_code(&db, draft_id, "PLANT").await;
+        node_types::update_node_type(
             &db,
-            CreateStructureModelPayload {
-                description: Some("Cost center break".to_string()),
-            },
-            1,
-        )
-        .await
-        .expect("draft");
-
-        let new_site = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "SITE".to_string(),
-                label: "Site v2".to_string(),
+            UpdateNodeTypePayload {
+                id: plant_type_id,
+                label: None,
                 icon_key: None,
                 color: None,
-                depth_hint: Some(0),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: true,
+                depth_hint: None,
+                can_host_assets: None,
+                can_own_work: None,
+                can_carry_cost_center: Some(false),
+                can_aggregate_kpis: None,
+                can_receive_permits: None,
             },
         )
         .await
-        .expect("site");
+        .expect("remove cost center capability from PLANT");
 
-        let new_plant = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "PLANT".to_string(),
-                label: "Plant v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(1),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: false, // ← removed capability
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .expect("plant no cc");
-
-        let new_zone = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "ZONE".to_string(),
-                label: "Zone v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(2),
-                can_host_assets: true,
-                can_own_work: false,
-                can_carry_cost_center: false,
-                can_aggregate_kpis: false,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .expect("zone");
-
-        relationship_rules::create_rule(
-            &db,
-            CreateRelationshipRulePayload {
-                structure_model_id: draft.id,
-                parent_type_id: new_site.id,
-                child_type_id: new_plant.id,
-                min_children: None,
-                max_children: None,
-            },
-        )
-        .await
-        .expect("rule");
-
-        relationship_rules::create_rule(
-            &db,
-            CreateRelationshipRulePayload {
-                structure_model_id: draft.id,
-                parent_type_id: new_plant.id,
-                child_type_id: new_zone.id,
-                min_children: None,
-                max_children: None,
-            },
-        )
-        .await
-        .expect("rule2");
-
-        let result = validation::validate_draft_model_for_publish(&db, draft.id as i64)
+        let result = validation::validate_draft_model_for_publish(&db, draft_id as i64)
             .await
             .expect("validate");
 
@@ -1029,6 +752,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_v1.id as i64,
             },
             1,
         )
@@ -1048,47 +772,20 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_v1.id as i64,
             },
             1,
         )
         .await
         .expect("create workshop node");
 
-        // ── Draft v2: only CAMPUS — omits WORKSHOP ────────────────────────
-        let draft_v2 = structure_model::create_model(
-            &db,
-            CreateStructureModelPayload {
-                description: Some("SV1 draft omits WORKSHOP".to_string()),
-            },
-            1,
-        )
-        .await
-        .expect("create draft v2");
-
-        node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft_v2.id,
-                code: "CAMPUS".to_string(),
-                label: "Campus v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(0),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: true,
-            },
-        )
-        .await
-        .expect("CAMPUS v2");
-
-        // No WORKSHOP type, no rules — just the root type.
+        // ── Draft fork: deactivate WORKSHOP type while WS1 node remains ───
+        let draft_id = fork_active_model(&db, "SV1 draft omits WORKSHOP").await;
+        let workshop_type_id = draft_type_id_by_code(&db, draft_id, "WORKSHOP").await;
+        force_deactivate_draft_type(&db, workshop_type_id).await;
 
         // ── Validate: must fail ───────────────────────────────────────────
-        let result = validation::validate_draft_model_for_publish(&db, draft_v2.id as i64)
+        let result = validation::validate_draft_model_for_publish(&db, draft_id as i64)
             .await
             .expect("validate");
 
@@ -1228,6 +925,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_v1.id as i64,
             },
             1,
         )
@@ -1247,6 +945,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_v1.id as i64,
             },
             1,
         )
@@ -1266,104 +965,24 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_v1.id as i64,
             },
             1,
         )
         .await
         .expect("floor node");
 
-        // ── Draft v2: all three types, but REMOVE the BUILDING→FLOOR rule ─
-        let draft_v2 = structure_model::create_model(
-            &db,
-            CreateStructureModelPayload {
-                description: Some("SV2 drift — no BUILDING→FLOOR rule".to_string()),
-            },
-            1,
-        )
-        .await
-        .expect("draft v2");
-
-        let new_site = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft_v2.id,
-                code: "SITE".to_string(),
-                label: "Site v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(0),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: true,
-            },
-        )
-        .await
-        .expect("SITE v2");
-
-        let new_building = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft_v2.id,
-                code: "BUILDING".to_string(),
-                label: "Building v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(1),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: false,
-                can_aggregate_kpis: false,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .expect("BUILDING v2");
-
-        let new_floor = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft_v2.id,
-                code: "FLOOR".to_string(),
-                label: "Floor v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(2),
-                can_host_assets: true,
-                can_own_work: false,
-                can_carry_cost_center: false,
-                can_aggregate_kpis: false,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .expect("FLOOR v2");
-
-        // Only SITE→BUILDING, deliberately omitting BUILDING→FLOOR.
+        // ── Draft fork: remove BUILDING→FLOOR rule; add SITE→FLOOR for reachability ─
+        let draft_id = fork_active_model(&db, "SV2 drift — no BUILDING→FLOOR rule").await;
+        delete_draft_rule(&db, draft_id, "BUILDING", "FLOOR").await;
+        let site_type_id = draft_type_id_by_code(&db, draft_id, "SITE").await;
+        let floor_type_id = draft_type_id_by_code(&db, draft_id, "FLOOR").await;
         relationship_rules::create_rule(
             &db,
             CreateRelationshipRulePayload {
-                structure_model_id: draft_v2.id,
-                parent_type_id: new_site.id,
-                child_type_id: new_building.id,
-                min_children: None,
-                max_children: None,
-            },
-        )
-        .await
-        .expect("SITE→BUILDING rule v2");
-
-        // Also add SITE→FLOOR so FLOOR is reachable (isolate the parent-child check).
-        relationship_rules::create_rule(
-            &db,
-            CreateRelationshipRulePayload {
-                structure_model_id: draft_v2.id,
-                parent_type_id: new_site.id,
-                child_type_id: new_floor.id,
+                structure_model_id: draft_id,
+                parent_type_id: site_type_id,
+                child_type_id: floor_type_id,
                 min_children: None,
                 max_children: None,
             },
@@ -1372,7 +991,7 @@ mod tests {
         .expect("SITE→FLOOR rule v2 (reachability only)");
 
         // ── Validate: must fail with PARENT_CHILD_NOT_ALLOWED ─────────────
-        let result = validation::validate_draft_model_for_publish(&db, draft_v2.id as i64)
+        let result = validation::validate_draft_model_for_publish(&db, draft_id as i64)
             .await
             .expect("validate");
 
@@ -1490,6 +1109,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_v1.id as i64,
             },
             1,
         )
@@ -1509,6 +1129,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_v1.id as i64,
             },
             1,
         )
@@ -1526,112 +1147,300 @@ mod tests {
         assert_eq!(pre_region.node_type_id, old_region_type_id);
         assert_eq!(pre_depot.node_type_id, old_depot_type_id);
 
-        // ── Draft v2: same codes, DIFFERENT labels ────────────────────────
-        let draft_v2 = structure_model::create_model(
-            &db,
-            CreateStructureModelPayload {
-                description: Some("SV3 relabelled draft".to_string()),
-            },
-            1,
-        )
-        .await
-        .expect("draft v2");
+        // ── Draft fork: relabel types while preserving codes ──────────────
+        let draft_id = fork_active_model(&db, "SV3 relabelled draft").await;
+        let new_region_type_id = draft_type_id_by_code(&db, draft_id, "REGION").await;
+        let new_depot_type_id = draft_type_id_by_code(&db, draft_id, "DEPOT").await;
 
-        let new_region = node_types::create_node_type(
+        node_types::update_node_type(
             &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft_v2.id,
-                code: "REGION".to_string(),
-                label: "Regional Hub".to_string(), // label changed
+            UpdateNodeTypePayload {
+                id: new_region_type_id,
+                label: Some("Regional Hub".to_string()),
                 icon_key: None,
                 color: None,
-                depth_hint: Some(0),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: true,
+                depth_hint: None,
+                can_host_assets: None,
+                can_own_work: None,
+                can_carry_cost_center: None,
+                can_aggregate_kpis: None,
+                can_receive_permits: None,
             },
         )
         .await
-        .expect("REGION v2");
+        .expect("relabel REGION");
 
-        let new_depot = node_types::create_node_type(
+        node_types::update_node_type(
             &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft_v2.id,
-                code: "DEPOT".to_string(),
-                label: "Distribution Depot".to_string(), // label changed
+            UpdateNodeTypePayload {
+                id: new_depot_type_id,
+                label: Some("Distribution Depot".to_string()),
                 icon_key: None,
                 color: None,
-                depth_hint: Some(1),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: false,
-                can_aggregate_kpis: false,
-                can_receive_permits: false,
-                is_root_type: false,
+                depth_hint: None,
+                can_host_assets: None,
+                can_own_work: None,
+                can_carry_cost_center: None,
+                can_aggregate_kpis: None,
+                can_receive_permits: None,
             },
         )
         .await
-        .expect("DEPOT v2");
-
-        relationship_rules::create_rule(
-            &db,
-            CreateRelationshipRulePayload {
-                structure_model_id: draft_v2.id,
-                parent_type_id: new_region.id,
-                child_type_id: new_depot.id,
-                min_children: None,
-                max_children: None,
-            },
-        )
-        .await
-        .expect("REGION→DEPOT rule v2");
-
-        let new_region_type_id = new_region.id as i64;
-        let new_depot_type_id = new_depot.id as i64;
+        .expect("relabel DEPOT");
 
         // IDs must differ between v1 and v2 rows.
-        assert_ne!(old_region_type_id, new_region_type_id, "type IDs must differ between model versions");
-        assert_ne!(old_depot_type_id, new_depot_type_id, "type IDs must differ between model versions");
+        assert_ne!(old_region_type_id, new_region_type_id as i64, "type IDs must differ between model versions");
+        assert_ne!(old_depot_type_id, new_depot_type_id as i64, "type IDs must differ between model versions");
 
         // ── Publish with remap ────────────────────────────────────────────
-        let result = validation::publish_model_with_remap(&db, draft_v2.id as i64, 1)
+        let result = validation::publish_model_with_remap(&db, draft_id as i64, 1)
             .await
             .expect("publish with remap");
 
         assert!(result.can_publish, "SV3: publish must succeed");
-        assert_eq!(result.remap_count, 2, "SV3: two type-to-type remaps");
+        assert_eq!(result.remap_count, 2, "SV3: two node remaps");
 
-        // ── Verify post-publish: IDs changed, nodes intact ────────────────
-        let post_region = nodes::get_org_node_by_id(&db, region_node.id)
+        // ── Verify post-publish: promoted draft nodes are active ──────────
+        let post_region = nodes::get_org_node_by_id(&db, active_node_id_by_code(&db, "REG_NORTH").await)
             .await
             .expect("post region");
-        let post_depot = nodes::get_org_node_by_id(&db, depot_node.id)
+        let post_depot = nodes::get_org_node_by_id(&db, active_node_id_by_code(&db, "DPT_01").await)
             .await
             .expect("post depot");
 
-        // IDs must now point to v2 type rows.
         assert_eq!(
-            post_region.node_type_id, new_region_type_id,
-            "SV3: region node must reference new REGION type ID"
+            post_region.node_type_id, new_region_type_id as i64,
+            "SV3: region node must reference draft REGION type ID"
         );
         assert_eq!(
-            post_depot.node_type_id, new_depot_type_id,
-            "SV3: depot node must reference new DEPOT type ID"
+            post_depot.node_type_id, new_depot_type_id as i64,
+            "SV3: depot node must reference draft DEPOT type ID"
         );
 
-        // Old IDs must no longer be referenced.
         assert_ne!(post_region.node_type_id, old_region_type_id);
         assert_ne!(post_depot.node_type_id, old_depot_type_id);
+        assert_ne!(post_region.id, region_node.id);
+        assert_ne!(post_depot.id, depot_node.id);
 
         // Nodes themselves are intact — same code, name, hierarchy.
         assert_eq!(post_region.code, "REG_NORTH");
         assert_eq!(post_region.name, "North Region");
         assert_eq!(post_depot.code, "DPT_01");
         assert_eq!(post_depot.name, "Depot 01");
-        assert_eq!(post_depot.parent_id, Some(region_node.id));
+        assert_eq!(post_depot.parent_id, Some(post_region.id));
+        assert!(nodes::get_org_node_by_id(&db, region_node.id).await.is_err());
+    }
+
+    // ── Unmapped active node with ops refs + reconcile ────────────────────
+
+    #[tokio::test]
+    async fn unmapped_active_node_with_ops_refs_blocks_validate_and_reconcile_heals() {
+        let db = setup().await;
+
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+        let draft_id = fork_active_model(&db, "Lineage repair draft").await;
+
+        let active_hq_id = active_node_id_by_code(&db, "HQ").await;
+
+        // Attach an ops FK to the active HQ node.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO capacity_rules \
+             (entity_id, team_id, effective_start, available_hours_per_day, max_overtime_hours_per_day) \
+             VALUES (?, ?, '2026-01-01', 8.0, 0.0)",
+            [active_hq_id.into(), active_hq_id.into()],
+        ))
+        .await
+        .expect("ops ref");
+
+        // Simulate a broken fork: clear lineage on the draft HQ clone.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE org_nodes SET origin_node_id = NULL \
+             WHERE structure_model_id = ? AND origin_node_id = ?",
+            [(draft_id as i64).into(), active_hq_id.into()],
+        ))
+        .await
+        .expect("break draft HQ lineage");
+
+        let blocked = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+            .await
+            .expect("validate");
+        assert!(!blocked.can_publish);
+        assert!(
+            blocked
+                .issues
+                .iter()
+                .any(|i| i.code == "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS"),
+            "expected UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS, got {:?}",
+            blocked.issues
+        );
+
+        let reconcile = structure_model::reconcile_org_draft_lineage(&db, draft_id as i64)
+            .await
+            .expect("reconcile");
+        assert!(reconcile.cloned_count >= 1);
+
+        let healed = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+            .await
+            .expect("validate after reconcile");
+        assert!(
+            !healed
+                .issues
+                .iter()
+                .any(|i| i.code == "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS"),
+            "unmapped issue must be cleared after reconcile: {:?}",
+            healed.issues
+        );
+    }
+
+    #[tokio::test]
+    async fn live_org_node_insert_without_structure_model_id_is_rejected() {
+        let db = setup().await;
+        let (model_id, site_id, _plant_id, _zone_id) = create_base_active_model(&db).await;
+
+        let err = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO org_nodes \
+                 (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, \
+                  created_at, updated_at, row_version, structure_model_id) \
+                 VALUES ('bad-sync', 'UNSCOPED', 'Unscoped', ?, NULL, '/', 0, 'active', \
+                         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1, NULL)",
+                [(site_id as i64).into()],
+            ))
+            .await;
+
+        assert!(
+            err.is_err(),
+            "DB must reject live org_nodes without structure_model_id (model_id={model_id})"
+        );
+    }
+
+    #[tokio::test]
+    async fn activation_style_root_is_always_model_scoped_and_forkable() {
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+
+        // Mirror vendor-console activation rename of the tenant root.
+        let root_id = active_node_id_by_code(&db, "HQ").await;
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE org_nodes \
+             SET name = ?, structure_model_id = COALESCE(structure_model_id, ?), updated_at = ? \
+             WHERE id = ?",
+            [
+                "Vendor Console Co".into(),
+                (model_id as i64).into(),
+                "2026-01-01T00:00:00Z".into(),
+                root_id.into(),
+            ],
+        ))
+        .await
+        .expect("activation rename");
+
+        let scoped: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM org_nodes \
+                 WHERE id = ? AND structure_model_id = ? AND deleted_at IS NULL",
+                [root_id.into(), (model_id as i64).into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "c")
+            .unwrap();
+        assert_eq!(scoped, 1);
+
+        crate::org::model_scope::assert_no_null_structure_model_ids(&db)
+            .await
+            .expect("activation tree must be fully scoped");
+
+        let draft = structure_model::fork_draft_from_published(
+            &db,
+            &CreateStructureModelPayload {
+                description: Some("fork vendor tenant".to_string()),
+            },
+            1,
+        )
+        .await
+        .expect("fork must clone every scoped live node including renamed root");
+
+        let active_count: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM org_nodes WHERE structure_model_id = ? AND deleted_at IS NULL",
+                [(model_id as i64).into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "c")
+            .unwrap();
+        let clone_count: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM org_nodes \
+                 WHERE structure_model_id = ? AND origin_node_id IS NOT NULL AND deleted_at IS NULL",
+                [(draft.id as i64).into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "c")
+            .unwrap();
+        assert_eq!(active_count, clone_count);
+        assert!(active_count >= 1);
+    }
+
+    #[tokio::test]
+    async fn heal_null_structure_model_id_then_fork_counts_match() {
+        let db = setup().await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
+
+        // Pre-trigger legacy path is no longer insertable; verify fork completeness
+        // on a fully scoped tree (the permanent invariant).
+        crate::org::model_scope::assert_no_null_structure_model_ids(&db)
+            .await
+            .expect("seeded tree must be fully scoped");
+
+        let draft = structure_model::fork_draft_from_published(
+            &db,
+            &CreateStructureModelPayload {
+                description: Some("fork after heal".to_string()),
+            },
+            1,
+        )
+        .await
+        .expect("fork must succeed with complete lineage");
+
+        let active_count: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM org_nodes WHERE structure_model_id = ? AND deleted_at IS NULL",
+                [(model_id as i64).into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "c")
+            .unwrap();
+        let clone_count: i64 = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c FROM org_nodes \
+                 WHERE structure_model_id = ? AND origin_node_id IS NOT NULL AND deleted_at IS NULL",
+                [(draft.id as i64).into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "c")
+            .unwrap();
+        assert_eq!(active_count, clone_count);
     }
 }

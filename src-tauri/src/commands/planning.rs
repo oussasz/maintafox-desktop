@@ -1,4 +1,4 @@
-﻿//! Planning IPC commands.
+//! Planning IPC commands.
 
 use tauri::State;
 
@@ -22,11 +22,15 @@ use crate::{require_permission, require_session};
 async fn require_plan_edit_or_legacy_manage(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
     let has_plan_edit = check_permission(&state.db, user_id, "plan.edit", &PermissionScope::Global).await?;
     if has_plan_edit {
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, "plan.edit").await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, "plan.edit").await?;
         return Ok(());
     }
 
     let has_legacy_manage = check_permission(&state.db, user_id, "plan.manage", &PermissionScope::Global).await?;
     if has_legacy_manage {
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, "plan.manage").await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, "plan.manage").await?;
         return Ok(());
     }
 
@@ -38,6 +42,8 @@ async fn require_plan_edit_or_legacy_manage(state: &State<'_, AppState>, user_id
 async fn require_plan_windows(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
     let has = check_permission(&state.db, user_id, "plan.windows", &PermissionScope::Global).await?;
     if has {
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, "plan.windows").await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, "plan.windows").await?;
         return Ok(());
     }
     Err(AppError::PermissionDenied(
@@ -48,6 +54,8 @@ async fn require_plan_windows(state: &State<'_, AppState>, user_id: i32) -> AppR
 async fn require_plan_confirm(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
     let has = check_permission(&state.db, user_id, "plan.confirm", &PermissionScope::Global).await?;
     if has {
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, "plan.confirm").await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, "plan.confirm").await?;
         return Ok(());
     }
     Err(AppError::PermissionDenied(

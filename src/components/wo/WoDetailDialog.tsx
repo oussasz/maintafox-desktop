@@ -1,38 +1,35 @@
 /**
  * WoDetailDialog.tsx
  *
- * Full detail dialog for a work order. UX-DW-001 pattern:
- *   • Centered modal overlay (max-w-4xl, max-h-[90vh])
- *   • Header: WO code + title + status/urgency badges + close
- *   • Body: scrollable info grid + 5-tab sub-panels
- *   • Footer: context-appropriate lifecycle action buttons
+ * Full detail dialog for a work order (Option B lifecycle).
+ * Single footer action line owns lifecycle CTAs; panels own form fields only.
  *
  * Tab visibility:
- *   Plan        — always visible; editable only in draft/planned/ready_to_schedule
- *   Execution   — visible once assigned or later
- *   Close-out   — visible once mechanically_complete or later
- *   Audit       — always visible (read-only)
- *   Attachments — always visible
- *
- * Phase 2 – Sub-phase 05 – File 02 – Sprint S4.
+ *   Plan        — always (draft = submit hint only)
+ *   Execution   — ready, in_progress, on_hold, completed, closed
+ *   Close-out   — completed, closed
+ *   Audit / Attachments — always (attachments blocked when closed/cancelled)
  */
 
 import {
   CheckCircle2,
   ClipboardCheck,
-  FileText,
+  FileCheck2,
   History,
   Paperclip,
   Pause,
   Pencil,
   Play,
   Printer,
+  RotateCcw,
   Settings,
   X,
+  XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -47,102 +44,174 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WoAttachmentPanel } from "@/components/wo/WoAttachmentPanel";
 import { WoAuditTimeline } from "@/components/wo/WoAuditTimeline";
+import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
 import { WoCloseOutPanel } from "@/components/wo/WoCloseOutPanel";
 import { WoCompletionDialog } from "@/components/wo/WoCompletionDialog";
+import { completionGatesProgress } from "@/components/wo/WoCompletionGatesChecklist";
 import { WoCostSummaryCard } from "@/components/wo/WoCostSummaryCard";
-import { WoExecutionControls } from "@/components/wo/WoExecutionControls";
-import { WoPlanningPanel } from "@/components/wo/WoPlanningPanel";
+import {
+  WoExecutionControls,
+  type WoExecutionControlsHandle,
+} from "@/components/wo/WoExecutionControls";
+import {
+  WoPlanningPanel,
+} from "@/components/wo/WoPlanningPanel";
 import { printWoFiche } from "@/components/wo/WoPrintFiche";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useSession } from "@/hooks/use-session";
-import { useWoStore } from "@/stores/wo-store";
+import {
+  needsPlanningApproval,
+  useWoLifecycleActions,
+} from "@/hooks/use-wo-lifecycle-actions";
+import { pushAppToast } from "@/store/app-toast-store";
+import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { formatDate } from "@/utils/format-date";
 import { statusToI18nKey, STATUS_STYLE, URGENCY_STYLE } from "@/utils/wo-status";
-import type { WoStatus, WorkOrder } from "@shared/ipc-types";
-
-// ── Status groupings for tab visibility ─────────────────────────────────────
+import { useWoStore } from "@/stores/wo-store";
+import type { WoCompletionGate, WoStatus, WorkOrder } from "@shared/ipc-types";
 
 const EXECUTION_VISIBLE: Set<string> = new Set([
-  "assigned",
-  "waiting_for_prerequisite",
+  "ready",
   "in_progress",
-  "paused",
   "on_hold",
-  "mechanically_complete",
-  "technically_verified",
+  "completed",
   "closed",
-  "cancelled",
 ]);
 
 const CLOSEOUT_VISIBLE: Set<string> = new Set([
-  "mechanically_complete",
-  "technically_verified",
+  "in_progress",
+  "on_hold",
+  "completed",
   "closed",
 ]);
-
-// ── Props ───────────────────────────────────────────────────────────────────
+const CANCELLABLE_DENY = new Set(["closed", "cancelled"]);
+const ATTACHMENT_UPLOAD_DENY = new Set(["closed", "cancelled"]);
 
 interface WoDetailDialogProps {
   wo: WorkOrder | null;
   open: boolean;
+  loading?: boolean;
   onClose: () => void;
 }
 
-// ── Component ───────────────────────────────────────────────────────────────
-
-export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
+export function WoDetailDialog({ wo, open, loading = false, onClose }: WoDetailDialogProps) {
   const { t, i18n } = useTranslation("ot");
   const { can } = usePermissions();
-  const { info } = useSession();
 
   const saving = useWoStore((s) => s.saving);
   const openCreateForm = useWoStore((s) => s.openCreateForm);
   const openCompletionDialog = useWoStore((s) => s.openCompletionDialog);
-  const closeWorkOrder = useWoStore((s) => s.closeWorkOrder);
+
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [showReadinessDialog, setShowReadinessDialog] = useState(false);
+  const [readinessDialogBlocking, setReadinessDialogBlocking] = useState<string[]>([]);
+  const [closeoutGates, setCloseoutGates] = useState<WoCompletionGate[]>([]);
+  const executionRef = useRef<WoExecutionControlsHandle>(null);
+
+  const lifecycle = useWoLifecycleActions(wo);
+
+  useEffect(() => {
+    if (wo?.status_code === "planning") {
+      void lifecycle.refreshReadiness();
+    }
+    // Only re-run when WO id/status changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wo?.id, wo?.status_code, wo?.row_version]);
+
+  const showExecution = wo ? EXECUTION_VISIBLE.has(wo.status_code ?? "") : false;
+  const showCloseout = wo ? CLOSEOUT_VISIBLE.has(wo.status_code ?? "") : false;
+
+  useEffect(() => {
+    if (!wo || !showCloseout) {
+      setCloseoutGates([]);
+      return;
+    }
+    let cancelled = false;
+    void evaluateWoCompletionGates(wo.id)
+      .then((rows) => {
+        if (!cancelled) setCloseoutGates(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setCloseoutGates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wo?.id, wo?.row_version, wo?.parts_actuals_confirmed, showCloseout]);
+
+  const closeoutProgress = useMemo(
+    () => completionGatesProgress(closeoutGates),
+    [closeoutGates],
+  );
 
   const handlePrint = useCallback(() => {
     if (wo) void printWoFiche(wo, t, i18n.resolvedLanguage || i18n.language || "fr");
   }, [wo, t, i18n.resolvedLanguage, i18n.language]);
 
-  // Determine visible tabs
-  const showExecution = wo ? EXECUTION_VISIBLE.has(wo.status_code ?? "") : false;
-  const showCloseout = wo ? CLOSEOUT_VISIBLE.has(wo.status_code ?? "") : false;
   const canEditWo = can("ot.edit");
+  const canUploadAttachments =
+    canEditWo && wo != null && !ATTACHMENT_UPLOAD_DENY.has(wo.status_code ?? "");
 
-  // Determine default tab
   const computedDefaultTab = useMemo(() => {
     if (!wo) return "plan";
     const sc = wo.status_code ?? "";
-    if (
-      sc === "in_progress" ||
-      sc === "on_hold" ||
-      sc === "paused" ||
-      sc === "waiting_for_prerequisite"
-    )
-      return "execution";
+    if (sc === "cancelled") return "audit";
+    if (sc === "ready" || sc === "in_progress" || sc === "on_hold") return "execution";
     if (CLOSEOUT_VISIBLE.has(sc)) return "closeout";
     return "plan";
   }, [wo]);
 
   const [activeTab, setActiveTab] = useState(computedDefaultTab);
 
-  // Sync active tab when WO status changes (e.g. after start/pause from within panel)
   useEffect(() => {
     setActiveTab(computedDefaultTab);
   }, [computedDefaultTab]);
 
+  const handleMarkReady = useCallback(async () => {
+    const result = await lifecycle.markReady();
+    if (result.ok) return;
+    setReadinessDialogBlocking(result.blocking);
+    setShowReadinessDialog(true);
+    setActiveTab("plan");
+    pushAppToast({
+      title: t("planning.readinessBlocking"),
+      ...(result.blocking.length > 0
+        ? { description: result.blocking.slice(0, 3).join(" · ") }
+        : {}),
+      variant: "destructive",
+    });
+  }, [lifecycle, t]);
+
+  if (!open) return null;
+
+  if (loading && !wo) {
+    return (
+      <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+        <DialogContent className="w-full max-w-5xl max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="px-6 pt-5 pb-3">
+            <DialogTitle>{t("detail.loading")}</DialogTitle>
+            <DialogDescription>{t("detail.loadingHint")}</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-1 items-center justify-center px-6 py-16 text-sm text-muted-foreground">
+            {t("detail.loading")}
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   if (!wo) return null;
 
   const statusKey = statusToI18nKey(wo.status_code ?? "draft");
+  const isCancelled = (wo.status_code ?? "") === "cancelled";
+  const footerBusy = saving || lifecycle.busy;
 
   return (
     <>
       <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
         <DialogContent
-          className="max-w-4xl max-h-[90vh] flex flex-col p-0 gap-0"
+          className="w-full max-w-5xl max-h-[90vh] flex flex-col p-0 gap-0"
           onPointerDownOutside={(e) => e.preventDefault()}
         >
-          {/* ── Header ──────────────────────────────────────────────── */}
           <DialogHeader className="px-6 pt-5 pb-3">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1 min-w-0">
@@ -175,16 +244,38 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
 
           <Separator />
 
-          {/* ── Scrollable body ─────────────────────────────────────── */}
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-            {/* Info grid */}
+            {isCancelled && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
+                <p className="font-medium text-destructive">{t("detail.cancelledBanner")}</p>
+                {wo.cancel_reason ? (
+                  <p className="mt-1 text-muted-foreground">{wo.cancel_reason}</p>
+                ) : null}
+                {wo.cancelled_at ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatDate(wo.cancelled_at, i18n.language)}
+                  </p>
+                ) : null}
+              </div>
+            )}
+
+            {lifecycle.error && (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {lifecycle.error}
+              </div>
+            )}
+
             <Card>
               <CardContent className="p-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
                 <InfoRow label={t("detail.fields.type")} value={wo.type_label ?? "—"} />
                 <InfoRow label={t("detail.fields.equipment")} value={wo.asset_label ?? "—"} />
                 <InfoRow
                   label={t("detail.fields.assignedTo")}
-                  value={wo.responsible_username ?? "—"}
+                  value={wo.responsible_display_name ?? wo.responsible_username ?? "—"}
+                />
+                <InfoRow
+                  label={t("detail.fields.planner")}
+                  value={wo.planner_display_name ?? wo.planner_username ?? "—"}
                 />
                 <InfoRow
                   label={t("detail.fields.plannedStart")}
@@ -204,32 +295,25 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                     wo.expected_duration_hours != null ? `${wo.expected_duration_hours}h` : "—"
                   }
                 />
-                {wo.source_di_id && (
+                {(wo.source_di_code ?? "").trim() !== "" && (
                   <InfoRow
-                    label={String(t("diPanel.title")).split(" ")[0] || "DI"}
-                    value={<span className="font-mono">DI-{wo.source_di_id}</span>}
+                    label={t("detail.fields.sourceDi")}
+                    value={
+                      <LinkedEntityBadge
+                        entity="di"
+                        code={wo.source_di_code}
+                        entityId={wo.source_di_id}
+                        title={wo.source_di_title}
+                      />
+                    }
                   />
                 )}
-                {wo.source_ram_ishikawa_diagram_id != null && (
+                {wo.source_ram_ishikawa_diagram_id != null && wo.source_rca_cause_text && (
                   <InfoRow
                     label={t("detail.fields.sourceRca")}
                     value={
-                      <span className="space-y-0.5">
-                        <span className="block font-mono">
-                          {t("detail.fields.sourceRcaDiagram", {
-                            id: wo.source_ram_ishikawa_diagram_id,
-                          })}
-                        </span>
-                        {wo.source_rca_cause_text ? (
-                          <span className="block text-text-secondary">
-                            {t("detail.fields.sourceRcaCause")}: {wo.source_rca_cause_text}
-                          </span>
-                        ) : null}
-                        {wo.source_ishikawa_flow_node_id ? (
-                          <span className="text-[10px] text-text-muted">
-                            node: {wo.source_ishikawa_flow_node_id}
-                          </span>
-                        ) : null}
+                      <span className="text-text-secondary">
+                        {t("detail.fields.sourceRcaCause")}: {wo.source_rca_cause_text}
                       </span>
                     }
                   />
@@ -237,10 +321,8 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
               </CardContent>
             </Card>
 
-            {/* Cost summary */}
             <WoCostSummaryCard woId={wo.id} status={wo.status_code ?? "draft"} />
 
-            {/* Tabs */}
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="w-full justify-start">
                 <TabsTrigger value="plan" className="gap-1.5 text-xs">
@@ -257,6 +339,11 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
                   <TabsTrigger value="closeout" className="gap-1.5 text-xs">
                     <ClipboardCheck className="h-3.5 w-3.5" />
                     {t("detail.sections.closeout")}
+                    {closeoutProgress.total > 0 && (
+                      <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px]">
+                        {closeoutProgress.done}/{closeoutProgress.total}
+                      </Badge>
+                    )}
                   </TabsTrigger>
                 )}
                 <TabsTrigger value="audit" className="gap-1.5 text-xs">
@@ -275,7 +362,7 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
 
               {showExecution && (
                 <TabsContent value="execution" className="pt-3">
-                  <WoExecutionControls wo={wo} canEdit={canEditWo} />
+                  <WoExecutionControls ref={executionRef} wo={wo} canEdit={canEditWo} />
                 </TabsContent>
               )}
 
@@ -290,43 +377,63 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
               </TabsContent>
 
               <TabsContent value="attachments" className="pt-3">
-                <WoAttachmentPanel woId={wo.id} canUpload={canEditWo} canDelete={canEditWo} />
+                <WoAttachmentPanel
+                  woId={wo.id}
+                  canUpload={canUploadAttachments}
+                  canDelete={canUploadAttachments}
+                />
               </TabsContent>
             </Tabs>
           </div>
 
-          {/* ── Footer ──────────────────────────────────────────────── */}
           <Separator />
-          <div className="flex items-center justify-between gap-2 px-6 py-3">
-            <div className="flex items-center gap-2">
+          {lifecycle.readinessBlocking.length > 0 && (wo.status_code ?? "") === "planning" && (
+            <div className="mx-6 mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <p className="mb-1 font-medium">{t("planning.readinessBlocking")}</p>
+              <ul className="list-disc list-inside space-y-0.5">
+                {lifecycle.readinessBlocking.map((msg, i) => (
+                  <li key={i}>{msg}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {/* Single footer action line */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-3">
+            <Button variant="outline" size="sm" onClick={handlePrint} className="gap-1.5">
+              <Printer className="h-3.5 w-3.5" />
+              {t("action.print")}
+            </Button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <FooterActions
                 wo={wo}
-                saving={saving}
+                busy={footerBusy}
                 can={can}
                 t={t}
+                needsApproval={
+                  lifecycle.readinessReport
+                    ? needsPlanningApproval(lifecycle.readinessReport.checks)
+                    : false
+                }
                 onEdit={() => {
                   openCreateForm(wo);
                   onClose();
                 }}
-                onSwitchToPlanning={() => setActiveTab("plan")}
-                onSwitchToExecution={() => setActiveTab("execution")}
-                onSwitchToCloseout={() => setActiveTab("closeout")}
-                onComplete={openCompletionDialog}
-                onClose={() => {
-                  if (!info?.user_id) return;
-                  void closeWorkOrder({
-                    wo_id: wo.id,
-                    actor_id: info.user_id,
-                    expected_row_version: wo.row_version,
-                  });
+                onSubmit={() => void lifecycle.submit()}
+                onApprove={() => void lifecycle.approve()}
+                onMarkReady={() => void handleMarkReady()}
+                onReturnToPlanning={() => void lifecycle.returnToPlan()}
+                onStart={() => {
+                  setActiveTab("execution");
+                  void lifecycle.start();
                 }}
+                onHold={() => {
+                  setActiveTab("execution");
+                  executionRef.current?.openHoldForm();
+                }}
+                onResume={() => void lifecycle.resume()}
+                onComplete={openCompletionDialog}
+                onCancel={() => setShowCancelDialog(true)}
               />
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={handlePrint} className="gap-1.5">
-                <Printer className="h-3.5 w-3.5" />
-                {t("print.button")}
-              </Button>
               <Button variant="outline" size="sm" onClick={onClose} className="gap-1.5">
                 <X className="h-3.5 w-3.5" />
                 {t("detail.close")}
@@ -336,125 +443,135 @@ export function WoDetailDialog({ wo, open, onClose }: WoDetailDialogProps) {
         </DialogContent>
       </Dialog>
 
-      {/* Completion dialog (overlay on top of detail) */}
+      <Dialog open={showReadinessDialog} onOpenChange={setShowReadinessDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("planning.readinessBlocking")}</DialogTitle>
+            <DialogDescription>{t("planning.readinessBlockingHint")}</DialogDescription>
+          </DialogHeader>
+          {readinessDialogBlocking.length > 0 ? (
+            <ul className="list-disc list-inside space-y-1 text-sm text-amber-900">
+              {readinessDialogBlocking.map((msg, i) => (
+                <li key={i}>{msg}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t("planning.readinessBlockingEmpty")}</p>
+          )}
+          <div className="flex justify-end">
+            <Button size="sm" onClick={() => setShowReadinessDialog(false)}>
+              {t("detail.close")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <WoCompletionDialog wo={wo} />
+      <WoCancelDialog wo={wo} open={showCancelDialog} onOpenChange={setShowCancelDialog} />
     </>
   );
 }
 
-// ── Footer action buttons ───────────────────────────────────────────────────
-
 interface FooterActionsProps {
   wo: WorkOrder;
-  saving: boolean;
+  busy: boolean;
   can: (p: string) => boolean;
   t: (key: string) => string;
+  needsApproval: boolean;
   onEdit: () => void;
-  onSwitchToPlanning: () => void;
-  onSwitchToExecution: () => void;
-  onSwitchToCloseout: () => void;
+  onSubmit: () => void;
+  onApprove: () => void;
+  onMarkReady: () => void;
+  onReturnToPlanning: () => void;
+  onStart: () => void;
+  onHold: () => void;
+  onResume: () => void;
   onComplete: () => void;
-  onClose: () => void;
+  onCancel: () => void;
 }
 
 function FooterActions({
   wo,
-  saving,
+  busy,
   can,
   t,
+  needsApproval,
   onEdit,
-  onSwitchToPlanning,
-  onSwitchToExecution,
-  onSwitchToCloseout,
+  onSubmit,
+  onApprove,
+  onMarkReady,
+  onReturnToPlanning,
+  onStart,
+  onHold,
+  onResume,
   onComplete,
-  onClose,
+  onCancel,
 }: FooterActionsProps) {
   const s = (wo.status_code ?? "") as WoStatus;
 
   return (
     <>
-      {/* draft → Edit */}
       {s === "draft" && can("ot.edit") && (
-        <Button size="sm" variant="outline" onClick={onEdit} disabled={saving} className="gap-1.5">
-          <Pencil className="h-3.5 w-3.5" />
-          {t("action.edit")}
-        </Button>
-      )}
-
-      {/* draft / planned → Schedule (opens Plan tab) */}
-      {(s === "draft" || s === "planned") && can("ot.plan") && (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onSwitchToPlanning}
-          disabled={saving}
-          className="gap-1.5"
-        >
-          <Settings className="h-3.5 w-3.5" />
-          {t("footer.schedule")}
-        </Button>
-      )}
-
-      {/* ready_to_schedule → Assign (opens Plan tab — assignment section is there) */}
-      {s === "ready_to_schedule" && can("ot.assign") && (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onSwitchToPlanning}
-          disabled={saving}
-          className="gap-1.5"
-        >
-          <FileText className="h-3.5 w-3.5" />
-          {t("footer.assign")}
-        </Button>
-      )}
-
-      {/* assigned → Start + re-Assign (opens Execution tab) */}
-      {(s as string) === "assigned" && (
         <>
-          {can("ot.execute") && (
-            <Button
-              size="sm"
-              onClick={onSwitchToExecution}
-              disabled={saving}
-              className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
-            >
-              <Play className="h-3.5 w-3.5" />
-              {t("action.start")}
-            </Button>
-          )}
-          {can("ot.assign") && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onSwitchToPlanning}
-              disabled={saving}
-              className="gap-1.5"
-            >
-              <FileText className="h-3.5 w-3.5" />
-              {t("footer.assign")}
-            </Button>
-          )}
+          <Button size="sm" variant="outline" onClick={onEdit} disabled={busy} className="gap-1.5">
+            <Pencil className="h-3.5 w-3.5" />
+            {t("action.edit")}
+          </Button>
+          <Button size="sm" onClick={onSubmit} disabled={busy} className="gap-1.5">
+            <Settings className="h-3.5 w-3.5" />
+            {t("planning.submit")}
+          </Button>
         </>
       )}
 
-      {/* in_progress → Pause (opens Execution tab) + Complete */}
-      {s === "in_progress" && can("ot.execute") && (
+      {s === "planning" && can("ot.edit") && (
         <>
+          {needsApproval && (
+            <Button size="sm" variant="outline" onClick={onApprove} disabled={busy} className="gap-1.5">
+              <FileCheck2 className="h-3.5 w-3.5" />
+              {t("planning.approvePlanning")}
+            </Button>
+          )}
           <Button
             size="sm"
-            variant="outline"
-            onClick={onSwitchToExecution}
-            disabled={saving}
-            className="gap-1.5"
+            onClick={onMarkReady}
+            disabled={busy}
+            className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
           >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {t("planning.markReady")}
+          </Button>
+        </>
+      )}
+
+      {s === "ready" && can("ot.edit") && (
+        <>
+          <Button size="sm" variant="outline" onClick={onReturnToPlanning} disabled={busy} className="gap-1.5">
+            <RotateCcw className="h-3.5 w-3.5" />
+            {t("planning.returnToPlanning")}
+          </Button>
+          <Button
+            size="sm"
+            onClick={onStart}
+            disabled={busy}
+            className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+          >
+            <Play className="h-3.5 w-3.5" />
+            {t("action.start")}
+          </Button>
+        </>
+      )}
+
+      {s === "in_progress" && can("ot.edit") && (
+        <>
+          <Button size="sm" variant="outline" onClick={onHold} disabled={busy} className="gap-1.5">
             <Pause className="h-3.5 w-3.5" />
-            {t("action.pause")}
+            {t("action.hold")}
           </Button>
           <Button
             size="sm"
             onClick={onComplete}
-            disabled={saving}
+            disabled={busy}
             className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
           >
             <CheckCircle2 className="h-3.5 w-3.5" />
@@ -463,12 +580,11 @@ function FooterActions({
         </>
       )}
 
-      {/* paused / waiting_for_prerequisite → Resume (opens Execution tab) */}
-      {(s === "paused" || (s as string) === "waiting_for_prerequisite") && can("ot.execute") && (
+      {s === "on_hold" && can("ot.edit") && (
         <Button
           size="sm"
-          onClick={onSwitchToExecution}
-          disabled={saving}
+          onClick={onResume}
+          disabled={busy}
           className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
         >
           <Play className="h-3.5 w-3.5" />
@@ -476,40 +592,21 @@ function FooterActions({
         </Button>
       )}
 
-      {/* mechanically_complete → Verify (opens closeout tab) + Close */}
-      {(s as string) === "mechanically_complete" && (
-        <>
-          {can("ot.verify") && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onSwitchToCloseout}
-              disabled={saving}
-              className="gap-1.5"
-            >
-              <ClipboardCheck className="h-3.5 w-3.5" />
-              {t("action.verify")}
-            </Button>
-          )}
-          {can("ot.close") && (
-            <Button size="sm" onClick={onClose} disabled={saving} className="gap-1.5">
-              {t("action.close")}
-            </Button>
-          )}
-        </>
-      )}
-
-      {/* technically_verified → Close */}
-      {(s as string) === "technically_verified" && can("ot.close") && (
-        <Button size="sm" onClick={onClose} disabled={saving} className="gap-1.5">
-          {t("action.close")}
+      {!CANCELLABLE_DENY.has(s) && can("ot.close") && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onCancel}
+          disabled={busy}
+          className="gap-1.5 text-destructive"
+        >
+          <XCircle className="h-3.5 w-3.5" />
+          {t("action.cancelWo")}
         </Button>
       )}
     </>
   );
 }
-
-// ── Sub-components ──────────────────────────────────────────────────────────
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (

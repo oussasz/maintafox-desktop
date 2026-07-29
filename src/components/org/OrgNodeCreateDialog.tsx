@@ -1,11 +1,12 @@
 /**
- * Create a live org node under the active structure model (types + relationship rules
- * are resolved from the published active model, not the draft).
+ * Create an org node in the structure model currently being edited.
+ * In draft design mode that is the draft tree — no active-model type mapping.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { resolveAllowedNodeTypes } from "@/components/org/resolve-allowed-node-types";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,7 +28,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { createOrgNode } from "@/services/org-node-service";
 import { listOrgNodeTypes, listOrgRelationshipRules } from "@/services/org-service";
-import { toErrorMessage } from "@/utils/errors";
+import { formatOrgIpcError } from "@/utils/errors";
 import type { OrgDesignerNodeRow, OrgNodeType, OrgRelationshipRule } from "@shared/ipc-types";
 
 type CreateMode = "root" | "child";
@@ -38,7 +39,10 @@ export interface OrgNodeCreateDialogProps {
   mode: CreateMode;
   /** Required when mode is "child". */
   parentNode: OrgDesignerNodeRow | null;
-  activeModelId: number;
+  /** Draft (or active) model whose types/rules/nodes are being edited. */
+  structureModelId: number;
+  /** Bump when draft types/rules change so an open dialog reloads allowed children. */
+  schemaRevision?: number;
   onCreated: (nodeId: number) => void;
 }
 
@@ -47,7 +51,8 @@ export function OrgNodeCreateDialog({
   onOpenChange,
   mode,
   parentNode,
-  activeModelId,
+  structureModelId,
+  schemaRevision = 0,
   onCreated,
 }: OrgNodeCreateDialogProps) {
   const { t } = useTranslation("org");
@@ -66,38 +71,39 @@ export function OrgNodeCreateDialog({
     setError(null);
     try {
       const [tList, rList] = await Promise.all([
-        listOrgNodeTypes(activeModelId),
-        listOrgRelationshipRules(activeModelId),
+        listOrgNodeTypes(structureModelId),
+        listOrgRelationshipRules(structureModelId),
       ]);
       setTypes(tList.filter((x) => x.is_active));
       setRules(rList);
     } catch (e) {
-      setError(toErrorMessage(e));
+      setError(formatOrgIpcError(e));
     } finally {
       setLoading(false);
     }
-  }, [activeModelId]);
+  }, [structureModelId]);
 
   useEffect(() => {
-    if (open) {
-      setCode("");
-      setName("");
-      setDescription("");
-      setNodeTypeId("");
-      void load();
-    }
-  }, [open, load]);
+    if (!open) return;
+    setCode("");
+    setName("");
+    setDescription("");
+    setNodeTypeId("");
+    void load();
+  }, [open, load, schemaRevision]);
 
-  const allowedChildTypes = useMemo(() => {
-    if (mode === "root") {
-      return types.filter((x) => x.is_root_type);
-    }
-    if (!parentNode) return [];
-    const childIds = new Set(
-      rules.filter((r) => r.parent_type_id === parentNode.node_type_id).map((r) => r.child_type_id),
-    );
-    return types.filter((x) => childIds.has(x.id) && !x.is_root_type);
-  }, [mode, parentNode, types, rules]);
+  const allowedChildTypes = useMemo(
+    () =>
+      resolveAllowedNodeTypes({
+        mode,
+        types,
+        rules,
+        // Same-model tree: parent row already carries this model's type id/code.
+        parentTypeCode: parentNode?.node_type_code ?? null,
+        parentTypeId: parentNode?.node_type_id ?? null,
+      }),
+    [mode, parentNode?.node_type_code, parentNode?.node_type_id, types, rules],
+  );
 
   useEffect(() => {
     if (allowedChildTypes.length === 0) {
@@ -125,18 +131,18 @@ export function OrgNodeCreateDialog({
     setSaving(true);
     setError(null);
     try {
-      const nType = parseInt(nodeTypeId, 10);
       const result = await createOrgNode({
         code: code.trim(),
         name: name.trim(),
-        node_type_id: nType,
+        node_type_id: parseInt(nodeTypeId, 10),
+        structure_model_id: structureModelId,
         parent_id: mode === "root" || !parentNode ? null : parentNode.node_id,
         description: description.trim() || null,
       });
       onCreated(result.id);
       onOpenChange(false);
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(formatOrgIpcError(err));
     } finally {
       setSaving(false);
     }

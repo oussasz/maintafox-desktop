@@ -262,9 +262,9 @@ export function PermitsPage() {
       {selectedId != null ? (
         <section className="grid gap-4 rounded-lg border border-surface-3 bg-surface-1 p-4 md:grid-cols-2">
           <div className="md:col-span-2">
-            <h2 className="mb-2 text-sm font-medium text-fg-1">Points d&apos;isolation LOTO</h2>
+            <h2 className="mb-2 text-sm font-medium text-fg-1">Points d'isolation LOTO</h2>
             {isolations.length === 0 ? (
-              <p className="text-sm text-fg-2">Aucun point d&apos;isolation.</p>
+              <p className="text-sm text-fg-2">Aucun point d'isolation.</p>
             ) : (
               <ul className="space-y-2">
                 {isolations.map((iso) => (

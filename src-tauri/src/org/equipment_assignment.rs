@@ -104,6 +104,8 @@ pub async fn assign_equipment_to_node(
     db: &DatabaseConnection,
     payload: AssignEquipmentPayload,
 ) -> AppResult<()> {
+    crate::org::model_scope::assert_org_node_active(db, payload.node_id).await?;
+
     let affected = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

@@ -10,12 +10,15 @@ import {
   Activity,
   AlertTriangle,
   ArrowUpRight,
+  ClipboardList,
   FileText,
   Gauge,
   GitFork,
   Loader2,
+  MoreHorizontal,
   Pencil,
   Tag,
+  Wrench,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -26,20 +29,34 @@ import { AssetDecommissionModal } from "@/components/assets/AssetDecommissionMod
 import { AssetHealthBadge } from "@/components/assets/AssetHealthBadge";
 import { AssetPhotoGallery } from "@/components/assets/AssetPhotoGallery";
 import { AssetQrCode } from "@/components/assets/AssetQrCode";
+import { AssetHistoryView } from "@/components/assets/history/AssetHistoryView";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   listAssetDocumentLinks,
   listAssetLifecycleEvents,
   listAssetMeters,
 } from "@/services/asset-lifecycle-service";
 import { getAssetById, listAssetChildren, listAssetParents } from "@/services/asset-service";
+import { assetToSearchResult } from "@/lib/asset-to-search-result";
+import { useAssetSearchStore } from "@/stores/asset-search-store";
 import { useAssetStore } from "@/stores/asset-store";
+import { useDiStore } from "@/stores/di-store";
+import { useWoStore } from "@/stores/wo-store";
 import { toErrorMessage } from "@/utils/errors";
 import type { Asset, AssetHierarchyRow, AssetLifecycleEvent, AssetMeter } from "@shared/ipc-types";
 
+const HEADER_ACTION_BTN = "h-7 px-2.5 text-xs gap-1.5";
+const ASSET_LIFECYCLE_SECTION_ID = "asset-detail-lifecycle";
 interface AssetDetailPanelProps {
   assetId: number;
   onToast?: (msg: string, variant?: "default" | "destructive") => void;
@@ -62,7 +79,17 @@ export function AssetDetailPanel({ assetId, onToast }: AssetDetailPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showDecommission, setShowDecommission] = useState(false);
+  const [activeView, setActiveView] = useState<"details" | "history">("details");
   const openEditForm = useAssetStore((s) => s.openEditForm);
+  const openCreateWo = useWoStore((s) => s.openCreateForm);
+  const openCreateDi = useDiStore((s) => s.openCreateForm);
+  const runSearch = useAssetSearchStore((s) => s.runSearch);
+  const searchResults = useAssetSearchStore((s) => s.results);
+
+  const createPrefillAsset = useCallback(() => {
+    if (!asset) return null;
+    return searchResults.find((row) => row.id === asset.id) ?? assetToSearchResult(asset);
+  }, [asset, searchResults]);
 
   const loadDetail = useCallback(async (id: number) => {
     setLoading(true);
@@ -133,23 +160,85 @@ export function AssetDetailPanel({ assetId, onToast }: AssetDetailPanelProps) {
 
   return (
     <div className="flex h-full flex-col overflow-auto p-4 space-y-4">
-      {/* Summary — status & health prominent */}
+      {/* Summary — identity (~65%) + compact QR (~35%) */}
       <Card className="border-surface-border shadow-sm">
-        <CardContent className="space-y-4 pt-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0 space-y-1">
+        <CardContent className="space-y-3 pt-4 pb-4">
+          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[minmax(0,1.85fr)_minmax(0,1fr)]">
+            <div className="min-w-0 space-y-1.5">
               <p className="font-mono text-xs text-text-muted">{asset.asset_code}</p>
               <h2 className="text-lg font-semibold leading-tight tracking-tight">
                 {asset.asset_name}
               </h2>
+              <AssetStatusBadge code={asset.status_code} size="md" />
+              {(asset.manufacturer?.trim() || asset.model?.trim()) && (
+                <p className="text-xs text-text-muted">
+                  {[asset.manufacturer?.trim(), asset.model?.trim()]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <PermissionGate permission="ot.create">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className={HEADER_ACTION_BTN}
+                    onClick={() => openCreateWo(undefined, createPrefillAsset())}
+                  >
+                    <Wrench className="h-3.5 w-3.5" />
+                    {t("actions.createWo")}
+                  </Button>
+                </PermissionGate>
+                <PermissionGate permission="di.create">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={HEADER_ACTION_BTN}
+                    onClick={() => openCreateDi(undefined, createPrefillAsset())}
+                  >
+                    <ClipboardList className="h-3.5 w-3.5" />
+                    {t("actions.createDi")}
+                  </Button>
+                </PermissionGate>
+                <PermissionGate permission="eq.manage">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 w-7 px-0"
+                        aria-label={t("actions.more")}
+                      >
+                        <MoreHorizontal className="h-3.5 w-3.5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-48">
+                      <DropdownMenuItem
+                        className="gap-2"
+                        onClick={() => openEditForm(asset)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        {t("editForm.button")}
+                      </DropdownMenuItem>
+                      {asset.status_code !== "DECOMMISSIONED" &&
+                        asset.status_code !== "SCRAPPED" && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="gap-2 text-status-danger focus:text-status-danger"
+                              onClick={() => setShowDecommission(true)}
+                            >
+                              <AlertTriangle className="h-3.5 w-3.5" />
+                              {t("decommission.action")}
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </PermissionGate>
+              </div>
             </div>
-            <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
-              <PermissionGate permission="eq.manage">
-                <Button variant="outline" size="sm" onClick={() => openEditForm(asset)}>
-                  <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                  {t("editForm.button")}
-                </Button>
-              </PermissionGate>
+            <div className="flex justify-start sm:justify-end sm:self-start">
               <AssetQrCode asset={asset} />
             </div>
           </div>
@@ -157,35 +246,43 @@ export function AssetDetailPanel({ assetId, onToast }: AssetDetailPanelProps) {
           <div className="flex flex-wrap items-center gap-3 border-t border-surface-border/80 pt-3">
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">
-                {t("detail.fields.status")}
-              </span>
-              <AssetStatusBadge code={asset.status_code} size="md" />
-            </div>
-            <div className="h-8 w-px bg-surface-border/80" aria-hidden />
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">
                 {t("health.title")}
               </span>
               <AssetHealthBadge assetId={assetId} />
             </div>
           </div>
-
-          {asset.status_code !== "DECOMMISSIONED" && asset.status_code !== "SCRAPPED" && (
-            <PermissionGate permission="eq.manage">
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-status-danger border-status-danger/30 hover:bg-status-danger/5"
-                onClick={() => setShowDecommission(true)}
-              >
-                <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
-                {t("decommission.action")}
-              </Button>
-            </PermissionGate>
-          )}
         </CardContent>
       </Card>
 
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          className="h-7 px-3 text-xs"
+          variant={activeView === "details" ? "default" : "outline"}
+          onClick={() => setActiveView("details")}
+        >
+          {t("history.tabs.details")}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          className="h-7 px-3 text-xs"
+          variant={activeView === "history" ? "default" : "outline"}
+          onClick={() => setActiveView("history")}
+        >
+          {t("history.tabs.history")}
+        </Button>
+      </div>
+
+      {activeView === "history" ? (
+        <Card>
+          <CardContent className="pt-4">
+            <AssetHistoryView assetId={assetId} />
+          </CardContent>
+        </Card>
+      ) : (
+        <>
       {/* Classification */}
       <Card>
         <CardHeader className="pb-3">
@@ -220,6 +317,35 @@ export function AssetDetailPanel({ assetId, onToast }: AssetDetailPanelProps) {
             label={t("detail.fields.commissioningDate")}
             value={
               asset.commissioned_at ? new Date(asset.commissioned_at).toLocaleDateString() : null
+            }
+          />
+        </CardContent>
+      </Card>
+
+      {/* RAMS profile */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-text-muted" />
+            <CardTitle className="text-base">RAMS (advanced)</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <Row
+            label="Operating Schedule (Classe Horaire)"
+            value={
+              asset.rams_schedule_reference_value_name ??
+              (asset.rams_schedule_reference_value_id != null
+                ? `#${asset.rams_schedule_reference_value_id}`
+                : null)
+            }
+          />
+          <Row
+            label="Utilization Factor (K_u)"
+            value={
+              Number.isFinite(asset.rams_utilization_factor)
+                ? asset.rams_utilization_factor.toFixed(2)
+                : null
             }
           />
         </CardContent>
@@ -272,7 +398,7 @@ export function AssetDetailPanel({ assetId, onToast }: AssetDetailPanelProps) {
       </Card>
 
       {/* Latest lifecycle events */}
-      <Card>
+      <Card id={ASSET_LIFECYCLE_SECTION_ID}>
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
             <Activity className="h-4 w-4 text-text-muted" />
@@ -353,6 +479,8 @@ export function AssetDetailPanel({ assetId, onToast }: AssetDetailPanelProps) {
       <AssetPhotoGallery assetId={assetId} {...(onToast ? { onToast } : {})} />
 
       <AssetBindingSummary assetId={assetId} />
+      </>
+      )}
 
       {asset && (
         <AssetDecommissionModal
@@ -362,6 +490,7 @@ export function AssetDetailPanel({ assetId, onToast }: AssetDetailPanelProps) {
           onDecommissioned={(updated) => {
             setShowDecommission(false);
             setAsset(updated);
+            void runSearch();
             onToast?.(t("decommission.success"));
           }}
         />

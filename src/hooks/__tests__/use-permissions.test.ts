@@ -1,14 +1,24 @@
 import { renderHook, waitFor, act } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { PermissionProvider } from "@/contexts/PermissionContext";
 import { usePermissions } from "@/hooks/use-permissions";
+import { resetPermissionCacheForTests, writePermissionCache } from "@/lib/permission-cache";
 
-// Mock the service layer — not Tauri invoke directly.
-// This isolates the hook logic from IPC transport concerns.
 const mockGetMyPermissions = vi.fn();
+const mockSession = vi.fn();
 
 vi.mock("@/services/rbac-service", () => ({
   getMyPermissions: (...args: unknown[]) => mockGetMyPermissions(...args),
+}));
+
+vi.mock("@/hooks/use-session", () => ({
+  useSession: () => mockSession(),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async () => vi.fn()),
 }));
 
 const MOCK_PERMISSIONS = [
@@ -35,14 +45,51 @@ const MOCK_PERMISSIONS = [
   },
 ];
 
+function authenticatedSession() {
+  return {
+    info: {
+      is_authenticated: true,
+      is_locked: false,
+      user_id: 1,
+      username: "admin",
+      display_name: "Admin",
+      is_admin: true,
+      force_password_change: false,
+      expires_at: null,
+      last_activity_at: null,
+      password_expires_in_days: null,
+      pin_configured: false,
+      tenant_id: null,
+      token_tenant_id: null,
+    },
+    isLoading: false,
+    hasBootstrapped: true,
+    error: null,
+    errorCode: null,
+    login: vi.fn(),
+    logout: vi.fn(),
+    refresh: vi.fn(),
+    unlock: vi.fn(),
+    changePassword: vi.fn(),
+    ensureBootstrapped: vi.fn(),
+    resetForTests: vi.fn(),
+  };
+}
+
+function wrapper({ children }: { children: ReactNode }) {
+  return createElement(PermissionProvider, null, children);
+}
+
 describe("usePermissions", () => {
   beforeEach(() => {
+    resetPermissionCacheForTests();
     mockGetMyPermissions.mockReset();
     mockGetMyPermissions.mockResolvedValue(MOCK_PERMISSIONS);
+    mockSession.mockReturnValue(authenticatedSession());
   });
 
   it("loads permissions from backend", async () => {
-    const { result } = renderHook(() => usePermissions());
+    const { result } = renderHook(() => usePermissions(), { wrapper });
     expect(result.current.isLoading).toBe(true);
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -51,7 +98,7 @@ describe("usePermissions", () => {
   });
 
   it("can() returns true for held permission", async () => {
-    const { result } = renderHook(() => usePermissions());
+    const { result } = renderHook(() => usePermissions(), { wrapper });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.can("eq.view")).toBe(true);
@@ -60,7 +107,7 @@ describe("usePermissions", () => {
   });
 
   it("can() returns false for missing permission", async () => {
-    const { result } = renderHook(() => usePermissions());
+    const { result } = renderHook(() => usePermissions(), { wrapper });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.can("adm.roles")).toBe(false);
@@ -68,10 +115,9 @@ describe("usePermissions", () => {
   });
 
   it("refresh() reloads permissions", async () => {
-    const { result } = renderHook(() => usePermissions());
+    const { result } = renderHook(() => usePermissions(), { wrapper });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    // Update the mock to return a different set
     mockGetMyPermissions.mockResolvedValue([
       ...MOCK_PERMISSIONS,
       {
@@ -91,13 +137,48 @@ describe("usePermissions", () => {
     expect(result.current.can("ot.view")).toBe(true);
   });
 
-  it("sets empty permissions on backend error", async () => {
-    mockGetMyPermissions.mockRejectedValue(new Error("IPC failure"));
+  it("does not call getMyPermissions when session is unauthenticated", async () => {
+    mockSession.mockReturnValue({
+      ...authenticatedSession(),
+      info: { ...authenticatedSession().info!, is_authenticated: false, user_id: null },
+    });
 
-    const { result } = renderHook(() => usePermissions());
+    const { result } = renderHook(() => usePermissions(), { wrapper });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
+    expect(mockGetMyPermissions).not.toHaveBeenCalled();
     expect(result.current.permissions).toHaveLength(0);
-    expect(result.current.can("eq.view")).toBe(false);
+  });
+
+  it("keeps prior permissions on transient AUTH_ERROR", async () => {
+    const { result } = renderHook(() => usePermissions(), { wrapper });
+    await waitFor(() => expect(result.current.permissions).toHaveLength(3));
+
+    mockGetMyPermissions.mockRejectedValue({
+      code: "AUTH_ERROR",
+      message: "Authentication error: Session expirée ou absente. Veuillez vous reconnecter.",
+    });
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.permissions).toHaveLength(3);
+    expect(result.current.can("eq.view")).toBe(true);
+  });
+
+  it("restores cached permissions after remount when reload fails", async () => {
+    writePermissionCache(1, MOCK_PERMISSIONS);
+    mockGetMyPermissions.mockRejectedValue({
+      code: "AUTH_ERROR",
+      message: "Authentication error: Session expirée ou absente. Veuillez vous reconnecter.",
+    });
+
+    const { result } = renderHook(() => usePermissions(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.permissions).toHaveLength(3);
+    expect(result.current.can("eq.view")).toBe(true);
   });
 });

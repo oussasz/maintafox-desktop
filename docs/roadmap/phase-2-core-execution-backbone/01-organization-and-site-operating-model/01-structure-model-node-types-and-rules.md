@@ -33,11 +33,16 @@ planning scope, KPI aggregation, and structural analytics."
 
 ## Architecture Rules Applied
 
-- **Structure model versioning.** A structure model is the schema of the org design
-  (the node types and rules), not the nodes themselves. When an admin changes node type
-  definitions or relationship rules, a new model version is drafted, validated, and
-  activated. The previously active model is superseded but not deleted — historical
-  records retain a reference to the model version in effect when they were created.
+> **Update (model-scoped draft trees):** The draft structure model is a **full workspace**,
+> not schema-only. Forking copies types, relationship rules, **and** the org node tree
+> (with `origin_node_id` lineage). Draft create/edit/move/deactivate affect only
+> `org_nodes.structure_model_id = draft`. Production modules read the **active** tree only.
+> Publish validates the draft tree, remaps operational FKs via `origin_node_id`, soft-deletes
+> the old active tree, and activates the draft in one transaction.
+
+- **Structure model versioning.** A structure model is the schema **and** (when drafted)
+  an isolated copy of the org tree. When an admin changes types, rules, or tree topology,
+  work happens on the draft; publish promotes it to production.
 - **Node types are tenant-defined.** There is no hardcoded "Site → Plant → Workshop"
   hierarchy. The tenant configures the vocabulary (names, codes, icons, depth hints).
 - **Capability flags are product-fixed semantics.** The names of capability flags
@@ -46,13 +51,11 @@ planning scope, KPI aggregation, and structural analytics."
   directly. The tenant decides which node types carry which flags.
 - **Relationship rules prevent invalid structures.** An admin cannot create an org node
   whose parent is an incompatible type according to the `org_type_relationship_rules`
-  for the active model.
+  for the **same** structure model as the node.
 - **Permission gate:** all structure model and node-type configuration requires
   `org.admin`. Reading the structure requires `org.view`.
 - **Draft-first safety.** A new structure model begins in `draft` status. It can only
-  be published (set to `active`) if all existing nodes in the database still conform to
-  the new rules, or if there are no nodes yet. This is the `validate_before_publish`
-  contract (detailed in F04).
+  be published (set to `active`) if the draft tree and schema pass validation (detailed in F04).
 
 ## What This File Builds
 

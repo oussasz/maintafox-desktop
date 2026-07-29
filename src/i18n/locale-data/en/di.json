@@ -54,14 +54,25 @@
       "closedAt": "Closed on",
       "conclusion": "Conclusion",
       "origin": "Origin",
+      "requestType": "Request type",
+      "symptom": "Symptom",
       "asset": "Equipment",
       "orgNode": "Org. node",
       "impact": "Impact",
-      "production": "Production"
+      "production": "Production",
+      "slaStatus": "SLA status",
+      "slaResponseDeadline": "SLA response deadline",
+      "slaResolutionDeadline": "SLA resolution deadline",
+      "slaResponseElapsed": "SLA response elapsed",
+      "slaResolutionElapsed": "SLA resolution elapsed",
+      "slaResponseRemaining": "SLA response remaining",
+      "slaResolutionRemaining": "SLA resolution remaining",
+      "hoursValue": "{{hours}} h"
     },
     "tabs": {
       "attachments": "Attachments",
       "stateLog": "State history",
+      "review": "Review",
       "activity": "Activity log"
     }
   },
@@ -69,7 +80,8 @@
     "section": {
       "requester": "Requester",
       "equipment": "Equipment",
-      "general": "General Information"
+      "general": "General Information",
+      "media": "Pictures & attachments"
     },
     "subject": {
       "label": "Subject",
@@ -85,13 +97,19 @@
     },
     "equipmentSearch": "Search equipment...",
     "priority": {
-      "label": "Priority"
+      "label": "Priority",
+      "placeholder": "Select a priority"
     },
     "observedAt": {
       "label": "Observation date"
     },
     "originType": {
-      "label": "Origin"
+      "label": "Origin",
+      "placeholder": "Select an origin"
+    },
+    "requestType": {
+      "label": "Request type",
+      "placeholder": "Select a request type"
     },
     "symptom": {
       "label": "Symptom",
@@ -99,7 +117,25 @@
       "searchPlaceholder": "Search symptom..."
     },
     "impactLevel": {
-      "label": "Impact level"
+      "label": "Impact level",
+      "placeholder": "Select an impact level"
+    },
+    "pictures": {
+      "label": "Pictures",
+      "empty": "No pictures yet",
+      "hint": "Add photos of the equipment or issue. Same picker as equipment gallery.",
+      "primary": "Primary",
+      "remove": "Remove",
+      "add": "Add pictures"
+    },
+    "attachments": {
+      "label": "Attached files",
+      "empty": "No files yet",
+      "add": "Add file",
+      "remove": "Remove"
+    },
+    "media": {
+      "partialUploadFailed": "{{failed}} of {{total}} file(s) could not be uploaded. You can retry from the request detail."
     },
     "safetyFlag": {
       "label": "Safety concern"
@@ -136,6 +172,7 @@
       "descriptionRequired": "Description is required",
       "equipmentRequired": "Equipment is required",
       "originRequired": "Origin is required",
+      "requestTypeRequired": "Request type is required",
       "symptomRequired": "Symptom is required",
       "urgencyRequired": "Priority is required",
       "impactRequired": "Impact level is required",
@@ -147,6 +184,9 @@
   },
   "status": {
     "new": "New",
+    "pendingReview": "Waiting for triage",
+    "awaitingApproval": "Awaiting approval",
+    "needsClarification": "Information required",
     "inReview": "In review",
     "approved": "Approved",
     "rejected": "Rejected",
@@ -168,7 +208,11 @@
     "assignTo": "Assign to",
     "convertToWO": "Convert to Work Order",
     "close": "Close",
-    "addComment": "Add comment"
+    "addComment": "Add comment",
+    "print": "Print",
+    "resubmit": "Resubmit",
+    "cancelNeed": "Cancel need",
+    "archive": "Archive"
   },
   "empty": {
     "list": "No intervention requests found.",
@@ -209,7 +253,38 @@
     },
     "save": "Save",
     "saving": "Saving…",
-    "close": "Close"
+    "close": "Close",
+    "status": {
+      "on_track": "On Track",
+      "at_risk": "At Risk",
+      "breached": "Breached",
+      "completed": "Completed",
+      "none": "—"
+    }
+  },
+  "reviewTimeline": {
+    "empty": "No review events recorded.",
+    "slaTarget": "SLA target",
+    "slaDeadline": "SLA deadline",
+    "slaResolutionTarget": "SLA resolution target",
+    "slaResolutionDeadline": "SLA resolution deadline",
+    "hours": "{{hours}} h",
+    "breachHint": "Past SLA deadline at event time",
+    "actor": "By",
+    "systemActor": "System",
+    "eventType": {
+      "sla_initialized": "SLA initialized",
+      "screened": "Screened",
+      "advanced_to_approval": "Advanced to approval",
+      "returned_for_clarification": "Returned for clarification",
+      "rejected": "Rejected",
+      "approved": "Approved",
+      "deferred": "Deferred",
+      "reactivated": "Reactivated",
+      "converted": "Converted",
+      "closed_non_executable": "Closed as non-executable",
+      "archived": "Archived"
+    }
   },
   "stateLog": {
     "empty": "No state transitions recorded.",
@@ -235,6 +310,9 @@
       "rejected": "Rejected",
       "approved": "Approved",
       "deferred": "Deferred",
+      "re_submitted": "Resubmitted",
+      "close_non_executable": "Closed as non-executable",
+      "archive": "Archived",
       "none": "—"
     },
     "unknownAction": "Event: {{action}}"
@@ -247,7 +325,7 @@
     "resultBlocked": "Blocked",
     "resultPartial": "Partial",
     "stepUp": "Step-up",
-    "actorUser": "User #{{id}}",
+    "actorUser": "{{name}}",
     "actorSystem": "System",
     "actionLabel": {
       "submit": "Intake (reporter)",
@@ -259,6 +337,9 @@
       "rejected": "Rejected",
       "approved": "Approved",
       "converted": "Conversion event",
+      "re_submitted": "Resubmitted",
+      "closed_non_executable": "Closed as non-executable",
+      "archived": "Archived",
       "blocked": "Blocked"
     }
   },
@@ -275,7 +356,9 @@
   },
   "kanban": {
     "colSubmitted": "Submitted / intake",
-    "colReview": "In review",
+    "colPendingReview": "Pending review",
+    "colAwaitingApproval": "Awaiting approval",
+    "colNeedsClarification": "Needs clarification",
     "colApproved": "Approved / planned",
     "colWork": "In progress",
     "colClosed": "Closed"
@@ -304,6 +387,7 @@
     "urgencyReported": "Reported priority",
     "urgencyValidated": "Validated priority",
     "origin": "Origin",
+    "symptom": "Symptom",
     "impactLevel": "Impact level",
     "createdAt": "Created on",
     "submittedAt": "Submitted on",
@@ -313,6 +397,7 @@
     "observedOn": "Observed on",
     "declarant": "Reporter",
     "convertedToWo": "Converted to work order",
+    "convertedToWoTitle": "Work order title",
     "convertedAt": "Conversion date",
     "flagSafety": "Safety",
     "flagEnv": "Environment",
@@ -340,7 +425,7 @@
     "thDescription": "Description",
     "thReviewerNote": "Reviewer note",
     "thApprovalNote": "Approval note",
-    "conversion": "Handoff to work order: {{from}} → {{to}}",
+    "conversion": "Handoff to work order — code assigned on convert (from {{from}})",
     "sigDeclarant": "Requester",
     "sigApprover": "Approver",
     "sigResp": "Maintenance responsible",
@@ -362,6 +447,7 @@
     "view": "View details",
     "returnAction": "Return",
     "approvalTitle": "Approve & Convert to Work Order",
+    "woCodeAssignedOnConvert": "Work order code will be assigned on convert",
     "approvalNote": "Approval note",
     "approvalNotePlaceholder": "Optional note for the approval record…",
     "approver": "Approver",
@@ -381,13 +467,16 @@
     "clarificationNotePlaceholder": "Describe what information is needed…",
     "clarificationRequired": "A clarification note is required",
     "returnInfo": "The request will be returned to the requester.",
-    "screenAction": "Validate screening"
+    "screenAction": "Validate screening",
+    "retryConversion": "Retry conversion"
   },
   "dashboard": {
     "total": "Total",
     "pending": "Pending",
     "inProgress": "In progress",
     "slaCompliance": "SLA compliance",
+    "slaBreached": "SLA breached",
+    "slaMet": "SLA met",
     "closedThisMonth": "Closed (month)",
     "overdue": "Overdue",
     "safetyIssues": "Safety issues",

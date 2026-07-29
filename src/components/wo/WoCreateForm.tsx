@@ -24,46 +24,20 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
+import { assetToSearchResult } from "@/lib/asset-to-search-result";
 import { getStoredRamsEquipmentId } from "@/pages/reliability/rams-equipment-context";
 import { searchAssets } from "@/services/asset-search-service";
-import { getAssetById } from "@/services/asset-service";
+import { getAssetByIdSilent } from "@/services/asset-service";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
 import { toErrorMessage } from "@/utils/errors";
 import type {
-  Asset,
   AssetSearchResult,
   WoCreateInput,
   WorkOrder,
   WorkOrderPriorityOption,
 } from "@shared/ipc-types";
-
-function assetToSearchResult(a: Asset): AssetSearchResult {
-  return {
-    id: a.id,
-    sync_id: a.sync_id,
-    asset_code: a.asset_code,
-    asset_name: a.asset_name,
-    class_code: a.class_code,
-    class_name: a.class_name,
-    family_code: a.family_code,
-    family_name: a.family_name,
-    criticality_code: a.criticality_code,
-    status_code: a.status_code,
-    org_node_id: a.org_node_id,
-    org_node_name: a.org_node_name,
-    parent_asset_id: null,
-    parent_asset_code: null,
-    parent_asset_name: null,
-    primary_meter_name: null,
-    primary_meter_reading: null,
-    primary_meter_unit: null,
-    primary_meter_last_read_at: null,
-    external_id_count: 0,
-    row_version: a.row_version,
-  };
-}
 
 const TITLE_MAX = 200;
 
@@ -82,7 +56,9 @@ function parseOptionalIdString(raw: string): number | null {
 
 interface WoCreateFormProps {
   initial: WorkOrder | null;
-  /** When set (e.g. from URL), pre-select this equipment for new WOs. */
+  /** Snapshot prefill when opening create from asset context. */
+  prefillAsset?: AssetSearchResult | null;
+  /** When set (e.g. RAMS / URL), pre-select this equipment for new WOs. */
   prefillEquipmentId?: number | null;
   onSubmitted: (wo: WorkOrder) => void;
   onCancel: () => void;
@@ -94,11 +70,18 @@ interface FormErrors {
   title?: string;
   typeCode?: string;
   urgencyId?: string;
+  equipment?: string;
 }
 
 function validate(
-  fields: { title: string; typeCode: string; urgencyId: string; urgencyIdValid: boolean },
-  opts: { requireType: boolean; requireUrgency: boolean },
+  fields: {
+    title: string;
+    typeCode: string;
+    urgencyId: string;
+    urgencyIdValid: boolean;
+    equipmentId: number | null;
+  },
+  opts: { requireType: boolean; requireUrgency: boolean; requireEquipment: boolean },
   t: (key: string) => string,
 ): FormErrors {
   const errors: FormErrors = {};
@@ -110,6 +93,9 @@ function validate(
     if (!raw) errors.urgencyId = t("form.validation.urgencyRequired");
     else if (!fields.urgencyIdValid) errors.urgencyId = t("form.validation.urgencyInvalid");
   }
+  if (opts.requireEquipment && fields.equipmentId == null) {
+    errors.equipment = "Équipement obligatoire.";
+  }
   return errors;
 }
 
@@ -117,6 +103,7 @@ function validate(
 
 export function WoCreateForm({
   initial,
+  prefillAsset = null,
   prefillEquipmentId,
   onSubmitted,
   onCancel,
@@ -221,29 +208,32 @@ export function WoCreateForm({
     };
   }, [initial?.id, initial?.equipment_id, initial?.asset_code]);
 
-  // ── New WO: one-shot pre-fill from RAMS (localStorage) or prop ─────────────
+  // ── New WO: one-shot pre-fill from asset context, id hint, or RAMS ────────
 
   useEffect(() => {
     if (isEdit) return;
     if (ramsEquipmentPrefillConsumedRef.current) return;
-    const hint = prefillEquipmentId ?? getStoredRamsEquipmentId();
-    if (hint == null || hint <= 0) {
+
+    if (prefillAsset) {
       ramsEquipmentPrefillConsumedRef.current = true;
+      setSelectedAsset(prefillAsset);
       return;
     }
+
+    const hint = prefillEquipmentId ?? getStoredRamsEquipmentId();
+    if (hint == null || hint <= 0) {
+      return;
+    }
+
     ramsEquipmentPrefillConsumedRef.current = true;
     let cancelled = false;
-    void getAssetById(hint)
-      .then((asset) => {
-        if (!cancelled) setSelectedAsset(assetToSearchResult(asset));
-      })
-      .catch(() => {
-        /* Missing asset or IPC error — user can search manually */
-      });
+    void getAssetByIdSilent(hint).then((asset) => {
+      if (!cancelled && asset) setSelectedAsset(assetToSearchResult(asset));
+    });
     return () => {
       cancelled = true;
     };
-  }, [isEdit, prefillEquipmentId]);
+  }, [isEdit, prefillAsset, prefillEquipmentId]);
 
   // ── Equipment search with debounce ────────────────────────────────────
 
@@ -261,7 +251,7 @@ export function WoCreateForm({
         const results = await searchAssets({
           query,
           limit: 20,
-          includeDecommissioned: false,
+          include_decommissioned: false,
         });
         setAssetResults(results);
         setShowAssetDropdown(true);
@@ -299,13 +289,29 @@ export function WoCreateForm({
   /** Create flow always requires an explicit type; edit only when the catalog has rows. */
   const requireType = !isEdit || woTypes.length > 0;
   const requireUrgency = activePriorities.length > 0;
+  const requireEquipment = !isEdit;
   const urgencyIdValid =
     !requireUrgency || activePriorities.some((p) => String(p.id) === urgencyId.trim());
+  const selectedEquipmentId = selectedAsset != null && selectedAsset.id > 0 ? selectedAsset.id : null;
 
   const currentErrors = useMemo(
     () =>
-      validate({ title, typeCode, urgencyId, urgencyIdValid }, { requireType, requireUrgency }, t),
-    [title, typeCode, urgencyId, urgencyIdValid, requireType, requireUrgency, t],
+      validate(
+        { title, typeCode, urgencyId, urgencyIdValid, equipmentId: selectedEquipmentId },
+        { requireType, requireUrgency, requireEquipment },
+        t,
+      ),
+    [
+      title,
+      typeCode,
+      urgencyId,
+      urgencyIdValid,
+      selectedEquipmentId,
+      requireType,
+      requireUrgency,
+      requireEquipment,
+      t,
+    ],
   );
   const isValid = Object.keys(currentErrors).length === 0;
   const catalogsReady = !typesLoading && !prioritiesLoading;
@@ -322,12 +328,11 @@ export function WoCreateForm({
   // ── Submit ────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
-    setTouched(new Set(["title", "typeCode", "urgencyId"]));
+    setTouched(new Set(["title", "typeCode", "urgencyId", "equipment"]));
     setSubmitError(null);
     if (!isValid || !catalogsReady || !info?.user_id) return;
 
-    const resolvedEquipmentId =
-      selectedAsset != null && selectedAsset.id > 0 ? selectedAsset.id : null;
+    const resolvedEquipmentId = selectedEquipmentId;
 
     try {
       if (isEdit && initial) {
@@ -427,7 +432,12 @@ export function WoCreateForm({
         </FormField>
 
         {/* Equipment */}
-        <FormField name="equipment" label={t("form.equipment.label")}>
+        <FormField
+          name="equipment"
+          label={t("form.equipment.label")}
+          error={fieldError("equipment")}
+          required={requireEquipment}
+        >
           {selectedAsset ? (
             <div className="rounded-lg border border-surface-border bg-surface-1 p-3">
               <div className="flex items-start justify-between">

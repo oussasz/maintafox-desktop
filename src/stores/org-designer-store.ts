@@ -9,7 +9,7 @@
 import { create } from "zustand";
 
 import { getOrgDesignerSnapshot, previewOrgChange } from "@/services/org-designer-service";
-import { toErrorMessage } from "@/utils/errors";
+import { formatOrgIpcError } from "@/utils/errors";
 import type {
   OrgDesignerSnapshot,
   OrgImpactPreview,
@@ -35,6 +35,7 @@ interface OrgDesignerStoreState {
   typeFilter: string | null;
   selectedNodeId: number | null;
   preview: OrgImpactPreview | null;
+  previewPayload: PreviewOrgChangePayload | null;
   previewOpen: boolean;
   loading: boolean;
   previewLoading: boolean;
@@ -50,7 +51,7 @@ interface OrgDesignerStoreState {
   closePreview: () => void;
 }
 
-export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set) => ({
+export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set, get) => ({
   snapshot: null,
   workspaceMode: "published",
   filterText: "",
@@ -58,6 +59,7 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set) => ({
   typeFilter: null,
   selectedNodeId: null,
   preview: null,
+  previewPayload: null,
   previewOpen: false,
   loading: false,
   previewLoading: false,
@@ -66,7 +68,8 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set) => ({
   loadSnapshot: async () => {
     set({ loading: true, error: null });
     try {
-      const snapshot = await getOrgDesignerSnapshot();
+      const preferDraft = get().workspaceMode === "draft";
+      const snapshot = await getOrgDesignerSnapshot(preferDraft);
       set((st) => {
         const prev = st.snapshot;
         let workspaceMode = st.workspaceMode;
@@ -86,13 +89,16 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set) => ({
         return { snapshot, workspaceMode, error: null };
       });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: formatOrgIpcError(err) });
     } finally {
       set({ loading: false });
     }
   },
 
-  setWorkspaceMode: (value) => set({ workspaceMode: value }),
+  setWorkspaceMode: (value) => {
+    set({ workspaceMode: value, selectedNodeId: null });
+    void get().loadSnapshot();
+  },
 
   setFilterText: (value) => set({ filterText: value }),
 
@@ -103,19 +109,20 @@ export const useOrgDesignerStore = create<OrgDesignerStoreState>()((set) => ({
   setSelectedNodeId: (nodeId) => set({ selectedNodeId: nodeId }),
 
   openPreview: async (payload) => {
-    set({ previewLoading: true, previewOpen: true, preview: null });
+    set({ previewLoading: true, previewOpen: true, preview: null, previewPayload: payload });
     try {
       const preview = await previewOrgChange(payload);
       set({ preview });
     } catch (err) {
       set({
-        error: toErrorMessage(err),
+        error: formatOrgIpcError(err),
         previewOpen: false,
+        previewPayload: null,
       });
     } finally {
       set({ previewLoading: false });
     }
   },
 
-  closePreview: () => set({ preview: null, previewOpen: false }),
+  closePreview: () => set({ preview: null, previewPayload: null, previewOpen: false }),
 }));

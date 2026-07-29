@@ -22,9 +22,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
+import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { usePermissions } from "@/hooks/use-permissions";
+import { formatAssetLabel, formatPersonLabel } from "@/lib/display";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { toErrorMessage } from "@/utils/errors";
@@ -83,6 +86,7 @@ const REVIEW_QUEUE_PREVIEW_LIMIT = 3;
 
 export function DiReviewPanel() {
   const { t } = useTranslation("di");
+  const { can } = usePermissions();
   const reviewQueue = useDiReviewStore((s) => s.reviewQueue);
   const loadReviewQueue = useDiReviewStore((s) => s.loadReviewQueue);
   const reviewError = useDiReviewStore((s) => s.error);
@@ -171,6 +175,9 @@ export function DiReviewPanel() {
               <ReviewRow
                 key={di.id}
                 di={di}
+                canApprove={can("di.approve")}
+                canReview={can("di.review")}
+                canScreen={can("di.screen") || can("di.review")}
                 onScreen={() => handleQuickScreen(di)}
                 onApprove={() => openApproval(di)}
                 onReject={() => openRejection(di)}
@@ -201,6 +208,9 @@ export function DiReviewPanel() {
 
 function ReviewRow({
   di,
+  canApprove,
+  canReview,
+  canScreen,
   onScreen,
   onApprove,
   onReject,
@@ -208,6 +218,9 @@ function ReviewRow({
   onView,
 }: {
   di: InterventionRequest;
+  canApprove: boolean;
+  canReview: boolean;
+  canScreen: boolean;
   onScreen: () => void;
   onApprove: () => void;
   onReject: () => void;
@@ -232,6 +245,14 @@ function ReviewRow({
       {/* Title */}
       <span className="truncate min-w-0 flex-1 font-medium">{di.title}</span>
 
+      <LinkedEntityBadge
+        entity="work_order"
+        code={di.converted_to_wo_code}
+        entityId={di.converted_to_wo_id}
+        title={di.converted_to_wo_title}
+        className="text-[10px] px-1.5 py-0 shrink-0"
+      />
+
       {/* Priority */}
       <Badge
         variant="outline"
@@ -241,10 +262,20 @@ function ReviewRow({
       </Badge>
 
       {/* Equipment */}
-      <span className="text-muted-foreground shrink-0 w-[60px] text-right">#{di.asset_id}</span>
+      <span
+        className="text-muted-foreground shrink-0 max-w-[140px] truncate text-right"
+        title={formatAssetLabel(di.asset_code, di.asset_label)}
+      >
+        {formatAssetLabel(di.asset_code, di.asset_label)}
+      </span>
 
       {/* Requester */}
-      <span className="text-muted-foreground shrink-0 w-[60px] text-right">#{di.submitter_id}</span>
+      <span
+        className="text-muted-foreground shrink-0 max-w-[120px] truncate text-right"
+        title={formatPersonLabel(di.submitter_display_name)}
+      >
+        {formatPersonLabel(di.submitter_display_name)}
+      </span>
 
       {/* Submitted date */}
       <span className="text-muted-foreground shrink-0 w-[80px] text-right">
@@ -253,7 +284,7 @@ function ReviewRow({
 
       {/* Actions */}
       <div className="flex items-center gap-1 shrink-0">
-        {di.status === "awaiting_approval" && (
+        {canApprove && di.status === "awaiting_approval" && (
           <Button
             variant="ghost"
             size="sm"
@@ -264,7 +295,7 @@ function ReviewRow({
             <Check className="h-3.5 w-3.5" />
           </Button>
         )}
-        {(di.status === "pending_review" || di.status === "returned_for_clarification") && (
+        {canScreen && di.status === "pending_review" && (
           <Button
             variant="ghost"
             size="sm"
@@ -275,24 +306,31 @@ function ReviewRow({
             <ClipboardCheck className="h-3.5 w-3.5" />
           </Button>
         )}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-          onClick={onReject}
-          title={t("action.reject")}
-        >
-          <X className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 w-6 p-0 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-          onClick={onReturn}
-          title={t("review.returnAction")}
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-        </Button>
+        {canReview &&
+          (di.status === "pending_review" ||
+            di.status === "screened" ||
+            di.status === "awaiting_approval") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+              onClick={onReject}
+              title={t("action.reject")}
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        {canReview && di.status === "pending_review" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+            onClick={onReturn}
+            title={t("review.returnAction")}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"

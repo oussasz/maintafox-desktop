@@ -17,8 +17,9 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -123,7 +124,7 @@ async fn get_set_by_id(db: &DatabaseConnection, set_id: i64) -> AppResult<Refere
 }
 
 /// Returns the next version number for a domain (max existing + 1, or 1).
-async fn next_version_no(db: &DatabaseConnection, domain_id: i64) -> AppResult<i64> {
+async fn next_version_no(db: &impl ConnectionTrait, domain_id: i64) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -139,6 +140,217 @@ async fn next_version_no(db: &DatabaseConnection, domain_id: i64) -> AppResult<i
         .try_get("", "max_v")
         .map_err(|e| decode_err("max_v", e))?;
     Ok(max_v + 1)
+}
+
+/// Latest published set for a domain, if any.
+async fn find_published_set_id(
+    db: &impl ConnectionTrait,
+    domain_id: i64,
+) -> AppResult<Option<i64>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM reference_sets \
+             WHERE domain_id = ? AND status = 'published' \
+             ORDER BY version_no DESC LIMIT 1",
+            [domain_id.into()],
+        ))
+        .await?;
+    Ok(match row {
+        Some(r) => Some(
+            r.try_get::<i64>("", "id")
+                .map_err(|e| decode_err("id", e))?,
+        ),
+        None => None,
+    })
+}
+
+const VALUE_CLONE_COLS: &str =
+    "id, parent_id, code, label, description, sort_order, \
+     color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json";
+
+/// Clone all values (+ aliases) from a published set into a new draft set.
+/// Preserves codes/labels/ordering/active/metadata; remaps parent_id; new IDs.
+async fn clone_published_values_into_draft(
+    db: &impl ConnectionTrait,
+    source_set_id: i64,
+    draft_set_id: i64,
+) -> AppResult<()> {
+    let source_rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &format!(
+                "SELECT {VALUE_CLONE_COLS} FROM reference_values WHERE set_id = ? \
+                 ORDER BY sort_order ASC, code ASC"
+            ),
+            [source_set_id.into()],
+        ))
+        .await?;
+
+    // Pass 1: insert scalars with parent_id NULL; build old→new id map via code.
+    let mut id_map: HashMap<i64, i64> = HashMap::with_capacity(source_rows.len());
+    let mut parent_jobs: Vec<(i64, i64)> = Vec::new(); // (new_id, old_parent_id)
+
+    for row in &source_rows {
+        let old_id: i64 = row
+            .try_get("", "id")
+            .map_err(|e| decode_err("id", e))?;
+        let old_parent: Option<i64> = row
+            .try_get("", "parent_id")
+            .map_err(|e| decode_err("parent_id", e))?;
+        let code: String = row
+            .try_get("", "code")
+            .map_err(|e| decode_err("code", e))?;
+        let label: String = row
+            .try_get("", "label")
+            .map_err(|e| decode_err("label", e))?;
+        let description: Option<String> = row
+            .try_get("", "description")
+            .map_err(|e| decode_err("description", e))?;
+        let sort_order: Option<i64> = row
+            .try_get("", "sort_order")
+            .map_err(|e| decode_err("sort_order", e))?;
+        let color_hex: Option<String> = row
+            .try_get("", "color_hex")
+            .map_err(|e| decode_err("color_hex", e))?;
+        let icon_name: Option<String> = row
+            .try_get("", "icon_name")
+            .map_err(|e| decode_err("icon_name", e))?;
+        let semantic_tag: Option<String> = row
+            .try_get("", "semantic_tag")
+            .map_err(|e| decode_err("semantic_tag", e))?;
+        let external_code: Option<String> = row
+            .try_get("", "external_code")
+            .map_err(|e| decode_err("external_code", e))?;
+        let is_active: i64 = row
+            .try_get("", "is_active")
+            .map_err(|e| decode_err("is_active", e))?;
+        let metadata_json: Option<String> = row
+            .try_get("", "metadata_json")
+            .map_err(|e| decode_err("metadata_json", e))?;
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO reference_values \
+                 (set_id, parent_id, code, label, description, sort_order, \
+                  color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
+             VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                draft_set_id.into(),
+                code.clone().into(),
+                label.into(),
+                description.into(),
+                sort_order.into(),
+                color_hex.into(),
+                icon_name.into(),
+                semantic_tag.into(),
+                external_code.into(),
+                is_active.into(),
+                metadata_json.into(),
+            ],
+        ))
+        .await?;
+
+        let inserted = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM reference_values WHERE set_id = ? AND code = ?",
+                [draft_set_id.into(), code.into()],
+            ))
+            .await?
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!(
+                    "cloned reference_values row missing after insert"
+                ))
+            })?;
+        let new_id: i64 = inserted
+            .try_get("", "id")
+            .map_err(|e| decode_err("id", e))?;
+        id_map.insert(old_id, new_id);
+        if let Some(pid) = old_parent {
+            parent_jobs.push((new_id, pid));
+        }
+    }
+
+    // Pass 2: remap parents; fail if parent was not in the cloned set (orphan).
+    for (new_id, old_parent_id) in parent_jobs {
+        let Some(&new_parent_id) = id_map.get(&old_parent_id) else {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Impossible de cloner le jeu : parent_id={old_parent_id} \
+                 introuvable dans le jeu publié (hiérarchie orpheline)."
+            )]));
+        };
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE reference_values SET parent_id = ? WHERE id = ?",
+            [new_parent_id.into(), new_id.into()],
+        ))
+        .await?;
+    }
+
+    // Pass 3: clone aliases onto new value IDs.
+    let now = Utc::now().to_rfc3339();
+    if id_map.is_empty() {
+        return Ok(());
+    }
+
+    let old_ids: Vec<i64> = id_map.keys().copied().collect();
+    let placeholders = old_ids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut params: Vec<sea_orm::Value> = old_ids.iter().map(|id| (*id).into()).collect();
+
+    let alias_rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT reference_value_id, alias_label, locale, alias_type, is_preferred \
+                 FROM reference_aliases WHERE reference_value_id IN ({placeholders})"
+            ),
+            params.drain(..),
+        ))
+        .await?;
+
+    for row in alias_rows {
+        let old_value_id: i64 = row
+            .try_get("", "reference_value_id")
+            .map_err(|e| decode_err("reference_value_id", e))?;
+        let Some(&new_value_id) = id_map.get(&old_value_id) else {
+            continue;
+        };
+        let alias_label: String = row
+            .try_get("", "alias_label")
+            .map_err(|e| decode_err("alias_label", e))?;
+        let locale: String = row
+            .try_get("", "locale")
+            .map_err(|e| decode_err("locale", e))?;
+        let alias_type: String = row
+            .try_get("", "alias_type")
+            .map_err(|e| decode_err("alias_type", e))?;
+        let is_preferred: i64 = row
+            .try_get("", "is_preferred")
+            .map_err(|e| decode_err("is_preferred", e))?;
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO reference_aliases \
+                 (reference_value_id, alias_label, locale, alias_type, is_preferred, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                new_value_id.into(),
+                alias_label.into(),
+                locale.into(),
+                alias_type.into(),
+                is_preferred.into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+    }
+
+    Ok(())
 }
 
 /// Verifies the domain exists. Returns `NotFound` otherwise.
@@ -214,18 +426,24 @@ pub async fn get_reference_set(
 ///
 /// Assigns the next sequential version number. Only one draft per domain
 /// is allowed at a time.
+///
+/// When a published set exists, all values (and aliases) are cloned into the
+/// new draft in one transaction. When none exists (bootstrap), the draft is empty.
 pub async fn create_draft_set(
     db: &DatabaseConnection,
     domain_id: i64,
     actor_id: i64,
 ) -> AppResult<ReferenceSet> {
-    assert_domain_exists(db, domain_id).await?;
+    let domain = super::domains::get_reference_domain(db, domain_id).await?;
+    super::governance::assert_allows_create_draft_set(&domain)?;
     assert_no_active_draft(db, domain_id).await?;
 
-    let version_no = next_version_no(db, domain_id).await?;
+    let txn = db.begin().await?;
+
+    let version_no = next_version_no(&txn, domain_id).await?;
     let now = Utc::now().to_rfc3339();
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO reference_sets \
              (domain_id, version_no, status, created_by_id, created_at) \
@@ -239,8 +457,7 @@ pub async fn create_draft_set(
     ))
     .await?;
 
-    // Fetch the created row via domain+version (unique index guarantees single row).
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             &format!(
@@ -256,7 +473,76 @@ pub async fn create_draft_set(
             ))
         })?;
 
-    map_set(&row)
+    let draft = map_set(&row)?;
+
+    if let Some(published_id) = find_published_set_id(&txn, domain_id).await? {
+        clone_published_values_into_draft(&txn, published_id, draft.id).await?;
+    }
+
+    txn.commit().await?;
+    Ok(draft)
+}
+
+/// Hard-deletes a draft set and its values/aliases/validation reports.
+/// Never affects published or superseded sets.
+pub async fn discard_draft_set(
+    db: &DatabaseConnection,
+    set_id: i64,
+) -> AppResult<()> {
+    let set = get_set_by_id(db, set_id).await?;
+    let domain = super::domains::get_reference_domain(db, set.domain_id).await?;
+    super::governance::assert_allows_create_draft_set(&domain)?;
+
+    if set.status != SET_STATUS_DRAFT {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Impossible de supprimer un jeu en statut '{}'. \
+             Seul un brouillon ('draft') peut être abandonné.",
+            set.status
+        )]));
+    }
+
+    let txn = db.begin().await?;
+
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM reference_aliases \
+         WHERE reference_value_id IN \
+             (SELECT id FROM reference_values WHERE set_id = ?)",
+        [set_id.into()],
+    ))
+    .await?;
+
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM reference_validation_reports WHERE set_id = ?",
+        [set_id.into()],
+    ))
+    .await?;
+
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM reference_values WHERE set_id = ?",
+        [set_id.into()],
+    ))
+    .await?;
+
+    let deleted = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM reference_sets WHERE id = ? AND status = 'draft'",
+            [set_id.into()],
+        ))
+        .await?;
+
+    if deleted.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec![
+            "Le brouillon n'a pas pu être supprimé (statut modifié pendant l'opération)."
+                .into(),
+        ]));
+    }
+
+    txn.commit().await?;
+    Ok(())
 }
 
 /// Transitions a draft set to validated.
@@ -315,6 +601,8 @@ pub async fn publish_set(
     _actor_id: i64,
 ) -> AppResult<ReferenceSet> {
     let set = get_set_by_id(db, set_id).await?;
+    let domain = super::domains::get_reference_domain(db, set.domain_id).await?;
+    super::governance::assert_allows_publish(&domain)?;
 
     if set.status != SET_STATUS_VALIDATED {
         return Err(AppError::ValidationFailed(vec![format!(

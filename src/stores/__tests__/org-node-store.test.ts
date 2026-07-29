@@ -40,6 +40,8 @@ const rootNode = {
   row_version: 1,
   origin_machine_id: null,
   last_synced_checkpoint: null,
+  structure_model_id: 1,
+  origin_node_id: null,
 };
 
 const childNode = {

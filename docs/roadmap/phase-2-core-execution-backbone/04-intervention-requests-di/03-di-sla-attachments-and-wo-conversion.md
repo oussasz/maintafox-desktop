@@ -273,7 +273,7 @@ Types:
 - `WoConversionResult`:
     di: InterventionRequest,      // updated DI with converted status
     wo_id: i64,                   // new WO id
-    wo_code: String               // new WO code (e.g., WOR-0001)
+    wo_code: String               // new WO code (e.g., OT-0001)
 
 Functions:
 
@@ -292,10 +292,10 @@ Logic inside a single sqlx transaction:
    - DI must have classification_code_id set (not NULL)
    Error descriptions must be specific: "Asset context required", "Classification required".
 
-4. Generate WO code:
-   SELECT COALESCE(MAX(CAST(SUBSTR(code,5) AS INT)),0)+1
-   FROM work_orders WHERE code LIKE 'WOR-%';
-   Format as "WOR-" + zero-padded 4 digits.
+4. Generate WO code via shared `generate_wo_code` (format `OT-NNNN`):
+   SELECT COALESCE(MAX(CAST(SUBSTR(code,4) AS INT)),0)+1
+   FROM work_orders WHERE code GLOB 'OT-[0-9]*';
+   Format as "OT-" + zero-padded 4 digits.
    NOTE: If work_orders table does not yet exist (SP05 not built), INSERT into a
    minimal `work_order_stubs` table with same schema subset. This table will be
    replaced by SP05's full work_orders table. Use CREATE TABLE IF NOT EXISTS inside
@@ -483,7 +483,7 @@ Attempt to drag a 25 MB file into DiAttachmentPanel; must show inline error with
 uploadDiAttachment.
 
 **V3 - Post-conversion feedback.**
-Successful conversion; modal must call `onConverted` with `woCode = "WOR-0001"` visible to
+Successful conversion; modal must call `onConverted` with `woCode = "OT-0001"` visible to
 the caller for navigation.
 
 **V4 - typecheck.**

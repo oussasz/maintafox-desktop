@@ -1,6 +1,7 @@
 import { z, ZodError } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { toErrorMessage } from "@/utils/errors";
 import type {
   ApplyAdminLicenseActionInput,
   ApplyAdminLicenseActionResult,
@@ -9,28 +10,6 @@ import type {
   LicenseTraceEvent,
   LicenseStatusView,
 } from "@shared/ipc-types";
-
-const LicenseStatusViewSchema = z.object({
-  entitlement_state: z.string(),
-  activation_state: z.string(),
-  trust_state: z.string(),
-  policy_sync_pending: z.boolean(),
-  pending_local_writes: z.number(),
-  last_admin_action: z.string().nullable(),
-  last_admin_action_at: z.string().nullable(),
-  actionable_message: z.string(),
-  recovery_paths: z.array(z.string()),
-});
-
-const ApplyAdminLicenseActionResultSchema = z.object({
-  action_id: z.string(),
-  action: z.string(),
-  applied_at: z.string(),
-  entitlement_state_after: z.string(),
-  activation_state_after: z.string(),
-  pending_local_writes: z.number(),
-  queued_local_writes: z.boolean(),
-});
 
 const LicenseTraceEventSchema = z.object({
   id: z.string(),
@@ -47,6 +26,35 @@ const LicenseTraceEventSchema = z.object({
   event_hash: z.string(),
 });
 
+/** Canonical License Enforcement view-model (single IPC SoT for the Settings panel). */
+const LicenseStatusViewSchema = z.object({
+  entitlement_state: z.string(),
+  activation_state: z.string(),
+  machine_activation_state: z.string(),
+  trust_state: z.string(),
+  license_edition: z.string().nullable(),
+  entitlement_tier: z.string().nullable(),
+  envelope_id: z.string().nullable(),
+  verification_result: z.string().nullable(),
+  policy_sync_pending: z.boolean(),
+  pending_local_writes: z.number(),
+  last_admin_action: z.string().nullable(),
+  last_admin_action_at: z.string().nullable(),
+  actionable_message: z.string(),
+  recovery_paths: z.array(z.string()),
+  recent_traces: z.array(LicenseTraceEventSchema).default([]),
+});
+
+const ApplyAdminLicenseActionResultSchema = z.object({
+  action_id: z.string(),
+  action: z.string(),
+  applied_at: z.string(),
+  entitlement_state_after: z.string(),
+  activation_state_after: z.string(),
+  pending_local_writes: z.number(),
+  queued_local_writes: z.boolean(),
+});
+
 const ApplyLicensingCompromiseResponseResultSchema = z.object({
   issuer: z.string(),
   key_id: z.string(),
@@ -59,7 +67,7 @@ function normalizeDecodeError(scope: string, err: unknown): Error {
   if (err instanceof ZodError) {
     return new Error(`${scope} response validation failed: ${err.message}`);
   }
-  return err instanceof Error ? err : new Error(String(err));
+  return new Error(`${scope}: ${toErrorMessage(err)}`);
 }
 
 export async function getLicenseEnforcementStatus(): Promise<LicenseStatusView> {

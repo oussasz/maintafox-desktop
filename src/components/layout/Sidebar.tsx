@@ -2,7 +2,9 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 
+import { useModuleCapabilities } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
+import { isModuleCapabilityAllowed } from "@/lib/module-capability";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 
@@ -25,11 +27,15 @@ export function Sidebar({ items }: SidebarProps) {
   const { t } = useTranslation("shell");
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const { can } = usePermissions();
+  const { capabilityMap } = useModuleCapabilities();
   const location = useLocation();
 
-  // Filter non-header items by permission, then group — hide empty groups
+  // Filter by RBAC + soft module capabilities, then group — hide empty groups
   const visibleItems = items.filter(
-    (item) => item.isGroupHeader || !item.requiredPermission || can(item.requiredPermission),
+    (item) =>
+      item.isGroupHeader ||
+      ((!item.requiredPermission || can(item.requiredPermission)) &&
+        isModuleCapabilityAllowed(capabilityMap, item.requiredPermission)),
   );
 
   type Group = { header: NavItem | null; children: NavItem[] };

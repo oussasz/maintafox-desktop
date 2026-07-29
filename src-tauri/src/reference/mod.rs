@@ -9,6 +9,7 @@
 //! Sub-phase 03 files 02–04 bridge the two layers.
 //!
 //! Sub-module layout:
+//!   `governance` — A/B/C category decision engine (single source of truth for permissions)
 //!   `domains`    — domain catalog CRUD with structure type and governance level validation
 //!   `sets`       — set version lifecycle (draft → validated → published → superseded)
 //!   `values`     — value tree CRUD with hierarchy cycle detection
@@ -22,12 +23,15 @@
 
 pub mod aliases;
 pub mod domains;
+pub mod governance;
 pub mod imports;
 pub mod migrations;
 pub mod protected;
 pub mod publish;
+pub mod schedule_patterns;
 pub mod search;
 pub mod sets;
+pub mod system_catalog_integrity;
 pub mod validation;
 pub mod values;
 
@@ -42,6 +46,8 @@ mod search_tests;
 #[cfg(test)]
 mod domains_tests;
 #[cfg(test)]
+mod governance_tests;
+#[cfg(test)]
 mod migrations_tests;
 #[cfg(test)]
 mod protected_tests;
@@ -51,3 +57,7 @@ mod sets_tests;
 mod validation_tests;
 #[cfg(test)]
 mod values_tests;
+#[cfg(test)]
+mod system_catalog_integrity_tests;
+#[cfg(test)]
+mod schedule_patterns_tests;

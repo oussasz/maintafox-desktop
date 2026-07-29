@@ -1630,6 +1630,25 @@ pub async fn transition_pm_occurrence(
 
     let mut linked_work_order_id = current.linked_work_order_id;
     if input.generate_work_order == Some(true) && linked_work_order_id.is_none() {
+        let scope_row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT asset_scope_type, asset_scope_id FROM pm_plans WHERE id = ?",
+                [current.pm_plan_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::NotFound {
+                entity: "pm_plan".into(),
+                id: current.pm_plan_id.to_string(),
+            })?;
+        let asset_scope_type: String = scope_row.try_get("", "asset_scope_type")?;
+        let asset_scope_id: Option<i64> = scope_row.try_get("", "asset_scope_id")?;
+        let equipment_id = if asset_scope_type == "equipment" {
+            asset_scope_id
+        } else {
+            None
+        };
+
         let wo_type_id = resolve_preventive_work_order_type_id(db, input.work_order_type_id).await?;
         let wo_type_code = resolve_work_order_type_code_by_id(db, wo_type_id).await?;
         let wo_title = format!(
@@ -1646,14 +1665,14 @@ pub async fn transition_pm_occurrence(
             db,
             WoCreateInput {
                 type_code: wo_type_code,
-                equipment_id: None,
+                equipment_id,
                 location_id: None,
                 source_di_id: None,
                 source_inspection_anomaly_id: None,
                 source_ram_ishikawa_diagram_id: None,
                 source_ishikawa_flow_node_id: None,
                 source_rca_cause_text: None,
-                entity_id: None,
+                entity_id: None, // Derived from equipment in WO create invariants.
                 planner_id: None,
                 urgency_id: None,
                 title: wo_title,
@@ -2053,6 +2072,12 @@ async fn create_follow_up_di_from_finding(
         _ => "minor",
     };
 
+    let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(
+        db,
+        &finding.finding_type,
+    )
+    .await?;
+
     let di = create_intervention_request(
         db,
         DiCreateInput {
@@ -2065,7 +2090,8 @@ async fn create_follow_up_di_from_finding(
             ),
             description: finding.description.clone(),
             origin_type: "pm".to_string(),
-            symptom_code_id: None,
+            request_type: "repair".to_string(),
+            symptom_code_id: Some(symptom_code_id),
             impact_level: impact.to_string(),
             production_impact: false,
             safety_flag: urgency == "critical",
@@ -2104,6 +2130,11 @@ async fn create_follow_up_wo_from_finding(
         })?;
     let asset_scope_type: String = plan_row.try_get("", "asset_scope_type")?;
     let asset_scope_id: Option<i64> = plan_row.try_get("", "asset_scope_id")?;
+    if asset_scope_type != "equipment" || asset_scope_id.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "Cannot create follow-up OT without equipment scope on PM plan.".to_string(),
+        ]));
+    }
     let wo_type_id = resolve_preventive_work_order_type_id(db, finding.follow_up_work_order_type_id).await?;
     let wo_type_code = resolve_work_order_type_code_by_id(db, wo_type_id).await?;
 
@@ -2111,7 +2142,7 @@ async fn create_follow_up_wo_from_finding(
         db,
         WoCreateInput {
             type_code: wo_type_code,
-            equipment_id: if asset_scope_type == "equipment" { asset_scope_id } else { None },
+            equipment_id: asset_scope_id,
             location_id: None,
             source_di_id,
             source_inspection_anomaly_id: None,

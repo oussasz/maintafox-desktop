@@ -32,6 +32,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useReferenceGovernanceStore } from "@/stores/reference-governance-store";
 import { useReferenceManagerStore } from "@/stores/reference-manager-store";
 import type { ReferencePublishIssue } from "@shared/ipc-types";
@@ -45,6 +46,8 @@ interface PublishReadinessPanelProps {
 
 export function PublishReadinessPanel({ setId, isProtected }: PublishReadinessPanelProps) {
   const { t } = useTranslation("reference");
+  const { can } = usePermissions();
+  const mayPublish = can("ref.publish");
 
   const readiness = useReferenceGovernanceStore((s) => s.readiness);
   const readinessLoading = useReferenceGovernanceStore((s) => s.readinessLoading);
@@ -68,7 +71,8 @@ export function PublishReadinessPanel({ setId, isProtected }: PublishReadinessPa
     readiness?.issues.filter((i: ReferencePublishIssue) => i.severity === "error") ?? [];
   const warnings =
     readiness?.issues.filter((i: ReferencePublishIssue) => i.severity === "warning") ?? [];
-  const canPublish = readiness?.is_ready === true && blockers.length === 0;
+  const isReady = readiness?.is_ready === true && blockers.length === 0;
+  const canPublish = mayPublish && isReady;
 
   const handlePublish = useCallback(async () => {
     setConfirmOpen(false);
@@ -98,7 +102,7 @@ export function PublishReadinessPanel({ setId, isProtected }: PublishReadinessPa
             <span className="text-sm font-medium text-text-primary">{t("publish.title")}</span>
             {readinessLoading ? (
               <div className="h-3.5 w-3.5 animate-spin rounded-full border border-surface-3 border-t-primary" />
-            ) : canPublish ? (
+            ) : isReady ? (
               <Badge variant="default" className="text-[10px] bg-green-500">
                 {t("publish.ready")}
               </Badge>
@@ -170,17 +174,19 @@ export function PublishReadinessPanel({ setId, isProtected }: PublishReadinessPa
                 <Eye className="h-3 w-3" />
                 {t("publish.previewImpact")}
               </Button>
-              <Button
-                variant="default"
-                size="sm"
-                className="gap-1.5 h-7 text-xs"
-                onClick={() => setConfirmOpen(true)}
-                disabled={!canPublish || readinessLoading}
-              >
-                {isProtected && <Shield className="h-3 w-3" />}
-                <Send className="h-3 w-3" />
-                {t("publish.publishSet")}
-              </Button>
+              {mayPublish ? (
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="gap-1.5 h-7 text-xs"
+                  onClick={() => setConfirmOpen(true)}
+                  disabled={!canPublish || readinessLoading}
+                >
+                  {isProtected && <Shield className="h-3 w-3" />}
+                  <Send className="h-3 w-3" />
+                  {t("publish.publishSet")}
+                </Button>
+              ) : null}
             </div>
           </div>
         )}

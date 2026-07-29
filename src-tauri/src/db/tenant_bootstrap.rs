@@ -23,10 +23,6 @@ pub async fn bootstrap_from_activation_claim(db: &DatabaseConnection, changed_by
     let Some(claim) = crate::commands::product_license::get_activation_claim_record(db).await? else {
         return Ok(());
     };
-    // Tenant-global guard from VPS: if already initialized elsewhere, skip all local bootstrap seeding.
-    if claim.is_initialized.unwrap_or(false) {
-        return Ok(());
-    }
     let tenant_id = claim.tenant_id.trim();
     if tenant_id.is_empty() {
         return Ok(());
@@ -34,7 +30,20 @@ pub async fn bootstrap_from_activation_claim(db: &DatabaseConnection, changed_by
 
     let now = Utc::now().to_rfc3339();
     let root_name = normalize_root_name(claim.tenant_display_name.as_deref());
+
+    // ALWAYS ensure local org integrity for vendor-console / activation tenants.
+    // `is_initialized` must not skip model-scoping the root — that caused publish
+    // failures when forks omitted unscoped live nodes.
     let root_id = ensure_root_organization(db, tenant_id, &root_name, &now).await?;
+    crate::org::model_scope::heal_null_structure_model_ids_onto_active(db).await?;
+    crate::org::model_scope::assert_no_null_structure_model_ids(db).await?;
+
+    // Tenant already initialized elsewhere: do not seed demo sandbox or rewrite
+    // bootstrap state, but local structure integrity above still applies.
+    if claim.is_initialized.unwrap_or(false) {
+        return Ok(());
+    }
+
     let want_demo_data = claim.has_demo_data.unwrap_or(false);
 
     let previous_state = load_bootstrap_state(db).await?;
@@ -45,6 +54,8 @@ pub async fn bootstrap_from_activation_claim(db: &DatabaseConnection, changed_by
 
     if want_demo_data && !already_demo_seeded {
         seed_generic_demo_sandbox(db, tenant_id, root_id, &now).await?;
+        crate::org::model_scope::heal_null_structure_model_ids_onto_active(db).await?;
+        crate::org::model_scope::assert_no_null_structure_model_ids(db).await?;
     }
 
     let state = TenantBootstrapState {
@@ -90,12 +101,19 @@ async fn ensure_root_organization(
         .await?;
     if let Some(row) = existing_root {
         let id = try_get_i64(&row, "id")?;
+        let model_id = ensure_active_org_model(db, now).await?;
+        // Rename to the activated tenant display name and permanently scope the root.
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE org_nodes SET name = ?, updated_at = ? WHERE id = ?",
-            [tenant_name.into(), now.into(), id.into()],
+            "UPDATE org_nodes \
+             SET name = ?, \
+                 structure_model_id = COALESCE(structure_model_id, ?), \
+                 updated_at = ? \
+             WHERE id = ?",
+            [tenant_name.into(), model_id.into(), now.into(), id.into()],
         ))
         .await?;
+        crate::org::model_scope::heal_null_structure_model_ids(db, model_id).await?;
         return Ok(id);
     }
 
@@ -106,8 +124,9 @@ async fn ensure_root_organization(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_nodes
-            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, created_at, updated_at, row_version)
-          VALUES (?, ?, ?, ?, NULL, '/', 0, 'active', ?, ?, 1)",
+            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+             created_at, updated_at, row_version, structure_model_id)
+          VALUES (?, ?, ?, ?, NULL, '/', 0, 'active', ?, ?, 1, ?)",
         [
             Uuid::new_v4().to_string().into(),
             root_code.into(),
@@ -115,6 +134,7 @@ async fn ensure_root_organization(
             root_type_id.into(),
             now.into(),
             now.into(),
+            model_id.into(),
         ],
     ))
     .await?;
@@ -216,8 +236,8 @@ async fn seed_generic_demo_sandbox(
     let suffix = code_fragment(tenant_id);
     let zone_code = format!("GEN-ZONE-1-{suffix}");
     let line_code = format!("GEN-LINE-A-{suffix}");
-    let zone_id = ensure_org_node(db, &zone_code, "Zone 1", zone_type_id, Some(root_id), 1, now).await?;
-    let line_id = ensure_org_node(db, &line_code, "Line A", line_type_id, Some(zone_id), 2, now).await?;
+    let zone_id = ensure_org_node(db, model_id, &zone_code, "Zone 1", zone_type_id, Some(root_id), 1, now).await?;
+    let line_id = ensure_org_node(db, model_id, &line_code, "Line A", line_type_id, Some(zone_id), 2, now).await?;
 
     let class_pump = ensure_equipment_class(db, "GEN-CLASS-PUMP", "Pump", None, "class", now).await?;
     let class_motor = ensure_equipment_class(db, "GEN-CLASS-MOTOR", "Motor", None, "class", now).await?;
@@ -277,7 +297,6 @@ async fn seed_generic_demo_sandbox(
 
     let wo_1 = ensure_work_order(
         db,
-        &format!("GEN-WO-001-{suffix}"),
         corrective_type_id,
         draft_status_id,
         Some(pump_id),
@@ -291,7 +310,6 @@ async fn seed_generic_demo_sandbox(
     .await?;
     let wo_2 = ensure_work_order(
         db,
-        &format!("GEN-WO-002-{suffix}"),
         preventive_type_id,
         draft_status_id,
         Some(motor_id),
@@ -355,6 +373,7 @@ async fn ensure_node_type(
 
 async fn ensure_org_node(
     db: &DatabaseConnection,
+    structure_model_id: i64,
     code: &str,
     name: &str,
     node_type_id: i64,
@@ -370,7 +389,15 @@ async fn ensure_org_node(
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        let id = try_get_i64(&row, "id")?;
+        // Heal legacy rows inserted without model scope.
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE org_nodes SET structure_model_id = COALESCE(structure_model_id, ?), updated_at = ? WHERE id = ?",
+            [structure_model_id.into(), now.into(), id.into()],
+        ))
+        .await?;
+        return Ok(id);
     }
 
     let ancestor_path = if let Some(pid) = parent_id {
@@ -381,8 +408,9 @@ async fn ensure_org_node(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_nodes
-            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, created_at, updated_at, row_version)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1)",
+            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+             created_at, updated_at, row_version, structure_model_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, ?)",
         [
             Uuid::new_v4().to_string().into(),
             code.into(),
@@ -393,6 +421,7 @@ async fn ensure_org_node(
             depth.into(),
             now.into(),
             now.into(),
+            structure_model_id.into(),
         ],
     ))
     .await?;
@@ -539,7 +568,6 @@ async fn ensure_di(
 #[allow(clippy::too_many_arguments)]
 async fn ensure_work_order(
     db: &DatabaseConnection,
-    code: &str,
     type_id: i64,
     status_id: i64,
     equipment_id: Option<i64>,
@@ -553,13 +581,15 @@ async fn ensure_work_order(
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM work_orders WHERE code = ? LIMIT 1",
-            [code.into()],
+            "SELECT id FROM work_orders WHERE title = ? LIMIT 1",
+            [title.into()],
         ))
         .await?;
     if let Some(row) = existing {
         return Ok(try_get_i64(&row, "id")?);
     }
+
+    let code = crate::wo::domain::generate_wo_code(db).await?;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

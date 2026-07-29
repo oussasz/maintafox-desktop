@@ -27,6 +27,7 @@ const InterventionRequestSchema = z.object({
   title: z.string(),
   description: z.string(),
   origin_type: z.string(),
+  request_type: z.string().default("repair"),
   symptom_code_id: z.number().nullable(),
   impact_level: z.string(),
   production_impact: z.boolean(),
@@ -47,6 +48,14 @@ const InterventionRequestSchema = z.object({
   archived_at: z.string().nullable(),
   converted_to_wo_id: z.number().nullable(),
   converted_at: z.string().nullable(),
+  sla_rule_id: z.number().nullable().optional(),
+  sla_target_response_hours: z.number().nullable().optional(),
+  sla_target_resolution_hours: z.number().nullable().optional(),
+  sla_escalation_threshold_hours: z.number().nullable().optional(),
+  sla_response_deadline: z.string().nullable().optional(),
+  sla_resolution_deadline: z.string().nullable().optional(),
+  sla_response_breach_notified_at: z.string().nullable().optional(),
+  sla_resolution_breach_notified_at: z.string().nullable().optional(),
   reviewer_note: z.string().nullable(),
   classification_code_id: z.number().nullable(),
   is_recurrence_flag: z.boolean(),
@@ -56,6 +65,14 @@ const InterventionRequestSchema = z.object({
   submitter_id: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+  asset_code: z.string().nullable().optional(),
+  asset_label: z.string().nullable().optional(),
+  org_node_code: z.string().nullable().optional(),
+  org_node_label: z.string().nullable().optional(),
+  submitter_display_name: z.string().nullable().optional(),
+  reviewer_display_name: z.string().nullable().optional(),
+  converted_to_wo_code: z.string().nullable().optional(),
+  converted_to_wo_title: z.string().nullable().optional(),
 });
 
 const WoConversionResultSchema = z.object({
@@ -69,10 +86,16 @@ const DiSlaStatusSchema = z.object({
   target_response_hours: z.number().nullable(),
   target_resolution_hours: z.number().nullable(),
   sla_deadline: z.string().nullable(),
+  resolution_deadline: z.string().nullable(),
   response_elapsed_hours: z.number().nullable(),
   resolution_elapsed_hours: z.number().nullable(),
+  response_remaining_hours: z.number().nullable(),
+  resolution_remaining_hours: z.number().nullable(),
   is_response_breached: z.boolean(),
   is_resolution_breached: z.boolean(),
+  status: z
+    .enum(["on_track", "at_risk", "breached", "completed"])
+    .nullable(),
 });
 
 const DiSlaRuleSchema = z.object({

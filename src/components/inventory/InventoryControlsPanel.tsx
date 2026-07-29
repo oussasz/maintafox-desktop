@@ -188,7 +188,8 @@ export function InventoryControlsPanel() {
     { accessorKey: "location_code", header: "Location" },
     { accessorKey: "quantity", header: "Qty" },
     { accessorKey: "source_ref", header: "Source ref" },
-    { accessorKey: "reason", header: "Reason" },
+    { accessorKey: "reason_code", header: "Reason code" },
+    { accessorKey: "notes", header: "Notes" },
   ];
 
   return (

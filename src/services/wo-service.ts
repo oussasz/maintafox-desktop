@@ -9,23 +9,30 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  WoApprovePlanningInput,
   WoAssignInput,
   WoCancelInput,
   WoCostSummary,
   WoCreateInput,
   WoDraftUpdateInput,
+  WoEvaluateReadinessInput,
   WoGetResponse,
   WoHoldInput,
   WoListFilter,
   WoListPage,
+  WoMarkReadyInput,
   WoMechCompleteInput,
   WoMechCompleteResponse,
+  WoCompletionGate,
   WoPauseInput,
   WoPlanInput,
   WoPreflightError,
+  WoReadinessResult,
+  WoReturnToPlanningInput,
   WoResumeInput,
   WoStartInput,
   WoStatsPayload,
+  WoSubmitInput,
   CreateWorkOrderTypeInput,
   UpdateWorkOrderPriorityInput,
   UpdateWorkOrderStatusInput,
@@ -40,15 +47,11 @@ import type {
 
 export const WoStatusSchema = z.enum([
   "draft",
-  "awaiting_approval",
-  "planned",
-  "ready_to_schedule",
-  "assigned",
-  "waiting_for_prerequisite",
+  "planning",
+  "ready",
   "in_progress",
-  "paused",
-  "mechanically_complete",
-  "technically_verified",
+  "on_hold",
+  "completed",
   "closed",
   "cancelled",
 ]);
@@ -92,6 +95,7 @@ export const WorkOrderSchema = z.object({
   active_labor_hours: z.number().nullable(),
   total_waiting_hours: z.number().nullable(),
   downtime_hours: z.number().nullable(),
+  planned_downtime_hours: z.number().nullable().optional(),
   labor_cost: z.number().nullable(),
   parts_cost: z.number().nullable(),
   service_cost: z.number().nullable(),
@@ -129,6 +133,11 @@ export const WorkOrderSchema = z.object({
   asset_label: z.string().nullable().optional(),
   planner_username: z.string().nullable().optional(),
   responsible_username: z.string().nullable().optional(),
+  planner_display_name: z.string().nullable().optional(),
+  responsible_display_name: z.string().nullable().optional(),
+  source_di_code: z.string().nullable().optional(),
+  source_di_title: z.string().nullable().optional(),
+  source_di_status: z.string().nullable().optional(),
 });
 
 export const WoTransitionRowSchema = z.object({
@@ -353,6 +362,56 @@ export async function assignWo(input: WoAssignInput): Promise<WorkOrder> {
   }
 }
 
+// ── Option B lifecycle transitions ───────────────────────────────────────────
+
+/** draft → planning */
+export async function submitWo(input: WoSubmitInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("submit_wo", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+/** Evaluate planning readiness (non-mutating preflight) */
+export async function evaluateWoReadiness(
+  input: WoEvaluateReadinessInput,
+): Promise<WoReadinessResult> {
+  const raw = await invoke<unknown>("evaluate_wo_readiness", { woId: input.wo_id });
+  return raw as WoReadinessResult;
+}
+
+/** planning → ready */
+export async function markWoReady(input: WoMarkReadyInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("mark_wo_ready", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+/** ready → planning (rejection / rework) */
+export async function returnToPlanning(input: WoReturnToPlanningInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("return_to_planning", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+/** planning → ready (supervisor approval path) */
+export async function approvePlanning(input: WoApprovePlanningInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("approve_planning", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
 // â”€â”€ Execution lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function startWo(input: WoStartInput): Promise<WorkOrder> {
@@ -406,6 +465,20 @@ export async function completeWoMechanically(
     }
     rethrowIfVersionConflict(err);
   }
+}
+
+export async function evaluateWoCompletionGates(woId: number): Promise<WoCompletionGate[]> {
+  const raw = await invoke<unknown>("evaluate_wo_completion_gates", { woId });
+  return z
+    .array(
+      z.object({
+        code: z.string(),
+        passed: z.boolean(),
+        required: z.boolean(),
+        detail: z.string().nullable().optional(),
+      }),
+    )
+    .parse(raw) as WoCompletionGate[];
 }
 
 export async function cancelWo(input: WoCancelInput): Promise<WorkOrder> {

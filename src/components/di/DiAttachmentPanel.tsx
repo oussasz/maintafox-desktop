@@ -2,7 +2,7 @@
  * DiAttachmentPanel.tsx
  *
  * Attachment list + upload drop zone for a DI.
- * Phase 2 – Sub-phase 04 – File 03 – Sprint S3.
+ * Photos show inline previews (same approach as equipment gallery).
  */
 
 import {
@@ -23,7 +23,9 @@ import { cn } from "@/lib/utils";
 import {
   listDiAttachments,
   uploadDiAttachment,
+  uploadDiAttachmentFromPath,
   deleteDiAttachment,
+  readDiAttachmentPreview,
   fileToNumberArray,
   MAX_ATTACHMENT_SIZE_BYTES,
 } from "@/services/di-attachment-service";
@@ -74,14 +76,14 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
   const { t, i18n } = useTranslation("di");
   const dateLocale = intlLocaleForLanguage(i18n.language);
   const [attachments, setAttachments] = useState<DiAttachment[]>([]);
+  const [previews, setPreviews] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [lightbox, setLightbox] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // ── Load attachments ────────────────────────────────────────────────────
 
   const loadAttachments = useCallback(async () => {
     try {
@@ -89,6 +91,21 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
       setError(null);
       const items = await listDiAttachments(diId);
       setAttachments(items);
+
+      const nextPreviews: Record<number, string> = {};
+      await Promise.all(
+        items
+          .filter((a) => a.attachment_type === "photo" || a.mime_type.startsWith("image/"))
+          .map(async (a) => {
+            try {
+              const preview = await readDiAttachmentPreview(a.id);
+              nextPreviews[a.id] = `data:${preview.mime_type};base64,${preview.data_base64}`;
+            } catch {
+              // Preview is best-effort; list still works without it.
+            }
+          }),
+      );
+      setPreviews(nextPreviews);
     } catch (err) {
       setError(toErrorMessage(err));
     } finally {
@@ -100,14 +117,11 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
     void loadAttachments();
   }, [loadAttachments]);
 
-  // ── Upload handler ──────────────────────────────────────────────────────
-
   const handleFiles = useCallback(
     async (files: FileList | File[]) => {
       const fileArray = Array.from(files);
       if (fileArray.length === 0) return;
 
-      // Validate size before any IPC call
       for (const file of fileArray) {
         if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
           setError(t("attachments.fileTooBig", { name: file.name, mb: MAX_SIZE_MB }));
@@ -120,14 +134,23 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
 
       try {
         for (const file of fileArray) {
-          const bytes = await fileToNumberArray(file);
-          await uploadDiAttachment({
-            diId,
-            fileName: file.name,
-            fileBytes: bytes,
-            mimeType: file.type || "application/octet-stream",
-            attachmentType: inferAttachmentType(file.type),
-          });
+          const withPath = file as File & { path?: string };
+          if (typeof withPath.path === "string" && withPath.path.length > 0) {
+            await uploadDiAttachmentFromPath({
+              diId,
+              sourcePath: withPath.path,
+              attachmentType: inferAttachmentType(file.type || ""),
+            });
+          } else {
+            const bytes = await fileToNumberArray(file);
+            await uploadDiAttachment({
+              diId,
+              fileName: file.name,
+              fileBytes: bytes,
+              mimeType: file.type || "application/octet-stream",
+              attachmentType: inferAttachmentType(file.type),
+            });
+          }
         }
         await loadAttachments();
       } catch (err) {
@@ -139,7 +162,66 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
     [diId, loadAttachments, t],
   );
 
-  // ── Delete handler ──────────────────────────────────────────────────────
+  const handlePickNative = useCallback(async () => {
+    if (!canUpload || uploading) return;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        multiple: true,
+        filters: [
+          {
+            name: "Files",
+            extensions: [
+              "png",
+              "jpg",
+              "jpeg",
+              "webp",
+              "gif",
+              "pdf",
+              "doc",
+              "docx",
+              "xls",
+              "xlsx",
+              "txt",
+              "csv",
+              "zip",
+            ],
+          },
+        ],
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected)
+        ? selected.map((s) => (typeof s === "string" ? s : (s as { path?: string }).path)).filter(Boolean)
+        : [typeof selected === "string" ? selected : (selected as { path?: string }).path].filter(
+            Boolean,
+          );
+
+      setUploading(true);
+      setError(null);
+      try {
+        for (const path of paths as string[]) {
+          const lower = path.toLowerCase();
+          const isImage = /\.(png|jpe?g|webp|gif)$/i.test(lower);
+          await uploadDiAttachmentFromPath({
+            diId,
+            sourcePath: path,
+            attachmentType: isImage ? "photo" : null,
+          });
+        }
+        await loadAttachments();
+      } catch (err) {
+        setError(toErrorMessage(err));
+      } finally {
+        setUploading(false);
+      }
+    } catch (err) {
+      // Fall back to HTML file input when dialog plugin is unavailable.
+      fileInputRef.current?.click();
+      if (err) {
+        // keep silent — input click is the fallback
+      }
+    }
+  }, [canUpload, uploading, diId, loadAttachments]);
 
   const handleDelete = useCallback(
     async (attachmentId: number) => {
@@ -154,8 +236,6 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
     },
     [loadAttachments],
   );
-
-  // ── Drag & drop handlers ───────────────────────────────────────────────
 
   const onDragOver = useCallback(
     (e: React.DragEvent) => {
@@ -172,29 +252,57 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
       e.preventDefault();
       setDragOver(false);
       if (!canUpload || uploading) return;
+
+      const paths = Array.from(e.dataTransfer.files ?? [])
+        .map((f) => {
+          const withPath = f as File & { path?: string };
+          return typeof withPath.path === "string" ? withPath.path : "";
+        })
+        .filter(Boolean);
+
+      if (paths.length > 0) {
+        void (async () => {
+          setUploading(true);
+          setError(null);
+          try {
+            for (const path of paths) {
+              const isImage = /\.(png|jpe?g|webp|gif)$/i.test(path);
+              await uploadDiAttachmentFromPath({
+                diId,
+                sourcePath: path,
+                attachmentType: isImage ? "photo" : null,
+              });
+            }
+            await loadAttachments();
+          } catch (err) {
+            setError(toErrorMessage(err));
+          } finally {
+            setUploading(false);
+          }
+        })();
+        return;
+      }
+
       const files = e.dataTransfer.files;
       if (files.length > 0) void handleFiles(files);
+      else void handlePickNative();
     },
-    [canUpload, uploading, handleFiles],
+    [canUpload, uploading, handleFiles, handlePickNative, diId, loadAttachments],
   );
 
   const onFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
       if (files && files.length > 0) void handleFiles(files);
-      // Reset input so re-selecting the same file triggers change
       e.target.value = "";
     },
     [handleFiles],
   );
 
-  // ── Render ──────────────────────────────────────────────────────────────
-
   return (
     <div className="space-y-4">
       <h3 className="text-sm font-semibold text-text-primary">{t("attachments.heading")}</h3>
 
-      {/* Error banner */}
       {error && (
         <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -202,7 +310,6 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
         </div>
       )}
 
-      {/* Drop zone */}
       {canUpload && (
         <div
           role="button"
@@ -217,11 +324,13 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
           onDrop={onDrop}
-          onClick={() => !uploading && fileInputRef.current?.click()}
+          onClick={() => {
+            if (!uploading) void handlePickNative();
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              if (!uploading) fileInputRef.current?.click();
+              if (!uploading) void handlePickNative();
             }
           }}
         >
@@ -246,7 +355,6 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
         </div>
       )}
 
-      {/* Attachment list */}
       {loading ? (
         <div className="flex items-center justify-center py-6">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -255,48 +363,89 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
         <p className="py-4 text-center text-sm text-muted-foreground">{t("attachments.empty")}</p>
       ) : (
         <ul className="divide-y divide-surface-border rounded-md border border-surface-border">
-          {attachments.map((att) => (
-            <li key={att.id} className="flex items-center gap-3 px-3 py-2.5">
-              {attachmentIcon(att.attachment_type)}
+          {attachments.map((att) => {
+            const previewUrl = previews[att.id];
+            return (
+              <li key={att.id} className="flex items-center gap-3 px-3 py-2.5">
+                {previewUrl ? (
+                  <button
+                    type="button"
+                    className="h-12 w-12 shrink-0 overflow-hidden rounded border border-surface-border"
+                    onClick={() => setLightbox(previewUrl)}
+                    title={att.file_name}
+                  >
+                    <img
+                      src={previewUrl}
+                      alt={att.file_name}
+                      className="h-full w-full object-cover"
+                    />
+                  </button>
+                ) : (
+                  attachmentIcon(att.attachment_type)
+                )}
 
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-text-primary">{att.file_name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {formatBytes(att.size_bytes)} ·{" "}
-                  {new Date(att.uploaded_at).toLocaleDateString(dateLocale, {
-                    day: "2-digit",
-                    month: "short",
-                    year: "numeric",
-                  })}
-                </p>
-              </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-text-primary">{att.file_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatBytes(att.size_bytes)} ·{" "}
+                    {new Date(att.uploaded_at).toLocaleDateString(dateLocale, {
+                      day: "2-digit",
+                      month: "short",
+                      year: "numeric",
+                    })}
+                  </p>
+                </div>
 
-              {canDelete && (
-                <>
-                  {confirmDeleteId === att.id ? (
-                    <div className="flex items-center gap-1">
-                      <Button variant="destructive" size="sm" onClick={() => handleDelete(att.id)}>
-                        {t("attachments.confirmDelete")}
+                {canDelete && (
+                  <>
+                    {confirmDeleteId === att.id ? (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleDelete(att.id)}
+                        >
+                          {t("attachments.confirmDelete")}
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>
+                          {t("attachments.cancelDelete")}
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setConfirmDeleteId(att.id)}
+                        title={t("attachments.deleteTitle")}
+                      >
+                        <Trash2 className="h-4 w-4 text-muted-foreground" />
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>
-                        {t("attachments.cancelDelete")}
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setConfirmDeleteId(att.id)}
-                      title={t("attachments.deleteTitle")}
-                    >
-                      <Trash2 className="h-4 w-4 text-muted-foreground" />
-                    </Button>
-                  )}
-                </>
-              )}
-            </li>
-          ))}
+                    )}
+                  </>
+                )}
+              </li>
+            );
+          })}
         </ul>
+      )}
+
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setLightbox(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setLightbox(null);
+          }}
+        >
+          <img
+            src={lightbox}
+            alt=""
+            className="max-h-[90vh] max-w-[90vw] rounded shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
     </div>
   );

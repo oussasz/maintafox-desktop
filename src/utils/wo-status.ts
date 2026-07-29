@@ -1,62 +1,72 @@
 /**
- * Shared WO status helpers.
- * Extracted to eliminate duplication across WoDetailDialog, WorkOrdersPage, WoCalendarView.
- * Phase 2 – Sub-phase 05 – Sprint S5 (GA-028/GA-029).
+ * Shared WO status helpers — Option B lifecycle.
+ * Statuses: draft → planning → ready → in_progress ↔ on_hold → completed → closed | cancelled
+ *
+ * Legacy snake_case codes from old data are remapped here for display purposes only.
  */
 
+/** Canonical i18n key for each lifecycle status */
 export type WoStatusKey =
   | "draft"
-  | "awaitingApproval"
-  | "planned"
-  | "released"
-  | "readyToSchedule"
-  | "assigned"
-  | "waitingForPrerequisite"
+  | "planning"
+  | "ready"
   | "inProgress"
   | "onHold"
-  | "paused"
-  | "mechanicallyComplete"
-  | "technicallyVerified"
+  | "completed"
   | "closed"
   | "cancelled";
 
+/**
+ * Maps any Rust snake_case status_code (current or legacy) to the closest
+ * WoStatusKey for i18n label resolution.
+ */
 const STATUS_MAP: Record<string, WoStatusKey> = {
+  // Current Option B codes
   draft: "draft",
-  awaiting_approval: "awaitingApproval",
-  planned: "planned",
-  released: "released",
-  ready_to_schedule: "readyToSchedule",
-  assigned: "assigned",
-  waiting_for_prerequisite: "waitingForPrerequisite",
+  planning: "planning",
+  ready: "ready",
   in_progress: "inProgress",
   on_hold: "onHold",
-  paused: "paused",
-  mechanically_complete: "mechanicallyComplete",
-  technically_verified: "technicallyVerified",
+  completed: "completed",
   closed: "closed",
   cancelled: "cancelled",
+  // Legacy aliases — map old data to nearest Option B key for display
+  awaiting_approval: "planning",
+  planned: "planning",
+  released: "ready",
+  ready_to_schedule: "ready",
+  assigned: "ready",
+  waiting_for_prerequisite: "onHold",
+  paused: "onHold",
+  mechanically_complete: "completed",
+  technically_verified: "completed",
 };
 
-/** Map Rust snake_case status to camelCase i18n key */
+/** Map any snake_case status_code to a camelCase i18n key safe for `t("status.X")`. */
 export function statusToI18nKey(s: string): WoStatusKey {
   return STATUS_MAP[s] ?? "draft";
 }
 
 export const STATUS_STYLE: Record<string, string> = {
+  // Option B statuses
   draft: "bg-gray-100 text-gray-600",
-  awaiting_approval: "bg-purple-100 text-purple-800",
-  planned: "bg-blue-100 text-blue-800",
-  released: "bg-sky-100 text-sky-800",
-  ready_to_schedule: "bg-indigo-100 text-indigo-800",
-  assigned: "bg-violet-100 text-violet-800",
+  planning: "bg-blue-100 text-blue-800",
+  ready: "bg-indigo-100 text-indigo-800",
   in_progress: "bg-amber-100 text-amber-800",
-  on_hold: "bg-orange-100 text-orange-800",
-  paused: "bg-orange-100 text-orange-800",
-  waiting_for_prerequisite: "bg-yellow-100 text-yellow-800",
-  mechanically_complete: "bg-teal-100 text-teal-800",
-  technically_verified: "bg-emerald-100 text-emerald-800",
+  on_hold: "bg-yellow-100 text-yellow-800",
+  completed: "bg-teal-100 text-teal-800",
   closed: "bg-neutral-100 text-neutral-500",
   cancelled: "bg-red-100 text-red-700",
+  // Legacy display fallbacks
+  awaiting_approval: "bg-blue-100 text-blue-800",
+  planned: "bg-blue-100 text-blue-800",
+  released: "bg-indigo-100 text-indigo-800",
+  ready_to_schedule: "bg-indigo-100 text-indigo-800",
+  assigned: "bg-violet-100 text-violet-800",
+  waiting_for_prerequisite: "bg-yellow-100 text-yellow-800",
+  paused: "bg-orange-100 text-orange-800",
+  mechanically_complete: "bg-teal-100 text-teal-800",
+  technically_verified: "bg-emerald-100 text-emerald-800",
 };
 
 export const URGENCY_STYLE: Record<string, string> = {

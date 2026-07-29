@@ -13,7 +13,8 @@
 //!   - `quality_loss` — running but producing rejects
 
 use crate::errors::{AppError, AppResult};
-use chrono::Utc;
+use crate::wo::execution_log::emit_execution_event;
+use crate::wo::time::now_utc_z;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +41,7 @@ pub struct WoDowntimeSegment {
     pub ended_at: Option<String>,
     pub downtime_type: String,
     pub comment: Option<String>,
+    pub classification_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -48,6 +50,7 @@ pub struct OpenDowntimeInput {
     pub downtime_type: String,
     pub comment: Option<String>,
     pub actor_id: i64,
+    pub classification_code: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -102,6 +105,9 @@ fn map_downtime_segment(row: &sea_orm::QueryResult) -> AppResult<WoDowntimeSegme
         comment: row
             .try_get::<Option<String>>("", "comment")
             .map_err(|e| decode_err("comment", e))?,
+        classification_code: row
+            .try_get::<Option<String>>("", "classification_code")
+            .map_err(|e| decode_err("classification_code", e))?,
     })
 }
 
@@ -131,14 +137,22 @@ const DELAY_COLS: &str =
     "id, work_order_id, started_at, ended_at, delay_reason_id, comment, entered_by_id";
 
 const DOWNTIME_COLS: &str =
-    "id, work_order_id, started_at, ended_at, downtime_type, comment";
+    "id, work_order_id, started_at, ended_at, downtime_type, comment, classification_code";
+
+const VALID_CLASSIFICATION_CODES: &[&str] = &[
+    "mechanical",
+    "electrical",
+    "waiting_spare",
+    "waiting_approval",
+    "operator_unavailable",
+];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) open_downtime_segment
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Manually open a downtime segment (OEE input).
-/// WO must be in [in_progress, paused, assigned].
+/// WO must be in [in_progress, on_hold].
 pub async fn open_downtime_segment(
     db: &DatabaseConnection,
     input: OpenDowntimeInput,
@@ -150,30 +164,43 @@ pub async fn open_downtime_segment(
         )]));
     }
 
+    if let Some(ref code) = input.classification_code {
+        if !VALID_CLASSIFICATION_CODES.contains(&code.as_str()) {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "classification_code invalide : '{code}'. Valeurs autorisées : mechanical, electrical, \
+                 waiting_spare, waiting_approval, operator_unavailable."
+            )]));
+        }
+    }
+
     let status_code = load_wo_status_code(db, input.wo_id).await?;
     if !matches!(
         status_code.as_str(),
-        "in_progress" | "paused" | "assigned"
+        "in_progress" | "on_hold"
     ) {
         return Err(AppError::ValidationFailed(vec![format!(
             "Un segment de temps d'arrêt ne peut être ouvert qu'aux statuts \
-             in_progress, paused ou assigned. Statut actuel : '{status_code}'."
+             in_progress ou on_hold. Statut actuel : '{status_code}'."
         )]));
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = now_utc_z();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_downtime_segments \
-         (work_order_id, started_at, downtime_type, comment) \
-         VALUES (?, ?, ?, ?)",
+         (work_order_id, started_at, downtime_type, comment, classification_code) \
+         VALUES (?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             now.into(),
             input.downtime_type.into(),
             input
                 .comment
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            input
+                .classification_code
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
         ],
@@ -195,7 +222,19 @@ pub async fn open_downtime_segment(
                 "Failed to re-read downtime segment after insert"
             ))
         })?;
-    map_downtime_segment(&row)
+    let segment = map_downtime_segment(&row)?;
+    let _ = emit_execution_event(
+        db,
+        segment.work_order_id,
+        "downtime_opened",
+        "executionLog.downtimeOpened",
+        serde_json::json!({ "downtime_type": segment.downtime_type }),
+        Some("downtime"),
+        Some(segment.id),
+        Some(input.actor_id),
+    )
+    .await;
+    Ok(segment)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -209,7 +248,7 @@ pub async fn close_downtime_segment(
     ended_at: Option<String>,
 ) -> AppResult<WoDowntimeSegment> {
     let close_ts = ended_at
-        .unwrap_or_else(|| Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        .unwrap_or_else(now_utc_z);
 
     let result = db
         .execute(Statement::from_sql_and_values(
@@ -251,7 +290,19 @@ pub async fn close_downtime_segment(
             entity: "WoDowntimeSegment".into(),
             id: segment_id.to_string(),
         })?;
-    map_downtime_segment(&row)
+    let segment = map_downtime_segment(&row)?;
+    let _ = emit_execution_event(
+        db,
+        segment.work_order_id,
+        "downtime_closed",
+        "executionLog.downtimeClosed",
+        serde_json::json!({ "downtime_type": segment.downtime_type }),
+        Some("downtime"),
+        Some(segment.id),
+        None,
+    )
+    .await;
+    Ok(segment)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

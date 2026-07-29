@@ -12,6 +12,7 @@
 //! active structure model are used for validation at runtime.
 
 use crate::errors::{AppError, AppResult};
+use crate::org::fail::{fail, fail_params};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -204,9 +205,10 @@ pub async fn create_node_type(db: &DatabaseConnection, payload: CreateNodeTypePa
     let model_status: String = model_row.try_get("", "status").map_err(|e| decode_err("status", e))?;
 
     if model_status != "draft" {
-        return Err(AppError::ValidationFailed(vec![
-            "node types can only be added to draft structure models".to_string(),
-        ]));
+        return Err(fail(
+            "ORG_TYPE_DRAFT_ONLY",
+            "Node types can only be added to draft structure models.",
+        ));
     }
 
     // Validate code uniqueness within this model
@@ -220,10 +222,14 @@ pub async fn create_node_type(db: &DatabaseConnection, payload: CreateNodeTypePa
         .expect("COUNT always returns a row");
     let existing: i32 = count_row.try_get("", "cnt").unwrap_or(0);
     if existing > 0 {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "node type code '{}' already exists in this model",
-            payload.code
-        )]));
+        return Err(fail_params(
+            "ORG_TYPE_DUPLICATE_CODE",
+            format!(
+                "Node type code '{}' already exists in this model.",
+                payload.code
+            ),
+            &[("typeCode", payload.code.clone())],
+        ));
     }
 
     // If this is declared as root type, ensure no other root type exists in this model
@@ -239,9 +245,10 @@ pub async fn create_node_type(db: &DatabaseConnection, payload: CreateNodeTypePa
             .expect("COUNT always returns a row");
         let root_count: i32 = root_row.try_get("", "cnt").unwrap_or(0);
         if root_count > 0 {
-            return Err(AppError::ValidationFailed(vec![
-                "a root node type already exists in this model — only one root type is allowed".to_string(),
-            ]));
+            return Err(fail(
+                "ORG_TYPE_ROOT_EXISTS",
+                "A root node type already exists in this model — only one root type is allowed.",
+            ));
         }
     }
 
@@ -310,9 +317,11 @@ pub async fn deactivate_node_type(db: &DatabaseConnection, id: i32) -> AppResult
     let node_count: i32 = count_row.try_get("", "cnt").unwrap_or(0);
 
     if node_count > 0 {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "{node_count} node(s) of this type exist — cannot deactivate"
-        )]));
+        return Err(fail_params(
+            "ORG_TYPE_IN_USE",
+            format!("{node_count} node(s) of this type exist — cannot deactivate."),
+            &[("count", node_count.to_string())],
+        ));
     }
 
     let now = Utc::now().to_rfc3339();
@@ -328,11 +337,34 @@ pub async fn deactivate_node_type(db: &DatabaseConnection, id: i32) -> AppResult
 }
 
 /// Update mutable fields of a node type. Only fields with `Some` values are updated.
+/// Only draft models may be mutated (same policy as [`create_node_type`]).
 pub async fn update_node_type(
     db: &DatabaseConnection,
     payload: UpdateNodeTypePayload,
 ) -> AppResult<OrgNodeType> {
-    let _existing = get_node_type_by_id(db, payload.id).await?;
+    let existing = get_node_type_by_id(db, payload.id).await?;
+
+    // Structural schema mutations are draft-only (align with create_node_type).
+    let model_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT status FROM org_structure_models WHERE id = ?",
+            [existing.structure_model_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "org_structure_model".to_string(),
+            id: existing.structure_model_id.to_string(),
+        })?;
+    let model_status: String = model_row
+        .try_get("", "status")
+        .map_err(|e| decode_err("status", e))?;
+    if model_status != "draft" {
+        return Err(fail(
+            "ORG_TYPE_DRAFT_ONLY",
+            "Node types can only be updated on draft structure models.",
+        ));
+    }
 
     let mut sets: Vec<String> = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();

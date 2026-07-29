@@ -50,6 +50,8 @@ export const OrgNodeSchema = z.object({
   row_version: z.number(),
   origin_machine_id: z.string().nullable(),
   last_synced_checkpoint: z.string().nullable(),
+  structure_model_id: z.number(),
+  origin_node_id: z.number().nullable(),
 });
 
 export const OrgTreeRowSchema = z.object({
@@ -133,8 +135,14 @@ export async function listOrgTree(): Promise<OrgTreeRow[]> {
   return z.array(OrgTreeRowSchema).parse(raw) as OrgTreeRow[];
 }
 
-export async function getOrgNode(nodeId: number): Promise<OrgNode> {
-  const raw = await invoke<unknown>("get_org_node", { nodeId });
+export async function getOrgNode(
+  nodeId: number,
+  structureModelId?: number | null,
+): Promise<OrgNode> {
+  const raw = await invoke<unknown>("get_org_node", {
+    nodeId,
+    structureModelId: structureModelId ?? null,
+  });
   return OrgNodeSchema.parse(raw) as OrgNode;
 }
 

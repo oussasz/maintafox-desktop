@@ -5,7 +5,11 @@ import { useNavigate } from "react-router-dom";
 
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { Button } from "@/components/ui/button";
-import { useProductLicenseGateRefresh } from "@/contexts/product-license-gate-context";
+import {
+  useProductLicenseGate,
+  useProductLicenseGateReconcile,
+  useProductLicenseGateRefresh,
+} from "@/contexts/product-license-gate-context";
 import { mfAlert, mfAuth, mfInput } from "@/design-system/tokens";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
@@ -25,6 +29,9 @@ export function LoginPage() {
   const navigate = useNavigate();
   const session = useSession();
   const { activeLocale, supportedLocales } = useLocaleStore();
+  const licenseGate = useProductLicenseGate();
+  const refreshProductLicense = useProductLicenseGateRefresh();
+  const reconcileProductLicense = useProductLicenseGateReconcile();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -37,7 +44,6 @@ export function LoginPage() {
   const [resettingActivation, setResettingActivation] = useState(false);
   const [resetActivationError, setResetActivationError] = useState<string | null>(null);
   const mountedRef = useRef(true);
-  const refreshProductLicense = useProductLicenseGateRefresh();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -98,7 +104,7 @@ export function LoginPage() {
           ? e.message
           : typeof e === "object" && e !== null && "message" in e
             ? String((e as { message: unknown }).message)
-            : "Could not reset activation. Try again, or restart the app.";
+            : t("login.resetActivation.errorFallback");
       setResetActivationError(message);
     } finally {
       if (mountedRef.current) {
@@ -112,6 +118,7 @@ export function LoginPage() {
     if (!activationReady || activationCheckLoading) return;
     try {
       await session.login({ username: username.trim(), password });
+      await reconcileProductLicense?.();
       navigate("/", { replace: true });
     } catch {
       // Error captured in session.error
@@ -137,23 +144,27 @@ export function LoginPage() {
           className={cn("mt-3 inline-flex items-center gap-2", mfAuth.linkPrimary)}
         >
           <Info className="h-4 w-4" />
-          {showLicenseMeta ? "Hide license details" : "View license details"}
+          {showLicenseMeta ? t("login.licenseDetails.hide") : t("login.licenseDetails.show")}
         </button>
         {showLicenseMeta ? (
           <div className={cn("mt-3", mfAlert.info)}>
             <p>
-              <span className="font-medium">License tier:</span>{" "}
-              {licenseMeta?.license_tier ?? "n/a"}
+              <span className="font-medium">{t("login.licenseDetails.tier")}:</span>{" "}
+              {licenseMeta?.license_tier ?? t("login.licenseDetails.na")}
             </p>
             <p>
-              <span className="font-medium">Slot limit:</span> {licenseMeta?.device_limit ?? "n/a"}
+              <span className="font-medium">{t("login.licenseDetails.slotLimit")}:</span>{" "}
+              {licenseMeta?.device_limit ?? t("login.licenseDetails.na")}
             </p>
             <p>
-              <span className="font-medium">Expiry date:</span> {licenseMeta?.expires_at ?? "n/a"}
+              <span className="font-medium">{t("login.licenseDetails.expiry")}:</span>{" "}
+              {licenseMeta?.expires_at ?? t("login.licenseDetails.na")}
             </p>
             <p>
-              <span className="font-medium">Company:</span>{" "}
-              {licenseMeta?.company_display_name ?? licenseMeta?.tenant_id ?? "n/a"}
+              <span className="font-medium">{t("login.licenseDetails.company")}:</span>{" "}
+              {licenseMeta?.company_display_name ??
+                licenseMeta?.tenant_id ??
+                t("login.licenseDetails.na")}
             </p>
           </div>
         ) : null}
@@ -161,31 +172,38 @@ export function LoginPage() {
         {activationCheckLoading ? (
           <div className="mt-6 flex items-center gap-2 text-sm text-text-muted">
             <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-surface-border border-t-primary" />
-            Vérification de l&apos;activation de l&apos;appareil…
+            {t("activation.loading")}
           </div>
         ) : !activationReady ? (
-          <div role="alert" className={cn("mt-6", mfAlert.warning)}>
-            <p className="font-medium">Activation requise</p>
-            <p className="mt-1">
-              Les informations de licence sur cet appareil sont incomplètes ou corrompues.
-              Réinitialisez l&apos;activation pour saisir une clé valide.
-            </p>
+          <div role="alert" className={cn("mt-6 space-y-3", mfAlert.warning)}>
+            <p className="font-medium">{t("login.activationRequired.title")}</p>
+            <p className="mt-1">{t("login.activationRequired.message")}</p>
+            <Button
+              type="button"
+              className="w-full justify-center"
+              onClick={() => {
+                licenseGate?.setPreferLoginView(false);
+                navigate("/", { replace: true });
+              }}
+            >
+              {t("login.activationRequired.cta")}
+            </Button>
             <button
               type="button"
               onClick={() => void handleResetActivation()}
               disabled={resettingActivation}
-              className="btn-primary mt-3 w-full justify-center py-2"
+              className="w-full text-sm font-semibold text-primary underline-offset-2 hover:underline disabled:opacity-50"
             >
               {resettingActivation
-                ? "Réinitialisation…"
-                : "Réinitialiser l&apos;activation / utiliser une autre clé"}
+                ? t("activation.activating")
+                : t("activation.changeKey")}
             </button>
           </div>
         ) : null}
 
         {postActivationHint && activationReady ? (
           <div role="status" className={cn("mt-4", mfAlert.info)}>
-            Please contact your Administrator for account credentials.
+            {t("login.postActivationHint")}
           </div>
         ) : null}
 
@@ -252,21 +270,15 @@ export function LoginPage() {
             </div>
           ) : session.error && tenantScopeDenied ? (
             <div role="alert" className={mfAlert.warning}>
-              <p className="font-medium">Compte non autorisé pour le tenant activé</p>
+              <p className="font-medium">{t("login.tenantScopeDenied.title")}</p>
               <p className="mt-1">{session.error}</p>
-              <p className="mt-1 text-xs">
-                Action: utilisez un compte autorisé pour ce tenant ou réactivez l&apos;appareil avec
-                la clé du bon tenant.
-              </p>
+              <p className="mt-1 text-xs">{t("login.tenantScopeDenied.action")}</p>
             </div>
           ) : session.error && staleSessionClaims ? (
             <div role="alert" className={mfAlert.info}>
-              <p className="font-medium">Contexte de session périmé</p>
+              <p className="font-medium">{t("login.staleSession.title")}</p>
               <p className="mt-1">{session.error}</p>
-              <p className="mt-1 text-xs">
-                Action: reconnectez-vous pour rafraîchir les claims tenant après un changement
-                d&apos;activation.
-              </p>
+              <p className="mt-1 text-xs">{t("login.staleSession.action")}</p>
               <button
                 type="button"
                 onClick={() => void handleResetActivation()}
@@ -274,8 +286,8 @@ export function LoginPage() {
                 className="mt-3 w-full rounded-lg border border-surface-border bg-surface-1 px-4 py-2 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-2 disabled:opacity-50"
               >
                 {resettingActivation
-                  ? "Réinitialisation…"
-                  : "Réinitialiser l&apos;activation / utiliser une autre clé"}
+                  ? t("login.staleSession.resetting")
+                  : t("login.staleSession.resetCta")}
               </button>
             </div>
           ) : session.error ? (
@@ -302,10 +314,7 @@ export function LoginPage() {
         </form>
 
         <div className="mt-5 border-t border-surface-border pt-5 text-center">
-          <p className="mb-2 text-xs text-text-muted">
-            Wrong tenant or need to enter a new license key? This clears local license data and
-            returns you to product activation.
-          </p>
+          <p className="mb-2 text-xs text-text-muted">{t("login.resetActivation.hint")}</p>
           {resetActivationError ? (
             <p role="alert" className={cn("mb-2 text-xs", mfAlert.danger)}>
               {resetActivationError}
@@ -318,8 +327,8 @@ export function LoginPage() {
             className="text-sm font-semibold text-primary underline-offset-2 hover:underline disabled:opacity-50"
           >
             {resettingActivation
-              ? "Réinitialisation…"
-              : "Réinitialiser l&apos;activation / autre clé"}
+              ? t("login.resetActivation.resetting")
+              : t("login.resetActivation.cta")}
           </button>
         </div>
 

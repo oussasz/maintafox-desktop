@@ -17,6 +17,20 @@ describe("sync orchestrator core", () => {
     expect(delay).toBeLessThanOrEqual(policy.maxDelayMs);
   });
 
+  it("treats explicit sync:false capability as not allowed", async () => {
+    const { isModuleCapabilityAllowed, parseCapabilityMap } = await import(
+      "@/lib/module-capability"
+    );
+    const map = parseCapabilityMap(
+      JSON.stringify({
+        equipment: true,
+        sync: false,
+      }),
+    );
+    expect(isModuleCapabilityAllowed(map, "sync.view")).toBe(false);
+    expect(isModuleCapabilityAllowed(map, "eq.view")).toBe(true);
+  });
+
   it("blocks scheduling when entitlement is suspended", () => {
     const policy = defaultSyncPolicyControls();
     policy.entitlementStatus = "suspended";

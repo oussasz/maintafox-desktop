@@ -127,8 +127,13 @@ impl std::fmt::Display for DiStatus {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DiOriginType — PRD §6.4 intake origin classification
+// DiOriginType — baseline seed codes only (NOT create-time authority)
 // ═══════════════════════════════════════════════════════════════════════════════
+//
+// Category B open catalog: `DI.ORIGIN` in `reference_values` is the SSOT for
+// create/update validation. Tenant-extended codes are valid once published and
+// active. This enum documents the seeded baseline set for tests/seeds; do not
+// use `try_from_str` to gate intake writes.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiOriginType {
@@ -281,6 +286,8 @@ pub struct InterventionRequest {
     pub title: String,
     pub description: String,
     pub origin_type: String,
+    /// Category A `DI.REQUEST_TYPE` code (default `repair`).
+    pub request_type: String,
     pub symptom_code_id: Option<i64>,
     // Impact flags
     pub impact_level: String,
@@ -306,6 +313,15 @@ pub struct InterventionRequest {
     // WO linkage
     pub converted_to_wo_id: Option<i64>,
     pub converted_at: Option<String>,
+    // Immutable SLA snapshot (frozen at create / backfill — never rewritten on rule edit)
+    pub sla_rule_id: Option<i64>,
+    pub sla_target_response_hours: Option<i64>,
+    pub sla_target_resolution_hours: Option<i64>,
+    pub sla_escalation_threshold_hours: Option<i64>,
+    pub sla_response_deadline: Option<String>,
+    pub sla_resolution_deadline: Option<String>,
+    pub sla_response_breach_notified_at: Option<String>,
+    pub sla_resolution_breach_notified_at: Option<String>,
     // Review decision fields
     pub reviewer_note: Option<String>,
     pub classification_code_id: Option<i64>,
@@ -319,6 +335,15 @@ pub struct InterventionRequest {
     pub submitter_id: i64,
     pub created_at: String,
     pub updated_at: String,
+    // Display enrichment (JOINs — never render FKs in UI)
+    pub asset_code: Option<String>,
+    pub asset_label: Option<String>,
+    pub org_node_code: Option<String>,
+    pub org_node_label: Option<String>,
+    pub submitter_display_name: Option<String>,
+    pub reviewer_display_name: Option<String>,
+    pub converted_to_wo_code: Option<String>,
+    pub converted_to_wo_title: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -379,6 +404,9 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         origin_type: row
             .try_get::<String>("", "origin_type")
             .map_err(|e| decode_err("origin_type", e))?,
+        request_type: row
+            .try_get::<String>("", "request_type")
+            .map_err(|e| decode_err("request_type", e))?,
         symptom_code_id: row
             .try_get::<Option<i64>>("", "symptom_code_id")
             .map_err(|e| decode_err("symptom_code_id", e))?,
@@ -443,6 +471,30 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         converted_at: row
             .try_get::<Option<String>>("", "converted_at")
             .map_err(|e| decode_err("converted_at", e))?,
+        sla_rule_id: row
+            .try_get::<Option<i64>>("", "sla_rule_id")
+            .map_err(|e| decode_err("sla_rule_id", e))?,
+        sla_target_response_hours: row
+            .try_get::<Option<i64>>("", "sla_target_response_hours")
+            .map_err(|e| decode_err("sla_target_response_hours", e))?,
+        sla_target_resolution_hours: row
+            .try_get::<Option<i64>>("", "sla_target_resolution_hours")
+            .map_err(|e| decode_err("sla_target_resolution_hours", e))?,
+        sla_escalation_threshold_hours: row
+            .try_get::<Option<i64>>("", "sla_escalation_threshold_hours")
+            .map_err(|e| decode_err("sla_escalation_threshold_hours", e))?,
+        sla_response_deadline: row
+            .try_get::<Option<String>>("", "sla_response_deadline")
+            .map_err(|e| decode_err("sla_response_deadline", e))?,
+        sla_resolution_deadline: row
+            .try_get::<Option<String>>("", "sla_resolution_deadline")
+            .map_err(|e| decode_err("sla_resolution_deadline", e))?,
+        sla_response_breach_notified_at: row
+            .try_get::<Option<String>>("", "sla_response_breach_notified_at")
+            .map_err(|e| decode_err("sla_response_breach_notified_at", e))?,
+        sla_resolution_breach_notified_at: row
+            .try_get::<Option<String>>("", "sla_resolution_breach_notified_at")
+            .map_err(|e| decode_err("sla_resolution_breach_notified_at", e))?,
         reviewer_note: row
             .try_get::<Option<String>>("", "reviewer_note")
             .map_err(|e| decode_err("reviewer_note", e))?,
@@ -471,6 +523,30 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         updated_at: row
             .try_get::<String>("", "updated_at")
             .map_err(|e| decode_err("updated_at", e))?,
+        asset_code: row
+            .try_get::<Option<String>>("", "asset_code")
+            .map_err(|e| decode_err("asset_code", e))?,
+        asset_label: row
+            .try_get::<Option<String>>("", "asset_label")
+            .map_err(|e| decode_err("asset_label", e))?,
+        org_node_code: row
+            .try_get::<Option<String>>("", "org_node_code")
+            .map_err(|e| decode_err("org_node_code", e))?,
+        org_node_label: row
+            .try_get::<Option<String>>("", "org_node_label")
+            .map_err(|e| decode_err("org_node_label", e))?,
+        submitter_display_name: row
+            .try_get::<Option<String>>("", "submitter_display_name")
+            .map_err(|e| decode_err("submitter_display_name", e))?,
+        reviewer_display_name: row
+            .try_get::<Option<String>>("", "reviewer_display_name")
+            .map_err(|e| decode_err("reviewer_display_name", e))?,
+        converted_to_wo_code: row
+            .try_get::<Option<String>>("", "converted_to_wo_code")
+            .map_err(|e| decode_err("converted_to_wo_code", e))?,
+        converted_to_wo_title: row
+            .try_get::<Option<String>>("", "converted_to_wo_title")
+            .map_err(|e| decode_err("converted_to_wo_title", e))?,
     })
 }
 

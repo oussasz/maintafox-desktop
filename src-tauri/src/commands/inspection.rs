@@ -224,7 +224,10 @@ pub async fn route_inspection_anomaly_to_di(
         &PermissionScope::Global,
     )
     .await?;
-    if !has_global {
+    if has_global {
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, "di.create").await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user.user_id, "di.create").await?;
+    } else {
         require_permission!(state, &user, "di.create.own", PermissionScope::Global);
     }
     routing::route_inspection_anomaly_to_di(

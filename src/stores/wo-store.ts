@@ -25,6 +25,7 @@ import {
 } from "@/services/wo-service";
 import { toErrorMessage } from "@/utils/errors";
 import type {
+  AssetSearchResult,
   WoAssignInput,
   WoCancelInput,
   WoCloseInput,
@@ -55,9 +56,15 @@ interface WoStoreState {
   total: number;
   // Detail
   activeWo: WoDetailPayload | null;
+  /** True while openWo is fetching (dialog may show loading shell). */
+  detailLoading: boolean;
+  openingWoId: number | null;
   // Create / edit form
   showCreateForm: boolean;
   editingWo: WorkOrder | null;
+  /** Prefill equipment when opening create from asset context. */
+  createPrefillAsset: AssetSearchResult | null;
+  createPrefillEquipmentId: number | null;
   // Completion dialog
   showCompletionDialog: boolean;
   completionErrors: WoPreflightError[];
@@ -72,7 +79,7 @@ interface WoStoreState {
   loadWos: () => Promise<void>;
   openWo: (id: number) => Promise<void>;
   closeActiveWo: () => void;
-  openCreateForm: (wo?: WorkOrder) => void;
+  openCreateForm: (wo?: WorkOrder, prefillAsset?: AssetSearchResult | null) => void;
   closeCreateForm: () => void;
   submitNewWo: (input: WoCreateInput) => Promise<WorkOrder>;
   updateDraft: (input: WoDraftUpdateInput) => Promise<void>;
@@ -97,8 +104,12 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
   items: [],
   total: 0,
   activeWo: null,
+  detailLoading: false,
+  openingWoId: null,
   showCreateForm: false,
   editingWo: null,
+  createPrefillAsset: null,
+  createPrefillEquipmentId: null,
   showCompletionDialog: false,
   completionErrors: [],
   filter: { ...DEFAULT_FILTER },
@@ -111,15 +122,25 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
   },
 
   closeActiveWo: () => {
-    set({ activeWo: null });
+    set({ activeWo: null, detailLoading: false, openingWoId: null });
   },
 
-  openCreateForm: (wo) => {
-    set({ showCreateForm: true, editingWo: wo ?? null });
+  openCreateForm: (wo, prefillAsset) => {
+    set({
+      showCreateForm: true,
+      editingWo: wo ?? null,
+      createPrefillAsset: wo ? null : (prefillAsset ?? null),
+      createPrefillEquipmentId: wo ? null : (prefillAsset?.id ?? null),
+    });
   },
 
   closeCreateForm: () => {
-    set({ showCreateForm: false, editingWo: null });
+    set({
+      showCreateForm: false,
+      editingWo: null,
+      createPrefillAsset: null,
+      createPrefillEquipmentId: null,
+    });
   },
 
   loadWos: async () => {
@@ -135,14 +156,28 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
   },
 
   openWo: async (id) => {
-    set({ loading: true, error: null });
+    const current = get().activeWo;
+    const keepCurrent = current?.wo.id === id;
+    set({
+      detailLoading: true,
+      openingWoId: id,
+      error: null,
+      ...(keepCurrent ? {} : { activeWo: null }),
+    });
     try {
       const resp = await getWo(id);
-      set({ activeWo: { wo: resp.wo, transitions: resp.transitions } });
+      set({
+        activeWo: { wo: resp.wo, transitions: resp.transitions },
+        detailLoading: false,
+        openingWoId: null,
+      });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
-    } finally {
-      set({ loading: false });
+      set({
+        error: toErrorMessage(err),
+        detailLoading: false,
+        openingWoId: null,
+        ...(keepCurrent ? {} : { activeWo: null }),
+      });
     }
   },
 
@@ -152,7 +187,7 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       const wo = await createWo(input);
       // Refresh list after create
       void get().loadWos();
-      set({ showCreateForm: false, editingWo: null });
+      set({ showCreateForm: false, editingWo: null, createPrefillAsset: null, createPrefillEquipmentId: null });
       return wo;
     } catch (err) {
       set({ error: toErrorMessage(err) });

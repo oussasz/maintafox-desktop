@@ -36,6 +36,7 @@ const COMMON_TOP_KEYS = [
   "time",
 ];
 const AUTH_TOP_KEYS = [
+  "activation",
   "device",
   "interceptor",
   "lockout",

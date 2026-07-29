@@ -1,13 +1,14 @@
 /**
  * DiDetailPanel.tsx
  *
- * Tabbed detail panel for a single DI: attachments, formal state log, and activity.
+ * Tabbed detail panel for a single DI: attachments, formal state log, review events, and activity.
  */
 
 import { useTranslation } from "react-i18next";
 
 import { DiAttachmentPanel } from "@/components/di/DiAttachmentPanel";
 import { DiAuditTimeline } from "@/components/di/DiAuditTimeline";
+import { DiReviewTimeline } from "@/components/di/DiReviewTimeline";
 import { DiStateTransitionList } from "@/components/di/DiStateTransitionList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui";
 import type { DiTransitionRow, InterventionRequest } from "@shared/ipc-types";
@@ -37,6 +38,7 @@ export function DiDetailPanel({
       <TabsList>
         <TabsTrigger value="attachments">{t("detail.tabs.attachments")}</TabsTrigger>
         <TabsTrigger value="stateLog">{t("detail.tabs.stateLog")}</TabsTrigger>
+        <TabsTrigger value="review">{t("detail.tabs.review")}</TabsTrigger>
         <TabsTrigger value="activity">{t("detail.tabs.activity")}</TabsTrigger>
       </TabsList>
 
@@ -50,6 +52,10 @@ export function DiDetailPanel({
 
       <TabsContent value="stateLog" className="mt-4">
         <DiStateTransitionList transitions={transitions} />
+      </TabsContent>
+
+      <TabsContent value="review" className="mt-4">
+        <DiReviewTimeline diId={di.id} />
       </TabsContent>
 
       <TabsContent value="activity" className="mt-4">

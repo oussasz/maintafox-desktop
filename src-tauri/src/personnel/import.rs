@@ -657,13 +657,9 @@ async fn validate_mapped_fields(
         }
     }
     if let Some(entity_code) = normalized.entity_code.as_deref() {
-        let found = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id FROM org_nodes WHERE code = ? LIMIT 1",
-                [entity_code.into()],
-            ))
-            .await?;
+        let found =
+            crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, entity_code)
+                .await?;
         if found.is_none() {
             push_message(
                 messages,
@@ -674,13 +670,8 @@ async fn validate_mapped_fields(
         }
     }
     if let Some(team_code) = normalized.team_code.as_deref() {
-        let found = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id FROM org_nodes WHERE code = ? LIMIT 1",
-                [team_code.into()],
-            ))
-            .await?;
+        let found =
+            crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, team_code).await?;
         if found.is_none() {
             push_message(
                 messages,
@@ -739,10 +730,23 @@ async fn resolve_mapped_fields(
     db: &impl ConnectionTrait,
     normalized: &NormalizedPersonnelRow,
 ) -> AppResult<MappedIds> {
+    let entity_id = match normalized.entity_code.as_deref() {
+        Some(code) => {
+            crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, code).await?
+        }
+        None => None,
+    };
+    let team_id = match normalized.team_code.as_deref() {
+        Some(code) => {
+            crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, code).await?
+        }
+        None => None,
+    };
     Ok(MappedIds {
-        position_id: map_code_to_id(db, "positions", "code", normalized.position_code.as_deref()).await?,
-        entity_id: map_code_to_id(db, "org_nodes", "code", normalized.entity_code.as_deref()).await?,
-        team_id: map_code_to_id(db, "org_nodes", "code", normalized.team_code.as_deref()).await?,
+        position_id: map_code_to_id(db, "positions", "code", normalized.position_code.as_deref())
+            .await?,
+        entity_id,
+        team_id,
         supervisor_id: map_code_to_id(
             db,
             "personnel",

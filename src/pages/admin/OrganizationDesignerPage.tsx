@@ -5,47 +5,35 @@
  * Governed lifecycle: explicit “published (read-only)” vs “draft (editing)” modes.
  */
 
-import { AlertTriangle, Building2, RefreshCw, Settings2 } from "lucide-react";
+import { AlertTriangle, Building2, Network, RefreshCw, Settings2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
-import { AuditTimeline } from "@/components/org/AuditTimeline";
 import { ImpactPreviewDrawer } from "@/components/org/ImpactPreviewDrawer";
-import { NodeInspectorPanel } from "@/components/org/NodeInspectorPanel";
 import { NodeTypeManagerPanel } from "@/components/org/NodeTypeManagerPanel";
 import { OrgDesignerLifecycleBar } from "@/components/org/OrgDesignerLifecycleBar";
+import { OrgDesignerPropertyPanel } from "@/components/org/OrgDesignerPropertyPanel";
 import { OrgExportMenu } from "@/components/org/OrgExportMenu";
 import { OrgNodeCreateDialog } from "@/components/org/OrgNodeCreateDialog";
 import { OrgRelationshipRulesPanel } from "@/components/org/OrgRelationshipRulesPanel";
 import { OrganizationTreePanel } from "@/components/org/OrganizationTreePanel";
-import { PublishReadinessBanner } from "@/components/org/PublishReadinessBanner";
-import { Badge } from "@/components/ui/badge";
+import { DraftStatusBanner } from "@/components/org/DraftStatusBanner";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
 import { isOrgStructureDesignMode, useOrgDesignerStore } from "@/stores/org-designer-store";
+import { useOrgGovernanceStore } from "@/stores/org-governance-store";
 
 export function OrganizationDesignerPage() {
   const { t } = useTranslation("org");
   const [typesPanelOpen, setTypesPanelOpen] = useState(false);
+  const [rulesPanelOpen, setRulesPanelOpen] = useState(false);
   const snapshot = useOrgDesignerStore((s) => s.snapshot);
   const loading = useOrgDesignerStore((s) => s.loading);
   const error = useOrgDesignerStore((s) => s.error);
-  const statusFilter = useOrgDesignerStore((s) => s.statusFilter);
-  const typeFilter = useOrgDesignerStore((s) => s.typeFilter);
   const workspaceMode = useOrgDesignerStore((s) => s.workspaceMode);
   const loadSnapshot = useOrgDesignerStore((s) => s.loadSnapshot);
-  const setStatusFilter = useOrgDesignerStore((s) => s.setStatusFilter);
-  const setTypeFilter = useOrgDesignerStore((s) => s.setTypeFilter);
+  const loadPublishValidation = useOrgGovernanceStore((s) => s.loadPublishValidation);
 
   useEffect(() => {
     void loadSnapshot();
@@ -68,11 +56,14 @@ export function OrganizationDesignerPage() {
 
   const isDesign = isOrgStructureDesignMode(snapshot, workspaceMode);
   const canOpenTypeManager = hasDraftModel && isDesign;
-  const activeModelId = snapshot?.active_model_id ?? null;
-  const canAddLiveNodes = isDesign && activeModelId != null;
+  const draftModelId = snapshot?.draft_model_id ?? null;
+  /** Draft workspace owns its tree — nodes are created on the draft model. */
+  const canAddDraftNodes = isDesign && draftModelId != null;
 
   const [createNodeOpen, setCreateNodeOpen] = useState(false);
   const [createNodeMode, setCreateNodeMode] = useState<"root" | "child">("root");
+  /** Bumps when draft types/rules change so create-dialog reloads allowed children. */
+  const [schemaRevision, setSchemaRevision] = useState(0);
   const selectedNodeId = useOrgDesignerStore((s) => s.selectedNodeId);
   const setSelectedNodeId = useOrgDesignerStore((s) => s.setSelectedNodeId);
 
@@ -88,6 +79,16 @@ export function OrganizationDesignerPage() {
     },
     [loadSnapshot, setSelectedNodeId],
   );
+
+  /** After draft schema mutations: refresh tree snapshot, re-run publish validation, reload create-dialog rules. */
+  const refreshAfterSchemaChange = useCallback(async () => {
+    await loadSnapshot();
+    setSchemaRevision((n) => n + 1);
+    const draftId = useOrgDesignerStore.getState().snapshot?.draft_model_id;
+    if (draftId != null) {
+      await loadPublishValidation(draftId);
+    }
+  }, [loadSnapshot, loadPublishValidation]);
 
   // Loading state
   if (loading && !snapshot) {
@@ -119,18 +120,6 @@ export function OrganizationDesignerPage() {
         <div className={mfLayout.moduleTitleRow}>
           <Building2 className={mfLayout.moduleHeaderIcon} />
           <h1 className={mfLayout.moduleTitle}>{t("designer.title")}</h1>
-          {hasActiveModel && (
-            <Badge variant="default" className="text-xs">
-              {t("designer.modelVersion", {
-                version: snapshot?.active_model_version ?? 0,
-              })}
-            </Badge>
-          )}
-          {hasDraftModel && (
-            <Badge variant="secondary" className="text-xs">
-              {t("lifecycle.draftVersionBadge", { version: snapshot?.draft_model_version ?? "—" })}
-            </Badge>
-          )}
         </div>
         <div className={mfLayout.moduleHeaderActions}>
           <PermissionGate permission="org.admin">
@@ -152,6 +141,25 @@ export function OrganizationDesignerPage() {
               {t("designer.manageTypes")}
             </Button>
           </PermissionGate>
+          <PermissionGate permission="org.admin">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => canOpenTypeManager && setRulesPanelOpen(true)}
+              disabled={!canOpenTypeManager}
+              title={
+                !hasDraftModel
+                  ? t("designer.manageHierarchyRulesNoDraftHint")
+                  : !isDesign
+                    ? t("designer.manageHierarchyRulesReadOnlyHint")
+                    : undefined
+              }
+              className="gap-1.5"
+            >
+              <Network className="h-3.5 w-3.5" />
+              {t("designer.manageHierarchyRules")}
+            </Button>
+          </PermissionGate>
           <OrgExportMenu treeContainerId="org-tree-container" />
           <Button
             variant="outline"
@@ -168,69 +176,16 @@ export function OrganizationDesignerPage() {
 
       <OrgDesignerLifecycleBar />
 
-      {isDesign && snapshot?.draft_model_id != null && (
-        <OrgRelationshipRulesPanel
-          structureModelId={snapshot.draft_model_id}
-          onChanged={() => void loadSnapshot()}
-        />
-      )}
-
-      <div className="shrink-0">
-        <PublishReadinessBanner
-          draftModelId={snapshot?.draft_model_id ?? null}
-          visible={isDesign}
-        />
-      </div>
+      <DraftStatusBanner
+        draftModelId={snapshot?.draft_model_id ?? null}
+        draftVersion={snapshot?.draft_model_version ?? null}
+        hasActivePublished={hasActiveModel}
+        visible={isDesign}
+      />
 
       {hasWorkspace && (
         <div className={mfLayout.moduleWorkspaceSplit}>
-          <aside className="w-56 shrink-0 border-r border-surface-border flex min-h-0 flex-col">
-            <div className="p-4 space-y-4">
-              <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider">
-                {t("designer.filters")}
-              </h2>
-
-              <div className="space-y-1.5">
-                <label className="text-xs text-text-muted">{t("designer.statusFilter")}</label>
-                <Select
-                  value={statusFilter ?? "__all__"}
-                  onValueChange={(v) => setStatusFilter(v === "__all__" ? null : v)}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">{t("designer.allStatuses")}</SelectItem>
-                    <SelectItem value="active">{t("designer.statusActive")}</SelectItem>
-                    <SelectItem value="inactive">{t("designer.statusInactive")}</SelectItem>
-                    <SelectItem value="draft">{t("designer.statusDraft")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs text-text-muted">{t("designer.typeFilter")}</label>
-                <Select
-                  value={typeFilter ?? "__all__"}
-                  onValueChange={(v) => setTypeFilter(v === "__all__" ? null : v)}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">{t("designer.allTypes")}</SelectItem>
-                    {nodeTypes.map((nt) => (
-                      <SelectItem key={nt.code} value={nt.code}>
-                        {nt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <Separator />
-
+          <aside className="w-44 shrink-0 border-r border-surface-border flex min-h-0 flex-col">
             <div className="p-4 space-y-2">
               <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wider">
                 {t("designer.modelSummary")}
@@ -252,12 +207,12 @@ export function OrganizationDesignerPage() {
 
           <main
             id="org-tree-container"
-            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-surface-border"
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
           >
             <OrganizationTreePanel
               readOnly={!isDesign}
-              canAddLiveNodes={canAddLiveNodes}
-              showNoActiveModelHint={isDesign && hasDraftModel && activeModelId == null}
+              canAddDraftNodes={canAddDraftNodes}
+              showNoActiveModelHint={false}
               onAddRoot={() => {
                 setCreateNodeMode("root");
                 setCreateNodeOpen(true);
@@ -269,39 +224,18 @@ export function OrganizationDesignerPage() {
             />
           </main>
 
-          <aside className="flex w-80 min-h-0 shrink-0 flex-col self-stretch overflow-hidden">
-            <Tabs
-              defaultValue="inspector"
-              className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
-            >
-              <TabsList className="mx-2 mt-2 shrink-0">
-                <TabsTrigger value="inspector">{t("designer.inspectorTab")}</TabsTrigger>
-                <TabsTrigger value="audit">{t("designer.auditTab")}</TabsTrigger>
-              </TabsList>
-              <TabsContent
-                value="inspector"
-                className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden p-0 data-[state=inactive]:hidden"
-              >
-                <NodeInspectorPanel readOnly={!isDesign} />
-              </TabsContent>
-              <TabsContent
-                value="audit"
-                className="mt-0 min-h-0 flex-1 overflow-y-auto p-0 data-[state=inactive]:hidden"
-              >
-                <AuditTimeline />
-              </TabsContent>
-            </Tabs>
-          </aside>
+          <OrgDesignerPropertyPanel readOnly={!isDesign} />
         </div>
       )}
 
-      {activeModelId != null && canAddLiveNodes && (
+      {canAddDraftNodes && draftModelId != null && (
         <OrgNodeCreateDialog
           open={createNodeOpen}
           onOpenChange={setCreateNodeOpen}
           mode={createNodeMode}
           parentNode={createNodeMode === "child" ? selectedNodeRow : null}
-          activeModelId={activeModelId}
+          structureModelId={draftModelId}
+          schemaRevision={schemaRevision}
           onCreated={onNodeCreated}
         />
       )}
@@ -310,7 +244,14 @@ export function OrganizationDesignerPage() {
         open={typesPanelOpen}
         onOpenChange={setTypesPanelOpen}
         structureModelId={snapshot?.draft_model_id ?? null}
-        onTypesChanged={() => void loadSnapshot()}
+        onTypesChanged={() => void refreshAfterSchemaChange()}
+      />
+
+      <OrgRelationshipRulesPanel
+        open={rulesPanelOpen}
+        onOpenChange={setRulesPanelOpen}
+        structureModelId={snapshot?.draft_model_id ?? null}
+        onChanged={() => void refreshAfterSchemaChange()}
       />
 
       <ImpactPreviewDrawer />

@@ -27,9 +27,9 @@ import {
   updateOrgNodeMetadata,
   VersionConflictError,
 } from "@/services/org-node-service";
-import { useOrgDesignerStore } from "@/stores/org-designer-store";
+import { useOrgDesignerStore, isOrgStructureDesignMode } from "@/stores/org-designer-store";
 import { useOrgNodeStore } from "@/stores/org-node-store";
-import { toErrorMessage } from "@/utils/errors";
+import { formatOrgIpcError } from "@/utils/errors";
 import type { OrgDesignerNodeRow, OrgNodeEquipmentRow } from "@shared/ipc-types";
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -49,6 +49,7 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
   const { t } = useTranslation("org");
   const selectedNodeId = useOrgDesignerStore((s) => s.selectedNodeId);
   const snapshot = useOrgDesignerStore((s) => s.snapshot);
+  const workspaceMode = useOrgDesignerStore((s) => s.workspaceMode);
   const openPreview = useOrgDesignerStore((s) => s.openPreview);
 
   const responsibilities = useOrgNodeStore((s) => s.responsibilities);
@@ -58,6 +59,10 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
   const nodeContextLoading = useOrgNodeStore((s) => s.loading);
   const refreshSelectedNodeContext = useOrgNodeStore((s) => s.refreshSelectedNodeContext);
   const loadSnapshot = useOrgDesignerStore((s) => s.loadSnapshot);
+
+  // Draft workspace nodes are not operational FKs — equipment assign must stay read-only.
+  const isDraftWorkspace = isOrgStructureDesignMode(snapshot, workspaceMode);
+  const equipmentReadOnly = readOnly || isDraftWorkspace;
 
   const selectedRow: OrgDesignerNodeRow | null = useMemo(() => {
     if (!snapshot || selectedNodeId === null) return null;
@@ -99,38 +104,42 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
     void loadEquipment();
   }, [loadEquipment]);
 
-  const handleEquipSearch = useCallback(async (query: string) => {
-    setEquipSearch(query);
-    if (query.length < 2) {
-      setEquipResults([]);
-      return;
-    }
-    setEquipSearching(true);
-    try {
-      const results = await searchUnassignedEquipment(query, 10);
-      setEquipResults(results);
-    } finally {
-      setEquipSearching(false);
-    }
-  }, []);
+  const handleEquipSearch = useCallback(
+    async (query: string) => {
+      setEquipSearch(query);
+      if (equipmentReadOnly || query.length < 2) {
+        setEquipResults([]);
+        return;
+      }
+      setEquipSearching(true);
+      try {
+        const results = await searchUnassignedEquipment(query, 10);
+        setEquipResults(results);
+      } finally {
+        setEquipSearching(false);
+      }
+    },
+    [equipmentReadOnly],
+  );
 
   const handleAssign = useCallback(
     async (equipmentId: number) => {
-      if (!selectedNodeId) return;
+      if (!selectedNodeId || equipmentReadOnly) return;
       await assignEquipmentToNode({ equipment_id: equipmentId, node_id: selectedNodeId });
       setEquipSearch("");
       setEquipResults([]);
       await loadEquipment();
     },
-    [selectedNodeId, loadEquipment],
+    [selectedNodeId, equipmentReadOnly, loadEquipment],
   );
 
   const handleUnassign = useCallback(
     async (equipmentId: number) => {
+      if (equipmentReadOnly) return;
       await unassignEquipmentFromNode(equipmentId);
       await loadEquipment();
     },
-    [loadEquipment],
+    [equipmentReadOnly, loadEquipment],
   );
 
   useEffect(() => {
@@ -197,7 +206,7 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
         void loadSnapshot();
         void refreshSelectedNodeContext();
       } else {
-        setMetaError(toErrorMessage(e));
+        setMetaError(formatOrgIpcError(e));
       }
     } finally {
       setMetaSaving(false);
@@ -256,26 +265,34 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
         <p className="text-xs text-text-muted mt-0.5">{selectedRow.node_type_label}</p>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs — horizontally scrollable so all labels stay accessible */}
       <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <TabsList className="mx-4 mt-2 shrink-0">
-          <TabsTrigger value="details">{t("designer.inspector.details")}</TabsTrigger>
-          {hasAssetCapability && (
-            <TabsTrigger value="equipment">
-              {t("designer.inspector.equipment")}
-              {equipment.length > 0 && (
-                <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1">
-                  {equipment.length}
-                </Badge>
-              )}
+        <div className="shrink-0 overflow-x-auto overscroll-x-contain border-b border-surface-border">
+          <TabsList className="mx-0 mt-0 inline-flex h-9 w-max max-w-none justify-start gap-0.5 rounded-none bg-transparent p-1">
+            <TabsTrigger value="details" className="shrink-0 px-2.5">
+              {t("designer.inspector.details")}
             </TabsTrigger>
-          )}
-          <TabsTrigger value="responsibilities">
-            {t("designer.inspector.responsibilities")}
-          </TabsTrigger>
-          <TabsTrigger value="bindings">{t("designer.inspector.bindings")}</TabsTrigger>
-          <TabsTrigger value="actions">{t("designer.inspector.actions")}</TabsTrigger>
-        </TabsList>
+            {hasAssetCapability && (
+              <TabsTrigger value="equipment" className="shrink-0 px-2.5">
+                {t("designer.inspector.equipment")}
+                {equipment.length > 0 && (
+                  <Badge variant="secondary" className="ml-1 h-4 shrink-0 px-1 text-[10px]">
+                    {equipment.length}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            )}
+            <TabsTrigger value="responsibilities" className="shrink-0 px-2.5">
+              {t("designer.inspector.responsibilities")}
+            </TabsTrigger>
+            <TabsTrigger value="bindings" className="shrink-0 px-2.5">
+              {t("designer.inspector.bindings")}
+            </TabsTrigger>
+            <TabsTrigger value="actions" className="shrink-0 px-2.5">
+              {t("designer.inspector.actions")}
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         {/* Details tab */}
         <TabsContent
@@ -443,7 +460,7 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
                       variant="ghost"
                       className="h-7 w-7 p-0"
                       onClick={() => void handleUnassign(eq.id)}
-                      disabled={readOnly}
+                      disabled={equipmentReadOnly}
                     >
                       <X className="h-3.5 w-3.5 text-status-danger" />
                     </Button>
@@ -452,14 +469,19 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
               </div>
             )}
 
-            {/* Assign search */}
+            {/* Assign search — ops FKs target the published tree only */}
+            {isDraftWorkspace ? (
+              <p className="mt-4 text-xs text-text-muted">
+                {t("designer.inspector.equipmentDraftReadOnly")}
+              </p>
+            ) : (
             <div className="mt-4 space-y-2">
               <Input
                 value={equipSearch}
                 onChange={(e) => void handleEquipSearch(e.target.value)}
                 placeholder={t("designer.inspector.equipSearchPlaceholder")}
                 className="h-8 text-xs"
-                disabled={readOnly}
+                disabled={equipmentReadOnly}
               />
               {equipSearching && (
                 <p className="text-xs text-text-muted">{t("designer.inspector.searching")}</p>
@@ -472,7 +494,7 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
                       type="button"
                       className="w-full text-left rounded-md p-2 text-sm hover:bg-surface-2 cursor-pointer disabled:opacity-50"
                       onClick={() => void handleAssign(eq.id)}
-                      disabled={readOnly}
+                      disabled={equipmentReadOnly}
                     >
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-xs text-text-muted">
@@ -492,6 +514,7 @@ export function NodeInspectorPanel({ readOnly = false }: NodeInspectorPanelProps
                 </div>
               )}
             </div>
+            )}
           </TabsContent>
         )}
 

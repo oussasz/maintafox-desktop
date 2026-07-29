@@ -1,0 +1,45 @@
+---
+description: Never show raw DB/FK IDs in end-user UI — always resolve to business labels
+alwaysApply: true
+---
+
+# No internal IDs in the UI
+
+Never expose internal database IDs (numeric or opaque FKs) to end users. Resolve every foreign key to its **business representation** before rendering.
+
+Numeric IDs are backend implementation details. They may appear only in dedicated developer/admin debugging interfaces (explicitly labeled as such).
+
+## Architecture (mandatory)
+
+Enrich IPC list/get DTOs on the **backend** with display fields (`*_label`, `*_code`, `*_display_name`) via JOINs — same pattern as WO `asset_label` / `responsible_username`.
+
+- Frontend is **presentation-only**: use enriched fields + [`src/lib/display`](src/lib/display) formatters.
+- Do **not** add per-component `getById` / N+1 lookups to paint labels.
+- Keep FKs on the DTO for permissions and mutations; never render them.
+
+## Required resolution
+
+| Stored field | Show instead |
+|--------------|--------------|
+| `person_id` / `user_id` / `submitter_id` | Full name (+ optional role) |
+| `asset_id` / `equipment_id` | Asset code + asset name |
+| `org_node_id` | Organization path (or node code + name) |
+| `work_order_id` / `converted_to_wo_id` | WO code (e.g. `OT-0042`) |
+| DI `id` | DI code (e.g. `DI-0007`) |
+| Reference FK / code | Reference **label** (via catalog / `ReferenceCombobox` patterns) |
+
+## Hard rules
+
+- Do not render `#123`, `id=45`, or bare numeric FKs in lists, cards, detail panes, print, or approvals.
+- If the label cannot be resolved yet, show a neutral placeholder (`—` / i18n empty) — not the raw id.
+- Codes that are **business identifiers** (`DI-0001`, `EQ-PMP-01`) are allowed; surrogate keys are not.
+
+```tsx
+// ❌ BAD
+<span>#{di.asset_id}</span>
+<span>{di.submitter_id}</span>
+
+// ✅ GOOD
+<span>{formatAssetLabel(di.asset_code, di.asset_label)}</span>
+<span>{formatPersonLabel(di.submitter_display_name)}</span>
+```

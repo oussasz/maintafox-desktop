@@ -2052,7 +2052,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
           </section>
 
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">Journal d&apos;exposition runtime (h)</h2>
+            <h2 className="mb-2 font-medium">Journal d'exposition runtime (h)</h2>
             <p className="mb-2 text-fg-2">
               PRD §6.10.2 — dénominateur T<sub>exp</sub> (somme des entrées `hours` sur la période).
             </p>
@@ -2156,7 +2156,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               <KpiAnalysisInputGates evalRow={kpiInputEval} />
             ) : (
               <p className="mb-2 text-xs text-fg-2">
-                Sélectionnez un équipement et une période pour qualifier les entrées d&apos;analyse.
+                Sélectionnez un équipement et une période pour qualifier les entrées d'analyse.
               </p>
             )}
             <div className="mb-2 flex flex-wrap items-end gap-2">
@@ -2318,7 +2318,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                 className="rounded bg-accent px-3 py-1 text-bg-0"
                 onClick={() => void onRunWeibull()}
               >
-                Lancer l&apos;ajustement
+                Lancer l'ajustement
               </button>
             </div>
             {wbResult != null ? (
@@ -2876,7 +2876,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
           </section>
 
           <section className="mb-6 rounded border border-border-1 bg-bg-1 p-3">
-            <h2 className="mb-2 font-medium">FTA / RBD / arbre d&apos;événements (PRD 6.10)</h2>
+            <h2 className="mb-2 font-medium">FTA / RBD / arbre d'événements (PRD 6.10)</h2>
             <p className="mb-2 text-xs text-fg-2">
               Modèles graphe locaux — FTA (ET/OU + prob. top), RBD (série/parallèle), ETA
               (séquence). Évaluer : <code className="font-mono">ram.analyze</code> ; CRUD :{" "}
@@ -3084,7 +3084,7 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
               </pre>
             ) : null}
 
-            <h3 className="mb-1 mt-4 font-medium">Arbre d&apos;événements</h3>
+            <h3 className="mb-1 mt-4 font-medium">Arbre d'événements</h3>
             <div className="mb-2 flex flex-wrap gap-2">
               <input
                 className="w-24 rounded border border-border-1 bg-bg-0 px-2 py-1 font-mono text-xs"

@@ -1,7 +1,7 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-pub const ANALYSIS_INPUT_SPEC_VERSION: u32 = 1;
+pub const ANALYSIS_INPUT_SPEC_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExposurePart {
@@ -76,12 +76,23 @@ pub struct AnalysisInputSpec {
     pub min_sample_n: i64,
     pub gates: AnalysisInputGates,
     pub analysis_ready: bool,
+    pub exposure_provenance: ExposureProvenance,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExposureProvenance {
+    pub source: String,
+    pub schedule_reference_value_id: Option<i64>,
+    pub utilization_factor: f64,
+    pub last_completed_wo_closed_at: Option<String>,
+    pub fallback_reason: Option<String>,
 }
 
 pub fn build_input_spec_json(
     exposure_hours: f64,
     eligible_event_count: i64,
     min_sample_n: i64,
+    exposure_provenance: ExposureProvenance,
 ) -> String {
     let gates = AnalysisInputGates {
         exposure_hours_positive: exposure_hours > 0.0,
@@ -95,6 +106,7 @@ pub fn build_input_spec_json(
         min_sample_n,
         gates,
         analysis_ready,
+        exposure_provenance,
     };
     serde_json::to_string(&spec).unwrap_or_else(|_| "{}".to_string())
 }

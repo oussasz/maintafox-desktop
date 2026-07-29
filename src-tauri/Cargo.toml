@@ -4,10 +4,13 @@ version = "0.4.0-dev"
 edition = "2021"
 rust-version = "1.78"
 build = "build.rs"
+default-run = "maintafox"
 
 [lib]
 name = "maintafox_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Desktop dev/CI: cdylib + rlib only (faster link; no staticlib .lib artifact).
+# Restore "staticlib" before Android/iOS/mobile static linking targets.
+crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -48,6 +51,12 @@ keyring = "2"
 calamine = "0.30.1"
 cron = "0.12.1"
 rust_xlsxwriter = "0.79.4"
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+
+[[bin]]
+name = "rams-readiness-eval"
+path = "src/bin/rams_readiness_eval.rs"
 
 [dev-dependencies]
 chrono = { version = "0.4", features = ["serde"] }
@@ -60,9 +69,11 @@ tempfile = "3"
 name = "reliability_core"
 harness = false
 
-# MSVC + cdylib: avoid sporadic LNK2019 (unresolved llvm/serde glue) from multi-CGU splits.
+# Dev compile speed: CGU=1 was a workaround for sporadic MSVC LNK2019 with cdylib.
+# Soak-tested on rustc 1.94.1 / MSVC (2026-07-27): CGU=16 + opt-level=0, no link errors.
 [profile.dev]
-codegen-units = 1
+codegen-units = 16
+incremental = true
 
 [profile.release]
 lto = "thin"

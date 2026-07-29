@@ -65,6 +65,7 @@ pub struct DiStatsPayload {
     pub closed_this_month: i64,
     pub overdue: i64,
     pub sla_met_count: i64,
+    pub sla_breached_count: i64,
     pub sla_total: i64,
     pub safety_issues: i64,
     pub status_distribution: Vec<DiStatusCount>,
@@ -440,6 +441,71 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
             .collect::<AppResult<Vec<_>>>()?
     };
 
+    let (sla_met_count, sla_breached_count, sla_total) = {
+        // Breached: response late OR resolution late (using frozen deadlines).
+        let breached = scalar_i64(
+            db,
+            &format!(
+                "SELECT COUNT(*) AS value
+                 FROM intervention_requests ir
+                 WHERE {base_where}
+                   AND ir.sla_response_deadline IS NOT NULL
+                   AND (
+                     (ir.screened_at IS NULL AND julianday('now') > julianday(ir.sla_response_deadline))
+                     OR (ir.screened_at IS NOT NULL AND julianday(ir.screened_at) > julianday(ir.sla_response_deadline))
+                     OR (
+                       ir.status NOT IN ('rejected', 'closed_as_non_executable', 'archived')
+                       AND ir.sla_resolution_deadline IS NOT NULL
+                       AND (
+                         (ir.converted_at IS NULL AND julianday('now') > julianday(ir.sla_resolution_deadline))
+                         OR (ir.converted_at IS NOT NULL AND julianday(ir.converted_at) > julianday(ir.sla_resolution_deadline))
+                       )
+                     )
+                     OR (
+                       ir.status IN ('rejected', 'closed_as_non_executable', 'archived')
+                       AND ir.sla_resolution_deadline IS NOT NULL
+                       AND ir.converted_at IS NOT NULL
+                       AND julianday(ir.converted_at) > julianday(ir.sla_resolution_deadline)
+                     )
+                   )"
+            ),
+            binds.to_vec(),
+        )
+        .await?;
+
+        // Met: has SLA, terminal/completed clocks, and not breached.
+        let met = scalar_i64(
+            db,
+            &format!(
+                "SELECT COUNT(*) AS value
+                 FROM intervention_requests ir
+                 WHERE {base_where}
+                   AND ir.sla_response_deadline IS NOT NULL
+                   AND (
+                     ir.converted_at IS NOT NULL
+                     OR ir.status IN ('rejected', 'closed_as_non_executable', 'archived')
+                   )
+                   AND NOT (
+                     (ir.screened_at IS NULL AND julianday('now') > julianday(ir.sla_response_deadline))
+                     OR (ir.screened_at IS NOT NULL AND julianday(ir.screened_at) > julianday(ir.sla_response_deadline))
+                     OR (
+                       ir.converted_at IS NOT NULL
+                       AND ir.sla_resolution_deadline IS NOT NULL
+                       AND julianday(ir.converted_at) > julianday(ir.sla_resolution_deadline)
+                     )
+                   )
+                   AND (
+                     ir.screened_at IS NULL
+                     OR julianday(ir.screened_at) <= julianday(ir.sla_response_deadline)
+                   )"
+            ),
+            binds.to_vec(),
+        )
+        .await?;
+
+        (met, breached, met + breached)
+    };
+
     Ok(DiStatsPayload {
         total,
         pending,
@@ -447,9 +513,9 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
         closed,
         closed_this_month,
         overdue,
-        // Keep explicit zeroes until SLA aggregation is fully reinstated.
-        sla_met_count: 0,
-        sla_total: 0,
+        sla_met_count,
+        sla_breached_count,
+        sla_total,
         safety_issues,
         status_distribution,
         priority_distribution,

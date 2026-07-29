@@ -21,6 +21,8 @@ export const AssetSearchResultSchema = z.object({
   class_name: z.string().nullable(),
   family_code: z.string().nullable(),
   family_name: z.string().nullable(),
+  subfamily_code: z.string().nullable(),
+  subfamily_name: z.string().nullable(),
   criticality_code: z.string().nullable(),
   status_code: z.string(),
   org_node_id: z.number().nullable(),
@@ -46,17 +48,7 @@ export const AssetSuggestionSchema = z.object({
 // â”€â”€ Search command â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function searchAssets(filters: AssetSearchFilters): Promise<AssetSearchResult[]> {
-  const raw = await invoke<unknown>("search_assets", {
-    filters: {
-      query: filters.query ?? null,
-      classCodes: filters.classCodes ?? null,
-      familyCodes: filters.familyCodes ?? null,
-      statusCodes: filters.statusCodes ?? null,
-      orgNodeIds: filters.orgNodeIds ?? null,
-      includeDecommissioned: filters.includeDecommissioned ?? null,
-      limit: filters.limit ?? null,
-    },
-  });
+  const raw = await invoke<unknown>("search_assets", { filters });
   return z.array(AssetSearchResultSchema).parse(raw) as AssetSearchResult[];
 }
 

@@ -21,15 +21,26 @@ pub struct LicenseEnforcementDecision {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicenseStatusView {
+    /// Effective entitlement state from the active envelope (time-derived).
     pub entitlement_state: String,
+    /// Product activation status from `product.license_onboarding` (canonical for Activation badge).
     pub activation_state: String,
+    /// Machine-activation contract revocation state (admin-action concurrency / write matrix).
+    pub machine_activation_state: String,
     pub trust_state: String,
+    pub license_edition: Option<String>,
+    pub entitlement_tier: Option<String>,
+    pub envelope_id: Option<String>,
+    pub verification_result: Option<String>,
     pub policy_sync_pending: bool,
     pub pending_local_writes: i64,
     pub last_admin_action: Option<String>,
     pub last_admin_action_at: Option<String>,
     pub actionable_message: String,
     pub recovery_paths: Vec<String>,
+    /// Recent immutable traces — included so the Settings panel needs one IPC only.
+    #[serde(default)]
+    pub recent_traces: Vec<LicenseTraceEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

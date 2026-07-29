@@ -504,7 +504,7 @@ async fn check_protected_deactivations_without_migration(
     vals: &[values::ReferenceValue],
     issues: &mut Vec<ReferenceValidationIssue>,
 ) {
-    if domain.governance_level != "protected_analytical" {
+    if !crate::reference::governance::requires_analytical_protection(domain) {
         return;
     }
 

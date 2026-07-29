@@ -11,20 +11,31 @@ use crate::errors::AppResult;
 use crate::inventory::domain::{
     ApproveInventoryCountLineInput, CreateInventoryCountSessionInput, CreateStockLocationInput, CreateWarehouseInput,
     ArticleFamily, CreateArticleFamilyInput, InventoryArticle, InventoryArticleFilter, InventoryArticleInput,
-    InventoryIssueInput, InventoryReleaseReservationInput, InventoryReorderRecommendation, InventoryReserveInput, InventoryReturnInput,
+    InventoryIssueInput, InventoryReleaseReservationInput, InventoryReorderRecommendation, InventoryReplenishmentRecommendation,
+    InventoryReserveInput, InventoryReturnInput,
     InventoryCountLine, InventoryCountSession, InventoryReconciliationFinding, InventoryReconciliationRun, InventoryStateEvent,
     InventoryStockAdjustInput, InventoryStockBalance, InventoryStockFilter, InventoryTaxCategory,
     InventoryTaxCategoryInput, InventoryTransaction, InventoryTransactionFilter, InventoryTransferInput, ProcurementRequisition,
-    ProcurementRequisitionLine, ProcurementSupplier, PurchaseOrder, PurchaseOrderLine, ReceiveGoodsInput, RepairableOrder, StockLocation,
+    ProcurementRequisitionLine, ProcurementSupplier, PurchaseOrder, PurchaseOrderDetail, PurchaseOrderLine, ReceiveGoodsInput,
+    RepairVsReplaceResult, RepairableOrder, RepairableOrderDetail, StockImpactProjection, StockLocation,
     RunInventoryReconciliationInput, StockReservation, StockReservationFilter, TransitionInventoryCountSessionInput,
     TransitionProcurementRequisitionInput, TransitionPurchaseOrderInput, TransitionRepairableOrderInput, UpdateArticleFamilyInput,
     UpdatePostingStateInput, UpdateStockLocationInput, UpdateWarehouseInput, UpsertInventoryCountLineInput, Warehouse,
     CreateProcurementRequisitionInput,
     CreatePurchaseOrderFromRequisitionInput, CreateRepairableOrderInput, GoodsReceipt, GoodsReceiptLine,
     PostInventoryCountSessionInput, ReverseInventoryCountSessionInput,
+    // Supplier types
+    InventorySupplier, InventorySupplierInput, SupplierArticleSource, SupplierArticleSourceInput,
+    SupplierContact, SupplierContactInput, SupplierPrice, SupplierPriceInput,
+    SupplierPurchaseHistoryRow, SupplierScorecard,
+    // New article / procurement types
+    ArticleEquivalent, ArticleEquivalentInput, ArticlePurchaseHistoryRow, ProcurementDashboardSummary,
+    ArticleRepairableHistory, InventoryDocumentLink, InventoryDocumentLinkInput,
+    ProcurementAlert, ArticleConsumptionMonth,
+    WoMaterialReadiness,
 };
 use crate::inventory::valuation::ValuationCostResult;
-use crate::inventory::{controls, procurement, queries, valuation};
+use crate::inventory::{controls, procurement, queries, suppliers, valuation};
 use crate::state::AppState;
 use crate::{require_permission, require_session};
 
@@ -392,6 +403,29 @@ pub async fn list_inventory_purchase_order_lines(
 }
 
 #[tauri::command]
+pub async fn get_inventory_purchase_order_detail(
+    purchase_order_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<PurchaseOrderDetail> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    procurement::get_purchase_order_detail(&state.db, purchase_order_id).await
+}
+
+#[tauri::command]
+pub async fn project_inventory_stock_impact(
+    article_id: i64,
+    warehouse_id: Option<i64>,
+    delta_qty: f64,
+    include_open_po_qty: bool,
+    state: State<'_, AppState>,
+) -> AppResult<StockImpactProjection> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    queries::project_stock_impact(&state.db, article_id, warehouse_id, delta_qty, include_open_po_qty).await
+}
+
+#[tauri::command]
 pub async fn receive_inventory_purchase_order_goods(
     input: ReceiveGoodsInput,
     state: State<'_, AppState>,
@@ -453,6 +487,26 @@ pub async fn list_inventory_repairable_orders(state: State<'_, AppState>) -> App
     let user = require_session!(state);
     require_permission!(state, &user, "inv.view", PermissionScope::Global);
     procurement::list_repairable_orders(&state.db).await
+}
+
+#[tauri::command]
+pub async fn get_inventory_repairable_order_detail(
+    order_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<RepairableOrderDetail> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    procurement::get_repairable_order_detail(&state.db, order_id).await
+}
+
+#[tauri::command]
+pub async fn evaluate_inventory_repair_vs_replace(
+    order_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<RepairVsReplaceResult> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    procurement::evaluate_repair_vs_replace(&state.db, order_id).await
 }
 
 #[tauri::command]
@@ -570,4 +624,329 @@ pub async fn list_inventory_reconciliation_findings(
     let user = require_session!(state);
     require_permission!(state, &user, "inv.view", PermissionScope::Global);
     controls::list_reconciliation_findings(&state.db, run_id).await
+}
+
+// ── Supplier commands ────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn list_inventory_suppliers(state: State<'_, AppState>) -> AppResult<Vec<InventorySupplier>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    suppliers::list_suppliers(&state.db).await
+}
+
+#[tauri::command]
+pub async fn get_inventory_supplier(
+    supplier_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<InventorySupplier> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    suppliers::get_supplier_by_id(&state.db, supplier_id).await
+}
+
+#[tauri::command]
+pub async fn upsert_inventory_supplier(
+    supplier_id: Option<i64>,
+    expected_row_version: Option<i64>,
+    input: InventorySupplierInput,
+    state: State<'_, AppState>,
+) -> AppResult<InventorySupplier> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    suppliers::upsert_supplier(&state.db, supplier_id, expected_row_version, input).await
+}
+
+#[tauri::command]
+pub async fn deactivate_inventory_supplier(
+    supplier_id: i64,
+    expected_row_version: i64,
+    state: State<'_, AppState>,
+) -> AppResult<InventorySupplier> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    suppliers::soft_delete_supplier(&state.db, supplier_id, expected_row_version).await
+}
+
+#[tauri::command]
+pub async fn list_supplier_article_sources(
+    supplier_id: Option<i64>,
+    article_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<SupplierArticleSource>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    suppliers::list_supplier_article_sources(&state.db, supplier_id, article_id).await
+}
+
+#[tauri::command]
+pub async fn upsert_supplier_article_source(
+    input: SupplierArticleSourceInput,
+    state: State<'_, AppState>,
+) -> AppResult<SupplierArticleSource> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    suppliers::upsert_supplier_article_source(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn delete_supplier_article_source(
+    source_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    suppliers::delete_supplier_article_source(&state.db, source_id).await
+}
+
+#[tauri::command]
+pub async fn list_supplier_prices(
+    supplier_id: i64,
+    article_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<SupplierPrice>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    suppliers::list_supplier_prices(&state.db, supplier_id, article_id).await
+}
+
+#[tauri::command]
+pub async fn upsert_supplier_price(
+    price_id: Option<i64>,
+    input: SupplierPriceInput,
+    state: State<'_, AppState>,
+) -> AppResult<SupplierPrice> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    suppliers::upsert_supplier_price(&state.db, price_id, input).await
+}
+
+#[tauri::command]
+pub async fn get_inventory_supplier_scorecard(
+    supplier_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<SupplierScorecard> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    suppliers::get_supplier_scorecard(&state.db, supplier_id).await
+}
+
+#[tauri::command]
+pub async fn list_supplier_contacts(
+    supplier_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<SupplierContact>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    suppliers::list_supplier_contacts(&state.db, supplier_id).await
+}
+
+#[tauri::command]
+pub async fn upsert_supplier_contact(
+    contact_id: Option<i64>,
+    input: SupplierContactInput,
+    state: State<'_, AppState>,
+) -> AppResult<SupplierContact> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    suppliers::upsert_supplier_contact(&state.db, contact_id, input).await
+}
+
+#[tauri::command]
+pub async fn delete_supplier_contact(
+    contact_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    suppliers::delete_supplier_contact(&state.db, contact_id).await
+}
+
+#[tauri::command]
+pub async fn list_supplier_purchase_history(
+    supplier_id: i64,
+    limit: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<SupplierPurchaseHistoryRow>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    suppliers::list_supplier_purchase_history(&state.db, supplier_id, limit).await
+}
+
+// ── Article equivalent commands ──────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn list_inventory_article_equivalents(
+    article_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ArticleEquivalent>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    queries::list_article_equivalents(&state.db, article_id).await
+}
+
+#[tauri::command]
+pub async fn upsert_inventory_article_equivalent(
+    input: ArticleEquivalentInput,
+    state: State<'_, AppState>,
+) -> AppResult<ArticleEquivalent> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    queries::upsert_article_equivalent(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn delete_inventory_article_equivalent(
+    equivalent_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    queries::delete_article_equivalent(&state.db, equivalent_id).await
+}
+
+// ── Article purchase history ──────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn list_inventory_article_purchase_history(
+    article_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ArticlePurchaseHistoryRow>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    queries::list_article_purchase_history(&state.db, article_id).await
+}
+
+// ── Replenishment ────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn evaluate_inventory_replenishment(
+    warehouse_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<InventoryReplenishmentRecommendation>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    queries::evaluate_replenishment(&state.db, warehouse_id).await
+}
+
+// ── ABC / XYZ classification ──────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn calculate_inventory_abc(state: State<'_, AppState>) -> AppResult<i64> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    queries::calculate_abc_classification(&state.db).await
+}
+
+#[tauri::command]
+pub async fn calculate_inventory_xyz(state: State<'_, AppState>) -> AppResult<i64> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    queries::calculate_xyz_classification(&state.db).await
+}
+
+// ── Procurement dashboard ────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_procurement_dashboard_summary(state: State<'_, AppState>) -> AppResult<ProcurementDashboardSummary> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    queries::get_procurement_dashboard_summary(&state.db).await
+}
+
+#[tauri::command]
+pub async fn get_procurement_alerts(state: State<'_, AppState>) -> AppResult<Vec<ProcurementAlert>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    queries::get_procurement_alerts(&state.db).await
+}
+
+#[tauri::command]
+pub async fn get_article_consumption_monthly(
+    article_id: i64,
+    months: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ArticleConsumptionMonth>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    queries::get_article_consumption_monthly(&state.db, article_id, months).await
+}
+
+// ── Repairable history ───────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_inventory_article_repairable_history(
+    article_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ArticleRepairableHistory>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    queries::get_article_repairable_history(&state.db, article_id).await
+}
+
+// ── Document links ───────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn list_inventory_document_links(
+    entity_type: String,
+    entity_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<InventoryDocumentLink>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    queries::list_inventory_document_links(&state.db, &entity_type, entity_id).await
+}
+
+#[tauri::command]
+pub async fn upsert_inventory_document_link(
+    input: InventoryDocumentLinkInput,
+    state: State<'_, AppState>,
+) -> AppResult<InventoryDocumentLink> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.manage", PermissionScope::Global);
+    queries::upsert_inventory_document_link(&state.db, input).await
+}
+
+// ── WO material readiness ────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn check_wo_part_stock_availability(
+    work_order_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<WoMaterialReadiness> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    procurement::check_wo_part_stock_availability(&state.db, work_order_id).await
+}
+
+#[tauri::command]
+pub async fn create_procurement_requisition_from_wo_part(
+    work_order_id: i64,
+    article_id: i64,
+    requested_qty: f64,
+    preferred_location_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<ProcurementRequisition> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.procure", PermissionScope::Global);
+    procurement::create_procurement_requisition_from_wo_part(
+        &state.db,
+        work_order_id,
+        article_id,
+        requested_qty,
+        preferred_location_id,
+        Some(i64::from(user.user_id)),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn suggest_inventory_internal_transfer(
+    article_id: i64,
+    target_warehouse_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<InventoryStockBalance>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "inv.view", PermissionScope::Global);
+    queries::suggest_internal_transfer(&state.db, article_id, target_warehouse_id).await
 }

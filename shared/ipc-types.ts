@@ -1,4 +1,4 @@
-﻿// IPC contract types shared between src/ (frontend) and the Tauri command layer.
+// IPC contract types shared between src/ (frontend) and the Tauri command layer.
 // Types defined here must be kept in sync with Rust structs in src-tauri/src/.
 
 export interface HealthCheckResponse {
@@ -101,13 +101,14 @@ export interface DeviceTrustStatus {
   device_fingerprint: string;
   is_trusted: boolean;
   is_revoked: boolean;
+  /** Canonical label aligned with License Enforcement (`trusted`/`untrusted`/`revoked`). */
+  trust_state: string;
   offline_allowed: boolean;
   offline_hours_remaining: number | null;
   device_label: string | null;
   trusted_at: string | null;
   offline_denial_code?: string | null;
   offline_denial_message?: string | null;
-  status?: string;
 }
 
 export interface ActivationPolicySnapshot {
@@ -226,14 +227,22 @@ export interface LicenseEnforcementDecision {
 
 export interface LicenseStatusView {
   entitlement_state: string;
+  /** Product activation status (onboarding claim). */
   activation_state: string;
+  /** Machine-activation contract revocation state. */
+  machine_activation_state: string;
   trust_state: string;
+  license_edition: string | null;
+  entitlement_tier: string | null;
+  envelope_id: string | null;
+  verification_result: string | null;
   policy_sync_pending: boolean;
   pending_local_writes: number;
   last_admin_action: string | null;
   last_admin_action_at: string | null;
   actionable_message: string;
   recovery_paths: string[];
+  recent_traces: LicenseTraceEvent[];
 }
 
 export interface ApplyAdminLicenseActionInput {
@@ -1265,6 +1274,28 @@ export interface IntegrityReport {
   value_count: number;
 }
 
+export interface RamsPresentationSeedInput {
+  equipment_id?: number | null;
+  months_back?: number | null;
+  failure_count?: number | null;
+  actor_id?: number | null;
+  force?: boolean | null;
+}
+
+export interface RamsPresentationSeedReport {
+  equipment_id: number;
+  skipped: boolean;
+  work_orders_created: number;
+  failure_events_count: number;
+  exposure_hours: number | null;
+  weibull_beta: number | null;
+  weibull_eta: number | null;
+  weibull_adequate: boolean;
+  markov_model_id: number | null;
+  warnings: string[];
+  errors: string[];
+}
+
 export interface DiagnosticsAppInfo {
   app_version: string;
   os_name: string;
@@ -1447,6 +1478,8 @@ export interface OrgNode {
   row_version: number;
   origin_machine_id: string | null;
   last_synced_checkpoint: string | null;
+  structure_model_id: number;
+  origin_node_id: number | null;
 }
 
 export interface OrgTreeRow {
@@ -1489,6 +1522,8 @@ export interface CreateOrgNodePayload {
   code: string;
   name: string;
   node_type_id: number;
+  /** The structure model this node belongs to. Must match the parent (if provided). */
+  structure_model_id: number;
   parent_id?: number | null;
   description?: string | null;
   cost_center_code?: string | null;
@@ -1558,6 +1593,8 @@ export interface OrgDesignerNodeRow {
   child_count: number;
   active_responsibility_count: number;
   active_binding_count: number;
+  origin_node_id?: number | null;
+  structure_model_id?: number;
 }
 
 export interface OrgDesignerSnapshot {
@@ -1566,6 +1603,8 @@ export interface OrgDesignerSnapshot {
   draft_model_id: number | null;
   /** Present when a draft model exists. */
   draft_model_version: number | null;
+  /** Which model's nodes are in `nodes` (draft or active). */
+  display_model_id: number | null;
   nodes: OrgDesignerNodeRow[];
 }
 
@@ -1583,8 +1622,8 @@ export interface OrgImpactPreview {
   descendant_count: number;
   active_responsibility_count: number;
   active_binding_count: number;
-  blockers: string[];
-  warnings: string[];
+  blockers: OrgValidationIssue[];
+  warnings: OrgValidationIssue[];
   dependencies: OrgImpactDependencySummary[];
 }
 
@@ -1604,6 +1643,8 @@ export interface OrgValidationIssue {
   severity: string;
   message: string;
   related_id: number | null;
+  /** Interpolation values for localized UI copy. */
+  params?: Record<string, string>;
 }
 
 export interface OrgPublishValidationResult {
@@ -1613,6 +1654,11 @@ export interface OrgPublishValidationResult {
   blocking_count: number;
   issues: OrgValidationIssue[];
   remap_count: number;
+}
+
+export interface OrgDraftLineageReconcileResult {
+  draft_model_id: number;
+  cloned_count: number;
 }
 
 export interface OrgChangeEvent {
@@ -1636,11 +1682,30 @@ export interface ReferenceDomain {
   code: string;
   name: string;
   structure_type: string;
+  /** @deprecated Prefer governance_category for permission decisions. */
   governance_level: string;
+  /** A/B/C: system_catalog | operational_dictionary | controlled_catalog */
+  governance_category: string;
   is_extendable: boolean;
   validation_rules_json: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Capability snapshot from governance engine (Manager / Combobox SSOT). */
+export interface ReferenceGovernanceCapabilities {
+  category: string;
+  enforcement_phase: string;
+  can_create_value: boolean;
+  can_update_value: boolean;
+  can_deactivate_value: boolean;
+  can_create_draft_set: boolean;
+  can_discard_draft_set: boolean;
+  can_publish: boolean;
+  can_operational_create: boolean;
+  is_read_only: boolean;
+  requires_analytical_protection: boolean;
+  set_status: string | null;
 }
 
 export interface CreateReferenceDomainPayload {
@@ -1648,6 +1713,7 @@ export interface CreateReferenceDomainPayload {
   name: string;
   structure_type: string;
   governance_level: string;
+  governance_category?: string;
   is_extendable?: boolean;
   validation_rules_json?: string | null;
 }
@@ -1656,6 +1722,7 @@ export interface UpdateReferenceDomainPayload {
   name?: string;
   structure_type?: string;
   governance_level?: string;
+  governance_category?: string;
   is_extendable?: boolean;
   validation_rules_json?: string | null;
 }
@@ -1699,6 +1766,15 @@ export interface CreateReferenceValuePayload {
   semantic_tag?: string | null;
   external_code?: string | null;
   metadata_json?: string | null;
+}
+
+/** Operational create into the latest published set (tenant_managed domains only). */
+export interface CreateOperationalReferenceValuePayload {
+  domain_code: string;
+  label: string;
+  description?: string | null;
+  parent_id?: number | null;
+  code?: string | null;
 }
 
 export interface UpdateReferenceValuePayload {
@@ -1897,6 +1973,8 @@ export interface Asset {
   class_name: string | null;
   family_code: string | null;
   family_name: string | null;
+  subfamily_code: string | null;
+  subfamily_name: string | null;
   criticality_value_id: number | null;
   criticality_code: string | null;
   status_code: string;
@@ -1904,6 +1982,9 @@ export interface Asset {
   model: string | null;
   serial_number: string | null;
   maintainable_boundary: boolean;
+  rams_schedule_reference_value_id: number | null;
+  rams_schedule_reference_value_name: string | null;
+  rams_utilization_factor: number;
   org_node_id: number | null;
   org_node_name: string | null;
   commissioned_at: string | null;
@@ -1953,6 +2034,8 @@ export interface CreateAssetPayload {
   model?: string | null;
   serial_number?: string | null;
   maintainable_boundary: boolean;
+  rams_schedule_reference_value_id?: number | null;
+  rams_utilization_factor?: number | null;
   org_node_id: number;
   commissioned_at?: string | null;
 }
@@ -1968,6 +2051,8 @@ export interface UpdateAssetIdentityPayload {
   model?: string | null;
   serial_number?: string | null;
   maintainable_boundary?: boolean;
+  rams_schedule_reference_value_id?: number | null;
+  rams_utilization_factor?: number;
   commissioned_at?: string | null;
   decommissioned_at?: string | null;
 }
@@ -2133,17 +2218,21 @@ export interface AssetBindingSummary {
   linked_document_count: DomainBindingEntry;
   linked_iot_signal_count: DomainBindingEntry;
   linked_erp_mapping_count: DomainBindingEntry;
+  /** Open (non-closed / non-archived) intervention requests — used for decommission blockers. */
+  open_di_count: DomainBindingEntry;
+  /** Open (non-closed / non-cancelled) work orders — used for decommission blockers. */
+  open_wo_count: DomainBindingEntry;
 }
 
 // â”€â”€â”€ Asset â€” Search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface AssetSearchFilters {
   query?: string | null;
-  classCodes?: string[] | null;
-  familyCodes?: string[] | null;
-  statusCodes?: string[] | null;
-  orgNodeIds?: number[] | null;
-  includeDecommissioned?: boolean;
+  class_codes?: string[] | null;
+  family_codes?: string[] | null;
+  status_codes?: string[] | null;
+  org_node_ids?: number[] | null;
+  include_decommissioned?: boolean;
   limit?: number | null;
 }
 
@@ -2156,6 +2245,8 @@ export interface AssetSearchResult {
   class_name: string | null;
   family_code: string | null;
   family_name: string | null;
+  subfamily_code: string | null;
+  subfamily_name: string | null;
   criticality_code: string | null;
   status_code: string;
   org_node_id: number | null;
@@ -2176,6 +2267,70 @@ export interface AssetSuggestion {
   asset_code: string;
   asset_name: string;
   status_code: string;
+}
+
+export type AssetHistoryEventType =
+  | "asset_created"
+  | "asset_updated"
+  | "decommissioned"
+  | "assignment_changed"
+  | "location_changed"
+  | "org_changed"
+  | "parent_changed"
+  | "child_changed"
+  | "wo_created"
+  | "wo_started"
+  | "wo_closed"
+  | "di_created"
+  | "di_closed"
+  | "pm_scheduled"
+  | "pm_executed"
+  | "inspection_recorded"
+  | "failure_recorded"
+  | "meter_reading"
+  | "document_linked"
+  | "photo_added";
+
+export interface AssetHistoryEventRef {
+  entity_type: "asset" | "wo" | "di" | "pm" | "inspection" | "document" | "photo";
+  entity_id: number | null;
+  entity_code: string | null;
+  route_hint: string | null;
+}
+
+export interface AssetHistoryEvent {
+  id: string;
+  asset_id: number;
+  event_type: AssetHistoryEventType;
+  occurred_at: string;
+  title: string;
+  description: string | null;
+  actor_label: string | null;
+  duration_minutes: number | null;
+  status_label: string | null;
+  metadata: Record<string, string | number | boolean | null>;
+  ref: AssetHistoryEventRef | null;
+}
+
+export interface AssetHistorySummary {
+  asset_id: number;
+  created_at: string | null;
+  age_days: number | null;
+  wo_count: number;
+  pm_count: number;
+  failure_count: number;
+  availability_percent: number | null;
+}
+
+export type AssetHistoryPeriod = "today" | "last_7_days" | "last_30_days" | "this_year" | "all";
+
+export interface AssetHistoryQuery {
+  asset_id: number;
+  event_types?: AssetHistoryEventType[] | null;
+  period?: AssetHistoryPeriod | null;
+  search?: string | null;
+  limit?: number | null;
+  offset?: number | null;
 }
 
 // â”€â”€â”€ Asset â€” Import â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -2321,8 +2476,10 @@ export interface InventoryArticle {
   procurement_category_label: string | null;
   preferred_warehouse_id: number | null;
   preferred_warehouse_code: string | null;
+  preferred_warehouse_name: string | null;
   preferred_location_id: number | null;
   preferred_location_code: string | null;
+  preferred_location_name: string | null;
   min_stock: number;
   max_stock: number | null;
   reorder_point: number;
@@ -2340,8 +2497,10 @@ export interface InventoryStockBalance {
   article_name: string;
   warehouse_id: number;
   warehouse_code: string;
+  warehouse_name: string | null;
   location_id: number;
   location_code: string;
+  location_name: string | null;
   on_hand_qty: number;
   reserved_qty: number;
   available_qty: number;
@@ -2415,7 +2574,12 @@ export interface InventoryStockAdjustInput {
   article_id: number;
   location_id: number;
   delta_qty: number;
-  reason?: string | null;
+  /** Movement reason lookup code (e.g. ENTREE_ACHAT). */
+  reason_code?: string | null;
+  /** Free-text comment. */
+  notes?: string | null;
+  /** Business document reference (PO, WO, count batch, …). */
+  source_ref?: string | null;
 }
 
 export interface InventoryTransaction {
@@ -2425,15 +2589,18 @@ export interface InventoryTransaction {
   article_name: string;
   warehouse_id: number;
   warehouse_code: string;
+  warehouse_name: string | null;
   location_id: number;
   location_code: string;
+  location_name: string | null;
   reservation_id: number | null;
   movement_type: string;
   quantity: number;
   source_type: string;
   source_id: number | null;
   source_ref: string | null;
-  reason: string | null;
+  reason_code: string | null;
+  notes: string | null;
   performed_by_id: number | null;
   performed_at: string;
 }
@@ -2445,11 +2612,14 @@ export interface StockReservation {
   article_name: string;
   warehouse_id: number;
   warehouse_code: string;
+  warehouse_name: string | null;
   location_id: number;
   location_code: string;
+  location_name: string | null;
   source_type: string;
   source_id: number | null;
   source_ref: string | null;
+  work_order_code: string | null;
   quantity_reserved: number;
   quantity_issued: number;
   status: string;
@@ -2546,6 +2716,7 @@ export interface ProcurementRequisition {
   demand_source_type: string;
   demand_source_id: number | null;
   demand_source_ref: string | null;
+  purchase_priority: string | null;
   status: string;
   posting_state: string;
   posting_error: string | null;
@@ -2577,8 +2748,10 @@ export interface CreateProcurementRequisitionInput {
   demand_source_type: string;
   demand_source_id?: number | null;
   demand_source_ref?: string | null;
+  demand_source_line_id?: number | null;
   source_reservation_id?: number | null;
   source_reorder_trigger?: string | null;
+  purchase_priority?: string | null;
   reason?: string | null;
   actor_id?: number | null;
 }
@@ -2598,6 +2771,8 @@ export interface PurchaseOrder {
   requisition_id: number | null;
   supplier_company_id: number | null;
   supplier_company_name: string | null;
+  supplier_id: number | null;
+  supplier_name: string | null;
   status: string;
   posting_state: string;
   posting_error: string | null;
@@ -2605,6 +2780,7 @@ export interface PurchaseOrder {
   ordered_at: string | null;
   approved_by_id: number | null;
   approved_at: string | null;
+  expected_delivery_date: string | null;
   row_version: number;
   created_at: string;
   updated_at: string;
@@ -2625,12 +2801,45 @@ export interface PurchaseOrderLine {
   demand_source_ref: string | null;
   source_reservation_id: number | null;
   status: string;
+  /** ordered_qty − received_qty, floored at zero. */
+  remaining_qty: number;
+  /** ordered_qty × unit_price; null when the line has no unit price yet. */
+  line_total: number | null;
+  work_order_id: number | null;
+  work_order_code: string | null;
   created_at: string;
   updated_at: string;
 }
 
+export interface PurchaseOrderDetail {
+  order: PurchaseOrder;
+  lines: PurchaseOrderLine[];
+  goods_receipts: GoodsReceipt[];
+  state_events: InventoryStateEvent[];
+  document_links: InventoryDocumentLink[];
+  /** Sum of priced line totals; null when no line carries a unit price. */
+  grand_total: number | null;
+  /** True when at least one line lacks a unit price, so the total understates the PO. */
+  grand_total_partial: boolean;
+}
+
+export interface StockImpactProjection {
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  warehouse_id: number | null;
+  warehouse_code: string | null;
+  current_on_hand: number;
+  reserved_qty: number;
+  available_qty: number;
+  incoming_open_po_qty: number;
+  delta_qty: number;
+  projected_on_hand: number;
+}
+
 export interface CreatePurchaseOrderFromRequisitionInput {
   requisition_id: number;
+  supplier_id?: number | null;
   supplier_company_id?: number | null;
   actor_id?: number | null;
 }
@@ -2688,6 +2897,7 @@ export interface ReceivePurchaseOrderLineInput {
 export interface ReceiveGoodsInput {
   purchase_order_id: number;
   lines: ReceivePurchaseOrderLineInput[];
+  fulfillment_action?: string | null;
   actor_id?: number | null;
 }
 
@@ -2713,10 +2923,51 @@ export interface RepairableOrder {
   linked_reservation_id: number | null;
   status: string;
   reason: string | null;
+  serial_number: string | null;
+  vendor_supplier_id: number | null;
+  vendor_supplier_code: string | null;
+  vendor_supplier_name: string | null;
+  sent_at: string | null;
+  returned_at: string | null;
+  warranty_active: number;
+  warranty_until: string | null;
+  repair_cost: number | null;
+  work_order_id: number | null;
+  work_order_code: string | null;
   created_by_id: number | null;
   row_version: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface RepairableHistoryStats {
+  repair_count: number;
+  avg_cost: number | null;
+  avg_turnaround_days: number | null;
+}
+
+export type RepairVsReplaceRecommendation =
+  | "REPAIR"
+  | "REPLACE"
+  | "REVIEW"
+  | "INSUFFICIENT_DATA";
+
+export interface RepairVsReplaceResult {
+  repair_cost: number | null;
+  replacement_cost: number | null;
+  /** Repair/replacement cost ratio above which replacement is recommended. */
+  threshold_ratio: number;
+  recommendation: RepairVsReplaceRecommendation;
+  /** Stable machine code explaining a REVIEW / INSUFFICIENT_DATA outcome. */
+  reason: string | null;
+}
+
+export interface RepairableOrderDetail {
+  order: RepairableOrder;
+  state_events: InventoryStateEvent[];
+  document_links: InventoryDocumentLink[];
+  history_stats: RepairableHistoryStats;
+  repair_vs_replace: RepairVsReplaceResult;
 }
 
 export interface CreateRepairableOrderInput {
@@ -2727,6 +2978,8 @@ export interface CreateRepairableOrderInput {
   linked_po_line_id?: number | null;
   linked_reservation_id?: number | null;
   reason?: string | null;
+  serial_number?: string | null;
+  vendor_supplier_id?: number | null;
   actor_id?: number | null;
 }
 
@@ -2738,6 +2991,11 @@ export interface TransitionRepairableOrderInput {
   note?: string | null;
   actor_id?: number | null;
   return_location_id?: number | null;
+  serial_number?: string | null;
+  vendor_supplier_id?: number | null;
+  repair_cost?: number | null;
+  warranty_active?: boolean | null;
+  warranty_until?: string | null;
 }
 
 export interface InventoryStateEvent {
@@ -2871,6 +3129,328 @@ export interface InventoryReconciliationFinding {
 export interface RunInventoryReconciliationInput {
   actor_id?: number | null;
   drift_break_threshold?: number;
+}
+
+// ── Supplier management ──────────────────────────────────────────────────────
+
+export interface InventorySupplier {
+  id: number;
+  code: string;
+  name: string;
+  external_company_id: number | null;
+  status_code: string;
+  payment_terms_code: string | null;
+  currency_value_id: number | null;
+  incoterms_code: string | null;
+  default_lead_time_days: number | null;
+  default_buyer_person_id: number | null;
+  is_active: number;
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventorySupplierInput {
+  code: string;
+  name: string;
+  external_company_id?: number | null;
+  status_code: string;
+  payment_terms_code?: string | null;
+  currency_value_id?: number | null;
+  incoterms_code?: string | null;
+  default_lead_time_days?: number | null;
+  default_buyer_person_id?: number | null;
+  is_active?: boolean | null;
+}
+
+export interface SupplierArticleSource {
+  id: number;
+  supplier_id: number;
+  supplier_code: string;
+  supplier_name: string;
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  is_preferred: number;
+  priority: number;
+  lead_time_days: number | null;
+  unit_price_hint: number | null;
+  min_order_qty: number | null;
+  supplier_article_code: string | null;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+  /** Most recent purchased unit price for this supplier/article pair. */
+  last_price: number | null;
+  /** Average purchased unit price for this supplier/article pair. */
+  avg_price: number | null;
+  last_purchase_at: string | null;
+  currency_value_id: number | null;
+  currency_label: string | null;
+  /** LOW | MEDIUM | HIGH — supplier risk classification. */
+  risk_level: string | null;
+}
+
+export interface SupplierArticleSourceInput {
+  supplier_id: number;
+  article_id: number;
+  is_preferred?: boolean | null;
+  priority?: number | null;
+  lead_time_days?: number | null;
+  unit_price_hint?: number | null;
+  min_order_qty?: number | null;
+  supplier_article_code?: string | null;
+  is_active?: boolean | null;
+}
+
+export interface SupplierPrice {
+  id: number;
+  supplier_id: number;
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  unit_price: number;
+  currency_value_id: number | null;
+  price_unit_value_id: number | null;
+  min_order_qty: number | null;
+  valid_from: string;
+  valid_to: string | null;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupplierPriceInput {
+  supplier_id: number;
+  article_id: number;
+  unit_price: number;
+  currency_value_id?: number | null;
+  price_unit_value_id?: number | null;
+  min_order_qty?: number | null;
+  valid_from?: string | null;
+  valid_to?: string | null;
+  is_active?: boolean | null;
+}
+
+export interface SupplierScorecard {
+  supplier_id: number;
+  supplier_code: string;
+  supplier_name: string;
+  on_time_delivery_pct: number | null;
+  avg_lead_time_days: number | null;
+  delivery_accuracy_pct: number | null;
+  avg_price: number | null;
+  open_po_count: number;
+  completed_po_count: number;
+  last_purchase_at: string | null;
+  /** % of received quantity rejected across goods-receipt lines. */
+  rejected_pct: number | null;
+  /** LOW | MEDIUM | HIGH risk classification derived from delivery metrics. */
+  risk_level: string;
+  last_deliveries: SupplierRecentDelivery[];
+}
+
+export interface SupplierRecentDelivery {
+  received_at: string | null;
+  po_number: string;
+  article_code: string;
+  article_name: string;
+  ordered_qty: number | null;
+  accepted_qty: number;
+  rejected_qty: number;
+  actual_lead_time_days: number | null;
+}
+
+export interface SupplierContact {
+  id: number;
+  supplier_id: number;
+  contact_name: string;
+  contact_role: string | null;
+  phone: string | null;
+  email: string | null;
+  is_primary: number;
+  created_at: string;
+}
+
+export interface SupplierContactInput {
+  supplier_id: number;
+  contact_name: string;
+  contact_role?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  is_primary?: boolean | null;
+}
+
+export interface SupplierPurchaseHistoryRow {
+  purchase_order_id: number;
+  po_number: string;
+  ordered_at: string | null;
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  ordered_qty: number;
+  unit_price: number | null;
+  status: string;
+}
+
+// ── Article equivalents ──────────────────────────────────────────────────────
+
+export interface ArticleEquivalent {
+  id: number;
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  equivalent_article_id: number;
+  equivalent_code: string;
+  equivalent_name: string;
+  equivalence_type: string;
+  notes: string | null;
+  is_bidirectional: number;
+  created_at: string;
+}
+
+export interface ArticleEquivalentInput {
+  article_id: number;
+  equivalent_article_id: number;
+  equivalence_type: string;
+  notes?: string | null;
+  is_bidirectional?: boolean | null;
+}
+
+// ── Replenishment ─────────────────────────────────────────────────────────────
+
+export interface ReplenishmentTransferOption {
+  warehouse_id: number;
+  warehouse_code: string;
+  available_qty: number;
+}
+
+export interface InventoryReplenishmentRecommendation {
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  warehouse_id: number;
+  warehouse_code: string;
+  min_stock: number;
+  reorder_point: number;
+  max_stock: number | null;
+  on_hand_qty: number;
+  reserved_qty: number;
+  available_qty: number;
+  suggested_reorder_qty: number;
+  trigger_type: string;
+  suggestion_type: string;
+  suggested_supplier_id: number | null;
+  suggested_supplier_name: string | null;
+  estimated_cost: number | null;
+  expected_arrival: string | null;
+  reason: string | null;
+  transfer_options: ReplenishmentTransferOption[];
+}
+
+export interface ProcurementAlert {
+  kind: string;
+  severity: string;
+  title: string;
+  detail: string | null;
+  entity_type: string | null;
+  entity_id: number | null;
+  entity_code: string | null;
+}
+
+export interface ArticleConsumptionMonth {
+  year_month: string;
+  issued_qty: number;
+}
+
+// ── Procurement analytics ─────────────────────────────────────────────────────
+
+export interface ArticlePurchaseHistoryRow {
+  purchase_order_id: number;
+  po_number: string;
+  ordered_at: string | null;
+  supplier_id: number | null;
+  supplier_name: string | null;
+  unit_price: number | null;
+  ordered_qty: number;
+  received_qty: number;
+  status: string;
+}
+
+export interface ProcurementDashboardSummary {
+  open_requisitions: number;
+  pending_approval_pos: number;
+  open_pos: number;
+  overdue_pos: number;
+  pending_receipts: number;
+  low_stock_articles: number;
+  critical_low_stock_articles: number;
+  repairables_in_repair: number;
+  active_suppliers_count: number;
+  receiving_today_count: number;
+}
+
+export interface ArticleRepairableHistory {
+  order_id: number;
+  order_code: string;
+  quantity: number;
+  status: string;
+  reason: string | null;
+  repair_cost: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Document links ────────────────────────────────────────────────────────────
+
+export interface InventoryDocumentLink {
+  id: number;
+  entity_type: string;
+  entity_id: number;
+  document_ref: string;
+  link_purpose: string;
+  is_primary: number;
+  valid_from: string;
+  valid_to: string | null;
+  created_by_id: number | null;
+  created_at: string;
+}
+
+export interface InventoryDocumentLinkInput {
+  entity_type: string;
+  entity_id: number;
+  document_ref: string;
+  link_purpose: string;
+  is_primary?: boolean | null;
+  valid_from?: string | null;
+  valid_to?: string | null;
+  created_by_id?: number | null;
+}
+
+// ── WO material readiness ─────────────────────────────────────────────────────
+
+export interface WoPartShortage {
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  requested_qty: number;
+  available_qty: number;
+  shortage_qty: number;
+  preferred_location_id: number | null;
+}
+
+export interface WoMaterialReadiness {
+  work_order_id: number;
+  work_order_code: string;
+  total_parts?: number;
+  available_parts?: number;
+  reserved_parts?: number;
+  missing_parts?: number;
+  ready_pct?: number;
+  reserved_pct?: number;
+  expected_arrival?: string | null;
+  is_fully_available: boolean;
+  shortages: WoPartShortage[];
 }
 
 // â”€â”€â”€ Preventive Maintenance (PRD Â§6.9) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -3237,6 +3817,8 @@ export interface InterventionRequest {
   title: string;
   description: string;
   origin_type: DiOriginType;
+  /** Category A DI.REQUEST_TYPE code (default repair). */
+  request_type: string;
   symptom_code_id: number | null;
   impact_level: DiImpactLevel;
   production_impact: boolean;
@@ -3257,6 +3839,15 @@ export interface InterventionRequest {
   archived_at: string | null;
   converted_to_wo_id: number | null;
   converted_at: string | null;
+  /** Immutable SLA snapshot (frozen at create). */
+  sla_rule_id?: number | null;
+  sla_target_response_hours?: number | null;
+  sla_target_resolution_hours?: number | null;
+  sla_escalation_threshold_hours?: number | null;
+  sla_response_deadline?: string | null;
+  sla_resolution_deadline?: string | null;
+  sla_response_breach_notified_at?: string | null;
+  sla_resolution_breach_notified_at?: string | null;
   reviewer_note: string | null;
   classification_code_id: number | null;
   is_recurrence_flag: boolean;
@@ -3266,6 +3857,15 @@ export interface InterventionRequest {
   submitter_id: number;
   created_at: string;
   updated_at: string;
+  /** Display enrichment from JOINs — prefer these over FKs in UI. */
+  asset_code?: string | null;
+  asset_label?: string | null;
+  org_node_code?: string | null;
+  org_node_label?: string | null;
+  submitter_display_name?: string | null;
+  reviewer_display_name?: string | null;
+  converted_to_wo_code?: string | null;
+  converted_to_wo_title?: string | null;
 }
 
 export interface DiListFilter {
@@ -3292,6 +3892,7 @@ export interface DiTransitionRow {
   to_status: string;
   action: string;
   actor_id: number | null;
+  actor_display_name?: string | null;
   reason_code: string | null;
   notes: string | null;
   acted_at: string;
@@ -3311,6 +3912,8 @@ export interface DiCreateInput {
   title: string;
   description: string;
   origin_type: string;
+  /** Category A DI.REQUEST_TYPE code. Defaults to repair when omitted. */
+  request_type?: string;
   symptom_code_id?: number | null;
   impact_level: string;
   production_impact: boolean;
@@ -3334,6 +3937,7 @@ export interface DiDraftUpdateInput {
   expected_row_version: number;
   title?: string | null;
   description?: string | null;
+  request_type?: string | null;
   symptom_code_id?: number | null;
   impact_level?: string | null;
   production_impact?: boolean | null;
@@ -3400,6 +4004,20 @@ export interface DiReactivateInput {
   notes?: string | null;
 }
 
+export interface DiCloseNonExecutableInput {
+  di_id: number;
+  actor_id: number;
+  expected_row_version: number;
+  notes?: string | null;
+}
+
+export interface DiArchiveInput {
+  di_id: number;
+  actor_id: number;
+  expected_row_version: number;
+  notes?: string | null;
+}
+
 export interface DiReviewEvent {
   id: number;
   di_id: number;
@@ -3412,6 +4030,8 @@ export interface DiReviewEvent {
   notes: string | null;
   sla_target_hours: number | null;
   sla_deadline: string | null;
+  sla_resolution_target_hours?: number | null;
+  sla_resolution_deadline?: string | null;
   step_up_used: boolean;
 }
 
@@ -3504,10 +4124,14 @@ export interface DiSlaStatus {
   target_response_hours: number | null;
   target_resolution_hours: number | null;
   sla_deadline: string | null;
+  resolution_deadline: string | null;
   response_elapsed_hours: number | null;
   resolution_elapsed_hours: number | null;
+  response_remaining_hours: number | null;
+  resolution_remaining_hours: number | null;
   is_response_breached: boolean;
   is_resolution_breached: boolean;
+  status: "on_track" | "at_risk" | "breached" | "completed" | null;
 }
 
 export interface SlaRuleUpdateInput {
@@ -3577,7 +4201,7 @@ export interface UploadAssetPhotoPayload {
 
 export interface DecommissionAssetPayload {
   asset_id: number;
-  target_status: "RETIRED" | "SCRAPPED" | "TRANSFERRED";
+  target_status: "DECOMMISSIONED" | "SCRAPPED";
   reason: string;
   notes: string | null;
 }
@@ -3697,6 +4321,7 @@ export interface DiStatsPayload {
   closed_this_month: number;
   overdue: number;
   sla_met_count: number;
+  sla_breached_count: number;
   sla_total: number;
   safety_issues: number;
   status_distribution: DiStatusCount[];
@@ -3712,17 +4337,14 @@ export interface DiStatsPayload {
 
 // â”€â”€â”€ Work Orders (OT) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+/** Option B lifecycle statuses */
 export type WoStatus =
   | "draft"
-  | "awaiting_approval"
-  | "planned"
-  | "ready_to_schedule"
-  | "assigned"
-  | "waiting_for_prerequisite"
+  | "planning"
+  | "ready"
   | "in_progress"
-  | "paused"
-  | "mechanically_complete"
-  | "technically_verified"
+  | "on_hold"
+  | "completed"
   | "closed"
   | "cancelled";
 
@@ -3772,6 +4394,7 @@ export interface WorkOrder {
   active_labor_hours: number | null;
   total_waiting_hours: number | null;
   downtime_hours: number | null;
+  planned_downtime_hours: number | null;
   // Cost accumulators
   labor_cost: number | null;
   parts_cost: number | null;
@@ -3812,6 +4435,12 @@ export interface WorkOrder {
   asset_label?: string | null;
   planner_username?: string | null;
   responsible_username?: string | null;
+  planner_display_name?: string | null;
+  responsible_display_name?: string | null;
+  /** Display enrichment — source DI (JOIN). Prefer over source_di_id in UI. */
+  source_di_code?: string | null;
+  source_di_title?: string | null;
+  source_di_status?: string | null;
 }
 
 export interface WoTransitionRow {
@@ -3968,6 +4597,7 @@ export interface WoPlanInput {
   planned_end: string;
   shift?: WoShift | null;
   expected_duration_hours?: number | null;
+  planned_downtime_hours?: number | null;
   urgency_id?: number | null;
 }
 
@@ -4017,6 +4647,56 @@ export interface WoMechCompleteInput {
   conclusion?: string | null;
 }
 
+// ── Option B lifecycle inputs ───────────────────────────────────────────────
+
+export interface WoSubmitInput {
+  wo_id: number;
+  actor_id: number;
+  expected_row_version: number;
+}
+
+export interface WoMarkReadyInput {
+  wo_id: number;
+  actor_id: number;
+  expected_row_version: number;
+}
+
+export interface WoEvaluateReadinessInput {
+  wo_id: number;
+}
+
+export interface WoReadinessCheck {
+  code: string;
+  category: string;
+  severity: string;
+  blocking: boolean;
+  phase: string;
+  outcome: string;
+  message?: string | null;
+}
+
+/** Matches backend `ReadinessReport` from evaluate_wo_readiness. */
+export interface WoReadinessResult {
+  wo_id: number;
+  can_mark_ready: boolean;
+  blocking_failed: number;
+  recommended_failed: number;
+  checks: WoReadinessCheck[];
+}
+
+export interface WoReturnToPlanningInput {
+  wo_id: number;
+  actor_id: number;
+  expected_row_version: number;
+  reason?: string | null;
+}
+
+export interface WoApprovePlanningInput {
+  wo_id: number;
+  actor_id: number;
+  expected_row_version: number;
+}
+
 export interface WoMechCompleteResponse {
   wo: WorkOrder;
   errors: WoPreflightError[];
@@ -4027,12 +4707,23 @@ export interface WoPreflightError {
   message: string;
 }
 
+/** Structured mech-complete readiness item (evaluate_wo_completion_gates). */
+export interface WoCompletionGate {
+  code: string;
+  passed: boolean;
+  required: boolean;
+  detail?: string | null;
+}
+
 export interface WoCloseInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
   no_downtime_attestation?: boolean | null;
   no_downtime_attestation_reason?: string | null;
+  fmeca_parts_override_reason?: string | null;
+  fmeca_parts_override_signed_by_id?: number | null;
+  fmeca_parts_override_signer_password?: string | null;
 }
 
 export interface WoLaborEntry {
@@ -4097,7 +4788,7 @@ export interface WoCostSummary {
 
 // â”€â”€ WO Execution sub-entity types (from wo-execution-service) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-export type TaskResultCode = "ok" | "nok" | "na" | "deferred";
+export type TaskResultCode = "ok" | "nok" | "na" | "deferred" | "cancelled";
 
 export type DowntimeType = "full" | "partial" | "standby" | "quality_loss";
 
@@ -4114,6 +4805,8 @@ export interface WoExecTask {
   completed_at: string | null;
   result_code: TaskResultCode | null;
   notes: string | null;
+  /** "planned" | "execution_added" | "generated" — enriched by backend JOIN */
+  origin?: string | null;
 }
 
 /** Labor/intervener row as returned by execution commands (raw FK columns). */
@@ -4127,6 +4820,8 @@ export interface WoIntervener {
   hours_worked: number | null;
   hourly_rate: number | null;
   notes: string | null;
+  intervener_display_name?: string | null;
+  skill_label?: string | null;
 }
 
 /** Part row as returned by execution commands (raw FK columns). */
@@ -4143,7 +4838,91 @@ export interface WoExecPart {
   quantity_reserved: number;
   quantity_issued: number;
   notes: string | null;
+  article_label?: string | null;
+  /** "planned" | "execution_added" — origin of this part line */
+  origin?: string | null;
+  /** "pending" | "used" | "not_used" | "partial" */
+  consumption_status?: string | null;
+  not_used_reason_id?: number | null;
+  not_used_comment?: string | null;
+  /** Enriched label for the not-used reason (JOIN from reference_values) */
+  not_used_reason_label?: string | null;
 }
+
+// ── Plan vs Actual adherence ──────────────────────────────────────────────────
+
+/** Matches backend `wo::plan_adherence::WoPlanAdherence`. */
+export interface WoPlanAdherence {
+  wo_id: number;
+  parts_planned: number;
+  parts_used: number;
+  parts_unused: number;
+  parts_extra: number;
+  tasks_planned: number;
+  tasks_done: number;
+  tasks_added: number;
+  tasks_cancelled: number;
+  planned_hours: number | null;
+  actual_hours: number | null;
+  time_variance_hours: number | null;
+  /** planned / actual × 100 when actual > 0 */
+  efficiency_pct: number | null;
+  planned_parts_cost: number;
+  actual_parts_cost: number;
+  planned_labor_cost: number;
+  actual_labor_cost: number;
+  cost_variance_pct: number | null;
+  planned_downtime_hours: number | null;
+  actual_downtime_hours: number;
+  downtime_variance_hours: number | null;
+  primary_downtime_cause: string | null;
+}
+
+// ── Execution events timeline ────────────────────────────────────────────────
+
+export interface WoExecutionEvent {
+  id: number;
+  work_order_id: number;
+  occurred_at: string;
+  event_type: string;
+  summary_key: string;
+  summary_params_json: string | null;
+  entity_kind: string | null;
+  entity_id: number | null;
+  actor_id: number | null;
+  actor_display_name?: string | null;
+}
+
+// ── Work order tools ─────────────────────────────────────────────────────────
+
+export interface WoTool {
+  id: number;
+  work_order_id: number;
+  origin: string;
+  tool_code: string | null;
+  tool_label: string;
+  usage_status: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface AddWoToolInput {
+  wo_id: number;
+  tool_label: string;
+  tool_code?: string | null;
+  origin?: string;
+  notes?: string | null;
+}
+
+export interface MarkWoToolStatusInput {
+  tool_id: number;
+  usage_status: string;
+  notes?: string | null;
+}
+
+// ── Attachment phase ─────────────────────────────────────────────────────────
+
+export type WoAttachmentPhase = "before" | "during" | "after" | "evidence";
 
 export interface WoDelaySegment {
   id: number;
@@ -4162,6 +4941,8 @@ export interface WoDowntimeSegment {
   ended_at: string | null;
   downtime_type: DowntimeType;
   comment: string | null;
+  /** Phase 2: mechanical | electrical | waiting_spare | waiting_approval | operator_unavailable */
+  classification_code?: string | null;
 }
 
 export interface WoStatsPayload {
@@ -4747,7 +5528,7 @@ export interface Personnel {
   primary_entity_id: number | null;
   primary_team_id: number | null;
   supervisor_id: number | null;
-  home_schedule_id: number | null;
+  home_schedule_reference_value_id: number | null;
   availability_status: string;
   hire_date: string | null;
   termination_date: string | null;
@@ -4794,7 +5575,7 @@ export interface PersonnelCreateInput {
   primary_entity_id?: number | null;
   primary_team_id?: number | null;
   supervisor_id?: number | null;
-  home_schedule_id?: number | null;
+  home_schedule_reference_value_id?: number | null;
   hire_date?: string | null;
   email?: string | null;
   phone?: string | null;
@@ -4811,7 +5592,7 @@ export interface PersonnelUpdateInput {
   primary_entity_id?: number | null;
   primary_team_id?: number | null;
   supervisor_id?: number | null;
-  home_schedule_id?: number | null;
+  home_schedule_reference_value_id?: number | null;
   availability_status?: string | null;
   hire_date?: string | null;
   termination_date?: string | null;
@@ -4844,7 +5625,7 @@ export interface ScheduleClass {
 
 export interface ScheduleDetail {
   id: number;
-  schedule_class_id: number;
+  reference_value_id: number;
   day_of_week: number;
   shift_start: string;
   shift_end: string;
@@ -4854,6 +5635,33 @@ export interface ScheduleDetail {
 export interface ScheduleClassWithDetails {
   class: ScheduleClass;
   details: ScheduleDetail[];
+}
+
+/** ORG.SCHEDULE_CLASS weekday pattern extension. */
+export interface ScheduleDayPattern {
+  day_of_week: number;
+  shift_start: string;
+  shift_end: string;
+  is_rest_day: boolean;
+}
+
+export interface SchedulePattern {
+  reference_value_id: number;
+  code: string;
+  label: string;
+  is_active: boolean;
+  shift_pattern_code: string;
+  is_continuous: boolean;
+  nominal_hours_per_day: number;
+  details: ScheduleDayPattern[];
+}
+
+export interface UpsertSchedulePatternPayload {
+  reference_value_id: number;
+  shift_pattern_code?: string | null;
+  is_continuous?: boolean | null;
+  nominal_hours_per_day?: number | null;
+  details?: ScheduleDayPattern[] | null;
 }
 
 export interface PersonnelRateCard {
@@ -5489,6 +6297,7 @@ export interface WeibullFitRunInput {
   equipment_id: number;
   period_start?: string | null;
   period_end?: string | null;
+  include_censored?: boolean | null;
 }
 
 export interface WeibullFitRecord {
@@ -5510,6 +6319,45 @@ export interface WeibullFitRecord {
   row_version: number;
   created_at: string;
   created_by_id: number | null;
+}
+
+export interface WeibullDashboardInput {
+  equipment_id: number;
+  include_censored?: boolean | null;
+  comparison_equipment_id?: number | null;
+  t_offset_hours?: number | null;
+}
+
+export interface WeibullCurvePoint {
+  t: number;
+  r: number;
+  r_low: number;
+  r_high: number;
+}
+
+export interface WeibullPmMarker {
+  t: number;
+  r: number;
+  label: string;
+}
+
+export interface WeibullDashboardPayload {
+  equipment_id: number;
+  include_censored: boolean;
+  comparison_equipment_id: number | null;
+  t_offset_hours: number;
+  t_effective_hours: number;
+  beta_actual: number | null;
+  beta_industrial_standard: number | null;
+  beta_industrial_source: string | null;
+  eta_hours: number | null;
+  points: WeibullCurvePoint[];
+  comparison_points: WeibullCurvePoint[];
+  pm_marker: WeibullPmMarker | null;
+  r_live: number | null;
+  rul_live_hours: number | null;
+  danger_threshold_r: number;
+  pm_threshold_r: number;
 }
 
 export interface FmecaAnalysis {
@@ -5605,6 +6453,12 @@ export interface FmecaSoCell {
 export interface FmecaSeverityOccurrenceMatrix {
   equipment_id: number;
   cells: FmecaSoCell[];
+  reference_domain_ready: boolean;
+  reference_modes_published_count: number;
+  fmeca_mode_links_count: number;
+  fmeca_orphan_mode_links_count: number;
+  warning_code: string | null;
+  warning_message: string | null;
 }
 
 export interface FmecaItemsEquipmentFilter {
@@ -5612,6 +6466,22 @@ export interface FmecaItemsEquipmentFilter {
   severity?: number | null;
   occurrence?: number | null;
   limit?: number | null;
+}
+
+export interface SuggestedPartsForFailureInput {
+  equipment_id: number;
+  failure_mode_id: number;
+}
+
+export interface SuggestedPartForFailure {
+  article_id: number;
+  article_code: string;
+  article_name: string;
+  suggested_quantity: number;
+  priority: number;
+  notes?: string | null;
+  stock_on_hand: number;
+  stock_available: number;
 }
 
 export interface Iso14224DatasetCompleteness {

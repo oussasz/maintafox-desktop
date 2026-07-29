@@ -1,7 +1,9 @@
 import { listen } from "@tauri-apps/api/event";
-import { type ReactNode, createContext, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Outlet } from "react-router-dom";
 
+import { useSession } from "@/hooks/use-session";
+import { readPermissionCache, writePermissionCache } from "@/lib/permission-cache";
 import { getMyPermissions } from "@/services/rbac-service";
 import type { PermissionRecord } from "@shared/ipc-types";
 
@@ -25,29 +27,62 @@ interface PermissionProviderProps {
 }
 
 /**
- * Central permission provider. Loads permissions once after authentication,
- * listens for `rbac-changed` and `session-unlocked` events to auto-refresh.
+ * Central permission provider. Uses the shared session store (same SSOT as
+ * AuthGuard) and a process-lifetime cache so remounts / transient AUTH_ERROR
+ * never wipe the Sidebar down to ungated items only.
  *
- * Place inside `<AuthGuard>` so it only mounts when the user is authenticated.
- * All `usePermissions()` consumers share this single permission set.
+ * Cache clear is owned by logout paths only (session store / AuthGuard), never
+ * by transient unauthenticated flips during AuthLock.
  */
 export function PermissionProvider({ children }: PermissionProviderProps) {
-  const [permissions, setPermissions] = useState<PermissionRecord[]>([]);
+  const session = useSession();
+  const authenticated = session.info?.is_authenticated === true;
+  const userId = session.info?.user_id ?? null;
+
+  const [permissions, setPermissions] = useState<PermissionRecord[]>(() =>
+    readPermissionCache(userId),
+  );
   const [isLoading, setIsLoading] = useState(true);
+  const loadGeneration = useRef(0);
 
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
+
+    if (!authenticated) {
+      // Wait for authentication — seed from cache, never wipe here.
+      const cached = readPermissionCache(userId);
+      if (generation === loadGeneration.current) {
+        if (cached.length > 0) {
+          setPermissions(cached);
+        }
+        setIsLoading(false);
+      }
+      return;
+    }
+
     setIsLoading(true);
     try {
       const perms = await getMyPermissions();
+      if (generation !== loadGeneration.current) {
+        return;
+      }
+      writePermissionCache(userId, perms);
       setPermissions(perms);
     } catch {
-      setPermissions([]);
+      if (generation !== loadGeneration.current) {
+        return;
+      }
+      // Any failure: keep last known / cache. Never collapse nav to ungated-only.
+      const cached = readPermissionCache(userId);
+      setPermissions((prev) => (prev.length > 0 ? prev : cached));
     } finally {
-      setIsLoading(false);
+      if (generation === loadGeneration.current) {
+        setIsLoading(false);
+      }
     }
-  }, []);
+  }, [authenticated, userId]);
 
-  // Initial load
+  // Load whenever auth presence / user changes.
   useEffect(() => {
     void load();
   }, [load]);

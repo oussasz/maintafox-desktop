@@ -123,6 +123,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model.id as i64,
             },
             1,
         )
@@ -174,6 +175,8 @@ mod tests {
             model: Some("Etanorm 50-200".to_string()),
             serial_number: Some("SN-2024-00123".to_string()),
             maintainable_boundary: true,
+            rams_schedule_reference_value_id: None,
+            rams_utilization_factor: Some(1.0),
             org_node_id,
             commissioned_at: Some("2024-03-15T00:00:00Z".to_string()),
         }

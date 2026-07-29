@@ -16,6 +16,7 @@ import {
   governedPublishReferenceSet,
   listReferenceValues,
   previewRefPublishImpact,
+  reactivateReferenceValue,
   updateReferenceValue,
 } from "@/services/reference-service";
 import { toErrorMessage } from "@/utils/errors";
@@ -48,7 +49,10 @@ interface ReferenceGovernanceStoreState {
   loadValues: (setId: number) => Promise<void>;
   saveValue: (valueId: number, payload: UpdateReferenceValuePayload) => Promise<void>;
   addValue: (payload: CreateReferenceValuePayload) => Promise<void>;
+  /** Soft-deactivate; keeps the row in the list as inactive. */
   removeValue: (valueId: number) => Promise<void>;
+  /** Toggle active flag (deactivate / reactivate); keeps row in place. */
+  setValueActive: (valueId: number, active: boolean) => Promise<void>;
   setEditingValueId: (id: number | null) => void;
   setNewValueDraft: (draft: Partial<CreateReferenceValuePayload> | null) => void;
 
@@ -56,6 +60,10 @@ interface ReferenceGovernanceStoreState {
   loadImpact: (setId: number) => Promise<void>;
   publish: (setId: number) => Promise<void>;
   clearError: () => void;
+}
+
+function replaceValue(values: ReferenceValue[], updated: ReferenceValue): ReferenceValue[] {
+  return values.map((v) => (v.id === updated.id ? updated : v));
 }
 
 // ── Store implementation ──────────────────────────────────────────────────────
@@ -90,11 +98,12 @@ export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>
     try {
       const updated = await updateReferenceValue(valueId, payload);
       set({
-        values: get().values.map((v) => (v.id === valueId ? updated : v)),
+        values: replaceValue(get().values, updated),
         editingValueId: null,
       });
     } catch (err) {
       set({ error: toErrorMessage(err) });
+      throw err;
     } finally {
       set({ savingValue: false });
     }
@@ -115,8 +124,22 @@ export const useReferenceGovernanceStore = create<ReferenceGovernanceStoreState>
   removeValue: async (valueId) => {
     set({ savingValue: true, error: null });
     try {
-      await deactivateReferenceValue(valueId);
-      set({ values: get().values.filter((v) => v.id !== valueId) });
+      const updated = await deactivateReferenceValue(valueId);
+      set({ values: replaceValue(get().values, updated) });
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+    } finally {
+      set({ savingValue: false });
+    }
+  },
+
+  setValueActive: async (valueId, active) => {
+    set({ savingValue: true, error: null });
+    try {
+      const updated = active
+        ? await reactivateReferenceValue(valueId)
+        : await deactivateReferenceValue(valueId);
+      set({ values: replaceValue(get().values, updated) });
     } catch (err) {
       set({ error: toErrorMessage(err) });
     } finally {

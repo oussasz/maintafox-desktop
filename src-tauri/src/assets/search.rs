@@ -39,6 +39,8 @@ pub struct AssetSearchResult {
     pub class_name: Option<String>,
     pub family_code: Option<String>,
     pub family_name: Option<String>,
+    pub subfamily_code: Option<String>,
+    pub subfamily_name: Option<String>,
     pub criticality_code: Option<String>,
     pub status_code: String,
     pub org_node_id: Option<i64>,
@@ -100,6 +102,12 @@ fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResult> {
         family_name: row
             .try_get::<Option<String>>("", "family_name")
             .map_err(|e| decode_err("family_name", e))?,
+        subfamily_code: row
+            .try_get::<Option<String>>("", "subfamily_code")
+            .map_err(|e| decode_err("subfamily_code", e))?,
+        subfamily_name: row
+            .try_get::<Option<String>>("", "subfamily_name")
+            .map_err(|e| decode_err("subfamily_name", e))?,
         criticality_code: row
             .try_get::<Option<String>>("", "criticality_code")
             .map_err(|e| decode_err("criticality_code", e))?,
@@ -161,17 +169,19 @@ fn map_suggestion(row: &QueryResult) -> AppResult<AssetSuggestion> {
 
 // ─── SQL fragments ────────────────────────────────────────────────────────────
 
-/// Enriched SELECT for search results. Extends the identity SELECT with parent
-/// asset context, primary meter summary, and external ID count via sub-queries.
+/// Enriched SELECT for search results. Class / family / subfamily / criticality /
+/// status expressions match `ASSET_SELECT` in identity.rs so List and Details share SSOT.
 const SEARCH_SELECT: &str = r"
     e.id,
     e.sync_id,
     e.asset_id_code         AS asset_code,
     e.name                  AS asset_name,
-    ec.code                 AS class_code,
-    ec.name                 AS class_name,
-    ef.code                 AS family_code,
-    ef.name                 AS family_name,
+    COALESCE(rs_class.code, ec.code) AS class_code,
+    COALESCE(rs_class.label, ec.name) AS class_name,
+    rs_fam.code             AS family_code,
+    rs_fam.label            AS family_name,
+    rs_sub.code             AS subfamily_code,
+    rs_sub.label            AS subfamily_name,
     COALESCE(rs_crit.code, lv.code) AS criticality_code,
     COALESCE(rs_stat.code, e.lifecycle_status) AS status_code,
     e.installed_at_node_id  AS org_node_id,
@@ -193,7 +203,9 @@ const SEARCH_SELECT: &str = r"
 const SEARCH_FROM: &str = r"
     FROM equipment e
     LEFT JOIN equipment_classes ec ON ec.id = e.class_id
-    LEFT JOIN equipment_classes ef ON ef.id = ec.parent_id
+    LEFT JOIN reference_values rs_class ON rs_class.id = e.equipment_class_ref_id
+    LEFT JOIN reference_values rs_fam ON rs_fam.id = e.equipment_family_ref_id
+    LEFT JOIN reference_values rs_sub ON rs_sub.id = e.equipment_subfamily_ref_id
     LEFT JOIN lookup_values lv     ON lv.id = e.criticality_value_id
     LEFT JOIN reference_values rs_crit ON rs_crit.id = e.equipment_criticality_ref_id
     LEFT JOIN reference_values rs_stat ON rs_stat.id = e.equipment_status_ref_id
@@ -224,8 +236,8 @@ const SEARCH_FROM: &str = r"
 ///
 /// Filters:
 ///   - `query` — searches asset_code, name, serial_number, and external_ids
-///   - `class_codes` — restrict to specific equipment class codes
-///   - `family_codes` — restrict to specific family (parent class) codes
+///   - `class_codes` — restrict to resolved class codes (`COALESCE(rs_class, ec)`)
+///   - `family_codes` — restrict to family codes (`equipment_family_ref_id`)
 ///   - `status_codes` — restrict to specific lifecycle status codes
 ///   - `org_node_ids` — restrict to specific org nodes
 ///   - `include_decommissioned` — when false (default), excludes DECOMMISSIONED
@@ -237,9 +249,12 @@ pub async fn search_assets(
     let mut where_clauses = vec!["e.deleted_at IS NULL".to_string()];
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
-    // ── Decommissioned filter ─────────────────────────────────────────────
+    // ── Decommissioned filter (resolved status, same as SEARCH_SELECT) ────
     if !filters.include_decommissioned.unwrap_or(false) {
-        where_clauses.push("e.lifecycle_status != 'DECOMMISSIONED'".to_string());
+        where_clauses.push(
+            "COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')"
+                .to_string(),
+        );
     }
 
     // ── Text query (domain-aware: code, name, serial, external IDs) ──────
@@ -259,33 +274,37 @@ pub async fn search_assets(
         }
     }
 
-    // ── Class code filter ─────────────────────────────────────────────────
+    // ── Class code filter (same resolved code as Details / SEARCH_SELECT) ─
     if let Some(ref codes) = filters.class_codes {
         if !codes.is_empty() {
             let placeholders = codes.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-            where_clauses.push(format!("ec.code IN ({placeholders})"));
+            where_clauses.push(format!(
+                "COALESCE(rs_class.code, ec.code) IN ({placeholders})"
+            ));
             for code in codes {
                 binds.push(code.clone().into());
             }
         }
     }
 
-    // ── Family code filter ────────────────────────────────────────────────
+    // ── Family code filter (equipment_family_ref_id → reference_values) ───
     if let Some(ref codes) = filters.family_codes {
         if !codes.is_empty() {
             let placeholders = codes.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-            where_clauses.push(format!("ef.code IN ({placeholders})"));
+            where_clauses.push(format!("rs_fam.code IN ({placeholders})"));
             for code in codes {
                 binds.push(code.clone().into());
             }
         }
     }
 
-    // ── Status code filter ────────────────────────────────────────────────
+    // ── Status code filter (resolved status, same as SEARCH_SELECT) ───────
     if let Some(ref codes) = filters.status_codes {
         if !codes.is_empty() {
             let placeholders = codes.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-            where_clauses.push(format!("e.lifecycle_status IN ({placeholders})"));
+            where_clauses.push(format!(
+                "COALESCE(rs_stat.code, e.lifecycle_status) IN ({placeholders})"
+            ));
             for code in codes {
                 binds.push(code.clone().into());
             }

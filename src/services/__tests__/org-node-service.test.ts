@@ -42,6 +42,8 @@ const baseNode = {
   row_version: 1,
   origin_machine_id: null,
   last_synced_checkpoint: null,
+  structure_model_id: 1,
+  origin_node_id: null,
 };
 
 const baseTreeRow = {
@@ -113,7 +115,19 @@ describe("getOrgNode", () => {
   it("calls get_org_node with the correct nodeId", async () => {
     mockInvoke.mockResolvedValueOnce(baseNode);
     await getOrgNode(1);
-    expect(mockInvoke).toHaveBeenCalledWith("get_org_node", { nodeId: 1 });
+    expect(mockInvoke).toHaveBeenCalledWith("get_org_node", {
+      nodeId: 1,
+      structureModelId: null,
+    });
+  });
+
+  it("passes structureModelId when provided", async () => {
+    mockInvoke.mockResolvedValueOnce(baseNode);
+    await getOrgNode(1, 42);
+    expect(mockInvoke).toHaveBeenCalledWith("get_org_node", {
+      nodeId: 1,
+      structureModelId: 42,
+    });
   });
 });
 

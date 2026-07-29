@@ -105,6 +105,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model.id as i64,
             },
             1,
         )
@@ -150,6 +151,8 @@ mod tests {
                 model: None,
                 serial_number: None,
                 maintainable_boundary: true,
+                rams_schedule_reference_value_id: None,
+                rams_utilization_factor: Some(1.0),
                 org_node_id,
                 commissioned_at: None,
             },

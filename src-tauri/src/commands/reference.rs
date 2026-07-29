@@ -11,7 +11,7 @@ use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
-use crate::reference::{aliases, domains, imports as ref_imports, migrations as ref_migrations, publish as ref_publish, search as ref_search, sets, values};
+use crate::reference::{aliases, domains, governance, imports as ref_imports, migrations as ref_migrations, publish as ref_publish, schedule_patterns, search as ref_search, sets, values};
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
 
@@ -34,6 +34,54 @@ pub async fn get_reference_domain(
     let user = require_session!(state);
     require_permission!(state, &user, "ref.view", PermissionScope::Global);
     domains::get_reference_domain(&state.db, domain_id).await
+}
+
+/// Capability snapshot for Reference Manager / Combobox (governance SSOT).
+#[tauri::command]
+pub async fn get_reference_governance_capabilities(
+    domain_id: i64,
+    set_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<governance::ReferenceGovernanceCapabilities> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.view", PermissionScope::Global);
+    let domain = domains::get_reference_domain(&state.db, domain_id).await?;
+    let set = if let Some(sid) = set_id {
+        let s = sets::get_reference_set(&state.db, sid).await?;
+        if s.domain_id != domain_id {
+            return Err(crate::errors::AppError::ValidationFailed(vec![
+                "Le jeu sélectionné n'appartient pas à ce domaine.".into(),
+            ]));
+        }
+        Some(s)
+    } else {
+        None
+    };
+    Ok(governance::capabilities_for(&domain, set.as_ref()))
+}
+
+/// Capability snapshot resolved by domain code (ReferenceCombobox / forms).
+#[tauri::command]
+pub async fn get_reference_governance_capabilities_by_code(
+    domain_code: String,
+    set_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<governance::ReferenceGovernanceCapabilities> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.view", PermissionScope::Global);
+    let domain = domains::get_reference_domain_by_code(&state.db, &domain_code).await?;
+    let set = if let Some(sid) = set_id {
+        let s = sets::get_reference_set(&state.db, sid).await?;
+        if s.domain_id != domain.id {
+            return Err(crate::errors::AppError::ValidationFailed(vec![
+                "Le jeu sélectionné n'appartient pas à ce domaine.".into(),
+            ]));
+        }
+        Some(s)
+    } else {
+        None
+    };
+    Ok(governance::capabilities_for(&domain, set.as_ref()))
 }
 
 #[tauri::command]
@@ -90,6 +138,16 @@ pub async fn create_draft_reference_set(
 }
 
 #[tauri::command]
+pub async fn discard_draft_reference_set(
+    set_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.manage", PermissionScope::Global);
+    sets::discard_draft_set(&state.db, set_id).await
+}
+
+#[tauri::command]
 pub async fn validate_reference_set(
     set_id: i64,
     state: State<'_, AppState>,
@@ -142,6 +200,16 @@ pub async fn create_reference_value(
 }
 
 #[tauri::command]
+pub async fn create_operational_reference_value(
+    payload: values::CreateOperationalReferenceValuePayload,
+    state: State<'_, AppState>,
+) -> AppResult<values::ReferenceValue> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.manage", PermissionScope::Global);
+    values::create_operational_value(&state.db, payload, i64::from(user.user_id)).await
+}
+
+#[tauri::command]
 pub async fn update_reference_value(
     value_id: i64,
     payload: values::UpdateReferenceValuePayload,
@@ -160,6 +228,16 @@ pub async fn deactivate_reference_value(
     let user = require_session!(state);
     require_permission!(state, &user, "ref.manage", PermissionScope::Global);
     values::deactivate_value(&state.db, value_id, i64::from(user.user_id)).await
+}
+
+#[tauri::command]
+pub async fn reactivate_reference_value(
+    value_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<values::ReferenceValue> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.manage", PermissionScope::Global);
+    values::reactivate_value(&state.db, value_id, i64::from(user.user_id)).await
 }
 
 #[tauri::command]
@@ -423,4 +501,31 @@ pub async fn governed_publish_reference_set(
     require_permission!(state, &user, "ref.publish", PermissionScope::Global);
     require_step_up!(state);
     ref_publish::publish_reference_set(&state.db, set_id, i64::from(user.user_id)).await
+}
+
+// -- Schedule pattern (ORG.SCHEDULE_CLASS extension) --------------------------
+
+#[tauri::command]
+pub async fn get_schedule_pattern(
+    reference_value_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<schedule_patterns::SchedulePattern> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.view", PermissionScope::Global);
+    schedule_patterns::get_schedule_pattern(&state.db, reference_value_id).await
+}
+
+#[tauri::command]
+pub async fn upsert_schedule_pattern(
+    payload: schedule_patterns::UpsertSchedulePatternPayload,
+    state: State<'_, AppState>,
+) -> AppResult<schedule_patterns::SchedulePattern> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "ref.manage", PermissionScope::Global);
+    schedule_patterns::upsert_schedule_pattern(
+        &state.db,
+        payload,
+        i64::from(user.user_id),
+    )
+    .await
 }

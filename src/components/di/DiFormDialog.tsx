@@ -18,9 +18,16 @@ export function DiFormDialog() {
 
   const open = useDiStore((s) => s.showCreateForm);
   const editingDi = useDiStore((s) => s.editingDi);
+  const createPrefillAsset = useDiStore((s) => s.createPrefillAsset);
+  const createPrefillEquipmentId = useDiStore((s) => s.createPrefillEquipmentId);
   const closeCreateForm = useDiStore((s) => s.closeCreateForm);
 
   const isEdit = editingDi !== null;
+  const formKey = open
+    ? editingDi
+      ? `e-${editingDi.id}`
+      : `new-${createPrefillEquipmentId ?? "blank"}`
+    : "closed";
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && closeCreateForm()}>
@@ -31,11 +38,16 @@ export function DiFormDialog() {
         <DialogHeader>
           <DialogTitle>{isEdit ? t("page.titleEdit") : t("page.titleNew")}</DialogTitle>
         </DialogHeader>
-        <DiCreateForm
-          initial={editingDi}
-          onSubmitted={() => closeCreateForm()}
-          onCancel={closeCreateForm}
-        />
+        {open ? (
+          <DiCreateForm
+            key={formKey}
+            initial={editingDi}
+            prefillAsset={createPrefillAsset}
+            prefillEquipmentId={createPrefillEquipmentId}
+            onSubmitted={() => closeCreateForm()}
+            onCancel={closeCreateForm}
+          />
+        ) : null}
       </DialogContent>
     </Dialog>
   );

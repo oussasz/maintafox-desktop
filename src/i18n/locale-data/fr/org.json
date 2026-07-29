@@ -9,14 +9,13 @@
     "pick": "Sélectionner…",
     "add": "Ajouter la règle",
     "remove": "Supprimer la règle",
-    "duplicatePair": "Cette règle parent → enfant existe déjà.",
-    "countHint": "{{count}} règles dans ce brouillon — développez pour ajouter ou vérifier."
+    "duplicatePair": "Cette règle parent → enfant existe déjà."
   },
   "createNode": {
     "titleRoot": "Ajouter un nœud racine",
     "titleChild": "Ajouter un nœud enfant",
     "parentHint": "Parent : {{name}} ({{code}})",
-    "hintRoot": "Un nouveau nœud de plus haut niveau est créé selon le modèle de structure actif (publié), avec les types et règles actifs.",
+    "hintRoot": "Crée un nœud dans l’arbre d’organisation du brouillon. La publication promeut l’arbre brouillon en production.",
     "codeLabel": "Code",
     "nameLabel": "Nom",
     "namePlaceholder": "Libellé affiché",
@@ -27,7 +26,7 @@
     "cancel": "Annuler",
     "create": "Créer le nœud",
     "saving": "Création…",
-    "noAllowedTypes": "Aucun type n’est autorisé dans ce contexte. Pour un enfant, ajoutez une règle de relation sur le brouillon (parent → enfant) et assurez-vous que le modèle actif autorise la paire. Pour une racine, un type racine doit exister sur le modèle actif.",
+    "noAllowedTypes": "Aucun type n’est autorisé sous ce parent selon les règles de relation du brouillon. Ajoutez une règle parent → enfant pour le type de ce parent, puis réessayez.",
     "missingParent": "Sélectionnez d’abord un parent dans l’arbre (ou ajoutez une racine).",
     "noTypeForContext": "Choisissez un type de nœud."
   },
@@ -36,8 +35,6 @@
     "modeLabel": "Affichage",
     "modePublished": "Publié (lecture seule)",
     "modeDraft": "Brouillon v{{version}} (édition)",
-    "publishedVersionBadge": "Publié v{{version}}",
-    "draftVersionBadge": "Brouillon v{{version}}",
     "draftModeBanner": "Vous modifiez un brouillon. L’organisation publiée reste inchangée jusqu’à une publication réussie (confirmation renforcée si requis).",
     "publishedViewBanner": "Lecture seule : vous consultez la structure publiée. Pour modifier les types, règles ou opérations structurelles, démarrez ou basculez en mode Brouillon (org.admin).",
     "noModelYet": "Aucun modèle de structure. Créez d’abord un brouillon, puis définissez types et règles avant publication.",
@@ -48,7 +45,7 @@
     "bootstrapDialogTitle": "Créer le premier brouillon de structure",
     "bootstrapDialogBody": "Crée un nouveau brouillon vide (versionné). Vous y ajoutez types et règles, puis publiez quand c’est prêt. Réservé à la toute première structure — s’il existe déjà un modèle publié, utilisez « Nouveau brouillon à partir du publié ».",
     "forkDialogTitle": "Nouveau brouillon d’après le modèle publié",
-    "forkDialogBody": "Crée un nouveau brouillon en copiant les types de nœuds et règles de relation de la version publiée. L’arbre n’est modifié qu’après publication et validation. Vous pouvez décrire le brouillon dans le champ ci-dessous (optionnel).",
+    "forkDialogBody": "Crée un nouveau brouillon en copiant les niveaux d’organisation, les règles de relation et l’arbre complet du modèle publié. La production reste inchangée tant que vous n’avez pas publié après validation. Vous pouvez décrire le brouillon dans le champ ci-dessous (optionnel).",
     "draftDescriptionLabel": "Description (facultative)",
     "draftDescriptionPlaceholder": "ex. revue hiérarchie T2",
     "cancel": "Annuler",
@@ -56,13 +53,12 @@
     "confirmBootstrap": "Créer le brouillon",
     "confirmFork": "Créer le brouillon d’après le publié",
     "abandonDialogTitle": "Abandonner ce brouillon ?",
-    "abandonDialogBody": "Le brouillon sera archivé. L’organisation publiée ne change pas. Vous pourrez créer un autre brouillon plus tard.",
+    "abandonDialogBody": "Le brouillon sera archivé et abandonné. L’arbre organisationnel actif/production n’est pas modifié. Vous pourrez créer un autre brouillon plus tard.",
     "confirmAbandon": "Archiver le brouillon",
     "prePublishDraftOnly": "Avant publication : seul un brouillon existe. Ajoutez types et règles, puis publiez."
   },
   "designer": {
     "title": "Concepteur d'organisation",
-    "modelVersion": "Modèle v{{version}} — Actif",
     "refresh": "Actualiser",
     "retry": "Réessayer",
     "noActiveModel": "Aucun modèle de structure actif",
@@ -95,7 +91,10 @@
     "manageTypes": "Gérer les types",
     "manageTypesNoDraftHint": "Créez d’abord un brouillon, puis basculez en mode Brouillon (édition).",
     "manageTypesReadOnlyHint": "Passez en mode Brouillon (édition) pour modifier les types de nœuds.",
-    "readOnlyInspectorBanner": "Lecture seule : parcourez les nœuds. Passez en Brouillon (édition) pour l’équipement, les actions ou les types.",
+    "manageHierarchyRules": "Règles de hiérarchie",
+    "manageHierarchyRulesNoDraftHint": "Créez d’abord un brouillon, puis basculez en mode Brouillon (édition).",
+    "manageHierarchyRulesReadOnlyHint": "Passez en mode Brouillon (édition) pour modifier les règles de hiérarchie.",
+    "readOnlyInspectorBanner": "Lecture seule : parcourez l’arbre publié. Passez en Brouillon pour modifier la structure ; l’affectation d’équipement reste sur l’arbre publié.",
     "metadata": {
       "title": "Détails du nœud (données en production)",
       "loading": "Chargement…",
@@ -131,6 +130,7 @@
       "equipSearchPlaceholder": "Rechercher un équipement à affecter…",
       "searching": "Recherche en cours…",
       "equipCurrentlyAssigned": "Actuellement affecté à {{node}}",
+      "equipmentDraftReadOnly": "L’affectation d’équipement s’applique uniquement à la structure publiée. Les nœuds brouillon ne peuvent pas recevoir d’affectations opérationnelles.",
       "ended": "Terminée",
       "person": "Personne",
       "team": "Équipe",
@@ -143,7 +143,15 @@
       "reassignResponsibility": "Réassigner la responsabilité"
     },
     "inspectorTab": "Inspecteur",
-    "auditTab": "Audit"
+    "auditTab": "Audit",
+    "propertyPanel": {
+      "title": "Propriétés",
+      "open": "Ouvrir les propriétés",
+      "expand": "Développer le panneau de propriétés",
+      "collapse": "Réduire le panneau de propriétés",
+      "resize": "Redimensionner le panneau de propriétés",
+      "drawerDescription": "Consulter les détails, les liaisons et l’historique d’audit du nœud."
+    }
   },
   "nodeTypes": {
     "title": "Gestionnaire de types de nœuds",
@@ -190,14 +198,121 @@
     "exportCsv": "Exporter en CSV"
   },
   "governance": {
-    "blockingIssues": "{{count}} problème(s) bloquant(s) empêchent la publication",
-    "moreIssues": "+ {{count}} problème(s) supplémentaire(s)",
-    "readyToPublish": "Prêt à publier ({{remapCount}} remappage(s) de types)",
+    "blockingIssues_one": "La publication est bloquée par 1 problème — corrigez-le ci-dessous, puis réessayez.",
+    "blockingIssues_other": "La publication est bloquée par {{count}} problèmes — corrigez-les ci-dessous, puis réessayez.",
+    "moreIssues": "+ {{count}} de plus",
+    "readyToPublish": "Prêt à publier. {{remapCount}} unité(s) existante(s) conserveront leurs liens opérationnels.",
     "publish": "Publier le modèle",
-    "revalidate": "Re-valider",
+    "repairDraftLineage": "Réparer les copies manquantes du brouillon",
     "auditTimeline": "Historique des modifications",
     "noAuditEvents": "Aucune modification récente",
-    "stepUpRequired": "Step-up"
+    "stepUpRequired": "Confirmation renforcée",
+    "issues": {
+      "NO_ROOT_TYPE": "Ce brouillon n’a aucun type d’organisation au sommet. Marquez exactement un type comme racine.",
+      "MULTIPLE_ROOT_TYPES": "Ce brouillon a {{rootCount}} types au sommet. Conservez un seul type marqué comme racine.",
+      "DUPLICATE_TYPE_CODE": "Le code de type «{{typeCode}}» est utilisé plusieurs fois. Chaque type doit avoir un code unique.",
+      "UNREACHABLE_TYPE": "Le niveau «{{typeCode}}» n’est pas relié au sommet de votre organisation. Ajoutez une règle de relation pour qu’il puisse dépendre de la racine ou d’un autre niveau autorisé.",
+      "RULE_GRAPH_CYCLE": "Certaines règles de relation forment une boucle (A sous B et B sous A). Supprimez le lien circulaire.",
+      "NO_WORK_CAPABLE_TYPE": "Aucun niveau d’organisation n’est configuré pour porter les travaux. Activez la propriété des travaux sur au moins un niveau.",
+      "NO_ASSET_CAPABLE_TYPE": "Aucun niveau d’organisation n’est configuré pour accueillir les actifs. Activez l’hébergement d’actifs sur au moins un niveau.",
+      "MISSING_TYPE_CODE": "«{{nodeName}}» utilise le niveau «{{typeCode}}», qui n’existe pas dans ce brouillon. Attribuez un niveau valide ou ajoutez ce type.",
+      "PARENT_CHILD_NOT_ALLOWED": "«{{nodeName}}» ({{childType}}) ne peut pas dépendre d’un {{parentType}} avec les règles de relation actuelles. Déplacez-le ou mettez à jour les règles.",
+      "PARENT_CHILD_DRIFT": "Une relation parent–enfant utilisée dans l’arbre n’est plus autorisée par les règles. Déplacez l’unité ou restaurez la règle.",
+      "COST_CENTER_INCOMPATIBLE": "«{{nodeName}}» a un centre de coûts, mais son niveau «{{typeCode}}» ne les autorise pas. Retirez le centre de coûts ou autorisez-les sur ce niveau.",
+      "UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS": "«{{nodeName}}» est encore utilisé par des données en production mais est absent de ce brouillon. Réparez les copies du brouillon, ou détachez ces liens avant de publier."
+    }
+  },
+  "errors": {
+    "ORG_VALIDATE_NOT_DRAFT": "Ce modèle est «{{status}}», pas un brouillon. Seuls les brouillons peuvent être vérifiés pour publication.",
+    "ORG_PARENT_CHILD_NOT_ALLOWED": "Cette combinaison parent–enfant n’est pas autorisée. Mettez à jour les règles de relation ou choisissez un autre emplacement.",
+    "ORG_NODE_TYPE_NOT_IN_MODEL": "Ce niveau d’organisation n’est pas disponible dans cette structure. Choisissez un autre niveau.",
+    "ORG_NODE_CODE_EMPTY": "Saisissez un code pour cette unité d’organisation.",
+    "ORG_STRUCTURE_MODEL_REQUIRED": "Indiquez à quelle structure (brouillon ou modèle) appartient cette unité.",
+    "ORG_DUPLICATE_CODE": "Le code «{{code}}» est déjà utilisé dans cette structure. Choisissez un autre code.",
+    "ORG_NODE_TYPE_NO_COST_CENTER": "Ce niveau d’organisation ne peut pas porter de centre de coûts. Retirez-le ou changez de niveau.",
+    "ORG_ROOT_TYPE_AS_CHILD": "Un type de sommet ne peut pas être créé sous une autre unité. Créez-le à la racine, ou choisissez un type non racine.",
+    "ORG_NODE_WRONG_MODEL": "Cette unité appartient à une autre version de structure. Changez d’espace de travail ou choisissez une unité de la structure actuelle.",
+    "ORG_ROOT_ONLY_WITHOUT_PARENT": "Seul un type de sommet peut être créé sans parent.",
+    "ORG_VERSION_CONFLICT": "Quelqu’un d’autre a modifié cette unité. Rechargez puis réessayez.",
+    "ORG_CONCURRENT_MODIFICATION": "Cette unité a été modifiée par quelqu’un d’autre. Rechargez puis réessayez.",
+    "ORG_MOVE_ROOT_UNDER_PARENT": "Une unité de sommet ne peut pas être déplacée sous une autre unité.",
+    "ORG_MOVE_CYCLE": "Vous ne pouvez pas déplacer une unité sous elle-même ou sous l’un de ses enfants.",
+    "ORG_MOVE_ROOT_ONLY": "Seul un type de sommet peut être déplacé au sommet de l’arbre.",
+    "ORG_HAS_ACTIVE_CHILDREN": "Désactivez ou déplacez d’abord les unités enfants, puis réessayez.",
+    "ORG_HAS_ACTIVE_RESPONSIBILITIES": "Terminez d’abord les responsabilités actives sur cette unité, puis réessayez.",
+    "ORG_TYPE_DRAFT_ONLY": "Les niveaux d’organisation ne peuvent être modifiés que dans un brouillon. Passez en mode brouillon.",
+    "ORG_TYPE_DUPLICATE_CODE": "Le code de niveau «{{code}}» existe déjà dans ce brouillon.",
+    "ORG_TYPE_ROOT_EXISTS": "Ce brouillon a déjà un type de sommet. Conservez un seul type racine.",
+    "ORG_TYPE_IN_USE": "{{count}} unité(s) utilisent encore ce niveau. Réassignez-les avant de le désactiver.",
+    "ORG_RULE_DRAFT_ONLY": "Les règles de relation ne peuvent être modifiées que dans un brouillon. Passez en mode brouillon.",
+    "ORG_RULE_DUPLICATE": "Cette règle parent → enfant existe déjà.",
+    "ORG_NO_ACTIVE_MODEL": "Aucune structure d’organisation n’est publiée. Créez et publiez d’abord un brouillon.",
+    "ORG_DRAFT_EXISTS": "Un brouillon existe déjà. Publiez-le, archivez-le ou abandonnez-le avant d’en créer un autre.",
+    "ORG_ACTIVE_MODEL_EXISTS": "Une structure d’organisation publiée existe déjà. Créez un nouveau brouillon à partir de la structure publiée plutôt qu’un premier brouillon vide.",
+    "ORG_FORK_NO_NODE_TYPES": "La structure publiée n’a aucun niveau. Ajoutez des niveaux avant de créer un nouveau brouillon à partir d’elle.",
+    "ORG_FORK_INCOMPLETE": "Le brouillon n’a pas pu copier toutes les unités publiées. Réparez les copies du brouillon puis réessayez.",
+    "ORG_PUBLISH_NOT_DRAFT": "Seul un brouillon peut être publié ou réparé. Ce modèle n’est pas un brouillon.",
+    "ORG_RECONCILE_MISSING_NODE_TYPE": "Une unité publiée utilise un niveau absent de ce brouillon. Ajoutez ce niveau, puis réparez à nouveau.",
+    "ORG_RECONCILE_PARENT_NOT_CLONED": "Le parent d’une unité est absent du brouillon. Réparez d’abord les parents, puis réessayez.",
+    "ORG_ARCHIVE_ACTIVE": "Vous ne pouvez pas archiver la structure publiée en production. Publiez d’abord un nouveau brouillon.",
+    "ORG_ALREADY_ARCHIVED": "Cette structure est déjà archivée.",
+    "ORG_EDIT_REQUIRES_DRAFT": "Les changements structurels doivent être faits dans l’espace brouillon tant qu’un brouillon existe.",
+    "ORG_NODE_NOT_ACTIVE": "Cette unité d’organisation n’est pas active.",
+    "ORG_NODES_MISSING_MODEL": "{{count}} unité(s) ne sont pas liées à une structure. Assignez-les avant de continuer.",
+    "ORG_RESPONSIBILITY_TYPE_EMPTY": "Choisissez un type de responsabilité.",
+    "ORG_ASSIGNEE_BOTH_SET": "Assignez soit une personne, soit une équipe, pas les deux.",
+    "ORG_ASSIGNEE_REQUIRED": "Choisissez une personne ou une équipe pour cette responsabilité.",
+    "ORG_ASSIGNMENT_EXISTS": "Une affectation active de ce type existe déjà sur cette unité.",
+    "ORG_INVALID_DATE_RANGE": "La date de fin doit être égale ou postérieure à la date de début.",
+    "ORG_BINDING_FIELDS_REQUIRED": "Renseignez tous les champs obligatoires du lien externe.",
+    "ORG_BINDING_DUPLICATE": "Un lien externe actif de ce type existe déjà sur cette unité.",
+    "ORG_LEGACY_PUBLISH_REMOVED": "Cette action de publication n’est plus disponible. Utilisez l’action Publier actuelle, qui vérifie le brouillon et met à jour les liens en toute sécurité."
+  },
+  "audit": {
+    "changeType": {
+      "publish_model": "Publication de la structure",
+      "fork_model": "Nouveau brouillon depuis le publié",
+      "fork_draft_from_published": "Nouveau brouillon depuis le publié",
+      "abandon_draft": "Abandon du brouillon",
+      "create_model": "Création du brouillon",
+      "move_node": "Déplacement d’unité",
+      "create_node": "Création d’unité",
+      "update_metadata": "Mise à jour d’unité",
+      "deactivate_node": "Désactivation d’unité",
+      "assign_responsibility": "Affectation de responsabilité",
+      "end_responsibility": "Fin de responsabilité",
+      "upsert_binding": "Mise à jour du lien externe",
+      "create_node_type": "Création de niveau",
+      "update_node_type": "Mise à jour de niveau",
+      "create_relationship_rule": "Ajout de règle de relation",
+      "delete_relationship_rule": "Suppression de règle de relation"
+    },
+    "applyResult": {
+      "applied": "Appliqué",
+      "blocked": "Bloqué",
+      "failed": "Échoué"
+    },
+    "entityKind": {
+      "structure_model": "Structure",
+      "org_node": "Unité d’organisation",
+      "org_node_type": "Niveau d’organisation",
+      "relationship_rule": "Règle de relation",
+      "responsibility": "Responsabilité",
+      "entity_binding": "Lien externe"
+    }
+  },
+  "draftStatus": {
+    "prePublishTitle": "Brouillon v{{version}} (avant publication)",
+    "validating": "Vérification de la publication…",
+    "awaitingValidation": "La validation de publication n’est pas encore terminée.",
+    "warningIssues": "{{count}} avertissement(s) non bloquant(s) — à vérifier avant publication",
+    "status": {
+      "checking": "Vérification",
+      "info": "Brouillon",
+      "ready": "Prêt",
+      "warning": "Avertissement",
+      "error": "Bloqué"
+    }
   },
   "capabilities": {
     "asset": "ACTIF",
@@ -209,21 +324,57 @@
   "preview": {
     "title": "Prévisualisation d'impact",
     "impactSummary": "Résumé de l'impact",
-    "affectedNodes": "Nœuds affectés",
-    "descendants": "Descendants",
+    "affectedNodes": "Unités concernées",
+    "descendants": "Unités enfants",
     "responsibilities": "Responsabilités",
-    "activeBindings": "Liaisons actives",
-    "blockers": "Blocages",
+    "activeBindings": "Liens externes",
+    "blockers": "À corriger",
     "warnings": "Avertissements",
-    "dependencies": "Dépendances entre modules",
+    "dependencies": "Domaines liés",
     "acknowledgeWarnings": "Je reconnais les avertissements et souhaite poursuivre",
     "cancel": "Annuler",
     "confirm": "Confirmer",
     "blocked": "Bloqué",
+    "moveRequiresParent": "Sélectionnez un nouveau parent avant de confirmer le déplacement.",
+    "staleNodeContext": "Rechargez l’unité sélectionnée, puis réessayez.",
+    "actionNotSupported": "Cette action ne peut pas encore être appliquée ici.",
+    "dependencyUnavailable": "Les détails d’impact pour ce domaine ne sont pas encore disponibles.",
+    "dependencyDomain": {
+      "assets": "Actifs",
+      "open_work": "Travaux ouverts",
+      "permits": "Permis",
+      "inventory": "Stocks"
+    },
+    "dependencyStatus": {
+      "unavailable": "Pas encore disponible",
+      "ok": "OK",
+      "impacted": "Impacté"
+    },
+    "dependencyNote": {
+      "assets": "L’impact sur les actifs pour ce changement n’est pas encore disponible.",
+      "open_work": "L’impact sur les ordres de travail ouverts n’est pas encore disponible.",
+      "permits": "L’impact sur les permis pour ce changement n’est pas encore disponible.",
+      "inventory": "L’impact sur les stocks pour ce changement n’est pas encore disponible."
+    },
     "actionLabel": {
-      "MoveNode": "Déplacer le nœud vers un nouveau parent",
-      "DeactivateNode": "Désactiver le nœud et son sous-arbre",
+      "MoveNode": "Déplacer l’unité vers un nouveau parent",
+      "DeactivateNode": "Désactiver l’unité et ses enfants",
       "ReassignResponsibility": "Réassigner la responsabilité à une autre personne ou équipe"
+    },
+    "issues": {
+      "ORG_PREVIEW_MOVE_CYCLE": "Vous ne pouvez pas déplacer cette unité sous elle-même ou sous l’un de ses enfants.",
+      "ORG_PREVIEW_PARENT_CHILD_NOT_ALLOWED": "Le niveau du parent cible n’autorise pas le niveau de cette unité. Choisissez un autre parent ou mettez à jour les règles.",
+      "ORG_PREVIEW_SUBTREE_RESPONSIBILITIES": "{{count}} affectation(s) de responsabilité active(s) dans la zone concernée.",
+      "ORG_PREVIEW_SUBTREE_BINDINGS": "{{count}} lien(s) externe(s) actif(s) dans la zone concernée.",
+      "ORG_PREVIEW_ACTIVE_DESCENDANTS": "{{count}} unité(s) enfant(s) active(s) doivent d’abord être désactivées.",
+      "ORG_PREVIEW_ACTIVE_RESPONSIBILITIES": "Terminez d’abord {{count}} affectation(s) de responsabilité active(s) sur cette unité.",
+      "ORG_PREVIEW_ORPHANED_BINDINGS": "{{count}} lien(s) externe(s) resteraient sans unité active.",
+      "ORG_PREVIEW_REPLACEMENT_REQUIRED": "Choisissez une personne ou une équipe de remplacement avant de réassigner.",
+      "ORG_PREVIEW_ASSIGNMENT_ENDED": "L’affectation précédente sera terminée.",
+      "ORG_PREVIEW_NO_ASSIGNMENT": "Aucune affectation active de ce type n’a été trouvée à réassigner.",
+      "ORG_PREVIEW_NEW_PARENT_REQUIRED": "Sélectionnez un nouveau parent pour ce déplacement.",
+      "ORG_PREVIEW_RESPONSIBILITY_TYPE_REQUIRED": "Choisissez le type de responsabilité à réassigner.",
+      "ORG_PREVIEW_UNKNOWN_ACTION": "Cette action d’aperçu n’est pas prise en charge."
     }
   }
 }

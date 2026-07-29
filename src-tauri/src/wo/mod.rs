@@ -16,6 +16,11 @@ pub mod stats;
 pub mod audit;
 pub mod permissions;
 pub mod sync_stage;
+pub mod time;
+pub mod workflow;
+pub mod execution_log;
+pub mod plan_adherence;
+pub mod tools;
 
 #[cfg(test)]
 mod audit_tests;

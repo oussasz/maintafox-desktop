@@ -1,10 +1,14 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { Columns3, Filter, List, Package, Plus, RefreshCw, Search, X } from "lucide-react";
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Columns3, List, Package, Plus, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
-import { ArticleEditorFields } from "@/components/inventory/ArticleEditorFields";
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
+import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
+import { ArticleDetailWorkspace } from "@/components/inventory/ArticleDetailWorkspace";
+import { ArticleEditorFields, type ExtendedArticleInput } from "@/components/inventory/ArticleEditorFields";
 import { InventoryControlsPanel } from "@/components/inventory/InventoryControlsPanel";
 import {
   ProcurementRepairablePanel,
@@ -16,7 +20,6 @@ import {
 } from "@/components/inventory/WarehouseLocationPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -25,27 +28,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { mfLayout } from "@/design-system/tokens";
 import { getLookupValues } from "@/services/lookup-service";
 import { useInventoryStore } from "@/stores/inventory-store";
 import type {
   InventoryArticle,
-  InventoryArticleInput,
-  InventoryStockBalance,
   LookupValueOption,
 } from "@shared/ipc-types";
 
-const EMPTY_ARTICLE_FORM: InventoryArticleInput = {
+const EMPTY_ARTICLE_FORM: ExtendedArticleInput = {
   article_code: "",
   article_name: "",
   family_id: null,
@@ -61,25 +53,38 @@ const EMPTY_ARTICLE_FORM: InventoryArticleInput = {
   reorder_point: 0,
   safety_stock: 0,
   is_active: true,
+  // Phase 2 extended fields
+  manufacturer_name: null,
+  manufacturer_part_number: null,
+  oem_part_number: null,
+  replenishment_policy_code: null,
+  eoq: null,
+  moq: null,
+  max_order_qty: null,
+  order_multiple: null,
+  lead_time_days: null,
+  review_period_days: null,
+  abc_class_code: null,
+  xyz_class_code: null,
+  is_critical_spare: null,
+  requires_expiration: null,
+  shelf_life_days: null,
+  requires_batch_tracking: null,
 };
 
 export function InventoryPage() {
+  const { t } = useTranslation("inventory");
   const families = useInventoryStore((s) => s.families);
   const warehouses = useInventoryStore((s) => s.warehouses);
   const locations = useInventoryStore((s) => s.locations);
   const articles = useInventoryStore((s) => s.articles);
-  const balances = useInventoryStore((s) => s.balances);
-  const selectedWarehouseId = useInventoryStore((s) => s.selectedWarehouseId);
   const loading = useInventoryStore((s) => s.loading);
   const saving = useInventoryStore((s) => s.saving);
   const error = useInventoryStore((s) => s.error);
   const loadAll = useInventoryStore((s) => s.loadAll);
-  const setWarehouse = useInventoryStore((s) => s.setWarehouse);
-  const setLowStockOnly = useInventoryStore((s) => s.setLowStockOnly);
   const setArticleSearch = useInventoryStore((s) => s.setArticleSearch);
   const createArticle = useInventoryStore((s) => s.createArticle);
   const updateArticle = useInventoryStore((s) => s.updateArticle);
-  const adjustStock = useInventoryStore((s) => s.adjustStock);
 
   const [unitOptions, setUnitOptions] = useState<LookupValueOption[]>([]);
   const [criticalityOptions, setCriticalityOptions] = useState<LookupValueOption[]>([]);
@@ -88,34 +93,32 @@ export function InventoryPage() {
   const [procurementCategoryOptions, setProcurementCategoryOptions] = useState<LookupValueOption[]>(
     [],
   );
-  const [articleForm, setArticleForm] = useState<InventoryArticleInput>(EMPTY_ARTICLE_FORM);
+  const [articleForm, setArticleForm] = useState<ExtendedArticleInput>(EMPTY_ARTICLE_FORM);
   const [selectedArticle, setSelectedArticle] = useState<InventoryArticle | null>(null);
-  const [isDetailOpen, setDetailOpen] = useState(false);
   const [isEditingInDialog, setEditingInDialog] = useState(false);
-  const [stockArticleId, setStockArticleId] = useState<number>(0);
-  const [stockLocationId, setStockLocationId] = useState<number>(0);
-  const [stockDelta, setStockDelta] = useState<number>(0);
-  const [lowOnly, setLowOnly] = useState(false);
 
-  const articleSearchStore = useInventoryStore((s) => s.articleSearch);
   const [invTab, setInvTab] = useState("master");
   const warehousePanelRef = useRef<WarehouseLocationPanelHandle>(null);
   const procurementPanelRef = useRef<ProcurementRepairablePanelHandle>(null);
-  const [showInvFilters, setShowInvFilters] = useState(
-    () => localStorage.getItem("inv-show-filters") !== "0",
-  );
   const [procurementView, setProcurementView] = useState<"list" | "kanban">(
     () => (localStorage.getItem("inv-procurement-view") as "list" | "kanban") || "list",
   );
   const [masterSearchInput, setMasterSearchInput] = useState("");
-  const masterSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [topologySearchFilter, setTopologySearchFilter] = useState("");
-  const [stockBalanceSearch, setStockBalanceSearch] = useState("");
+  const [masterFamilyFilter, setMasterFamilyFilter] = useState<string | null>(null);
+  const [masterStatusFilter, setMasterStatusFilter] = useState<string | null>(null);
   const [isCreateArticleOpen, setCreateArticleOpen] = useState(false);
+  const articleSearchStore = useInventoryStore((s) => s.articleSearch);
 
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    setSelectedArticle((prev) => {
+      if (!prev) return null;
+      return articles.find((a) => a.id === prev.id) ?? null;
+    });
+  }, [articles]);
 
   useEffect(() => {
     setMasterSearchInput(articleSearchStore);
@@ -174,19 +177,6 @@ export function InventoryPage() {
     [],
   );
 
-  const stockColumns: ColumnDef<InventoryStockBalance>[] = useMemo(
-    () => [
-      { accessorKey: "article_code", header: "Article" },
-      { accessorKey: "warehouse_code", header: "Warehouse" },
-      { accessorKey: "location_code", header: "Location" },
-      { accessorKey: "on_hand_qty", header: "On-hand" },
-      { accessorKey: "reserved_qty", header: "Reserved" },
-      { accessorKey: "available_qty", header: "Available" },
-      { accessorKey: "updated_at", header: "Updated" },
-    ],
-    [],
-  );
-
   const resetArticleForm = () => {
     setArticleForm((prev) => ({
       ...EMPTY_ARTICLE_FORM,
@@ -197,9 +187,8 @@ export function InventoryPage() {
   };
 
   const openArticleDetails = (article: InventoryArticle) => {
-    setSelectedArticle(article);
+    setSelectedArticle((prev) => (prev?.id === article.id ? null : article));
     setEditingInDialog(false);
-    setDetailOpen(true);
   };
 
   const beginEditSelectedArticle = () => {
@@ -238,7 +227,7 @@ export function InventoryPage() {
   const softDeleteSelectedArticle = async () => {
     if (!selectedArticle) return;
     const confirmed = window.confirm(
-      `Delete article ${selectedArticle.article_code}? It will be deactivated and hidden from active operations.`,
+      `Deactivate article ${selectedArticle.article_code}? It will be hidden from active operations.`,
     );
     if (!confirmed) return;
     await updateArticle(selectedArticle.id, selectedArticle.row_version, {
@@ -259,8 +248,14 @@ export function InventoryPage() {
       is_active: false,
     });
     await loadAll();
-    setDetailOpen(false);
     setSelectedArticle(null);
+  };
+
+  const handleCreateRequisitionFromDetail = () => {
+    setInvTab("procurement");
+    window.setTimeout(() => {
+      procurementPanelRef.current?.openCreateRequisition();
+    }, 0);
   };
 
   const createNewArticle = async () => {
@@ -269,54 +264,62 @@ export function InventoryPage() {
     setCreateArticleOpen(false);
   };
 
-  const handleMasterSearchChange = useCallback(
-    (e: ChangeEvent<HTMLInputElement>) => {
-      const val = e.target.value;
-      setMasterSearchInput(val);
-      if (masterSearchTimerRef.current) clearTimeout(masterSearchTimerRef.current);
-      masterSearchTimerRef.current = setTimeout(() => {
-        void setArticleSearch(val.trim());
-      }, 300);
+  const onMasterSearchChange = useCallback(
+    (val: string) => {
+      void setArticleSearch(val.trim());
     },
     [setArticleSearch],
   );
 
-  const clearMasterSearch = useCallback(() => {
+  const resetMasterFilters = useCallback(() => {
     setMasterSearchInput("");
+    setMasterFamilyFilter(null);
+    setMasterStatusFilter(null);
     void setArticleSearch("");
   }, [setArticleSearch]);
+
+  const masterFilterDefs = useMemo<SmartFilterDef[]>(
+    () => [
+      {
+        id: "family",
+        kind: "select",
+        label: t("filters.family"),
+        options: families
+          .filter((f) => f.is_active === 1)
+          .map((f) => ({ value: String(f.id), label: `${f.code} — ${f.name}` })),
+        value: masterFamilyFilter,
+        onChange: setMasterFamilyFilter,
+      },
+      {
+        id: "status",
+        kind: "select",
+        label: t("filters.status"),
+        options: [
+          { value: "active", label: t("filters.statusActive") },
+          { value: "inactive", label: t("filters.statusInactive") },
+        ],
+        value: masterStatusFilter,
+        onChange: setMasterStatusFilter,
+      },
+    ],
+    [families, masterFamilyFilter, masterStatusFilter, t],
+  );
+
+  const filteredArticles = useMemo(() => {
+    return articles.filter((article) => {
+      if (masterFamilyFilter && String(article.family_id ?? "") !== masterFamilyFilter) {
+        return false;
+      }
+      if (masterStatusFilter === "active" && article.is_active !== 1) return false;
+      if (masterStatusFilter === "inactive" && article.is_active === 1) return false;
+      return true;
+    });
+  }, [articles, masterFamilyFilter, masterStatusFilter]);
 
   const switchProcurementView = useCallback((v: "list" | "kanban") => {
     setProcurementView(v);
     localStorage.setItem("inv-procurement-view", v);
   }, []);
-
-  const toggleInvFilters = useCallback(() => {
-    setShowInvFilters((prev) => {
-      const next = !prev;
-      localStorage.setItem("inv-show-filters", next ? "1" : "0");
-      return next;
-    });
-  }, []);
-
-  const articleHistory = useMemo(() => {
-    if (!selectedArticle) return [];
-    return balances
-      .filter((balance) => balance.article_id === selectedArticle.id)
-      .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-  }, [balances, selectedArticle]);
-
-  const filteredStockBalances = useMemo(() => {
-    const q = stockBalanceSearch.trim().toLowerCase();
-    if (!q) return balances;
-    return balances.filter(
-      (b) =>
-        b.article_code.toLowerCase().includes(q) ||
-        b.article_name.toLowerCase().includes(q) ||
-        b.warehouse_code.toLowerCase().includes(q) ||
-        b.location_code.toLowerCase().includes(q),
-    );
-  }, [balances, stockBalanceSearch]);
 
   const isArticleFormValid = useMemo(() => {
     const maxStock = articleForm.max_stock ?? null;
@@ -456,20 +459,15 @@ export function InventoryPage() {
           ) : null}
 
           <Button
-            type="button"
             variant="outline"
             size="sm"
-            onClick={toggleInvFilters}
-            title="Filters"
-            className="gap-1.5"
-          >
-            <Filter className="h-3.5 w-3.5" />
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void loadAll()}
+            onClick={() => {
+              if (invTab === "procurement") {
+                void procurementPanelRef.current?.reload();
+                return;
+              }
+              void loadAll();
+            }}
             disabled={loading}
             className="gap-1.5"
           >
@@ -477,114 +475,6 @@ export function InventoryPage() {
           </Button>
         </div>
       </div>
-
-      {showInvFilters ? (
-        <div className={mfLayout.moduleFilterBar}>
-          {invTab === "master" ? (
-            <div className="relative max-w-sm flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
-              <Input
-                className="h-8 pl-9 text-sm"
-                placeholder="Search article code or name"
-                value={masterSearchInput}
-                onChange={handleMasterSearchChange}
-              />
-              {masterSearchInput ? (
-                <button
-                  type="button"
-                  className="absolute right-2 top-2 text-text-muted hover:text-text-primary"
-                  onClick={clearMasterSearch}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-
-          {invTab === "topology" ? (
-            <div className="relative max-w-sm flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
-              <Input
-                className="h-8 pl-9 text-sm"
-                placeholder="Search warehouse code or name"
-                value={topologySearchFilter}
-                onChange={(e) => setTopologySearchFilter(e.target.value)}
-              />
-              {topologySearchFilter ? (
-                <button
-                  type="button"
-                  className="absolute right-2 top-2 text-text-muted hover:text-text-primary"
-                  onClick={() => setTopologySearchFilter("")}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-
-          {invTab === "stock" ? (
-            <div className="flex w-full min-w-0 flex-nowrap items-center gap-3 overflow-x-auto pb-0.5 sm:overflow-visible sm:pb-0">
-              <div className="relative min-w-0 flex-1 basis-0">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-                <Input
-                  className="h-8 pl-9 pr-8 text-sm"
-                  placeholder="Filter balances (article, warehouse, location…)"
-                  value={stockBalanceSearch}
-                  onChange={(e) => setStockBalanceSearch(e.target.value)}
-                />
-                {stockBalanceSearch ? (
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
-                    onClick={() => setStockBalanceSearch("")}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="hidden text-xs text-text-muted sm:inline whitespace-nowrap">
-                  Warehouse
-                </span>
-                <Select
-                  value={String(selectedWarehouseId ?? "__all__")}
-                  onValueChange={(v) => void setWarehouse(v === "__all__" ? null : Number(v))}
-                >
-                  <SelectTrigger className="h-8 w-[min(220px,42vw)] text-sm" aria-label="Warehouse">
-                    <SelectValue placeholder="Warehouse" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">All warehouses</SelectItem>
-                    {warehouses.map((w) => (
-                      <SelectItem key={w.id} value={String(w.id)}>
-                        {w.code} - {w.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <label
-                htmlFor="low-only-inv"
-                className="flex shrink-0 cursor-pointer select-none items-center gap-2 whitespace-nowrap rounded-md border border-surface-border bg-surface-1 px-2.5 py-1 text-sm text-text-primary hover:bg-surface-2"
-              >
-                <Checkbox
-                  id="low-only-inv"
-                  checked={lowOnly}
-                  onCheckedChange={(checked) => {
-                    const next = checked === true;
-                    setLowOnly(next);
-                    void setLowStockOnly(next);
-                  }}
-                  className="shrink-0"
-                />
-                <span>Low stock only</span>
-              </label>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
 
       {error ? <div className="px-6 py-2 text-sm text-destructive">{error}</div> : null}
 
@@ -596,100 +486,55 @@ export function InventoryPage() {
         <TabsList className="w-fit">
           <TabsTrigger value="master">Item master</TabsTrigger>
           <TabsTrigger value="topology">Warehouses & locations</TabsTrigger>
-          <TabsTrigger value="stock">Stock balances</TabsTrigger>
           <TabsTrigger value="procurement">Procurement & repairables</TabsTrigger>
           <TabsTrigger value="controls">Controls & reconciliation</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="master" className="mt-4 min-h-0 flex-1 space-y-4">
-          <div className="overflow-auto p-1">
-            <DataTable
-              columns={articleColumns}
-              data={articles}
-              isLoading={loading}
-              searchable={false}
-              onRowClick={openArticleDetails}
-            />
+        <TabsContent value="master" className="mt-4 min-h-0 flex-1 data-[state=inactive]:hidden">
+          <div className={mfLayout.moduleWorkspaceSplit}>
+            <div className="flex w-[55%] min-w-[400px] flex-col border-r border-surface-border">
+              <SmartFilterBar
+                searchPlaceholder={t("filters.searchArticle")}
+                searchValue={masterSearchInput}
+                onSearchInputChange={setMasterSearchInput}
+                onSearchChange={onMasterSearchChange}
+                filters={masterFilterDefs}
+                resultCount={filteredArticles.length}
+                onReset={resetMasterFilters}
+              />
+              <div className="min-h-0 flex-1 overflow-auto p-1">
+                <DataTable
+                  columns={articleColumns}
+                  data={filteredArticles}
+                  isLoading={loading}
+                  searchable={false}
+                  onRowClick={openArticleDetails}
+                  isRowSelected={(row) => row.id === selectedArticle?.id}
+                />
+              </div>
+            </div>
+            <div className="min-w-[300px] flex-1 overflow-hidden">
+              {selectedArticle ? (
+                <ArticleDetailWorkspace
+                  article={selectedArticle}
+                  onEdit={beginEditSelectedArticle}
+                  onDeactivate={() => void softDeleteSelectedArticle()}
+                  onCreateRequisition={handleCreateRequisitionFromDetail}
+                  onStockAdjusted={() => void loadAll()}
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center p-6">
+                  <p className="text-sm text-text-muted">{t("detail.noSelection")}</p>
+                </div>
+              )}
+            </div>
           </div>
         </TabsContent>
 
-        <TabsContent value="topology" className="mt-4 space-y-4">
-          <WarehouseLocationPanel ref={warehousePanelRef} searchFilter={topologySearchFilter} />
+        <TabsContent value="topology" className="mt-4 min-h-0 flex-1 data-[state=inactive]:hidden">
+          <WarehouseLocationPanel ref={warehousePanelRef} />
         </TabsContent>
 
-        <TabsContent value="stock" className="mt-4 space-y-4">
-          <PermissionGate permission="inv.manage">
-            <div className="rounded-md border p-4">
-              <h3 className="mb-3 text-sm font-semibold">Stock adjustment</h3>
-              <div className="grid gap-2 md:grid-cols-4">
-                <Select
-                  value={String(stockArticleId)}
-                  onValueChange={(v) => setStockArticleId(Number(v))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Article" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0">Select article</SelectItem>
-                    {articles.map((a) => (
-                      <SelectItem key={a.id} value={String(a.id)}>
-                        {a.article_code} - {a.article_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select
-                  value={String(stockLocationId)}
-                  onValueChange={(v) => setStockLocationId(Number(v))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Location" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0">Select location</SelectItem>
-                    {locations.map((l) => (
-                      <SelectItem key={l.id} value={String(l.id)}>
-                        {l.warehouse_code}/{l.code}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={stockDelta}
-                  onChange={(e) => setStockDelta(Number(e.target.value || 0))}
-                  placeholder="Delta qty (+/-)"
-                />
-
-                <Button
-                  onClick={() =>
-                    void adjustStock({
-                      article_id: stockArticleId,
-                      location_id: stockLocationId,
-                      delta_qty: stockDelta,
-                    })
-                  }
-                  disabled={
-                    saving || stockArticleId <= 0 || stockLocationId <= 0 || stockDelta === 0
-                  }
-                >
-                  Post adjustment
-                </Button>
-              </div>
-            </div>
-          </PermissionGate>
-
-          <Separator />
-          <DataTable
-            columns={stockColumns}
-            data={filteredStockBalances}
-            isLoading={loading}
-            searchable={false}
-          />
-        </TabsContent>
         <TabsContent value="procurement" className="mt-4 space-y-4">
           <ProcurementRepairablePanel
             ref={procurementPanelRef}
@@ -703,154 +548,46 @@ export function InventoryPage() {
       </Tabs>
 
       <Dialog
-        open={isDetailOpen}
+        open={isEditingInDialog}
         onOpenChange={(open) => {
-          setDetailOpen(open);
           if (!open) setEditingInDialog(false);
         }}
       >
-        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+        <DialogContent
+          className="max-h-[90vh] max-w-3xl overflow-y-auto"
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
           <DialogHeader>
-            <DialogTitle>
-              {selectedArticle
-                ? `${selectedArticle.article_code} - ${selectedArticle.article_name}`
-                : "Article details"}
-            </DialogTitle>
+            <DialogTitle>Edit article</DialogTitle>
             <DialogDescription>
-              Full article details and stock history across locations.
+              Update catalog data and replenishment parameters.
             </DialogDescription>
           </DialogHeader>
-
-          {selectedArticle ? (
-            <div className="space-y-4">
-              {!isEditingInDialog ? (
-                <div className="grid grid-cols-2 gap-3 rounded-md border p-3 text-sm">
-                  <div>
-                    <span className="text-text-muted">Family:</span>{" "}
-                    {selectedArticle.family_name ?? "—"}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Unit:</span> {selectedArticle.unit_label}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Criticality:</span>{" "}
-                    {selectedArticle.criticality_label ?? "—"}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Status:</span>{" "}
-                    {selectedArticle.is_active === 1 ? "Active" : "Inactive"}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Stocking type:</span>{" "}
-                    {selectedArticle.stocking_type_label}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Tax category:</span>{" "}
-                    {selectedArticle.tax_category_label}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Procurement category:</span>{" "}
-                    {selectedArticle.procurement_category_label ?? "—"}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Preferred warehouse:</span>{" "}
-                    {selectedArticle.preferred_warehouse_code ?? "—"}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Preferred location:</span>{" "}
-                    {selectedArticle.preferred_location_code ?? "—"}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Min stock:</span> {selectedArticle.min_stock}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Reorder point:</span>{" "}
-                    {selectedArticle.reorder_point}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Safety stock:</span>{" "}
-                    {selectedArticle.safety_stock}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Created at:</span>{" "}
-                    {selectedArticle.created_at}
-                  </div>
-                  <div>
-                    <span className="text-text-muted">Updated at:</span>{" "}
-                    {selectedArticle.updated_at}
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-md border p-3">
-                  <ArticleEditorFields
-                    articleForm={articleForm}
-                    setArticleForm={setArticleForm}
-                    families={families}
-                    warehouses={warehouses}
-                    preferredWarehouseLocations={preferredWarehouseLocations}
-                    unitOptions={unitOptions}
-                    criticalityOptions={criticalityOptions}
-                    stockingTypeOptions={stockingTypeOptions}
-                    taxCategoryOptions={taxCategoryOptions}
-                    procurementCategoryOptions={procurementCategoryOptions}
-                  />
-                </div>
-              )}
-
-              <div className="rounded-md border p-3">
-                <h4 className="mb-2 text-sm font-semibold">Historique</h4>
-                {articleHistory.length === 0 ? (
-                  <p className="text-sm text-text-muted">
-                    No stock history entries yet for this article.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {articleHistory.map((entry) => (
-                      <div key={entry.id} className="rounded border p-2 text-sm">
-                        <div className="font-medium">
-                          {entry.warehouse_code}/{entry.location_code}
-                        </div>
-                        <div className="text-text-muted">
-                          On-hand: {entry.on_hand_qty} | Reserved: {entry.reserved_qty} | Available:{" "}
-                          {entry.available_qty}
-                        </div>
-                        <div className="text-xs text-text-muted">Updated: {entry.updated_at}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : null}
-
+          <PermissionGate permission="inv.manage">
+            <ArticleEditorFields
+              articleForm={articleForm}
+              setArticleForm={setArticleForm}
+              families={families}
+              warehouses={warehouses}
+              preferredWarehouseLocations={preferredWarehouseLocations}
+              unitOptions={unitOptions}
+              criticalityOptions={criticalityOptions}
+              stockingTypeOptions={stockingTypeOptions}
+              taxCategoryOptions={taxCategoryOptions}
+              procurementCategoryOptions={procurementCategoryOptions}
+            />
+          </PermissionGate>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDetailOpen(false)}>
-              Close
+            <Button variant="outline" onClick={() => setEditingInDialog(false)}>
+              Cancel
             </Button>
             <PermissionGate permission="inv.manage">
-              {!isEditingInDialog ? (
-                <>
-                  <Button variant="outline" onClick={beginEditSelectedArticle}>
-                    Edit
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => void softDeleteSelectedArticle()}
-                    disabled={saving}
-                  >
-                    Delete
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button variant="outline" onClick={() => setEditingInDialog(false)}>
-                    Cancel
-                  </Button>
-                  <Button onClick={() => void saveEditedArticle()} disabled={saving}>
-                    Save
-                  </Button>
-                </>
-              )}
+              <Button
+                onClick={() => void saveEditedArticle()}
+                disabled={saving || !isArticleFormValid}
+              >
+                Save
+              </Button>
             </PermissionGate>
           </DialogFooter>
         </DialogContent>

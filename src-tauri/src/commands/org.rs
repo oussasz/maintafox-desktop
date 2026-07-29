@@ -15,6 +15,7 @@ use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
+use crate::org::fail::fail;
 use crate::org::{
     audit::{self, OrgAuditEventInput, OrgChangeEvent},
     entity_bindings::{self, UpsertOrgEntityBindingPayload},
@@ -24,7 +25,7 @@ use crate::org::{
     nodes::{self, CreateOrgNodePayload, MoveOrgNodePayload, UpdateOrgNodeMetadataPayload},
     relationship_rules::{self, CreateRelationshipRulePayload},
     responsibilities::{self, AssignResponsibilityPayload},
-    structure_model::{self, CreateStructureModelPayload},
+    structure_model::{self, CreateStructureModelPayload, OrgDraftLineageReconcileResult},
     tree_queries::{self, OrgDesignerNodeRow, OrgDesignerSnapshot},
     validation::{self, OrgPublishValidationResult},
     OrgEntityBinding, OrgNode, OrgNodeResponsibility, OrgNodeType, OrgRelationshipRule,
@@ -57,9 +58,10 @@ pub async fn create_org_structure_model(
     let user = require_session!(state);
     require_permission!(state, &user, "org.admin", PermissionScope::Global);
     if structure_model::get_active_model(&state.db).await?.is_some() {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "A published (active) structure model already exists. Use fork_org_draft_from_published to start a new draft that copies the current published node types and rules."
-        )]));
+        return Err(fail(
+            "ORG_ACTIVE_MODEL_EXISTS",
+            "A published organization structure already exists. Create a new draft from the published structure instead of a blank first draft.",
+        ));
     }
     structure_model::create_model(&state.db, payload, user.user_id).await
 }
@@ -92,31 +94,19 @@ pub async fn fork_org_draft_from_published(
     Ok(result)
 }
 
+/// Deprecated: use `publish_org_model` instead.
+///
+/// The legacy path called `structure_model::publish_model` without node/FK remapping
+/// and must not be used once model-scoped draft trees are in production.
 #[tauri::command]
-pub async fn publish_org_structure_model(model_id: i32, state: State<'_, AppState>) -> AppResult<OrgStructureModel> {
-    let user = require_session!(state);
-    require_permission!(state, &user, "org.admin", PermissionScope::Global);
-    require_step_up!(state);
-
-    let result = structure_model::publish_model(&state.db, model_id, user.user_id).await?;
-
-    audit::record_org_change(
-        &state.db,
-        OrgAuditEventInput {
-            entity_kind: "structure_model".to_string(),
-            entity_id: Some(model_id as i64),
-            change_type: "publish_model_simple".to_string(),
-            before_json: None,
-            after_json: Some(serde_json::to_string(&result).unwrap_or_default()),
-            preview_summary_json: None,
-            changed_by_id: Some(user.user_id as i64),
-            requires_step_up: true,
-            apply_result: "applied".to_string(),
-        },
-    )
-    .await?;
-
-    Ok(result)
+pub async fn publish_org_structure_model(
+    _model_id: i32,
+    _state: State<'_, AppState>,
+) -> AppResult<OrgStructureModel> {
+    Err(fail(
+        "ORG_LEGACY_PUBLISH_REMOVED",
+        "This publish action is no longer available. Use the current Publish action, which checks the draft and updates live links safely.",
+    ))
 }
 
 #[tauri::command]
@@ -254,9 +244,16 @@ pub async fn list_org_tree(state: State<'_, AppState>) -> AppResult<Vec<OrgTreeR
 }
 
 #[tauri::command]
-pub async fn get_org_node(node_id: i64, state: State<'_, AppState>) -> AppResult<OrgNode> {
+pub async fn get_org_node(
+    node_id: i64,
+    structure_model_id: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<OrgNode> {
     let user = require_session!(state);
     require_permission!(state, &user, "org.view", PermissionScope::Global);
+    if let Some(expected_model_id) = structure_model_id {
+        crate::org::model_scope::assert_node_in_model(&state.db, node_id, expected_model_id).await?;
+    }
     nodes::get_org_node_by_id(&state.db, node_id).await
 }
 
@@ -539,11 +536,12 @@ pub async fn deactivate_org_node(
 
 #[tauri::command]
 pub async fn get_org_designer_snapshot(
+    prefer_draft: Option<bool>,
     state: State<'_, AppState>,
 ) -> AppResult<OrgDesignerSnapshot> {
     let user = require_session!(state);
     require_permission!(state, &user, "org.view", PermissionScope::Global);
-    tree_queries::get_org_designer_snapshot(&state.db).await
+    tree_queries::get_org_designer_snapshot(&state.db, prefer_draft).await
 }
 
 #[tauri::command]
@@ -551,6 +549,7 @@ pub async fn search_org_designer_nodes(
     query: String,
     status_filter: Option<String>,
     type_filter: Option<String>,
+    model_id: i64,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<OrgDesignerNodeRow>> {
     let user = require_session!(state);
@@ -560,6 +559,7 @@ pub async fn search_org_designer_nodes(
         &query,
         status_filter.as_deref(),
         type_filter.as_deref(),
+        model_id,
     )
     .await
 }
@@ -584,6 +584,36 @@ pub async fn validate_org_model_for_publish(
     let user = require_session!(state);
     require_permission!(state, &user, "org.view", PermissionScope::Global);
     validation::validate_draft_model_for_publish(&state.db, model_id).await
+}
+
+#[tauri::command]
+pub async fn reconcile_org_draft_lineage(
+    draft_model_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<OrgDraftLineageReconcileResult> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "org.admin", PermissionScope::Global);
+
+    let result =
+        structure_model::reconcile_org_draft_lineage(&state.db, draft_model_id).await?;
+
+    audit::record_org_change(
+        &state.db,
+        OrgAuditEventInput {
+            entity_kind: "structure_model".to_string(),
+            entity_id: Some(draft_model_id),
+            change_type: "reconcile_draft_lineage".to_string(),
+            before_json: None,
+            after_json: Some(serde_json::to_string(&result).unwrap_or_default()),
+            preview_summary_json: None,
+            changed_by_id: Some(user.user_id as i64),
+            requires_step_up: false,
+            apply_result: "applied".to_string(),
+        },
+    )
+    .await?;
+
+    Ok(result)
 }
 
 #[tauri::command]

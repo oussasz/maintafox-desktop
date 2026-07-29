@@ -16,6 +16,8 @@ import { AssetDetailPanel } from "@/components/assets/AssetDetailPanel";
 import { AssetEditForm } from "@/components/assets/AssetEditForm";
 import { AssetFilterBar } from "@/components/assets/AssetFilterBar";
 import { AssetResultTable } from "@/components/assets/AssetResultTable";
+import { WoFormDialog } from "@/components/wo/WoFormDialog";
+import { DiFormDialog } from "@/components/di/DiFormDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { mfLayout } from "@/design-system/tokens";
@@ -93,6 +95,8 @@ export function AssetRegistryPage() {
       {/* ── Dialogs ──────────────────────────────────────────────── */}
       <AssetCreateForm />
       <AssetEditForm />
+      <WoFormDialog />
+      <DiFormDialog />
     </div>
   );
 }

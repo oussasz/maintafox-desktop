@@ -71,13 +71,13 @@ async fn seed_entitlement_and_activation(db: &DatabaseConnection) {
         state: "active".to_string(),
         channel: "stable".to_string(),
         machine_slots: 4,
-        feature_flags_json: r#"{"sync_panel":true}"#.to_string(),
+        feature_flags_json: r#"{}"#.to_string(),
         capabilities_json:
-            r#"{"inventory.write":true,"finance.write":true,"planning.write":true,"sync.runtime":true}"#
+            r#"{"equipment":true,"inventory":true,"finance":true,"planning":true,"sync":true}"#
                 .to_string(),
-        policy_json: r#"{"grace_allowed_capabilities":["sync.runtime","core.read"]}"#.to_string(),
-        issued_at: "2026-04-16T00:00:00Z".to_string(),
-        valid_from: "2026-04-16T00:00:00Z".to_string(),
+        policy_json: r#"{"grace_allowed_modules":["sync","equipment"]}"#.to_string(),
+        issued_at: "2026-07-26T00:00:00Z".to_string(),
+        valid_from: "2026-07-26T00:00:00Z".to_string(),
         valid_until: "2099-01-01T00:00:00Z".to_string(),
         offline_grace_until: "2099-01-03T00:00:00Z".to_string(),
         signature: String::new(),
@@ -99,7 +99,7 @@ async fn seed_entitlement_and_activation(db: &DatabaseConnection) {
             trust_score: 99,
             vps_version: 4,
             response_nonce: "nonce-license-1".to_string(),
-            issued_at: "2026-04-16T00:00:00Z".to_string(),
+            issued_at: "2026-07-26T00:00:00Z".to_string(),
             expires_at: "2099-01-01T00:00:00Z".to_string(),
             offline_grace_until: "2099-01-03T00:00:00Z".to_string(),
             revocation_state: "active".to_string(),

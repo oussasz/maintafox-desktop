@@ -14,13 +14,13 @@ export function useDeviceTrustStatus(): DeviceTrustStatus {
     device_fingerprint: "",
     is_trusted: false,
     is_revoked: false,
+    trust_state: "untrusted",
     offline_allowed: false,
     offline_hours_remaining: null,
     device_label: null,
     trusted_at: null,
     offline_denial_code: null,
     offline_denial_message: null,
-    status: "unknown",
   });
 
   const fetch = useCallback(async () => {
@@ -28,18 +28,18 @@ export function useDeviceTrustStatus(): DeviceTrustStatus {
       const result = await invoke<DeviceTrustStatus>("get_device_trust_status");
       setStatus(result);
     } catch {
-      // Command failed (no session, or not implemented yet) â€” silent fallback
+      // Command failed (no session, or not implemented yet) — silent fallback
       setStatus({
         device_fingerprint: "",
         is_trusted: false,
         is_revoked: false,
+        trust_state: "untrusted",
         offline_allowed: false,
         offline_hours_remaining: null,
         device_label: null,
         trusted_at: null,
         offline_denial_code: null,
         offline_denial_message: null,
-        status: "unknown",
       });
     }
   }, []);

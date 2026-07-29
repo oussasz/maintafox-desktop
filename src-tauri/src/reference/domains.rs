@@ -6,12 +6,19 @@
 //! Each domain represents a named, governed vocabulary with a structure type
 //! and governance level that control editing workflows and downstream impact.
 //!
+//! Permission decisions (create/edit/publish/operational) are owned by
+//! `crate::reference::governance` (A/B/C). `governance_level` / `is_extendable`
+//! remain for compatibility and are kept aligned with `governance_category`.
+//!
 //! Validation rules:
 //!   - `code`: uppercase ASCII letters, digits, underscores, or dots; 1–64 chars
 //!   - `structure_type`: one of the PRD 6.13 types
 //!   - `governance_level`: one of the PRD 6.13 levels
 
 use crate::errors::{AppError, AppResult};
+use crate::reference::governance::{
+    derive_category_for_persist, default_is_extendable, GovernanceCategory, GOVERNANCE_CATEGORIES,
+};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -27,7 +34,7 @@ pub const STRUCTURE_TYPES: &[&str] = &[
     "external_code_set",
 ];
 
-/// PRD 6.13 allowed governance levels.
+/// PRD 6.13 allowed governance levels (legacy; prefer `governance_category`).
 pub const GOVERNANCE_LEVELS: &[&str] = &[
     "protected_analytical",
     "tenant_managed",
@@ -45,6 +52,8 @@ pub struct ReferenceDomain {
     pub name: String,
     pub structure_type: String,
     pub governance_level: String,
+    /// A/B/C category — permission decision source of truth.
+    pub governance_category: String,
     pub is_extendable: bool,
     pub validation_rules_json: Option<String>,
     pub created_at: String,
@@ -58,6 +67,8 @@ pub struct CreateReferenceDomainPayload {
     pub name: String,
     pub structure_type: String,
     pub governance_level: String,
+    /// Optional explicit A/B/C; derived from code + governance_level when omitted.
+    pub governance_category: Option<String>,
     pub is_extendable: Option<bool>,
     pub validation_rules_json: Option<String>,
 }
@@ -68,6 +79,7 @@ pub struct UpdateReferenceDomainPayload {
     pub name: Option<String>,
     pub structure_type: Option<String>,
     pub governance_level: Option<String>,
+    pub governance_category: Option<String>,
     pub is_extendable: Option<bool>,
     pub validation_rules_json: Option<Option<String>>,
 }
@@ -101,6 +113,9 @@ fn map_domain(row: &QueryResult) -> AppResult<ReferenceDomain> {
         governance_level: row
             .try_get::<String>("", "governance_level")
             .map_err(|e| decode_err("governance_level", e))?,
+        governance_category: row
+            .try_get::<String>("", "governance_category")
+            .map_err(|e| decode_err("governance_category", e))?,
         is_extendable: i64_to_bool(
             row.try_get::<i64>("", "is_extendable")
                 .map_err(|e| decode_err("is_extendable", e))?,
@@ -166,6 +181,16 @@ fn validate_governance_level(gl: &str) -> AppResult<()> {
     Ok(())
 }
 
+fn validate_governance_category(cat: &str) -> AppResult<()> {
+    if !GOVERNANCE_CATEGORIES.contains(&cat) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Catégorie de gouvernance '{cat}' invalide. Valeurs autorisées : {}.",
+            GOVERNANCE_CATEGORIES.join(", ")
+        )]));
+    }
+    Ok(())
+}
+
 fn validate_name(name: &str) -> AppResult<()> {
     let trimmed = name.trim();
     if trimmed.is_empty() || trimmed.len() > 255 {
@@ -205,7 +230,8 @@ pub async fn list_reference_domains(
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT id, code, name, structure_type, governance_level, \
-                    is_extendable, validation_rules_json, created_at, updated_at \
+                    governance_category, is_extendable, validation_rules_json, \
+                    created_at, updated_at \
              FROM reference_domains \
              ORDER BY name ASC",
         ))
@@ -223,7 +249,8 @@ pub async fn get_reference_domain(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, code, name, structure_type, governance_level, \
-                    is_extendable, validation_rules_json, created_at, updated_at \
+                    governance_category, is_extendable, validation_rules_json, \
+                    created_at, updated_at \
              FROM reference_domains WHERE id = ?",
             [domain_id.into()],
         ))
@@ -236,10 +263,40 @@ pub async fn get_reference_domain(
     map_domain(&row)
 }
 
+/// Returns a single reference domain by canonical code (case-insensitive).
+pub async fn get_reference_domain_by_code(
+    db: &DatabaseConnection,
+    domain_code: &str,
+) -> AppResult<ReferenceDomain> {
+    let code = normalize_code(domain_code);
+    if code.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "Le code de domaine est requis.".into(),
+        ]));
+    }
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, code, name, structure_type, governance_level, \
+                    governance_category, is_extendable, validation_rules_json, \
+                    created_at, updated_at \
+             FROM reference_domains WHERE UPPER(code) = ?",
+            [code.clone().into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "ReferenceDomain".into(),
+            id: code,
+        })?;
+
+    map_domain(&row)
+}
+
 /// Creates a new reference domain. Returns the created domain.
 ///
 /// Validates code format, structure type, governance level, and name.
 /// Code is normalized to uppercase before insertion.
+/// `governance_category` is derived from code + level when not provided.
 pub async fn create_reference_domain(
     db: &DatabaseConnection,
     payload: CreateReferenceDomainPayload,
@@ -252,8 +309,25 @@ pub async fn create_reference_domain(
     validate_governance_level(&payload.governance_level)?;
     validate_rules_json(&payload.validation_rules_json)?;
 
+    let category = if let Some(ref raw) = payload.governance_category {
+        validate_governance_category(raw)?;
+        GovernanceCategory::parse(raw).ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "Catégorie de gouvernance '{raw}' invalide."
+            )])
+        })?
+    } else {
+        derive_category_for_persist(&code, &payload.governance_level)
+    };
+
     let now = Utc::now().to_rfc3339();
-    let is_extendable: i32 = if payload.is_extendable.unwrap_or(true) {
+    let is_extendable: i32 = if let Some(ext) = payload.is_extendable {
+        if ext {
+            1
+        } else {
+            0
+        }
+    } else if default_is_extendable(category) {
         1
     } else {
         0
@@ -262,14 +336,15 @@ pub async fn create_reference_domain(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO reference_domains \
-             (code, name, structure_type, governance_level, is_extendable, \
-              validation_rules_json, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             (code, name, structure_type, governance_level, governance_category, \
+              is_extendable, validation_rules_json, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             code.clone().into(),
             payload.name.trim().to_string().into(),
             payload.structure_type.clone().into(),
             payload.governance_level.clone().into(),
+            category.as_str().into(),
             is_extendable.into(),
             payload.validation_rules_json.clone().into(),
             now.clone().into(),
@@ -293,7 +368,8 @@ pub async fn create_reference_domain(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, code, name, structure_type, governance_level, \
-                    is_extendable, validation_rules_json, created_at, updated_at \
+                    governance_category, is_extendable, validation_rules_json, \
+                    created_at, updated_at \
              FROM reference_domains WHERE code = ?",
             [code.into()],
         ))
@@ -340,6 +416,18 @@ pub async fn update_reference_domain(
         validate_governance_level(gl)?;
         sets.push("governance_level = ?".into());
         values.push(gl.clone().into());
+        // Keep category aligned when level changes and category not explicitly set.
+        if payload.governance_category.is_none() {
+            let cat = derive_category_for_persist(&existing.code, gl);
+            sets.push("governance_category = ?".into());
+            values.push(cat.as_str().into());
+        }
+    }
+
+    if let Some(ref cat_raw) = payload.governance_category {
+        validate_governance_category(cat_raw)?;
+        sets.push("governance_category = ?".into());
+        values.push(cat_raw.clone().into());
     }
 
     if let Some(ext) = payload.is_extendable {

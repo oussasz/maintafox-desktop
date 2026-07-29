@@ -1,35 +1,47 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-import { invoke } from "@/lib/ipc-invoke";
+import { invokeSilent } from "@/lib/ipc-invoke";
+import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
+import { useSessionStore } from "@/store/session-store";
 
 const POLL_INTERVAL_MS = 30_000;
 
 /**
  * Polls the `get_unread_count` IPC command every 30 seconds.
  *
- * If the command is not yet implemented (Phase 2 SP07), the hook catches the
- * error silently and returns 0. This allows the TopBar to use the hook now
- * without blocking on the notification backend.
+ * Uses invokeSilent so AUTH/SESSION failures never open AuthLockLayer.
+ * Polling pauses while the session is locked or absent.
  */
 export function useNotificationCount(): number {
   const [count, setCount] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const authenticated = useSessionStore((s) => s.info?.is_authenticated === true);
+  const locked = useSessionStore((s) => s.info?.is_locked === true);
 
   const poll = useCallback(async () => {
+    if (!isSessionActiveForBackgroundWork()) {
+      setCount(0);
+      return;
+    }
     try {
-      const result = await invoke<number>("get_unread_count");
+      const result = await invokeSilent<number>("get_unread_count");
       setCount(result);
     } catch {
-      // Command not yet available â€” silent fallback to 0
       setCount(0);
     }
   }, []);
 
   useEffect(() => {
-    // Initial fetch
-    void poll();
+    if (!authenticated || locked) {
+      setCount(0);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
 
-    // Periodic polling
+    void poll();
     timerRef.current = setInterval(() => void poll(), POLL_INTERVAL_MS);
 
     return () => {
@@ -37,7 +49,7 @@ export function useNotificationCount(): number {
         clearInterval(timerRef.current);
       }
     };
-  }, [poll]);
+  }, [authenticated, locked, poll]);
 
   return count;
 }

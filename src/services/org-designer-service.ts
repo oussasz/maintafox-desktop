@@ -8,6 +8,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import { OrgValidationIssueSchema } from "@/services/org-governance-service";
 import type {
   OrgDesignerNodeRow,
   OrgDesignerSnapshot,
@@ -37,6 +38,8 @@ const OrgDesignerNodeRowSchema = z.object({
   child_count: z.number(),
   active_responsibility_count: z.number(),
   active_binding_count: z.number(),
+  structure_model_id: z.number().optional(),
+  origin_node_id: z.number().nullable().optional(),
 });
 
 const OrgDesignerSnapshotSchema = z.object({
@@ -44,6 +47,7 @@ const OrgDesignerSnapshotSchema = z.object({
   active_model_version: z.number().nullable(),
   draft_model_id: z.number().nullable(),
   draft_model_version: z.number().nullable(),
+  display_model_id: z.number().nullable().optional(),
   nodes: z.array(OrgDesignerNodeRowSchema),
 });
 
@@ -61,15 +65,17 @@ const OrgImpactPreviewSchema = z.object({
   descendant_count: z.number(),
   active_responsibility_count: z.number(),
   active_binding_count: z.number(),
-  blockers: z.array(z.string()),
-  warnings: z.array(z.string()),
+  blockers: z.array(OrgValidationIssueSchema),
+  warnings: z.array(OrgValidationIssueSchema),
   dependencies: z.array(OrgImpactDependencySummarySchema),
 });
 
 // â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-export async function getOrgDesignerSnapshot(): Promise<OrgDesignerSnapshot> {
-  const raw = await invoke<unknown>("get_org_designer_snapshot");
+export async function getOrgDesignerSnapshot(preferDraft = false): Promise<OrgDesignerSnapshot> {
+  const raw = await invoke<unknown>("get_org_designer_snapshot", {
+    preferDraft,
+  });
   return OrgDesignerSnapshotSchema.parse(raw) as OrgDesignerSnapshot;
 }
 
@@ -77,11 +83,16 @@ export async function searchOrgDesignerNodes(
   query: string,
   statusFilter?: string | null,
   typeFilter?: string | null,
+  modelId?: number | null,
 ): Promise<OrgDesignerNodeRow[]> {
+  if (modelId == null) {
+    throw new Error("searchOrgDesignerNodes requires modelId (display_model_id)");
+  }
   const raw = await invoke<unknown>("search_org_designer_nodes", {
     query,
     statusFilter: statusFilter ?? null,
     typeFilter: typeFilter ?? null,
+    modelId,
   });
   return z.array(OrgDesignerNodeRowSchema).parse(raw) as OrgDesignerNodeRow[];
 }

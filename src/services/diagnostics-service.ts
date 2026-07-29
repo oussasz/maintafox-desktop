@@ -5,7 +5,13 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
-import type { DiagnosticsAppInfo, IntegrityReport, SupportBundle } from "@shared/ipc-types";
+import type {
+  DiagnosticsAppInfo,
+  IntegrityReport,
+  RamsPresentationSeedInput,
+  RamsPresentationSeedReport,
+  SupportBundle,
+} from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas for runtime shape validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -56,6 +62,28 @@ export async function runIntegrityCheck(): Promise<IntegrityReport> {
 export async function repairSeedData(): Promise<IntegrityReport> {
   const raw = await invoke<unknown>("repair_seed_data");
   return IntegrityReportSchema.parse(raw) as IntegrityReport;
+}
+
+const RamsPresentationSeedReportSchema = z.object({
+  equipment_id: z.number(),
+  skipped: z.boolean(),
+  work_orders_created: z.number(),
+  failure_events_count: z.number(),
+  exposure_hours: z.number().nullable(),
+  weibull_beta: z.number().nullable(),
+  weibull_eta: z.number().nullable(),
+  weibull_adequate: z.boolean(),
+  markov_model_id: z.number().nullable(),
+  warnings: z.array(z.string()),
+  errors: z.array(z.string()),
+});
+
+export async function seedRamsPresentationData(
+  input: RamsPresentationSeedInput = {},
+): Promise<RamsPresentationSeedReport> {
+  // DEMO ONLY — must be user-triggered; never call from page load / equipment create.
+  const raw = await invoke<unknown>("seed_rams_presentation_data", { input });
+  return RamsPresentationSeedReportSchema.parse(raw) as RamsPresentationSeedReport;
 }
 
 // â”€â”€ Service functions â€” SP06-F03 Diagnostics & Support Bundle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,6 +43,7 @@ export function PersonnelCreateDialog() {
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
   const [externalCompanyId, setExternalCompanyId] = useState<string>("__none__");
+  const [homeScheduleRefId, setHomeScheduleRefId] = useState<string | null>(null);
   const [positions, setPositions] = useState<{ id: number; code: string; name: string }[]>([]);
   const [entityNodes, setEntityNodes] = useState<OrgDesignerNodeRow[]>([]);
   const [teamNodes, setTeamNodes] = useState<OrgDesignerNodeRow[]>([]);
@@ -82,6 +84,7 @@ export function PersonnelCreateDialog() {
     setPhone("");
     setNotes("");
     setExternalCompanyId("__none__");
+    setHomeScheduleRefId(null);
   }, [showCreateForm, loadLookups]);
 
   const handleSubmit = async () => {
@@ -108,6 +111,10 @@ export function PersonnelCreateDialog() {
       notes: notes.trim() || null,
       external_company_id:
         needsCompany && externalCompanyId !== "__none__" ? Number(externalCompanyId) : null,
+      home_schedule_reference_value_id:
+        homeScheduleRefId != null && homeScheduleRefId !== ""
+          ? Number(homeScheduleRefId)
+          : null,
     };
 
     try {
@@ -182,6 +189,18 @@ export function PersonnelCreateDialog() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label>{t("field.schedule")}</Label>
+            <ReferenceCombobox
+              id="personnel-home-schedule"
+              referenceType="org.schedule_class"
+              valueMode="id"
+              value={homeScheduleRefId}
+              onChange={setHomeScheduleRefId}
+              placeholder={t("field.schedule")}
+              allowClear
+            />
           </div>
           <div className="grid gap-2">
             <Label>{t("field.entity")}</Label>

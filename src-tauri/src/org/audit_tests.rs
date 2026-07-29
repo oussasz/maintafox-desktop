@@ -154,6 +154,7 @@ mod tests {
     /// Create live nodes for the active model.
     async fn create_live_nodes(
         db: &sea_orm::DatabaseConnection,
+        model_id: i32,
         site_type_id: i32,
         plant_type_id: i32,
         zone_type_id: i32,
@@ -171,6 +172,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id as i64,
             },
             1,
         )
@@ -190,6 +192,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id as i64,
             },
             1,
         )
@@ -209,6 +212,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id as i64,
             },
             1,
         )
@@ -218,14 +222,52 @@ mod tests {
         (site_node.id, plant_node.id, zone_node.id)
     }
 
+    async fn fork_active_model(db: &sea_orm::DatabaseConnection, description: &str) -> i32 {
+        structure_model::fork_draft_from_published(
+            db,
+            &CreateStructureModelPayload {
+                description: Some(description.to_string()),
+            },
+            1,
+        )
+        .await
+        .expect("fork draft from published")
+        .id
+    }
+
+    async fn draft_type_id_by_code(
+        db: &sea_orm::DatabaseConnection,
+        draft_id: i32,
+        code: &str,
+    ) -> i32 {
+        let types = node_types::list_node_types(db, draft_id)
+            .await
+            .expect("list draft types");
+        types
+            .iter()
+            .find(|t| t.code == code)
+            .unwrap_or_else(|| panic!("draft type '{code}' missing"))
+            .id
+    }
+
+    async fn force_deactivate_draft_type(db: &sea_orm::DatabaseConnection, type_id: i32) {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE org_node_types SET is_active = 0 WHERE id = ?",
+            [type_id.into()],
+        ))
+        .await
+        .expect("force deactivate type");
+    }
+
     // ── AT1 — Successful publish writes an audit row ──────────────────────
 
     #[tokio::test]
     async fn at1_successful_publish_writes_audit_row() {
         let db = setup().await;
 
-        let (_, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
-        create_live_nodes(&db, site_id, plant_id, zone_id).await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
 
         // Create a valid draft v2 with same codes but updated labels.
         let draft = structure_model::create_model(
@@ -377,86 +419,27 @@ mod tests {
     async fn at2_blocked_publish_writes_blocked_audit_row() {
         let db = setup().await;
 
-        let (_, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
-        create_live_nodes(&db, site_id, plant_id, zone_id).await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
 
-        // Create an invalid draft v2 that omits ZONE.
-        let draft = structure_model::create_model(
-            &db,
-            CreateStructureModelPayload {
-                description: Some("Blocked audit test".to_string()),
-            },
-            1,
-        )
-        .await
-        .expect("draft");
+        // Fork a draft tree, then deactivate ZONE so draft nodes still reference
+        // an inactive type — publish must block under model-scoped validation.
+        let draft_id = fork_active_model(&db, "Blocked audit test").await;
+        let zone_type_id = draft_type_id_by_code(&db, draft_id, "ZONE").await;
+        force_deactivate_draft_type(&db, zone_type_id).await;
 
-        let ns = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "SITE".to_string(),
-                label: "Site v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(0),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: true,
-            },
-        )
-        .await
-        .expect("SITE v2");
-
-        let np = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "PLANT".to_string(),
-                label: "Plant v2".to_string(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(1),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .expect("PLANT v2");
-
-        relationship_rules::create_rule(
-            &db,
-            CreateRelationshipRulePayload {
-                structure_model_id: draft.id,
-                parent_type_id: ns.id,
-                child_type_id: np.id,
-                min_children: None,
-                max_children: None,
-            },
-        )
-        .await
-        .expect("rule");
-
-        // Attempt publish — must fail because ZONE is missing.
-        let publish_err = validation::publish_model_with_remap(&db, draft.id as i64, 1)
+        let publish_err = validation::publish_model_with_remap(&db, draft_id as i64, 1)
             .await
-            .expect_err("publish should fail — ZONE missing");
+            .expect_err("publish should fail — ZONE type inactive on draft");
 
         assert!(matches!(
             publish_err,
-            crate::errors::AppError::ValidationFailed(_)
+            crate::errors::AppError::OrgValidationFailed(_)
         ));
 
         // Record the blocked audit event (mimics command handler on error path).
         let blocked_validation =
-            validation::validate_draft_model_for_publish(&db, draft.id as i64)
+            validation::validate_draft_model_for_publish(&db, draft_id as i64)
                 .await
                 .ok();
 
@@ -464,7 +447,7 @@ mod tests {
             &db,
             OrgAuditEventInput {
                 entity_kind: "structure_model".to_string(),
-                entity_id: Some(draft.id as i64),
+                entity_id: Some(draft_id as i64),
                 change_type: "publish_model".to_string(),
                 before_json: None,
                 after_json: None,
@@ -699,8 +682,8 @@ mod tests {
     async fn sv_v2_publish_success_audit_row() {
         let db = setup().await;
 
-        let (_, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
-        create_live_nodes(&db, site_id, plant_id, zone_id).await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
 
         // Build a valid v2 draft with the same type codes.
         let draft = structure_model::create_model(
@@ -807,81 +790,24 @@ mod tests {
     async fn sv_v3_blocked_publish_audit_row() {
         let db = setup().await;
 
-        let (_, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
-        create_live_nodes(&db, site_id, plant_id, zone_id).await;
+        let (model_id, site_id, plant_id, zone_id) = create_base_active_model(&db).await;
+        create_live_nodes(&db, model_id, site_id, plant_id, zone_id).await;
 
-        // Invalid draft: drops ZONE type code.
-        let draft = structure_model::create_model(
-            &db,
-            CreateStructureModelPayload { description: Some("SV-V3 blocked".into()) },
-            1,
-        )
-        .await
-        .unwrap();
-
-        let ns = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "SITE".into(),
-                label: "Site V3".into(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(0),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: true,
-            },
-        )
-        .await
-        .unwrap();
-
-        let np = node_types::create_node_type(
-            &db,
-            CreateNodeTypePayload {
-                structure_model_id: draft.id,
-                code: "PLANT".into(),
-                label: "Plant V3".into(),
-                icon_key: None,
-                color: None,
-                depth_hint: Some(1),
-                can_host_assets: true,
-                can_own_work: true,
-                can_carry_cost_center: true,
-                can_aggregate_kpis: true,
-                can_receive_permits: false,
-                is_root_type: false,
-            },
-        )
-        .await
-        .unwrap();
-
-        relationship_rules::create_rule(
-            &db,
-            CreateRelationshipRulePayload {
-                structure_model_id: draft.id,
-                parent_type_id: ns.id,
-                child_type_id: np.id,
-                min_children: None,
-                max_children: None,
-            },
-        )
-        .await
-        .unwrap();
+        // Fork then deactivate ZONE — draft nodes still reference the inactive type.
+        let draft_id = fork_active_model(&db, "SV-V3 blocked").await;
+        let zone_type_id = draft_type_id_by_code(&db, draft_id, "ZONE").await;
+        force_deactivate_draft_type(&db, zone_type_id).await;
 
         // Publish must fail.
-        let err = validation::publish_model_with_remap(&db, draft.id as i64, 1)
+        let err = validation::publish_model_with_remap(&db, draft_id as i64, 1)
             .await
-            .expect_err("SV-V3: publish should fail — ZONE missing");
+            .expect_err("SV-V3: publish should fail — ZONE type inactive on draft");
 
-        assert!(matches!(err, AppError::ValidationFailed(_)));
+        assert!(matches!(err, AppError::OrgValidationFailed(_)));
 
         // Record blocked audit (mirrors command handler error path).
         let blocked_validation =
-            validation::validate_draft_model_for_publish(&db, draft.id as i64)
+            validation::validate_draft_model_for_publish(&db, draft_id as i64)
                 .await
                 .ok();
 
@@ -889,7 +815,7 @@ mod tests {
             &db,
             OrgAuditEventInput {
                 entity_kind: "structure_model".into(),
-                entity_id: Some(draft.id as i64),
+                entity_id: Some(draft_id as i64),
                 change_type: "publish_model".into(),
                 before_json: None,
                 after_json: None,

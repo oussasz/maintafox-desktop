@@ -496,6 +496,12 @@ async fn check_org_node_active(
     db: &impl ConnectionTrait,
     org_node_id: i64,
 ) -> AppResult<OrgNodeCheck> {
+    if let Err(e) = crate::org::model_scope::assert_node_is_active_tree(db, org_node_id).await {
+        return Ok(match e {
+            AppError::NotFound { .. } | AppError::ValidationFailed(_) => OrgNodeCheck::NotFound,
+            other => return Err(other),
+        });
+    }
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

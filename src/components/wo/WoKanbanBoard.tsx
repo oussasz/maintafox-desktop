@@ -1,12 +1,12 @@
 /**
  * WoKanbanBoard.tsx
  *
- * Kanban board view for work orders, same design as DiKanbanBoard.
- * 5 columns: Brouillon → Planifié → En cours → Clôture → Terminés.
- * Cards show code, title, type badge, urgency badge, responsible, and date.
+ * Kanban board view for work orders — Option B lifecycle.
+ * 7 columns: Draft | Planning | Ready | Executing | Completed | Closed | Cancelled.
+ * "Executing" groups in_progress + on_hold.
  */
 
-import { CheckCircle, ClipboardCheck, FileEdit, Play, Settings } from "lucide-react";
+import { CheckCircle, ClipboardCheck, FileEdit, Loader2, Play, Settings, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -28,38 +28,52 @@ interface KanbanColumnDef {
 const COLUMNS: KanbanColumnDef[] = [
   {
     id: "draft",
-    i18nKey: "kanban.draft",
+    i18nKey: "kanban.columnDraft",
     icon: <FileEdit className="h-4 w-4" />,
     headerClass: "bg-gray-50 text-gray-700 border-gray-200",
-    statuses: ["draft", "awaiting_approval"],
+    statuses: ["draft"],
   },
   {
-    id: "planned",
-    i18nKey: "kanban.planned",
+    id: "planning",
+    i18nKey: "kanban.columnPlanning",
     icon: <Settings className="h-4 w-4" />,
     headerClass: "bg-blue-50 text-blue-700 border-blue-200",
-    statuses: ["planned", "ready_to_schedule", "assigned", "waiting_for_prerequisite"],
+    statuses: ["planning"],
+  },
+  {
+    id: "ready",
+    i18nKey: "kanban.columnReady",
+    icon: <Loader2 className="h-4 w-4" />,
+    headerClass: "bg-indigo-50 text-indigo-700 border-indigo-200",
+    statuses: ["ready"],
   },
   {
     id: "executing",
-    i18nKey: "kanban.executing",
+    i18nKey: "kanban.columnExecuting",
     icon: <Play className="h-4 w-4" />,
     headerClass: "bg-amber-50 text-amber-700 border-amber-200",
-    statuses: ["in_progress", "paused", "on_hold"],
+    statuses: ["in_progress", "on_hold"],
   },
   {
-    id: "closing",
-    i18nKey: "kanban.closing",
+    id: "completed",
+    i18nKey: "kanban.columnCompleted",
     icon: <ClipboardCheck className="h-4 w-4" />,
-    headerClass: "bg-purple-50 text-purple-700 border-purple-200",
-    statuses: ["mechanically_complete", "technically_verified"],
+    headerClass: "bg-teal-50 text-teal-700 border-teal-200",
+    statuses: ["completed"],
   },
   {
-    id: "done",
-    i18nKey: "kanban.done",
+    id: "closed",
+    i18nKey: "kanban.columnClosed",
     icon: <CheckCircle className="h-4 w-4" />,
     headerClass: "bg-slate-50 text-slate-600 border-slate-200",
-    statuses: ["closed", "cancelled"],
+    statuses: ["closed"],
+  },
+  {
+    id: "cancelled",
+    i18nKey: "kanban.columnCancelled",
+    icon: <XCircle className="h-4 w-4" />,
+    headerClass: "bg-red-50 text-red-700 border-red-200",
+    statuses: ["cancelled"],
   },
 ];
 

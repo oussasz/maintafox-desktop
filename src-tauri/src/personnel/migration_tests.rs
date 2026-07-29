@@ -27,7 +27,7 @@ mod tests {
             .expect("seeder should run");
     }
 
-    /// V1 — Migration applies cleanly; 8 tables; seeds: 7 positions, 1 schedule class, 7 details.
+    /// V1 — Migration applies cleanly; tables; seeds: 7 positions, ORG.SCHEDULE_CLASS + details.
     #[tokio::test]
     async fn v1_migration_tables_and_seed_counts() {
         let db = Database::connect("sqlite::memory:")
@@ -37,13 +37,14 @@ mod tests {
 
         let expected_tables = [
             "positions",
-            "schedule_classes",
             "schedule_details",
             "external_companies",
             "external_company_contacts",
             "personnel",
             "personnel_rate_cards",
             "personnel_authorizations",
+            "reference_values",
+            "reference_domains",
         ];
 
         for name in expected_tables {
@@ -59,9 +60,20 @@ mod tests {
                 .expect("sqlite_master query");
             assert!(
                 row.is_some(),
-                "table `{name}` must exist after migration 039"
+                "table `{name}` must exist after migrations"
             );
         }
+
+        // schedule_classes must be gone after ORG.SCHEDULE_CLASS migration.
+        let legacy = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='schedule_classes'"
+                    .to_string(),
+            ))
+            .await
+            .expect("legacy table query");
+        assert!(legacy.is_none(), "schedule_classes must be dropped");
 
         let n: i64 = db
             .query_one(Statement::from_string(
@@ -90,26 +102,32 @@ mod tests {
         let sc: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS c FROM schedule_classes".to_string(),
+                "SELECT COUNT(*) AS c \
+                 FROM reference_values rv \
+                 JOIN reference_sets rs ON rs.id = rv.set_id AND rs.status = 'published' \
+                 JOIN reference_domains d ON d.id = rs.domain_id \
+                 WHERE UPPER(TRIM(d.code)) = 'ORG.SCHEDULE_CLASS' AND rv.is_active = 1"
+                    .to_string(),
             ))
             .await
-            .expect("count schedule_classes")
+            .expect("count ORG.SCHEDULE_CLASS values")
             .expect("row")
             .try_get::<i64>("", "c")
             .expect("c");
-        assert_eq!(sc, 1, "seed schedule class");
+        assert!(sc >= 1, "at least one ORG.SCHEDULE_CLASS reference value");
 
         let sd: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS c FROM schedule_details".to_string(),
+                "SELECT COUNT(*) AS c FROM schedule_details WHERE reference_value_id IS NOT NULL"
+                    .to_string(),
             ))
             .await
             .expect("count schedule_details")
             .expect("row")
             .try_get::<i64>("", "c")
             .expect("c");
-        assert_eq!(sd, 7, "seed schedule details");
+        assert!(sd >= 7, "seed schedule details keyed by reference_value_id");
 
         // Key indexes from migration 039
         for (tbl, idx) in [

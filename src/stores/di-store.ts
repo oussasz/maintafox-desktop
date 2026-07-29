@@ -17,6 +17,7 @@ import {
 } from "@/services/di-service";
 import { toErrorMessage } from "@/utils/errors";
 import type {
+  AssetSearchResult,
   DiCreateInput,
   DiDraftUpdateInput,
   DiListFilter,
@@ -43,6 +44,9 @@ interface DiStoreState {
   // Create / edit form
   showCreateForm: boolean;
   editingDi: InterventionRequest | null;
+  /** Prefill equipment when opening create from asset context. */
+  createPrefillAsset: AssetSearchResult | null;
+  createPrefillEquipmentId: number | null;
   // Filter
   filter: DiListFilter;
   // Flags
@@ -54,7 +58,7 @@ interface DiStoreState {
   loadDis: () => Promise<void>;
   openDi: (id: number) => Promise<void>;
   closeDi: () => void;
-  openCreateForm: (di?: InterventionRequest) => void;
+  openCreateForm: (di?: InterventionRequest, prefillAsset?: AssetSearchResult | null) => void;
   closeCreateForm: () => void;
   submitNewDi: (input: DiCreateInput) => Promise<InterventionRequest>;
   updateDraft: (input: DiDraftUpdateInput) => Promise<void>;
@@ -67,6 +71,8 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
   activeDi: null,
   showCreateForm: false,
   editingDi: null,
+  createPrefillAsset: null,
+  createPrefillEquipmentId: null,
   filter: { ...DEFAULT_FILTER },
   loading: false,
   saving: false,
@@ -80,12 +86,22 @@ export const useDiStore = create<DiStoreState>()((set, get) => ({
     set({ activeDi: null });
   },
 
-  openCreateForm: (di) => {
-    set({ showCreateForm: true, editingDi: di ?? null });
+  openCreateForm: (di, prefillAsset) => {
+    set({
+      showCreateForm: true,
+      editingDi: di ?? null,
+      createPrefillAsset: di ? null : (prefillAsset ?? null),
+      createPrefillEquipmentId: di ? null : (prefillAsset?.id ?? null),
+    });
   },
 
   closeCreateForm: () => {
-    set({ showCreateForm: false, editingDi: null });
+    set({
+      showCreateForm: false,
+      editingDi: null,
+      createPrefillAsset: null,
+      createPrefillEquipmentId: null,
+    });
   },
 
   loadDis: async () => {

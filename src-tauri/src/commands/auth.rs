@@ -425,6 +425,7 @@ pub async fn get_device_trust_status(state: State<'_, AppState>) -> AppResult<de
         device_fingerprint: fingerprint,
         is_trusted: trust.is_some() && !trust.as_ref().is_some_and(|t| t.is_revoked),
         is_revoked: trust.as_ref().is_some_and(|t| t.is_revoked),
+        trust_state: device::trust_state_label(trust.as_ref()).to_string(),
         offline_allowed,
         offline_hours_remaining: offline_hours,
         device_label: trust.as_ref().and_then(|t| t.device_label.clone()),

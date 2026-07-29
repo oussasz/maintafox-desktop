@@ -4,15 +4,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { getUnreadCount } from "@/services/notification-service";
+import { useSessionStore } from "@/store/session-store";
 
 const POLL_INTERVAL_MS = 30_000;
 
 export function NotificationBell() {
   const [count, setCount] = useState(0);
   const intervalRef = useRef<number | null>(null);
+  const authenticated = useSessionStore((s) => s.info?.is_authenticated === true);
+  const locked = useSessionStore((s) => s.info?.is_locked === true);
 
   const poll = useCallback(async () => {
+    if (!isSessionActiveForBackgroundWork()) {
+      setCount(0);
+      return;
+    }
     try {
       const unread = await getUnreadCount();
       setCount(unread);
@@ -22,6 +30,15 @@ export function NotificationBell() {
   }, []);
 
   useEffect(() => {
+    if (!authenticated || locked) {
+      setCount(0);
+      if (intervalRef.current !== null) {
+        window.clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      return;
+    }
+
     void poll();
     intervalRef.current = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
     return () => {
@@ -29,7 +46,7 @@ export function NotificationBell() {
         window.clearInterval(intervalRef.current);
       }
     };
-  }, [poll]);
+  }, [authenticated, locked, poll]);
 
   return (
     <DropdownMenu>

@@ -11,8 +11,10 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::assets::{
     bindings,
+    decommission::{self, DecommissionAssetPayload},
     documents::{self, UpsertDocumentLinkPayload},
     health,
+    history::{self, AssetHistoryQuery},
     hierarchy::{self, LinkAssetPayload},
     identity::{self, CreateAssetPayload, UpdateAssetIdentityPayload},
     import::{self, ApplyPolicy},
@@ -136,6 +138,26 @@ pub async fn get_asset_health_score(
     health::get_asset_health_score(&state.db, asset_id).await
 }
 
+#[tauri::command]
+pub async fn list_asset_history_events(
+    query: AssetHistoryQuery,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<history::AssetHistoryEvent>> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    history::list_asset_history_events(&state.db, query).await
+}
+
+#[tauri::command]
+pub async fn get_asset_history_summary(
+    asset_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<history::AssetHistorySummary> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "eq.view", PermissionScope::Global);
+    history::get_asset_history_summary(&state.db, asset_id).await
+}
+
 // ─── Mutation commands (eq.manage) ────────────────────────────────────────────
 
 #[tauri::command]
@@ -222,6 +244,16 @@ pub async fn record_lifecycle_event(
     let user = require_session!(state);
     require_permission!(state, &user, "eq.manage", PermissionScope::Global);
     lifecycle::record_lifecycle_event(&state.db, payload, user.user_id).await
+}
+
+#[tauri::command]
+pub async fn decommission_asset(
+    payload: DecommissionAssetPayload,
+    state: State<'_, AppState>,
+) -> AppResult<identity::Asset> {
+    let user = require_session!(state);
+    require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+    decommission::decommission_asset(&state.db, payload, user.user_id).await
 }
 
 // ─── Meters & readings (eq.view / eq.manage) ─────────────────────────────────

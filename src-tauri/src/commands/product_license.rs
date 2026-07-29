@@ -36,6 +36,8 @@ pub struct ProductLicenseOnboardingState {
     pub tenant_id: Option<String>,
     /// Company / tenant display name from activation (when provided by the control plane).
     pub company_display_name: Option<String>,
+    /// Commercial edition from claim (`core`/`professional`/`enterprise`/`development`) when known.
+    pub license_edition: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -68,10 +70,18 @@ pub struct ProductActivationClaimRecord {
     pub reconnect_requires_fresh_heartbeat: Option<bool>,
     #[serde(default, alias = "company_display_name", alias = "company_name", alias = "tenant_name")]
     pub tenant_display_name: Option<String>,
+    #[serde(default)]
+    pub tenant_slug: Option<String>,
     #[serde(default, alias = "slot_limit", alias = "seat_limit")]
     pub device_limit: Option<i64>,
-    #[serde(default, alias = "tier", alias = "plan")]
+    #[serde(default, alias = "tier", alias = "plan", alias = "edition")]
     pub license_tier: Option<String>,
+    #[serde(default, alias = "rollout_cohort")]
+    pub license_plan: Option<String>,
+    #[serde(default)]
+    pub license_status: Option<String>,
+    #[serde(default)]
+    pub activated_device_count: Option<i64>,
     #[serde(default, alias = "demo_data", alias = "is_demo")]
     pub has_demo_data: Option<bool>,
     #[serde(default, alias = "tenant_initialized")]
@@ -199,6 +209,8 @@ pub enum ProductLicenseReconciliationOutcomeKind {
 pub struct ProductLicenseReconciliationInput {
     pub kind: ProductLicenseReconciliationOutcomeKind,
     pub claim: Option<ProductActivationClaimRecord>,
+    #[serde(default)]
+    pub entitlement_envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub app_version: Option<String>,
@@ -216,6 +228,215 @@ pub struct ProductLicenseDiagnostics {
     pub reconciliation: ProductLicenseReconciliationPolicy,
     pub diagnostics: Vec<ProductLicenseDiagnosticEvent>,
     pub has_activation_claim: bool,
+}
+
+/// Collapse control-plane / FE alias keys onto canonical `ProductActivationClaimRecord` fields.
+///
+/// `normalizeActivationPayload` (and some control-plane payloads) emit both a canonical name and
+/// its serde `alias` (e.g. `license_tier` + `edition`). Serde rejects that as a duplicate field;
+/// this sanitizer keeps one value per field so activation never fails on alias co-presence.
+fn sanitize_activation_claim_object(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    fn take_non_null(
+        obj: &mut serde_json::Map<String, serde_json::Value>,
+        key: &str,
+    ) -> Option<serde_json::Value> {
+        match obj.remove(key) {
+            Some(v) if !v.is_null() => Some(v),
+            _ => None,
+        }
+    }
+
+    fn prefer_canonical(
+        obj: &mut serde_json::Map<String, serde_json::Value>,
+        canonical: &str,
+        aliases: &[&str],
+    ) {
+        let mut chosen = take_non_null(obj, canonical);
+        for alias in aliases {
+            if let Some(v) = take_non_null(obj, alias) {
+                if chosen.is_none() {
+                    chosen = Some(v);
+                }
+            }
+        }
+        if let Some(v) = chosen {
+            obj.insert(canonical.to_string(), v);
+        }
+    }
+
+    // Commercial edition: prefer explicit `edition` over legacy tier/plan labels.
+    let edition = take_non_null(obj, "edition");
+    prefer_canonical(obj, "license_tier", &["tier", "plan"]);
+    prefer_canonical(obj, "license_plan", &["rollout_cohort"]);
+    if let Some(edition) = edition {
+        obj.insert("license_tier".to_string(), edition.clone());
+        obj.insert("license_plan".to_string(), edition);
+    }
+
+    prefer_canonical(
+        obj,
+        "tenant_display_name",
+        &["company_display_name", "company_name", "tenant_name"],
+    );
+    prefer_canonical(obj, "device_limit", &["slot_limit", "seat_limit"]);
+    prefer_canonical(obj, "has_demo_data", &["demo_data", "is_demo"]);
+    prefer_canonical(obj, "is_initialized", &["tenant_initialized"]);
+
+    // FE-only / control-plane noise — not part of ProductActivationClaimRecord.
+    for key in [
+        "force_update_mode",
+        "force_update_reason",
+        "force_update_policy_source",
+        "capabilities_digest",
+        "feature_flags_digest",
+        "machine_label",
+        "entitlement_envelope",
+    ] {
+        obj.remove(key);
+    }
+}
+
+fn extract_claim_and_envelope(
+    raw: &str,
+) -> AppResult<(
+    ProductActivationClaimRecord,
+    Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
+)> {
+    let mut value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+        AppError::ValidationFailed(vec![format!("claimJson must be valid JSON: {e}")])
+    })?;
+
+    let envelope = match value
+        .as_object_mut()
+        .and_then(|obj| obj.remove("entitlement_envelope"))
+        .filter(|v| !v.is_null())
+    {
+        Some(env_value) => Some(
+            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(
+                env_value,
+            )
+            .map_err(|e| {
+                AppError::ValidationFailed(vec![format!("entitlement_envelope is invalid: {e}")])
+            })?,
+        ),
+        None => None,
+    };
+
+    if let Some(obj) = value.as_object_mut() {
+        sanitize_activation_claim_object(obj);
+    }
+
+    let mut claim: ProductActivationClaimRecord = serde_json::from_value(value).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "claimJson must be valid ProductActivationClaimRecord JSON: {e}"
+        )])
+    })?;
+    // Prefer explicit edition fields for display when plan/tier missing.
+    if claim.license_plan.is_none() {
+        claim.license_plan = claim.license_tier.clone();
+    }
+    if claim.license_tier.is_none() {
+        claim.license_tier = claim.license_plan.clone();
+    }
+    Ok((claim, envelope))
+}
+
+async fn apply_claim_entitlement_envelope(
+    db: &DatabaseConnection,
+    envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
+) -> AppResult<()> {
+    let Some(envelope) = envelope else {
+        // #region agent log
+        {
+            let line = format!(
+                "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"A\",\"location\":\"product_license.rs:apply_claim_entitlement_envelope\",\"message\":\"claim had no entitlement_envelope\",\"data\":{{\"applied\":false}},\"timestamp\":{}}}\n",
+                chrono::Utc::now().timestamp_millis()
+            );
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    f.write_all(line.as_bytes())
+                });
+        }
+        // #endregion
+        return Ok(());
+    };
+    // Ensure trust material exists before verify (older DBs may have an empty table).
+    if let Err(e) = crate::license::security::ensure_default_licensing_trust_keys(db).await {
+        tracing::warn!(
+            event = "desktop_entitlement_trust_seed_failed",
+            error = %e,
+            "Failed to ensure licensing trust keys before envelope apply"
+        );
+    }
+    let result = match crate::entitlements::queries::apply_entitlement_envelope(db, envelope).await {
+        Ok(result) => result,
+        Err(e) => {
+            // #region agent log
+            {
+                let line = format!(
+                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"K-trust\",\"location\":\"product_license.rs:apply_claim_entitlement_envelope\",\"message\":\"envelope apply error soft-continued\",\"data\":{{\"error\":\"{}\"}},\"timestamp\":{}}}\n",
+                    e.to_string().replace('\\', "\\\\").replace('"', "'"),
+                    chrono::Utc::now().timestamp_millis()
+                );
+                let _ = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
+                    .and_then(|mut f| {
+                        use std::io::Write;
+                        f.write_all(line.as_bytes())
+                    });
+            }
+            // #endregion
+            // Soft phase: never roll activation back to degraded solely because envelope apply failed.
+            tracing::warn!(
+                event = "desktop_entitlement_envelope_apply_failed",
+                error = %e,
+                "Entitlement envelope apply failed; keeping activation success"
+            );
+            return Ok(());
+        }
+    };
+    // #region agent log
+    {
+        let line = format!(
+            "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"A-D\",\"location\":\"product_license.rs:apply_claim_entitlement_envelope\",\"message\":\"envelope apply result\",\"data\":{{\"applied\":true,\"verified\":{},\"envelopeId\":\"{}\",\"effectiveState\":\"{}\",\"verification\":\"{}\"}},\"timestamp\":{}}}\n",
+            result.verified,
+            result.envelope_id.replace('"', ""),
+            result.effective_state.replace('"', ""),
+            result.verification_result.replace('"', ""),
+            chrono::Utc::now().timestamp_millis()
+        );
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(line.as_bytes())
+            });
+    }
+    // #endregion
+    if !result.verified {
+        tracing::warn!(
+            event = "desktop_entitlement_envelope_unverified",
+            envelope_id = %result.envelope_id,
+            verification_result = %result.verification_result,
+            "Entitlement envelope not verified; continuing without active envelope"
+        );
+        return Ok(());
+    }
+    tracing::info!(
+        event = "desktop_entitlement_envelope_applied",
+        envelope_id = %result.envelope_id,
+        effective_state = %result.effective_state,
+        "Signed entitlement envelope applied from activation claim"
+    );
+    Ok(())
 }
 
 fn compute_backoff_at(attempt: u32) -> DateTime<Utc> {
@@ -297,6 +518,25 @@ pub async fn is_product_activation_complete(db: &DatabaseConnection) -> AppResul
     Ok(record_has_valid_activation_claim(&record))
 }
 
+fn commercial_edition_from_claim(claim: &ProductActivationClaimRecord) -> Option<String> {
+    for candidate in [
+        claim.license_tier.as_deref(),
+        claim.license_plan.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let v = candidate.trim().to_ascii_lowercase();
+        if matches!(
+            v.as_str(),
+            "core" | "professional" | "enterprise" | "development"
+        ) {
+            return Some(v);
+        }
+    }
+    None
+}
+
 fn onboarding_state_from_record(record: &ProductLicenseStateRecord) -> ProductLicenseOnboardingState {
     let complete = record_has_valid_activation_claim(record);
     ProductLicenseOnboardingState {
@@ -313,7 +553,29 @@ fn onboarding_state_from_record(record: &ProductLicenseStateRecord) -> ProductLi
         last_error_message: record.reconciliation.last_error_message.clone(),
         tenant_id: record.activation_claim.as_ref().map(|c| c.tenant_id.clone()),
         company_display_name: record.company_display_name.clone(),
+        license_edition: record
+            .activation_claim
+            .as_ref()
+            .and_then(commercial_edition_from_claim),
     }
+}
+
+/// Fields for the License Enforcement canonical view-model.
+pub async fn product_activation_view_fields(
+    db: &DatabaseConnection,
+) -> AppResult<(String, Option<String>)> {
+    let Some(record) = load_state_record_from_db(db).await? else {
+        return Ok(("uninitialized".to_string(), None));
+    };
+    let status = serde_json::to_value(&record.status)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "uninitialized".to_string());
+    let edition = record
+        .activation_claim
+        .as_ref()
+        .and_then(commercial_edition_from_claim);
+    Ok((status, edition))
 }
 
 /// Tenant context for sync exchange JSON (desktop → control plane).
@@ -369,6 +631,8 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         "policy_snapshots",
         "secure_secret_refs",
         "connection_profiles",
+        // System signing trust anchors — not tenant data; required for entitlement apply after wipe.
+        "licensing_trust_keys",
     ]);
 
     tracing::warn!(event = "desktop_tenant_runtime_reset_begin", "Starting runtime tenant data reset");
@@ -431,6 +695,10 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
     let wiped_rows_total = wipe_result?;
 
     crate::db::seeder::seed_system_data(&state.db).await?;
+    // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
+    // reference_* catalogs that seed_system_data does not cover (lookup_* only).
+    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db)
+        .await?;
     tracing::warn!(
         event = "desktop_tenant_runtime_reset_complete",
         wiped_rows_total,
@@ -672,6 +940,7 @@ pub async fn get_product_license_onboarding_state(state: State<'_, AppState>) ->
             last_error_message: None,
             tenant_id: None,
             company_display_name: None,
+            license_edition: None,
         })
     }
 }
@@ -696,16 +965,18 @@ pub async fn submit_product_license_key(
     if trimmed.len() < 8 {
         return Err(AppError::ValidationFailed(vec!["License key must be at least 8 characters.".into()]));
     }
+    let mut entitlement_envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput> = None;
     let parsed_claim = match claim_json {
         Some(raw) => {
-            let value: ProductActivationClaimRecord = serde_json::from_str(&raw)
-                .map_err(|_| AppError::ValidationFailed(vec!["claimJson must be valid ProductActivationClaimRecord JSON".into()]))?;
+            let (value, envelope) = extract_claim_and_envelope(&raw)?;
+            entitlement_envelope = envelope;
             tracing::info!(
                 event = "desktop_activation_submit_claim_received",
                 tenant_id = value.tenant_id.as_str(),
                 license_id = value.license_id.as_str(),
                 machine_fingerprint = value.machine_fingerprint.as_str(),
                 activation_token_len = value.activation_token.len(),
+                has_entitlement_envelope = entitlement_envelope.is_some(),
                 "Activation claim payload received before persistence"
             );
             Some(value)
@@ -785,6 +1056,7 @@ pub async fn submit_product_license_key(
     );
     persist_state_record(&state, changed_by_id, &record, "product license key submitted (state machine)")
         .await?;
+    apply_claim_entitlement_envelope(&state.db, entitlement_envelope).await?;
     crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, changed_by_id).await?;
     Ok(())
 }
@@ -805,8 +1077,98 @@ pub async fn apply_product_license_reconciliation(
     let mut record = load_state_record(&state)
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["No local product license state found.".into()]))?;
-    let outcome: ProductLicenseReconciliationInput = serde_json::from_str(&outcome_json)
-        .map_err(|_| AppError::ValidationFailed(vec!["outcomeJson must be valid ProductLicenseReconciliationInput JSON".into()]))?;
+    let outcome_value: serde_json::Value = serde_json::from_str(&outcome_json).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "outcomeJson must be valid JSON: {e}"
+        )])
+    })?;
+    // #region agent log
+    {
+        let kind = outcome_value.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let has_claim = outcome_value.get("claim").is_some();
+        let has_env = outcome_value.get("entitlement_envelope").is_some();
+        let line = format!(
+            "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"G-serde\",\"location\":\"product_license.rs:apply_reconciliation\",\"message\":\"reconciling outcome\",\"data\":{{\"kind\":\"{kind}\",\"hasClaim\":{has_claim},\"hasEnvelope\":{has_env}}},\"timestamp\":{}}}\n",
+            chrono::Utc::now().timestamp_millis()
+        );
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(line.as_bytes())
+            });
+    }
+    // #endregion
+    let entitlement_envelope = match outcome_value
+        .get("entitlement_envelope")
+        .cloned()
+        .filter(|v| !v.is_null())
+        .map(serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>)
+        .transpose()
+    {
+        Ok(v) => v,
+        Err(e) => {
+            // #region agent log
+            {
+                let line = format!(
+                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"G-serde\",\"location\":\"product_license.rs:envelope_parse\",\"message\":\"envelope deserialize failed; continuing without envelope\",\"data\":{{\"error\":\"{}\"}},\"timestamp\":{}}}\n",
+                    e.to_string().replace('\\', "\\\\").replace('"', "'"),
+                    chrono::Utc::now().timestamp_millis()
+                );
+                let _ = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
+                    .and_then(|mut f| {
+                        use std::io::Write;
+                        f.write_all(line.as_bytes())
+                    });
+            }
+            // #endregion
+            tracing::warn!(
+                event = "desktop_entitlement_envelope_parse_failed",
+                error = %e,
+                "Ignoring invalid entitlement_envelope during reconciliation (soft phase)"
+            );
+            None
+        }
+    };
+    // Strip envelope from claim object before typed deserialize (unknown nested shapes must not fail claim).
+    let mut claim_value = outcome_value.get("claim").cloned().unwrap_or(serde_json::Value::Null);
+    if let Some(obj) = claim_value.as_object_mut() {
+        obj.remove("entitlement_envelope");
+    }
+    let mut outcome_for_meta = outcome_value.clone();
+    if let Some(obj) = outcome_for_meta.as_object_mut() {
+        obj.remove("entitlement_envelope");
+        obj.insert("claim".into(), claim_value);
+    }
+    let mut outcome: ProductLicenseReconciliationInput = serde_json::from_value(outcome_for_meta)
+        .map_err(|e| {
+            // #region agent log
+            {
+                let line = format!(
+                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"G-serde\",\"location\":\"product_license.rs:outcome_parse\",\"message\":\"outcome deserialize failed\",\"data\":{{\"error\":\"{}\"}},\"timestamp\":{}}}\n",
+                    e.to_string().replace('\\', "\\\\").replace('"', "'"),
+                    chrono::Utc::now().timestamp_millis()
+                );
+                let _ = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
+                    .and_then(|mut f| {
+                        use std::io::Write;
+                        f.write_all(line.as_bytes())
+                    });
+            }
+            // #endregion
+            AppError::ValidationFailed(vec![format!(
+                "outcomeJson must be valid ProductLicenseReconciliationInput JSON: {e}"
+            )])
+        })?;
+    outcome.entitlement_envelope = entitlement_envelope;
 
     let now = Utc::now().to_rfc3339();
     record.reconciliation.last_attempt_at = Some(now.clone());
@@ -913,6 +1275,12 @@ pub async fn apply_product_license_reconciliation(
         "product license reconciliation state updated",
     )
     .await?;
+    if matches!(
+        outcome.kind,
+        ProductLicenseReconciliationOutcomeKind::Success
+    ) {
+        apply_claim_entitlement_envelope(&state.db, outcome.entitlement_envelope).await?;
+    }
     crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, changed_by_id).await?;
 
     Ok(onboarding_state_from_record(&record))
@@ -1006,4 +1374,98 @@ pub async fn get_control_plane_activation_bearer_token(state: State<'_, AppState
         return Ok(None);
     }
     Ok(rec.activation_claim.map(|c| c.activation_token))
+}
+
+/// Device-local activation token for policy refresh before/without an app session.
+#[tauri::command]
+pub async fn get_product_activation_token(state: State<'_, AppState>) -> AppResult<Option<String>> {
+    let record = load_state_record(&state).await?;
+    let Some(rec) = record else {
+        return Ok(None);
+    };
+    if !record_has_valid_activation_claim(&rec) {
+        return Ok(None);
+    }
+    Ok(rec.activation_claim.map(|c| c.activation_token))
+}
+
+#[cfg(test)]
+mod claim_json_tests {
+    use super::{extract_claim_and_envelope, sanitize_activation_claim_object};
+
+    #[test]
+    fn raw_alias_co_presence_fails_without_sanitize() {
+        // Documents the production failure mode before sanitize_activation_claim_object.
+        let raw = r#"{
+            "tenant_id": "t-1",
+            "license_id": "lic-1",
+            "machine_fingerprint": "fp-1",
+            "activation_token": "tok-1",
+            "license_tier": "professional",
+            "edition": "core"
+        }"#;
+        let value: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let err = serde_json::from_value::<super::ProductActivationClaimRecord>(value)
+            .expect_err("serde must reject edition+license_tier co-presence");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("duplicate") || msg.contains("edition") || msg.contains("license_tier"),
+            "unexpected serde error: {err}"
+        );
+    }
+
+    #[test]
+    fn accepts_claim_with_alias_and_canonical_co_present() {
+        // Mirrors FE normalizeActivationPayload which sets license_tier + edition (+ company aliases).
+        let raw = r#"{
+            "tenant_id": "t-1",
+            "license_id": "lic-1",
+            "machine_fingerprint": "fp-1",
+            "activation_token": "tok-1",
+            "license_tier": "professional",
+            "license_plan": "professional",
+            "edition": "core",
+            "company_display_name": "Acme",
+            "tenant_display_name": "Acme Corp",
+            "slot_limit": 3,
+            "device_limit": 5,
+            "force_update_mode": "off",
+            "capabilities_digest": "abc",
+            "entitlement_envelope": null
+        }"#;
+        let (claim, envelope) = extract_claim_and_envelope(raw).expect("claim should parse");
+        assert!(envelope.is_none());
+        assert_eq!(claim.tenant_id, "t-1");
+        assert_eq!(claim.activation_token, "tok-1");
+        // edition wins for commercial edition fields
+        assert_eq!(claim.license_tier.as_deref(), Some("core"));
+        assert_eq!(claim.license_plan.as_deref(), Some("core"));
+        assert_eq!(claim.tenant_display_name.as_deref(), Some("Acme Corp"));
+        assert_eq!(claim.device_limit, Some(5));
+    }
+
+    #[test]
+    fn rejects_invalid_json_with_detail() {
+        let err = extract_claim_and_envelope("{not-json").expect_err("must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("claimJson must be valid JSON"), "{msg}");
+    }
+
+    #[test]
+    fn sanitize_promotes_aliases_when_canonical_missing() {
+        let mut value = serde_json::json!({
+            "edition": "enterprise",
+            "company_name": "Beta SA",
+            "seat_limit": 10
+        });
+        let obj = value.as_object_mut().unwrap();
+        sanitize_activation_claim_object(obj);
+        assert_eq!(obj.get("license_tier").and_then(|v| v.as_str()), Some("enterprise"));
+        assert_eq!(obj.get("license_plan").and_then(|v| v.as_str()), Some("enterprise"));
+        assert_eq!(obj.get("tenant_display_name").and_then(|v| v.as_str()), Some("Beta SA"));
+        assert_eq!(obj.get("device_limit").and_then(|v| v.as_i64()), Some(10));
+        assert!(!obj.contains_key("edition"));
+        assert!(!obj.contains_key("company_name"));
+        assert!(!obj.contains_key("seat_limit"));
+    }
 }

@@ -1,4 +1,4 @@
-use sea_orm::{Database, DatabaseConnection};
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
 use sea_orm_migration::MigratorTrait;
 use sha2::{Digest, Sha256};
 
@@ -17,26 +17,30 @@ async fn setup_db() -> DatabaseConnection {
 }
 
 fn sign_envelope(input: &EntitlementEnvelopeInput) -> String {
-    let payload = serde_json::json!({
-        "envelope_id": input.envelope_id,
-        "previous_envelope_id": input.previous_envelope_id,
-        "lineage_version": input.lineage_version,
-        "issuer": input.issuer,
-        "key_id": input.key_id,
-        "signature_alg": input.signature_alg,
-        "tier": input.tier,
-        "state": input.state,
-        "channel": input.channel,
-        "machine_slots": input.machine_slots,
-        "feature_flags_json": input.feature_flags_json,
-        "capabilities_json": input.capabilities_json,
-        "policy_json": input.policy_json,
-        "issued_at": input.issued_at,
-        "valid_from": input.valid_from,
-        "valid_until": input.valid_until,
-        "offline_grace_until": input.offline_grace_until
-    })
-    .to_string();
+    let previous = match &input.previous_envelope_id {
+        Some(v) => serde_json::to_string(v).unwrap(),
+        None => "null".to_string(),
+    };
+    let payload = format!(
+        "{{\"envelope_id\":{},\"previous_envelope_id\":{},\"lineage_version\":{},\"issuer\":{},\"key_id\":{},\"signature_alg\":{},\"tier\":{},\"state\":{},\"channel\":{},\"machine_slots\":{},\"feature_flags_json\":{},\"capabilities_json\":{},\"policy_json\":{},\"issued_at\":{},\"valid_from\":{},\"valid_until\":{},\"offline_grace_until\":{}}}",
+        serde_json::to_string(&input.envelope_id).unwrap(),
+        previous,
+        input.lineage_version,
+        serde_json::to_string(&input.issuer).unwrap(),
+        serde_json::to_string(&input.key_id).unwrap(),
+        serde_json::to_string(&input.signature_alg).unwrap(),
+        serde_json::to_string(&input.tier).unwrap(),
+        serde_json::to_string(&input.state).unwrap(),
+        serde_json::to_string(&input.channel).unwrap(),
+        input.machine_slots,
+        serde_json::to_string(&input.feature_flags_json).unwrap(),
+        serde_json::to_string(&input.capabilities_json).unwrap(),
+        serde_json::to_string(&input.policy_json).unwrap(),
+        serde_json::to_string(&input.issued_at).unwrap(),
+        serde_json::to_string(&input.valid_from).unwrap(),
+        serde_json::to_string(&input.valid_until).unwrap(),
+        serde_json::to_string(&input.offline_grace_until).unwrap(),
+    );
     let mut payload_hasher = Sha256::new();
     payload_hasher.update(payload);
     let payload_hash = hex::encode(payload_hasher.finalize());
@@ -65,19 +69,50 @@ fn base_envelope(envelope_id: &str, lineage_version: i64, previous: Option<&str>
         state: "active".to_string(),
         channel: "stable".to_string(),
         machine_slots: 5,
-        feature_flags_json: r#"{"sync_panel":true,"advanced_budget":true}"#.to_string(),
+        feature_flags_json: r#"{}"#.to_string(),
         capabilities_json:
-            r#"{"inventory.write":true,"finance.write":true,"planning.write":true,"sync.runtime":true}"#
+            r#"{"equipment":true,"inventory":true,"finance":true,"planning":true,"sync":true,"pm":true,"personnel":true}"#
                 .to_string(),
-        policy_json: r#"{"grace_allowed_capabilities":["sync.runtime","core.read"]}"#.to_string(),
-        issued_at: "2026-04-16T00:00:00Z".to_string(),
-        valid_from: "2026-04-16T00:00:00Z".to_string(),
+        policy_json: r#"{"grace_allowed_modules":["sync","equipment","inventory"]}"#.to_string(),
+        issued_at: "2026-07-26T00:00:00Z".to_string(),
+        valid_from: "2026-07-26T00:00:00Z".to_string(),
         valid_until: "2099-01-01T00:00:00Z".to_string(),
         offline_grace_until: "2099-01-03T00:00:00Z".to_string(),
         signature: String::new(),
     };
     input.signature = sign_envelope(&input);
     input
+}
+
+#[tokio::test]
+async fn soft_lineage_refresh_supersedes_without_growing_rows() {
+    let db = setup_db().await;
+    let env1 = base_envelope("env-soft-1", 1, None);
+    queries::apply_entitlement_envelope(&db, env1)
+        .await
+        .expect("apply soft v1");
+
+    let mut env2 = base_envelope("env-soft-2", 1, None);
+    env2.signature = sign_envelope(&env2);
+    queries::apply_entitlement_envelope(&db, env2)
+        .await
+        .expect("apply soft refresh");
+
+    let count: i64 = db
+        .query_one(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DatabaseBackend::Sqlite,
+            "SELECT COUNT(*) AS count FROM entitlement_envelopes",
+            [],
+        ))
+        .await
+        .expect("count query")
+        .expect("count row")
+        .try_get("", "count")
+        .expect("count");
+    assert_eq!(count, 1, "soft-lineage refresh must supersede in place");
+
+    let summary = queries::get_entitlement_summary(&db).await.expect("summary");
+    assert_eq!(summary.envelope_id.as_deref(), Some("env-soft-2"));
 }
 
 #[tokio::test]
@@ -96,6 +131,9 @@ async fn signed_envelope_persists_and_capability_check_is_enforced() {
     queries::enforce_capability_for_permission(&db, "inv.manage")
         .await
         .expect("inventory capability allowed");
+    queries::enforce_capability_for_permission(&db, "inv.view")
+        .await
+        .expect("inventory view maps to same module");
 }
 
 #[tokio::test]
@@ -128,7 +166,7 @@ async fn state_transitions_and_mid_session_policy_refresh_are_consistent() {
 
     let mut env2 = base_envelope("env-101", 2, Some("env-100"));
     env2.state = "suspended".to_string();
-    env2.capabilities_json = r#"{"inventory.write":true,"finance.write":false,"planning.write":true,"sync.runtime":true}"#
+    env2.capabilities_json = r#"{"equipment":true,"inventory":true,"finance":false,"planning":true,"sync":true}"#
         .to_string();
     env2.signature = sign_envelope(&env2);
     queries::apply_entitlement_envelope(&db, env2)

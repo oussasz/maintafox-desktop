@@ -23,12 +23,41 @@
     "expand": "Expand",
     "collapse": "Collapse",
     "newSet": "New Set",
+    "workingCatalog": "Working catalog",
     "renameDomain": "Rename Domain",
+    "systemCatalogDomain": "System catalog (read-only)",
     "status": {
       "draft": "Draft",
       "validated": "Validated",
       "published": "Published",
       "superseded": "Superseded"
+    }
+  },
+  "governance": {
+    "category": {
+      "systemCatalog": "System",
+      "operationalDictionary": "Operational dictionary",
+      "controlledCatalog": "Controlled catalog",
+      "unknown": "Catalog"
+    },
+    "categoryShort": {
+      "systemCatalog": "System",
+      "operationalDictionary": "Dictionary",
+      "controlledCatalog": "Catalog",
+      "unknown": "Catalog"
+    },
+    "readOnly": {
+      "published": "This version is published. Create a draft to modify this reference catalog.",
+      "publishedProtected": "This catalog is published and protected. Modifications are not allowed.",
+      "superseded": "This version has been superseded. Create a draft from the published version to make changes.",
+      "supersededProtected": "This version has been superseded. Modifications are not allowed.",
+      "systemCatalog": "This system catalog is read-only.",
+      "createDraft": "Create draft",
+      "creatingDraft": "Creating draft…",
+      "discardDraft": "Discard draft",
+      "discardingDraft": "Discarding…",
+      "discardDraftTitle": "Discard draft?",
+      "discardDraftDescription": "This permanently deletes the draft and all of its values. The published catalog is not affected."
     }
   },
   "editor": {
@@ -58,7 +87,12 @@
     "deactivate": "Deactivate",
     "save": "Save",
     "edit": "Edit",
-    "aliases": "Aliases"
+    "aliases": "Aliases",
+    "disabledReason": {
+      "noPermission": "You do not have permission to change this value.",
+      "systemValue": "System values cannot be modified or removed.",
+      "alreadyInactive": "This value is already inactive."
+    }
   },
   "alias": {
     "title": "Aliases – {{label}}",
@@ -73,6 +107,8 @@
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",
+    "deleteTitle": "Delete alias?",
+    "deleteDescription": "Permanently delete the alias \"{{label}}\"?",
     "edit": "Edit",
     "preferred": "Preferred"
   },
@@ -158,7 +194,9 @@
     "lockedHint": "System priority (code and level protected)",
     "active": "Active",
     "inactive": "Inactive",
-    "empty": "No priorities loaded."
+    "empty": "No priorities loaded.",
+    "deactivateTitle": "Deactivate priority",
+    "deactivateDescription": "Deactivate priority \"{{code}}\"?"
   },
   "woStatuses": {
     "panelTitle": "Work order statuses",
@@ -175,5 +213,119 @@
     "terminalNo": "No",
     "lockedHint": "Status code locked (engine contract)",
     "empty": "No statuses loaded."
+  },
+  "synthetic": {
+    "published": "v1 — published",
+    "articleFamilies": {
+      "title": "Stock article families",
+      "add": "Add family",
+      "empty": "No families yet.",
+      "colName": "Name",
+      "namePlaceholder": "Name…",
+      "deactivateTitle": "Deactivate family",
+      "deactivateDescription": "Deactivate article family \"{{code}}\"?"
+    },
+    "taxCategories": {
+      "title": "Stock article tax categories",
+      "add": "Add tax category",
+      "empty": "No tax categories yet.",
+      "colFr": "FR",
+      "colEn": "EN",
+      "codePlaceholder": "VAT_20",
+      "labelPlaceholder": "VAT 20%",
+      "frPlaceholder": "TVA 20%",
+      "enPlaceholder": "VAT 20%",
+      "deactivateTitle": "Deactivate tax category",
+      "deactivateDescription": "Deactivate tax category \"{{code}}\"?"
+    },
+    "woTypes": {
+      "codePlaceholder": "custom_type"
+    },
+    "woStatuses": {
+      "colorPlaceholder": "#RRGGBB"
+    }
+  },
+  "combobox": {
+    "searchPlaceholder": "Search…",
+    "loading": "Loading…",
+    "noneOption": "— None —",
+    "parentLabel": "Parent",
+    "parentMissing": "Parent required",
+    "parentRequired": "Select the parent value first.",
+    "fieldLabel": "Label",
+    "fieldLabelPlaceholder": "Display label",
+    "fieldDescription": "Description",
+    "fieldDescriptionPlaceholder": "Optional description",
+    "labelRequired": "Label is required.",
+    "createNotAllowed": "Creation is not allowed for this catalog.",
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "schedulePattern": {
+    "title": "Weekly work calendar",
+    "column": "Schedule",
+    "cancel": "Cancel",
+    "close": "Close schedule pattern",
+    "loading": "Loading schedule pattern…",
+    "saving": "Saving…",
+    "save": "Save schedule",
+    "readOnly": "You do not have permission to edit this schedule pattern.",
+    "shiftPatternCode": "Shift pattern code",
+    "nominalHours": "Nominal hours / day",
+    "isContinuous": "Continuous (24h)",
+    "weekCanvas": "Work week",
+    "dayMode": "Day mode",
+    "day": "Day",
+    "start": "Start",
+    "end": "End",
+    "restDay": "Rest",
+    "restDayLabel": "Rest day",
+    "dayAriaWork": "{{day}}: {{start}} to {{end}}",
+    "dayAriaRest": "{{day}}: rest day",
+    "mode": {
+      "work": "Working day",
+      "rest": "Rest day"
+    },
+    "metrics": {
+      "workingDays": "Working days",
+      "restDays": "Rest days",
+      "weeklyHours": "Weekly hours",
+      "dayDuration": "Day duration",
+      "hoursValue": "{{hours}} h"
+    },
+    "templates": {
+      "title": "Templates",
+      "normal_day": "Normal day",
+      "two_by_eight": "2×8 coverage",
+      "three_by_eight": "3×8 / 24h day",
+      "continuous_24_7": "24/7 continuous",
+      "weekend_only": "Weekend only",
+      "personalized": "Custom"
+    },
+    "validation": {
+      "generic": "Fix the schedule before saving.",
+      "incompleteWeek": "The week must contain exactly seven days.",
+      "missingTime": "Each working day needs a start and end time.",
+      "invalidFormat": "Times must use HH:mm format.",
+      "identicalTimes": "Start and end times must be different."
+    },
+    "days": {
+      "monday": "Monday",
+      "tuesday": "Tuesday",
+      "wednesday": "Wednesday",
+      "thursday": "Thursday",
+      "friday": "Friday",
+      "saturday": "Saturday",
+      "sunday": "Sunday"
+    },
+    "daysShort": {
+      "monday": "Mon",
+      "tuesday": "Tue",
+      "wednesday": "Wed",
+      "thursday": "Thu",
+      "friday": "Fri",
+      "saturday": "Sat",
+      "sunday": "Sun"
+    }
   }
 }

@@ -1,4 +1,4 @@
-﻿//! Budget and finance IPC commands.
+//! Budget and finance IPC commands.
 
 use tauri::State;
 
@@ -26,9 +26,13 @@ use crate::{require_permission, require_session};
 
 async fn require_fin_budget_or_legacy_manage(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
     if check_permission(&state.db, user_id, "fin.budget", &PermissionScope::Global).await? {
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, "fin.budget").await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, "fin.budget").await?;
         return Ok(());
     }
     if check_permission(&state.db, user_id, "fin.manage", &PermissionScope::Global).await? {
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, "fin.manage").await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, "fin.manage").await?;
         return Ok(());
     }
     Err(AppError::PermissionDenied(
@@ -38,6 +42,8 @@ async fn require_fin_budget_or_legacy_manage(state: &State<'_, AppState>, user_i
 
 async fn require_fin_post(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
     if check_permission(&state.db, user_id, "fin.post", &PermissionScope::Global).await? {
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, "fin.post").await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, "fin.post").await?;
         return Ok(());
     }
     Err(AppError::PermissionDenied(
@@ -47,6 +53,8 @@ async fn require_fin_post(state: &State<'_, AppState>, user_id: i32) -> AppResul
 
 async fn require_fin_report(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
     if check_permission(&state.db, user_id, "fin.report", &PermissionScope::Global).await? {
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, "fin.report").await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, "fin.report").await?;
         return Ok(());
     }
     Err(AppError::PermissionDenied(

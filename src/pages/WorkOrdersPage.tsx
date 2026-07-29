@@ -13,37 +13,34 @@ import {
   Columns3,
   Filter,
   List,
+  MoreHorizontal,
   Plus,
   RefreshCw,
-  Search,
   Shield,
   Wrench,
-  X,
 } from "lucide-react";
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
+import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { WoArchivePanel } from "@/components/wo/WoArchivePanel";
 import { WoCalendarView } from "@/components/wo/WoCalendarView";
+import { WoCancelDialog } from "@/components/wo/WoCancelDialog";
+import { WoContextMenu } from "@/components/wo/WoContextMenu";
 import { WoDashboardView } from "@/components/wo/WoDashboardView";
 import { WoDetailDialog } from "@/components/wo/WoDetailDialog";
 import { WoDiManagementPanel } from "@/components/wo/WoDiManagementPanel";
 import { WoFormDialog } from "@/components/wo/WoFormDialog";
 import { WoIntegrityWorkbench } from "@/components/wo/WoIntegrityWorkbench";
 import { WoKanbanView } from "@/components/wo/WoKanbanView";
-import { mfInput, mfLayout } from "@/design-system/tokens";
+import { printWoFiche } from "@/components/wo/WoPrintFiche";
+import { mfLayout } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
@@ -64,6 +61,7 @@ export function WorkOrdersPage() {
   const loadWos = useWoStore((s) => s.loadWos);
   const openWo = useWoStore((s) => s.openWo);
   const activeWo = useWoStore((s) => s.activeWo);
+  const detailLoading = useWoStore((s) => s.detailLoading);
   const closeWo = useWoStore((s) => s.closeActiveWo);
   const openCreateForm = useWoStore((s) => s.openCreateForm);
   const setFilter = useWoStore((s) => s.setFilter);
@@ -74,41 +72,37 @@ export function WorkOrdersPage() {
   const [showFilters, setShowFilters] = useState(
     () => localStorage.getItem("wo-show-filters") !== "0",
   );
+  const [cancelTarget, setCancelTarget] = useState<WorkOrder | null>(null);
   const woTypes = useWorkOrderTypesCatalog((s) => s.types);
   const loadWoTypes = useWorkOrderTypesCatalog((s) => s.load);
   const woPriorities = useWorkOrderPrioritiesCatalog((s) => s.priorities);
   const loadWoPriorities = useWorkOrderPrioritiesCatalog((s) => s.load);
 
-  // ── Search with debounce ──────────────────────────────────────────────
+  // ── Search / filters (SmartFilterBar) ─────────────────────────────────
 
   const [searchInput, setSearchInput] = useState("");
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const handleSearchChange = useCallback(
-    (e: ChangeEvent<HTMLInputElement>) => {
-      const val = e.target.value;
-      setSearchInput(val);
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-      searchTimerRef.current = setTimeout(() => {
-        setFilter({ search: val || null });
-        void loadWos();
-      }, 300);
-    },
-    [setFilter, loadWos],
-  );
-
-  const clearSearch = useCallback(() => {
-    setSearchInput("");
-    setFilter({ search: null });
-    void loadWos();
-  }, [setFilter, loadWos]);
-
-  // ── Status / type / priority filters ──────────────────────────────
+  useEffect(() => {
+    const raw = searchParams.get("openWo");
+    if (!raw) return;
+    const id = Number(raw);
+    if (!Number.isFinite(id) || id <= 0) return;
+    void openWo(id);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("openWo");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, openWo, setSearchParams]);
 
   const STATUS_OPTIONS = useMemo(
     () =>
       Object.keys(STATUS_STYLE).map((code) => ({
-        code,
+        value: code,
         label: t(`status.${statusToI18nKey(code)}`),
       })),
     [t],
@@ -119,7 +113,7 @@ export function WorkOrdersPage() {
       woTypes
         .filter((type) => type.is_active)
         .map((type) => ({
-          code: type.code,
+          value: type.code,
           label: t(`type.${type.code === "condition_based" ? "conditionBased" : type.code}`, {
             defaultValue: type.label,
           }),
@@ -132,41 +126,104 @@ export function WorkOrdersPage() {
       woPriorities
         .filter((p) => p.is_active)
         .map((p) => ({
-          value: p.level,
+          value: String(p.level),
           label: i18n.language.toLowerCase().startsWith("fr") ? p.label_fr : p.label,
         })),
     [woPriorities, i18n.language],
   );
 
-  const [statusFilter, setStatusFilter] = useState<string>("__all__");
-  const [typeFilter, setTypeFilter] = useState<string>("__all__");
-  const [priorityFilter, setPriorityFilter] = useState<string>("__all__");
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
+
+  const onSearchChange = useCallback(
+    (val: string) => {
+      setFilter({ search: val.trim() || null });
+      void loadWos();
+    },
+    [setFilter, loadWos],
+  );
 
   const handleStatusFilter = useCallback(
-    (val: string) => {
+    (val: string | null) => {
       setStatusFilter(val);
-      setFilter({ status_codes: val === "__all__" ? null : [val] });
+      setFilter({ status_codes: val ? [val] : null });
       void loadWos();
     },
     [setFilter, loadWos],
   );
 
   const handleTypeFilter = useCallback(
-    (val: string) => {
+    (val: string | null) => {
       setTypeFilter(val);
-      setFilter({ type_codes: val === "__all__" ? null : [val] });
+      setFilter({ type_codes: val ? [val] : null });
       void loadWos();
     },
     [setFilter, loadWos],
   );
 
   const handlePriorityFilter = useCallback(
-    (val: string) => {
+    (val: string | null) => {
       setPriorityFilter(val);
-      setFilter({ urgency_level: val === "__all__" ? null : Number(val) });
+      setFilter({ urgency_level: val ? Number(val) : null });
       void loadWos();
     },
     [setFilter, loadWos],
+  );
+
+  const resetFilters = useCallback(() => {
+    setSearchInput("");
+    setStatusFilter(null);
+    setTypeFilter(null);
+    setPriorityFilter(null);
+    setFilter({
+      search: null,
+      status_codes: null,
+      type_codes: null,
+      urgency_level: null,
+    });
+    void loadWos();
+  }, [setFilter, loadWos]);
+
+  const filterDefs = useMemo<SmartFilterDef[]>(
+    () => [
+      {
+        id: "status",
+        kind: "select",
+        label: t("list.filters.status"),
+        options: STATUS_OPTIONS,
+        value: statusFilter,
+        onChange: handleStatusFilter,
+      },
+      {
+        id: "type",
+        kind: "select",
+        label: t("list.filters.type"),
+        options: TYPE_OPTIONS,
+        value: typeFilter,
+        onChange: handleTypeFilter,
+      },
+      {
+        id: "priority",
+        kind: "select",
+        label: t("list.filters.priority"),
+        options: PRIORITY_OPTIONS,
+        value: priorityFilter,
+        onChange: handlePriorityFilter,
+      },
+    ],
+    [
+      t,
+      STATUS_OPTIONS,
+      TYPE_OPTIONS,
+      PRIORITY_OPTIONS,
+      statusFilter,
+      typeFilter,
+      priorityFilter,
+      handleStatusFilter,
+      handleTypeFilter,
+      handlePriorityFilter,
+    ],
   );
 
   // ── Load on mount ─────────────────────────────────────────────────────
@@ -257,8 +314,38 @@ export function WorkOrdersPage() {
           </span>
         ),
       },
+      {
+        id: "actions",
+        header: "",
+        cell: ({ row }) => {
+          const wo = row.original;
+          return (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <WoContextMenu
+                wo={wo}
+                onViewDetail={(item) => void openWo(item.id)}
+                onEdit={(item) => openCreateForm(item)}
+                onStart={(item) => void openWo(item.id)}
+                onComplete={(item) => void openWo(item.id)}
+                onPrint={(item) =>
+                  void printWoFiche(item, t, i18n.resolvedLanguage || i18n.language || "fr")
+                }
+                onCancel={(item) => setCancelTarget(item)}
+              >
+                <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                  <MoreHorizontal className="h-4 w-4" />
+                  <span className="sr-only">{t("contextMenu.viewDetail")}</span>
+                </Button>
+              </WoContextMenu>
+            </div>
+          );
+        },
+      },
     ],
-    [t, i18n.language],
+    [t, i18n.language, i18n.resolvedLanguage, openWo, openCreateForm],
   );
 
   return (
@@ -355,68 +442,15 @@ export function WorkOrdersPage() {
 
       {/* ── Filters ──────────────────────────────────────────────────── */}
       {showFilters && (
-        <div className={mfLayout.moduleFilterBar}>
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
-            <Input
-              className={mfInput.filterSearch}
-              placeholder={t("search.placeholder")}
-              value={searchInput}
-              onChange={handleSearchChange}
-            />
-            {searchInput && (
-              <button
-                type="button"
-                className="absolute right-2 top-2 text-text-muted hover:text-text-primary"
-                onClick={clearSearch}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-
-          <Select value={statusFilter} onValueChange={handleStatusFilter}>
-            <SelectTrigger className={cn(mfInput.filterSelect, "w-[160px]")}>
-              <SelectValue placeholder={t("list.filters.status")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">{t("list.filters.status")}</SelectItem>
-              {STATUS_OPTIONS.map((opt) => (
-                <SelectItem key={opt.code} value={opt.code}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={typeFilter} onValueChange={handleTypeFilter}>
-            <SelectTrigger className={cn(mfInput.filterSelect, "w-[160px]")}>
-              <SelectValue placeholder={t("list.filters.type")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">{t("list.filters.type")}</SelectItem>
-              {TYPE_OPTIONS.map((opt) => (
-                <SelectItem key={opt.code} value={opt.code}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={priorityFilter} onValueChange={handlePriorityFilter}>
-            <SelectTrigger className={cn(mfInput.filterSelect, "w-[130px]")}>
-              <SelectValue placeholder={t("list.filters.priority")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">{t("list.filters.priority")}</SelectItem>
-              {PRIORITY_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={String(opt.value)}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <SmartFilterBar
+          searchPlaceholder={t("search.placeholder")}
+          searchValue={searchInput}
+          onSearchInputChange={setSearchInput}
+          onSearchChange={onSearchChange}
+          filters={filterDefs}
+          resultCount={total}
+          onReset={resetFilters}
+        />
       )}
 
       {/* ── DI management panel (ot.edit permission) ─────────────────── */}
@@ -458,7 +492,20 @@ export function WorkOrdersPage() {
       <WoFormDialog />
 
       {/* ── Detail dialog ────────────────────────────────────────────── */}
-      <WoDetailDialog wo={activeWo?.wo ?? null} open={activeWo !== null} onClose={closeWo} />
+      <WoDetailDialog
+        wo={activeWo?.wo ?? null}
+        open={activeWo !== null || detailLoading}
+        loading={detailLoading && !activeWo}
+        onClose={closeWo}
+      />
+
+      <WoCancelDialog
+        wo={cancelTarget}
+        open={cancelTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setCancelTarget(null);
+        }}
+      />
     </div>
   );
 }

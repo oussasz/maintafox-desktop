@@ -9,10 +9,14 @@
 
 import { create } from "zustand";
 
-import { normalizeReferenceDomainForUi } from "@/lib/reference-domain-ui";
-import { listReferenceDomains, listReferenceSets } from "@/services/reference-service";
+import { preferredWorkingSet } from "@/lib/reference-governance-ui";
+import { listReferenceDomains, listReferenceSets, getReferenceGovernanceCapabilities } from "@/services/reference-service";
 import { toErrorMessage } from "@/utils/errors";
-import type { ReferenceDomain, ReferenceSet } from "@shared/ipc-types";
+import type {
+  ReferenceDomain,
+  ReferenceGovernanceCapabilities,
+  ReferenceSet,
+} from "@shared/ipc-types";
 
 /**
  * Domains seeded in demo/legacy data that are superseded by synthetic sidebar entries
@@ -38,6 +42,7 @@ const INVENTORY_ARTICLE_FAMILY_DOMAIN: ReferenceDomain = {
   name: "Familles articles de stock",
   structure_type: "flat",
   governance_level: "tenant_managed",
+  governance_category: "operational_dictionary",
   is_extendable: true,
   validation_rules_json: null,
   created_at: "",
@@ -61,6 +66,7 @@ const INVENTORY_TAX_CATEGORY_DOMAIN: ReferenceDomain = {
   name: "Catégories TVA articles de stock",
   structure_type: "flat",
   governance_level: "tenant_managed",
+  governance_category: "operational_dictionary",
   is_extendable: true,
   validation_rules_json: null,
   created_at: "",
@@ -84,6 +90,7 @@ const WORK_ORDER_TYPES_DOMAIN: ReferenceDomain = {
   name: "Types d'ordre de travail",
   structure_type: "flat",
   governance_level: "protected_analytical",
+  governance_category: "system_catalog",
   is_extendable: true,
   validation_rules_json: null,
   created_at: "",
@@ -107,6 +114,7 @@ const WORK_ORDER_PRIORITIES_DOMAIN: ReferenceDomain = {
   name: "Priorités d'ordre de travail",
   structure_type: "flat",
   governance_level: "protected_analytical",
+  governance_category: "system_catalog",
   is_extendable: false,
   validation_rules_json: null,
   created_at: "",
@@ -130,6 +138,7 @@ const WORK_ORDER_STATUSES_DOMAIN: ReferenceDomain = {
   name: "Statuts d'ordre de travail",
   structure_type: "flat",
   governance_level: "protected_analytical",
+  governance_category: "system_catalog",
   is_extendable: false,
   validation_rules_json: null,
   created_at: "",
@@ -153,6 +162,9 @@ interface ReferenceManagerStoreState {
   /** All reference domains loaded from backend */
   domains: ReferenceDomain[];
   domainsLoading: boolean;
+
+  /** Domain-level capabilities (no set) from governance engine */
+  domainCapabilities: Record<number, ReferenceGovernanceCapabilities>;
 
   /** Sets keyed by domain_id — loaded lazily on expand */
   setsMap: Record<number, ReferenceSet[]>;
@@ -195,6 +207,7 @@ interface ReferenceManagerStoreState {
 export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((set, get) => ({
   domains: [],
   domainsLoading: false,
+  domainCapabilities: {},
   setsMap: {},
   setsLoading: {},
   selectedDomainId: null,
@@ -207,11 +220,9 @@ export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((se
     set({ domainsLoading: true, error: null });
     try {
       const domains = await listReferenceDomains();
-      const filteredDomains = domains
-        .filter(
-          (domain) => !SUPERSEDED_REFERENCE_DOMAIN_CODES.has(domain.code.trim().toUpperCase()),
-        )
-        .map(normalizeReferenceDomainForUi);
+      const filteredDomains = domains.filter(
+        (domain) => !SUPERSEDED_REFERENCE_DOMAIN_CODES.has(domain.code.trim().toUpperCase()),
+      );
       const hasInventoryFamilyDomain = filteredDomains.some(
         (domain) => domain.id === INVENTORY_ARTICLE_FAMILY_DOMAIN_ID,
       );
@@ -235,8 +246,25 @@ export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((se
         ...(hasWorkOrderPrioritiesDomain ? [] : [WORK_ORDER_PRIORITIES_DOMAIN]),
         ...(hasWorkOrderStatusesDomain ? [] : [WORK_ORDER_STATUSES_DOMAIN]),
       ].sort((a, b) => a.name.localeCompare(b.name));
+
+      const capabilityEntries = await Promise.all(
+        filteredDomains.map(async (d) => {
+          try {
+            const caps = await getReferenceGovernanceCapabilities(d.id, null);
+            return [d.id, caps] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const domainCapabilities: Record<number, ReferenceGovernanceCapabilities> = {};
+      for (const entry of capabilityEntries) {
+        if (entry) domainCapabilities[entry[0]] = entry[1];
+      }
+
       set({
         domains: nextDomains,
+        domainCapabilities,
         setsMap: {
           ...get().setsMap,
           [INVENTORY_ARTICLE_FAMILY_DOMAIN_ID]: [INVENTORY_ARTICLE_FAMILY_SET],
@@ -312,6 +340,18 @@ export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((se
       set({
         setsMap: { ...get().setsMap, [domainId]: sets },
       });
+      // Category B: auto-open the published working catalog.
+      const domain = get().domains.find((d) => d.id === domainId);
+      if (
+        domain?.governance_category === "operational_dictionary" &&
+        get().selectedDomainId === domainId &&
+        get().selectedSetId == null
+      ) {
+        const working = preferredWorkingSet(sets);
+        if (working) {
+          get().selectSet(working.id, domainId);
+        }
+      }
     } catch (err) {
       set({ error: toErrorMessage(err) });
     } finally {
@@ -322,15 +362,21 @@ export const useReferenceManagerStore = create<ReferenceManagerStoreState>()((se
   },
 
   selectDomain: (domainId) => {
-    const { expandedDomainIds } = get();
+    const { expandedDomainIds, setsMap, domains } = get();
     const isExpanded = expandedDomainIds.includes(domainId);
+    const domain = domains.find((d) => d.id === domainId);
+    const existingSets = setsMap[domainId];
+    let autoSetId: number | null = null;
+    if (domain?.governance_category === "operational_dictionary" && existingSets) {
+      autoSetId = preferredWorkingSet(existingSets)?.id ?? null;
+    }
     set({
       selectedDomainId: domainId,
-      selectedSetId: null,
+      selectedSetId: autoSetId,
       expandedDomainIds: isExpanded ? expandedDomainIds : [...expandedDomainIds, domainId],
     });
     // Eagerly load sets when domain is selected
-    if (!get().setsMap[domainId]) {
+    if (!existingSets) {
       void get().loadSetsForDomain(domainId);
     }
   },

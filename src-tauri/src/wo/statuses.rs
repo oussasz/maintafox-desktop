@@ -1,6 +1,6 @@
 //! Work order lifecycle statuses (`work_order_statuses`) — engine contract + reference UI.
 //!
-//! Must stay aligned with migration `m20260409_000022_wo_domain_core` (12 canonical rows).
+//! Option B catalog (8 statuses). Aligned with migration `m20260814_000130_wo_lifecycle_redesign`.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
@@ -10,38 +10,13 @@ use crate::errors::{AppError, AppResult};
 /// Canonical rows: (code, label_en, color_hex, macro_state, is_terminal, sequence)
 const REQUIRED_WORK_ORDER_STATUSES: &[(&str, &str, &str, &str, i64, i64)] = &[
     ("draft", "Draft", "#94A3B8", "open", 0, 1),
-    ("awaiting_approval", "Awaiting Approval", "#F59E0B", "open", 0, 2),
-    ("planned", "Planned", "#3B82F6", "open", 0, 3),
-    ("ready_to_schedule", "Ready To Schedule", "#6366F1", "open", 0, 4),
-    ("assigned", "Assigned", "#8B5CF6", "executing", 0, 5),
-    (
-        "waiting_for_prerequisite",
-        "Waiting For Prerequisite",
-        "#F97316",
-        "executing",
-        0,
-        6,
-    ),
-    ("in_progress", "In Progress", "#10B981", "executing", 0, 7),
-    ("paused", "Paused", "#EF4444", "executing", 0, 8),
-    (
-        "mechanically_complete",
-        "Mechanically Complete",
-        "#06B6D4",
-        "completed",
-        0,
-        9,
-    ),
-    (
-        "technically_verified",
-        "Technically Verified",
-        "#22C55E",
-        "completed",
-        0,
-        10,
-    ),
-    ("closed", "Closed", "#64748B", "closed", 1, 11),
-    ("cancelled", "Cancelled", "#DC2626", "cancelled", 1, 12),
+    ("planning", "Planning", "#3B82F6", "open", 0, 2),
+    ("ready", "Ready", "#8B5CF6", "open", 0, 3),
+    ("in_progress", "In Progress", "#10B981", "executing", 0, 4),
+    ("on_hold", "On Hold", "#F97316", "executing", 0, 5),
+    ("completed", "Completed", "#06B6D4", "completed", 0, 6),
+    ("closed", "Closed", "#64748B", "closed", 1, 7),
+    ("cancelled", "Cancelled", "#DC2626", "cancelled", 1, 8),
 ];
 
 const REQUIRED_COUNT: usize = REQUIRED_WORK_ORDER_STATUSES.len();
@@ -204,6 +179,7 @@ pub async fn list_work_order_statuses(db: &DatabaseConnection) -> AppResult<Vec<
             DbBackend::Sqlite,
             "SELECT id, code, label, color, macro_state, is_terminal, is_system, sequence \
              FROM work_order_statuses \
+             WHERE is_system = 1 \
              ORDER BY sequence ASC, id ASC"
                 .to_string(),
         ))

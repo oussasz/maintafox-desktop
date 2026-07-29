@@ -5,20 +5,24 @@
 //!
 //! Functions:
 //!   save_failure_detail     — upsert structured failure taxonomy (symptom/mode/cause/effect)
-//!   save_verification       — record verification + transition to technically_verified
-//!   close_wo                — quality-gated closure with cost roll-up
-//!   reopen_wo               — supervised reopen within configurable recurrence window
+//!   save_verification       — supervisor review action on completed (no status change)
+//!   close_wo                — quality-gated closure completed → closed
+//!   reopen_wo               — completed → in_progress or planning by reason
 //!   get_failure_details     — list failure detail rows for a WO
 //!   get_verifications       — list verification rows for a WO
 
 use crate::activity::emitter;
 use crate::audit;
+use crate::auth::password;
 use crate::errors::{AppError, AppResult};
 use crate::inventory::queries as inventory_queries;
+use crate::reliability::advanced_rams::queries as advanced_rams_queries;
+use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 use crate::reliability::queries as reliability_queries;
 use crate::wo::queries;
 use crate::wo::sync_stage;
-use chrono::Utc;
+use crate::wo::time::now_utc_z;
+use chrono::{Duration, Utc};
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait,
 };
@@ -43,6 +47,12 @@ pub struct WoFailureDetail {
     pub is_permanent_repair: bool,
     pub cause_not_determined: bool,
     pub notes: Option<String>,
+    #[serde(default)]
+    pub failure_mode_label: Option<String>,
+    #[serde(default)]
+    pub failure_cause_label: Option<String>,
+    #[serde(default)]
+    pub failure_effect_label: Option<String>,
 }
 
 /// Row from `work_order_verifications`.
@@ -94,6 +104,12 @@ pub struct WoCloseInput {
     pub no_downtime_attestation: Option<bool>,
     #[serde(default)]
     pub no_downtime_attestation_reason: Option<String>,
+    #[serde(default)]
+    pub fmeca_parts_override_reason: Option<String>,
+    #[serde(default)]
+    pub fmeca_parts_override_signed_by_id: Option<i64>,
+    #[serde(default)]
+    pub fmeca_parts_override_signer_password: Option<String>,
 }
 
 /// Input for reopening a recently closed WO.
@@ -103,6 +119,9 @@ pub struct WoReopenInput {
     pub actor_id: i64,
     pub expected_row_version: i64,
     pub reason: String,
+    /// Target status: `in_progress` (default) or `planning`.
+    #[serde(default)]
+    pub target_status: Option<String>,
 }
 
 /// Input for updating root cause analysis fields on the WO.
@@ -124,6 +143,18 @@ const VALID_RECURRENCE_LEVELS: &[&str] = &["none", "low", "medium", "high"];
 /// WO types that require failure coding and root cause before closure.
 const FAILURE_REQUIRED_TYPE_CODES: &[&str] = &["corrective", "emergency"];
 
+const FAILURE_DETAIL_SELECT: &str = "\
+    SELECT fd.id, fd.work_order_id, fd.symptom_id, fd.failure_mode_id, fd.failure_cause_id, \
+           fd.failure_effect_id, fd.is_temporary_repair, fd.is_permanent_repair, \
+           fd.cause_not_determined, fd.notes, \
+           fm.label AS failure_mode_label, \
+           fc.label AS failure_cause_label, \
+           fe.label AS failure_effect_label \
+    FROM work_order_failure_details fd \
+    LEFT JOIN reference_values fm ON fm.id = fd.failure_mode_id \
+    LEFT JOIN reference_values fc ON fc.id = fd.failure_cause_id \
+    LEFT JOIN reference_values fe ON fe.id = fd.failure_effect_id";
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Row mapping
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -132,6 +163,59 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
     AppError::Internal(anyhow::anyhow!(
         "WO closeout row decode failed for column '{column}': {e}"
     ))
+}
+
+async fn validate_failure_mode_governance(
+    db: &impl ConnectionTrait,
+    failure_mode_id: Option<i64>,
+) -> AppResult<Option<String>> {
+    let published_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c
+             FROM reference_values rv
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id
+             INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE UPPER(TRIM(rd.code)) = UPPER(TRIM('WORK.FAILURE_MODES'))
+               AND rs.status = 'published'
+               AND rv.is_active = 1",
+            [],
+        ))
+        .await?;
+    let published_count: i64 = published_row
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("WORK.FAILURE_MODES published count missing")))?
+        .try_get("", "c")
+        .map_err(|e| decode_err("work_failure_modes_published_count", e))?;
+    if published_count <= 0 {
+        return Ok(Some("GATE_CLOSEOUT_REFERENCE_MODES_NOT_PUBLISHED".into()));
+    }
+
+    if let Some(mode_id) = failure_mode_id {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS c
+                 FROM reference_values rv
+                 INNER JOIN reference_sets rs ON rs.id = rv.set_id
+                 INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+                 WHERE rv.id = ?
+                   AND rv.is_active = 1
+                   AND rs.status = 'published'
+                   AND UPPER(TRIM(rd.code)) = UPPER(TRIM('WORK.FAILURE_MODES'))",
+                [mode_id.into()],
+            ))
+            .await?;
+        let governed_count: i64 = row
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failure mode governance count missing")))?
+            .try_get("", "c")
+            .map_err(|e| decode_err("governed_failure_mode_count", e))?;
+        if governed_count <= 0 {
+            return Ok(Some(format!(
+                "GATE_CLOSEOUT_FAILURE_MODE_NOT_GOVERNED:failure_mode_id={mode_id}"
+            )));
+        }
+    }
+    Ok(None)
 }
 
 fn map_failure_detail(row: &sea_orm::QueryResult) -> AppResult<WoFailureDetail> {
@@ -169,6 +253,15 @@ fn map_failure_detail(row: &sea_orm::QueryResult) -> AppResult<WoFailureDetail> 
         notes: row
             .try_get::<Option<String>>("", "notes")
             .map_err(|e| decode_err("notes", e))?,
+        failure_mode_label: row
+            .try_get::<Option<String>>("", "failure_mode_label")
+            .unwrap_or(None),
+        failure_cause_label: row
+            .try_get::<Option<String>>("", "failure_cause_label")
+            .unwrap_or(None),
+        failure_effect_label: row
+            .try_get::<Option<String>>("", "failure_effect_label")
+            .unwrap_or(None),
     })
 }
 
@@ -331,6 +424,10 @@ struct CloseoutPolicyRow {
     allow_close_with_cause_mode_only: bool,
     require_verification_return_to_service: bool,
     notes_min_length_when_cnd: i64,
+    require_fmeca_parts_for_critical: bool,
+    fmeca_parts_override_reason_min_length: i64,
+    fmeca_parts_override_require_distinct_signer: bool,
+    fmeca_parts_override_allowed_roles: Vec<String>,
 }
 
 async fn load_closeout_policy(
@@ -342,7 +439,9 @@ async fn load_closeout_policy(
             DbBackend::Sqlite,
             "SELECT id, require_downtime_if_production_impact, \
              allow_close_with_cause_not_determined, allow_close_with_cause_mode_only, \
-             require_verification_return_to_service, notes_min_length_when_cnd \
+             require_verification_return_to_service, notes_min_length_when_cnd, \
+             require_fmeca_parts_for_critical, fmeca_parts_override_reason_min_length, \
+             fmeca_parts_override_require_distinct_signer, fmeca_parts_override_allowed_roles_json \
              FROM closeout_validation_policies WHERE id = ?",
             [policy_id.into()],
         ))
@@ -352,6 +451,24 @@ async fn load_closeout_policy(
                 "closeout_validation_policies missing id {policy_id}"
             ))
         })?;
+
+    let allowed_roles_json: String = row
+        .try_get::<Option<String>>("", "fmeca_parts_override_allowed_roles_json")
+        .map_err(|e| decode_err("fmeca_parts_override_allowed_roles_json", e))?
+        .unwrap_or_else(|| {
+            "[\"Supervisor\",\"Maintenance Supervisor\",\"Administrator\",\"Superadmin\"]".into()
+        });
+    let allowed_roles = serde_json::from_str::<Vec<String>>(&allowed_roles_json)
+        .unwrap_or_else(|_| vec![
+            "Supervisor".into(),
+            "Maintenance Supervisor".into(),
+            "Administrator".into(),
+            "Superadmin".into(),
+        ])
+        .into_iter()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .collect::<Vec<_>>();
 
     Ok(CloseoutPolicyRow {
         require_downtime_if_production_impact: row
@@ -373,7 +490,160 @@ async fn load_closeout_policy(
         notes_min_length_when_cnd: row
             .try_get::<i64>("", "notes_min_length_when_cnd")
             .map_err(|e| decode_err("notes_min_length_when_cnd", e))?,
+        require_fmeca_parts_for_critical: row
+            .try_get::<i64>("", "require_fmeca_parts_for_critical")
+            .map_err(|e| decode_err("require_fmeca_parts_for_critical", e))?
+            != 0,
+        fmeca_parts_override_reason_min_length: row
+            .try_get::<i64>("", "fmeca_parts_override_reason_min_length")
+            .map_err(|e| decode_err("fmeca_parts_override_reason_min_length", e))?,
+        fmeca_parts_override_require_distinct_signer: row
+            .try_get::<i64>("", "fmeca_parts_override_require_distinct_signer")
+            .map_err(|e| decode_err("fmeca_parts_override_require_distinct_signer", e))?
+            != 0,
+        fmeca_parts_override_allowed_roles: allowed_roles,
     })
+}
+
+async fn has_active_user(db: &impl ConnectionTrait, user_id: i64) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c FROM user_accounts WHERE id = ? AND is_active = 1 AND deleted_at IS NULL",
+            [user_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("active user count missing")))?;
+    let count: i64 = row
+        .try_get("", "c")
+        .map_err(|e| decode_err("active_user_count", e))?;
+    Ok(count > 0)
+}
+
+async fn verify_user_password(
+    db: &impl ConnectionTrait,
+    user_id: i64,
+    password_raw: &str,
+) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT password_hash
+             FROM user_accounts
+             WHERE id = ? AND is_active = 1 AND deleted_at IS NULL",
+            [user_id.into()],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(false);
+    };
+    let hash: Option<String> = row
+        .try_get("", "password_hash")
+        .map_err(|e| decode_err("override_signer_password_hash", e))?;
+    let Some(hash) = hash else {
+        return Ok(false);
+    };
+    password::verify_password(password_raw, &hash)
+}
+
+async fn has_supervisor_override_role(
+    db: &impl ConnectionTrait,
+    user_id: i64,
+    allowed_role_names: &[String],
+) -> AppResult<bool> {
+    if allowed_role_names.is_empty() {
+        return Ok(false);
+    }
+    let role_list = allowed_role_names
+        .iter()
+        .map(|v| format!("'{}'", v.replace('\'', "''").to_lowercase()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT COUNT(*) AS c
+         FROM user_scope_assignments usa
+         INNER JOIN roles r ON r.id = usa.role_id
+         WHERE usa.user_id = ?
+           AND usa.deleted_at IS NULL
+           AND r.deleted_at IS NULL
+           AND LOWER(TRIM(r.name)) IN ({role_list})"
+    );
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            [user_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("override role count missing")))?;
+    let count: i64 = row
+        .try_get("", "c")
+        .map_err(|e| decode_err("override_role_count", e))?;
+    Ok(count > 0)
+}
+
+async fn has_critical_fmeca_part_suggestions(
+    db: &impl ConnectionTrait,
+    equipment_id: i64,
+    failure_mode_id: i64,
+    rpn_critical: i64,
+) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c
+             FROM fmeca_analyses fa
+             INNER JOIN fmeca_items fi ON fi.analysis_id = fa.id
+             INNER JOIN fmeca_item_parts fip ON fip.fmeca_item_id = fi.id
+             WHERE fa.equipment_id = ?
+               AND fi.failure_mode_id = ?
+               AND COALESCE(fi.rpn, COALESCE(fi.severity, 0) * COALESCE(fi.occurrence, 0) * COALESCE(fi.detectability, 0)) >= ?",
+            [equipment_id.into(), failure_mode_id.into(), rpn_critical.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("critical fmeca suggestion count missing")))?;
+    let count: i64 = row
+        .try_get("", "c")
+        .map_err(|e| decode_err("critical_fmeca_suggestion_count", e))?;
+    Ok(count > 0)
+}
+
+async fn has_consumed_critical_suggested_part(
+    db: &impl ConnectionTrait,
+    wo_id: i64,
+    equipment_id: i64,
+    failure_mode_id: i64,
+    rpn_critical: i64,
+) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c
+             FROM work_order_parts wop
+             WHERE wop.work_order_id = ?
+               AND COALESCE(wop.quantity_used, 0) > 0
+               AND wop.article_id IN (
+                 SELECT DISTINCT fip.article_id
+                 FROM fmeca_analyses fa
+                 INNER JOIN fmeca_items fi ON fi.analysis_id = fa.id
+                 INNER JOIN fmeca_item_parts fip ON fip.fmeca_item_id = fi.id
+                 WHERE fa.equipment_id = ?
+                   AND fi.failure_mode_id = ?
+                   AND COALESCE(fi.rpn, COALESCE(fi.severity, 0) * COALESCE(fi.occurrence, 0) * COALESCE(fi.detectability, 0)) >= ?
+               )",
+            [
+                wo_id.into(),
+                equipment_id.into(),
+                failure_mode_id.into(),
+                rpn_critical.into(),
+            ],
+        ))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("consumed critical suggested part count missing")))?;
+    let count: i64 = row
+        .try_get("", "c")
+        .map_err(|e| decode_err("consumed_critical_suggested_part_count", e))?;
+    Ok(count > 0)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -498,7 +768,7 @@ pub async fn save_failure_detail(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT * FROM work_order_failure_details WHERE work_order_id = ?",
+            &format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
             [input.wo_id.into()],
         ))
         .await?
@@ -512,16 +782,16 @@ pub async fn save_failure_detail(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// B) save_verification — mechanically_complete → technically_verified
+// B) save_verification — supervisor review on completed (no status change)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Record a technical verification and transition the WO to technically_verified.
+/// Record a supervisor verification while WO stays in `completed`.
 ///
 /// Enforces:
-///   - WO must be in `mechanically_complete`
+///   - WO must be in `completed`
 ///   - `result` must be one of: pass, fail, monitor
 ///   - `verified_by_id` must differ from `primary_responsible_id` (no self-verification)
-///   - Only `pass` with `return_to_service_confirmed` triggers the status transition
+///   - Pass + return_to_service stamps `technically_verified_at` but does not change status
 pub async fn save_verification(
     db: &DatabaseConnection,
     input: SaveVerificationInput,
@@ -546,9 +816,15 @@ pub async fn save_verification(
 
     let txn = db.begin().await?;
 
-    // ── Guard: WO must be in mechanically_complete ────────────────────────
+    // ── Guard: WO must be in completed ────────────────────────────────────
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
-    guard_wo_transition(&current_status, &WoStatus::TechnicallyVerified)
+    if current_status != WoStatus::Completed {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "La revue superviseur n'est disponible qu'en statut completed (actuel: '{from_code}')."
+        )]));
+    }
+    use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
+    assert_action_allowed(&current_status, WoAction::SupervisorReview)
         .map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     // ── No self-verification ──────────────────────────────────────────────
@@ -579,7 +855,7 @@ pub async fn save_verification(
     }
 
     // ── Insert verification record ────────────────────────────────────────
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = now_utc_z();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -607,25 +883,18 @@ pub async fn save_verification(
     ))
     .await?;
 
-    // ── Transition to technically_verified ─────────────────────────────────
-    // Only pass + return_to_service_confirmed triggers the transition.
-    // fail/monitor records the verification but leaves WO in mechanically_complete.
+    // Stamp review fields; status stays completed until Close.
     if input.result == "pass" && input.return_to_service_confirmed {
-        let tv_status_id = resolve_status_id(&txn, "technically_verified").await?;
-
-        // Update recurrence_risk_level on the WO if provided
         let result = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE work_orders SET \
-                    status_id = ?, \
                     technically_verified_at = ?, \
                     recurrence_risk_level = COALESCE(?, recurrence_risk_level), \
                     row_version = row_version + 1, \
                     updated_at = ? \
                  WHERE id = ? AND row_version = ?",
                 [
-                    tv_status_id.into(),
                     now.clone().into(),
                     input
                         .recurrence_risk_level
@@ -639,20 +908,18 @@ pub async fn save_verification(
             ))
             .await?;
         check_concurrency(result.rows_affected())?;
-
-        log_transition(
-            &txn,
-            input.wo_id,
-            &from_code,
-            "technically_verified",
-            "verify",
-            input.verified_by_id,
-            None,
-            input.notes.as_deref(),
-            &now,
-        )
-        .await?;
     }
+
+    crate::wo::workflow::events::emit_action_event(
+        &txn,
+        input.wo_id,
+        "review_recorded",
+        Some(input.verified_by_id),
+        Some(&from_code),
+        Some(&from_code),
+        None,
+    )
+    .await?;
 
     txn.commit().await?;
 
@@ -706,10 +973,17 @@ impl PreflightResult {
 /// All blocking conditions are collected and returned together so the
 /// user sees every issue at once, not one-at-a-time.
 pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult<WorkOrder> {
+    // Load settings before opening the transaction — SQLite single-connection pools
+    // deadlock if we call back into `db` while `txn` holds the only connection.
+    let rpn_critical = advanced_rams_queries::fmeca_rpn_critical_threshold_i64(db).await?;
+
     let txn = db.begin().await?;
 
-    // ── Guard: technically_verified → closed ──────────────────────────────
+    // ── Guard: completed → closed ─────────────────────────────────────────
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
+    use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
+    assert_action_allowed(&current_status, WoAction::Close)
+        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
     guard_wo_transition(&current_status, &WoStatus::Closed)
         .map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
@@ -839,6 +1113,9 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                          (Failure mode is required.)",
                     );
                 }
+                if let Some(gov_err) = validate_failure_mode_governance(&txn, failure_mode_id).await? {
+                    preflight.add(gov_err);
+                }
                 if failure_cause_id.is_none() && !policy.allow_close_with_cause_mode_only {
                     preflight.add(
                         "Cause de defaillance obligatoire (ISO 14224 — failure cause), \
@@ -872,6 +1149,93 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             preflight.add(
                 "Resume de cause racine requis. (Root cause summary required.)",
             );
+        }
+    }
+
+    // (c3) Critical FMECA suggested-part requirement
+    if is_failure_required && policy.require_fmeca_parts_for_critical {
+        let row = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT wo.equipment_id, fd.failure_mode_id
+                 FROM work_orders wo
+                 LEFT JOIN work_order_failure_details fd ON fd.work_order_id = wo.id
+                 WHERE wo.id = ?",
+                [input.wo_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::NotFound {
+                entity: "WorkOrder".into(),
+                id: input.wo_id.to_string(),
+            })?;
+        let equipment_id: Option<i64> = row
+            .try_get::<Option<i64>>("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?;
+        let failure_mode_id: Option<i64> = row
+            .try_get::<Option<i64>>("", "failure_mode_id")
+            .map_err(|e| decode_err("failure_mode_id", e))?;
+
+        if let (Some(eq_id), Some(mode_id)) = (equipment_id, failure_mode_id) {
+            let has_suggestions =
+                has_critical_fmeca_part_suggestions(&txn, eq_id, mode_id, rpn_critical).await?;
+            if has_suggestions {
+                let has_matched_consumed_parts = has_consumed_critical_suggested_part(
+                    &txn,
+                    input.wo_id,
+                    eq_id,
+                    mode_id,
+                    rpn_critical,
+                )
+                .await?;
+                let reason_min = policy.fmeca_parts_override_reason_min_length.max(1) as usize;
+                let override_reason_ok = input
+                    .fmeca_parts_override_reason
+                    .as_deref()
+                    .map(|s| s.trim().len() >= reason_min)
+                    .unwrap_or(false);
+                let signer_id_opt = input.fmeca_parts_override_signed_by_id;
+                let signer_id = signer_id_opt.unwrap_or_default();
+                let signer_exists = signer_id > 0 && has_active_user(&txn, signer_id).await?;
+                let signer_has_role = signer_exists
+                    && has_supervisor_override_role(
+                        &txn,
+                        signer_id,
+                        &policy.fmeca_parts_override_allowed_roles,
+                    )
+                    .await?;
+                let signer_is_distinct = !policy.fmeca_parts_override_require_distinct_signer
+                    || (signer_id > 0 && signer_id != input.actor_id);
+                let signer_password_ok = if signer_exists {
+                    match input.fmeca_parts_override_signer_password.as_deref() {
+                        Some(raw) if !raw.trim().is_empty() => verify_user_password(&txn, signer_id, raw).await?,
+                        _ => false,
+                    }
+                } else {
+                    false
+                };
+                let signer_ok = signer_exists && signer_has_role && signer_is_distinct && signer_password_ok;
+
+                if !(has_matched_consumed_parts || (override_reason_ok && signer_ok)) {
+                    preflight.add("GATE_CLOSEOUT_FMECA_PARTS_REQUIRED");
+                }
+                if !has_matched_consumed_parts && !override_reason_ok {
+                    preflight.add(format!(
+                        "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_REASON_REQUIRED:min_len={reason_min}"
+                    ));
+                }
+                if !has_matched_consumed_parts && !signer_ok {
+                    preflight.add("GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNATURE_REQUIRED");
+                }
+                if !has_matched_consumed_parts && signer_id_opt == Some(input.actor_id) {
+                    preflight.add("GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_MUST_DIFFER");
+                }
+                if !has_matched_consumed_parts && signer_exists && !signer_has_role {
+                    preflight.add("GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_ROLE_INVALID");
+                }
+                if !has_matched_consumed_parts && signer_exists && signer_has_role && signer_is_distinct && !signer_password_ok {
+                    preflight.add("GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_AUTH_FAILED");
+                }
+            }
         }
     }
 
@@ -1016,7 +1380,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         .try_get::<Option<String>>("", "actual_start")
         .map_err(|e| decode_err("actual_start", e))?;
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = now_utc_z();
 
     // Compute actual_duration_hours from actual_start to now
     let actual_duration_hours: Option<f64> = if actual_start.is_some() {
@@ -1042,6 +1406,8 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         0i64
     };
     let no_dt_reason = input.no_downtime_attestation_reason.clone();
+    let fmeca_override_reason = input.fmeca_parts_override_reason.clone();
+    let fmeca_override_signed_by_id = input.fmeca_parts_override_signed_by_id;
 
     let result = txn
         .execute(Statement::from_sql_and_values(
@@ -1058,6 +1424,8 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 closeout_validation_profile_id = ?, \
                 no_downtime_attestation = ?, \
                 no_downtime_attestation_reason = ?, \
+                fmeca_parts_override_reason = ?, \
+                fmeca_parts_override_signed_by_id = ?, \
                 row_version = row_version + 1, \
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
@@ -1076,6 +1444,12 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 no_dt_reason
                     .map(sea_orm::Value::from)
                     .unwrap_or(sea_orm::Value::from(None::<String>)),
+                fmeca_override_reason
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                fmeca_override_signed_by_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<i64>)),
                 now.clone().into(),
                 input.wo_id.into(),
                 input.expected_row_version.into(),
@@ -1123,6 +1497,26 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         tracing::warn!(target: "maintafox", "ingest_failure_event_from_closed_wo: {e}");
     }
 
+    // Optimistic immediate RAMS KPI refresh for the impacted equipment.
+    if let Ok(Some(wo)) = queries::get_work_order(db, input.wo_id).await {
+        if let Some(equipment_id) = wo.equipment_id {
+            let period_end = Utc::now();
+            let period_start = period_end - Duration::days(365);
+            let refresh_input = RefreshReliabilityKpiSnapshotInput {
+                equipment_id,
+                period_start: period_start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                period_end: period_end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                min_sample_n: Some(1),
+                repeat_lookback_days: Some(30),
+            };
+            if let Err(e) =
+                reliability_queries::refresh_reliability_kpi_snapshot(db, refresh_input).await
+            {
+                tracing::warn!(target: "maintafox", "refresh_reliability_kpi_snapshot after close: {e}");
+            }
+        }
+    }
+
     let wo_id_str = input.wo_id.to_string();
     let _ = emitter::emit_wo_event(
         db,
@@ -1157,15 +1551,10 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// D) reopen_wo — closed → technically_verified within recurrence window
+// D) reopen_wo — completed → in_progress or planning
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Reopen a recently-closed WO, reverting it to `technically_verified`.
-///
-/// Guards:
-///   - WO must be in `closed` status
-///   - `closed_at` must be within the configurable recurrence window (default 7 days)
-///   - All original close-out evidence is preserved
+/// Reopen a completed WO to execution (`in_progress`) or plan (`planning`).
 pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResult<WorkOrder> {
     if input.reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -1173,59 +1562,32 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         ]));
     }
 
+    let target = match input.target_status.as_deref().unwrap_or("in_progress") {
+        "planning" => WoStatus::Planning,
+        "in_progress" => WoStatus::InProgress,
+        other => {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Cible de reouverture invalide '{other}'. Utilisez 'in_progress' ou 'planning'."
+            )]));
+        }
+    };
+
     let txn = db.begin().await?;
 
-    // ── Guard: must be closed ─────────────────────────────────────────────
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
-    if current_status != WoStatus::Closed {
+    use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
+    assert_action_allowed(&current_status, WoAction::Reopen)
+        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    if current_status != WoStatus::Completed {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Seuls les OT clotures peuvent etre reouverts. Statut actuel : '{from_code}'."
+            "Seuls les OT completed peuvent etre reouverts. Statut actuel : '{from_code}'."
         )]));
     }
+    guard_wo_transition(&current_status, &target)
+        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
-    // ── Check recurrence window ───────────────────────────────────────────
-    let setting_row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT setting_value_json FROM app_settings WHERE setting_key = 'wo_reopen_window_days'",
-            [],
-        ))
-        .await?;
-    let window_days: i64 = setting_row
-        .and_then(|r| r.try_get::<String>("", "setting_value_json").ok())
-        .and_then(|v| v.trim_matches('"').parse::<i64>().ok())
-        .unwrap_or(7);
-
-    let window_row = txn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT \
-                closed_at, \
-                ROUND(JULIANDAY('now') - JULIANDAY(closed_at), 2) AS days_since_close \
-             FROM work_orders WHERE id = ?",
-            [input.wo_id.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: input.wo_id.to_string(),
-        })?;
-
-    let days_since_close: f64 = window_row
-        .try_get::<f64>("", "days_since_close")
-        .map_err(|e| decode_err("days_since_close", e))?;
-
-    if days_since_close > window_days as f64 {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "La fenetre de reouverture ({window_days} jours) est depassee. \
-             L'OT a ete cloture il y a {days_since_close:.1} jours. \
-             (Reopen window of {window_days} days exceeded.)"
-        )]));
-    }
-
-    // ── Transition: closed → technically_verified ─────────────────────────
-    let tv_status_id = resolve_status_id(&txn, "technically_verified").await?;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let target_status_id = resolve_status_id(&txn, target.as_str()).await?;
+    let now = now_utc_z();
 
     let result = txn
         .execute(Statement::from_sql_and_values(
@@ -1233,13 +1595,14 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
             "UPDATE work_orders SET \
                 status_id = ?, \
                 reopen_count = reopen_count + 1, \
-                last_closed_at = closed_at, \
-                closed_at = NULL, \
+                mechanically_completed_at = NULL, \
+                technically_verified_at = NULL, \
+                actual_end = NULL, \
                 row_version = row_version + 1, \
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
             [
-                tv_status_id.into(),
+                target_status_id.into(),
                 now.clone().into(),
                 input.wo_id.into(),
                 input.expected_row_version.into(),
@@ -1252,7 +1615,7 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         &txn,
         input.wo_id,
         &from_code,
-        "technically_verified",
+        target.as_str(),
         "reopen",
         input.actor_id,
         None,
@@ -1261,13 +1624,16 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
     )
     .await?;
 
-    txn
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "DELETE FROM failure_events WHERE source_type = 'work_order' AND source_id = ?",
-            [input.wo_id.into()],
-        ))
-        .await?;
+    crate::wo::workflow::events::emit_action_event(
+        &txn,
+        input.wo_id,
+        "reopened",
+        Some(input.actor_id),
+        Some(&from_code),
+        Some(target.as_str()),
+        Some(&input.reason),
+    )
+    .await?;
 
     txn.commit().await?;
 
@@ -1291,7 +1657,7 @@ pub async fn get_failure_details(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT * FROM work_order_failure_details WHERE work_order_id = ?",
+            &format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
             [wo_id.into()],
         ))
         .await?;
@@ -1341,7 +1707,7 @@ pub async fn update_wo_rca(
         )]));
     }
 
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = now_utc_z();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

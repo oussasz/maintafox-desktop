@@ -3,18 +3,19 @@
  *
  * Accessible treegrid for the org designer workspace. Renders the flattened
  * snapshot as depth-indented rows with capability badges, child counts,
- * and keyboard navigation.
+ * and keyboard navigation. Search/filters use SmartFilterBar (client-side).
  */
 
 import type { TFunction } from "i18next";
-import { Plus, Search } from "lucide-react";
-import { useMemo } from "react";
+import { Plus } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
+import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useOrgDesignerStore } from "@/stores/org-designer-store";
 import type { OrgDesignerNodeRow } from "@shared/ipc-types";
@@ -34,8 +35,8 @@ function capabilityBadges(node: OrgDesignerNodeRow, t: TFunction<"org">) {
 interface OrganizationTreePanelProps {
   /** When true, the tree is for browsing only (no structural editing in the inspector). */
   readOnly?: boolean;
-  /** When true, user is in draft design mode and an active model exists (live node creation is allowed by the backend). */
-  canAddLiveNodes?: boolean;
+  /** When true, user is in draft design mode and may add nodes to the draft tree. */
+  canAddDraftNodes?: boolean;
   onAddRoot?: () => void;
   onAddChild?: () => void;
   /** In draft design mode, explain why add-node is unavailable when there is no active (published) model. */
@@ -44,7 +45,7 @@ interface OrganizationTreePanelProps {
 
 export function OrganizationTreePanel({
   readOnly = false,
-  canAddLiveNodes = false,
+  canAddDraftNodes = false,
   onAddRoot,
   onAddChild,
   showNoActiveModelHint = false,
@@ -56,7 +57,22 @@ export function OrganizationTreePanel({
   const typeFilter = useOrgDesignerStore((s) => s.typeFilter);
   const selectedNodeId = useOrgDesignerStore((s) => s.selectedNodeId);
   const setFilterText = useOrgDesignerStore((s) => s.setFilterText);
+  const setStatusFilter = useOrgDesignerStore((s) => s.setStatusFilter);
+  const setTypeFilter = useOrgDesignerStore((s) => s.setTypeFilter);
   const setSelectedNodeId = useOrgDesignerStore((s) => s.setSelectedNodeId);
+
+  const [searchInput, setSearchInput] = useState(filterText);
+
+  const nodeTypeOptions = useMemo(() => {
+    if (!snapshot) return [];
+    const seen = new Map<string, string>();
+    for (const node of snapshot.nodes) {
+      if (!seen.has(node.node_type_code)) {
+        seen.set(node.node_type_code, node.node_type_label);
+      }
+    }
+    return Array.from(seen.entries()).map(([value, label]) => ({ value, label }));
+  }, [snapshot]);
 
   const filteredNodes = useMemo(() => {
     if (!snapshot) return [];
@@ -83,6 +99,48 @@ export function OrganizationTreePanel({
     return nodes;
   }, [snapshot, filterText, statusFilter, typeFilter]);
 
+  const onSearchChange = useCallback(
+    (value: string) => {
+      setFilterText(value);
+    },
+    [setFilterText],
+  );
+
+  const onReset = useCallback(() => {
+    setSearchInput("");
+    setFilterText("");
+    setStatusFilter(null);
+    setTypeFilter(null);
+  }, [setFilterText, setStatusFilter, setTypeFilter]);
+
+  const filterDefs = useMemo<SmartFilterDef[]>(
+    () => [
+      {
+        id: "status",
+        kind: "select",
+        label: t("designer.statusFilter"),
+        options: [
+          { value: "active", label: t("designer.statusActive") },
+          { value: "inactive", label: t("designer.statusInactive") },
+          { value: "draft", label: t("designer.statusDraft") },
+        ],
+        value: statusFilter,
+        onChange: setStatusFilter,
+        allLabel: t("designer.allStatuses"),
+      },
+      {
+        id: "type",
+        kind: "select",
+        label: t("designer.typeFilter"),
+        options: nodeTypeOptions,
+        value: typeFilter,
+        onChange: setTypeFilter,
+        allLabel: t("designer.allTypes"),
+      },
+    ],
+    [t, statusFilter, typeFilter, nodeTypeOptions, setStatusFilter, setTypeFilter],
+  );
+
   const handleRowClick = (nodeId: number) => {
     setSelectedNodeId(nodeId === selectedNodeId ? null : nodeId);
   };
@@ -100,20 +158,20 @@ export function OrganizationTreePanel({
       data-readonly={readOnly ? "true" : undefined}
       aria-readonly={readOnly || undefined}
     >
-      {/* Search bar */}
-      <div className="border-b border-surface-border p-3">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
-          <Input
-            value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
-            placeholder={t("designer.searchPlaceholder")}
-            className="pl-8"
-          />
-        </div>
-        {canAddLiveNodes && !readOnly && (onAddRoot || onAddChild) && (
+      <div className="border-b border-surface-border shrink-0">
+        <SmartFilterBar
+          searchPlaceholder={t("designer.searchPlaceholder")}
+          searchValue={searchInput}
+          onSearchInputChange={setSearchInput}
+          onSearchChange={onSearchChange}
+          filters={filterDefs}
+          resultCount={filteredNodes.length}
+          onReset={onReset}
+          className="border-0"
+        />
+        {canAddDraftNodes && !readOnly && (onAddRoot || onAddChild) && (
           <PermissionGate permission="org.manage">
-            <div className="mt-2 flex flex-wrap gap-1.5">
+            <div className="px-4 pb-2 flex flex-wrap gap-1.5">
               {onAddRoot && (
                 <Button
                   type="button"
@@ -146,13 +204,12 @@ export function OrganizationTreePanel({
           </PermissionGate>
         )}
         {showNoActiveModelHint && !readOnly && (
-          <p className="text-xs text-text-muted mt-2 border-t border-surface-border/60 pt-2">
+          <p className="text-xs text-text-muted mx-4 mb-2 border-t border-surface-border/60 pt-2">
             {t("designer.noActiveModelForNodes")}
           </p>
         )}
       </div>
 
-      {/* Tree rows */}
       <div
         className="min-h-0 flex-1 overflow-y-auto"
         role="treegrid"
@@ -160,7 +217,9 @@ export function OrganizationTreePanel({
       >
         {filteredNodes.length === 0 ? (
           <div className="flex items-center justify-center p-8 text-text-muted text-sm">
-            {filterText.trim() ? t("designer.noResults") : t("designer.emptyTree")}
+            {filterText.trim() || statusFilter || typeFilter
+              ? t("designer.noResults")
+              : t("designer.emptyTree")}
           </div>
         ) : (
           filteredNodes.map((node) => {
@@ -184,7 +243,6 @@ export function OrganizationTreePanel({
                 )}
                 style={{ paddingLeft: `${node.depth * INDENT_PX + 12}px` }}
               >
-                {/* Node identity */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs text-text-muted">{node.code}</span>
@@ -207,7 +265,6 @@ export function OrganizationTreePanel({
                   </div>
                 </div>
 
-                {/* Counters */}
                 <div className="flex items-center gap-3 shrink-0 text-xs text-text-muted">
                   {node.child_count > 0 && (
                     <span title={t("designer.childCount")}>

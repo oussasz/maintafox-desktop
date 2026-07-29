@@ -327,8 +327,10 @@ pub async fn list_asset_lifecycle_events(
 ///   - reclassification events require both class codes
 ///
 /// Side-effects:
-///   - `DECOMMISSIONED` → sets `equipment.lifecycle_status = 'DECOMMISSIONED'`
-///     and `equipment.decommissioned_at`
+///   - `DECOMMISSIONED` → sets `equipment.lifecycle_status` to a terminal
+///     status (`DECOMMISSIONED` or `SCRAPPED` from `to_status_code`, default
+///     `DECOMMISSIONED`), sets `decommissioned_at`, and syncs
+///     `equipment_status_ref_id`
 ///   - `RECOMMISSIONED` → sets `equipment.lifecycle_status` to
 ///     `payload.to_status_code` (required) and clears `decommissioned_at`
 pub async fn record_lifecycle_event(
@@ -372,13 +374,33 @@ pub async fn record_lifecycle_event(
 
     match payload.event_type.as_str() {
         "DECOMMISSIONED" => {
+            let terminal = match payload.to_status_code.as_deref() {
+                None | Some("") => "DECOMMISSIONED".to_string(),
+                Some("DECOMMISSIONED") => "DECOMMISSIONED".to_string(),
+                Some("SCRAPPED") => "SCRAPPED".to_string(),
+                Some(other) => {
+                    return Err(AppError::ValidationFailed(vec![format!(
+                        "Statut terminal invalide '{other}' pour un événement DECOMMISSIONED. \
+                         Valeurs autorisées: DECOMMISSIONED, SCRAPPED."
+                    )]));
+                }
+            };
+            // Keep payload.to_status_code aligned with the applied status.
+            payload.to_status_code = Some(terminal.clone());
+
+            let status_ref_id =
+                crate::assets::identity::resolve_status_ref_id(&txn, &terminal).await?;
+
             txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE equipment SET lifecycle_status = 'DECOMMISSIONED', \
+                "UPDATE equipment SET lifecycle_status = ?, \
+                 equipment_status_ref_id = ?, \
                  decommissioned_at = ?, updated_at = ?, \
                  row_version = row_version + 1 \
                  WHERE id = ?",
                 [
+                    terminal.into(),
+                    status_ref_id.into(),
                     event_at.clone().into(),
                     now.clone().into(),
                     payload.asset_id.into(),
@@ -387,15 +409,25 @@ pub async fn record_lifecycle_event(
             .await?;
         }
         "RECOMMISSIONED" => {
-            let target_status = payload.to_status_code.as_deref().unwrap_or("ACTIVE_IN_SERVICE");
+            let target_status = payload
+                .to_status_code
+                .as_deref()
+                .unwrap_or("ACTIVE_IN_SERVICE");
+            let normalized =
+                crate::assets::identity::normalize_status_code_for_reference(target_status)?;
+            let status_ref_id =
+                crate::assets::identity::resolve_status_ref_id(&txn, &normalized).await?;
+            payload.to_status_code = Some(normalized.clone());
             txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE equipment SET lifecycle_status = ?, \
+                 equipment_status_ref_id = ?, \
                  decommissioned_at = NULL, updated_at = ?, \
                  row_version = row_version + 1 \
                  WHERE id = ?",
                 [
-                    target_status.into(),
+                    normalized.into(),
+                    status_ref_id.into(),
                     now.clone().into(),
                     payload.asset_id.into(),
                 ],

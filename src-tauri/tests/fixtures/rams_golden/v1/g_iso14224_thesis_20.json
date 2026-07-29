@@ -1,0 +1,35 @@
+{
+  "name": "G-ISO14224-THESIS-20",
+  "description": "Thesis Ch.3 validation: 20 failure events, C=92.5%",
+  "events": [
+    {"id": 1, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 2, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 3, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 4, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 5, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 6, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 7, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 8, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 9, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 10, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 11, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 12, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 13, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 14, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 15, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 16, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 17, "equipment_identified": true, "interval_complete": true, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 18, "equipment_identified": true, "interval_complete": false, "failure_mode_coded": true, "corrective_documented": true},
+    {"id": 19, "equipment_identified": true, "interval_complete": false, "failure_mode_coded": false, "corrective_documented": true},
+    {"id": 20, "equipment_identified": true, "interval_complete": false, "failure_mode_coded": false, "corrective_documented": false}
+  ],
+  "expected": {
+    "event_count": 20,
+    "completeness_percent": 92.5,
+    "dim_equipment_id_pct": 100.0,
+    "dim_failure_interval_pct": 85.0,
+    "dim_failure_mode_pct": 90.0,
+    "dim_corrective_closure_pct": 95.0
+  },
+  "tolerance": { "abs": 0.1 }
+}

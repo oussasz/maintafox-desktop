@@ -41,7 +41,7 @@ mod tests {
 
     /// Helper: create a published model with root + child types + rules.
     /// Returns (root_type_id, child_type_id).
-    async fn setup_published_model(db: &sea_orm::DatabaseConnection) -> (i32, i32) {
+    async fn setup_published_model(db: &sea_orm::DatabaseConnection) -> (i64, i32, i32) {
         let model = structure_model::create_model(
             db,
             CreateStructureModelPayload {
@@ -124,13 +124,14 @@ mod tests {
             .await
             .expect("publish model");
 
-        (root_type.id, child_type.id)
+        (model.id as i64, root_type.id, child_type.id)
     }
 
     /// Helper: create a 3-level tree: Root -> Child -> Grandchild.
     /// Returns (root_id, child_id, grandchild_id).
     async fn setup_three_level_tree(
         db: &sea_orm::DatabaseConnection,
+        model_id: i64,
         root_type_id: i32,
         child_type_id: i32,
     ) -> (i64, i64, i64) {
@@ -147,6 +148,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -166,6 +168,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -185,6 +188,7 @@ mod tests {
                 effective_from: None,
                 erp_reference: None,
                 notes: None,
+                structure_model_id: model_id,
             },
             1,
         )
@@ -201,11 +205,11 @@ mod tests {
     #[tokio::test]
     async fn v1_snapshot_ordered_by_ancestor_path_and_correct_depths() {
         let db = setup().await;
-        let (root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
         let (root_id, child_id, grandchild_id) =
-            setup_three_level_tree(&db, root_type_id, child_type_id).await;
+            setup_three_level_tree(&db, model_id, root_type_id, child_type_id).await;
 
-        let snapshot = tree_queries::get_org_designer_snapshot(&db)
+        let snapshot = tree_queries::get_org_designer_snapshot(&db, None)
             .await
             .expect("snapshot should succeed");
 
@@ -253,7 +257,7 @@ mod tests {
         let db = setup().await;
 
         // Don't create/publish any model.
-        let snapshot = tree_queries::get_org_designer_snapshot(&db)
+        let snapshot = tree_queries::get_org_designer_snapshot(&db, None)
             .await
             .expect("snapshot should succeed");
 
@@ -269,9 +273,9 @@ mod tests {
     #[tokio::test]
     async fn v2_move_preview_blocks_cycle_under_descendant() {
         let db = setup().await;
-        let (root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
         let (root_id, _child_id, grandchild_id) =
-            setup_three_level_tree(&db, root_type_id, child_type_id).await;
+            setup_three_level_tree(&db, model_id, root_type_id, child_type_id).await;
 
         // Try to move root under its grandchild — this must be blocked.
         let preview = impact_preview::preview_move_node(&db, root_id, grandchild_id)
@@ -286,7 +290,10 @@ mod tests {
         let has_cycle_blocker = preview
             .blockers
             .iter()
-            .any(|b| b.to_lowercase().contains("cycle") || b.to_lowercase().contains("descendant"));
+            .any(|b| {
+                b.code == "ORG_PREVIEW_MOVE_CYCLE"
+                    || b.message.to_lowercase().contains("descendant")
+            });
         assert!(
             has_cycle_blocker,
             "blocker text must mention cycle or descendant, got: {:?}",
@@ -303,9 +310,9 @@ mod tests {
     #[tokio::test]
     async fn v2_move_preview_blocks_move_under_self() {
         let db = setup().await;
-        let (root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
         let (_root_id, child_id, _grandchild_id) =
-            setup_three_level_tree(&db, root_type_id, child_type_id).await;
+            setup_three_level_tree(&db, model_id, root_type_id, child_type_id).await;
 
         // Move a node under itself.
         let preview = impact_preview::preview_move_node(&db, child_id, child_id)
@@ -325,9 +332,9 @@ mod tests {
     #[tokio::test]
     async fn v3_preview_includes_all_future_domain_placeholders() {
         let db = setup().await;
-        let (root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
         let (_root_id, _child_id, grandchild_id) =
-            setup_three_level_tree(&db, root_type_id, child_type_id).await;
+            setup_three_level_tree(&db, model_id, root_type_id, child_type_id).await;
 
         // Use deactivate preview for a leaf node (no blockers expected).
         let preview = impact_preview::preview_deactivate_node(&db, grandchild_id)
@@ -377,9 +384,9 @@ mod tests {
     #[tokio::test]
     async fn v3_placeholders_present_in_move_preview_too() {
         let db = setup().await;
-        let (root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
         let (root_id, child_id, _grandchild_id) =
-            setup_three_level_tree(&db, root_type_id, child_type_id).await;
+            setup_three_level_tree(&db, model_id, root_type_id, child_type_id).await;
 
         // Valid move preview (child is already under root, but let's still call it).
         let preview = impact_preview::preview_move_node(&db, child_id, root_id)
@@ -397,9 +404,9 @@ mod tests {
     #[tokio::test]
     async fn v3_placeholders_present_via_dispatch_preview_endpoint() {
         let db = setup().await;
-        let (root_type_id, child_type_id) = setup_published_model(&db).await;
+        let (model_id, root_type_id, child_type_id) = setup_published_model(&db).await;
         let (_root_id, child_id, _grandchild_id) =
-            setup_three_level_tree(&db, root_type_id, child_type_id).await;
+            setup_three_level_tree(&db, model_id, root_type_id, child_type_id).await;
 
         // Use the dispatch function as the IPC command would.
         let preview = impact_preview::dispatch_preview(

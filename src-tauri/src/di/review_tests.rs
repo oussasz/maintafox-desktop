@@ -75,9 +75,9 @@ mod tests {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at) \
+            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
              VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
-             datetime('now'), datetime('now'));".to_string(),
+             datetime('now'), datetime('now'), 1);".to_string(),
         ))
         .await
         .expect("insert test org_node");
@@ -121,14 +121,22 @@ mod tests {
         .expect("id")
     }
 
-    fn make_create_input(user_id: i64) -> DiCreateInput {
+    async fn seeded_symptom_id(db: &sea_orm::DatabaseConnection) -> i64 {
+        crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+            .await
+            .expect("symptom lookup")
+            .expect("seeded DI.SYMPTOM vibration")
+    }
+
+    async fn make_create_input(db: &sea_orm::DatabaseConnection, user_id: i64) -> DiCreateInput {
         DiCreateInput {
             asset_id: 1,
             org_node_id: 1,
             title: "Pump vibration alert".to_string(),
             description: "Excessive vibration on pump P-101".to_string(),
             origin_type: "operator".to_string(),
-            symptom_code_id: None,
+            request_type: "repair".to_string(),
+            symptom_code_id: Some(seeded_symptom_id(db).await),
             impact_level: "unknown".to_string(),
             production_impact: false,
             safety_flag: false,
@@ -194,7 +202,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -235,7 +243,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -265,7 +273,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         // DI is still 'submitted', not 'pending_review'
@@ -299,7 +307,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -330,7 +338,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -354,7 +362,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -394,7 +402,7 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         // Create â†’ pending_review â†’ screen (â†’ awaiting_approval)
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -447,7 +455,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -480,7 +488,7 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         // Create â†’ pending_review â†’ screen â†’ approve â†’ defer with past date
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -541,7 +549,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -595,7 +603,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -653,7 +661,7 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         // 1. Create DI (submitted)
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         assert_eq!(di.status, "submitted");
@@ -795,7 +803,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -820,7 +828,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -851,7 +859,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;

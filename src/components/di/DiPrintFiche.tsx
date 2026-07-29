@@ -6,7 +6,19 @@
 
 import type { TFunction } from "i18next";
 
+import { diStatusToI18nKey } from "@/components/di/status-meta";
+import {
+  fetchDiSymptomLabel,
+  loadDiOriginLabelMap,
+  resolveDiOriginLabel,
+} from "@/components/di/di-reference-labels";
 import { i18n } from "@/i18n";
+import {
+  formatAssetLabel,
+  formatEntityCode,
+  formatOrgNodeLabel,
+  formatPersonLabel,
+} from "@/lib/display";
 import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
 
@@ -21,36 +33,15 @@ function esc(v: string | null | undefined): string {
     .replace(/"/g, "&quot;");
 }
 
-type DiStatusKey =
-  | "new"
-  | "inReview"
-  | "approved"
-  | "rejected"
-  | "inProgress"
-  | "resolved"
-  | "closed"
-  | "cancelled";
-
-function statusToI18nKey(s: string): DiStatusKey {
-  const map: Record<string, DiStatusKey> = {
-    submitted: "new",
-    pending_review: "inReview",
-    returned_for_clarification: "inReview",
-    rejected: "rejected",
-    screened: "inReview",
-    awaiting_approval: "inReview",
-    approved_for_planning: "approved",
-    deferred: "inReview",
-    converted_to_work_order: "inProgress",
-    closed_as_non_executable: "closed",
-    archived: "closed",
-  };
-  return map[s] ?? "new";
-}
-
 // ── Build HTML ──────────────────────────────────────────────────────────────
 
-function buildHtml(di: InterventionRequest, t: TFunction<"di">, locale: string): string {
+function buildHtml(
+  di: InterventionRequest,
+  t: TFunction<"di">,
+  locale: string,
+  originText: string,
+  symptomText: string,
+): string {
   const fmt = (iso: string | null | undefined) => {
     if (!iso) return "—";
     try {
@@ -72,15 +63,12 @@ function buildHtml(di: InterventionRequest, t: TFunction<"di">, locale: string):
     year: "numeric",
   });
 
-  const sk = statusToI18nKey(di.status);
+  const sk = diStatusToI18nKey(di.status);
   const statusText = t(`status.${sk}` as "status.new");
   const urgencyR = t(`priority.${di.reported_urgency}` as "priority.low");
   const urgencyV = di.validated_urgency
     ? t(`priority.${di.validated_urgency}` as "priority.low")
     : null;
-  const originText = t(`form.origin.${di.origin_type}` as "form.origin.operator", {
-    defaultValue: di.origin_type,
-  });
   const impactText = t(`form.impact.${di.impact_level}` as "form.impact.unknown", {
     defaultValue: di.impact_level,
   });
@@ -139,6 +127,11 @@ function buildHtml(di: InterventionRequest, t: TFunction<"di">, locale: string):
       <tr><th>${t("print.urgencyReported")}</th><td>${esc(urgencyR)}</td></tr>
       ${urgencyV != null ? `<tr><th>${t("print.urgencyValidated")}</th><td>${esc(urgencyV)}</td></tr>` : ""}
       <tr><th>${t("print.origin")}</th><td>${esc(originText)}</td></tr>
+      ${
+        symptomText
+          ? `<tr><th>${t("print.symptom")}</th><td>${esc(symptomText)}</td></tr>`
+          : ""
+      }
       <tr><th>${t("print.impactLevel")}</th><td>${esc(impactText)}</td></tr>
       <tr><th>${t("print.createdAt")}</th><td>${fmt(di.created_at)}</td></tr>
       <tr><th>${t("print.submittedAt")}</th><td>${fmt(di.submitted_at)}</td></tr>
@@ -148,10 +141,10 @@ function buildHtml(di: InterventionRequest, t: TFunction<"di">, locale: string):
   <div class="section">
     <h2>${t("print.equipment")}</h2>
     <table>
-      <tr><th>${t("print.asset")}</th><td>#${di.asset_id}${
+      <tr><th>${t("print.asset")}</th><td>${esc(formatAssetLabel(di.asset_code, di.asset_label))}${
         di.sub_asset_ref ? ` — ${t("print.subAsset")} : ${esc(di.sub_asset_ref)}` : ""
       }</td></tr>
-      <tr><th>${t("print.orgNode")}</th><td>#${di.org_node_id}</td></tr>
+      <tr><th>${t("print.orgNode")}</th><td>${esc(formatOrgNodeLabel(di.org_node_code, di.org_node_label))}</td></tr>
     </table>
   </div>
 
@@ -175,7 +168,7 @@ function buildHtml(di: InterventionRequest, t: TFunction<"di">, locale: string):
           )}</strong></p>`
         : ""
     }
-    <p style="font-size:10px;margin-bottom:4px;">${t("print.declarant")} <strong>#${di.submitter_id}</strong></p>
+    <p style="font-size:10px;margin-bottom:4px;">${t("print.declarant")} <strong>${esc(formatPersonLabel(di.submitter_display_name))}</strong></p>
     <div class="desc">${esc(di.description)}</div>
   </div>
 
@@ -193,7 +186,12 @@ function buildHtml(di: InterventionRequest, t: TFunction<"di">, locale: string):
       ? `<div class="section">
     <h2>${t("print.conversion")}</h2>
     <table>
-      <tr><th>${t("print.convertedToWo")}</th><td>#${di.converted_to_wo_id}</td></tr>
+      <tr><th>${t("print.convertedToWo")}</th><td>${esc(formatEntityCode(di.converted_to_wo_code))}</td></tr>
+      ${
+        di.converted_to_wo_title
+          ? `<tr><th>${t("print.convertedToWoTitle")}</th><td>${esc(di.converted_to_wo_title)}</td></tr>`
+          : ""
+      }
       <tr><th>${t("print.convertedAt")}</th><td>${fmt(di.converted_at)}</td></tr>
     </table>
   </div>`
@@ -230,12 +228,17 @@ function buildHtml(di: InterventionRequest, t: TFunction<"di">, locale: string):
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
-export function printDiFiche(di: InterventionRequest): void {
+export async function printDiFiche(di: InterventionRequest): Promise<void> {
   let html = "";
   try {
     const t = i18n.getFixedT(i18n.language, "di");
     const locale = intlLocaleForLanguage(i18n.language);
-    html = buildHtml(di, t, locale);
+    const [originMap, symptomText] = await Promise.all([
+      loadDiOriginLabelMap(),
+      fetchDiSymptomLabel(di.symptom_code_id),
+    ]);
+    const originText = resolveDiOriginLabel(originMap, di.origin_type);
+    html = buildHtml(di, t, locale, originText, symptomText);
   } catch {
     // Last-resort fallback so the print action still works even if i18n/template generation fails.
     html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(di.code)}</title></head><body><h1>${esc(di.code)}</h1><p>${esc(di.title)}</p><pre>${esc(di.description)}</pre></body></html>`;
@@ -252,20 +255,33 @@ export function printDiFiche(di: InterventionRequest): void {
   iframe.style.border = "0";
   iframe.setAttribute("aria-hidden", "true");
 
-  iframe.onload = () => {
-    const w = iframe.contentWindow;
-    if (!w) return;
-    w.focus();
-    w.print();
-    setTimeout(() => {
-      iframe.remove();
-    }, 1000);
-  };
-
   document.body.appendChild(iframe);
   const doc = iframe.contentDocument;
   if (!doc) return;
   doc.open();
   doc.write(html);
   doc.close();
+
+  const w = iframe.contentWindow;
+  if (!w) return;
+
+  const cleanup = () => {
+    setTimeout(() => {
+      iframe.remove();
+    }, 300);
+  };
+
+  // In desktop webviews, iframe `onload` can fire for the initial empty
+  // document before our HTML is painted, causing a blank first preview.
+  // Trigger print after the written document gets a paint frame.
+  w.requestAnimationFrame(() => {
+    w.requestAnimationFrame(() => {
+      w.focus();
+      w.print();
+    });
+  });
+
+  w.onafterprint = cleanup;
+  // Fallback cleanup if the runtime never emits `afterprint`.
+  setTimeout(cleanup, 15000);
 }

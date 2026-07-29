@@ -76,9 +76,9 @@ mod tests {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at) \
+            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
              VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
-             datetime('now'), datetime('now'));".to_string(),
+             datetime('now'), datetime('now'), 1);".to_string(),
         ))
         .await
         .expect("insert test org_node");
@@ -121,14 +121,22 @@ mod tests {
         .expect("id")
     }
 
-    fn make_create_input(user_id: i64) -> DiCreateInput {
+    async fn seeded_symptom_id(db: &sea_orm::DatabaseConnection) -> i64 {
+        crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
+            .await
+            .expect("symptom lookup")
+            .expect("seeded DI.SYMPTOM vibration")
+    }
+
+    async fn make_create_input(db: &sea_orm::DatabaseConnection, user_id: i64) -> DiCreateInput {
         DiCreateInput {
             asset_id: 1,
             org_node_id: 1,
             title: "Pump vibration alert".to_string(),
             description: "Excessive vibration on pump P-101".to_string(),
             origin_type: "operator".to_string(),
-            symptom_code_id: None,
+            request_type: "repair".to_string(),
+            symptom_code_id: Some(seeded_symptom_id(db).await),
             impact_level: "unknown".to_string(),
             production_impact: false,
             safety_flag: false,
@@ -182,7 +190,7 @@ mod tests {
     /// Advance a DI through: create → pending_review → screen → approve.
     /// Returns the DI id and final row_version after approval.
     async fn advance_to_approved(db: &sea_orm::DatabaseConnection, user_id: i64) -> (i64, i64) {
-        let di = create_intervention_request(db, make_create_input(user_id))
+        let di = create_intervention_request(db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(db, di.id).await;
@@ -298,7 +306,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
 
@@ -324,7 +332,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -351,7 +359,7 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(&db, make_create_input(user_id))
+        let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
             .await
             .expect("create DI");
         advance_to_pending_review(&db, di.id).await;
@@ -698,6 +706,7 @@ mod tests {
                 expected_row_version: converted.di.row_version,
                 title: Some("Modified title after conversion".to_string()),
                 description: None,
+                request_type: None,
                 symptom_code_id: None,
                 impact_level: None,
                 production_impact: None,

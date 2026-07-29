@@ -4,6 +4,7 @@ pub mod domain;
 pub mod controls;
 pub mod procurement;
 pub mod queries;
+pub mod suppliers;
 pub mod valuation;
 
 #[cfg(test)]

@@ -14,7 +14,8 @@ import {
   listOrgNodeResponsibilities,
   listOrgTree,
 } from "@/services/org-node-service";
-import { toErrorMessage } from "@/utils/errors";
+import { useOrgDesignerStore } from "@/stores/org-designer-store";
+import { formatOrgIpcError } from "@/utils/errors";
 import type {
   OrgEntityBinding,
   OrgNode,
@@ -37,6 +38,10 @@ interface OrgNodeStoreState {
   refreshSelectedNodeContext: () => Promise<void>;
 }
 
+function currentDisplayModelId(): number | null {
+  return useOrgDesignerStore.getState().snapshot?.display_model_id ?? null;
+}
+
 export const useOrgNodeStore = create<OrgNodeStoreState>()((set, get) => ({
   treeRows: [],
   selectedNodeId: null,
@@ -53,7 +58,7 @@ export const useOrgNodeStore = create<OrgNodeStoreState>()((set, get) => ({
       const treeRows = await listOrgTree();
       set({ treeRows });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: formatOrgIpcError(err) });
     } finally {
       set({ loading: false });
     }
@@ -72,14 +77,15 @@ export const useOrgNodeStore = create<OrgNodeStoreState>()((set, get) => ({
     }
     set({ loading: true, error: null, selectedNodeId: nodeId });
     try {
+      const modelId = currentDisplayModelId();
       const [node, responsibilities, bindings] = await Promise.all([
-        getOrgNode(nodeId),
+        getOrgNode(nodeId, modelId),
         listOrgNodeResponsibilities(nodeId),
         listOrgEntityBindings(nodeId),
       ]);
       set({ selectedNode: node, responsibilities, bindings });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: formatOrgIpcError(err) });
     } finally {
       set({ loading: false });
     }
@@ -91,15 +97,16 @@ export const useOrgNodeStore = create<OrgNodeStoreState>()((set, get) => ({
 
     set({ loading: true, error: null });
     try {
+      const modelId = currentDisplayModelId();
       const [treeRows, node, responsibilities, bindings] = await Promise.all([
         listOrgTree(),
-        getOrgNode(selectedNodeId),
+        getOrgNode(selectedNodeId, modelId),
         listOrgNodeResponsibilities(selectedNodeId),
         listOrgEntityBindings(selectedNodeId),
       ]);
       set({ treeRows, selectedNode: node, responsibilities, bindings });
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      set({ error: formatOrgIpcError(err) });
     } finally {
       set({ loading: false });
     }
