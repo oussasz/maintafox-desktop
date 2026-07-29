@@ -412,7 +412,8 @@ export function toUserFacingActivationError(err: unknown): UserFacingActivationE
   if (status == null && !code) {
     return {
       title: "Unable to connect",
-      message: "We could not reach the activation service. Check your network connection and try again.",
+      message:
+        "We could not reach the activation service. Check your network connection and try again.",
       referenceCode: "network_unreachable",
       technicalDetails,
     };
@@ -460,7 +461,11 @@ async function postActivationEndpoint(
   });
   if (!res.ok) {
     const text = await res.text().catch(() => undefined);
-    throwActivationHttpError(res, path.includes("preview") ? "License validation" : "Activation", text);
+    throwActivationHttpError(
+      res,
+      path.includes("preview") ? "License validation" : "Activation",
+      text,
+    );
   }
   return (await res.json()) as Record<string, unknown>;
 }
@@ -636,7 +641,12 @@ export function assertClaimSerializableForDesktop(claim: ProductActivationClaim)
     throw new Error("Activation claim serialization must produce a JSON object.");
   }
   const obj = parsed as Record<string, unknown>;
-  for (const key of ["tenant_id", "license_id", "machine_fingerprint", "activation_token"] as const) {
+  for (const key of [
+    "tenant_id",
+    "license_id",
+    "machine_fingerprint",
+    "activation_token",
+  ] as const) {
     if (typeof obj[key] !== "string" || !(obj[key] as string).trim()) {
       throw new Error(`Activation claim is missing required field: ${key}`);
     }
@@ -685,8 +695,7 @@ export async function applyProductLicenseReconciliation(
   outcome: z.input<typeof ReconciliationOutcomeInputSchema>,
 ): Promise<ProductLicenseOnboardingState> {
   const payload = ReconciliationOutcomeInputSchema.parse(outcome);
-  const envelope =
-    payload.entitlement_envelope ?? payload.claim?.entitlement_envelope ?? undefined;
+  const envelope = payload.entitlement_envelope ?? payload.claim?.entitlement_envelope ?? undefined;
   // Same canonical claim shape as submit_product_license_key (no serde aliases).
   const claimForRust = payload.claim ? toDesktopActivationClaimRecord(payload.claim) : undefined;
   const forRust = {
@@ -697,29 +706,6 @@ export async function applyProductLicenseReconciliation(
     error_message: payload.error_message,
     app_version: payload.app_version,
   };
-  // #region agent log
-  fetch("http://127.0.0.1:7917/ingest/ad1591f6-dd5d-401c-a069-f101c6318963", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "a6aab3" },
-    body: JSON.stringify({
-      sessionId: "a6aab3",
-      runId: "post-fix",
-      hypothesisId: "G-serde",
-      location: "product-license-service.ts:applyReconciliation",
-      message: "sending reconciliation outcome to rust",
-      data: {
-        kind: forRust.kind,
-        hasClaim: Boolean(forRust.claim),
-        hasEnvelope: Boolean(forRust.entitlement_envelope),
-        edition: payload.claim?.edition ?? null,
-        licenseTier: claimForRust?.license_tier ?? null,
-        envelopeId: envelope?.envelope_id ?? null,
-        envelopeTier: envelope?.tier ?? null,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   const raw = await invoke<unknown>("apply_product_license_reconciliation", {
     outcomeJson: JSON.stringify(forRust),
   });
@@ -748,28 +734,12 @@ export async function refreshProductActivationPolicy(
   const raw = (await res.json()) as Record<string, unknown>;
   const normalized = normalizeActivationPayload(raw);
   // Control plane may omit activation_token on refresh; reuse the bearer we already hold.
-  if (typeof normalized["activation_token"] !== "string" || !String(normalized["activation_token"]).trim()) {
+  if (
+    typeof normalized["activation_token"] !== "string" ||
+    !String(normalized["activation_token"]).trim()
+  ) {
     normalized["activation_token"] = token;
   }
-  // #region agent log
-  fetch("http://127.0.0.1:7917/ingest/ad1591f6-dd5d-401c-a069-f101c6318963", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "a6aab3" },
-    body: JSON.stringify({
-      sessionId: "a6aab3",
-      runId: "post-fix",
-      hypothesisId: "J-token",
-      location: "product-license-service.ts:refreshPolicy",
-      message: "policy-refresh normalized",
-      data: {
-        edition: normalized["edition"] ?? null,
-        hasEnvelope: Boolean(normalized["entitlement_envelope"]),
-        hasToken: Boolean(normalized["activation_token"]),
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   return ActivationClaimSchema.parse(normalized);
 }
 

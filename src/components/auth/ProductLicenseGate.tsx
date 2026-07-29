@@ -2,11 +2,11 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
 
+import { AuthLockLayer } from "@/components/auth/AuthLockLayer";
 import { ActivationStatusCard } from "@/components/auth/activation/ActivationStatusCard";
 import { ActivationStepper } from "@/components/auth/activation/ActivationStepper";
 import { ActivationTechnicalDetails } from "@/components/auth/activation/ActivationTechnicalDetails";
 import { OrganizationLicenseCard } from "@/components/auth/activation/OrganizationLicenseCard";
-import { AuthLockLayer } from "@/components/auth/AuthLockLayer";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -197,68 +197,45 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
     [recordOutcome],
   );
 
-  const attemptReconciliation = useCallback(async (origin: ReconcileOrigin) => {
-    if (!isOnlineRef.current) {
-      if (origin !== "submit") return;
-      setWarning(t("activation.offlineWarning"));
-      return;
-    }
-    if (reconcilingRef.current) return;
+  const attemptReconciliation = useCallback(
+    async (origin: ReconcileOrigin) => {
+      if (!isOnlineRef.current) {
+        if (origin !== "submit") return;
+        setWarning(t("activation.offlineWarning"));
+        return;
+      }
+      if (reconcilingRef.current) return;
 
-    reconcilingRef.current = true;
-    setReconciling(true);
-    setWarning(null);
-    try {
-      // Prefer policy-refresh (no slot consumption) when a local activation token exists.
-      const existingToken = await getProductActivationToken().catch(() => null);
-      // #region agent log
-      fetch("http://127.0.0.1:7917/ingest/ad1591f6-dd5d-401c-a069-f101c6318963", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "a6aab3" },
-        body: JSON.stringify({
-          sessionId: "a6aab3",
-          runId: "post-fix",
-          hypothesisId: "F-refresh",
-          location: "ProductLicenseGate.tsx:attemptReconciliation:start",
-          message: "reconciliation start",
-          data: {
-            origin,
-            hasToken: Boolean(existingToken),
-            tokenLen: existingToken?.length ?? 0,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      let claim: ProductActivationClaim;
-      let pathUsed: "policy-refresh" | "claim-fallback" | "claim" = "claim";
-      if (existingToken) {
-        try {
-          claim = await refreshProductActivationPolicy(existingToken);
-          pathUsed = "policy-refresh";
-        } catch (refreshErr) {
-          // Fall back to claim for devices that predate policy-refresh or lost token validity.
+      reconcilingRef.current = true;
+      setReconciling(true);
+      setWarning(null);
+      try {
+        // Prefer policy-refresh (no slot consumption) when a local activation token exists.
+        const existingToken = await getProductActivationToken().catch(() => null);
+        let claim: ProductActivationClaim;
+        if (existingToken) {
+          try {
+            claim = await refreshProductActivationPolicy(existingToken);
+          } catch (refreshErr) {
+            // Fall back to claim for devices that predate policy-refresh or lost token validity.
+            const cachedKey = localStorage.getItem(keyCacheStorage)?.trim();
+            if (!cachedKey || cachedKey.length < 8) {
+              throw refreshErr;
+            }
+            claim = await claimProductActivation({
+              license_key: cachedKey,
+              machine_fingerprint: deviceFingerprint,
+              machine_label: deviceName.trim() || defaultDeviceName(),
+              app_version: appVersion,
+            });
+          }
+        } else {
           const cachedKey = localStorage.getItem(keyCacheStorage)?.trim();
-          // #region agent log
-          fetch("http://127.0.0.1:7917/ingest/ad1591f6-dd5d-401c-a069-f101c6318963", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "a6aab3" },
-            body: JSON.stringify({
-              sessionId: "a6aab3",
-              runId: "post-fix",
-              hypothesisId: "F-refresh",
-              location: "ProductLicenseGate.tsx:attemptReconciliation:refresh-fail",
-              message: "policy-refresh failed",
-              data: {
-                error: refreshErr instanceof Error ? refreshErr.message : String(refreshErr),
-                hasCachedKey: Boolean(cachedKey && cachedKey.length >= 8),
-              },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {});
-          // #endregion
           if (!cachedKey || cachedKey.length < 8) {
-            throw refreshErr;
+            if (stateRef.current?.status === "pending_online_validation") {
+              setWarning(t("activation.subtitle"));
+            }
+            return;
           }
           claim = await claimProductActivation({
             license_key: cachedKey,
@@ -266,120 +243,54 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
             machine_label: deviceName.trim() || defaultDeviceName(),
             app_version: appVersion,
           });
-          pathUsed = "claim-fallback";
         }
-      } else {
-        const cachedKey = localStorage.getItem(keyCacheStorage)?.trim();
-        if (!cachedKey || cachedKey.length < 8) {
-          // #region agent log
-          fetch("http://127.0.0.1:7917/ingest/ad1591f6-dd5d-401c-a069-f101c6318963", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "a6aab3" },
-            body: JSON.stringify({
-              sessionId: "a6aab3",
-              runId: "post-fix",
-              hypothesisId: "F-refresh",
-              location: "ProductLicenseGate.tsx:attemptReconciliation:no-creds",
-              message: "no token and no cached key; skip reconcile",
-              data: { origin },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {});
-          // #endregion
-          if (stateRef.current?.status === "pending_online_validation") {
-            setWarning(t("activation.subtitle"));
-          }
-          return;
+        const next = await recordOutcomeSafely({ kind: "success", claim });
+        if (next?.status === "active") {
+          setWarning(null);
         }
-        claim = await claimProductActivation({
-          license_key: cachedKey,
-          machine_fingerprint: deviceFingerprint,
-          machine_label: deviceName.trim() || defaultDeviceName(),
-          app_version: appVersion,
-        });
-        pathUsed = "claim";
+      } catch (err) {
+        const e = err as Error & { code?: string; status?: number };
+        const code = e.code;
+        const status = e.status;
+        const message = e.message || "Activation reconciliation failed.";
+        const deniedCodes = new Set([
+          "license_revoked",
+          "license_expired",
+          "slot_limit_reached",
+          "force_update_required",
+        ]);
+        if (deniedCodes.has(code ?? "")) {
+          await recordOutcomeSafely({
+            kind: "denied",
+            ...(code ? { error_code: code } : {}),
+            error_message: message,
+          });
+        } else if (typeof status === "number" && status >= 400 && status < 500) {
+          await recordOutcomeSafely({
+            kind: "denied",
+            error_code: code ?? "license_denied",
+            error_message: message,
+          });
+        } else if (typeof status === "number") {
+          await recordOutcomeSafely({
+            kind: "http_error",
+            error_code: code ?? `http_${status}`,
+            error_message: message,
+          });
+        } else {
+          await recordOutcomeSafely({
+            kind: "network_error",
+            error_code: code ?? "network_unreachable",
+            error_message: message,
+          });
+        }
+      } finally {
+        reconcilingRef.current = false;
+        setReconciling(false);
       }
-      // #region agent log
-      fetch("http://127.0.0.1:7917/ingest/ad1591f6-dd5d-401c-a069-f101c6318963", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "a6aab3" },
-        body: JSON.stringify({
-          sessionId: "a6aab3",
-          runId: "post-fix",
-          hypothesisId: "F-refresh",
-          location: "ProductLicenseGate.tsx:attemptReconciliation:claim",
-          message: "claim/refresh payload before apply",
-          data: {
-            pathUsed,
-            edition: claim.edition ?? null,
-            licensePlan: claim.license_plan ?? null,
-            hasEnvelope: Boolean(claim.entitlement_envelope),
-            envelopeId: claim.entitlement_envelope?.envelope_id ?? null,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      const next = await recordOutcomeSafely({ kind: "success", claim });
-      if (next?.status === "active") {
-        setWarning(null);
-      }
-    } catch (err) {
-      const e = err as Error & { code?: string; status?: number };
-      const code = e.code;
-      const status = e.status;
-      const message = e.message || "Activation reconciliation failed.";
-      // #region agent log
-      fetch("http://127.0.0.1:7917/ingest/ad1591f6-dd5d-401c-a069-f101c6318963", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "a6aab3" },
-        body: JSON.stringify({
-          sessionId: "a6aab3",
-          runId: "post-fix",
-          hypothesisId: "F-refresh",
-          location: "ProductLicenseGate.tsx:attemptReconciliation:error",
-          message: "reconciliation error",
-          data: { code: code ?? null, status: status ?? null, message },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      const deniedCodes = new Set([
-        "license_revoked",
-        "license_expired",
-        "slot_limit_reached",
-        "force_update_required",
-      ]);
-      if (deniedCodes.has(code ?? "")) {
-        await recordOutcomeSafely({
-          kind: "denied",
-          ...(code ? { error_code: code } : {}),
-          error_message: message,
-        });
-      } else if (typeof status === "number" && status >= 400 && status < 500) {
-        await recordOutcomeSafely({
-          kind: "denied",
-          error_code: code ?? "license_denied",
-          error_message: message,
-        });
-      } else if (typeof status === "number") {
-        await recordOutcomeSafely({
-          kind: "http_error",
-          error_code: code ?? `http_${status}`,
-          error_message: message,
-        });
-      } else {
-        await recordOutcomeSafely({
-          kind: "network_error",
-          error_code: code ?? "network_unreachable",
-          error_message: message,
-        });
-      }
-    } finally {
-      reconcilingRef.current = false;
-      setReconciling(false);
-    }
-  }, [appVersion, deviceFingerprint, deviceName, keyCacheStorage, recordOutcomeSafely, t]);
+    },
+    [appVersion, deviceFingerprint, deviceName, keyCacheStorage, recordOutcomeSafely, t],
+  );
 
   const reconcileProductLicense = useCallback(async () => {
     await attemptReconciliation("login");
@@ -553,29 +464,6 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       try {
         const summary = await getEntitlementSummary();
         missingEnvelope = !summary.envelope_id;
-        // #region agent log
-        fetch("http://127.0.0.1:7917/ingest/ad1591f6-dd5d-401c-a069-f101c6318963", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "a6aab3" },
-          body: JSON.stringify({
-            sessionId: "a6aab3",
-            runId: "post-fix",
-            hypothesisId: "I-backoff",
-            location: "ProductLicenseGate.tsx:maybeReconcile",
-            message: "checked envelope before scheduled reconcile",
-            data: {
-              status: s.status,
-              pending: s.pending_online_validation,
-              missingEnvelope,
-              envelopeId: summary.envelope_id,
-              scheduleDue: shouldRetryBySchedule(),
-              nextRetryAt: s.next_retry_at ?? null,
-              origin,
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
       } catch (err) {
         if (isSessionUnavailableError(err)) {
           // Pre-login: do not treat as missing envelope — wait for login trigger.
@@ -923,7 +811,9 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
               onClick={() => void attemptReconciliation("manual")}
               disabled={!isOnline || reconciling}
             >
-              {reconciling ? t("activation.denied.revalidating") : t("activation.denied.revalidate")}
+              {reconciling
+                ? t("activation.denied.revalidating")
+                : t("activation.denied.revalidate")}
             </Button>
             <Button
               type="button"
