@@ -10,7 +10,8 @@ alwaysApply: true
 
 # RBAC permissions (canonical registry)
 
-**SSOT:** [`shared/rbac/permission-registry.json`](shared/rbac/permission-registry.json)
+**SSOT:** [`shared/rbac/permission-registry.json`](shared/rbac/permission-registry.json) 
+**Per-feature workflow:** [`.cursor/rules/rbac-definition-of-done.mdc`](.cursor/rules/rbac-definition-of-done.mdc)
 
 Generated artifacts (checked in, never hand-edited):
 
