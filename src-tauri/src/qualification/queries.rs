@@ -380,6 +380,51 @@ pub async fn list_qualification_requirement_profiles(
     Ok(out)
 }
 
+/// List skill reference_value_ids linked to a profile via `qualification_profile_skills`.
+pub async fn list_profile_skill_ids(
+    db: &DatabaseConnection,
+    profile_id: i64,
+) -> AppResult<Vec<i64>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT reference_value_id FROM qualification_profile_skills WHERE profile_id = ? ORDER BY id ASC",
+            [profile_id.into()],
+        ))
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| r.try_get::<i64>("", "reference_value_id").ok())
+        .collect())
+}
+
+/// Replace `qualification_profile_skills` rows for a profile.
+/// Call inside a transaction to keep the cert JSON and skills in sync.
+pub async fn replace_profile_skills(
+    db: &DatabaseConnection,
+    profile_id: i64,
+    skill_reference_value_ids: &[i64],
+) -> AppResult<()> {
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "DELETE FROM qualification_profile_skills WHERE profile_id = ?",
+        [profile_id.into()],
+    ))
+    .await?;
+    for &rv_id in skill_reference_value_ids {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT OR IGNORE INTO qualification_profile_skills \
+             (profile_id, reference_value_id, min_proficiency_level, is_required, created_at) \
+             VALUES (?, ?, 1, 1, ?)",
+            [profile_id.into(), rv_id.into(), now.clone().into()],
+        ))
+        .await?;
+    }
+    Ok(())
+}
+
 async fn get_profile_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option<QualificationRequirementProfile>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -440,10 +485,15 @@ pub async fn upsert_qualification_requirement_profile(
         }
         let updated = get_profile_by_id(db, id).await?.expect("row");
         stage_qualification_profile(db, &updated).await?;
+        // Sync skills if provided
+        if let Some(ref skill_ids) = input.skill_reference_value_ids {
+            replace_profile_skills(db, id, skill_ids).await?;
+        }
         return Ok(updated);
     }
 
     let sync_id = Uuid::new_v4().to_string();
+    let skill_ids_snap = input.skill_reference_value_ids.clone();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO qualification_requirement_profiles (entity_sync_id, profile_name, \
@@ -465,6 +515,9 @@ pub async fn upsert_qualification_requirement_profile(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+    if let Some(ref skill_ids) = skill_ids_snap {
+        replace_profile_skills(db, new_id, skill_ids).await?;
+    }
     let created = get_profile_by_id(db, new_id).await?.expect("row");
     stage_qualification_profile(db, &created).await?;
     Ok(created)

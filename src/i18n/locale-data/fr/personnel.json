@@ -20,7 +20,8 @@
     "skillsMatrix": "Matrice des competences",
     "availabilityCalendar": "Calendrier de disponibilite",
     "teamCapacity": "Capacite des equipes",
-    "training": "Formation et certifications"
+    "training": "Formation et certifications",
+    "positions": "Postes"
   },
   "training": {
     "heading": "Formation et qualifications",
@@ -85,8 +86,10 @@
     "searchPlaceholder": "Recherche code, nom, e-mail, téléphone…",
     "entity": "Entité",
     "position": "Poste",
-    "status": "Statut",
+    "status": "Disponibilité",
     "employmentType": "Type d'emploi",
+    "employmentOrigin": "Origine",
+    "employmentStatus": "Statut",
     "all": "Tous",
     "clearAll": "Tout effacer"
   },
@@ -112,6 +115,7 @@
       "teams": "Equipes",
       "rates": "Tarifs",
       "authorizations": "Autorisations",
+      "assignment": "Affectations",
       "history": "Historique",
       "workload": "Charge"
     },
@@ -120,28 +124,88 @@
       "inProgressWo": "OT en cours",
       "pendingDi": "DI en attente",
       "di30d": "DI sur 30 jours"
+    },
+    "assignment": {
+      "unknown": "Affectation inconnue",
+      "reason": "Motif",
+      "to": "Jusqu'au",
+      "current": "En cours"
     }
   },
   "create": {
     "title": "Nouveau personnel",
     "submit": "Créer",
-    "cancel": "Annuler"
+    "cancel": "Annuler",
+    "section": {
+      "identity": "Identité",
+      "origin": "Origine et contrat",
+      "organization": "Organisation",
+      "photo": "Photo",
+      "skills": "Compétences",
+      "certifications": "Certifications",
+      "contact": "Contact",
+      "account": "Compte MaintaFox",
+      "notes": "Notes"
+    },
+    "photo": {
+      "label": "Photo de profil",
+      "hint": "Choisissez une photo (JPEG/PNG, max 5 Mo)",
+      "error": "Échec du téléversement de la photo"
+    },
+    "skill": {
+      "add": "Ajouter une compétence",
+      "remove": "Supprimer",
+      "proficiency": "Niveau",
+      "fromPosition": "Prérempli depuis les exigences du poste"
+    },
+    "cert": {
+      "add": "Ajouter une certification",
+      "remove": "Supprimer",
+      "issuedAt": "Émise le",
+      "expiresAt": "Expire le",
+      "issuingBody": "Organisme",
+      "ref": "Réf. certificat",
+      "fromPosition": "Prérempli depuis les exigences du poste"
+    },
+    "account": {
+      "checkbox": "Créer un compte utilisateur MaintaFox pour cette personne",
+      "locked": "Le compte de cette personne sera lié à l'enregistrement que vous venez de créer"
+    },
+    "validation": {
+      "fullNameRequired": "Le nom complet est obligatoire",
+      "employeeCodeRequired": "Le matricule est obligatoire",
+      "employmentTypeRequired": "Le type d'emploi est obligatoire",
+      "positionRequired": "Le poste est obligatoire",
+      "companyRequired": "La société est obligatoire pour une origine Externe",
+      "entityRequired": "L'entité est obligatoire",
+      "scheduleRequired": "L'horaire est obligatoire"
+    },
+    "error": {
+      "createFailed": "Échec de la création du personnel",
+      "photoFailed": "Personnel créé, mais le téléversement de la photo a échoué"
+    }
   },
   "field": {
     "employeeCode": "Matricule",
     "fullName": "Nom complet",
     "employmentType": "Type d'emploi",
+    "employmentOrigin": "Origine",
+    "employmentStatus": "Statut RH",
     "position": "Poste",
     "entity": "Entité",
     "team": "Équipe",
     "supervisor": "Supérieur hiérarchique",
     "schedule": "Horaire",
-    "status": "Statut",
+    "status": "Disponibilité",
     "hireDate": "Date d'embauche",
     "email": "Email",
     "phone": "Téléphone",
     "company": "Société externe",
-    "notes": "Notes"
+    "contractNumber": "Numéro de contrat",
+    "contractStart": "Début du contrat",
+    "contractEnd": "Fin du contrat",
+    "notes": "Notes",
+    "photo": "Photo"
   },
   "status": {
     "available": "Disponible",
@@ -157,16 +221,68 @@
     "temp": "Intérimaire",
     "vendor": "Fournisseur"
   },
+  "employmentOrigin": {
+    "internal": "Interne",
+    "external": "Externe"
+  },
+  "employmentStatus": {
+    "active": "Actif",
+    "inactive": "Inactif",
+    "suspended": "Suspendu",
+    "terminated": "Terminé"
+  },
   "validation": {
     "nameRequired": "Le nom est requis",
     "employmentTypeRequired": "Le type d'emploi est requis"
+  },
+  "position": {
+    "panel": {
+      "title": "Postes",
+      "searchPlaceholder": "Recherche code ou nom…",
+      "noData": "Aucun poste trouvé."
+    },
+    "action": {
+      "create": "Nouveau poste",
+      "archive": "Archiver",
+      "archived": "Archivé"
+    },
+    "create": {
+      "title": "Nouveau poste",
+      "code": "Code",
+      "name": "Nom",
+      "category": "Catégorie",
+      "active": "Actif",
+      "skills": "Compétences requises",
+      "certs": "Certifications requises",
+      "addSkill": "Ajouter une compétence",
+      "addCert": "Ajouter une certification",
+      "submit": "Créer",
+      "cancel": "Annuler",
+      "error": "Échec de la création du poste"
+    },
+    "category": {
+      "technician": "Technicien",
+      "engineer": "Ingénieur",
+      "supervisor": "Superviseur",
+      "planner": "Planificateur",
+      "inspector": "Inspecteur",
+      "operator": "Opérateur",
+      "other": "Autre"
+    },
+    "columns": {
+      "code": "Code",
+      "name": "Nom",
+      "category": "Catégorie",
+      "status": "Statut"
+    }
   },
   "archive": {
     "title": "Personnel inactif"
   },
   "common": {
     "loading": "Chargement...",
-    "noData": "Aucune donnee disponible."
+    "noData": "Aucune donnée disponible.",
+    "today": "Aujourd'hui"
   },
   "skills": {
     "searchPlaceholder": "Rechercher personnel ou competence...",

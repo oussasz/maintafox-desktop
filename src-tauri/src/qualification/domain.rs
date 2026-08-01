@@ -53,6 +53,9 @@ pub struct QualificationRequirementProfileUpsertInput {
     pub profile_name: String,
     pub required_certification_type_ids_json: String,
     pub applies_to_permit_type_codes_json: String,
+    /// Optional list of skill reference_value_ids to replace the profile's skills.
+    #[serde(default)]
+    pub skill_reference_value_ids: Option<Vec<i64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,9 +1,11 @@
 ﻿//! Personnel availability computations and block mutations.
 
+use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
+use super::domain::PersonnelAvailabilityState;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AvailabilityCalendarFilter {
@@ -231,8 +233,7 @@ pub async fn create_availability_block(
     db: &DatabaseConnection,
     input: AvailabilityBlockCreateInput,
     actor_id: i64,
-) -> AppResult<PersonnelAvailabilityBlock> {
-    if input.start_at >= input.end_at {
+) -> AppResult<PersonnelAvailabilityBlock> {    if input.start_at >= input.end_at {
         return Err(AppError::ValidationFailed(vec![
             "start_at must be before end_at.".to_string(),
         ]));
@@ -296,4 +297,124 @@ pub async fn create_availability_block(
     })
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Computed availability state (point-in-time)
+// ─────────────────────────────────────────────────────────────────────────────
 
+/// Compute the current availability state for a single personnel.
+///
+/// Priority:
+/// 1. `blocked_override = 1` → blocked
+/// 2. Active `personnel_availability_blocks` (leave / training / medical) → on_leave / in_training / blocked
+/// 3. Open WO assignments as primary_responsible → assigned
+/// 4. Otherwise → available
+pub async fn compute_personnel_availability_state(
+    db: &DatabaseConnection,
+    personnel_id: i64,
+) -> AppResult<PersonnelAvailabilityState> {
+    let as_of = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    // Fetch blocked_override + employment_status
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT blocked_override, employment_status FROM personnel WHERE id = ? LIMIT 1",
+            [personnel_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "Personnel".into(),
+            id: personnel_id.to_string(),
+        })?;
+
+    let blocked_override: i64 = row.try_get("", "blocked_override").unwrap_or(0);
+    let employment_status: String = row.try_get("", "employment_status").unwrap_or_else(|_| "active".to_string());
+
+    if employment_status == "terminated" {
+        return Ok(PersonnelAvailabilityState {
+            personnel_id,
+            status: "inactive".to_string(),
+            blocked_override: false,
+            reasons: vec!["Employment terminated.".to_string()],
+            as_of,
+        });
+    }
+
+    if blocked_override != 0 {
+        return Ok(PersonnelAvailabilityState {
+            personnel_id,
+            status: "blocked".to_string(),
+            blocked_override: true,
+            reasons: vec!["Blocked by manual override.".to_string()],
+            as_of,
+        });
+    }
+
+    // Check active blocks
+    let block_rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT block_type FROM personnel_availability_blocks \
+             WHERE personnel_id = ? AND start_at <= ? AND end_at > ? \
+             ORDER BY is_critical DESC, id ASC LIMIT 10",
+            [personnel_id.into(), as_of.clone().into(), as_of.clone().into()],
+        ))
+        .await?;
+
+    if !block_rows.is_empty() {
+        let block_types: Vec<String> = block_rows
+            .iter()
+            .filter_map(|r| r.try_get::<String>("", "block_type").ok())
+            .collect();
+
+        let status = if block_types.iter().any(|t| t == "training") {
+            "in_training"
+        } else if block_types.iter().any(|t| matches!(t.as_str(), "leave" | "vacation" | "sick")) {
+            "on_leave"
+        } else {
+            "blocked"
+        };
+
+        return Ok(PersonnelAvailabilityState {
+            personnel_id,
+            status: status.to_string(),
+            blocked_override: false,
+            reasons: block_types,
+            as_of,
+        });
+    }
+
+    // Check open WO assignments
+    let wo_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS n FROM work_orders wo
+             JOIN work_order_statuses s ON s.id = wo.status_id
+             WHERE wo.primary_responsible_id = ?
+               AND s.code NOT IN ('closed', 'cancelled')
+             LIMIT 1",
+            [personnel_id.into()],
+        ))
+        .await;
+
+    if let Ok(Some(wr)) = wo_row {
+        let count: i64 = wr.try_get("", "n").unwrap_or(0);
+        if count > 0 {
+            return Ok(PersonnelAvailabilityState {
+                personnel_id,
+                status: "assigned".to_string(),
+                blocked_override: false,
+                reasons: vec![format!("{count} ordre(s) de travail actif(s).")],
+                as_of,
+            });
+        }
+    }
+
+    Ok(PersonnelAvailabilityState {
+        personnel_id,
+        status: "available".to_string(),
+        blocked_override: false,
+        reasons: vec![],
+        as_of,
+    })
+}

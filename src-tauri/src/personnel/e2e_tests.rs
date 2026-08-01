@@ -49,28 +49,171 @@ mod tests {
         row.try_get::<i64>("", "id").expect("id")
     }
 
+    /// Insert minimal prerequisites (org_structure_model, node_type, two org_nodes, schedule RV).
+    /// Returns `(position_id, entity_id, team_id, sched_rv_id)`.
+    async fn prepare_prerequisites(db: &sea_orm::DatabaseConnection) -> (i64, i64, i64, i64) {
+        let now = "2026-01-01T00:00:00Z";
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "INSERT OR IGNORE INTO org_structure_models \
+                 (sync_id, version_number, status, created_at, updated_at) \
+                 VALUES ('test-model-001', 1, 'active', '{now}', '{now}')"
+            ),
+        ))
+        .await
+        .expect("insert org_structure_model");
+
+        let model_id: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM org_structure_models WHERE sync_id = 'test-model-001'".to_string(),
+            ))
+            .await
+            .expect("q")
+            .expect("model row")
+            .try_get("", "id")
+            .unwrap();
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "INSERT OR IGNORE INTO org_node_types \
+                 (sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+                 VALUES ('test-type-001', {model_id}, 'TEST', 'Test Type', 1, '{now}', '{now}')"
+            ),
+        ))
+        .await
+        .expect("insert org_node_type");
+
+        let type_id: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM org_node_types WHERE sync_id = 'test-type-001' LIMIT 1".to_string(),
+            ))
+            .await
+            .expect("q")
+            .expect("type row")
+            .try_get("", "id")
+            .unwrap();
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "INSERT OR IGNORE INTO org_nodes \
+                 (sync_id, code, name, node_type_id, structure_model_id, \
+                  ancestor_path, depth, status, created_at, updated_at) \
+                 VALUES ('test-entity-001', 'ENT-TEST', 'Test Entity', \
+                  {type_id}, {model_id}, '/', 0, 'active', '{now}', '{now}')"
+            ),
+        ))
+        .await
+        .expect("insert entity node");
+
+        let entity_id: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM org_nodes WHERE sync_id = 'test-entity-001'".to_string(),
+            ))
+            .await
+            .expect("q")
+            .expect("entity row")
+            .try_get("", "id")
+            .unwrap();
+
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "INSERT OR IGNORE INTO org_nodes \
+                 (sync_id, code, name, node_type_id, structure_model_id, \
+                  ancestor_path, depth, status, created_at, updated_at) \
+                 VALUES ('test-team-001', 'TEAM-TEST', 'Test Team', \
+                  {type_id}, {model_id}, '/', 0, 'active', '{now}', '{now}')"
+            ),
+        ))
+        .await
+        .expect("insert team node");
+
+        let team_id: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM org_nodes WHERE sync_id = 'test-team-001'".to_string(),
+            ))
+            .await
+            .expect("q")
+            .expect("team row")
+            .try_get("", "id")
+            .unwrap();
+
+        let position_id: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM positions WHERE code = 'POS-TECH' LIMIT 1".to_string(),
+            ))
+            .await
+            .expect("q")
+            .expect("position row")
+            .try_get("", "id")
+            .unwrap();
+
+        // Prefer seeded ORG.SCHEDULE_CLASS; insert a minimal active value if missing.
+        let sched_rv_id: i64 = match db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT rv.id FROM reference_values rv \
+                 JOIN reference_sets rs ON rs.id = rv.set_id \
+                 JOIN reference_domains rd ON rd.id = rs.domain_id \
+                 WHERE UPPER(TRIM(rd.code)) = 'ORG.SCHEDULE_CLASS' \
+                   AND rv.is_active = 1 \
+                 ORDER BY rv.id ASC LIMIT 1"
+                    .to_string(),
+            ))
+            .await
+            .expect("q")
+        {
+            Some(row) => row.try_get("", "id").unwrap(),
+            None => {
+                // Fallback: any active reference_value (schedule assert may still fail — seed should provide)
+                panic!("ORG.SCHEDULE_CLASS reference value missing after migrations/seeder");
+            }
+        };
+
+        (position_id, entity_id, team_id, sched_rv_id)
+    }
+
     /// V1 — Create personnel; DB row; activity `personnel.created`.
     #[tokio::test]
     async fn v1_create_personnel_end_to_end() {
         let db = setup().await;
         let actor = admin_id(&db).await;
+        let (position_id, entity_id, team_id, sched_rv_id) = prepare_prerequisites(&db).await;
 
         let p = create_personnel(
             &db,
             PersonnelCreateInput {
                 full_name: "Test Tech".to_string(),
-                employee_code: None,
+                employee_code: "PER-0001".to_string(),
                 employment_type: "employee".to_string(),
-                position_id: None,
-                primary_entity_id: None,
-                primary_team_id: None,
+                employment_origin: "internal".to_string(),
+                employment_status: None,
+                position_id,
+                primary_entity_id: entity_id,
+                primary_team_id: team_id,
                 supervisor_id: None,
-                home_schedule_reference_value_id: None,
+                home_schedule_reference_value_id: sched_rv_id,
                 hire_date: None,
                 email: None,
                 phone: None,
                 external_company_id: None,
+                contract_number: None,
+                contract_start_date: None,
+                contract_end_date: None,
                 notes: None,
+                blocked_override: None,
+                assignment_reason: None,
+                skills: vec![],
+                certifications: vec![],
             },
             actor,
         )
@@ -120,6 +263,7 @@ mod tests {
     async fn v2_contractor_company_name_join() {
         let db = setup().await;
         let actor = admin_id(&db).await;
+        let (position_id, entity_id, team_id, sched_rv_id) = prepare_prerequisites(&db).await;
 
         let co = create_external_company(
             &db,
@@ -136,18 +280,27 @@ mod tests {
             &db,
             PersonnelCreateInput {
                 full_name: "Contractor User".to_string(),
-                employee_code: None,
+                employee_code: "CTR-0001".to_string(),
                 employment_type: "contractor".to_string(),
-                position_id: None,
-                primary_entity_id: None,
-                primary_team_id: None,
+                employment_origin: "external".to_string(),
+                employment_status: None,
+                position_id,
+                primary_entity_id: entity_id,
+                primary_team_id: team_id,
                 supervisor_id: None,
-                home_schedule_reference_value_id: None,
+                home_schedule_reference_value_id: sched_rv_id,
                 hire_date: None,
                 email: None,
                 phone: None,
                 external_company_id: Some(co.id),
+                contract_number: None,
+                contract_start_date: None,
+                contract_end_date: None,
                 notes: None,
+                blocked_override: None,
+                assignment_reason: None,
+                skills: vec![],
+                certifications: vec![],
             },
             actor,
         )
@@ -167,23 +320,33 @@ mod tests {
     async fn v3_update_stale_row_version() {
         let db = setup().await;
         let actor = admin_id(&db).await;
+        let (position_id, entity_id, team_id, sched_rv_id) = prepare_prerequisites(&db).await;
 
         let p = create_personnel(
             &db,
             PersonnelCreateInput {
                 full_name: "Versioned".to_string(),
-                employee_code: None,
+                employee_code: "VER-0001".to_string(),
                 employment_type: "employee".to_string(),
-                position_id: None,
-                primary_entity_id: None,
-                primary_team_id: None,
+                employment_origin: "internal".to_string(),
+                employment_status: None,
+                position_id,
+                primary_entity_id: entity_id,
+                primary_team_id: team_id,
                 supervisor_id: None,
-                home_schedule_reference_value_id: None,
+                home_schedule_reference_value_id: sched_rv_id,
                 hire_date: None,
                 email: None,
                 phone: None,
                 external_company_id: None,
+                contract_number: None,
+                contract_start_date: None,
+                contract_end_date: None,
                 notes: None,
+                blocked_override: None,
+                assignment_reason: None,
+                skills: vec![],
+                certifications: vec![],
             },
             actor,
         )
@@ -197,6 +360,9 @@ mod tests {
                 expected_row_version: 99,
                 full_name: Some("Should Fail".into()),
                 employment_type: None,
+                employment_origin: None,
+                employment_status: None,
+                blocked_override: None,
                 position_id: None,
                 primary_entity_id: None,
                 primary_team_id: None,
@@ -208,7 +374,12 @@ mod tests {
                 email: None,
                 phone: None,
                 external_company_id: None,
+                contract_number: None,
+                contract_start_date: None,
+                contract_end_date: None,
                 notes: None,
+                assignment_reason: None,
+                employee_code: None,
             },
             actor,
         )
@@ -223,23 +394,33 @@ mod tests {
     async fn v4_deactivate_blocked_by_wo_then_succeeds() {
         let db = setup().await;
         let actor = admin_id(&db).await;
+        let (position_id, entity_id, team_id, sched_rv_id) = prepare_prerequisites(&db).await;
 
         let p = create_personnel(
             &db,
             PersonnelCreateInput {
                 full_name: "WO Linked".to_string(),
-                employee_code: None,
+                employee_code: "WOL-0001".to_string(),
                 employment_type: "employee".to_string(),
-                position_id: None,
-                primary_entity_id: None,
-                primary_team_id: None,
+                employment_origin: "internal".to_string(),
+                employment_status: None,
+                position_id,
+                primary_entity_id: entity_id,
+                primary_team_id: team_id,
                 supervisor_id: None,
-                home_schedule_reference_value_id: None,
+                home_schedule_reference_value_id: sched_rv_id,
                 hire_date: None,
                 email: None,
                 phone: None,
                 external_company_id: None,
+                contract_number: None,
+                contract_start_date: None,
+                contract_end_date: None,
                 notes: None,
+                blocked_override: None,
+                assignment_reason: None,
+                skills: vec![],
+                certifications: vec![],
             },
             actor,
         )
@@ -254,11 +435,33 @@ mod tests {
         .await
         .expect("link user to personnel");
 
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "INSERT INTO equipment (sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, created_at, updated_at) \
+                 VALUES ('test-eq-per-v4', 'EQ-PER-V4', 'Personnel V4 Equipment', 'active_in_service', \
+                 {entity_id}, datetime('now'), datetime('now'))"
+            ),
+        ))
+        .await
+        .expect("insert equipment");
+
+        let equipment_id: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM equipment WHERE sync_id = 'test-eq-per-v4'".to_string(),
+            ))
+            .await
+            .expect("q")
+            .expect("equipment row")
+            .try_get("", "id")
+            .unwrap();
+
         let wo = wo_queries::create_work_order(
             &db,
             WoCreateInput {
                 type_code: "corrective".into(),
-                equipment_id: None,
+                equipment_id: Some(equipment_id),
                 location_id: None,
                 source_di_id: None,
                 source_inspection_anomaly_id: None,
@@ -333,23 +536,33 @@ mod tests {
     async fn v5_active_rate_card_picks_latest_effective() {
         let db = setup().await;
         let actor = admin_id(&db).await;
+        let (position_id, entity_id, team_id, sched_rv_id) = prepare_prerequisites(&db).await;
 
         let p = create_personnel(
             &db,
             PersonnelCreateInput {
                 full_name: "Rated".to_string(),
-                employee_code: None,
+                employee_code: "RTD-0001".to_string(),
                 employment_type: "employee".to_string(),
-                position_id: None,
-                primary_entity_id: None,
-                primary_team_id: None,
+                employment_origin: "internal".to_string(),
+                employment_status: None,
+                position_id,
+                primary_entity_id: entity_id,
+                primary_team_id: team_id,
                 supervisor_id: None,
-                home_schedule_reference_value_id: None,
+                home_schedule_reference_value_id: sched_rv_id,
                 hire_date: None,
                 email: None,
                 phone: None,
                 external_company_id: None,
+                contract_number: None,
+                contract_start_date: None,
+                contract_end_date: None,
                 notes: None,
+                blocked_override: None,
+                assignment_reason: None,
+                skills: vec![],
+                certifications: vec![],
             },
             actor,
         )
@@ -386,24 +599,37 @@ mod tests {
     async fn v6_list_search_filters_by_name() {
         let db = setup().await;
         let actor = admin_id(&db).await;
+        let (position_id, entity_id, team_id, sched_rv_id) = prepare_prerequisites(&db).await;
 
-        for name in ["Alice Jones", "Bob unique Smith", "Charlie Brown"] {
+        for (i, name) in ["Alice Jones", "Bob unique Smith", "Charlie Brown"]
+            .iter()
+            .enumerate()
+        {
             create_personnel(
                 &db,
                 PersonnelCreateInput {
                     full_name: name.to_string(),
-                    employee_code: None,
+                    employee_code: format!("SRH-{i:04}"),
                     employment_type: "employee".to_string(),
-                    position_id: None,
-                    primary_entity_id: None,
-                    primary_team_id: None,
+                    employment_origin: "internal".to_string(),
+                    employment_status: None,
+                    position_id,
+                    primary_entity_id: entity_id,
+                    primary_team_id: team_id,
                     supervisor_id: None,
-                    home_schedule_reference_value_id: None,
+                    home_schedule_reference_value_id: sched_rv_id,
                     hire_date: None,
                     email: None,
                     phone: None,
                     external_company_id: None,
+                    contract_number: None,
+                    contract_start_date: None,
+                    contract_end_date: None,
                     notes: None,
+                    blocked_override: None,
+                    assignment_reason: None,
+                    skills: vec![],
+                    certifications: vec![],
                 },
                 actor,
             )

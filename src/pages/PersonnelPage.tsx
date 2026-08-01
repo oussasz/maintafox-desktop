@@ -18,6 +18,7 @@ import { PersonnelCreateDialog } from "@/components/personnel/PersonnelCreateDia
 import { PersonnelDetailDialog } from "@/components/personnel/PersonnelDetailDialog";
 import { PersonnelExportMenu } from "@/components/personnel/PersonnelExportMenu";
 import { PersonnelImportWizard } from "@/components/personnel/PersonnelImportWizard";
+import { PositionsPanel } from "@/components/personnel/PositionsPanel";
 import { SkillsMatrixPanel } from "@/components/personnel/SkillsMatrixPanel";
 import { TeamCapacityBoard } from "@/components/personnel/TeamCapacityBoard";
 import { TrainingQualificationPanel } from "@/components/personnel/TrainingQualificationPanel";
@@ -46,6 +47,8 @@ const AVAILABILITY_CODES = [
 ] as const;
 
 const EMPLOYMENT_CODES = ["employee", "contractor", "temp", "vendor"] as const;
+const EMPLOYMENT_ORIGIN_CODES = ["internal", "external"] as const;
+const EMPLOYMENT_STATUS_CODES = ["active", "inactive", "suspended", "terminated"] as const;
 
 const VIEW_STORAGE_KEY = "personnel-view-mode";
 
@@ -123,6 +126,11 @@ export function PersonnelPage() {
     [filter.availability_status],
   );
   const selectedEmployment = useMemo(() => filter.employment_type ?? [], [filter.employment_type]);
+  const selectedOrigin = useMemo(() => filter.employment_origin ?? [], [filter.employment_origin]);
+  const selectedEmpStatus = useMemo(
+    () => filter.employment_status ?? [],
+    [filter.employment_status],
+  );
 
   const handleEntityFilter = useCallback(
     (val: string | null) => {
@@ -156,6 +164,22 @@ export function PersonnelPage() {
     [setFilter, loadPersonnel],
   );
 
+  const handleOriginMulti = useCallback(
+    (next: string[]) => {
+      setFilter({ employment_origin: next.length ? next : null });
+      void loadPersonnel();
+    },
+    [setFilter, loadPersonnel],
+  );
+
+  const handleEmpStatusMulti = useCallback(
+    (next: string[]) => {
+      setFilter({ employment_status: next.length ? next : null });
+      void loadPersonnel();
+    },
+    [setFilter, loadPersonnel],
+  );
+
   const clearAllFilters = useCallback(() => {
     setSearchInput("");
     setFilter({
@@ -164,6 +188,8 @@ export function PersonnelPage() {
       position_id: null,
       availability_status: null,
       employment_type: null,
+      employment_origin: null,
+      employment_status: null,
     });
     void loadPersonnel();
   }, [setFilter, loadPersonnel]);
@@ -183,7 +209,6 @@ export function PersonnelPage() {
         })),
         value: entityValue,
         onChange: handleEntityFilter,
-        allLabel: t("filters.all"),
       },
       {
         id: "position",
@@ -195,7 +220,6 @@ export function PersonnelPage() {
         })),
         value: positionValue,
         onChange: handlePositionFilter,
-        allLabel: t("filters.all"),
       },
       {
         id: "status",
@@ -219,6 +243,28 @@ export function PersonnelPage() {
         value: selectedEmployment,
         onChange: handleEmploymentMulti,
       },
+      {
+        id: "origin",
+        kind: "multi-select",
+        label: t("filters.employmentOrigin", "Origin"),
+        options: EMPLOYMENT_ORIGIN_CODES.map((code) => ({
+          value: code,
+          label: t(`employmentOrigin.${code}`, code),
+        })),
+        value: selectedOrigin,
+        onChange: handleOriginMulti,
+      },
+      {
+        id: "empStatus",
+        kind: "multi-select",
+        label: t("filters.employmentStatus", "Status"),
+        options: EMPLOYMENT_STATUS_CODES.map((code) => ({
+          value: code,
+          label: t(`employmentStatus.${code}`, code),
+        })),
+        value: selectedEmpStatus,
+        onChange: handleEmpStatusMulti,
+      },
     ],
     [
       t,
@@ -228,10 +274,14 @@ export function PersonnelPage() {
       positionValue,
       selectedStatuses,
       selectedEmployment,
+      selectedOrigin,
+      selectedEmpStatus,
       handleEntityFilter,
       handlePositionFilter,
       handleStatusMulti,
       handleEmploymentMulti,
+      handleOriginMulti,
+      handleEmpStatusMulti,
     ],
   );
 
@@ -384,12 +434,13 @@ export function PersonnelPage() {
         <div className={mfLayout.moduleWorkspaceInner}>
           <div className={mfLayout.moduleWorkspaceBody}>
             <Tabs defaultValue="directory" className="w-full">
-              <TabsList className="grid w-full max-w-4xl grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+              <TabsList className="grid w-full max-w-5xl grid-cols-3 sm:grid-cols-3 lg:grid-cols-6">
                 <TabsTrigger value="directory">{t("tabs.directory")}</TabsTrigger>
                 <TabsTrigger value="skills">{t("tabs.skillsMatrix")}</TabsTrigger>
                 <TabsTrigger value="availability">{t("tabs.availabilityCalendar")}</TabsTrigger>
                 <TabsTrigger value="capacity">{t("tabs.teamCapacity")}</TabsTrigger>
                 <TabsTrigger value="training">{t("tabs.training")}</TabsTrigger>
+                <TabsTrigger value="positions">{t("tabs.positions", "Positions")}</TabsTrigger>
               </TabsList>
 
               <TabsContent value="directory" className="mt-4">
@@ -447,6 +498,10 @@ export function PersonnelPage() {
 
               <TabsContent value="training" className="mt-4">
                 <TrainingQualificationPanel />
+              </TabsContent>
+
+              <TabsContent value="positions" className="mt-4">
+                <PositionsPanel />
               </TabsContent>
             </Tabs>
           </div>

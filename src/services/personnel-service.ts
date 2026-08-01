@@ -16,7 +16,9 @@ import type {
   ExternalCompany,
   ExternalCompanyContact,
   Personnel,
+  PersonnelAssignmentHistoryEntry,
   PersonnelAvailabilityBlock,
+  PersonnelAvailabilityState,
   PersonnelAuthorization,
   PersonnelCreateInput,
   PersonnelDetailPayload,
@@ -29,6 +31,9 @@ import type {
   PersonnelWorkHistoryEntry,
   PersonnelWorkloadSummary,
   Position,
+  PositionDetailPayload,
+  PositionListFilter,
+  PositionUpsertInput,
   SkillMatrixRow,
   SkillsMatrixFilter,
   TeamCapacityFilter,
@@ -77,6 +82,9 @@ export const PersonnelSchema = z.object({
   employee_code: z.string(),
   full_name: z.string(),
   employment_type: z.string(),
+  employment_origin: z.string(),
+  employment_status: z.string(),
+  blocked_override: z.boolean(),
   position_id: z.number().nullable(),
   primary_entity_id: z.number().nullable(),
   primary_team_id: z.number().nullable(),
@@ -90,11 +98,15 @@ export const PersonnelSchema = z.object({
   photo_path: z.string().nullable(),
   hr_external_id: z.string().nullable(),
   external_company_id: z.number().nullable(),
+  contract_number: z.string().nullable(),
+  contract_start_date: z.string().nullable(),
+  contract_end_date: z.string().nullable(),
   notes: z.string().nullable(),
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
   position_name: z.string().nullable(),
+  position_code: z.string().nullable(),
   position_category: z.string().nullable(),
   entity_name: z.string().nullable(),
   team_name: z.string().nullable(),
@@ -355,6 +367,58 @@ export const WorkforceKpiReportSchema = z.object({
   team_coverage_ratio: z.number(),
 });
 
+export const PositionChangeEventSchema = z.object({
+  id: z.number(),
+  position_id: z.number(),
+  event_type: z.string(),
+  summary: z.string(),
+  detail_json: z.string().nullable(),
+  changed_by_id: z.number().nullable(),
+  created_at: z.string(),
+});
+
+export const PositionDetailPayloadSchema = z.object({
+  position: PositionSchema,
+  skill_reference_value_ids: z.array(z.number()),
+  certification_type_ids: z.array(z.number()),
+  change_events: z.array(PositionChangeEventSchema),
+});
+
+export const PositionRequirementSeedSchema = z.object({
+  skill_reference_value_ids: z.array(z.number()),
+  certification_type_ids: z.array(z.number()),
+});
+export type PositionRequirementSeed = z.infer<typeof PositionRequirementSeedSchema>;
+
+export const PersonnelAssignmentHistoryEntrySchema = z.object({
+  id: z.number(),
+  personnel_id: z.number(),
+  entity_id: z.number().nullable(),
+  team_id: z.number().nullable(),
+  position_id: z.number().nullable(),
+  manager_id: z.number().nullable(),
+  schedule_reference_value_id: z.number().nullable(),
+  started_at: z.string(),
+  ended_at: z.string().nullable(),
+  reason: z.string().nullable(),
+  changed_by_id: z.number().nullable(),
+  created_at: z.string(),
+  entity_name: z.string().nullable(),
+  team_name: z.string().nullable(),
+  position_code: z.string().nullable(),
+  position_name: z.string().nullable(),
+  manager_name: z.string().nullable(),
+  schedule_name: z.string().nullable(),
+});
+
+export const PersonnelAvailabilityStateSchema = z.object({
+  personnel_id: z.number(),
+  status: z.string(),
+  blocked_override: z.boolean(),
+  reasons: z.array(z.string()),
+  as_of: z.string(),
+});
+
 // â”€â”€ IPC errors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface IpcErrorShape {
@@ -448,6 +512,73 @@ export async function deactivatePersonnel(
 export async function listPositions(): Promise<Position[]> {
   const rows = await invokeParsed("list_positions", undefined, z.array(PositionSchema));
   return rows as Position[];
+}
+
+export async function listPositionsFiltered(filter: PositionListFilter): Promise<Position[]> {
+  const rows = await invokeParsed("list_positions", { filter }, z.array(PositionSchema));
+  return rows as Position[];
+}
+
+export async function getPosition(id: number): Promise<PositionDetailPayload> {
+  const detail = await invokeParsed("get_position", { id }, PositionDetailPayloadSchema);
+  return detail as PositionDetailPayload;
+}
+
+export async function upsertPosition(input: PositionUpsertInput): Promise<Position> {
+  const p = await invokeParsed("upsert_position", { input }, PositionSchema);
+  return p as Position;
+}
+
+export async function archivePosition(id: number): Promise<Position> {
+  const p = await invokeParsed("archive_position", { id }, PositionSchema);
+  return p as Position;
+}
+
+export async function getPositionRequirementSeed(
+  positionId: number,
+): Promise<PositionRequirementSeed> {
+  const seed = await invokeParsed(
+    "get_position_requirement_seed",
+    { positionId },
+    PositionRequirementSeedSchema,
+  );
+  return seed;
+}
+
+export async function uploadPersonnelPhoto(
+  personnelId: number,
+  sourcePath: string,
+): Promise<string> {
+  // Backend returns the stored photo path.
+  const path = await invokeParsed(
+    "upload_personnel_photo",
+    { personnelId, sourcePath },
+    z.string(),
+  );
+  return path;
+}
+
+export async function listPersonnelAssignmentHistory(
+  personnelId: number,
+  limit = 60,
+): Promise<PersonnelAssignmentHistoryEntry[]> {
+  const rows = await invokeParsed(
+    "list_personnel_assignment_history",
+    { personnelId, limit },
+    z.array(PersonnelAssignmentHistoryEntrySchema),
+  );
+  return rows as PersonnelAssignmentHistoryEntry[];
+}
+
+export async function getPersonnelAvailabilityState(
+  personnelId: number,
+): Promise<PersonnelAvailabilityState> {
+  const state = await invokeParsed(
+    "get_personnel_availability_state",
+    { personnelId },
+    PersonnelAvailabilityStateSchema,
+  );
+  return state as PersonnelAvailabilityState;
 }
 
 export async function createPosition(

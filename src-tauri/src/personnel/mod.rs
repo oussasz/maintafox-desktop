@@ -10,6 +10,8 @@ pub mod availability;
 pub mod teams;
 pub mod import;
 pub mod reports;
+pub mod assignment_history;
+pub mod photos;
 
 #[cfg(test)]
 mod e2e_tests;

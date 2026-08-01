@@ -33,6 +33,8 @@ export interface EntityFormImageUploaderProps {
    * When drop yields no path, we fall back to onPickFiles.
    */
   extractDroppedPaths?: (event: DragEvent) => string[];
+  /** When set, caps staged images (e.g. 1 for personnel photo). */
+  maxItems?: number;
 }
 
 function fileNameFromPath(path: string): string {
@@ -57,17 +59,22 @@ export function EntityFormImageUploader({
   addLabel = "Add images",
   className,
   extractDroppedPaths,
+  maxItems,
 }: EntityFormImageUploaderProps) {
   const busy = disabled || uploading;
   const inputGuard = useRef(false);
+  const atCap = maxItems != null && items.length >= maxItems;
 
   const pick = useCallback(async () => {
-    if (busy || inputGuard.current) return;
+    if (busy || inputGuard.current || atCap) return;
     inputGuard.current = true;
     try {
       const next = await onPickFiles();
       if (next && next.length > 0) {
-        const merged = [...items, ...next];
+        let merged = [...items, ...next];
+        if (maxItems != null) {
+          merged = merged.slice(0, maxItems);
+        }
         if (!merged.some((i) => i.isPrimary) && merged[0]) {
           merged[0] = { ...merged[0], isPrimary: true };
         }
@@ -76,7 +83,7 @@ export function EntityFormImageUploader({
     } finally {
       inputGuard.current = false;
     }
-  }, [busy, items, onChange, onPickFiles]);
+  }, [atCap, busy, items, maxItems, onChange, onPickFiles]);
 
   const removeAt = (id: string) => {
     const next = items.filter((i) => i.id !== id);
@@ -93,7 +100,7 @@ export function EntityFormImageUploader({
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (busy) return;
+    if (busy || atCap) return;
 
     const paths =
       extractDroppedPaths?.(e) ??
@@ -109,13 +116,20 @@ export function EntityFormImageUploader({
       return;
     }
 
-    const staged: EntityFormImageItem[] = paths.map((path, idx) => ({
+    const room = maxItems != null ? Math.max(0, maxItems - items.length) : paths.length;
+    const limitedPaths = paths.slice(0, room);
+    if (limitedPaths.length === 0) return;
+
+    const staged: EntityFormImageItem[] = limitedPaths.map((path, idx) => ({
       id: `drop-${Date.now()}-${idx}`,
       name: fileNameFromPath(path),
       path,
       isPrimary: false,
     }));
-    const merged = [...items, ...staged];
+    let merged = [...items, ...staged];
+    if (maxItems != null) {
+      merged = merged.slice(0, maxItems);
+    }
     if (!merged.some((i) => i.isPrimary) && merged[0]) {
       merged[0] = { ...merged[0], isPrimary: true };
     }
@@ -124,32 +138,34 @@ export function EntityFormImageUploader({
 
   return (
     <div className={cn("space-y-3", className)}>
-      <div
-        role="button"
-        tabIndex={busy ? -1 : 0}
-        className={cn(mfEntityForm.mediaDropzone, busy && "pointer-events-none opacity-60")}
-        onClick={() => void pick()}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
+      {!atCap ? (
+        <div
+          role="button"
+          tabIndex={busy ? -1 : 0}
+          className={cn(mfEntityForm.mediaDropzone, busy && "pointer-events-none opacity-60")}
+          onClick={() => void pick()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              void pick();
+            }
+          }}
+          onDragOver={(e) => {
             e.preventDefault();
-            void pick();
-          }
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-        }}
-        onDrop={onDrop}
-        aria-disabled={busy}
-      >
-        {uploading ? (
-          <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
-        ) : (
-          <ImagePlus className="h-6 w-6 text-text-muted" />
-        )}
-        <span className="font-medium text-text-primary">{addLabel}</span>
-        <span className="max-w-sm text-xs">{hintLabel}</span>
-      </div>
+            e.stopPropagation();
+          }}
+          onDrop={onDrop}
+          aria-disabled={busy}
+        >
+          {uploading ? (
+            <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
+          ) : (
+            <ImagePlus className="h-6 w-6 text-text-muted" />
+          )}
+          <span className="font-medium text-text-primary">{addLabel}</span>
+          <span className="max-w-sm text-xs">{hintLabel}</span>
+        </div>
+      ) : null}
 
       {items.length === 0 ? (
         <p className="text-xs text-text-muted">{emptyLabel}</p>
@@ -158,11 +174,7 @@ export function EntityFormImageUploader({
           {items.map((item) => (
             <li key={item.id} className={mfEntityForm.mediaTile}>
               {item.previewUrl ? (
-                <img
-                  src={item.previewUrl}
-                  alt={item.name}
-                  className="h-full w-full object-cover"
-                />
+                <img src={item.previewUrl} alt={item.name} className="h-full w-full object-cover" />
               ) : (
                 <div className="flex h-full w-full flex-col items-center justify-center gap-1 p-2 text-center text-[10px] text-text-muted">
                   <Upload className="h-4 w-4" />

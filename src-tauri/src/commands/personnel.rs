@@ -3,18 +3,20 @@
 //! Permission gates: `per.view` (read), `per.manage` (writes). `deactivate_personnel` also
 //! requires step-up verification.
 
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
 use crate::notifications::emitter::{emit_event as emit_notification_event, NotificationEventInput};
-use crate::personnel::{availability, import, reports, skills, teams};
+use crate::personnel::{assignment_history, availability, import, photos, reports, skills, teams};
 use crate::personnel::domain::{
     CompanyListFilter, ExternalCompany, ExternalCompanyContact, Personnel, PersonnelAuthorization,
-    DeclareOwnSkillInput, PersonnelAvailabilityBlock, PersonnelCreateInput, PersonnelDetailPayload,
+    DeclareOwnSkillInput, PersonnelAssignmentHistoryEntry, PersonnelAvailabilityBlock,
+    PersonnelAvailabilityState, PersonnelCreateInput, PersonnelDetailPayload,
     PersonnelListFilter, PersonnelListPage, PersonnelRateCard, PersonnelSkillReferenceValue,
-    PersonnelTeamAssignment, PersonnelUpdateInput, PersonnelWorkHistoryEntry, PersonnelWorkloadSummary, Position,
-    ScheduleClassWithDetails, SuccessionRiskRow,
+    PersonnelTeamAssignment, PersonnelUpdateInput, PersonnelWorkHistoryEntry,
+    PersonnelWorkloadSummary, Position, PositionDetailPayload, PositionListFilter,
+    PositionRequirementSeed, PositionUpsertInput, ScheduleClassWithDetails, SuccessionRiskRow,
 };
 use crate::personnel::queries;
 use crate::state::AppState;
@@ -112,15 +114,9 @@ pub async fn create_personnel(
     let mut payload = input;
     payload.full_name = trimmed;
 
-    if let Some(pid) = payload.position_id {
-        queries::assert_position_exists(&state.db, pid).await?;
-    }
-    if let Some(eid) = payload.primary_entity_id {
-        queries::assert_org_node_exists(&state.db, eid).await?;
-    }
-    if let Some(tid) = payload.primary_team_id {
-        queries::assert_org_node_exists(&state.db, tid).await?;
-    }
+    queries::assert_position_exists(&state.db, payload.position_id).await?;
+    queries::assert_org_node_exists(&state.db, payload.primary_entity_id).await?;
+    queries::assert_org_node_exists(&state.db, payload.primary_team_id).await?;
 
     queries::create_personnel(&state.db, payload, i64::from(user.user_id)).await
 }
@@ -136,6 +132,11 @@ pub async fn update_personnel(
 ) -> AppResult<Personnel> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
+
+    // employee_code change requires step-up
+    if input.employee_code.is_some() {
+        require_step_up!(state);
+    }
 
     if let Some(pid) = input.position_id {
         queries::assert_position_exists(&state.db, pid).await?;
@@ -172,10 +173,48 @@ pub async fn deactivate_personnel(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_positions(state: State<'_, AppState>) -> AppResult<Vec<Position>> {
+pub async fn list_positions(
+    filter: Option<PositionListFilter>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<Position>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PER_VIEW, PermissionScope::Global);
-    queries::list_positions(&state.db).await
+    require_permission!(state, &user, crate::rbac::permissions::PER_POSITION_VIEW, PermissionScope::Global);
+    queries::list_positions_filtered(&state.db, filter.unwrap_or_default()).await
+}
+
+#[tauri::command]
+pub async fn get_position(
+    id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<PositionDetailPayload> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PER_POSITION_VIEW, PermissionScope::Global);
+    queries::get_position(&state.db, id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "Position".into(),
+            id: id.to_string(),
+        })
+}
+
+#[tauri::command]
+pub async fn upsert_position(
+    input: PositionUpsertInput,
+    state: State<'_, AppState>,
+) -> AppResult<Position> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PER_POSITION_MANAGE, PermissionScope::Global);
+    queries::upsert_position(&state.db, input, Some(i64::from(user.user_id))).await
+}
+
+#[tauri::command]
+pub async fn archive_position(
+    id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Position> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PER_POSITION_MANAGE, PermissionScope::Global);
+    queries::archive_position(&state.db, id, Some(i64::from(user.user_id))).await
 }
 
 #[tauri::command]
@@ -186,8 +225,59 @@ pub async fn create_position(
     state: State<'_, AppState>,
 ) -> AppResult<Position> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
+    require_permission!(state, &user, crate::rbac::permissions::PER_POSITION_MANAGE, PermissionScope::Global);
     queries::create_position(&state.db, code, name, category).await
+}
+
+#[tauri::command]
+pub async fn get_position_requirement_seed(
+    position_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<PositionRequirementSeed> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PER_POSITION_VIEW, PermissionScope::Global);
+    queries::get_position_requirement_seed(&state.db, position_id).await
+}
+
+#[tauri::command]
+pub async fn list_personnel_assignment_history(
+    personnel_id: i64,
+    limit: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<PersonnelAssignmentHistoryEntry>> {
+    let user = require_session!(state);
+    if !can_read_personnel_record(&state, &user, personnel_id).await? {
+        return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
+    }
+    assignment_history::list_personnel_assignment_history(&state.db, personnel_id, limit.unwrap_or(50)).await
+}
+
+#[tauri::command]
+pub async fn upload_personnel_photo(
+    app: AppHandle,
+    personnel_id: i64,
+    source_path: String,
+    state: State<'_, AppState>,
+) -> AppResult<String> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::PER_MANAGE, PermissionScope::Global);
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    photos::upload_personnel_photo(&state.db, &app_data_dir, personnel_id, &source_path).await
+}
+
+#[tauri::command]
+pub async fn get_personnel_availability_state(
+    personnel_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<PersonnelAvailabilityState> {
+    let user = require_session!(state);
+    if !can_read_personnel_record(&state, &user, personnel_id).await? {
+        return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
+    }
+    availability::compute_personnel_availability_state(&state.db, personnel_id).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

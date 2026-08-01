@@ -149,6 +149,223 @@ impl TryFrom<&str> for EmploymentType {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// EmploymentOrigin — internal | external (orthogonal to employment_type)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EmploymentOrigin {
+    Internal,
+    External,
+}
+
+impl EmploymentOrigin {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Internal => "internal",
+            Self::External => "external",
+        }
+    }
+}
+
+impl TryFrom<&str> for EmploymentOrigin {
+    type Error = String;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "internal" => Ok(Self::Internal),
+            "external" => Ok(Self::External),
+            other => Err(format!("Unknown employment origin: '{other}'")),
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EmploymentStatus — active | inactive | suspended | terminated
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EmploymentStatus {
+    Active,
+    Inactive,
+    Suspended,
+    Terminated,
+}
+
+impl EmploymentStatus {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Inactive => "inactive",
+            Self::Suspended => "suspended",
+            Self::Terminated => "terminated",
+        }
+    }
+}
+
+impl TryFrom<&str> for EmploymentStatus {
+    type Error = String;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "active" => Ok(Self::Active),
+            "inactive" => Ok(Self::Inactive),
+            "suspended" => Ok(Self::Suspended),
+            "terminated" => Ok(Self::Terminated),
+            other => Err(format!("Unknown employment status: '{other}'")),
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ComputedAvailabilityStatus — display / gates (not free-form on create)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ComputedAvailabilityStatus {
+    Available,
+    Assigned,
+    InTraining,
+    OnLeave,
+    Blocked,
+}
+
+impl ComputedAvailabilityStatus {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Assigned => "assigned",
+            Self::InTraining => "in_training",
+            Self::OnLeave => "on_leave",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonnelAvailabilityState {
+    pub personnel_id: i64,
+    pub status: String,
+    pub blocked_override: bool,
+    pub reasons: Vec<String>,
+    pub as_of: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonnelAssignmentHistoryEntry {
+    pub id: i64,
+    pub personnel_id: i64,
+    pub entity_id: Option<i64>,
+    pub team_id: Option<i64>,
+    pub position_id: Option<i64>,
+    pub manager_id: Option<i64>,
+    pub schedule_reference_value_id: Option<i64>,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub reason: Option<String>,
+    pub changed_by_id: Option<i64>,
+    pub created_at: String,
+    // Display
+    pub entity_name: Option<String>,
+    pub team_name: Option<String>,
+    pub position_code: Option<String>,
+    pub position_name: Option<String>,
+    pub manager_name: Option<String>,
+    pub schedule_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PositionChangeEvent {
+    pub id: i64,
+    pub position_id: i64,
+    pub event_type: String,
+    pub summary: String,
+    pub detail_json: Option<String>,
+    pub changed_by_id: Option<i64>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonnelSkillDraft {
+    pub reference_value_id: i64,
+    pub proficiency_level: i64,
+    pub source_type: String,
+    pub valid_to: Option<String>,
+    pub is_primary: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonnelCertDraft {
+    pub certification_type_id: i64,
+    pub issued_at: Option<String>,
+    pub expires_at: Option<String>,
+    pub issuing_body: Option<String>,
+    pub certificate_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PositionRequirementProfileInput {
+    pub profile_name: String,
+    pub skill_reference_value_ids: Vec<i64>,
+    pub certification_type_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PositionUpsertInput {
+    pub id: Option<i64>,
+    pub code: String,
+    pub name: String,
+    pub category: String,
+    pub is_active: Option<bool>,
+    pub requirement_profile: Option<PositionRequirementProfileInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PositionListFilter {
+    pub search: Option<String>,
+    pub include_inactive: Option<bool>,
+    #[serde(default = "default_list_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+
+impl Default for PositionListFilter {
+    fn default() -> Self {
+        Self {
+            search: None,
+            include_inactive: Some(false),
+            limit: default_list_limit(),
+            offset: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PositionDetailPayload {
+    pub position: Position,
+    pub skill_reference_value_ids: Vec<i64>,
+    pub certification_type_ids: Vec<i64>,
+    pub change_events: Vec<PositionChangeEvent>,
+}
+
+/// Skills + certification types suggested by a position's requirement profile
+/// (personnel create dialog seed).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PositionRequirementSeed {
+    pub skill_reference_value_ids: Vec<i64>,
+    pub certification_type_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadPersonnelPhotoInput {
+    pub personnel_id: i64,
+    pub source_path: String,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // AvailabilityStatus — PRD §6.6 `personnel.availability_status`
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -368,6 +585,9 @@ pub struct Personnel {
     pub employee_code: String,
     pub full_name: String,
     pub employment_type: String,
+    pub employment_origin: String,
+    pub employment_status: String,
+    pub blocked_override: bool,
     pub position_id: Option<i64>,
     pub primary_entity_id: Option<i64>,
     pub primary_team_id: Option<i64>,
@@ -381,12 +601,16 @@ pub struct Personnel {
     pub photo_path: Option<String>,
     pub hr_external_id: Option<String>,
     pub external_company_id: Option<i64>,
+    pub contract_number: Option<String>,
+    pub contract_start_date: Option<String>,
+    pub contract_end_date: Option<String>,
     pub notes: Option<String>,
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
     // Display (joins)
     pub position_name: Option<String>,
+    pub position_code: Option<String>,
     pub position_category: Option<String>,
     pub entity_name: Option<String>,
     pub team_name: Option<String>,
@@ -486,18 +710,29 @@ pub struct ExternalCompanyContact {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonnelCreateInput {
     pub full_name: String,
-    pub employee_code: Option<String>,
+    pub employee_code: String,
     pub employment_type: String,
-    pub position_id: Option<i64>,
-    pub primary_entity_id: Option<i64>,
-    pub primary_team_id: Option<i64>,
+    pub employment_origin: String,
+    pub employment_status: Option<String>,
+    pub position_id: i64,
+    pub primary_entity_id: i64,
+    pub primary_team_id: i64,
     pub supervisor_id: Option<i64>,
-    pub home_schedule_reference_value_id: Option<i64>,
+    pub home_schedule_reference_value_id: i64,
     pub hire_date: Option<String>,
     pub email: Option<String>,
     pub phone: Option<String>,
     pub external_company_id: Option<i64>,
+    pub contract_number: Option<String>,
+    pub contract_start_date: Option<String>,
+    pub contract_end_date: Option<String>,
     pub notes: Option<String>,
+    pub blocked_override: Option<bool>,
+    pub assignment_reason: Option<String>,
+    #[serde(default)]
+    pub skills: Vec<PersonnelSkillDraft>,
+    #[serde(default)]
+    pub certifications: Vec<PersonnelCertDraft>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -506,23 +741,34 @@ pub struct PersonnelUpdateInput {
     pub expected_row_version: i64,
     pub full_name: Option<String>,
     pub employment_type: Option<String>,
+    pub employment_origin: Option<String>,
+    pub employment_status: Option<String>,
     pub position_id: Option<i64>,
     pub primary_entity_id: Option<i64>,
     pub primary_team_id: Option<i64>,
     pub supervisor_id: Option<i64>,
     pub home_schedule_reference_value_id: Option<i64>,
     pub availability_status: Option<String>,
+    pub blocked_override: Option<bool>,
     pub hire_date: Option<String>,
     pub termination_date: Option<String>,
     pub email: Option<String>,
     pub phone: Option<String>,
     pub external_company_id: Option<i64>,
+    pub contract_number: Option<String>,
+    pub contract_start_date: Option<String>,
+    pub contract_end_date: Option<String>,
     pub notes: Option<String>,
+    pub assignment_reason: Option<String>,
+    /// Privileged path only — omitted for normal updates.
+    pub employee_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonnelListFilter {
     pub employment_type: Option<Vec<String>>,
+    pub employment_origin: Option<Vec<String>>,
+    pub employment_status: Option<Vec<String>>,
     pub availability_status: Option<Vec<String>>,
     pub position_id: Option<i64>,
     pub entity_id: Option<i64>,
@@ -543,6 +789,8 @@ impl Default for PersonnelListFilter {
     fn default() -> Self {
         Self {
             employment_type: None,
+            employment_origin: None,
+            employment_status: None,
             availability_status: None,
             position_id: None,
             entity_id: None,

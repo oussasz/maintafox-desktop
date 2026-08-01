@@ -5521,6 +5521,9 @@ export interface Personnel {
   employee_code: string;
   full_name: string;
   employment_type: string;
+  employment_origin: string;
+  employment_status: string;
+  blocked_override: boolean;
   position_id: number | null;
   primary_entity_id: number | null;
   primary_team_id: number | null;
@@ -5534,11 +5537,15 @@ export interface Personnel {
   photo_path: string | null;
   hr_external_id: string | null;
   external_company_id: number | null;
+  contract_number: string | null;
+  contract_start_date: string | null;
+  contract_end_date: string | null;
   notes: string | null;
   row_version: number;
   created_at: string;
   updated_at: string;
   position_name: string | null;
+  position_code: string | null;
   position_category: string | null;
   entity_name: string | null;
   team_name: string | null;
@@ -5549,6 +5556,8 @@ export interface Personnel {
 
 export interface PersonnelListFilter {
   employment_type?: string[] | null;
+  employment_origin?: string[] | null;
+  employment_status?: string[] | null;
   availability_status?: string[] | null;
   position_id?: number | null;
   entity_id?: number | null;
@@ -5564,20 +5573,45 @@ export interface PersonnelListPage {
   total: number;
 }
 
+export interface PersonnelSkillDraft {
+  reference_value_id: number;
+  proficiency_level: number;
+  source_type: string;
+  valid_to?: string | null;
+  is_primary?: boolean | null;
+}
+
+export interface PersonnelCertDraft {
+  certification_type_id: number;
+  issued_at?: string | null;
+  expires_at?: string | null;
+  issuing_body?: string | null;
+  certificate_ref?: string | null;
+}
+
 export interface PersonnelCreateInput {
   full_name: string;
-  employee_code?: string | null;
+  employee_code: string;
   employment_type: string;
-  position_id?: number | null;
-  primary_entity_id?: number | null;
-  primary_team_id?: number | null;
+  employment_origin: string;
+  employment_status?: string | null;
+  position_id: number;
+  primary_entity_id: number;
+  primary_team_id: number;
   supervisor_id?: number | null;
-  home_schedule_reference_value_id?: number | null;
+  home_schedule_reference_value_id: number;
   hire_date?: string | null;
   email?: string | null;
   phone?: string | null;
   external_company_id?: number | null;
+  contract_number?: string | null;
+  contract_start_date?: string | null;
+  contract_end_date?: string | null;
   notes?: string | null;
+  blocked_override?: boolean | null;
+  assignment_reason?: string | null;
+  skills?: PersonnelSkillDraft[];
+  certifications?: PersonnelCertDraft[];
 }
 
 export interface PersonnelUpdateInput {
@@ -5585,6 +5619,9 @@ export interface PersonnelUpdateInput {
   expected_row_version: number;
   full_name?: string | null;
   employment_type?: string | null;
+  employment_origin?: string | null;
+  employment_status?: string | null;
+  blocked_override?: boolean | null;
   position_id?: number | null;
   primary_entity_id?: number | null;
   primary_team_id?: number | null;
@@ -5596,7 +5633,13 @@ export interface PersonnelUpdateInput {
   email?: string | null;
   phone?: string | null;
   external_company_id?: number | null;
+  contract_number?: string | null;
+  contract_start_date?: string | null;
+  contract_end_date?: string | null;
   notes?: string | null;
+  assignment_reason?: string | null;
+  /** Privileged path only — requires step-up verification */
+  employee_code?: string | null;
 }
 
 export interface Position {
@@ -5608,6 +5651,74 @@ export interface Position {
   is_active: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface PositionRequirementProfileInput {
+  profile_name: string;
+  skill_reference_value_ids: number[];
+  certification_type_ids: number[];
+}
+
+export interface PositionUpsertInput {
+  id?: number | null;
+  code: string;
+  name: string;
+  category: string;
+  is_active?: boolean | null;
+  requirement_profile?: PositionRequirementProfileInput | null;
+}
+
+export interface PositionListFilter {
+  search?: string | null;
+  include_inactive?: boolean | null;
+  limit?: number;
+  offset?: number;
+}
+
+export interface PositionChangeEvent {
+  id: number;
+  position_id: number;
+  event_type: string;
+  summary: string;
+  detail_json: string | null;
+  changed_by_id: number | null;
+  created_at: string;
+}
+
+export interface PositionDetailPayload {
+  position: Position;
+  skill_reference_value_ids: number[];
+  certification_type_ids: number[];
+  change_events: PositionChangeEvent[];
+}
+
+export interface PersonnelAssignmentHistoryEntry {
+  id: number;
+  personnel_id: number;
+  entity_id: number | null;
+  team_id: number | null;
+  position_id: number | null;
+  manager_id: number | null;
+  schedule_reference_value_id: number | null;
+  started_at: string;
+  ended_at: string | null;
+  reason: string | null;
+  changed_by_id: number | null;
+  created_at: string;
+  entity_name: string | null;
+  team_name: string | null;
+  position_code: string | null;
+  position_name: string | null;
+  manager_name: string | null;
+  schedule_name: string | null;
+}
+
+export interface PersonnelAvailabilityState {
+  personnel_id: number;
+  status: string;
+  blocked_override: boolean;
+  reasons: string[];
+  as_of: string;
 }
 
 export interface ScheduleClass {
