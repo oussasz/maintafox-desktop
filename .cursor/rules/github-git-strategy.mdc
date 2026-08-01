@@ -1,0 +1,337 @@
+---
+description: Auto commit/push after major work using Maintafox branching, conventional commits, stash/reachability hygiene, and release/tag policy
+alwaysApply: true
+---
+
+# GitHub & Git strategy (agent must follow)
+
+**SSOT docs (read when unsure):** `docs/BRANCHING_STRATEGY.md`, `docs/VERSIONING_POLICY.md`, `docs/RELEASE_CHECKLIST.md`
+
+The product owner is not a programmer. After major or fundamental work (or a coherent series of related changes), **you must commit and push** using this strategy—do not leave durable progress uncommitted unless the user says to wait.
+
+## When to commit and push (timing)
+
+Do this automatically when any of these are true:
+
+1. A feature/fix/chore slice is **functionally complete** (builds, hooks pass, intent delivered).
+2. A **series of related edits** forms one logical unit (e.g. DI triage + migrations + i18n).
+3. Work is **risky to lose** (schema, IPC, auth, migrations, multi-file refactors).
+4. The user asks to save/push progress, or ends a major task without an open “hold commits” request.
+
+Do **not** spam micro-commits for every tiny edit mid-debug; batch into one conventional commit per logical unit. Prefer **one clear commit** over many noisy ones for the same slice.
+
+### Session commit discipline (mandatory)
+
+**No feature may remain uncommitted for more than one logical work session.**
+
+If a feature becomes stable (builds, intent clear, safe to preserve):
+
+1. Ensure a dedicated feature branch exists (one feature).
+2. Commit.
+3. Push.
+
+Do **not** accumulate unrelated work across modules in one working tree. Do **not** work for days/weeks with only a dirty tree or stash — that is how irreversible mess starts. Official mirror: `docs/BRANCHING_STRATEGY.md`.
+
+## Branch model (never violate)
+
+```
+feature|fix|chore → develop (PR) → staging → main (PR)
+hotfix from release tag on main → PR to main + PR to develop
+```
+
+- Work only on `feature/*`, `fix/*`, `chore/*`, or `hotfix/*` — never commit directly to `main`, `staging`, or `develop`.
+- If detached/wrong branch: create/switch to the correct branch **before** committing; never rewrite protected history.
+- Keep existing feature branch when already on one (e.g. `feature/p5-sp00-…`); do not invent a parallel branch for the same sprint unless asked.
+
+### One branch = one feature
+
+- Each `feature/*` branch owns **one** coherent feature or sprint slice (e.g. AssetPicker only).
+- Do not pile unrelated recoveries, refactors, or modules onto an existing feature branch.
+- Prefer small, purpose-named branches over long-lived multi-feature stacks.
+
+### No duplicate feature branches
+
+Before creating any feature/fix/chore branch:
+
+1. Search local and remote branches (`git branch -a`, name/slug/`p{N}-sp{NN}` match).
+2. If a branch already exists for the same feature or sprint → **continue there**.
+3. Never create a near-duplicate (`feature/p2-sp04-di-…` vs `feature/p2-sp04-di-lifecycle-…` for the same work).
+4. If uncertain whether an existing branch covers the work → **ask before branching**.
+
+### Temporary integration / cleanup branches
+
+Names like `cleanup/*`, `reconstruction/*`, or similar are **temporary integration branches**, not long-lived development lines.
+
+- Allowed briefly during history rebuild or multi-commit reconstruction.
+- Target merge: **`cleanup|reconstruction` → `develop` (PR)** as soon as the slice is complete.
+- After a **successful merge into `develop`**: archive if an audit trail is needed, otherwise **delete** the branch (local + remote after merge).
+- They must **never** become standing bases for ongoing feature work.
+
+### Feature branches must not depend on cleanup long-term
+
+During a rebuild it is acceptable that features temporarily stack:
+
+```
+develop → cleanup/… → feature/di-…
+```
+
+After cleanup merges into `develop`, the steady state must be:
+
+```
+develop
+├── feature/x
+├── feature/y
+└── feature/z
+```
+
+Not `feature → cleanup → feature → feature`.
+
+- New work after cleanup lands: branch from **updated `develop`**, not from the deleted cleanup tip.
+- Rebase/retarget open feature PRs onto `develop` if they were created atop cleanup.
+- Do not open new features off a cleanup branch once cleanup is merged or obsolete.
+
+### Recommended merge order (reconstruction / isolated recoveries)
+
+When a temporary cleanup and isolated one-feature recoveries coexist:
+
+```
+cleanup/… → develop
+feature/di-… → develop
+(later) feature/…-asset-picker → develop
+(later) feature/…-procurement-archive-… → develop
+```
+
+Merge one logical unit at a time. Keep unrelated recovered features **isolated** until deliberately integrated.
+
+## Stashes are temporary only (mandatory)
+
+**A stash must never become the only copy (SSOT) of product code.**
+
+Before dropping, popping, or replacing any stash, the agent **MUST** verify that every unique change is already reachable from at least one Git reference (branch, tag, or permanent commit on a named ref).
+
+If any unique code exists only inside the stash:
+
+1. Create a dedicated feature branch (one feature).
+2. Restore the content.
+3. Commit it.
+4. Then drop the stash.
+
+Never rely on dangling Git objects as backup.
+
+### Safe stash removal
+
+Never execute `git stash drop` or `git stash clear` until the agent explicitly reports:
+
+```text
+SAFE TO DELETE
+```
+
+Including:
+
+- reachability verified
+- no unique product code remains only in the stash
+- recovery no longer required
+
+## Reachability check (mandatory)
+
+Before deleting any branch, stash, or temporary ref (`safety/*`, `compare/*`, `recovery/*`, `cleanup/*` after merge), perform a reachability audit.
+
+Verify:
+
+- every commit worth keeping is reachable from a permanent branch (or intentional archive tag/ref)
+- no product code exists only in dangling commits
+- no unique blobs exist only in unreachable objects
+
+If any unique code exists, preserve it first (dedicated feature branch + commit), then delete.
+
+## Pre-reconstruction / pre-recovery snapshot (mandatory)
+
+Before **any** reconstruction or recovery operation, run and **save** a baseline report:
+
+```bash
+git status
+git branch --all
+git stash list
+git log --graph --decorate --oneline --all -50
+git tag
+```
+
+Persist the full output to a dated file under `docs/engineering/git-snapshots/` (e.g. `YYYYMMDD-HHMM-pre-recovery.md`) and/or the session end-of-task report so a rollback baseline always exists. Do not start destructive recovery until the report is saved.
+
+## Recovery branches
+
+If a recovered feature is **unrelated** to the current work:
+
+- Do **not** merge it into the current branch.
+- Create a dedicated feature branch.
+- Restore the **exact** original content (byte-identical when forensic recovery requires it).
+- Commit without opportunistic refactoring.
+- Continue current work independently.
+
+Recovered features must become first-class Git history (named branch + commit), not stash or dangling leftovers.
+
+## Branch health check
+
+After every sprint, and **before starting any new sprint**, generate a **Branch Health Report**:
+
+| Section | Include |
+|---------|---------|
+| Active feature branches | Purpose + tip SHA |
+| Temporary integration branches | e.g. `cleanup/*` — merge or delete? |
+| Archived branches | Intentional keep |
+| Scratch branches | `safety/*`, `compare/*`, `recovery/*` — local only |
+| Stale branches | remote `[gone]`, abandoned sprints |
+| Merge order | Recommended next merges |
+| Dependency graph | What is stacked on what (must not stay stacked on cleanup) |
+
+Recommend branches that should disappear. Prevent multi-year clutter.
+
+## Repository inventory
+
+At the end of every major feature or sprint, generate a **repository inventory**:
+
+- feature / merged / active / archived / dropped branches
+- dangling commits and recovery risks
+- highlight anything that may disappear after `git gc`
+
+Keep the repository organized as Maintafox grows.
+
+## Commit message style (unified conventional)
+
+Format:
+
+```text
+type(scope): short imperative summary
+
+- optional body bullets: why / what modules
+```
+
+| type | use for |
+|------|---------|
+| `feat` | new capability |
+| `fix` | bug fix |
+| `chore` | gitignore, deps, tooling, non-app docs |
+| `docs` | documentation only |
+| `refactor` | no behavior change |
+| `test` | tests only |
+| `perf` | performance |
+
+- Scope = module area: `di`, `org`, `auth`, `admin`, `wo`, `gitignore`, `phase5`, etc.
+- Subject: imperative, ≤ ~72 chars, no trailing period.
+- Match recent repo style (e.g. `feat(di,lookups,auth): …`, `chore(gitignore): …`).
+
+## Safe commit procedure (mandatory checklist)
+
+1. `git status` + `git diff` + `git log -5` (style check).
+2. Stage **only source of truth**: app code, migrations, shared IPC, docs intended for the change.
+3. **Never stage:** secrets (`.env`, credentials), `node_modules/`, `src-tauri/target/`, `src-tauri/target-*`, `target-check*`, build caches, IDE junk, large generated binaries unless the user explicitly wants them.
+4. If huge untracked trees appear under `target*` / `target-check*`: **do not** `git add -A`; stage paths explicitly; recommend/add `.gitignore` entries in a separate `chore(gitignore): …` commit.
+5. Commit with HEREDOC/`-m` multi-line conventional message (PowerShell-safe on Windows).
+6. If pre-commit/lint-staged fails: **fix the issue**, create a **new** commit — never `--no-verify`, never amend a failed commit — **except** the exact-recovery case below.
+7. `git push -u origin HEAD` (or push current feature branch). **No force-push** to `main`/`staging`/`develop`. No force-push elsewhere unless the user explicitly orders it.
+8. Confirm clean tree for intended files; report commit SHA + branch + remote result.
+
+### Exact-recovery `--no-verify` exception
+
+If pre-commit fails because the agent **intentionally restores historical code byte-identically** (repository recovery, forensic reconstruction, history preservation), the agent **MAY** use `--no-verify` **only if all** of the following are true:
+
+1. The user requested exact recovery (or the recovery plan requires byte-identical blobs).
+2. The restored blob must remain byte-identical (lint/format would destroy forensic equality).
+3. The reason is documented in the commit message and/or the final task report.
+
+Otherwise, skipping hooks remains **forbidden**. Do not weaken hooks for ordinary feature work.
+
+## Branch naming and work organization
+
+Allowed names only: `feature/p{N}-sp{NN}-{slug}`, `fix/{issue-id}-{slug}`, `chore/{slug}`, `hotfix/{version}-{slug}`.
+
+Temporary integration names (`cleanup/*`, reconstruction-style) are allowed only under the temporary-integration rules above and must not linger after merge to `develop`.
+
+- One branch per sprint/logical unit; stay on the existing sprint branch instead of forking a near-duplicate.
+- Before committing, verify the branch name matches the current work; if it does not, create a correctly named branch from the current tip and continue there.
+- Backup/scratch refs (`safety/*`, `compare/*`, `recovery/*`, `backup-*`) are **local only** — never push them and never name them `v*`.
+- Keep merged sprint branches for 30 days (audit trail). Delete only stale local scratch refs, and only after the **reachability check**.
+- After cleanup/reconstruction merges to `develop`, delete (or archive then delete) that integration branch promptly.
+- Report stale/diverged branches (remote `[gone]`, unmerged old sprint branches) instead of silently deleting or force-updating them.
+
+## Porting fixes already made on other branches
+
+When a fix exists on another branch, **reuse it — never re-implement or overwrite it**:
+
+1. Locate it: `git log --all --oneline --grep="<keyword>"` or `git branch -a --contains <sha>`.
+2. Bring it over with `git cherry-pick -x <sha>` (keeps provenance) onto the correct target branch.
+3. If the fix only lives in a stash/scratch ref, preserve it on a dedicated feature branch (commit), then verify nothing else from that ref is lost — stash is not SSOT.
+4. Never merge an old branch wholesale to grab one fix, and never revert newer work to make an old branch apply cleanly.
+5. Resolve conflicts by keeping current architecture; state clearly in the report which commits were ported.
+
+## Pull requests and GitHub hygiene
+
+- One PR per branch toward `develop` (draft is fine). Update the existing PR — never open duplicates; refresh its title/body when scope grows.
+- PR title format from `.github/PULL_REQUEST_TEMPLATE.md`: `[P{N}-SP{NN}-F{NN}-S{N}] Description`; fill Summary, Changes Made, and the Definition of Done checklist.
+- Apply existing labels from `.github/labels.yml` only (`phase:*`, `type:*`, `status:*`, `priority:*`) — do not invent labels.
+- Use `.github/ISSUE_TEMPLATE/` for bugs and supervisor feedback; link issues in `fix/*` PRs.
+- Respect required status checks in `.github/branch-protection.md` (`develop` 1 approval, `staging` 1, `main` 2). Never bypass or merge red CI.
+- Report CI failures with the cause; fix forward in new commits.
+
+## Version and release management
+
+**Every release must be reproducible.**
+
+- Only **merge-tested** commits (through the promotion path) may receive a version tag.
+- Never tag temporary `cleanup/*` or reconstruction branches.
+- Never tag unmerged feature tips, stash tips, or scratch refs.
+
+Only during an explicit release/versioning task:
+
+1. Follow the phase ranges in `docs/VERSIONING_POLICY.md`; bump `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` to the **identical** string in one commit.
+2. Move `CHANGELOG.md` `[Unreleased]` into a dated version section; `[Unreleased]` must never be empty in a PR to `main`.
+3. Complete `docs/RELEASE_CHECKLIST.md` gates, then promote `develop` → `staging` → `main` by PR (2 approvals for `main`).
+4. After the merge to `main`, create the annotated tag there and push it separately:
+   `git tag -a v{VERSION} -m "Maintafox {VERSION} — {summary}"` then `git push origin --tags`.
+5. Publish the GitHub release from that tag (`gh release create v{VERSION} …`), verify installer artifacts, and keep it draft until artifacts are confirmed.
+6. Never tag or publish a release from `feature/*`, `fix/*`, `develop`, `staging`, or `cleanup/*`; if the user asks for a release before promotion, explain the gap and offer the promotion path.
+
+## Hard forbidden actions
+
+| Action | Status |
+|--------|--------|
+| Direct commit to `main` / `staging` / `develop` | Forbidden |
+| Force-push protected branches | Never |
+| Amend/rebase **pushed** shared commits | Forbidden |
+| `--no-verify` / skip hooks | Forbidden except exact-recovery exception above |
+| Using a stash as the only copy of product code | Forbidden |
+| `git stash drop` / `git stash clear` without `SAFE TO DELETE` report | Forbidden |
+| Leaving `cleanup/*` (or similar) as a long-lived base after merge to `develop` | Forbidden |
+| Creating a duplicate branch for an existing feature/sprint | Forbidden — continue or ask |
+| `reset --hard` / destructive discard of user work | Forbidden without explicit user order + backup |
+| Commit secrets or build artifact trees | Forbidden |
+| Official release tags off `main` | Forbidden |
+| Version tags on `cleanup/*`, reconstruction, feature, or scratch tips | Forbidden |
+| Leaving stable work uncommitted across sessions / multi-module dirty trees | Forbidden |
+| Starting reconstruction/recovery without a saved baseline snapshot | Forbidden |
+| Deleting branches/refs holding unpushed / unique work | Forbidden without reachability check (+ user order when destructive) |
+| Re-implementing a fix that already exists on another branch | Forbidden — cherry-pick it |
+| Merging an unrelated recovered feature into the current WIP branch | Forbidden — dedicated recovery branch |
+
+## End-of-task report (always)
+
+After auto commit/push, tell the user briefly:
+
+- commit SHA + message
+- branch pushed
+- PR link if any
+- what was excluded (e.g. local `target-check*`)
+- commits ported from other branches, if any
+- if a release tag was **not** created, say why (tags only on `main`)
+- any branch/organization problem noticed (bad name, stale branch, diverged `develop`, cleanup still living, features still stacked on cleanup)
+- if hooks were skipped: exact-recovery justification
+- after major sprints: point to or include Branch Health / Repository Inventory
+
+```text
+❌ BAD — leave a finished multi-file feature uncommitted; or git add -A including target-check
+❌ BAD — stash as SSOT; long-lived cleanup base; duplicate feature branches; drop stash without SAFE TO DELETE
+❌ BAD — weeks of multi-module WIP with no commits; recovery without a saved baseline snapshot
+✅ GOOD — conventional commit of the logical unit on feature/*, push, keep/update PR to develop
+✅ GOOD — one branch = one feature; recoveries on dedicated branches; cleanup merged then deleted
+✅ GOOD — session-end commit+push when stable; pre-recovery snapshot saved under docs/engineering/git-snapshots/
+```
