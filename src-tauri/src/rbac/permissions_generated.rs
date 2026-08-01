@@ -1499,13 +1499,98 @@ pub const ALIAS_MAP: &[(&str, &str)] = &[
 ];
 
 /// Permissions excluded from Supervisor / Maintenance Supervisor defaults.
-pub const SUPERVISOR_EXCLUSIONS: &[&str] = &[ADM_USERS, ADM_ROLES, ADM_PERMISSIONS, CFG_MANAGE, CFG_PUBLISH, ERP_CONFIGURE, LOG_EXPORT, CONSOLE_VIEW, CUSTOMER_MANAGE, ENTITLEMENT_MANAGE, SYNC_OPERATE, ROLLOUT_MANAGE, PLATFORM_OBSERVE, AUDIT_VIEW, LIC_MANAGE, ENT_MANAGE, ACT_MANAGE];
+pub const SUPERVISOR_EXCLUSIONS: &[&str] = &[
+    ADM_USERS,
+    ADM_ROLES,
+    ADM_PERMISSIONS,
+    CFG_MANAGE,
+    CFG_PUBLISH,
+    ERP_CONFIGURE,
+    LOG_EXPORT,
+    CONSOLE_VIEW,
+    CUSTOMER_MANAGE,
+    ENTITLEMENT_MANAGE,
+    SYNC_OPERATE,
+    ROLLOUT_MANAGE,
+    PLATFORM_OBSERVE,
+    AUDIT_VIEW,
+    LIC_MANAGE,
+    ENT_MANAGE,
+    ACT_MANAGE,
+];
 
 /// Default Operator / Maintenance Technician permission set.
-pub const OPERATOR_PERMISSIONS: &[&str] = &[EQ_VIEW, EQ_MANAGE, DI_VIEW, DI_CREATE, DI_CREATE_OWN, OT_VIEW, OT_CREATE, OT_EDIT, OT_CLOSE, ORG_VIEW, PER_VIEW, PER_REPORT, PER_POSITION_VIEW, REF_VIEW, INV_VIEW, INV_MANAGE, PM_VIEW, RAM_VIEW, SYNC_VIEW, REP_VIEW, ARC_VIEW, DOC_VIEW, PLAN_VIEW, LOG_VIEW, TRN_VIEW, IOT_VIEW, ERP_VIEW, PTW_VIEW, PTW_ISSUE, FIN_VIEW, FIN_REPORT, INS_VIEW, INS_EXECUTE, CFG_VIEW];
+pub const OPERATOR_PERMISSIONS: &[&str] = &[
+    EQ_VIEW,
+    EQ_MANAGE,
+    DI_VIEW,
+    DI_CREATE,
+    DI_CREATE_OWN,
+    OT_VIEW,
+    OT_CREATE,
+    OT_EDIT,
+    OT_CLOSE,
+    ORG_VIEW,
+    PER_VIEW,
+    PER_REPORT,
+    PER_POSITION_VIEW,
+    REF_VIEW,
+    INV_VIEW,
+    INV_MANAGE,
+    PM_VIEW,
+    RAM_VIEW,
+    SYNC_VIEW,
+    REP_VIEW,
+    ARC_VIEW,
+    DOC_VIEW,
+    PLAN_VIEW,
+    LOG_VIEW,
+    TRN_VIEW,
+    IOT_VIEW,
+    ERP_VIEW,
+    PTW_VIEW,
+    PTW_ISSUE,
+    FIN_VIEW,
+    FIN_REPORT,
+    INS_VIEW,
+    INS_EXECUTE,
+    CFG_VIEW,
+];
 
 /// Default Planner/Scheduler permission set.
-pub const PLANNER_PERMISSIONS: &[&str] = &[OT_VIEW, OT_CREATE, OT_EDIT, DI_VIEW, DI_CREATE, DI_SCREEN, PM_VIEW, PM_CREATE, PM_EDIT, PM_APPROVE, PLAN_VIEW, PLAN_EDIT, PLAN_CONFIRM, PLAN_WINDOWS, EQ_VIEW, INV_VIEW, INV_MANAGE, INV_PROCURE, ORG_VIEW, PER_VIEW, PER_REPORT, PER_POSITION_VIEW, REF_VIEW, REP_VIEW, REP_EXPORT, ARC_VIEW, DOC_VIEW, LOG_VIEW, RAM_VIEW, SYNC_VIEW, CFG_VIEW];
+pub const PLANNER_PERMISSIONS: &[&str] = &[
+    OT_VIEW,
+    OT_CREATE,
+    OT_EDIT,
+    DI_VIEW,
+    DI_CREATE,
+    DI_SCREEN,
+    PM_VIEW,
+    PM_CREATE,
+    PM_EDIT,
+    PM_APPROVE,
+    PLAN_VIEW,
+    PLAN_EDIT,
+    PLAN_CONFIRM,
+    PLAN_WINDOWS,
+    EQ_VIEW,
+    INV_VIEW,
+    INV_MANAGE,
+    INV_PROCURE,
+    ORG_VIEW,
+    PER_VIEW,
+    PER_REPORT,
+    PER_POSITION_VIEW,
+    REF_VIEW,
+    REP_VIEW,
+    REP_EXPORT,
+    ARC_VIEW,
+    DOC_VIEW,
+    LOG_VIEW,
+    RAM_VIEW,
+    SYNC_VIEW,
+    CFG_VIEW,
+];
 
 /// Resolve a permission or alias to its canonical name.
 pub fn canonicalize(name: &str) -> Option<&'static str> {
@@ -1524,4 +1609,3 @@ pub fn canonicalize(name: &str) -> Option<&'static str> {
 pub fn all_names() -> impl Iterator<Item = &'static str> {
     CATALOG.iter().map(|m| m.name)
 }
-
