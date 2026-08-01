@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 import { getDiagnosticsInfo, generateSupportBundle } from "@/services/diagnostics-service";
+import { toErrorMessage } from "@/utils/errors";
 import type { DiagnosticsAppInfo, SupportBundle } from "@shared/ipc-types";
 
 interface Props {
@@ -38,7 +39,7 @@ export function SupportBundleDialog({ open, onClose }: Props) {
       setAppInfo(info);
       setBundle(b);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(toErrorMessage(err));
     } finally {
       setIsGenerating(false);
     }

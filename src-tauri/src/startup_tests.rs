@@ -47,15 +47,24 @@ mod startup_tests {
             elapsed < 4_000,
             "Test itself took longer than the budget — CI machine is too slow"
         );
-        assert!(within, "Instant startup should always be within 4000ms budget");
+        assert!(
+            within,
+            "Instant startup should always be within 4000ms budget"
+        );
     }
 
     #[test]
     fn format_startup_message_within_budget() {
         let msg = format_startup_message(350, true, 4_000);
         assert!(msg.contains("350ms"), "Message must include elapsed time");
-        assert!(msg.contains("within"), "Message must say 'within' for under-budget");
-        assert!(msg.contains("4000ms"), "Message must include the budget value");
+        assert!(
+            msg.contains("within"),
+            "Message must say 'within' for under-budget"
+        );
+        assert!(
+            msg.contains("4000ms"),
+            "Message must include the budget value"
+        );
     }
 
     #[test]
@@ -66,6 +75,9 @@ mod startup_tests {
             msg.to_lowercase().contains("warning"),
             "Message must contain a warning indicator"
         );
-        assert!(msg.contains("4000ms"), "Message must include the budget value");
+        assert!(
+            msg.contains("4000ms"),
+            "Message must include the budget value"
+        );
     }
 }

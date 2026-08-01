@@ -529,6 +529,26 @@ Each entry must include:
 | `list_org_relationship_rules` | `commands::org::list_org_relationship_rules` | Yes + org.view | `db` (read), `session` (read) | `org-service.ts::listOrgRelationshipRules` |
 | `create_org_relationship_rule` | `commands::org::create_org_relationship_rule` | Yes + org.admin | `db` (read + write), `session` (read) | `org-service.ts::createOrgRelationshipRule` |
 | `delete_org_relationship_rule` | `commands::org::delete_org_relationship_rule` | Yes + org.admin | `db` (read + write), `session` (read) | `org-service.ts::deleteOrgRelationshipRule` |
+| `list_di` | `commands::di::list_di` | Yes + di.view | `db` (read), `session` (read) | `di-service.ts::listDis` |
+| `get_di` | `commands::di::get_di` | Yes + di.view | `db` (read), `session` (read) | `di-service.ts::getDi` |
+| `create_di` | `commands::di::create_di` | Yes + di.create | `db` (read + write), `session` (read) | `di-service.ts::createDi` |
+| `update_di_draft` | `commands::di::update_di_draft` | Yes + di.create | `db` (read + write), `session` (read) | `di-service.ts::updateDiDraft` |
+| `screen_di` | `commands::di::screen_di` | Yes + di.review | `db` (read + write), `session` (read) | `di-review-service.ts::screenDi` |
+| `return_di` | `commands::di::return_di` | Yes + di.review | `db` (read + write), `session` (read) | `di-review-service.ts::returnDi` |
+| `reject_di` | `commands::di::reject_di` | Yes + di.review | `db` (read + write), `session` (read) | `di-review-service.ts::rejectDi` |
+| `approve_di` | `commands::di::approve_di` | Yes + di.approve + step-up | `db` (read + write), `session` (read) | `di-review-service.ts::approveDi` |
+| `defer_di` | `commands::di::defer_di` | Yes + di.approve | `db` (read + write), `session` (read) | `di-review-service.ts::deferDi` |
+| `reactivate_di` | `commands::di::reactivate_di` | Yes + di.approve | `db` (read + write), `session` (read) | `di-review-service.ts::reactivateDi` |
+| `get_di_review_events` | `commands::di::get_di_review_events` | Yes + di.view | `db` (read), `session` (read) | `di-review-service.ts::getDiReviewEvents` |
+| `upload_di_attachment` | `commands::di::upload_di_attachment` | Yes + di.create | `db` (read + write), `session` (read) | `di-attachment-service.ts::uploadDiAttachment` |
+| `list_di_attachments` | `commands::di::list_di_attachments` | Yes + di.view | `db` (read), `session` (read) | `di-attachment-service.ts::listDiAttachments` |
+| `delete_di_attachment` | `commands::di::delete_di_attachment` | Yes + di.create | `db` (read + write), `session` (read) | `di-attachment-service.ts::deleteDiAttachment` |
+| `convert_di_to_wo` | `commands::di::convert_di_to_wo` | Yes + di.convert + step-up | `db` (read + write), `session` (read) | `di-conversion-service.ts::convertDiToWo` |
+| `get_sla_status` | `commands::di::get_sla_status` | Yes + di.view | `db` (read), `session` (read) | `di-conversion-service.ts::getSlaStatus` |
+| `list_sla_rules` | `commands::di::list_sla_rules` | Yes + di.view | `db` (read), `session` (read) | `di-conversion-service.ts::listSlaRules` |
+| `update_sla_rule` | `commands::di::update_sla_rule` | Yes + di.admin | `db` (read + write), `session` (read) | `di-conversion-service.ts::updateSlaRule` |
+| `list_di_change_events` | `commands::di::list_di_change_events` | Yes + di.view | `db` (read), `session` (read) | `di-audit-service.ts::listDiChangeEvents` |
+| `list_all_di_change_events` | `commands::di::list_all_di_change_events` | Yes + di.admin | `db` (read), `session` (read) | `di-audit-service.ts::listAllDiChangeEvents` |
 
 ## Rules
 

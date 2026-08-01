@@ -4,10 +4,12 @@ import { persist } from "zustand/middleware";
 import type { AppStatus } from "@/types";
 
 export interface SyncStatus {
-  state: "idle" | "syncing" | "pending" | "error";
+  state: "idle" | "scheduled" | "running" | "blocked" | "degraded" | "error" | "paused";
   pendingCount: number;
   lastSyncAt: string | null;
   errorMessage: string | null;
+  blockerReason?: string | null;
+  retryAttempt?: number;
 }
 
 export interface AppStore {
@@ -54,6 +56,8 @@ export const useAppStore = create<AppStore>()(
         pendingCount: 0,
         lastSyncAt: null,
         errorMessage: null,
+        blockerReason: null,
+        retryAttempt: 0,
       },
       unreadNotificationCount: 0,
       hasActiveSession: false,

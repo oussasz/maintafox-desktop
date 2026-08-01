@@ -2,9 +2,12 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 
+import { useModuleCapabilities } from "@/hooks/use-module-capabilities";
 import { usePermissions } from "@/hooks/use-permissions";
+import { isModuleCapabilityAllowed } from "@/lib/module-capability";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
+import type { PermissionName } from "@shared/rbac/permissions.generated";
 
 export interface NavItem {
   key: string;
@@ -13,8 +16,12 @@ export interface NavItem {
   icon: ReactNode;
   groupKey?: string;
   isGroupHeader?: boolean;
-  /** Permission required to see this nav item. If undefined, always visible. */
-  requiredPermission?: string;
+  /**
+   * Permission required to see this nav item. If undefined, always visible.
+   * Sidebar only supports a single permission (no anyOf); use the primary
+   * route permission and document OR cases at the call site.
+   */
+  requiredPermission?: PermissionName;
 }
 
 interface SidebarProps {
@@ -25,11 +32,15 @@ export function Sidebar({ items }: SidebarProps) {
   const { t } = useTranslation("shell");
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const { can } = usePermissions();
+  const { capabilityMap } = useModuleCapabilities();
   const location = useLocation();
 
-  // Filter non-header items by permission, then group — hide empty groups
+  // Filter by RBAC + soft module capabilities, then group — hide empty groups
   const visibleItems = items.filter(
-    (item) => item.isGroupHeader || !item.requiredPermission || can(item.requiredPermission),
+    (item) =>
+      item.isGroupHeader ||
+      ((!item.requiredPermission || can(item.requiredPermission)) &&
+        isModuleCapabilityAllowed(capabilityMap, item.requiredPermission)),
   );
 
   type Group = { header: NavItem | null; children: NavItem[] };
@@ -72,10 +83,20 @@ export function Sidebar({ items }: SidebarProps) {
             )}
             {/* Nav items */}
             {group.children.map((item) => {
+              const tab = new URLSearchParams(location.search).get("tab");
               const isActive =
                 item.path === "/"
                   ? location.pathname === "/"
-                  : location.pathname.startsWith(item.path);
+                  : item.key === "training"
+                    ? location.pathname === "/personnel" && tab === "training"
+                    : item.key === "personnel"
+                      ? location.pathname === "/personnel" && tab !== "training"
+                      : item.key === "documentation"
+                        ? location.pathname.startsWith("/documentation")
+                        : item.path.includes("?")
+                          ? `${location.pathname}${location.search}` === item.path
+                          : location.pathname === item.path ||
+                            location.pathname.startsWith(`${item.path}/`);
               return (
                 <Link
                   key={item.key}

@@ -9,18 +9,18 @@
  * org-node-service.ts (SP01-F02).
  */
 
-import { invoke } from "@tauri-apps/api/core";
-
+import { invoke } from "@/lib/ipc-invoke";
 import type {
-  OrgStructureModel,
-  OrgNodeType,
-  OrgRelationshipRule,
-  CreateStructureModelPayload,
   CreateOrgNodeTypePayload,
   CreateRelationshipRulePayload,
+  CreateStructureModelPayload,
+  OrgNodeType,
+  OrgRelationshipRule,
+  OrgStructureModel,
+  UpdateOrgNodeTypePayload,
 } from "@shared/ipc-types";
 
-// ─── Structure models ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Structure models â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function listOrgStructureModels(): Promise<OrgStructureModel[]> {
   return invoke<OrgStructureModel[]>("list_org_structure_models");
@@ -30,8 +30,15 @@ export function getActiveOrgStructureModel(): Promise<OrgStructureModel | null> 
   return invoke<OrgStructureModel | null>("get_active_org_structure_model");
 }
 
-export function createOrgStructureModel(description?: string): Promise<OrgStructureModel> {
+export function createOrgStructureModel(description?: string | null): Promise<OrgStructureModel> {
   return invoke<OrgStructureModel>("create_org_structure_model", {
+    payload: { description: description ?? null } satisfies CreateStructureModelPayload,
+  });
+}
+
+/** New draft: copy published node types and rules from the active model (org.admin). */
+export function forkOrgDraftFromPublished(description?: string | null): Promise<OrgStructureModel> {
+  return invoke<OrgStructureModel>("fork_org_draft_from_published", {
     payload: { description: description ?? null } satisfies CreateStructureModelPayload,
   });
 }
@@ -48,8 +55,6 @@ export function archiveOrgStructureModel(modelId: number): Promise<OrgStructureM
   });
 }
 
-// ─── Node types ───────────────────────────────────────────────────────────────
-
 export function listOrgNodeTypes(structureModelId: number): Promise<OrgNodeType[]> {
   return invoke<OrgNodeType[]>("list_org_node_types", {
     structureModelId,
@@ -64,7 +69,15 @@ export function deactivateOrgNodeType(nodeTypeId: number): Promise<OrgNodeType> 
   return invoke<OrgNodeType>("deactivate_org_node_type", { nodeTypeId });
 }
 
-// ─── Relationship rules ───────────────────────────────────────────────────────
+export function updateOrgNodeType(payload: UpdateOrgNodeTypePayload): Promise<OrgNodeType> {
+  return invoke<OrgNodeType>("update_org_node_type", { payload });
+}
+
+export function getOrgNodeTypeUsageCount(nodeTypeId: number): Promise<number> {
+  return invoke<number>("get_org_node_type_usage_count", { nodeTypeId });
+}
+
+// â”€â”€â”€ Relationship rules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function listOrgRelationshipRules(structureModelId: number): Promise<OrgRelationshipRule[]> {
   return invoke<OrgRelationshipRule[]>("list_org_relationship_rules", {

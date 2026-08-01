@@ -43,5 +43,35 @@
   "io": {
     "generic": "Erreur d'entr\u00e9e/sortie : {{message}}",
     "internalError": "Une erreur interne s'est produite."
+  },
+  "appError": {
+    "DATABASE_ERROR": "Erreur de base de donn\u00e9es.",
+    "AUTH_ERROR": "Erreur d'authentification.",
+    "TENANT_SCOPE_VIOLATION": "Violation de p\u00e9rim\u00e8tre locataire.",
+    "SESSION_CLAIM_INVALID": "Session invalide.",
+    "NOT_FOUND": "Enregistrement introuvable.",
+    "VALIDATION_FAILED": "Validation impossible.",
+    "SYNC_ERROR": "Erreur de synchronisation.",
+    "IO_ERROR": "Erreur d'entr\u00e9e/sortie.",
+    "SERIALIZATION_ERROR": "Erreur de s\u00e9rialisation.",
+    "PERMISSION_DENIED": "Permission refus\u00e9e.",
+    "LICENSE_DENIED": "Licence refus\u00e9e.",
+    "STEP_UP_REQUIRED": "V\u00e9rification renforc\u00e9e requise.",
+    "ACCOUNT_LOCKED": "Compte verrouill\u00e9.",
+    "SESSION_LOCKED": "Session verrouill\u00e9e pour inactivit\u00e9.",
+    "INTERNAL_ERROR": "Une erreur interne s'est produite."
+  },
+  "gateError": {
+    "GATE_FMECA_REFERENCE_MODES_NOT_PUBLISHED": "Mise à jour FMECA bloquée : publiez d'abord des valeurs actives dans WORK.FAILURE_MODES.",
+    "GATE_FMECA_FAILURE_MODE_NOT_GOVERNED": "Mise à jour FMECA bloquée : le mode de défaillance sélectionné n'est pas gouverné par WORK.FAILURE_MODES publié.",
+    "GATE_CLOSEOUT_REFERENCE_MODES_NOT_PUBLISHED": "Clôture bloquée : WORK.FAILURE_MODES ne contient aucune valeur active publiée.",
+    "GATE_CLOSEOUT_FAILURE_MODE_NOT_GOVERNED": "Clôture bloquée : le mode de défaillance sélectionné n'est pas gouverné par WORK.FAILURE_MODES publié.",
+    "GATE_CLOSEOUT_FMECA_PARTS_REQUIRED": "Clôture bloquée : les recommandations de pièces FMECA critiques exigent des lignes de consommation ou une dérogation signée.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_REASON_REQUIRED": "Clôture bloquée : fournissez un motif de dérogation complet pour l'absence de pièces FMECA critiques.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNATURE_REQUIRED": "Clôture bloquée : une signature de dérogation valide est requise pour l'absence de pièces FMECA critiques.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_MUST_DIFFER": "Clôture bloquée : le signataire de dérogation doit être différent de l'utilisateur qui clôture.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_ROLE_INVALID": "Clôture bloquée : le signataire de dérogation doit avoir un rôle Superviseur/Admin.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_AUTH_FAILED": "Clôture bloquée : la ré-authentification du signataire de dérogation a échoué.",
+    "GATE_RUNTIME_EXPOSURE_SOURCE_NOT_ALLOWED_IN_PRODUCTION": "Écriture d'exposition bloquée : la source RAMS injectée est interdite en mode production activé."
   }
 }

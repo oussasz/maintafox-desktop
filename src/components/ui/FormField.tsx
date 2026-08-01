@@ -10,9 +10,9 @@ interface FormFieldProps {
   /** Field label text */
   label: string;
   /** Optional description shown below the label */
-  description?: string;
+  description?: string | undefined;
   /** Error message string (from react-hook-form errors) */
-  error?: string;
+  error?: string | undefined;
   /** Whether the field is required */
   required?: boolean;
   /** The form control (input, textarea, select, etc.) */

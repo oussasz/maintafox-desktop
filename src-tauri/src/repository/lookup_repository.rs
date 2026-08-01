@@ -147,6 +147,30 @@ pub async fn get_domain_values(
     domain_key: &str,
     active_only: bool,
 ) -> AppResult<Vec<LookupValueOption>> {
+    if domain_key.trim().eq_ignore_ascii_case("WORK.FAILURE_MODES") {
+        let active_clause = if active_only { " AND rv.is_active = 1" } else { "" };
+        let sql = format!(
+            r"
+            SELECT
+              rv.id AS id,
+              rv.code AS code,
+              rv.label AS label,
+              rv.fr_label AS fr_label,
+              rv.en_label AS en_label,
+              rv.color AS color,
+              rv.is_active AS is_active
+            FROM reference_values rv
+            INNER JOIN reference_sets rs ON rs.id = rv.set_id
+            INNER JOIN reference_domains rd ON rd.id = rs.domain_id
+            WHERE UPPER(TRIM(rd.code)) = UPPER(TRIM(?))
+              {active_clause}
+            ORDER BY rv.sort_order ASC, rv.label ASC
+            ",
+        );
+        let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, &sql, ["WORK.FAILURE_MODES".into()]);
+        return Ok(LookupValueOption::find_by_statement(stmt).all(db).await?);
+    }
+
     let active_clause = if active_only { " AND lv.is_active = 1" } else { "" };
     let sql = format!(
         r"

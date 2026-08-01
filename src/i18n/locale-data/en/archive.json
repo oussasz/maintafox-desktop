@@ -1,1 +1,10 @@
-{}
+{
+  "page": {
+    "title": "Archive",
+    "subtitle": "Browse archived records, verify integrity, and manage retention policies."
+  },
+  "tabs": {
+    "explorer": "Explorer",
+    "retention": "Retention policies"
+  }
+}

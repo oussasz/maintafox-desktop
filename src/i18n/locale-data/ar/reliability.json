@@ -1,0 +1,79 @@
+{
+  "module": {
+    "title": "RAMS Mission Control",
+    "subtitle": "Reliability analytics workstation"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "foundation": "Asset foundation",
+    "lab": "Visual lab",
+    "advanced": "Advanced methods",
+    "governance": "Governance"
+  },
+  "health": {
+    "badge": "RAM data health",
+    "equip": "Asset",
+    "score": "Score",
+    "openDq": "Data quality",
+    "none": "—"
+  },
+  "dashboard": {
+    "title": "Operations dashboard",
+    "kpiTitle": "Latest reliability snapshot",
+    "mtbf": "MTBF (h)",
+    "mttr": "MTTR (h)",
+    "availability": "Availability",
+    "failureRate": "Failure rate",
+    "events": "Events",
+    "noSnapshot": "No KPI snapshot for this filter.",
+    "weibullTitle": "Weibull reliability R(t)",
+    "weibullHint": "Neon curve from last fit.",
+    "weibullRun": "Run fit",
+    "weibullEmpty": "Run a Weibull fit to plot the curve.",
+    "markovTitle": "Markov steady-state",
+    "markovHint": "Steady-state on discrete states.",
+    "markovEmpty": "Evaluate a Markov model to see states.",
+    "filterEquip": "Equipment id",
+    "refresh": "Refresh"
+  },
+  "lab": {
+    "title": "FTA / RBD visual lab",
+    "modeFta": "Fault tree (FTA)",
+    "modeRbd": "Block diagram (RBD)",
+    "equip": "Equipment id",
+    "model": "Model",
+    "newModel": "New",
+    "save": "Save graph",
+    "evaluate": "Evaluate",
+    "delete": "Delete",
+    "topRoot": "Top / root id",
+    "addAnd": "AND gate",
+    "addOr": "OR gate",
+    "addBe": "Basic event",
+    "addBlock": "Block",
+    "addSeries": "Series",
+    "addParallel": "Parallel",
+    "result": "Result",
+    "loadError": "Failed to load models",
+    "needModel": "Create or select a model first.",
+    "placeholderTitle": "New model",
+    "refresh": "Refresh"
+  },
+  "advanced": {
+    "title": "Advanced methods",
+    "heatmapTitle": "FMECA risk heatmap (RPN = S × O)",
+    "heatmapHint": "Click a cell to inspect S and O.",
+    "sAxis": "Severity S",
+    "oAxis": "Occurrence O",
+    "selected": "Selected",
+    "rpn": "RPN"
+  },
+  "governance": {
+    "title": "Governance",
+    "body": "Expert sign-offs and audit views: full Arabic copy pending."
+  },
+  "foundation": {
+    "title": "Asset foundation",
+    "hint": "Taxonomy, exposure, KPI jobs, data quality."
+  }
+}

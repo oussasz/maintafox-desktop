@@ -193,10 +193,13 @@ mod tests {
             .await
             .expect_err("should reject non-draft publish");
 
-        let msg = err.to_string();
         assert!(
-            msg.contains("not 'draft'"),
-            "error message should mention draft requirement, got: {msg}"
+            matches!(
+                &err,
+                crate::errors::AppError::OrgValidationFailed(issues)
+                    if issues.first().map(|i| i.code.as_str()) == Some("ORG_PUBLISH_NOT_DRAFT")
+            ),
+            "expected ORG_PUBLISH_NOT_DRAFT, got: {err:?}"
         );
     }
 
@@ -216,10 +219,13 @@ mod tests {
             .await
             .expect_err("archiving active model should fail");
 
-        let msg = err.to_string();
         assert!(
-            msg.contains("cannot archive the active model"),
-            "error should mention active model guard, got: {msg}"
+            matches!(
+                &err,
+                crate::errors::AppError::OrgValidationFailed(issues)
+                    if issues.first().map(|i| i.code.as_str()) == Some("ORG_ARCHIVE_ACTIVE")
+            ),
+            "expected ORG_ARCHIVE_ACTIVE, got: {err:?}"
         );
     }
 
@@ -275,10 +281,13 @@ mod tests {
             .await
             .expect_err("should reject update on active model");
 
-        let msg = err.to_string();
         assert!(
-            msg.contains("not a draft"),
-            "error should mention draft-only editing, got: {msg}"
+            matches!(
+                &err,
+                crate::errors::AppError::OrgValidationFailed(issues)
+                    if issues.first().map(|i| i.code.as_str()) == Some("ORG_EDIT_REQUIRES_DRAFT")
+            ),
+            "expected ORG_EDIT_REQUIRES_DRAFT, got: {err:?}"
         );
     }
 

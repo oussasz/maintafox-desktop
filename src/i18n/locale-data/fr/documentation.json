@@ -1,1 +1,67 @@
-{}
+{
+  "module": {
+    "title": "Bibliothèque documentaire",
+    "subtitle": "Manuels techniques, modes opératoires, protocoles de sécurité et certificats de conformité",
+    "navAria": "Catégories de documents"
+  },
+  "categories": {
+    "technical-manuals": {
+      "label": "Manuels techniques",
+      "heading": "Manuels techniques",
+      "description": "Manuels d’équipement, plans et documentation constructeur."
+    },
+    "sops": {
+      "label": "Modes opératoires",
+      "heading": "Modes opératoires (SOP)",
+      "description": "Procédures détaillées pour l’exploitation et la maintenance."
+    },
+    "safety-protocols": {
+      "label": "Protocoles de sécurité",
+      "heading": "Protocoles de sécurité",
+      "description": "Consignations, espaces confinés, travaux à feu et documents associés."
+    },
+    "compliance-certificates": {
+      "label": "Certificats de conformité",
+      "heading": "Certificats de conformité",
+      "description": "Certificats d’inspection, étalonnages et dossiers réglementaires."
+    }
+  },
+  "upload": {
+    "title": "Téléverser un document",
+    "uploading": "Téléversement…",
+    "maxSize": "Taille maximale : {{mb}} Mo.",
+    "fields": {
+      "title": "Titre",
+      "titlePlaceholder": "Libellé (par défaut : nom du fichier)",
+      "equipment": "Équipement lié",
+      "equipmentPlaceholder": "Sélectionner un équipement",
+      "noEquipment": "Non lié",
+      "notes": "Notes",
+      "notesPlaceholder": "Description facultative"
+    }
+  },
+  "list": {
+    "empty": "Aucun document dans cette catégorie.",
+    "columns": {
+      "title": "Titre",
+      "file": "Fichier",
+      "equipment": "Équipement",
+      "uploaded": "Téléversé",
+      "actions": "Actions"
+    },
+    "download": "Télécharger",
+    "edit": "Modifier le lien",
+    "delete": "Supprimer"
+  },
+  "edit": {
+    "title": "Modifier le document",
+    "save": "Enregistrer",
+    "cancel": "Annuler"
+  },
+  "confirm": {
+    "delete": "Supprimer cet enregistrement documentaire ? Le fichier reste sur le disque à des fins d’audit."
+  },
+  "errors": {
+    "fileTooLarge": "Le fichier dépasse {{mb}} Mo."
+  }
+}

@@ -1,18 +1,11 @@
-//! Audit event writer.
+//! Audit module.
 //!
-//! All security-significant operations emit an audit event. Audit writes are
-//! fire-and-forget: if the insert fails, a `tracing::error!` is emitted but the
-//! operation is **NOT** blocked. Downtime is never caused by audit failure.
-//!
-//! The `audit_events` table (migration 001) has columns:
-//!   `id` TEXT PK, `event_type`, `actor_id`, `actor_name`, `entity_type`,
-//!   `entity_id`, `summary`, `detail_json`, `device_id`, `occurred_at`.
-//!
-//! Callers: use the free function [`emit`] for awaited writes, or
-//! [`emit_background`] for fire-and-forget Tokio-spawned writes.
+//! `writer::write_audit_event` is the strict append-only writer that propagates
+//! persistence failures so callers can decide whether to block.
+//! `emit` remains as a compatibility adapter for existing call sites that use
+//! fire-and-log semantics.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
-use tracing::error;
+pub mod writer;
 
 /// All recognized audit event types.
 /// Use these string constants to avoid typos in `event_type` values.
@@ -36,6 +29,10 @@ pub mod event_type {
     pub const USER_DEACTIVATED: &str = "user.deactivated";
     pub const PASSWORD_CHANGED: &str = "user.password_changed";
     pub const FORCE_CHANGE_SET: &str = "user.force_change_set";
+    pub const PIN_SET: &str = "user.pin_set";
+    pub const PIN_CLEARED: &str = "user.pin_cleared";
+    pub const SESSION_UNLOCKED_WITH_PIN: &str = "session.unlocked_with_pin";
+    pub const RBAC_EMERGENCY_GRANT_CREATED: &str = "rbac.emergency_grant_created";
 }
 
 /// Builder for audit event parameters.
@@ -58,46 +55,66 @@ pub struct AuditEvent<'a> {
 ///
 /// Any DB error is logged at `error!` level but **never propagated** — the
 /// caller always succeeds regardless of audit write outcome.
-pub async fn emit(db: &DatabaseConnection, event: AuditEvent<'_>) {
-    let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
+pub async fn emit(db: &sea_orm::DatabaseConnection, event: AuditEvent<'_>) {
+    let details_json = build_compat_details_json(&event);
+    let input = writer::AuditEventInput {
+        action_code: event.event_type.to_string(),
+        target_type: event.entity_type.map(ToOwned::to_owned),
+        target_id: event.entity_id.map(ToOwned::to_owned),
+        actor_id: event.actor_id.map(i64::from),
+        auth_context: infer_auth_context(event.event_type).to_string(),
+        result: infer_result(event.event_type).to_string(),
+        before_hash: None,
+        after_hash: None,
+        retention_class: "standard".to_string(),
+        details_json: Some(details_json),
+    };
 
-    let result = db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            r"INSERT OR IGNORE INTO audit_events
-                   (id, event_type, actor_id, actor_name, entity_type,
-                    entity_id, summary, detail_json, device_id, occurred_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                id.into(),
-                event.event_type.into(),
-                event
-                    .actor_id
-                    .map_or(sea_orm::Value::String(None), |v| v.to_string().into()),
-                event
-                    .actor_name
-                    .map_or(sea_orm::Value::String(None), |s| s.to_string().into()),
-                event
-                    .entity_type
-                    .map_or(sea_orm::Value::String(None), |s| s.to_string().into()),
-                event
-                    .entity_id
-                    .map_or(sea_orm::Value::String(None), |s| s.to_string().into()),
-                event.summary.into(),
-                event
-                    .detail_json
-                    .clone()
-                    .map_or(sea_orm::Value::String(None), Into::into),
-                event
-                    .device_id
-                    .map_or(sea_orm::Value::String(None), |s| s.to_string().into()),
-                now.into(),
-            ],
-        ))
-        .await;
-
-    if let Err(e) = result {
-        error!(event_type = event.event_type, error = %e, "audit::emit failed");
+    if let Err(err) = writer::write_audit_event(db, input).await {
+        tracing::error!(
+            event_type = event.event_type,
+            error = %err,
+            "audit::emit compatibility writer failed"
+        );
     }
+}
+
+fn infer_auth_context(event_type: &str) -> &'static str {
+    if event_type.contains("pin") {
+        "pin"
+    } else if event_type.contains("step_up") {
+        "step_up"
+    } else if event_type.contains("login") || event_type.contains("password") {
+        "password"
+    } else {
+        "system"
+    }
+}
+
+fn infer_result(event_type: &str) -> &'static str {
+    if event_type.contains("failure") {
+        "fail"
+    } else if event_type == event_type::PERMISSION_DENIED {
+        "blocked"
+    } else {
+        "success"
+    }
+}
+
+fn build_compat_details_json(event: &AuditEvent<'_>) -> serde_json::Value {
+    let mut details = serde_json::json!({
+        "summary": event.summary,
+        "actor_name": event.actor_name,
+        "device_id": event.device_id,
+    });
+
+    if let Some(raw) = &event.detail_json {
+        let parsed = serde_json::from_str::<serde_json::Value>(raw)
+            .unwrap_or_else(|_| serde_json::json!({ "raw_detail_json": raw }));
+        if let Some(obj) = details.as_object_mut() {
+            obj.insert("detail".to_string(), parsed);
+        }
+    }
+
+    details
 }

@@ -2,12 +2,12 @@
 // Components and hooks MUST NOT import from @tauri-apps/api/core directly
 // for backup operations.
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type { BackupRunRecord, BackupRunResult, RestoreTestResult } from "@shared/ipc-types";
 
-// ── Zod schemas for runtime shape validation ──────────────────────────────
+// â”€â”€ Zod schemas for runtime shape validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const BackupRunRecordSchema = z.object({
   id: z.number().int(),
@@ -42,7 +42,7 @@ const RestoreTestResultSchema = z.object({
   warnings: z.array(z.string()),
 });
 
-// ── Service functions ─────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Run a manual backup to the specified target path.
@@ -76,7 +76,7 @@ export async function validateBackupFile(backupPath: string): Promise<RestoreTes
 }
 
 /**
- * Factory reset stub — validates all security gates but does NOT delete data.
+ * Factory reset stub â€” validates all security gates but does NOT delete data.
  * Phase 2 will implement actual data deletion after VPS sync drain.
  * Requires: active session + adm.settings + step-up + typed confirmation phrase.
  */

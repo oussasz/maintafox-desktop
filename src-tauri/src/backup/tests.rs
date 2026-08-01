@@ -58,7 +58,12 @@ mod tests {
             .try_get::<i64>("", "cnt")
             .expect("cnt should be readable");
 
-        assert_eq!(migration_count, 8, "8 migrations should be applied (001-008)");
+        let expected_migrations = crate::migrations::Migrator::migrations().len() as i64;
+        assert_eq!(
+            migration_count,
+            expected_migrations,
+            "all registered migrations should be applied"
+        );
     }
 
     /// V2 — backup_runs table has all expected columns.

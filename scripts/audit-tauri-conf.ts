@@ -30,6 +30,10 @@ check(win?.label === "main", "window.label must be 'main'");
 const csp: string = conf?.app?.security?.csp ?? "";
 check(csp.includes("default-src 'self'"), "CSP must include default-src 'self'");
 check(csp.includes("connect-src") && csp.includes("ipc:"), "CSP must allow ipc: for Tauri bridge");
+check(
+  csp.includes("https://api.maintafox.systems"),
+  "CSP connect-src must allow https://api.maintafox.systems",
+);
 check(!csp.includes("unsafe-eval"), "CSP must NOT include unsafe-eval");
 
 // ─── Identity ──────────────────────────────────────────────────────────────

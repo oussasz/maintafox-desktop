@@ -11,6 +11,7 @@
 //! round-trip.
 
 use crate::errors::{AppError, AppResult};
+use crate::org::fail::fail;
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -155,9 +156,10 @@ pub async fn create_rule(
     let model_status: String = model_row.try_get("", "status").map_err(|e| decode_err("status", e))?;
 
     if model_status != "draft" {
-        return Err(AppError::ValidationFailed(vec![
-            "rules can only be added to draft structure models".to_string(),
-        ]));
+        return Err(fail(
+            "ORG_RULE_DRAFT_ONLY",
+            "Relationship rules can only be added to draft structure models.",
+        ));
     }
 
     // Validate no duplicate rule
@@ -169,9 +171,10 @@ pub async fn create_rule(
     )
     .await?;
     if existing {
-        return Err(AppError::ValidationFailed(vec![
-            "this parent–child relationship rule already exists".to_string(),
-        ]));
+        return Err(fail(
+            "ORG_RULE_DUPLICATE",
+            "This parent-child relationship rule already exists.",
+        ));
     }
 
     let now = Utc::now().to_rfc3339();
@@ -246,9 +249,10 @@ pub async fn delete_rule(db: &DatabaseConnection, rule_id: i32) -> AppResult<()>
     let model_status: String = model_row.try_get("", "status").map_err(|e| decode_err("status", e))?;
 
     if model_status != "draft" {
-        return Err(AppError::ValidationFailed(vec![
-            "rules can only be deleted from draft structure models".to_string(),
-        ]));
+        return Err(fail(
+            "ORG_RULE_DRAFT_ONLY",
+            "Relationship rules can only be deleted from draft structure models.",
+        ));
     }
 
     db.execute(Statement::from_sql_and_values(

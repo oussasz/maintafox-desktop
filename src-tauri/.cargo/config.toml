@@ -1,11 +1,15 @@
 [env]
 SQLX_OFFLINE = "true"
 
+[build]
+pipelining = true
+
 [profile.release]
 lto = "thin"
 opt-level = "s"
 strip = true
 
 [profile.dev]
-opt-level = 1
+opt-level = 0
 debug = true
+incremental = true

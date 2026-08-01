@@ -317,32 +317,36 @@ This module is not a flat equipment list. It preserves the maintainable boundary
 - HSE, quality, or production escalations
 - IoT or external-system triggered alerts that require human review
 
-**Required state model:**
+**Required state model (process stages):**
 
 1. Submitted
-2. Pending Review
+2. In Review
 3. Returned for Clarification
-4. Rejected
-5. Screened
-6. Awaiting Approval
-7. Approved for Planning
-8. Deferred
-9. Converted to Work Order
-10. Closed as Non-Executable
-11. Archived
+4. Awaiting Approval
+5. Approved
+6. Deferred
+7. Closed (sole terminal operational status)
+
+**Disposition model (governed outcomes on close):**
+
+Terminal business meaning is carried by `disposition_code` (reference domain `DI.DISPOSITION`), not by extra statuses. Seed codes include: `converted_to_wo`, `rejected_invalid`, `duplicate` (requires `related_di_id`), `cancelled_by_requester`, `cancelled_by_planner`, `no_work_required`, `solved_immediately`, `information_only`, `other` (notes required).
+
+Work Order creation is optional: only disposition `converted_to_wo` creates a WO and sets `converted_to_wo_id`. Archive is a retention flag (`archived_at`) on closed DIs, not a lifecycle status.
 
 **Stage-gated data capture:**
 
 - submission requires the minimum valid intake context
 - review requires validated priority, queue ownership, and triage decision
+- approval authorizes demand but does not auto-create a work order
 - conversion requires confirmed asset or location context, request classification, and approved execution path
+- close without WO requires a governed disposition (and related DI when duplicate)
 
 **Data-quality rules:**
 
-- the request remains the immutable origin record once converted
+- the request remains the immutable origin record once converted (closed with `converted_to_wo`)
 - request-to-review, review-to-approval, and approval-to-conversion timings are preserved for SLA and backlog analysis
-- photos, sensor snapshots, and free text support triage, but controlled classifications are used where analytics require structured evidence
-
+- photos, sensor snapshots, and free text support triage, but controlled classifications and dispositions are used where analytics require structured evidence
+- disposition rates (conversion, reject, duplicate, cancel, no-work) are first-class KPIs
 ---
 
 ### 6.5 Work Orders (OT - Ordres de Travail)
@@ -354,7 +358,7 @@ This module is not a flat equipment list. It preserves the maintainable boundary
 - `work_order_statuses`: id, code, label, color, macro_state, is_terminal, is_system
 - `urgency_levels`: id, level (1-5), label (Faible -> Critique), hex_color
 - `delay_reason_codes`: id, code, label, category (parts/permit/shutdown/vendor/labor/access/diagnosis/other), is_active
-- `work_orders`: id, code (WOR-XXXX), type_id, status_id, equipment_id, component_id (nullable), location_id (nullable), requester_id, source_di_id, entity_id, planner_id, approver_id, assigned_group_id, primary_responsible_id, urgency_id, title, description, planned_start, planned_end, scheduled_at, actual_start, actual_end, mechanically_completed_at, technically_verified_at, closed_at, expected_duration_hours, actual_duration_hours, active_labor_hours, total_waiting_hours, downtime_hours, labor_cost, parts_cost, service_cost, total_cost, recurrence_risk_level, production_impact_id, root_cause_summary, corrective_action_summary, verification_method, notes
+- `work_orders`: id, code (OT-XXXX), type_id, status_id, equipment_id, component_id (nullable), location_id (nullable), requester_id, source_di_id, entity_id, planner_id, approver_id, assigned_group_id, primary_responsible_id, urgency_id, title, description, planned_start, planned_end, scheduled_at, actual_start, actual_end, mechanically_completed_at, technically_verified_at, closed_at, expected_duration_hours, actual_duration_hours, active_labor_hours, total_waiting_hours, downtime_hours, labor_cost, parts_cost, service_cost, total_cost, recurrence_risk_level, production_impact_id, root_cause_summary, corrective_action_summary, verification_method, notes
 - `work_order_interveners`: id, work_order_id, intervener_id, skill_id, started_at, ended_at, hours_worked, hourly_rate, notes
 - `work_order_parts`: id, work_order_id, article_id, quantity_planned, quantity_used, unit_cost, stock_location_id
 - `work_order_tasks`: id, work_order_id, task_description, sequence_order, estimated_minutes, is_mandatory, is_completed, completed_by_id, completed_at, result_code, notes

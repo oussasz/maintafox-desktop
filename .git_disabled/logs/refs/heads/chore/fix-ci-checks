@@ -1,0 +1,5 @@
+0000000000000000000000000000000000000000 ab29c86a927d125aff06873f3d62c76e726d6e50 oussasz <brahimi.oussamaa@gmail.com> 1775406094 +0100	branch: Created from HEAD
+ab29c86a927d125aff06873f3d62c76e726d6e50 f39d106c1b11e1501ba35b48dc666aea03efed64 oussasz <brahimi.oussamaa@gmail.com> 1775407699 +0100	commit: [chore] fix CI: Prettier formatting (166 files), Rust Clippy (33 warnings), cargo fmt (CRLF newlines)
+f39d106c1b11e1501ba35b48dc666aea03efed64 5dc45abb2e7236a6d263ef9e74a76277acd184f4 oussasz <brahimi.oussamaa@gmail.com> 1775409385 +0100	commit: [chore] ignore RUSTSEC-2024-0429 glib advisory (Tauri upstream dependency)
+5dc45abb2e7236a6d263ef9e74a76277acd184f4 b50a21c0ca498415001008a00e15b5019720c1ec oussasz <brahimi.oussamaa@gmail.com> 1775409817 +0100	commit: fix(ci): make CHANGELOG gate robust with awk section parser
+b50a21c0ca498415001008a00e15b5019720c1ec 9e698ac9d759cbe1ff62b928829faad2f764c583 oussasz <brahimi.oussamaa@gmail.com> 1775410130 +0100	commit: test: add app-store unit tests (10 tests, 100% store coverage)

@@ -14,12 +14,6 @@ pub struct WindowState {
     pub maximized: bool,
 }
 
-const MIN_WIDTH: u32 = 640;
-const MIN_HEIGHT: u32 = 480;
-const DEFAULT_WIDTH: u32 = 1280;
-const DEFAULT_HEIGHT: u32 = 800;
-const MINIMIZED_SENTINEL: i32 = -32000;
-
 impl Default for WindowState {
     fn default() -> Self {
         Self {
@@ -46,7 +40,7 @@ pub fn load_state(app: &AppHandle) -> WindowState {
     match state_path(app) {
         Ok(path) => {
             if let Ok(text) = std::fs::read_to_string(&path) {
-                sanitize_state(serde_json::from_str(&text).unwrap_or_default())
+                serde_json::from_str(&text).unwrap_or_default()
             } else {
                 WindowState::default()
             }
@@ -56,24 +50,6 @@ pub fn load_state(app: &AppHandle) -> WindowState {
             WindowState::default()
         }
     }
-}
-
-const fn is_minimized_position(x: i32, y: i32) -> bool {
-    x <= MINIMIZED_SENTINEL || y <= MINIMIZED_SENTINEL
-}
-
-const fn sanitize_state(mut state: WindowState) -> WindowState {
-    if state.width < MIN_WIDTH {
-        state.width = DEFAULT_WIDTH;
-    }
-    if state.height < MIN_HEIGHT {
-        state.height = DEFAULT_HEIGHT;
-    }
-    if is_minimized_position(state.x, state.y) {
-        state.x = 0;
-        state.y = 0;
-    }
-    state
 }
 
 pub fn save_state(app: &AppHandle, state: &WindowState) {
@@ -92,8 +68,15 @@ pub fn save_state(app: &AppHandle, state: &WindowState) {
 /// Called in the Tauri setup hook. Applies the saved state to the main window
 /// and registers event listeners to persist state on resize/move/close.
 pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
-    let state = load_state(&app.handle().clone());
+    let mut state = load_state(&app.handle().clone());
     let handle = app.handle().clone();
+
+    // Sanitize bad saved values (e.g. from a minimized window on Windows)
+    if state.width == 0 || state.height == 0 || state.x <= -30000 || state.y <= -30000 {
+        warn!("Window state has invalid values (w={}, h={}, x={}, y={}), resetting to defaults",
+              state.width, state.height, state.x, state.y);
+        state = WindowState::default();
+    }
 
     if let Some(window) = app.get_webview_window("main") {
         if state.maximized {
@@ -123,8 +106,8 @@ pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
         window.on_window_event(move |event| {
             match event {
                 tauri::WindowEvent::Resized(size) => {
-                    // Ignore transient minimized/hidden sizes that would make next startup invisible.
-                    if size.width < MIN_WIDTH || size.height < MIN_HEIGHT {
+                    // Ignore minimized dimensions (Windows reports 0×0 when minimized)
+                    if size.width == 0 || size.height == 0 {
                         return;
                     }
                     debug!("Window resized: {size:?}");
@@ -140,8 +123,8 @@ pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
                     );
                 }
                 tauri::WindowEvent::Moved(pos) => {
-                    // Ignore minimized sentinel coordinates (e.g. -32000 on Windows).
-                    if is_minimized_position(pos.x, pos.y) {
+                    // Ignore minimized position (Windows uses -32000,-32000)
+                    if pos.x <= -30000 || pos.y <= -30000 {
                         return;
                     }
                     debug!("Window moved: {pos:?}");

@@ -3,11 +3,39 @@
   "identifier": "default",
   "description": "Maintafox default capability set. Keep minimal. No additional permissions without ADR.",
   "platforms": ["linux", "macOS", "windows"],
-  "windows": ["main"],
+  "windows": ["main", "print-*"],
   "permissions": [
     "core:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
     "shell:allow-open",
     "dialog:default",
-    "fs:default"
+    "dialog:allow-save",
+    "fs:default",
+    "fs:allow-write-file",
+    "fs:allow-write-text-file",
+    "fs:allow-remove",
+    "fs:allow-temp-write",
+    "fs:allow-temp-write-recursive",
+    "fs:allow-temp-meta",
+    "fs:allow-download-write",
+    "fs:allow-download-write-recursive",
+    "fs:allow-document-write",
+    "fs:allow-document-write-recursive",
+    "fs:allow-desktop-write",
+    "fs:allow-desktop-write-recursive",
+    "fs:allow-home-write",
+    "fs:allow-home-write-recursive",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$HOME/**" },
+        { "path": "$TEMP/**" }
+      ]
+    }
   ]
 }

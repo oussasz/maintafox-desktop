@@ -46,6 +46,9 @@ jobs:
       - name: TypeScript type check
         run: pnpm run typecheck
 
+      - name: RBAC permission parity
+        run: pnpm run rbac:check
+
       - name: ESLint
         run: pnpm run lint:check
 
@@ -123,6 +126,10 @@ jobs:
       - name: Rust unit tests
         working-directory: src-tauri
         run: cargo test
+
+      - name: RAMS golden benchmarks (rams_golden)
+        working-directory: src-tauri
+        run: cargo test rams_golden
 
       - name: Rust schema integration tests
         working-directory: src-tauri

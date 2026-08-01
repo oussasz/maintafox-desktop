@@ -1,0 +1,59 @@
+---
+description: List-module search/filter toolbars must use SmartFilterBar (debounced search, chips, reset)
+alwaysApply: true
+---
+
+# SmartFilterBar for list module filters
+
+Any **module list / directory toolbar** with search and/or quick filters MUST use `SmartFilterBar` — never a one-off `setTimeout` search row, ad-hoc `moduleFilterBar` markup, or a Search/Apply button.
+
+Primitives: `src/components/filters/SmartFilterBar.tsx`, `smart-filter-types.ts`, `src/hooks/useDebouncedValue.ts`  
+Shared i18n: `common.smartFilter.*` (reset, chips, active count, result count, **all**)  
+Page-specific placeholders stay in the module namespace (`equipment`, `org`, `personnel`, …).
+
+## Adopted modules (do not regress)
+
+Assets, Org Designer tree, Admin Users, Work Orders, DI/Requests, Personnel, Inventory (master / topology / stock).
+
+**Later pass (still use SmartFilterBar when touching them):** PM, Planning, Reliability pickers, Reference manager browser.
+
+## Required path
+
+1. Page owns values + side effects (Zustand / local state / IPC). SmartFilterBar never calls IPC or stores.
+2. Wire `<SmartFilterBar searchValue … onSearchChange … filters={…} onReset={…} />`.
+3. Search: debounce is **inside** the bar (300ms via `useDebouncedValue`). Use `onSearchChange` for settled query → store/load. Optionally `onSearchInputChange` to keep parent `searchValue` in sync.
+4. Filters: `kind: "select" | "multi-select"` — apply **immediately** in each def’s `onChange`.
+5. Reset clears search + filters in the **page adapter** (`onReset`); bar shows chips / active count.
+6. **No new URL query sync** in the bar. Preserve existing DI `review`/`triage` presets in the page adapter only. Future `syncToUrl` belongs in the page, not SmartFilterBar props.
+7. **“All” option label:** use the shared short label only — `common.smartFilter.all` (`Tous` / `All`). Omit `allLabel` so SmartFilterBar’s default applies, or pass `t("smartFilter.all", { ns: "common" })`. Never use long phrases such as “Toutes les familles”, “All warehouses”, “Tous les magasins”.
+
+```tsx
+// ❌ BAD — local debounce + custom filter chrome
+const t = setTimeout(() => setFilter({ search: q }), 300);
+<div className={mfLayout.moduleFilterBar}>
+  <Input … /><Button>Search</Button><Select … />
+</div>
+
+// ❌ BAD — long “all” labels
+allLabel: t("filters.allFamilies") // "Toutes les familles"
+
+// ✅ GOOD
+<SmartFilterBar
+  searchPlaceholder={t("filters.searchPlaceholder")}
+  searchValue={searchInput}
+  onSearchInputChange={setSearchInput}
+  onSearchChange={(q) => { setFilter({ search: q.trim() || null }); void load(); }}
+  filters={filterDefs} // select filters: omit allLabel → common.smartFilter.all
+  resultCount={total}
+  onReset={resetFilters}
+/>
+```
+
+## Hard rules
+
+- No Search/Apply button for text search.
+- Do not reintroduce per-page `setTimeout(…, 300)` search debouncing.
+- Do not put URL sync props on SmartFilterBar.
+- Reuse `mfLayout.moduleFilterBar` / `mfInput.filterSearch` only **through** SmartFilterBar (or keep layout tokens elsewhere); do not fork a parallel filter chrome.
+- Reference-backed **form** fields still use `ReferenceCombobox` (separate rule); SmartFilterBar is for list toolbars, not reference CRUD.
+- Select filter "all" option must display **Tous** / **All** via `common.smartFilter.all` — not "Toutes les …" / "All families"-style phrases.

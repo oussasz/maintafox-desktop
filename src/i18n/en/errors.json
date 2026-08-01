@@ -43,5 +43,35 @@
   "io": {
     "generic": "I/O error: {{message}}",
     "internalError": "An internal error occurred."
+  },
+  "appError": {
+    "DATABASE_ERROR": "Database error.",
+    "AUTH_ERROR": "Authentication error.",
+    "TENANT_SCOPE_VIOLATION": "Tenant scope violation.",
+    "SESSION_CLAIM_INVALID": "Session claim invalid.",
+    "NOT_FOUND": "Record not found.",
+    "VALIDATION_FAILED": "Validation failed.",
+    "SYNC_ERROR": "Synchronization error.",
+    "IO_ERROR": "I/O error.",
+    "SERIALIZATION_ERROR": "Serialization error.",
+    "PERMISSION_DENIED": "Permission denied.",
+    "LICENSE_DENIED": "License denied.",
+    "STEP_UP_REQUIRED": "Step-up verification required.",
+    "ACCOUNT_LOCKED": "Account locked.",
+    "SESSION_LOCKED": "Session locked due to inactivity.",
+    "INTERNAL_ERROR": "An internal error occurred."
+  },
+  "gateError": {
+    "GATE_FMECA_REFERENCE_MODES_NOT_PUBLISHED": "FMECA update blocked: publish active values in WORK.FAILURE_MODES first.",
+    "GATE_FMECA_FAILURE_MODE_NOT_GOVERNED": "FMECA update blocked: selected failure mode is not governed by published WORK.FAILURE_MODES.",
+    "GATE_CLOSEOUT_REFERENCE_MODES_NOT_PUBLISHED": "Closeout blocked: WORK.FAILURE_MODES has no published active values.",
+    "GATE_CLOSEOUT_FAILURE_MODE_NOT_GOVERNED": "Closeout blocked: selected failure mode is not governed by published WORK.FAILURE_MODES.",
+    "GATE_CLOSEOUT_FMECA_PARTS_REQUIRED": "Closeout blocked: critical FMECA part recommendations require consumed part lines or a signed override.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_REASON_REQUIRED": "Closeout blocked: provide a complete override reason for missing critical FMECA parts.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNATURE_REQUIRED": "Closeout blocked: a valid override signature is required for missing critical FMECA parts.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_MUST_DIFFER": "Closeout blocked: override signer must be different from the user performing closeout.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_ROLE_INVALID": "Closeout blocked: override signer must hold Supervisor/Admin privileges.",
+    "GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_AUTH_FAILED": "Closeout blocked: override signer re-authentication failed.",
+    "GATE_RUNTIME_EXPOSURE_SOURCE_NOT_ALLOWED_IN_PRODUCTION": "Runtime exposure write blocked: injected RAMS source is forbidden in activated production mode."
   }
 }

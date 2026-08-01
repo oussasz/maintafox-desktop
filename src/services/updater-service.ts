@@ -2,14 +2,14 @@
 // Components and hooks MUST NOT import from @tauri-apps/api/core directly for
 // update operations. Use the useUpdater() hook instead.
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type { UpdateCheckResult } from "@shared/ipc-types";
 
-// ── Runtime validation schema ─────────────────────────────────────────────────
+// â”€â”€ Runtime validation schema â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Mirrors UpdateCheckResult in src-tauri/src/commands/updater.rs.
-// Zod parse is the enforced boundary — any unexpected shape from the Rust layer
+// Zod parse is the enforced boundary â€” any unexpected shape from the Rust layer
 // is caught here rather than silently corrupted in store state.
 
 const UpdateCheckResultSchema = z.object({
@@ -19,11 +19,11 @@ const UpdateCheckResultSchema = z.object({
   pub_date: z.string().nullable(),
 });
 
-// ── Service functions ─────────────────────────────────────────────────────────
+// â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Check the remote manifest for a newer version.
- * No session required — safe at startup and on the login screen.
+ * No session required â€” safe at startup and on the login screen.
  * Always resolves (never throws); manifest failures return `available: false`.
  */
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
@@ -33,7 +33,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
 
 /**
  * Download and install a pending update.
- * Requires an active authenticated session — the Rust command enforces this.
+ * Requires an active authenticated session â€” the Rust command enforces this.
  * The caller (useUpdater hook) is responsible for showing a confirmation dialog
  * before invoking this function.
  */

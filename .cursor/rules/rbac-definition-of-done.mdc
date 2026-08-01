@@ -1,0 +1,44 @@
+---
+description: RBAC is part of the Definition of Done for every feature
+globs:
+  - src/**/*.{ts,tsx}
+  - shared/**/*.{ts,tsx}
+  - src-tauri/src/**/*.rs
+alwaysApply: true
+---
+
+# RBAC Definition of Done
+
+Registry mechanics and the no-literals rule live in [`.cursor/rules/rbac-permissions.mdc`](.cursor/rules/rbac-permissions.mdc). This rule covers the delivery workflow: **no feature ships without an RBAC pass.**
+
+## 1. New capability
+
+When a feature adds a user capability (create, edit, approve, close, execute, import, export, configure…):
+
+- First check whether a canonical permission already covers it — reuse before adding.
+- If none fits, add a canonical entry to `shared/rbac/permission-registry.json`, then `pnpm rbac:generate`.
+- Aliases require explicit approval; do not introduce parallel names.
+
+## 2. Backend
+
+Every IPC/command that mutates state, configuration, or business data must require the canonical permission. A mutating command with no permission check is a defect, not a TODO.
+
+## 3. Frontend
+
+Review **every** surface that exposes the capability, using the same constant as the backend:
+
+buttons · context menus · toolbar actions · dialog actions · routes · command palette · keyboard shortcuts · empty-state CTAs
+
+## 4. Roles
+
+If the permission belongs in a role by default, update the role templates in the registry. Keep least privilege — never grant Administrator-only or vendor-console permissions to operational roles.
+
+## 5. Validation before claiming done
+
+- [ ] No new hardcoded permission strings (backend, frontend, tests)
+- [ ] Backend and frontend gate on the *same* canonical permission
+- [ ] `pnpm rbac:check` passes
+- [ ] Permission appears in Administration → Permissions
+- [ ] UI appears/disappears correctly for authorized vs unauthorized users
+
+A feature is complete only when permissions exist, backend enforcement exists, frontend gating exists, default roles are updated where required, and parity checks pass.

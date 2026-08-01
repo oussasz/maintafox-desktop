@@ -146,6 +146,17 @@ pub struct TrustedDevice {
     pub revoked_at: Option<String>,
 }
 
+/// Shared trust label used by License Enforcement and TopBar device badge.
+pub fn trust_state_label(trust: Option<&TrustedDevice>) -> &'static str {
+    if trust.is_some_and(|t| t.is_revoked) {
+        "revoked"
+    } else if trust.is_some() {
+        "trusted"
+    } else {
+        "untrusted"
+    }
+}
+
 /// Device trust status for the current device, current user.
 #[derive(Debug, Clone, Serialize)]
 pub struct DeviceTrustStatus {
@@ -155,6 +166,8 @@ pub struct DeviceTrustStatus {
     pub is_trusted: bool,
     /// Whether this device's trust has been revoked
     pub is_revoked: bool,
+    /// Canonical trust label aligned with License Enforcement (`trusted`/`untrusted`/`revoked`).
+    pub trust_state: String,
     /// Whether offline access is currently allowed for this user+device
     pub offline_allowed: bool,
     /// Remaining offline hours (None if no trust record or unlimited)
@@ -163,6 +176,10 @@ pub struct DeviceTrustStatus {
     pub device_label: Option<String>,
     /// When this device's trust was established (ISO 8601)
     pub trusted_at: Option<String>,
+    /// Machine activation denial code if offline eligibility failed.
+    pub offline_denial_code: Option<String>,
+    /// Human-readable operator message describing the denial reason.
+    pub offline_denial_message: Option<String>,
 }
 
 // â”€â”€ trusted_devices CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

@@ -27,6 +27,33 @@ mod errors_tests {
         let s = err.to_string();
         assert!(s.contains("field required"));
         assert!(s.contains("too long"));
+        assert!(!s.contains("[\""));
+    }
+
+    #[test]
+    fn validation_failed_serializes_joined_message_and_details() {
+        let err = AppError::ValidationFailed(vec!["a".into(), "b".into()]);
+        let json = serde_json::to_value(&err).expect("serialize");
+        assert_eq!(json["code"], "VALIDATION_FAILED");
+        assert_eq!(json["message"], "Validation failed: a; b");
+        assert!(json["details"].as_array().unwrap().len() == 2);
+    }
+
+    #[test]
+    fn org_validation_failed_serializes_structured_details() {
+        use crate::errors::{issue_params, AppValidationIssue};
+        let err = AppError::OrgValidationFailed(vec![AppValidationIssue::error(
+            "ORG_MOVE_CYCLE",
+            "cannot move under itself",
+            issue_params(&[]),
+        )]);
+        let json = serde_json::to_value(&err).expect("serialize");
+        assert_eq!(json["code"], "VALIDATION_FAILED");
+        assert!(json["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot move under itself"));
+        assert_eq!(json["details"][0]["code"], "ORG_MOVE_CYCLE");
     }
 
     #[test]
@@ -75,6 +102,8 @@ mod errors_tests {
         let cases: Vec<(AppError, &str)> = vec![
             (AppError::Database(sea_orm::DbErr::Custom("x".into())), "DATABASE_ERROR"),
             (AppError::Auth("x".into()), "AUTH_ERROR"),
+            (AppError::TenantScopeViolation("x".into()), "TENANT_SCOPE_VIOLATION"),
+            (AppError::SessionClaimInvalid("x".into()), "SESSION_CLAIM_INVALID"),
             (
                 AppError::NotFound {
                     entity: "e".into(),
@@ -83,6 +112,10 @@ mod errors_tests {
                 "NOT_FOUND",
             ),
             (AppError::ValidationFailed(vec![]), "VALIDATION_FAILED"),
+            (
+                AppError::OrgValidationFailed(vec![]),
+                "VALIDATION_FAILED",
+            ),
             (AppError::SyncError("x".into()), "SYNC_ERROR"),
             (
                 AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")),
@@ -100,7 +133,24 @@ mod errors_tests {
                 "PERMISSION_DENIED",
             ),
             (AppError::PermissionDenied("x".into()), "PERMISSION_DENIED"),
+            (
+                AppError::LicenseDenied {
+                    reason_code: "entitlement_violation".into(),
+                    message: "blocked".into(),
+                },
+                "LICENSE_DENIED",
+            ),
             (AppError::StepUpRequired, "STEP_UP_REQUIRED"),
+            (
+                AppError::AccountLocked {
+                    until: "2026-01-01T00:00:00Z".into(),
+                },
+                "ACCOUNT_LOCKED",
+            ),
+            (
+                AppError::SessionLocked("idle".into()),
+                "SESSION_LOCKED",
+            ),
             (AppError::Internal(anyhow::anyhow!("boom")), "INTERNAL_ERROR"),
         ];
 
@@ -111,15 +161,15 @@ mod errors_tests {
     }
 
     #[test]
-    fn internal_error_never_leaks_details() {
-        let err = AppError::Internal(anyhow::anyhow!("secret SQL password"));
+    fn internal_error_surfaces_capped_french_prefix() {
+        let err = AppError::Internal(anyhow::anyhow!("mapping failure"));
         let json = serde_json::to_value(&err).expect("serialize");
         let msg = json["message"].as_str().unwrap();
         assert!(
-            !msg.contains("secret"),
-            "Internal error leaked details to frontend: {msg}"
+            msg.starts_with("Erreur interne"),
+            "expected French internal prefix, got: {msg}"
         );
-        assert_eq!(msg, "Une erreur interne s'est produite.");
+        assert!(msg.contains("mapping failure"));
     }
 
     #[test]

@@ -1,0 +1,39 @@
+{
+  "mcpServers": {
+    "tauri-docs": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://tauri-docs.mastra.cloud/api/mcp/tauri-docs/mcp"
+      ]
+    },
+    "rust-cargo-assistant": {
+      "command": "rust-mcp-server",
+      "args": []
+    },
+    "mcp-checkup": {
+      "command": "npx",
+      "args": ["-y", "mcp-checkup"]
+    },
+    "knowledge-graph-memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "env": {
+        "MEMORY_FILE_PATH": ".cursor/memory.jsonl"
+      }
+    },
+    "lighthouse-a11y": {
+      "command": "npx",
+      "args": ["-y", "lighthouse-mcp-server"]
+    },
+    "database": {
+      "command": "npx",
+      "args": ["-y", "mcp-dbs@1.0.4", "--stdio"],
+      "env": {
+        "MCP_SQLITE_FILENAME": "dev-data/maintafox-dev.db",
+        "MCP_SQLITE_CREATE_IF_NOT_EXISTS": "true"
+      }
+    }
+  }
+}

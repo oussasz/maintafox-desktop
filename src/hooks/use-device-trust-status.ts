@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useState, useEffect, useCallback } from "react";
 
+import { invoke } from "@/lib/ipc-invoke";
 import type { DeviceTrustStatus } from "@shared/ipc-types";
 
 /**
@@ -10,7 +10,18 @@ import type { DeviceTrustStatus } from "@shared/ipc-types";
  * Re-fetches automatically when the component remounts.
  */
 export function useDeviceTrustStatus(): DeviceTrustStatus {
-  const [status, setStatus] = useState<DeviceTrustStatus>({ status: "unknown" });
+  const [status, setStatus] = useState<DeviceTrustStatus>({
+    device_fingerprint: "",
+    is_trusted: false,
+    is_revoked: false,
+    trust_state: "untrusted",
+    offline_allowed: false,
+    offline_hours_remaining: null,
+    device_label: null,
+    trusted_at: null,
+    offline_denial_code: null,
+    offline_denial_message: null,
+  });
 
   const fetch = useCallback(async () => {
     try {
@@ -18,7 +29,18 @@ export function useDeviceTrustStatus(): DeviceTrustStatus {
       setStatus(result);
     } catch {
       // Command failed (no session, or not implemented yet) — silent fallback
-      setStatus({ status: "unknown" });
+      setStatus({
+        device_fingerprint: "",
+        is_trusted: false,
+        is_revoked: false,
+        trust_state: "untrusted",
+        offline_allowed: false,
+        offline_hours_remaining: null,
+        device_label: null,
+        trusted_at: null,
+        offline_denial_code: null,
+        offline_denial_message: null,
+      });
     }
   }, []);
 

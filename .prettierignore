@@ -4,3 +4,6 @@ node_modules/
 *.md
 *.sql
 dev-data/
+
+# Generated RBAC artifacts (must match rbac:generate byte-for-byte)
+shared/rbac/permissions.generated.ts

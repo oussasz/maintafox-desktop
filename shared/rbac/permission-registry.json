@@ -1,0 +1,1194 @@
+{
+  "$schema": "./permission-registry.schema.json",
+  "version": 1,
+  "description": "Canonical desktop RBAC permission registry. Sole source of permission-name strings.",
+  "permissions": [
+    {
+      "name": "eq.view",
+      "description": "View equipment registry",
+      "category": "eq",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "eq.manage",
+      "description": "Create and edit equipment records",
+      "category": "eq",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["eq.create", "eq.edit", "eq.admin"]
+    },
+    {
+      "name": "eq.import",
+      "description": "Import equipment from CSV / ERP",
+      "category": "eq",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "eq.delete",
+      "description": "Soft-delete equipment records",
+      "category": "eq",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "di.view",
+      "description": "View intervention request list and details",
+      "category": "di",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "di.create",
+      "description": "Submit new intervention requests (all assets)",
+      "category": "di",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["di.submit"]
+    },
+    {
+      "name": "di.create.own",
+      "description": "Submit intervention requests (own entity only)",
+      "category": "di",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["di.submit.own"]
+    },
+    {
+      "name": "di.screen",
+      "description": "Triage incoming DIs (submitted to review queue)",
+      "category": "di",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "di.review",
+      "description": "Screen, return, and reject intervention requests",
+      "category": "di",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "di.approve",
+      "description": "Approve, defer, or reactivate intervention requests",
+      "category": "di",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "di.convert",
+      "description": "Convert approved DI to work order",
+      "category": "di",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "di.admin",
+      "description": "Override, archive, reopen, manage DI settings",
+      "category": "di",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "di.delete",
+      "description": "Delete draft intervention requests",
+      "category": "di",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "ot.view",
+      "description": "View work orders and details",
+      "category": "ot",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ot.create",
+      "description": "Create new work orders",
+      "category": "ot",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ot.edit",
+      "description": "Edit, plan, assign, and execute work orders",
+      "category": "ot",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ot.approve",
+      "description": "Approve work orders from draft / planning",
+      "category": "ot",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "ot.close",
+      "description": "Close technically verified work orders",
+      "category": "ot",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ot.reopen",
+      "description": "Reopen recently closed work orders",
+      "category": "ot",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "ot.admin",
+      "description": "Override, archive, manage WO settings",
+      "category": "ot",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ot.delete",
+      "description": "Delete draft work orders",
+      "category": "ot",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "org.view",
+      "description": "View organizational structure",
+      "category": "org",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "org.manage",
+      "description": "Create and edit org nodes and entities",
+      "category": "org",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["org.edit"]
+    },
+    {
+      "name": "org.admin",
+      "description": "Publish, archive, and merge org units",
+      "category": "org",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "per.view",
+      "description": "View personnel records",
+      "category": "per",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "per.manage",
+      "description": "Create and edit personnel records",
+      "category": "per",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["per.create", "per.edit", "per.delete", "per.admin"]
+    },
+    {
+      "name": "per.report",
+      "description": "View and export workforce reports",
+      "category": "per",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "per.sensitiveview",
+      "description": "View sensitive personnel fields",
+      "category": "per",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "catalog-only",
+      "usage_justification": "Reserved for field-level masking; not yet enforced",
+      "aliases": []
+    },
+    {
+      "name": "per.position.view",
+      "description": "View positions and requirement profiles",
+      "category": "per",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "per.position.manage",
+      "description": "Create, update, and archive positions and requirement profiles",
+      "category": "per",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ref.view",
+      "description": "View reference and lookup values",
+      "category": "ref",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ref.manage",
+      "description": "Create and edit governed reference values",
+      "category": "ref",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["ref.edit", "ref.admin"]
+    },
+    {
+      "name": "ref.publish",
+      "description": "Publish reference domain versions",
+      "category": "ref",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "inv.view",
+      "description": "View inventory and stock levels",
+      "category": "inv",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "inv.manage",
+      "description": "Issue, return, adjust, and transfer stock",
+      "category": "inv",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "inv.procure",
+      "description": "Create and approve purchase requisitions and orders",
+      "category": "inv",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["inv.order"]
+    },
+    {
+      "name": "inv.count",
+      "description": "Execute and post stock count sessions",
+      "category": "inv",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["inv.adjust"]
+    },
+    {
+      "name": "pm.view",
+      "description": "View PM plans and occurrences",
+      "category": "pm",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "pm.create",
+      "description": "Create new PM plans",
+      "category": "pm",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "pm.edit",
+      "description": "Edit PM plans and versions",
+      "category": "pm",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["pm.manage"]
+    },
+    {
+      "name": "pm.delete",
+      "description": "Delete draft PM plans",
+      "category": "pm",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "pm.approve",
+      "description": "Approve PM plan changes",
+      "category": "pm",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "catalog-only",
+      "usage_justification": "Reserved for PM approval workflow; not yet enforced",
+      "aliases": []
+    },
+    {
+      "name": "ram.view",
+      "description": "View RAMS and reliability data",
+      "category": "ram",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ram.manage",
+      "description": "Edit RAMS records and failure modes",
+      "category": "ram",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ram.analyze",
+      "description": "Run advanced RAMS analysis",
+      "category": "ram",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ram.export",
+      "description": "Export RAMS analysis artifacts",
+      "category": "ram",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "rep.view",
+      "description": "View standard reports and analytics",
+      "category": "rep",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "rep.export",
+      "description": "Export report data",
+      "category": "rep",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "rep.manage",
+      "description": "Create and edit custom reports",
+      "category": "rep",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["rep.admin"]
+    },
+    {
+      "name": "arc.view",
+      "description": "Browse archive entries",
+      "category": "arc",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "arc.restore",
+      "description": "Restore archived records",
+      "category": "arc",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "arc.export",
+      "description": "Export archived data",
+      "category": "arc",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "arc.purge",
+      "description": "Permanently purge archived records",
+      "category": "arc",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "doc.view",
+      "description": "View documentation and library content",
+      "category": "doc",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "doc.manage",
+      "description": "Create and edit documentation articles",
+      "category": "doc",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["doc.author", "doc.admin"]
+    },
+    {
+      "name": "plan.view",
+      "description": "View planning and scheduling data",
+      "category": "plan",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "plan.edit",
+      "description": "Edit planning schedules and commitments",
+      "category": "plan",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["plan.manage", "plan.admin"]
+    },
+    {
+      "name": "plan.confirm",
+      "description": "Confirm planning commitments",
+      "category": "plan",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "plan.windows",
+      "description": "Manage planning windows",
+      "category": "plan",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "log.view",
+      "description": "View activity feed and scoped audit events",
+      "category": "log",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "log.export",
+      "description": "Export audit log data",
+      "category": "log",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "log.admin",
+      "description": "Administer audit log retention and policy",
+      "category": "log",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "catalog-only",
+      "usage_justification": "Reserved for audit admin surfaces; not yet enforced",
+      "aliases": []
+    },
+    {
+      "name": "trn.view",
+      "description": "View training and certification records",
+      "category": "trn",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "trn.manage",
+      "description": "Manage training records and plans",
+      "category": "trn",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "trn.certify",
+      "description": "Issue or revoke certifications",
+      "category": "trn",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "backend",
+      "aliases": ["trn.override"]
+    },
+    {
+      "name": "iot.view",
+      "description": "View IoT device data and readings",
+      "category": "iot",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "catalog-only",
+      "usage_justification": "IoT module catalog placeholder; no desktop enforcement yet",
+      "aliases": []
+    },
+    {
+      "name": "iot.manage",
+      "description": "Configure IoT gateways and devices",
+      "category": "iot",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "catalog-only",
+      "usage_justification": "IoT module catalog placeholder; no desktop enforcement yet",
+      "aliases": ["iot.configure"]
+    },
+    {
+      "name": "erp.view",
+      "description": "View ERP sync status and mappings",
+      "category": "erp",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "catalog-only",
+      "usage_justification": "ERP view surfaces not yet gated; reconcile is enforced separately",
+      "aliases": []
+    },
+    {
+      "name": "erp.configure",
+      "description": "Configure ERP integration settings",
+      "category": "erp",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "catalog-only",
+      "usage_justification": "ERP configuration UI not yet gated",
+      "aliases": ["erp.manage"]
+    },
+    {
+      "name": "erp.reconcile",
+      "description": "Reconcile ERP posting states for goods receipts",
+      "category": "erp",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": ["erp.sync"]
+    },
+    {
+      "name": "ptw.view",
+      "description": "View work permits",
+      "category": "ptw",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ptw.issue",
+      "description": "Issue work permits",
+      "category": "ptw",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": ["ptw.create", "ptw.approve"]
+    },
+    {
+      "name": "ptw.close",
+      "description": "Close and cancel work permits",
+      "category": "ptw",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "backend",
+      "aliases": ["ptw.cancel"]
+    },
+    {
+      "name": "fin.view",
+      "description": "View budgets and cost data",
+      "category": "fin",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "fin.budget",
+      "description": "Manage governed budget baselines",
+      "category": "fin",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "fin.report",
+      "description": "Export governed budget reports",
+      "category": "fin",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "fin.manage",
+      "description": "Manage budgets and cost centers (legacy umbrella)",
+      "category": "fin",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "fin.post",
+      "description": "Post cost actuals to ERP",
+      "category": "fin",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "fin.approve",
+      "description": "Approve cost events and commitments",
+      "category": "fin",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "catalog-only",
+      "usage_justification": "Reserved for finance approval workflow; not yet enforced",
+      "aliases": []
+    },
+    {
+      "name": "ins.view",
+      "description": "View inspection rounds and checklists",
+      "category": "ins",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "ins.execute",
+      "description": "Execute inspection rounds and record results",
+      "category": "ins",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": ["ins.complete"]
+    },
+    {
+      "name": "ins.admin",
+      "description": "Manage inspection templates and schedules",
+      "category": "ins",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": ["ins.manage"]
+    },
+    {
+      "name": "cfg.view",
+      "description": "View tenant configuration",
+      "category": "cfg",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "frontend",
+      "aliases": []
+    },
+    {
+      "name": "cfg.manage",
+      "description": "Manage tenant configuration rules",
+      "category": "cfg",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "catalog-only",
+      "usage_justification": "Configuration engine write surfaces not yet enforced",
+      "aliases": ["cfg.edit", "cfg.admin"]
+    },
+    {
+      "name": "cfg.publish",
+      "description": "Publish configuration changes globally",
+      "category": "cfg",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "catalog-only",
+      "usage_justification": "Configuration publish surfaces not yet enforced",
+      "aliases": []
+    },
+    {
+      "name": "adm.users",
+      "description": "Manage user accounts and scope assignments",
+      "category": "adm",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "adm.roles",
+      "description": "Manage roles and role permissions",
+      "category": "adm",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "adm.permissions",
+      "description": "View and govern the permission catalog",
+      "category": "adm",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "adm.settings",
+      "description": "Manage application settings and diagnostics",
+      "category": "adm",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "adm.audit",
+      "description": "View the full audit log",
+      "category": "adm",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "sync.view",
+      "description": "View sync health, conflicts, and replay history",
+      "category": "sync",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "sync.manage",
+      "description": "Apply sync batches and stage sync envelopes",
+      "category": "sync",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "sync.resolve",
+      "description": "Resolve sync conflicts",
+      "category": "sync",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "sync.replay",
+      "description": "Run sync replay and checkpoint rollback workflows",
+      "category": "sync",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "sync.repair",
+      "description": "Preview and execute scoped sync repair actions",
+      "category": "sync",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "integrity.repair",
+      "description": "Repair data integrity findings",
+      "category": "integrity",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "act.view",
+      "description": "View machine activation state",
+      "category": "act",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "act.manage",
+      "description": "Manage machine activation",
+      "category": "act",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "lic.view",
+      "description": "View license enforcement state",
+      "category": "lic",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "lic.manage",
+      "description": "Manage license enforcement matrix",
+      "category": "lic",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "ent.view",
+      "description": "View entitlement envelopes",
+      "category": "ent",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "ent.manage",
+      "description": "Manage entitlement envelopes",
+      "category": "ent",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "backend",
+      "aliases": []
+    },
+    {
+      "name": "console.view",
+      "description": "Access vendor control-plane console shell",
+      "category": "vendor_console",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "customer.manage",
+      "description": "Manage tenant customer records in vendor console",
+      "category": "vendor_console",
+      "is_dangerous": true,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "entitlement.manage",
+      "description": "Change entitlements and license posture in vendor console",
+      "category": "vendor_console",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "sync.operate",
+      "description": "Vendor-console sync operations",
+      "category": "vendor_console",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "rollout.manage",
+      "description": "Publish and roll back control-plane update rollouts",
+      "category": "vendor_console",
+      "is_dangerous": true,
+      "requires_step_up": true,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "platform.observe",
+      "description": "View platform health and integration status",
+      "category": "vendor_console",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "audit.view",
+      "description": "Read vendor-scoped audit and evidence trails",
+      "category": "vendor_console",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    }
+  ],
+  "dependencies": [
+    { "permission": "ot.create", "requires": "ot.view", "dep_type": "hard" },
+    { "permission": "ot.edit", "requires": "ot.view", "dep_type": "hard" },
+    { "permission": "ot.approve", "requires": "ot.view", "dep_type": "hard" },
+    { "permission": "ot.close", "requires": "ot.edit", "dep_type": "hard" },
+    { "permission": "ot.reopen", "requires": "ot.close", "dep_type": "warn" },
+    { "permission": "di.create", "requires": "di.view", "dep_type": "hard" },
+    { "permission": "di.create.own", "requires": "di.view", "dep_type": "hard" },
+    { "permission": "di.screen", "requires": "di.view", "dep_type": "hard" },
+    { "permission": "di.review", "requires": "di.view", "dep_type": "hard" },
+    { "permission": "di.approve", "requires": "di.review", "dep_type": "hard" },
+    { "permission": "di.convert", "requires": "di.approve", "dep_type": "hard" },
+    { "permission": "eq.manage", "requires": "eq.view", "dep_type": "hard" },
+    { "permission": "eq.delete", "requires": "eq.manage", "dep_type": "warn" },
+    { "permission": "eq.import", "requires": "eq.view", "dep_type": "hard" },
+    { "permission": "pm.create", "requires": "pm.view", "dep_type": "hard" },
+    { "permission": "pm.edit", "requires": "pm.view", "dep_type": "hard" },
+    { "permission": "pm.delete", "requires": "pm.edit", "dep_type": "warn" },
+    { "permission": "inv.manage", "requires": "inv.view", "dep_type": "hard" },
+    { "permission": "inv.procure", "requires": "inv.view", "dep_type": "hard" },
+    { "permission": "inv.count", "requires": "inv.view", "dep_type": "hard" },
+    { "permission": "org.manage", "requires": "org.view", "dep_type": "hard" },
+    { "permission": "org.admin", "requires": "org.manage", "dep_type": "warn" },
+    { "permission": "per.manage", "requires": "per.view", "dep_type": "hard" },
+    { "permission": "per.report", "requires": "per.view", "dep_type": "hard" },
+    { "permission": "per.position.view", "requires": "per.view", "dep_type": "hard" },
+    { "permission": "per.position.manage", "requires": "per.position.view", "dep_type": "hard" },
+    { "permission": "ref.manage", "requires": "ref.view", "dep_type": "hard" },
+    { "permission": "ref.publish", "requires": "ref.manage", "dep_type": "warn" },
+    { "permission": "plan.edit", "requires": "plan.view", "dep_type": "hard" },
+    { "permission": "plan.confirm", "requires": "plan.edit", "dep_type": "hard" },
+    { "permission": "plan.windows", "requires": "plan.edit", "dep_type": "hard" },
+    { "permission": "adm.roles", "requires": "adm.users", "dep_type": "warn" },
+    { "permission": "adm.permissions", "requires": "adm.roles", "dep_type": "hard" },
+    { "permission": "sync.manage", "requires": "sync.view", "dep_type": "hard" },
+    { "permission": "sync.resolve", "requires": "sync.view", "dep_type": "hard" },
+    { "permission": "sync.replay", "requires": "sync.resolve", "dep_type": "hard" },
+    { "permission": "sync.repair", "requires": "sync.replay", "dep_type": "hard" },
+    { "permission": "integrity.repair", "requires": "sync.manage", "dep_type": "hard" },
+    { "permission": "ent.manage", "requires": "ent.view", "dep_type": "hard" },
+    { "permission": "act.manage", "requires": "act.view", "dep_type": "hard" },
+    { "permission": "lic.manage", "requires": "lic.view", "dep_type": "hard" },
+    { "permission": "log.export", "requires": "log.view", "dep_type": "hard" },
+    { "permission": "arc.restore", "requires": "arc.view", "dep_type": "hard" },
+    { "permission": "arc.export", "requires": "arc.view", "dep_type": "hard" },
+    { "permission": "arc.purge", "requires": "arc.restore", "dep_type": "hard" },
+    { "permission": "adm.audit", "requires": "log.view", "dep_type": "warn" }
+  ],
+  "role_defaults": {
+    "supervisor_exclusions": [
+      "adm.users",
+      "adm.roles",
+      "adm.permissions",
+      "cfg.manage",
+      "cfg.publish",
+      "erp.configure",
+      "log.export",
+      "console.view",
+      "customer.manage",
+      "entitlement.manage",
+      "sync.operate",
+      "rollout.manage",
+      "platform.observe",
+      "audit.view",
+      "lic.manage",
+      "ent.manage",
+      "act.manage"
+    ],
+    "operator": [
+      "eq.view",
+      "eq.manage",
+      "di.view",
+      "di.create",
+      "di.create.own",
+      "ot.view",
+      "ot.create",
+      "ot.edit",
+      "ot.close",
+      "org.view",
+      "per.view",
+      "per.report",
+      "per.position.view",
+      "ref.view",
+      "inv.view",
+      "inv.manage",
+      "pm.view",
+      "ram.view",
+      "sync.view",
+      "rep.view",
+      "arc.view",
+      "doc.view",
+      "plan.view",
+      "log.view",
+      "trn.view",
+      "iot.view",
+      "erp.view",
+      "ptw.view",
+      "ptw.issue",
+      "fin.view",
+      "fin.report",
+      "ins.view",
+      "ins.execute",
+      "cfg.view"
+    ],
+    "planner": [
+      "ot.view",
+      "ot.create",
+      "ot.edit",
+      "di.view",
+      "di.create",
+      "di.screen",
+      "pm.view",
+      "pm.create",
+      "pm.edit",
+      "pm.approve",
+      "plan.view",
+      "plan.edit",
+      "plan.confirm",
+      "plan.windows",
+      "eq.view",
+      "inv.view",
+      "inv.manage",
+      "inv.procure",
+      "org.view",
+      "per.view",
+      "per.report",
+      "per.position.view",
+      "ref.view",
+      "rep.view",
+      "rep.export",
+      "arc.view",
+      "doc.view",
+      "log.view",
+      "ram.view",
+      "sync.view",
+      "cfg.view"
+    ]
+  },
+  "role_templates": {
+    "Supervisor Template": [
+      "ot.view",
+      "ot.create",
+      "ot.edit",
+      "ot.approve",
+      "ot.close",
+      "di.view",
+      "di.create",
+      "di.screen",
+      "di.review",
+      "di.approve",
+      "di.convert",
+      "pm.view",
+      "pm.create",
+      "pm.edit",
+      "pm.approve",
+      "per.view",
+      "per.manage",
+      "per.report",
+      "per.position.view",
+      "per.position.manage",
+      "eq.view",
+      "eq.manage",
+      "inv.view",
+      "inv.manage",
+      "inv.procure"
+    ],
+    "Technician Template": [
+      "ot.view",
+      "ot.create",
+      "ot.edit",
+      "di.view",
+      "di.create",
+      "di.create.own",
+      "eq.view",
+      "eq.manage"
+    ],
+    "Planner Template": [
+      "ot.view",
+      "ot.create",
+      "ot.edit",
+      "di.view",
+      "di.create",
+      "di.screen",
+      "pm.view",
+      "pm.create",
+      "pm.edit",
+      "plan.view",
+      "plan.edit",
+      "plan.confirm",
+      "plan.windows",
+      "inv.view",
+      "inv.manage",
+      "inv.procure"
+    ],
+    "Observer Template": ["ot.view", "di.view", "pm.view", "eq.view"]
+  }
+}

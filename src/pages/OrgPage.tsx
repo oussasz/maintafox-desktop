@@ -1,5 +1,5 @@
-﻿import { ModulePlaceholder } from "./placeholder/ModulePlaceholder";
+﻿import { OrganizationDesignerPage } from "./admin/OrganizationDesignerPage";
 
 export function OrgPage() {
-  return <ModulePlaceholder moduleName="Organisation" prdSection="6.2" phase="Phase 2" />;
+  return <OrganizationDesignerPage />;
 }

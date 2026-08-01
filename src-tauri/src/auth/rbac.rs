@@ -9,8 +9,12 @@
 //!   tenant > entity > site > team > `org_node`
 
 use crate::errors::AppResult;
+use crate::rbac::cache::PermissionCache;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
+use std::collections::HashSet;
+use tokio::sync::RwLock;
+use tracing::debug;
 
 /// The scope type passed to a permission check.
 /// `Global` means the caller doesn't require scope restriction.
@@ -101,9 +105,160 @@ pub async fn check_permission(
     Ok(count > 0)
 }
 
+/// Convert a `PermissionScope` to a cache key string.
+pub fn scope_to_cache_key(scope: &PermissionScope) -> String {
+    match scope {
+        PermissionScope::Global => "tenant".to_string(),
+        PermissionScope::Entity(id) => format!("entity:{id}"),
+        PermissionScope::Site(id) => format!("site:{id}"),
+        PermissionScope::Team(id) => format!("team:{id}"),
+        PermissionScope::OrgNode(id) => format!("org_node:{id}"),
+    }
+}
+
+/// Cache-aware permission check.
+///
+/// 1. Derive a cache key from `(user_id, scope)`.
+/// 2. Check `PermissionCache` — on hit return membership immediately.
+/// 3. On miss — load the **full** permission set for this user+scope from
+///    the database, store in cache, then check membership.
+///
+/// This ensures that commands checking multiple permissions against the same
+/// user+scope only hit the database once.
+pub async fn check_permission_cached(
+    db: &DatabaseConnection,
+    cache: &RwLock<PermissionCache>,
+    user_id: i32,
+    permission_name: &str,
+    scope: &PermissionScope,
+) -> AppResult<bool> {
+    let cache_key = scope_to_cache_key(scope);
+    let uid = i64::from(user_id);
+
+    // ── Fast path: cache hit ─────────────────────────────────────────────
+    {
+        let guard = cache.read().await;
+        if let Some(perms) = guard.get(uid, &cache_key) {
+            debug!(
+                user_id = uid,
+                permission = permission_name,
+                cache_key = %cache_key,
+                "permission_cache HIT"
+            );
+            return Ok(perms.contains(permission_name));
+        }
+    }
+
+    // ── Slow path: load full permission set, populate cache ──────────────
+    debug!(
+        user_id = uid,
+        permission = permission_name,
+        cache_key = %cache_key,
+        "permission_cache MISS — loading from DB"
+    );
+    let perms = load_scope_permissions(db, user_id, scope).await?;
+    let has = perms.contains(permission_name);
+
+    {
+        let mut guard = cache.write().await;
+        guard.put(uid, cache_key, perms);
+    }
+
+    Ok(has)
+}
+
+/// Load all permission names a user holds at a given scope (for cache population).
+async fn load_scope_permissions(
+    db: &DatabaseConnection,
+    user_id: i32,
+    scope: &PermissionScope,
+) -> AppResult<HashSet<String>> {
+    if user_has_elevated_admin_access(db, user_id).await? {
+        let all = get_all_permissions(db).await?;
+        return Ok(all.into_iter().map(|p| p.name).collect());
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let (scope_type_filter, scope_ref_filter): (Option<&str>, Option<String>) = match scope {
+        PermissionScope::Global => (None, None),
+        PermissionScope::Entity(id) => (Some("entity"), Some(id.clone())),
+        PermissionScope::Site(id) => (Some("site"), Some(id.clone())),
+        PermissionScope::Team(id) => (Some("team"), Some(id.clone())),
+        PermissionScope::OrgNode(id) => (Some("org_node"), Some(id.clone())),
+    };
+
+    let scope_sql = if scope_type_filter.is_some() {
+        "(usa.scope_type = 'tenant' OR (usa.scope_type = ? AND usa.scope_reference = ?))"
+    } else {
+        "usa.scope_type = 'tenant'"
+    };
+
+    let sql = format!(
+        "SELECT DISTINCT p.name \
+         FROM permissions p \
+         INNER JOIN role_permissions rp ON rp.permission_id = p.id \
+         INNER JOIN user_scope_assignments usa ON usa.role_id = rp.role_id \
+         WHERE usa.user_id = ? \
+           AND usa.deleted_at IS NULL \
+           AND (usa.valid_from IS NULL OR usa.valid_from <= ?) \
+           AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?) \
+           AND {scope_sql}"
+    );
+
+    let mut values: Vec<sea_orm::Value> =
+        vec![user_id.into(), now.clone().into(), now.into()];
+
+    if let (Some(st), Some(sr)) = (&scope_type_filter, &scope_ref_filter) {
+        values.push((*st).into());
+        values.push(sr.clone().into());
+    }
+
+    let rows = db
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+        .await?;
+
+    let perms: HashSet<String> = rows
+        .iter()
+        .filter_map(|r| r.try_get::<String>("", "name").ok())
+        .collect();
+
+    Ok(perms)
+}
+
+/// True when the account is a bootstrap/system admin or holds Administrator/Superadmin.
+pub async fn user_has_elevated_admin_access(db: &DatabaseConnection, user_id: i32) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"SELECT
+                COALESCE((SELECT is_admin FROM user_accounts WHERE id = ? AND is_active = 1), 0) AS is_admin,
+                (SELECT COUNT(*)
+                 FROM user_scope_assignments usa
+                 INNER JOIN roles r ON r.id = usa.role_id
+                 WHERE usa.user_id = ?
+                   AND usa.deleted_at IS NULL
+                   AND r.deleted_at IS NULL
+                   AND r.name IN ('Administrator', 'Superadmin')) AS admin_role_cnt",
+            [user_id.into(), user_id.into()],
+        ))
+        .await?;
+
+    let Some(row) = row else {
+        return Ok(false);
+    };
+    let is_admin: i32 = row.try_get("", "is_admin").unwrap_or(0);
+    let admin_role_cnt: i64 = row.try_get("", "admin_role_cnt").unwrap_or(0);
+    Ok(is_admin == 1 || admin_role_cnt > 0)
+}
+
 /// Load all effective permissions for a user (for frontend pre-loading).
 /// Returns only the permissions the user currently holds via active role assignments.
 pub async fn get_user_permissions(db: &DatabaseConnection, user_id: i32) -> AppResult<Vec<PermissionRecord>> {
+    if user_has_elevated_admin_access(db, user_id).await? {
+        return get_all_permissions(db).await;
+    }
+
     let now = chrono::Utc::now().to_rfc3339();
 
     let rows = db
@@ -120,6 +275,32 @@ pub async fn get_user_permissions(db: &DatabaseConnection, user_id: i32) -> AppR
              AND (usa.valid_to   IS NULL OR usa.valid_to   >= ?)
            ORDER BY p.name",
             [user_id.into(), now.clone().into(), now.into()],
+        ))
+        .await?;
+
+    let perms = rows
+        .into_iter()
+        .map(|r| PermissionRecord {
+            name: r.try_get("", "name").unwrap_or_default(),
+            description: r.try_get("", "description").unwrap_or_default(),
+            category: r.try_get("", "category").unwrap_or_default(),
+            is_dangerous: r.try_get::<i32>("", "is_dangerous").unwrap_or(0) == 1,
+            requires_step_up: r.try_get::<i32>("", "requires_step_up").unwrap_or(0) == 1,
+        })
+        .collect();
+
+    Ok(perms)
+}
+
+/// Load every permission in the catalog (for system-admin accounts).
+pub async fn get_all_permissions(db: &DatabaseConnection) -> AppResult<Vec<PermissionRecord>> {
+    let rows = db
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            r"SELECT name, description, category, is_dangerous, requires_step_up
+               FROM permissions
+               ORDER BY name"
+                .to_string(),
         ))
         .await?;
 
@@ -170,14 +351,14 @@ mod tests {
     #[test]
     fn permission_record_serializes() {
         let rec = PermissionRecord {
-            name: "eq.view".into(),
+            name: crate::rbac::permissions::EQ_VIEW.into(),
             description: "View equipment".into(),
             category: "equipment".into(),
             is_dangerous: false,
             requires_step_up: false,
         };
         let json = serde_json::to_string(&rec).expect("serialize");
-        assert!(json.contains("eq.view"));
+        assert!(json.contains(crate::rbac::permissions::EQ_VIEW));
         assert!(json.contains("\"is_dangerous\":false"));
     }
 }
