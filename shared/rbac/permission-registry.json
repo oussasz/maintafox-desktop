@@ -257,6 +257,24 @@
       "aliases": []
     },
     {
+      "name": "per.position.view",
+      "description": "View positions and requirement profiles",
+      "category": "per",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
+      "name": "per.position.manage",
+      "description": "Create, update, and archive positions and requirement profiles",
+      "category": "per",
+      "is_dangerous": false,
+      "requires_step_up": false,
+      "usage": "both",
+      "aliases": []
+    },
+    {
       "name": "ref.view",
       "description": "View reference and lookup values",
       "category": "ref",
@@ -1002,6 +1020,8 @@
     { "permission": "org.admin", "requires": "org.manage", "dep_type": "warn" },
     { "permission": "per.manage", "requires": "per.view", "dep_type": "hard" },
     { "permission": "per.report", "requires": "per.view", "dep_type": "hard" },
+    { "permission": "per.position.view", "requires": "per.view", "dep_type": "hard" },
+    { "permission": "per.position.manage", "requires": "per.position.view", "dep_type": "hard" },
     { "permission": "ref.manage", "requires": "ref.view", "dep_type": "hard" },
     { "permission": "ref.publish", "requires": "ref.manage", "dep_type": "warn" },
     { "permission": "plan.edit", "requires": "plan.view", "dep_type": "hard" },
@@ -1056,6 +1076,7 @@
       "org.view",
       "per.view",
       "per.report",
+      "per.position.view",
       "ref.view",
       "inv.view",
       "inv.manage",
@@ -1100,6 +1121,7 @@
       "org.view",
       "per.view",
       "per.report",
+      "per.position.view",
       "ref.view",
       "rep.view",
       "rep.export",
@@ -1131,6 +1153,8 @@
       "per.view",
       "per.manage",
       "per.report",
+      "per.position.view",
+      "per.position.manage",
       "eq.view",
       "eq.manage",
       "inv.view",
