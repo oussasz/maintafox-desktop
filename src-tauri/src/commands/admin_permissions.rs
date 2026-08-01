@@ -86,7 +86,12 @@ pub async fn list_permissions(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PermissionWithSystem>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_PERMISSIONS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_PERMISSIONS,
+        PermissionScope::Global
+    );
 
     let mut conditions = Vec::<String>::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
@@ -149,7 +154,12 @@ pub async fn get_permission_dependencies(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PermissionDependencyRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_PERMISSIONS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_PERMISSIONS,
+        PermissionScope::Global
+    );
 
     let sql = "SELECT id, permission_name, required_permission_name, dependency_type \
                FROM permission_dependencies \
@@ -160,10 +170,7 @@ pub async fn get_permission_dependencies(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [
-                permission_name.clone().into(),
-                permission_name.into(),
-            ],
+            [permission_name.clone().into(), permission_name.into()],
         ))
         .await?;
 
@@ -183,9 +190,8 @@ pub async fn get_permission_dependencies(
 /// Reserved system-namespace prefixes.  Custom permissions must NOT start with
 /// any of these; they must use the `cst.` prefix.
 const SYSTEM_PREFIXES: &[&str] = &[
-    "eq.", "di.", "ot.", "org.", "per.", "ref.", "inv.", "pm.", "ram.", "rep.",
-    "arc.", "doc.", "plan.", "log.", "trn.", "iot.", "erp.", "ptw.", "fin.",
-    "ins.", "cfg.", "adm.",
+    "eq.", "di.", "ot.", "org.", "per.", "ref.", "inv.", "pm.", "ram.", "rep.", "arc.", "doc.", "plan.", "log.",
+    "trn.", "iot.", "erp.", "ptw.", "fin.", "ins.", "cfg.", "adm.",
 ];
 
 /// Create a tenant-defined custom permission.
@@ -201,7 +207,12 @@ pub async fn create_custom_permission(
     state: State<'_, AppState>,
 ) -> AppResult<PermissionWithSystem> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_PERMISSIONS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_PERMISSIONS,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     let name = input.name.trim().to_lowercase();
@@ -216,9 +227,9 @@ pub async fn create_custom_permission(
     // ── Ensure no system prefix collision ────────────────────────────────
     for prefix in SYSTEM_PREFIXES {
         if name.starts_with(prefix) {
-            return Err(AppError::ValidationFailed(vec![
-                format!("Permission name must not use reserved system prefix '{prefix}'"),
-            ]));
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Permission name must not use reserved system prefix '{prefix}'"
+            )]));
         }
     }
 
@@ -286,7 +297,12 @@ pub async fn validate_role_permissions(
     state: State<'_, AppState>,
 ) -> AppResult<RoleValidationResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
 
     let names: HashSet<String> = input.permission_names.into_iter().collect();
 
@@ -295,9 +311,7 @@ pub async fn validate_role_permissions(
         Vec::new()
     } else {
         let placeholders: String = names.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "SELECT name FROM permissions WHERE name IN ({placeholders})"
-        );
+        let sql = format!("SELECT name FROM permissions WHERE name IN ({placeholders})");
         let values: Vec<sea_orm::Value> = names.iter().map(|n| n.clone().into()).collect();
 
         let rows = state

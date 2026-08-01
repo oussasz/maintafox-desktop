@@ -31,7 +31,9 @@ pub async fn load_guardrails(db: &DatabaseConnection) -> AppResult<GuardrailFlag
     let Some(r) = row else {
         return Ok(GuardrailFlags::default());
     };
-    let s: String = r.try_get("", "flags_json").map_err(|e| AppError::SyncError(format!("flags_json: {e}")))?;
+    let s: String = r
+        .try_get("", "flags_json")
+        .map_err(|e| AppError::SyncError(format!("flags_json: {e}")))?;
     serde_json::from_str(&s).map_err(|e| AppError::ValidationFailed(vec![format!("guardrails JSON: {e}")]))
 }
 

@@ -17,6 +17,4 @@ pub use completeness::{evaluate_iso14224_completeness, IsoCompletenessResult};
 pub use evaluate::{evaluate_asset, evaluate_asset_dual, AssetReadinessReport, EvaluateAssetInput};
 pub use event::ReadinessEvent;
 pub use policy::*;
-pub use report::{
-    DatasetSummary, DualRunOutput, LoaderRowStats, PolicyManifest, RunManifest, UniversitySummary,
-};
+pub use report::{DatasetSummary, DualRunOutput, LoaderRowStats, PolicyManifest, RunManifest, UniversitySummary};

@@ -5,9 +5,9 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 
 use crate::errors::{AppError, AppResult};
 use crate::inventory::domain::{
-    InventorySupplier, InventorySupplierInput, SupplierArticleSource, SupplierArticleSourceInput,
-    SupplierContact, SupplierContactInput, SupplierPrice, SupplierPriceInput,
-    SupplierPurchaseHistoryRow, SupplierRecentDelivery, SupplierScorecard,
+    InventorySupplier, InventorySupplierInput, SupplierArticleSource, SupplierArticleSourceInput, SupplierContact,
+    SupplierContactInput, SupplierPrice, SupplierPriceInput, SupplierPurchaseHistoryRow, SupplierRecentDelivery,
+    SupplierScorecard,
 };
 
 fn now_iso() -> String {
@@ -174,10 +174,14 @@ pub async fn upsert_supplier(
     input: InventorySupplierInput,
 ) -> AppResult<InventorySupplier> {
     if input.code.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Supplier code is required.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "Supplier code is required.".to_string()
+        ]));
     }
     if input.name.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Supplier name is required.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "Supplier name is required.".to_string()
+        ]));
     }
     let allowed_statuses = ["PREFERRED", "APPROVED", "BLOCKED", "UNDER_EVALUATION"];
     if !allowed_statuses.contains(&input.status_code.as_str()) {
@@ -205,7 +209,9 @@ pub async fn upsert_supplier(
             })?;
         let current_rv: i64 = row.try_get("", "row_version")?;
         if current_rv != expected_rv {
-            return Err(AppError::ValidationFailed(vec!["Supplier row_version mismatch.".to_string()]));
+            return Err(AppError::ValidationFailed(vec![
+                "Supplier row_version mismatch.".to_string()
+            ]));
         }
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -284,7 +290,9 @@ pub async fn soft_delete_supplier(
         })?;
     let current_rv: i64 = row.try_get("", "row_version")?;
     if current_rv != expected_row_version {
-        return Err(AppError::ValidationFailed(vec!["Supplier row_version mismatch.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "Supplier row_version mismatch.".to_string()
+        ]));
     }
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -408,7 +416,10 @@ pub async fn upsert_supplier_article_source(
             input.lead_time_days.map_or(Value::BigInt(None), Value::from),
             input.unit_price_hint.map_or(Value::Double(None), Value::from),
             input.min_order_qty.map_or(Value::Double(None), Value::from),
-            input.supplier_article_code.clone().map_or(Value::String(None), Value::from),
+            input
+                .supplier_article_code
+                .clone()
+                .map_or(Value::String(None), Value::from),
             src_is_active.into(),
             now_iso().into(),
             now_iso().into(),
@@ -417,13 +428,12 @@ pub async fn upsert_supplier_article_source(
     .await?;
 
     let rows = list_supplier_article_sources(db, Some(input.supplier_id), Some(input.article_id)).await?;
-    rows.into_iter().next().ok_or_else(|| AppError::ValidationFailed(vec!["Failed to retrieve article source.".to_string()]))
+    rows.into_iter()
+        .next()
+        .ok_or_else(|| AppError::ValidationFailed(vec!["Failed to retrieve article source.".to_string()]))
 }
 
-pub async fn delete_supplier_article_source(
-    db: &DatabaseConnection,
-    source_id: i64,
-) -> AppResult<()> {
+pub async fn delete_supplier_article_source(db: &DatabaseConnection, source_id: i64) -> AppResult<()> {
     let exists = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -481,7 +491,9 @@ pub async fn upsert_supplier_price(
     input: SupplierPriceInput,
 ) -> AppResult<SupplierPrice> {
     if input.unit_price < 0.0 {
-        return Err(AppError::ValidationFailed(vec!["unit_price cannot be negative.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "unit_price cannot be negative.".to_string()
+        ]));
     }
     let sup_exists = db
         .query_one(Statement::from_sql_and_values(
@@ -628,10 +640,7 @@ pub async fn resolve_effective_price(
 
 // ── Scorecard ────────────────────────────────────────────────────────────────
 
-pub async fn get_supplier_scorecard(
-    db: &DatabaseConnection,
-    supplier_id: i64,
-) -> AppResult<SupplierScorecard> {
+pub async fn get_supplier_scorecard(db: &DatabaseConnection, supplier_id: i64) -> AppResult<SupplierScorecard> {
     let sup = get_supplier(db, supplier_id).await?;
 
     let accuracy_row = db
@@ -700,9 +709,7 @@ pub async fn get_supplier_scorecard(
             [supplier_id.into()],
         ))
         .await?;
-    let avg_price: Option<f64> = price_row
-        .and_then(|r| r.try_get("", "avg_price").ok())
-        .flatten();
+    let avg_price: Option<f64> = price_row.and_then(|r| r.try_get("", "avg_price").ok()).flatten();
 
     let counts_row = db
         .query_one(Statement::from_sql_and_values(
@@ -789,10 +796,7 @@ pub async fn get_supplier_scorecard(
 
 // ── Contacts ─────────────────────────────────────────────────────────────────
 
-pub async fn list_supplier_contacts(
-    db: &DatabaseConnection,
-    supplier_id: i64,
-) -> AppResult<Vec<SupplierContact>> {
+pub async fn list_supplier_contacts(db: &DatabaseConnection, supplier_id: i64) -> AppResult<Vec<SupplierContact>> {
     let _ = get_supplier(db, supplier_id).await?;
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -827,9 +831,9 @@ pub async fn upsert_supplier_contact(
 ) -> AppResult<SupplierContact> {
     let _ = get_supplier(db, input.supplier_id).await?;
     if input.contact_name.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "contact_name is required.".to_string(),
-        ]));
+        return Err(AppError::ValidationFailed(
+            vec!["contact_name is required.".to_string()],
+        ));
     }
     let is_primary = input.is_primary.unwrap_or(false) as i64;
     if is_primary == 1 {
@@ -882,9 +886,7 @@ pub async fn upsert_supplier_contact(
         ))
         .await?
         .and_then(|r| r.try_get::<i64>("", "id").ok())
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec!["Unable to create supplier contact.".to_string()])
-        })?
+        .ok_or_else(|| AppError::ValidationFailed(vec!["Unable to create supplier contact.".to_string()]))?
     };
 
     list_supplier_contacts(db, input.supplier_id)

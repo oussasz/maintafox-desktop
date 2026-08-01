@@ -32,15 +32,10 @@ pub struct WoPlanAdherence {
 }
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "WO plan adherence decode failed for '{column}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("WO plan adherence decode failed for '{column}': {e}"))
 }
 
-pub async fn get_plan_adherence(
-    db: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<WoPlanAdherence> {
+pub async fn get_plan_adherence(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<WoPlanAdherence> {
     let wo = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -100,12 +95,8 @@ pub async fn get_plan_adherence(
         .map_err(|e| decode_err("waiting_hours", e))?;
     let actual_downtime = downtime_hours + waiting_hours;
 
-    let actual_labor_cost: f64 = wo
-        .try_get("", "labor_cost")
-        .map_err(|e| decode_err("labor_cost", e))?;
-    let actual_parts_cost: f64 = wo
-        .try_get("", "parts_cost")
-        .map_err(|e| decode_err("parts_cost", e))?;
+    let actual_labor_cost: f64 = wo.try_get("", "labor_cost").map_err(|e| decode_err("labor_cost", e))?;
+    let actual_parts_cost: f64 = wo.try_get("", "parts_cost").map_err(|e| decode_err("parts_cost", e))?;
 
     let parts = db
         .query_one(Statement::from_sql_and_values(
@@ -127,22 +118,10 @@ pub async fn get_plan_adherence(
     let (parts_planned, parts_used, parts_unused, parts_extra, planned_parts_cost, used_parts_cost) =
         if let Some(p) = parts {
             (
-                p.try_get::<Option<i64>>("", "planned")
-                    .ok()
-                    .flatten()
-                    .unwrap_or(0),
-                p.try_get::<Option<i64>>("", "used")
-                    .ok()
-                    .flatten()
-                    .unwrap_or(0),
-                p.try_get::<Option<i64>>("", "unused")
-                    .ok()
-                    .flatten()
-                    .unwrap_or(0),
-                p.try_get::<Option<i64>>("", "extra")
-                    .ok()
-                    .flatten()
-                    .unwrap_or(0),
+                p.try_get::<Option<i64>>("", "planned").ok().flatten().unwrap_or(0),
+                p.try_get::<Option<i64>>("", "used").ok().flatten().unwrap_or(0),
+                p.try_get::<Option<i64>>("", "unused").ok().flatten().unwrap_or(0),
+                p.try_get::<Option<i64>>("", "extra").ok().flatten().unwrap_or(0),
                 p.try_get::<f64>("", "planned_cost").unwrap_or(0.0),
                 p.try_get::<f64>("", "used_cost").unwrap_or(0.0),
             )
@@ -165,22 +144,10 @@ pub async fn get_plan_adherence(
 
     let (tasks_planned, tasks_done, tasks_added, tasks_cancelled) = if let Some(t) = tasks {
         (
-            t.try_get::<Option<i64>>("", "planned")
-                .ok()
-                .flatten()
-                .unwrap_or(0),
-            t.try_get::<Option<i64>>("", "done")
-                .ok()
-                .flatten()
-                .unwrap_or(0),
-            t.try_get::<Option<i64>>("", "added")
-                .ok()
-                .flatten()
-                .unwrap_or(0),
-            t.try_get::<Option<i64>>("", "cancelled")
-                .ok()
-                .flatten()
-                .unwrap_or(0),
+            t.try_get::<Option<i64>>("", "planned").ok().flatten().unwrap_or(0),
+            t.try_get::<Option<i64>>("", "done").ok().flatten().unwrap_or(0),
+            t.try_get::<Option<i64>>("", "added").ok().flatten().unwrap_or(0),
+            t.try_get::<Option<i64>>("", "cancelled").ok().flatten().unwrap_or(0),
         )
     } else {
         (0, 0, 0, 0)
@@ -229,8 +196,7 @@ pub async fn get_plan_adherence(
             [wo_id.into()],
         ))
         .await?;
-    let primary_cause = cause_row
-        .and_then(|r| r.try_get::<Option<String>>("", "cause").ok().flatten());
+    let primary_cause = cause_row.and_then(|r| r.try_get::<Option<String>>("", "cause").ok().flatten());
 
     Ok(WoPlanAdherence {
         wo_id,

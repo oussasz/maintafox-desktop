@@ -1,11 +1,11 @@
-﻿//! Personnel availability computations and block mutations.
+//! Personnel availability computations and block mutations.
 
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 
-use crate::errors::{AppError, AppResult};
 use super::domain::PersonnelAvailabilityState;
+use crate::errors::{AppError, AppResult};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AvailabilityCalendarFilter {
@@ -65,7 +65,7 @@ pub async fn list_availability_calendar(
 ) -> AppResult<Vec<AvailabilityCalendarEntry>> {
     if filter.date_from > filter.date_to {
         return Err(AppError::ValidationFailed(vec![
-            "date_from must be <= date_to.".to_string(),
+            "date_from must be <= date_to.".to_string()
         ]));
     }
 
@@ -183,11 +183,7 @@ pub async fn list_availability_calendar(
     );
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            values,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
     let mapped = rows
@@ -200,10 +196,7 @@ pub async fn list_availability_calendar(
             let block_types = if raw_types.is_empty() {
                 Vec::new()
             } else {
-                raw_types
-                    .split(',')
-                    .map(std::string::ToString::to_string)
-                    .collect()
+                raw_types.split(',').map(std::string::ToString::to_string).collect()
             };
 
             AvailabilityCalendarEntry {
@@ -233,19 +226,18 @@ pub async fn create_availability_block(
     db: &DatabaseConnection,
     input: AvailabilityBlockCreateInput,
     actor_id: i64,
-) -> AppResult<PersonnelAvailabilityBlock> {    if input.start_at >= input.end_at {
+) -> AppResult<PersonnelAvailabilityBlock> {
+    if input.start_at >= input.end_at {
         return Err(AppError::ValidationFailed(vec![
-            "start_at must be before end_at.".to_string(),
+            "start_at must be before end_at.".to_string()
         ]));
     }
     if input.block_type.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "block_type is required.".to_string(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["block_type is required.".to_string()]));
     }
 
-    let is_critical = input.is_critical.unwrap_or(false)
-        || matches!(input.block_type.as_str(), "medical" | "restriction");
+    let is_critical =
+        input.is_critical.unwrap_or(false) || matches!(input.block_type.as_str(), "medical" | "restriction");
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -328,7 +320,9 @@ pub async fn compute_personnel_availability_state(
         })?;
 
     let blocked_override: i64 = row.try_get("", "blocked_override").unwrap_or(0);
-    let employment_status: String = row.try_get("", "employment_status").unwrap_or_else(|_| "active".to_string());
+    let employment_status: String = row
+        .try_get("", "employment_status")
+        .unwrap_or_else(|_| "active".to_string());
 
     if employment_status == "terminated" {
         return Ok(PersonnelAvailabilityState {
@@ -369,7 +363,10 @@ pub async fn compute_personnel_availability_state(
 
         let status = if block_types.iter().any(|t| t == "training") {
             "in_training"
-        } else if block_types.iter().any(|t| matches!(t.as_str(), "leave" | "vacation" | "sick")) {
+        } else if block_types
+            .iter()
+            .any(|t| matches!(t.as_str(), "leave" | "vacation" | "sick"))
+        {
             "on_leave"
         } else {
             "blocked"

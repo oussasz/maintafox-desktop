@@ -11,12 +11,8 @@ use crate::pm::domain::{
 use crate::pm::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None)
-        .await
-        .expect("migrations");
+    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     crate::db::seeder::seed_system_data(&db)
         .await
         .expect("seed system data");
@@ -221,13 +217,9 @@ async fn stale_row_version_is_rejected() {
 #[tokio::test]
 async fn publish_sets_plan_current_version() {
     let db = setup_db().await;
-    let (plan_id, version_id) = create_plan_with_published_version(
-        &db,
-        "PM-PUB-001",
-        "event",
-        r#"{"event_code":"INSPECTION_COMPLETED"}"#,
-    )
-    .await;
+    let (plan_id, version_id) =
+        create_plan_with_published_version(&db, "PM-PUB-001", "event", r#"{"event_code":"INSPECTION_COMPLETED"}"#)
+            .await;
 
     let plan_after = queries::get_pm_plan(&db, plan_id).await.expect("plan after publish");
     assert_eq!(plan_after.current_version_id, Some(version_id));
@@ -571,15 +563,30 @@ async fn pm_permission_boundaries_view_without_create_edit() {
     .await
     .expect("insert user scope assignment");
 
-    let can_view = rbac::check_permission(&db, user_id, crate::rbac::permissions::PM_VIEW, &PermissionScope::Global)
-        .await
-        .expect("check pm.view");
-    let can_create = rbac::check_permission(&db, user_id, crate::rbac::permissions::PM_CREATE, &PermissionScope::Global)
-        .await
-        .expect("check pm.create");
-    let can_edit = rbac::check_permission(&db, user_id, crate::rbac::permissions::PM_EDIT, &PermissionScope::Global)
-        .await
-        .expect("check pm.edit");
+    let can_view = rbac::check_permission(
+        &db,
+        user_id,
+        crate::rbac::permissions::PM_VIEW,
+        &PermissionScope::Global,
+    )
+    .await
+    .expect("check pm.view");
+    let can_create = rbac::check_permission(
+        &db,
+        user_id,
+        crate::rbac::permissions::PM_CREATE,
+        &PermissionScope::Global,
+    )
+    .await
+    .expect("check pm.create");
+    let can_edit = rbac::check_permission(
+        &db,
+        user_id,
+        crate::rbac::permissions::PM_EDIT,
+        &PermissionScope::Global,
+    )
+    .await
+    .expect("check pm.edit");
 
     assert!(can_view);
     assert!(!can_create);
@@ -887,7 +894,7 @@ async fn planning_readiness_projection_returns_blockers_without_scheduler_side_e
         },
     )
     .await
-        .expect("generate occurrences");
+    .expect("generate occurrences");
 
     let mut occurrences = queries::list_pm_occurrences(
         &db,
@@ -937,7 +944,8 @@ async fn planning_readiness_projection_returns_blockers_without_scheduler_side_e
 
     let first = readiness.candidates.first().expect("at least one candidate");
     let blocker_codes: Vec<String> = first.blockers.iter().map(|b| b.code.clone()).collect();
-    assert!(blocker_codes.iter().any(|code| code == "missing_parts"));    assert!(blocker_codes.iter().any(|code| code == "permit_not_ready"));
+    assert!(blocker_codes.iter().any(|code| code == "missing_parts"));
+    assert!(blocker_codes.iter().any(|code| code == "permit_not_ready"));
     assert!(blocker_codes.iter().any(|code| code == "locked_window"));
 }
 

@@ -47,9 +47,7 @@ mod tests {
     /// Rules: SITE→PLANT, PLANT→ZONE
     ///
     /// Returns `(model_id, site_type_id, plant_type_id, zone_type_id)`.
-    async fn create_base_active_model(
-        db: &sea_orm::DatabaseConnection,
-    ) -> (i32, i32, i32, i32) {
+    async fn create_base_active_model(db: &sea_orm::DatabaseConnection) -> (i32, i32, i32, i32) {
         let model = structure_model::create_model(
             db,
             CreateStructureModelPayload {
@@ -243,11 +241,7 @@ mod tests {
         .id
     }
 
-    async fn draft_type_id_by_code(
-        db: &sea_orm::DatabaseConnection,
-        draft_id: i32,
-        code: &str,
-    ) -> i32 {
+    async fn draft_type_id_by_code(db: &sea_orm::DatabaseConnection, draft_id: i32, code: &str) -> i32 {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -276,12 +270,7 @@ mod tests {
         row.try_get::<i64>("", "id").expect("id")
     }
 
-    async fn delete_draft_rule(
-        db: &sea_orm::DatabaseConnection,
-        draft_id: i32,
-        parent_code: &str,
-        child_code: &str,
-    ) {
+    async fn delete_draft_rule(db: &sea_orm::DatabaseConnection, draft_id: i32, parent_code: &str, child_code: &str) {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -295,15 +284,10 @@ mod tests {
             .expect("query rule")
             .unwrap_or_else(|| panic!("rule {parent_code}→{child_code} not found in draft {draft_id}"));
         let rule_id: i32 = row.try_get::<i64>("", "id").expect("id") as i32;
-        relationship_rules::delete_rule(db, rule_id)
-            .await
-            .expect("delete rule");
+        relationship_rules::delete_rule(db, rule_id).await.expect("delete rule");
     }
 
-    async fn force_deactivate_draft_type(
-        db: &sea_orm::DatabaseConnection,
-        type_id: i32,
-    ) {
+    async fn force_deactivate_draft_type(db: &sea_orm::DatabaseConnection, type_id: i32) {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE org_node_types SET is_active = 0 WHERE id = ?",
@@ -316,9 +300,7 @@ mod tests {
     /// Helper to build a draft fork with the same three types and rules as the active model.
     ///
     /// Returns `(draft_model_id, new_site_type_id, new_plant_type_id, new_zone_type_id)`.
-    async fn create_matching_draft_model(
-        db: &sea_orm::DatabaseConnection,
-    ) -> (i32, i32, i32, i32) {
+    async fn create_matching_draft_model(db: &sea_orm::DatabaseConnection) -> (i32, i32, i32, i32) {
         let draft_id = fork_active_model(db, "Model v2").await;
         let new_site_id = draft_type_id_by_code(db, draft_id, "SITE").await;
         let new_plant_id = draft_type_id_by_code(db, draft_id, "PLANT").await;
@@ -486,8 +468,7 @@ mod tests {
         assert_eq!(before.node_type_id, site_id as i64);
 
         // Draft v2 — same codes, new rows (different IDs), updated labels.
-        let (draft_id, new_site_id, new_plant_id, new_zone_id) =
-            create_matching_draft_model(&db).await;
+        let (draft_id, new_site_id, new_plant_id, new_zone_id) = create_matching_draft_model(&db).await;
 
         // Publish with remap.
         let result = validation::publish_model_with_remap(&db, draft_id as i64, 1)
@@ -527,9 +508,7 @@ mod tests {
         assert_eq!(active.status, "active");
 
         // The old model is superseded.
-        let models = structure_model::list_models(&db)
-            .await
-            .expect("list models");
+        let models = structure_model::list_models(&db).await.expect("list models");
         let superseded_count = models.iter().filter(|m| m.status == "superseded").count();
         assert_eq!(superseded_count, 1);
     }
@@ -594,10 +573,7 @@ mod tests {
 
         assert!(!result.can_publish);
         assert!(
-            result
-                .issues
-                .iter()
-                .any(|i| i.code == "PARENT_CHILD_NOT_ALLOWED"),
+            result.issues.iter().any(|i| i.code == "PARENT_CHILD_NOT_ALLOWED"),
             "expected PARENT_CHILD_NOT_ALLOWED for the draft ZONE node under PLANT"
         );
 
@@ -648,10 +624,7 @@ mod tests {
 
         assert!(!result.can_publish);
         assert!(
-            result
-                .issues
-                .iter()
-                .any(|i| i.code == "COST_CENTER_INCOMPATIBLE"),
+            result.issues.iter().any(|i| i.code == "COST_CENTER_INCOMPATIBLE"),
             "expected COST_CENTER_INCOMPATIBLE for PLT1 node"
         );
     }
@@ -794,8 +767,7 @@ mod tests {
             result
                 .issues
                 .iter()
-                .any(|i| i.code == "MISSING_TYPE_CODE"
-                    && i.message.contains("WORKSHOP")),
+                .any(|i| i.code == "MISSING_TYPE_CODE" && i.message.contains("WORKSHOP")),
             "SV1: expected MISSING_TYPE_CODE issue referencing WORKSHOP"
         );
     }
@@ -1008,8 +980,9 @@ mod tests {
             "SV2: expected at least one PARENT_CHILD_NOT_ALLOWED issue"
         );
         assert!(
-            pc_issues.iter().any(|i| i.message.contains("BUILDING")
-                && i.message.contains("FLOOR")),
+            pc_issues
+                .iter()
+                .any(|i| i.message.contains("BUILDING") && i.message.contains("FLOOR")),
             "SV2: the issue must reference the BUILDING/FLOOR type pair — got: {:?}",
             pc_issues.iter().map(|i| &i.message).collect::<Vec<_>>()
         );
@@ -1140,9 +1113,7 @@ mod tests {
         let pre_region = nodes::get_org_node_by_id(&db, region_node.id)
             .await
             .expect("pre region");
-        let pre_depot = nodes::get_org_node_by_id(&db, depot_node.id)
-            .await
-            .expect("pre depot");
+        let pre_depot = nodes::get_org_node_by_id(&db, depot_node.id).await.expect("pre depot");
 
         assert_eq!(pre_region.node_type_id, old_region_type_id);
         assert_eq!(pre_depot.node_type_id, old_depot_type_id);
@@ -1189,8 +1160,14 @@ mod tests {
         .expect("relabel DEPOT");
 
         // IDs must differ between v1 and v2 rows.
-        assert_ne!(old_region_type_id, new_region_type_id as i64, "type IDs must differ between model versions");
-        assert_ne!(old_depot_type_id, new_depot_type_id as i64, "type IDs must differ between model versions");
+        assert_ne!(
+            old_region_type_id, new_region_type_id as i64,
+            "type IDs must differ between model versions"
+        );
+        assert_ne!(
+            old_depot_type_id, new_depot_type_id as i64,
+            "type IDs must differ between model versions"
+        );
 
         // ── Publish with remap ────────────────────────────────────────────
         let result = validation::publish_model_with_remap(&db, draft_id as i64, 1)

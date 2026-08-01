@@ -49,10 +49,7 @@ mod errors_tests {
         )]);
         let json = serde_json::to_value(&err).expect("serialize");
         assert_eq!(json["code"], "VALIDATION_FAILED");
-        assert!(json["message"]
-            .as_str()
-            .unwrap()
-            .contains("cannot move under itself"));
+        assert!(json["message"].as_str().unwrap().contains("cannot move under itself"));
         assert_eq!(json["details"][0]["code"], "ORG_MOVE_CYCLE");
     }
 
@@ -112,10 +109,7 @@ mod errors_tests {
                 "NOT_FOUND",
             ),
             (AppError::ValidationFailed(vec![]), "VALIDATION_FAILED"),
-            (
-                AppError::OrgValidationFailed(vec![]),
-                "VALIDATION_FAILED",
-            ),
+            (AppError::OrgValidationFailed(vec![]), "VALIDATION_FAILED"),
             (AppError::SyncError("x".into()), "SYNC_ERROR"),
             (
                 AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")),
@@ -147,10 +141,7 @@ mod errors_tests {
                 },
                 "ACCOUNT_LOCKED",
             ),
-            (
-                AppError::SessionLocked("idle".into()),
-                "SESSION_LOCKED",
-            ),
+            (AppError::SessionLocked("idle".into()), "SESSION_LOCKED"),
             (AppError::Internal(anyhow::anyhow!("boom")), "INTERNAL_ERROR"),
         ];
 

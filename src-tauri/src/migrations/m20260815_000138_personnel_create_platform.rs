@@ -23,18 +23,12 @@ impl MigrationTrait for Migration {
         let db = manager.get_connection();
 
         // ── Personnel master extensions ──────────────────────────────────────
-        db.execute_unprepared(
-            "ALTER TABLE personnel ADD COLUMN employment_origin TEXT NOT NULL DEFAULT 'internal'",
-        )
-        .await?;
-        db.execute_unprepared(
-            "ALTER TABLE personnel ADD COLUMN employment_status TEXT NOT NULL DEFAULT 'active'",
-        )
-        .await?;
-        db.execute_unprepared(
-            "ALTER TABLE personnel ADD COLUMN blocked_override INTEGER NOT NULL DEFAULT 0",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE personnel ADD COLUMN employment_origin TEXT NOT NULL DEFAULT 'internal'")
+            .await?;
+        db.execute_unprepared("ALTER TABLE personnel ADD COLUMN employment_status TEXT NOT NULL DEFAULT 'active'")
+            .await?;
+        db.execute_unprepared("ALTER TABLE personnel ADD COLUMN blocked_override INTEGER NOT NULL DEFAULT 0")
+            .await?;
         db.execute_unprepared("ALTER TABLE personnel ADD COLUMN contract_number TEXT NULL")
             .await?;
         db.execute_unprepared("ALTER TABLE personnel ADD COLUMN contract_start_date TEXT NULL")
@@ -137,24 +131,18 @@ impl MigrationTrait for Migration {
         .await?;
 
         // ── Personnel skills validation / verification ───────────────────────
-        db.execute_unprepared(
-            "ALTER TABLE personnel_skills ADD COLUMN is_validated INTEGER NOT NULL DEFAULT 0",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE personnel_skills ADD COLUMN is_validated INTEGER NOT NULL DEFAULT 0")
+            .await?;
         db.execute_unprepared(
             "ALTER TABLE personnel_skills ADD COLUMN verified_by_id INTEGER NULL REFERENCES personnel(id)",
         )
         .await?;
-        db.execute_unprepared(
-            "ALTER TABLE personnel_skills ADD COLUMN verified_at TEXT NULL",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE personnel_skills ADD COLUMN verified_at TEXT NULL")
+            .await?;
 
         // ── Certification evidence path (attachment) ─────────────────────────
-        db.execute_unprepared(
-            "ALTER TABLE personnel_certifications ADD COLUMN evidence_path TEXT NULL",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE personnel_certifications ADD COLUMN evidence_path TEXT NULL")
+            .await?;
 
         // ── Position change events for Timeline audit ────────────────────────
         db.execute_unprepared(

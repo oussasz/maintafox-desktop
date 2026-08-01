@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use super::domain::{
-    generate_wo_code, guard_wo_transition, map_wo_transition_row, map_work_order, WoCreateInput,
-    WoStatus, WoTransitionRow, WorkOrder,
+    generate_wo_code, guard_wo_transition, map_wo_transition_row, map_work_order, WoCreateInput, WoStatus,
+    WoTransitionRow, WorkOrder,
 };
 use super::statuses::ensure_work_order_statuses_if_needed;
 use super::time::now_utc_z;
@@ -156,10 +156,7 @@ const WO_JOINS: &str = "\
 // A) list_work_orders — paginated, filtered
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn list_work_orders(
-    db: &DatabaseConnection,
-    filter: WoListFilter,
-) -> AppResult<WoListPage> {
+pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> AppResult<WoListPage> {
     let mut where_clauses: Vec<String> = vec!["1 = 1".to_string()];
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
@@ -231,9 +228,7 @@ pub async fn list_work_orders(
     if let Some(ref search) = filter.search {
         let trimmed = search.trim();
         if !trimmed.is_empty() {
-            where_clauses.push(
-                "(wo.code LIKE ? OR wo.title LIKE ? OR ar.name LIKE ?)".to_string(),
-            );
+            where_clauses.push("(wo.code LIKE ? OR wo.title LIKE ? OR ar.name LIKE ?)".to_string());
             let pattern = format!("%{trimmed}%");
             binds.push(pattern.clone().into());
             binds.push(pattern.clone().into());
@@ -244,9 +239,7 @@ pub async fn list_work_orders(
     let where_sql = where_clauses.join(" AND ");
 
     // ── Count query ──────────────────────────────────────────────────────
-    let count_sql = format!(
-        "SELECT COUNT(*) AS total FROM work_orders wo {WO_JOINS} WHERE {where_sql}"
-    );
+    let count_sql = format!("SELECT COUNT(*) AS total FROM work_orders wo {WO_JOINS} WHERE {where_sql}");
     let count_binds = binds.clone();
     let count_row = db
         .query_one(Statement::from_sql_and_values(
@@ -255,9 +248,7 @@ pub async fn list_work_orders(
             count_binds,
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("WO count query returned no rows"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("WO count query returned no rows")))?;
     let total: i64 = count_row
         .try_get::<i64>("", "total")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("WO count decode: {e}")))?;
@@ -275,17 +266,10 @@ pub async fn list_work_orders(
          LIMIT {row_limit} OFFSET {offset}"
     );
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &data_sql,
-            binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &data_sql, binds))
         .await?;
 
-    let items: Vec<WorkOrder> = rows
-        .iter()
-        .map(map_work_order)
-        .collect::<AppResult<Vec<_>>>()?;
+    let items: Vec<WorkOrder> = rows.iter().map(map_work_order).collect::<AppResult<Vec<_>>>()?;
 
     Ok(WoListPage { items, total })
 }
@@ -294,10 +278,7 @@ pub async fn list_work_orders(
 // B) get_work_order — single row by id with full joins
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn get_work_order(
-    db: &DatabaseConnection,
-    id: i64,
-) -> AppResult<Option<WorkOrder>> {
+pub async fn get_work_order(db: &DatabaseConnection, id: i64) -> AppResult<Option<WorkOrder>> {
     let sql = format!(
         "SELECT {WO_COLS}, {WO_JOIN_COLS} \
          FROM work_orders wo \
@@ -305,11 +286,7 @@ pub async fn get_work_order(
          WHERE wo.id = ?"
     );
     let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            [id.into()],
-        ))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, [id.into()]))
         .await?;
 
     match row {
@@ -322,10 +299,7 @@ pub async fn get_work_order(
 // C) get_wo_transition_log — append-only log for a WO
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn get_wo_transition_log(
-    db: &DatabaseConnection,
-    wo_id: i64,
-) -> AppResult<Vec<WoTransitionRow>> {
+pub async fn get_wo_transition_log(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<WoTransitionRow>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -344,10 +318,7 @@ pub async fn get_wo_transition_log(
 // D) create_work_order — full insert + transition log
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn create_work_order(
-    db: &DatabaseConnection,
-    input: WoCreateInput,
-) -> AppResult<WorkOrder> {
+pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) -> AppResult<WorkOrder> {
     ensure_work_order_statuses_if_needed(db).await?;
     let default_closeout_policy_id = ensure_default_closeout_validation_policy_id(db).await?;
 
@@ -382,11 +353,7 @@ pub async fn create_work_order(
             if entity_id.is_none() {
                 entity_id = row
                     .try_get::<Option<i64>>("", "installed_at_node_id")
-                    .map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!(
-                            "equipment.installed_at_node_id decode: {e}"
-                        ))
-                    })?;
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.installed_at_node_id decode: {e}")))?;
             }
         } else {
             return Err(AppError::ValidationFailed(vec![format!(
@@ -465,9 +432,7 @@ pub async fn create_work_order(
             .await?;
         if let Some(row) = existing_wo {
             let existing_id: i64 = row.try_get("", "id").unwrap_or_default();
-            let existing_code: String = row
-                .try_get("", "code")
-                .unwrap_or_else(|_| "N/A".to_string());
+            let existing_code: String = row.try_get("", "code").unwrap_or_else(|_| "N/A".to_string());
             return Err(AppError::ValidationFailed(vec![format!(
                 "Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
             )]));
@@ -512,11 +477,7 @@ pub async fn create_work_order(
             [],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "work_order_statuses missing 'draft' row"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("work_order_statuses missing 'draft' row")))?;
     let status_id: i64 = draft_row
         .try_get::<i64>("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("draft status_id decode: {e}")))?;
@@ -554,9 +515,17 @@ pub async fn create_work_order(
             code.clone().into(),
             type_id.into(),
             status_id.into(),
-            equipment_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
-            input.location_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
-            input.source_di_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
+            equipment_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            input
+                .location_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            input
+                .source_di_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
             input
                 .source_inspection_anomaly_id
                 .map(sea_orm::Value::from)
@@ -575,18 +544,48 @@ pub async fn create_work_order(
                 .clone()
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
-            entity_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
-            input.planner_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
+            entity_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
+            input
+                .planner_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.creator_id.into(),
-            urgency_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
+            urgency_id
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<i64>)),
             input.title.into(),
-            input.description.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
-            input.notes.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
-            input.planned_start.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
-            input.planned_end.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
-            input.shift.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
-            input.expected_duration_hours.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<f64>)),
-            (if input.requires_permit.unwrap_or(false) { 1i64 } else { 0i64 }).into(),
+            input
+                .description
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            input
+                .notes
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            input
+                .planned_start
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            input
+                .planned_end
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            input
+                .shift
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
+            input
+                .expected_duration_hours
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<f64>)),
+            (if input.requires_permit.unwrap_or(false) {
+                1i64
+            } else {
+                0i64
+            })
+            .into(),
             now.clone().into(),
             now.clone().into(),
         ],
@@ -594,13 +593,9 @@ pub async fn create_work_order(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec![
-                "Un code OT en doublon a été généré. Veuillez réessayer.".into(),
-            ])
+            AppError::ValidationFailed(vec!["Un code OT en doublon a été généré. Veuillez réessayer.".into()])
         } else if e.to_string().contains("FOREIGN KEY") {
-            AppError::ValidationFailed(vec![format!(
-                "Référence invalide (contrainte FK). Détail SQLite: {e}"
-            )])
+            AppError::ValidationFailed(vec![format!("Référence invalide (contrainte FK). Détail SQLite: {e}")])
         } else {
             AppError::Database(e)
         }
@@ -614,11 +609,7 @@ pub async fn create_work_order(
                 [code.clone().into()],
             ))
             .await?
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!(
-                    "Failed to re-read WO after insert: code={code}"
-                ))
-            })?;
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read WO after insert: code={code}")))?;
         row.try_get::<i64>("", "id")
             .map_err(|e| AppError::Internal(anyhow::anyhow!("WO id decode: {e}")))?
     };
@@ -644,11 +635,7 @@ pub async fn create_work_order(
 
     let wo = get_work_order(db, new_id)
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "Failed to re-read WO after insert: code={code}"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read WO after insert: code={code}")))?;
 
     // Write initial transition log entry
     db.execute(Statement::from_sql_and_values(
@@ -672,12 +659,10 @@ pub async fn update_wo_draft_fields(
     input: super::domain::WoDraftUpdateInput,
 ) -> AppResult<WorkOrder> {
     // 1. Fetch current row to validate status
-    let current = get_work_order(db, input.id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: input.id.to_string(),
-        })?;
+    let current = get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "WorkOrder".into(),
+        id: input.id.to_string(),
+    })?;
 
     // 2. Guard: only allow draft edits
     let status_code = current.status_code.as_deref().unwrap_or("unknown");
@@ -763,11 +748,7 @@ pub async fn update_wo_draft_fields(
     );
 
     let result = db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            values,
-        ))
+        .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
     if result.rows_affected() == 0 {
@@ -779,22 +760,17 @@ pub async fn update_wo_draft_fields(
     }
 
     // 5. Re-fetch and return updated row
-    get_work_order(db, input.id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: input.id.to_string(),
-        })
+    get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "WorkOrder".into(),
+        id: input.id.to_string(),
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // F) cancel_work_order — state guard + cancel reason required
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn cancel_work_order(
-    db: &DatabaseConnection,
-    input: super::domain::WoCancelInput,
-) -> AppResult<WorkOrder> {
+pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::WoCancelInput) -> AppResult<WorkOrder> {
     // Validate cancel_reason is not empty
     if input.cancel_reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -803,24 +779,16 @@ pub async fn cancel_work_order(
     }
 
     // 1. Fetch current row
-    let current = get_work_order(db, input.id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: input.id.to_string(),
-        })?;
+    let current = get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "WorkOrder".into(),
+        id: input.id.to_string(),
+    })?;
 
     // 2. Guard: check transition is legal
-    let from_code = current
-        .status_code
-        .as_deref()
-        .unwrap_or("unknown");
-    let from_status = WoStatus::try_from_str(from_code).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("Stored WO has invalid status: {e}"))
-    })?;
-    guard_wo_transition(&from_status, &WoStatus::Cancelled).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
+    let from_code = current.status_code.as_deref().unwrap_or("unknown");
+    let from_status = WoStatus::try_from_str(from_code)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Stored WO has invalid status: {e}")))?;
+    guard_wo_transition(&from_status, &WoStatus::Cancelled).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     // 3. Resolve cancelled status_id
     let cancelled_row = db
@@ -830,11 +798,7 @@ pub async fn cancel_work_order(
             [],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "work_order_statuses missing 'cancelled' row"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("work_order_statuses missing 'cancelled' row")))?;
     let cancelled_id: i64 = cancelled_row
         .try_get::<i64>("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("cancelled status_id decode: {e}")))?;
@@ -885,10 +849,8 @@ pub async fn cancel_work_order(
     .await?;
 
     // 6. Re-fetch and return
-    get_work_order(db, input.id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrder".into(),
-            id: input.id.to_string(),
-        })
+    get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "WorkOrder".into(),
+        id: input.id.to_string(),
+    })
 }

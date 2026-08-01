@@ -78,7 +78,8 @@ impl MigrationTrait for Migration {
         let db = manager.get_connection();
         db.execute_unprepared("DROP TABLE IF EXISTS document_acknowledgements")
             .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS training_attendance").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS training_attendance")
+            .await?;
         db.execute_unprepared("DROP TABLE IF EXISTS training_sessions").await?;
         Ok(())
     }

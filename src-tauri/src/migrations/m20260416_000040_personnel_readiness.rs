@@ -1,4 +1,4 @@
-﻿//! Migration 040 - Personnel readiness foundation.
+//! Migration 040 - Personnel readiness foundation.
 //!
 //! Adds:
 //! - `personnel_skills`
@@ -39,14 +39,10 @@ impl MigrationTrait for Migration {
             )",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ps_personnel ON personnel_skills(personnel_id)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ps_skill ON personnel_skills(reference_value_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ps_personnel ON personnel_skills(personnel_id)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ps_skill ON personnel_skills(reference_value_id)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE TABLE IF NOT EXISTS personnel_team_assignments (
@@ -67,10 +63,8 @@ impl MigrationTrait for Migration {
             "CREATE INDEX IF NOT EXISTS idx_pta_personnel ON personnel_team_assignments(personnel_id)",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_pta_team ON personnel_team_assignments(team_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_pta_team ON personnel_team_assignments(team_id)")
+            .await?;
         db.execute_unprepared(
             "CREATE INDEX IF NOT EXISTS idx_pta_validity ON personnel_team_assignments(valid_from, valid_to)",
         )
@@ -175,11 +169,8 @@ impl MigrationTrait for Migration {
             .await?;
         db.execute_unprepared("DROP TABLE IF EXISTS personnel_team_assignments")
             .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS personnel_skills")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS personnel_skills").await?;
 
         Ok(())
     }
 }
-
-

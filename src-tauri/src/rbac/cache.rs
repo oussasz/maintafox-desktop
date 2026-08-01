@@ -39,13 +39,15 @@ impl PermissionCache {
     /// - the entry has expired (older than `max_age`).
     pub fn get(&self, user_id: i64, scope_key: &str) -> Option<&HashSet<String>> {
         let key = (user_id, scope_key.to_string());
-        self.entries.get(&key).and_then(|(perms, ts)| {
-            if ts.elapsed() < self.max_age {
-                Some(perms)
-            } else {
-                None
-            }
-        })
+        self.entries.get(&key).and_then(
+            |(perms, ts)| {
+                if ts.elapsed() < self.max_age {
+                    Some(perms)
+                } else {
+                    None
+                }
+            },
+        )
     }
 
     /// Store permissions for a `(user_id, scope_key)` pair.

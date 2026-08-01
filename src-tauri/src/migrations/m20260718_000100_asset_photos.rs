@@ -35,8 +35,7 @@ impl MigrationTrait for Migration {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_asset_photos_asset_id ON asset_photos(asset_id)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_asset_photos_asset_id ON asset_photos(asset_id)".to_string(),
         ))
         .await?;
 

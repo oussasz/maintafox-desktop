@@ -20,8 +20,8 @@
 //!   - `work_order_parts.article_id`    — FK to `articles`; nullable until SP08
 //!   - `work_order_parts.stock_location_id` — FK to stock locations; nullable until SP08
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -126,32 +126,27 @@ impl MigrationTrait for Migration {
         // ── Indexes ───────────────────────────────────────────────────────
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_woi_wo_id  ON work_order_interveners(work_order_id)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_woi_wo_id  ON work_order_interveners(work_order_id)".to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_wop_wo_id  ON work_order_parts(work_order_id)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_wop_wo_id  ON work_order_parts(work_order_id)".to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_wot_wo_id  ON work_order_tasks(work_order_id)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_wot_wo_id  ON work_order_tasks(work_order_id)".to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_wods_wo_id  ON work_order_delay_segments(work_order_id)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_wods_wo_id  ON work_order_delay_segments(work_order_id)".to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_wodts_wo_id ON work_order_downtime_segments(work_order_id)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_wodts_wo_id ON work_order_downtime_segments(work_order_id)".to_string(),
         ))
         .await?;
 
@@ -161,8 +156,7 @@ impl MigrationTrait for Migration {
         // complete_wo_mechanically() as the parts quality gate.
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "ALTER TABLE work_orders ADD COLUMN parts_actuals_confirmed INTEGER NOT NULL DEFAULT 0"
-                .to_string(),
+            "ALTER TABLE work_orders ADD COLUMN parts_actuals_confirmed INTEGER NOT NULL DEFAULT 0".to_string(),
         ))
         .await?;
 

@@ -11,8 +11,8 @@ use crate::auth::rbac;
 use crate::auth::rbac::PermissionScope;
 use crate::auth::{password, session_manager};
 use crate::errors::{AppError, AppResult};
-use crate::{require_permission, require_session};
 use crate::state::AppState;
+use crate::{require_permission, require_session};
 
 /// Return the effective permission set for the currently authenticated user.
 ///
@@ -125,7 +125,12 @@ pub async fn verify_step_up(payload: StepUpRequest, state: State<'_, AppState>) 
 #[tauri::command]
 pub async fn get_rbac_settings(prefix: String, state: State<'_, AppState>) -> AppResult<Vec<RbacSettingEntry>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
 
     let pattern = format!("{}%", prefix.trim());
     let rows = state
@@ -154,7 +159,12 @@ pub async fn get_rbac_settings(prefix: String, state: State<'_, AppState>) -> Ap
 #[tauri::command]
 pub async fn update_rbac_setting(key: String, value: String, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
 
     let key = key.trim();
     if key.is_empty() {
@@ -182,7 +192,12 @@ pub async fn update_rbac_setting(key: String, value: String, state: State<'_, Ap
 #[tauri::command]
 pub async fn get_password_policy(state: State<'_, AppState>) -> AppResult<PasswordPolicySettings> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
 
     let policy = PasswordPolicy::load(&state.db).await;
     Ok(PasswordPolicySettings {

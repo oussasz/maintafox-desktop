@@ -4,8 +4,9 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Transac
 use crate::errors::{AppError, AppResult};
 use crate::inventory::domain::{
     ApproveInventoryCountLineInput, CreateInventoryCountSessionInput, InventoryCountLine, InventoryCountSession,
-    InventoryReconciliationFinding, InventoryReconciliationRun, PostInventoryCountSessionInput, ReverseInventoryCountSessionInput,
-    RunInventoryReconciliationInput, TransitionInventoryCountSessionInput, UpsertInventoryCountLineInput,
+    InventoryReconciliationFinding, InventoryReconciliationRun, PostInventoryCountSessionInput,
+    ReverseInventoryCountSessionInput, RunInventoryReconciliationInput, TransitionInventoryCountSessionInput,
+    UpsertInventoryCountLineInput,
 };
 
 fn now_iso() -> String {
@@ -158,7 +159,7 @@ pub async fn create_count_session(
 ) -> AppResult<InventoryCountSession> {
     if input.critical_abs_threshold.unwrap_or(5.0) < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "critical_abs_threshold must be >= 0.".to_string(),
+            "critical_abs_threshold must be >= 0.".to_string()
         ]));
     }
     db.execute(Statement::from_sql_and_values(
@@ -194,7 +195,7 @@ pub async fn transition_count_session(
     let current = ensure_count_session(db, input.session_id).await?;
     if current.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "count session row_version mismatch.".to_string(),
+            "count session row_version mismatch.".to_string()
         ]));
     }
     let allowed = match current.status.as_str() {
@@ -233,11 +234,14 @@ pub async fn transition_count_session(
     ensure_count_session(db, input.session_id).await
 }
 
-pub async fn upsert_count_line(db: &DatabaseConnection, input: UpsertInventoryCountLineInput) -> AppResult<InventoryCountLine> {
+pub async fn upsert_count_line(
+    db: &DatabaseConnection,
+    input: UpsertInventoryCountLineInput,
+) -> AppResult<InventoryCountLine> {
     if input.counted_qty < 0.0 {
-        return Err(AppError::ValidationFailed(vec![
-            "counted_qty must be >= 0.".to_string(),
-        ]));
+        return Err(AppError::ValidationFailed(
+            vec!["counted_qty must be >= 0.".to_string()],
+        ));
     }
     let session = ensure_count_session(db, input.session_id).await?;
     if session.status != "draft" && session.status != "counting" {
@@ -302,14 +306,21 @@ pub async fn upsert_count_line(db: &DatabaseConnection, input: UpsertInventoryCo
             "SELECT cl.id
              FROM inventory_count_lines cl
              WHERE cl.session_id = ? AND cl.article_id = ? AND cl.location_id = ?",
-            [input.session_id.into(), input.article_id.into(), input.location_id.into()],
+            [
+                input.session_id.into(),
+                input.article_id.into(),
+                input.location_id.into(),
+            ],
         ))
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["Unable to upsert count line.".to_string()]))?;
     get_count_line(db, row.try_get("", "id")?).await
 }
 
-pub async fn approve_count_line(db: &DatabaseConnection, input: ApproveInventoryCountLineInput) -> AppResult<InventoryCountLine> {
+pub async fn approve_count_line(
+    db: &DatabaseConnection,
+    input: ApproveInventoryCountLineInput,
+) -> AppResult<InventoryCountLine> {
     if input.reviewer_evidence.trim().len() < 8 {
         return Err(AppError::ValidationFailed(vec![
             "reviewer_evidence must be explicit and at least 8 characters.".to_string(),
@@ -318,7 +329,7 @@ pub async fn approve_count_line(db: &DatabaseConnection, input: ApproveInventory
     let line = get_count_line(db, input.line_id).await?;
     if line.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "count line row_version mismatch.".to_string(),
+            "count line row_version mismatch.".to_string()
         ]));
     }
     if line.approval_required == 0 {
@@ -343,11 +354,14 @@ pub async fn approve_count_line(db: &DatabaseConnection, input: ApproveInventory
     get_count_line(db, input.line_id).await
 }
 
-pub async fn post_count_session(db: &DatabaseConnection, input: PostInventoryCountSessionInput) -> AppResult<InventoryCountSession> {
+pub async fn post_count_session(
+    db: &DatabaseConnection,
+    input: PostInventoryCountSessionInput,
+) -> AppResult<InventoryCountSession> {
     let session = ensure_count_session(db, input.session_id).await?;
     if session.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "count session row_version mismatch.".to_string(),
+            "count session row_version mismatch.".to_string()
         ]));
     }
     if session.status != "approved" {
@@ -358,7 +372,7 @@ pub async fn post_count_session(db: &DatabaseConnection, input: PostInventoryCou
     let lines = list_count_lines(db, input.session_id).await?;
     if lines.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Count session has no lines.".to_string(),
+            "Count session has no lines.".to_string()
         ]));
     }
     for line in &lines {
@@ -449,13 +463,13 @@ pub async fn reverse_count_session(
 ) -> AppResult<InventoryCountSession> {
     if input.reason.trim().len() < 5 {
         return Err(AppError::ValidationFailed(vec![
-            "Reversal reason must be explicit.".to_string(),
+            "Reversal reason must be explicit.".to_string()
         ]));
     }
     let session = ensure_count_session(db, input.session_id).await?;
     if session.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "count session row_version mismatch.".to_string(),
+            "count session row_version mismatch.".to_string()
         ]));
     }
     if session.status != "posted" {

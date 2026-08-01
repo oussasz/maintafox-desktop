@@ -10,9 +10,7 @@ use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 
-use super::domain::{
-    generate_di_code, guard_transition, map_intervention_request, DiStatus, InterventionRequest,
-};
+use super::domain::{generate_di_code, guard_transition, map_intervention_request, DiStatus, InterventionRequest};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Input / output types
@@ -163,16 +161,12 @@ const IR_JOINS: &str = "\
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "di query row decode failed for column '{column}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("di query row decode failed for column '{column}': {e}"))
 }
 
 fn map_transition_row(row: &QueryResult) -> AppResult<DiTransitionRow> {
     Ok(DiTransitionRow {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         from_status: row
             .try_get::<String>("", "from_status")
             .map_err(|e| decode_err("from_status", e))?,
@@ -202,15 +196,9 @@ fn map_transition_row(row: &QueryResult) -> AppResult<DiTransitionRow> {
 
 fn map_summary_row(row: &QueryResult) -> AppResult<DiSummaryRow> {
     Ok(DiSummaryRow {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
-        code: row
-            .try_get::<String>("", "code")
-            .map_err(|e| decode_err("code", e))?,
-        title: row
-            .try_get::<String>("", "title")
-            .map_err(|e| decode_err("title", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
+        title: row.try_get::<String>("", "title").map_err(|e| decode_err("title", e))?,
         status: row
             .try_get::<String>("", "status")
             .map_err(|e| decode_err("status", e))?,
@@ -224,10 +212,7 @@ fn map_summary_row(row: &QueryResult) -> AppResult<DiSummaryRow> {
 // A) list_intervention_requests — paginated, filtered
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn list_intervention_requests(
-    db: &DatabaseConnection,
-    filter: DiListFilter,
-) -> AppResult<DiListPage> {
+pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListFilter) -> AppResult<DiListPage> {
     let mut where_clauses: Vec<String> = vec!["1 = 1".to_string()];
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
@@ -284,8 +269,7 @@ pub async fn list_intervention_requests(
     if let Some(ref search) = filter.search {
         let trimmed = search.trim();
         if !trimmed.is_empty() {
-            where_clauses
-                .push("(ir.title LIKE ? OR ir.description LIKE ? OR ir.code LIKE ?)".to_string());
+            where_clauses.push("(ir.title LIKE ? OR ir.description LIKE ? OR ir.code LIKE ?)".to_string());
             let pattern = format!("%{trimmed}%");
             binds.push(pattern.clone().into());
             binds.push(pattern.clone().into());
@@ -296,9 +280,7 @@ pub async fn list_intervention_requests(
     let where_sql = where_clauses.join(" AND ");
 
     // ── Count query (same WHERE, no joins needed for count) ───────────────
-    let count_sql = format!(
-        "SELECT COUNT(*) AS total FROM intervention_requests ir WHERE {where_sql}"
-    );
+    let count_sql = format!("SELECT COUNT(*) AS total FROM intervention_requests ir WHERE {where_sql}");
     let count_binds = binds.clone();
     let count_row = db
         .query_one(Statement::from_sql_and_values(
@@ -307,9 +289,7 @@ pub async fn list_intervention_requests(
             count_binds,
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("DI count query returned no rows"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("DI count query returned no rows")))?;
     let total: i64 = count_row
         .try_get::<i64>("", "total")
         .map_err(|e| decode_err("total", e))?;
@@ -327,11 +307,7 @@ pub async fn list_intervention_requests(
          LIMIT {row_limit} OFFSET {offset}"
     );
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &data_sql,
-            binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &data_sql, binds))
         .await?;
 
     let items: Vec<InterventionRequest> = rows
@@ -346,10 +322,7 @@ pub async fn list_intervention_requests(
 // B) get_intervention_request — single row by id
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn get_intervention_request(
-    db: &DatabaseConnection,
-    id: i64,
-) -> AppResult<Option<InterventionRequest>> {
+pub async fn get_intervention_request(db: &DatabaseConnection, id: i64) -> AppResult<Option<InterventionRequest>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -373,10 +346,7 @@ pub async fn get_intervention_request(
 // C) get_di_transition_log — append-only log for a DI
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn get_di_transition_log(
-    db: &DatabaseConnection,
-    di_id: i64,
-) -> AppResult<Vec<DiTransitionRow>> {
+pub async fn get_di_transition_log(db: &DatabaseConnection, di_id: i64) -> AppResult<Vec<DiTransitionRow>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -406,10 +376,7 @@ pub async fn get_recent_similar_dis(
 ) -> AppResult<Vec<DiSummaryRow>> {
     let mut where_clauses = vec![
         "asset_id = ?".to_string(),
-        format!(
-            "submitted_at >= datetime('now', '-{} days')",
-            days.max(1)
-        ),
+        format!("submitted_at >= datetime('now', '-{} days')", days.max(1)),
     ];
     let mut binds: Vec<sea_orm::Value> = vec![asset_id.into()];
 
@@ -428,11 +395,7 @@ pub async fn get_recent_similar_dis(
     );
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
     rows.iter().map(map_summary_row).collect()
@@ -447,18 +410,9 @@ pub async fn create_intervention_request(
     input: DiCreateInput,
 ) -> AppResult<InterventionRequest> {
     // Catalog membership (Category B) — same philosophy as equipment taxonomy.
-    let origin_type = crate::di::reference_catalog::validate_di_origin_code(
-        db,
-        &input.origin_type,
-    )
-    .await?;
-    let request_type = crate::di::reference_catalog::validate_di_request_type(
-        db,
-        &input.request_type,
-    )
-    .await?;
-    let symptom_code_id =
-        crate::di::reference_catalog::require_di_symptom_id(db, input.symptom_code_id).await?;
+    let origin_type = crate::di::reference_catalog::validate_di_origin_code(db, &input.origin_type).await?;
+    let request_type = crate::di::reference_catalog::validate_di_request_type(db, &input.request_type).await?;
+    let symptom_code_id = crate::di::reference_catalog::require_di_symptom_id(db, input.symptom_code_id).await?;
 
     if input.org_node_id != 0 {
         crate::org::model_scope::assert_org_node_active(db, input.org_node_id).await?;
@@ -490,7 +444,10 @@ pub async fn create_intervention_request(
             (i64::from(input.environmental_flag)).into(),
             (i64::from(input.quality_flag)).into(),
             input.reported_urgency.into(),
-            input.observed_at.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
+            input
+                .observed_at
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
             now.clone().into(),
             input.submitter_id.into(),
             input
@@ -504,12 +461,10 @@ pub async fn create_intervention_request(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec![
-                "Un code DI en doublon a été généré. Veuillez réessayer.".into(),
-            ])
+            AppError::ValidationFailed(vec!["Un code DI en doublon a été généré. Veuillez réessayer.".into()])
         } else if e.to_string().contains("FOREIGN KEY") {
             AppError::ValidationFailed(vec![
-                "Référence invalide (asset_id, org_node_id, ou submitter_id).".into(),
+                "Référence invalide (asset_id, org_node_id, ou submitter_id).".into()
             ])
         } else {
             AppError::Database(e)
@@ -529,11 +484,7 @@ pub async fn create_intervention_request(
             [code.clone().into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "Failed to re-read DI after insert: code={code}"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read DI after insert: code={code}")))?;
 
     let di = map_intervention_request(&row)?;
 
@@ -595,15 +546,11 @@ pub async fn update_di_draft_fields(
             id: input.id.to_string(),
         })?;
 
-    let status = DiStatus::try_from_str(&current.status).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("Stored DI has invalid status: {e}"))
-    })?;
+    let status = DiStatus::try_from_str(&current.status)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Stored DI has invalid status: {e}")))?;
 
     // 2. Guard: only allow draft edits on mutable intake states
-    if !matches!(
-        status,
-        DiStatus::Submitted | DiStatus::ReturnedForClarification
-    ) {
+    if !matches!(status, DiStatus::Submitted | DiStatus::ReturnedForClarification) {
         return Err(AppError::ValidationFailed(vec![format!(
             "Les champs ne peuvent être modifiés qu'au statut 'submitted' ou \
              'returned_for_clarification'. Statut actuel : '{}'.",
@@ -624,17 +571,14 @@ pub async fn update_di_draft_fields(
         values.push(description.clone().into());
     }
     if let Some(ref request_type) = input.request_type {
-        let validated =
-            crate::di::reference_catalog::validate_di_request_type(db, request_type).await?;
+        let validated = crate::di::reference_catalog::validate_di_request_type(db, request_type).await?;
         sets.push("request_type = ?".into());
         values.push(validated.into());
     }
     if let Some(ref symptom_code_id) = input.symptom_code_id {
         match symptom_code_id {
             None => {
-                return Err(AppError::ValidationFailed(vec![
-                    "Le symptôme est obligatoire.".into(),
-                ]));
+                return Err(AppError::ValidationFailed(vec!["Le symptôme est obligatoire.".into()]));
             }
             Some(id) => {
                 // Validate only when writing a new value (legacy rows keep existing id until changed).
@@ -699,11 +643,7 @@ pub async fn update_di_draft_fields(
     );
 
     let result = db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            values,
-        ))
+        .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
     if result.rows_affected() == 0 {
@@ -740,14 +680,10 @@ pub async fn triage_submitted_di(
             id: input.di_id.to_string(),
         })?;
 
-    let status = DiStatus::try_from_str(&current.status).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("Stored DI has invalid status: {e}"))
-    })?;
+    let status = DiStatus::try_from_str(&current.status)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Stored DI has invalid status: {e}")))?;
 
-    if !matches!(
-        status,
-        DiStatus::Submitted | DiStatus::ReturnedForClarification
-    ) {
+    if !matches!(status, DiStatus::Submitted | DiStatus::ReturnedForClarification) {
         return Err(AppError::ValidationFailed(vec![format!(
             "Seules les demandes au statut « soumis » ou « retourné pour clarification » \
              peuvent être (re)soumises vers la revue. \
@@ -756,9 +692,7 @@ pub async fn triage_submitted_di(
         )]));
     }
 
-    guard_transition(&status, &DiStatus::InReview).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
+    guard_transition(&status, &DiStatus::InReview).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 

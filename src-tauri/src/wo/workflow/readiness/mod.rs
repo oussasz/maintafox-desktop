@@ -179,14 +179,7 @@ async fn load_material_readiness_snapshot(
         .flatten()
         .and_then(|r| r.try_get::<Option<String>>("", "eta").ok().flatten());
 
-    Ok((
-        total,
-        missing == 0,
-        ready_pct,
-        reserved_pct,
-        missing,
-        expected_arrival,
-    ))
+    Ok((total, missing == 0, ready_pct, reserved_pct, missing, expected_arrival))
 }
 
 async fn load_approval_policy(db: &impl ConnectionTrait) -> AppResult<bool> {
@@ -238,10 +231,7 @@ fn dto_from_check(c: ReadinessCheck) -> ReadinessCheckDto {
     }
 }
 
-pub async fn evaluate_wo_readiness(
-    db: &DatabaseConnection,
-    wo_id: i64,
-) -> AppResult<ReadinessReport> {
+pub async fn evaluate_wo_readiness(db: &DatabaseConnection, wo_id: i64) -> AppResult<ReadinessReport> {
     let ctx = WoReadinessContext::load(db, wo_id).await?;
     let rules = all_ready_gate_rules();
     let mut checks = Vec::with_capacity(rules.len());
@@ -273,16 +263,10 @@ pub async fn assert_ready_to_mark(db: &DatabaseConnection, wo_id: i64) -> AppRes
     if report.can_mark_ready {
         return Ok(());
     }
-    let mut errors: Vec<String> = vec![
-        "Impossible de marquer prêt : des contrôles bloquants ont échoué.".into(),
-    ];
+    let mut errors: Vec<String> = vec!["Impossible de marquer prêt : des contrôles bloquants ont échoué.".into()];
     for c in report.checks {
         if c.blocking && c.outcome == "fail" {
-            errors.push(format!(
-                "[{}] {}",
-                c.code,
-                c.message.unwrap_or_else(|| "échec".into())
-            ));
+            errors.push(format!("[{}] {}", c.code, c.message.unwrap_or_else(|| "échec".into())));
         }
     }
     Err(AppError::ValidationFailed(errors))

@@ -55,11 +55,7 @@ impl GovernanceCategory {
     }
 }
 
-pub const GOVERNANCE_CATEGORIES: &[&str] = &[
-    "system_catalog",
-    "operational_dictionary",
-    "controlled_catalog",
-];
+pub const GOVERNANCE_CATEGORIES: &[&str] = &["system_catalog", "operational_dictionary", "controlled_catalog"];
 
 // ─── Enforcement phase ────────────────────────────────────────────────────────
 
@@ -109,9 +105,7 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "WORK.SYMPTOMS"
         | "WORK.FAILURE_CAUSES"
         | "WORK.FAILURE_EFFECTS"
-        | "PM.MAINTENANCE_TASK_LIST" => {
-            Some(GovernanceCategory::ControlledCatalog)
-        }
+        | "PM.MAINTENANCE_TASK_LIST" => Some(GovernanceCategory::ControlledCatalog),
 
         _ => None,
     }
@@ -134,9 +128,7 @@ fn normalize_domain_code(code: &str) -> String {
 fn category_from_legacy_level(governance_level: &str) -> GovernanceCategory {
     match governance_level.trim() {
         "tenant_managed" => GovernanceCategory::OperationalDictionary,
-        "protected_analytical" | "system_seeded" | "erp_synced" => {
-            GovernanceCategory::SystemCatalog
-        }
+        "protected_analytical" | "system_seeded" | "erp_synced" => GovernanceCategory::SystemCatalog,
         _ => GovernanceCategory::OperationalDictionary,
     }
 }
@@ -170,10 +162,7 @@ pub fn category_of(domain: &ReferenceDomain) -> GovernanceCategory {
 }
 
 /// Derive category to persist when creating/updating a domain.
-pub fn derive_category_for_persist(
-    domain_code: &str,
-    legacy_governance_level: &str,
-) -> GovernanceCategory {
+pub fn derive_category_for_persist(domain_code: &str, legacy_governance_level: &str) -> GovernanceCategory {
     resolve_category(domain_code, legacy_governance_level, None)
 }
 
@@ -202,9 +191,7 @@ pub fn allows_value_mutation(category: GovernanceCategory, set: &ReferenceSet) -
     match ACTIVE_ENFORCEMENT_PHASE {
         EnforcementPhase::Compat => match category {
             GovernanceCategory::SystemCatalog => false,
-            GovernanceCategory::OperationalDictionary | GovernanceCategory::ControlledCatalog => {
-                set_is_draft(set)
-            }
+            GovernanceCategory::OperationalDictionary | GovernanceCategory::ControlledCatalog => set_is_draft(set),
         },
         EnforcementPhase::Target => match category {
             GovernanceCategory::SystemCatalog => false,
@@ -219,9 +206,7 @@ pub fn allows_create_draft_set(category: GovernanceCategory) -> bool {
     match ACTIVE_ENFORCEMENT_PHASE {
         EnforcementPhase::Compat => match category {
             GovernanceCategory::SystemCatalog => false,
-            GovernanceCategory::OperationalDictionary | GovernanceCategory::ControlledCatalog => {
-                true
-            }
+            GovernanceCategory::OperationalDictionary | GovernanceCategory::ControlledCatalog => true,
         },
         EnforcementPhase::Target => match category {
             GovernanceCategory::SystemCatalog => false,
@@ -236,9 +221,7 @@ pub fn allows_publish(category: GovernanceCategory) -> bool {
     match ACTIVE_ENFORCEMENT_PHASE {
         EnforcementPhase::Compat => match category {
             GovernanceCategory::SystemCatalog => false,
-            GovernanceCategory::OperationalDictionary | GovernanceCategory::ControlledCatalog => {
-                true
-            }
+            GovernanceCategory::OperationalDictionary | GovernanceCategory::ControlledCatalog => true,
         },
         EnforcementPhase::Target => match category {
             GovernanceCategory::SystemCatalog => false,
@@ -285,20 +268,15 @@ pub struct ReferenceGovernanceCapabilities {
 /// Build capability snapshot for a domain and optional selected set.
 ///
 /// When `set` is `None`, value-mutation flags are `false` (mutation is set-scoped).
-pub fn capabilities_for(
-    domain: &ReferenceDomain,
-    set: Option<&ReferenceSet>,
-) -> ReferenceGovernanceCapabilities {
+pub fn capabilities_for(domain: &ReferenceDomain, set: Option<&ReferenceSet>) -> ReferenceGovernanceCapabilities {
     let cat = category_of(domain);
-    let can_mutate = set
-        .map(|s| allows_value_mutation(cat, s))
-        .unwrap_or(false);
+    let can_mutate = set.map(|s| allows_value_mutation(cat, s)).unwrap_or(false);
     let can_draft = allows_create_draft_set(cat);
     let can_discard = can_draft && set.map(|s| s.status == "draft").unwrap_or(false);
     let can_pub = allows_publish(cat);
     let can_op = allows_operational_create(cat);
-    let read_only = matches!(cat, GovernanceCategory::SystemCatalog)
-        || (!can_mutate && !can_draft && !can_pub && !can_op);
+    let read_only =
+        matches!(cat, GovernanceCategory::SystemCatalog) || (!can_mutate && !can_draft && !can_pub && !can_op);
 
     ReferenceGovernanceCapabilities {
         category: cat.as_str().to_string(),
@@ -331,10 +309,7 @@ pub fn assert_allows_operational_create(domain: &ReferenceDomain) -> AppResult<(
     )]))
 }
 
-pub fn assert_allows_value_mutation(
-    domain: &ReferenceDomain,
-    set: &ReferenceSet,
-) -> AppResult<()> {
+pub fn assert_allows_value_mutation(domain: &ReferenceDomain, set: &ReferenceSet) -> AppResult<()> {
     let cat = category_of(domain);
     if allows_value_mutation(cat, set) {
         return Ok(());

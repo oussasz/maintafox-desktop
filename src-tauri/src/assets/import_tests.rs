@@ -14,15 +14,15 @@ mod tests {
     use sea_orm_migration::MigratorTrait;
 
     use crate::assets::governance::ConflictCategory;
-    use crate::assets::import;
     use crate::assets::identity::{self, CreateAssetPayload};
+    use crate::assets::import;
     use crate::auth::rbac::{self, PermissionScope};
     use crate::auth::session_manager::AuthenticatedUser;
-    use crate::state::AppState;
     use crate::org::node_types::{self, CreateNodeTypePayload};
     use crate::org::nodes::{self, CreateOrgNodePayload};
     use crate::org::relationship_rules::{self, CreateRelationshipRulePayload};
     use crate::org::structure_model::{self, CreateStructureModelPayload};
+    use crate::state::AppState;
 
     /// In-memory SQLite with all migrations + seed data.
     async fn setup() -> sea_orm::DatabaseConnection {
@@ -244,9 +244,7 @@ mod tests {
             .await
             .expect("create batch");
 
-        let events = import::list_import_events(&db, batch.id)
-            .await
-            .expect("list events");
+        let events = import::list_import_events(&db, batch.id).await.expect("list events");
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "uploaded");
@@ -293,9 +291,7 @@ mod tests {
             .await
             .expect("create batch");
 
-        import::parse_and_stage_csv(&db, batch.id, &csv)
-            .await
-            .expect("stage");
+        import::parse_and_stage_csv(&db, batch.id, &csv).await.expect("stage");
 
         let validated = import::validate_import_batch(&db, batch.id, Some(1))
             .await
@@ -335,17 +331,13 @@ mod tests {
             .await
             .expect("create batch");
 
-        import::parse_and_stage_csv(&db, batch.id, &csv)
-            .await
-            .expect("stage");
+        import::parse_and_stage_csv(&db, batch.id, &csv).await.expect("stage");
 
         import::validate_import_batch(&db, batch.id, Some(1))
             .await
             .expect("validate");
 
-        let events = import::list_import_events(&db, batch.id)
-            .await
-            .expect("list events");
+        let events = import::list_import_events(&db, batch.id).await.expect("list events");
 
         // Should have 2 events: uploaded + validated
         assert_eq!(events.len(), 2);
@@ -356,14 +348,8 @@ mod tests {
             .summary_json
             .as_ref()
             .expect("validated event should have summary");
-        assert!(
-            summary.contains("valid_rows"),
-            "summary should contain valid_rows"
-        );
-        assert!(
-            summary.contains("error_rows"),
-            "summary should contain error_rows"
-        );
+        assert!(summary.contains("valid_rows"), "summary should contain valid_rows");
+        assert!(summary.contains("error_rows"), "summary should contain error_rows");
     }
 
     #[tokio::test]
@@ -379,9 +365,7 @@ mod tests {
             .await
             .expect("create batch");
 
-        import::parse_and_stage_csv(&db, batch.id, &csv)
-            .await
-            .expect("stage");
+        import::parse_and_stage_csv(&db, batch.id, &csv).await.expect("stage");
 
         import::validate_import_batch(&db, batch.id, Some(1))
             .await
@@ -419,17 +403,13 @@ mod tests {
             .await
             .expect("create batch");
 
-        import::parse_and_stage_csv(&db, batch.id, &csv)
-            .await
-            .expect("stage");
+        import::parse_and_stage_csv(&db, batch.id, &csv).await.expect("stage");
 
         import::validate_import_batch(&db, batch.id, Some(1))
             .await
             .expect("validate");
 
-        let preview = import::get_import_preview(&db, batch.id)
-            .await
-            .expect("get preview");
+        let preview = import::get_import_preview(&db, batch.id).await.expect("get preview");
 
         // Row 2 (row_no=2): FAKE_CLASS should produce UnknownClassCode
         let row2 = preview
@@ -461,24 +441,16 @@ mod tests {
             .await
             .expect("create batch");
 
-        import::parse_and_stage_csv(&db, batch.id, &csv)
-            .await
-            .expect("stage");
+        import::parse_and_stage_csv(&db, batch.id, &csv).await.expect("stage");
 
         import::validate_import_batch(&db, batch.id, Some(1))
             .await
             .expect("validate");
 
-        let preview = import::get_import_preview(&db, batch.id)
-            .await
-            .expect("get preview");
+        let preview = import::get_import_preview(&db, batch.id).await.expect("get preview");
 
         // Row 3 (row_no=3): org_node_id=999999 should produce OrgNodeMissing
-        let row3 = preview
-            .rows
-            .iter()
-            .find(|r| r.row_no == 3)
-            .expect("row 3 should exist");
+        let row3 = preview.rows.iter().find(|r| r.row_no == 3).expect("row 3 should exist");
 
         assert_eq!(row3.validation_status, "error");
         assert!(
@@ -503,24 +475,16 @@ mod tests {
             .await
             .expect("create batch");
 
-        import::parse_and_stage_csv(&db, batch.id, &csv)
-            .await
-            .expect("stage");
+        import::parse_and_stage_csv(&db, batch.id, &csv).await.expect("stage");
 
         import::validate_import_batch(&db, batch.id, Some(1))
             .await
             .expect("validate");
 
-        let preview = import::get_import_preview(&db, batch.id)
-            .await
-            .expect("get preview");
+        let preview = import::get_import_preview(&db, batch.id).await.expect("get preview");
 
         // Row 4 (row_no=4): NONEXISTENT_CRIT should produce UnknownCriticalityCode
-        let row4 = preview
-            .rows
-            .iter()
-            .find(|r| r.row_no == 4)
-            .expect("row 4 should exist");
+        let row4 = preview.rows.iter().find(|r| r.row_no == 4).expect("row 4 should exist");
 
         assert_eq!(row4.validation_status, "error");
         assert!(
@@ -545,24 +509,16 @@ mod tests {
             .await
             .expect("create batch");
 
-        import::parse_and_stage_csv(&db, batch.id, &csv)
-            .await
-            .expect("stage");
+        import::parse_and_stage_csv(&db, batch.id, &csv).await.expect("stage");
 
         import::validate_import_batch(&db, batch.id, Some(1))
             .await
             .expect("validate");
 
-        let preview = import::get_import_preview(&db, batch.id)
-            .await
-            .expect("get preview");
+        let preview = import::get_import_preview(&db, batch.id).await.expect("get preview");
 
         // Row 5 (row_no=5): empty asset_code + missing class_code
-        let row5 = preview
-            .rows
-            .iter()
-            .find(|r| r.row_no == 5)
-            .expect("row 5 should exist");
+        let row5 = preview.rows.iter().find(|r| r.row_no == 5).expect("row 5 should exist");
 
         assert_eq!(row5.validation_status, "error");
         assert!(
@@ -587,24 +543,16 @@ mod tests {
             .await
             .expect("create batch");
 
-        import::parse_and_stage_csv(&db, batch.id, &csv)
-            .await
-            .expect("stage");
+        import::parse_and_stage_csv(&db, batch.id, &csv).await.expect("stage");
 
         import::validate_import_batch(&db, batch.id, Some(1))
             .await
             .expect("validate");
 
-        let preview = import::get_import_preview(&db, batch.id)
-            .await
-            .expect("get preview");
+        let preview = import::get_import_preview(&db, batch.id).await.expect("get preview");
 
         // Row 1 (row_no=1): fully valid, should propose "create"
-        let row1 = preview
-            .rows
-            .iter()
-            .find(|r| r.row_no == 1)
-            .expect("row 1 should exist");
+        let row1 = preview.rows.iter().find(|r| r.row_no == 1).expect("row 1 should exist");
 
         assert_eq!(row1.validation_status, "valid");
         assert_eq!(
@@ -612,10 +560,7 @@ mod tests {
             Some("create"),
             "valid new asset should propose create"
         );
-        assert!(
-            row1.validation_messages.is_empty(),
-            "valid row should have no messages"
-        );
+        assert!(row1.validation_messages.is_empty(), "valid row should have no messages");
     }
 
     #[tokio::test]
@@ -670,17 +615,13 @@ mod tests {
             .await
             .expect("create batch");
 
-        import::parse_and_stage_csv(&db, batch.id, &csv)
-            .await
-            .expect("stage");
+        import::parse_and_stage_csv(&db, batch.id, &csv).await.expect("stage");
 
         import::validate_import_batch(&db, batch.id, Some(1))
             .await
             .expect("validate");
 
-        let preview = import::get_import_preview(&db, batch.id)
-            .await
-            .expect("get preview");
+        let preview = import::get_import_preview(&db, batch.id).await.expect("get preview");
 
         let row = &preview.rows[0];
         assert_eq!(row.validation_status, "warning");
@@ -736,17 +677,13 @@ mod tests {
             .await
             .expect("create batch");
 
-        import::parse_and_stage_csv(&db, batch.id, &csv)
-            .await
-            .expect("stage");
+        import::parse_and_stage_csv(&db, batch.id, &csv).await.expect("stage");
 
         import::validate_import_batch(&db, batch.id, Some(1))
             .await
             .expect("validate");
 
-        let preview = import::get_import_preview(&db, batch.id)
-            .await
-            .expect("get preview");
+        let preview = import::get_import_preview(&db, batch.id).await.expect("get preview");
 
         let row = &preview.rows[0];
         assert_eq!(row.validation_status, "error");
@@ -772,18 +709,12 @@ mod tests {
     }
 
     /// Helper: stage + validate a CSV and return the batch id.
-    async fn stage_and_validate(
-        db: &sea_orm::DatabaseConnection,
-        csv: &[u8],
-        filename: &str,
-    ) -> i64 {
+    async fn stage_and_validate(db: &sea_orm::DatabaseConnection, csv: &[u8], filename: &str) -> i64 {
         let sha = sha256_hex(csv);
         let batch = import::create_import_batch(db, filename, &sha, Some(1))
             .await
             .expect("create batch");
-        import::parse_and_stage_csv(db, batch.id, csv)
-            .await
-            .expect("stage");
+        import::parse_and_stage_csv(db, batch.id, csv).await.expect("stage");
         import::validate_import_batch(db, batch.id, Some(1))
             .await
             .expect("validate");
@@ -812,12 +743,9 @@ mod tests {
         assert_eq!(result.batch.status, "applied");
 
         // Verify equipment rows exist in the registry
-        let asset = identity::get_asset_by_id(
-            &db,
-            find_equipment_id_by_code(&db, "IMP-5001").await,
-        )
-        .await
-        .expect("IMP-5001 should exist");
+        let asset = identity::get_asset_by_id(&db, find_equipment_id_by_code(&db, "IMP-5001").await)
+            .await
+            .expect("IMP-5001 should exist");
         assert_eq!(asset.asset_code, "IMP-5001");
         assert_eq!(asset.asset_name, "Imported Pump A");
     }
@@ -886,12 +814,9 @@ mod tests {
         assert_eq!(result.created, 0);
         assert_eq!(result.updated, 1, "should have updated 1 row");
 
-        let asset = identity::get_asset_by_id(
-            &db,
-            find_equipment_id_by_code(&db, "IMP-6001").await,
-        )
-        .await
-        .expect("IMP-6001 should exist");
+        let asset = identity::get_asset_by_id(&db, find_equipment_id_by_code(&db, "IMP-6001").await)
+            .await
+            .expect("IMP-6001 should exist");
         assert_eq!(asset.asset_name, "Updated name");
     }
 
@@ -1043,9 +968,7 @@ mod tests {
             .await
             .expect("apply");
 
-        let events = import::list_import_events(&db, batch_id)
-            .await
-            .expect("list events");
+        let events = import::list_import_events(&db, batch_id).await.expect("list events");
 
         // Should have 3 events: uploaded + validated + applied
         assert_eq!(events.len(), 3);
@@ -1057,8 +980,7 @@ mod tests {
             .as_ref()
             .expect("applied event should have summary");
 
-        let parsed: serde_json::Value =
-            serde_json::from_str(summary).expect("summary should be valid JSON");
+        let parsed: serde_json::Value = serde_json::from_str(summary).expect("summary should be valid JSON");
         assert_eq!(parsed["created"], 2);
         assert_eq!(parsed["updated"], 0);
     }
@@ -1126,12 +1048,12 @@ mod tests {
 
         assert_eq!(result.updated, 1, "warning row should be applied");
 
-        let events = import::list_import_events(&db, batch_id)
-            .await
-            .expect("list events");
-        let applied_event = events.iter().find(|e| e.event_type == "applied").expect("applied event");
-        let summary: serde_json::Value =
-            serde_json::from_str(applied_event.summary_json.as_ref().unwrap()).unwrap();
+        let events = import::list_import_events(&db, batch_id).await.expect("list events");
+        let applied_event = events
+            .iter()
+            .find(|e| e.event_type == "applied")
+            .expect("applied event");
+        let summary: serde_json::Value = serde_json::from_str(applied_event.summary_json.as_ref().unwrap()).unwrap();
         assert_eq!(summary["include_warnings"], true);
     }
 
@@ -1146,10 +1068,7 @@ mod tests {
             .await
             .expect("check_permission should not error");
 
-        assert!(
-            !has_perm,
-            "user without role assignment should NOT have eq.import"
-        );
+        assert!(!has_perm, "user without role assignment should NOT have eq.import");
     }
 
     #[tokio::test]
@@ -1174,10 +1093,7 @@ mod tests {
             .await
             .expect("check_permission should not error");
 
-        assert!(
-            has_perm,
-            "Administrator should have eq.import permission"
-        );
+        assert!(has_perm, "Administrator should have eq.import permission");
     }
 
     #[tokio::test]
@@ -1202,9 +1118,6 @@ mod tests {
             .await
             .expect("check_permission should not error");
 
-        assert!(
-            !has_perm,
-            "Operator should NOT have eq.import permission"
-        );
+        assert!(!has_perm, "Operator should NOT have eq.import permission");
     }
 }

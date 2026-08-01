@@ -206,8 +206,7 @@ async fn load_scope_permissions(
            AND {scope_sql}"
     );
 
-    let mut values: Vec<sea_orm::Value> =
-        vec![user_id.into(), now.clone().into(), now.into()];
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into(), now.clone().into(), now.into()];
 
     if let (Some(st), Some(sr)) = (&scope_type_filter, &scope_ref_filter) {
         values.push((*st).into());

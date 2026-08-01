@@ -52,9 +52,7 @@ pub struct CostPostingHook {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "WO cost row decode failed for column '{column}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("WO cost row decode failed for column '{column}': {e}"))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -62,10 +60,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Compute the cost summary for a WO from sub-entity accumulators.
-pub async fn get_cost_summary(
-    db: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<WoCostSummary> {
+pub async fn get_cost_summary(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<WoCostSummary> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -164,10 +159,7 @@ pub async fn get_cost_summary(
 
 /// Assemble the cost-posting hook payload for budget module consumption.
 /// WO must be in `closed` or `technically_verified` state.
-pub async fn get_cost_posting_hook(
-    db: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<CostPostingHook> {
+pub async fn get_cost_posting_hook(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<CostPostingHook> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -209,9 +201,7 @@ pub async fn get_cost_posting_hook(
     }
 
     Ok(CostPostingHook {
-        wo_id: row
-            .try_get::<i64>("", "wo_id")
-            .map_err(|e| decode_err("wo_id", e))?,
+        wo_id: row.try_get::<i64>("", "wo_id").map_err(|e| decode_err("wo_id", e))?,
         wo_code: row
             .try_get::<String>("", "wo_code")
             .map_err(|e| decode_err("wo_code", e))?,

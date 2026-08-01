@@ -45,30 +45,20 @@ impl MigrationTrait for Migration {
         //   created_at, origin_machine_id
         //
         // New columns:
-        db.execute_unprepared(
-            "ALTER TABLE equipment_lifecycle_events ADD COLUMN from_class_code TEXT",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE equipment_lifecycle_events ADD COLUMN from_class_code TEXT")
+            .await?;
 
-        db.execute_unprepared(
-            "ALTER TABLE equipment_lifecycle_events ADD COLUMN to_class_code TEXT",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE equipment_lifecycle_events ADD COLUMN to_class_code TEXT")
+            .await?;
 
-        db.execute_unprepared(
-            "ALTER TABLE equipment_lifecycle_events ADD COLUMN related_asset_id INTEGER",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE equipment_lifecycle_events ADD COLUMN related_asset_id INTEGER")
+            .await?;
 
-        db.execute_unprepared(
-            "ALTER TABLE equipment_lifecycle_events ADD COLUMN reason_code TEXT",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE equipment_lifecycle_events ADD COLUMN reason_code TEXT")
+            .await?;
 
-        db.execute_unprepared(
-            "ALTER TABLE equipment_lifecycle_events ADD COLUMN approved_by_id INTEGER",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE equipment_lifecycle_events ADD COLUMN approved_by_id INTEGER")
+            .await?;
 
         // ── 2. Add composite index for timeline queries ───────────────────
         //
@@ -121,15 +111,11 @@ impl MigrationTrait for Migration {
         // New columns:
         //   meter_code  — stable governed identifier (e.g. "HRS-001")
         //   rollover_value — cyclic counter max before reset (NULL = no rollover)
-        db.execute_unprepared(
-            "ALTER TABLE equipment_meters ADD COLUMN meter_code TEXT",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE equipment_meters ADD COLUMN meter_code TEXT")
+            .await?;
 
-        db.execute_unprepared(
-            "ALTER TABLE equipment_meters ADD COLUMN rollover_value REAL",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE equipment_meters ADD COLUMN rollover_value REAL")
+            .await?;
 
         // Backfill meter_code from name for existing rows (idempotent).
         db.execute_unprepared(
@@ -154,11 +140,7 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(Alias::new("meter_id")).integer().not_null())
-                    .col(
-                        ColumnDef::new(Alias::new("reading_value"))
-                            .double()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("reading_value")).double().not_null())
                     .col(ColumnDef::new(Alias::new("reading_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("source_type")).text().not_null())
                     .col(ColumnDef::new(Alias::new("source_reference")).text())
@@ -220,12 +202,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("asset_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("document_ref")).text().not_null())
                     .col(ColumnDef::new(Alias::new("link_purpose")).text().not_null())
-                    .col(
-                        ColumnDef::new(Alias::new("is_primary"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("is_primary")).integer().not_null().default(0))
                     .col(ColumnDef::new(Alias::new("valid_from")).text())
                     .col(ColumnDef::new(Alias::new("valid_to")).text())
                     .col(ColumnDef::new(Alias::new("created_by_id")).integer())
@@ -261,11 +238,7 @@ impl MigrationTrait for Migration {
             .await?;
 
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("asset_document_links"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("asset_document_links")).to_owned())
             .await?;
 
         // Drop Sprint S2 objects
@@ -288,11 +261,7 @@ impl MigrationTrait for Migration {
             .await?;
 
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("asset_meter_readings"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("asset_meter_readings")).to_owned())
             .await?;
 
         // SQLite < 3.35 does not support DROP COLUMN.

@@ -6,8 +6,8 @@ mod tests {
     use sea_orm_migration::MigratorTrait;
 
     use crate::reference::schedule_patterns::{
-        get_schedule_pattern, upsert_schedule_pattern, ScheduleDayPattern,
-        UpsertSchedulePatternPayload, SCHEDULE_CLASS_DOMAIN_CODE,
+        get_schedule_pattern, upsert_schedule_pattern, ScheduleDayPattern, UpsertSchedulePatternPayload,
+        SCHEDULE_CLASS_DOMAIN_CODE,
     };
     use crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity;
     use crate::reference::values::{create_operational_value, CreateOperationalReferenceValuePayload};
@@ -20,12 +20,8 @@ mod tests {
         ))
         .await
         .expect("pragma");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrate");
-        ensure_system_reference_catalog_integrity(&db)
-            .await
-            .expect("integrity");
+        crate::migrations::Migrator::up(&db, None).await.expect("migrate");
+        ensure_system_reference_catalog_integrity(&db).await.expect("integrity");
         db
     }
 
@@ -79,8 +75,7 @@ mod tests {
         let legacy = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='schedule_classes'"
-                    .to_string(),
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='schedule_classes'".to_string(),
             ))
             .await
             .expect("sqlite_master");
@@ -89,8 +84,7 @@ mod tests {
         let orphan = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM reference_domains WHERE UPPER(TRIM(code)) = 'ORG.SCHEDULES'"
-                    .to_string(),
+                "SELECT id FROM reference_domains WHERE UPPER(TRIM(code)) = 'ORG.SCHEDULES'".to_string(),
             ))
             .await
             .expect("query");
@@ -114,9 +108,7 @@ mod tests {
         .await
         .expect("create operational");
 
-        let pattern = get_schedule_pattern(&db, created.id)
-            .await
-            .expect("get pattern");
+        let pattern = get_schedule_pattern(&db, created.id).await.expect("get pattern");
         assert_eq!(pattern.details.len(), 7);
         assert_eq!(pattern.shift_pattern_code, "WEEKEND_SHIFT");
     }

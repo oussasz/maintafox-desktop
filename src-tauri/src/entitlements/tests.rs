@@ -3,16 +3,12 @@ use sea_orm_migration::MigratorTrait;
 use sha2::{Digest, Sha256};
 
 use crate::entitlements::domain::{EntitlementEnvelopeInput, ENTITLEMENT_SIGNATURE_ALG_V1};
-use crate::errors::AppError;
 use crate::entitlements::queries;
+use crate::errors::AppError;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None)
-        .await
-        .expect("migrations");
+    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     db
 }
 
@@ -50,10 +46,7 @@ fn sign_envelope(input: &EntitlementEnvelopeInput) -> String {
         _ => "UNKNOWN",
     };
     let mut hasher = Sha256::new();
-    hasher.update(format!(
-        "{}:{}:{}:{}",
-        input.issuer, input.key_id, payload_hash, secret
-    ));
+    hasher.update(format!("{}:{}:{}:{}", input.issuer, input.key_id, payload_hash, secret));
     hex::encode(hasher.finalize())
 }
 
@@ -157,17 +150,15 @@ async fn malformed_signature_is_rejected_and_does_not_become_active() {
 async fn state_transitions_and_mid_session_policy_refresh_are_consistent() {
     let db = setup_db().await;
     let env1 = base_envelope("env-100", 1, None);
-    queries::apply_entitlement_envelope(&db, env1)
-        .await
-        .expect("apply v1");
+    queries::apply_entitlement_envelope(&db, env1).await.expect("apply v1");
     queries::enforce_capability_for_permission(&db, crate::rbac::permissions::FIN_MANAGE)
         .await
         .expect("finance write allowed in v1");
 
     let mut env2 = base_envelope("env-101", 2, Some("env-100"));
     env2.state = "suspended".to_string();
-    env2.capabilities_json = r#"{"equipment":true,"inventory":true,"finance":false,"planning":true,"sync":true}"#
-        .to_string();
+    env2.capabilities_json =
+        r#"{"equipment":true,"inventory":true,"finance":false,"planning":true,"sync":true}"#.to_string();
     env2.signature = sign_envelope(&env2);
     queries::apply_entitlement_envelope(&db, env2)
         .await
@@ -187,13 +178,9 @@ async fn state_transitions_and_mid_session_policy_refresh_are_consistent() {
 async fn entitlement_diagnostics_include_lineage_and_runbooks() {
     let db = setup_db().await;
     let env1 = base_envelope("env-diag-1", 1, None);
-    queries::apply_entitlement_envelope(&db, env1)
-        .await
-        .expect("apply v1");
+    queries::apply_entitlement_envelope(&db, env1).await.expect("apply v1");
     let env2 = base_envelope("env-diag-2", 2, Some("env-diag-1"));
-    queries::apply_entitlement_envelope(&db, env2)
-        .await
-        .expect("apply v2");
+    queries::apply_entitlement_envelope(&db, env2).await.expect("apply v2");
 
     let diagnostics = queries::get_entitlement_diagnostics(&db, Some(10))
         .await
@@ -207,9 +194,7 @@ async fn entitlement_diagnostics_include_lineage_and_runbooks() {
 async fn lineage_requires_previous_reference_for_new_versions() {
     let db = setup_db().await;
     let env1 = base_envelope("env-lineage-1", 1, None);
-    queries::apply_entitlement_envelope(&db, env1)
-        .await
-        .expect("apply v1");
+    queries::apply_entitlement_envelope(&db, env1).await.expect("apply v1");
 
     let mut broken = base_envelope("env-lineage-2", 2, Some("missing-parent"));
     broken.signature = sign_envelope(&broken);

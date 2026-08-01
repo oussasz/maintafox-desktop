@@ -49,34 +49,43 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
-        let _ = db.execute_unprepared(
-            "ALTER TABLE schedule_change_log
+        let _ = db
+            .execute_unprepared(
+                "ALTER TABLE schedule_change_log
              ADD COLUMN field_changed TEXT NULL",
-        ).await;
-        let _ = db.execute_unprepared(
-            "ALTER TABLE schedule_change_log
+            )
+            .await;
+        let _ = db
+            .execute_unprepared(
+                "ALTER TABLE schedule_change_log
              ADD COLUMN old_value TEXT NULL",
-        ).await;
-        let _ = db.execute_unprepared(
-            "ALTER TABLE schedule_change_log
+            )
+            .await;
+        let _ = db
+            .execute_unprepared(
+                "ALTER TABLE schedule_change_log
              ADD COLUMN new_value TEXT NULL",
-        ).await;
-        let _ = db.execute_unprepared(
-            "ALTER TABLE schedule_change_log
+            )
+            .await;
+        let _ = db
+            .execute_unprepared(
+                "ALTER TABLE schedule_change_log
              ADD COLUMN reason_code TEXT NULL",
-        ).await;
-        let _ = db.execute_unprepared(
-            "ALTER TABLE schedule_change_log
+            )
+            .await;
+        let _ = db
+            .execute_unprepared(
+                "ALTER TABLE schedule_change_log
              ADD COLUMN reason_note TEXT NULL",
-        ).await;
+            )
+            .await;
 
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared("DROP TABLE IF EXISTS schedule_break_ins")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS schedule_break_ins").await?;
         Ok(())
     }
 }

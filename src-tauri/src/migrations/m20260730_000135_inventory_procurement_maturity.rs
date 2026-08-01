@@ -145,8 +145,7 @@ impl MigrationTrait for Migration {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "ALTER TABLE procurement_requisition_lines ADD COLUMN demand_source_line_id INTEGER NULL"
-                .to_string(),
+            "ALTER TABLE procurement_requisition_lines ADD COLUMN demand_source_line_id INTEGER NULL".to_string(),
         ))
         .await?;
 

@@ -73,12 +73,8 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_attachment(row: &QueryResult) -> AppResult<DiAttachment> {
     Ok(DiAttachment {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
-        di_id: row
-            .try_get::<i64>("", "di_id")
-            .map_err(|e| decode_err("di_id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        di_id: row.try_get::<i64>("", "di_id").map_err(|e| decode_err("di_id", e))?,
         file_name: row
             .try_get::<String>("", "file_name")
             .map_err(|e| decode_err("file_name", e))?,
@@ -145,9 +141,7 @@ pub async fn save_di_attachment(
         .and_then(|n| n.to_str())
         .unwrap_or("attachment");
     if sanitized_name.is_empty() || sanitized_name.contains("..") {
-        return Err(AppError::ValidationFailed(vec![
-            "Nom de fichier invalide.".into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["Nom de fichier invalide.".into()]));
     }
 
     // ── Verify DI exists and is not archived ──────────────────────────────
@@ -163,9 +157,7 @@ pub async fn save_di_attachment(
             id: input.di_id.to_string(),
         })?;
 
-    let status: String = di_row
-        .try_get("", "status")
-        .map_err(|e| decode_err("status", e))?;
+    let status: String = di_row.try_get("", "status").map_err(|e| decode_err("status", e))?;
 
     if status == "archived" {
         return Err(AppError::ValidationFailed(vec![
@@ -175,10 +167,7 @@ pub async fn save_di_attachment(
 
     // ── Generate unique relative path ─────────────────────────────────────
     let uuid = Uuid::new_v4();
-    let relative_path = format!(
-        "di_attachments/{}/{}-{}",
-        input.di_id, uuid, sanitized_name
-    );
+    let relative_path = format!("di_attachments/{}/{}-{}", input.di_id, uuid, sanitized_name);
 
     // ── Write to disk ─────────────────────────────────────────────────────
     let absolute_path = app_data_dir.join(&relative_path);
@@ -222,11 +211,7 @@ pub async fn save_di_attachment(
             [relative_path.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "Failed to re-fetch inserted di_attachment"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch inserted di_attachment")))?;
 
     map_attachment(&row)
 }
@@ -248,9 +233,8 @@ pub async fn save_di_attachment_from_path(
         )]));
     }
 
-    let meta = std::fs::metadata(src).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("metadata for DI attachment source: {e}"))
-    })?;
+    let meta = std::fs::metadata(src)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("metadata for DI attachment source: {e}")))?;
     if meta.len() as usize > MAX_FILE_SIZE_BYTES {
         return Err(AppError::ValidationFailed(vec![format!(
             "Fichier trop volumineux (max {} Mo).",
@@ -258,9 +242,8 @@ pub async fn save_di_attachment_from_path(
         )]));
     }
 
-    let file_bytes = std::fs::read(src).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("read DI attachment source: {e}"))
-    })?;
+    let file_bytes =
+        std::fs::read(src).map_err(|e| AppError::Internal(anyhow::anyhow!("read DI attachment source: {e}")))?;
 
     let file_name = src
         .file_name()
@@ -312,13 +295,9 @@ fn mime_from_path(path: &Path) -> String {
         Some("pdf") => "application/pdf".into(),
         Some("txt") => "text/plain".into(),
         Some("doc") => "application/msword".into(),
-        Some("docx") => {
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into()
-        }
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into(),
         Some("xls") => "application/vnd.ms-excel".into(),
-        Some("xlsx") => {
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into()
-        }
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
         _ => "application/octet-stream".into(),
     }
 }
@@ -352,9 +331,7 @@ pub async fn read_di_attachment_preview(
     let relative_path: String = row
         .try_get("", "relative_path")
         .map_err(|e| decode_err("relative_path", e))?;
-    let mime_type: String = row
-        .try_get("", "mime_type")
-        .map_err(|e| decode_err("mime_type", e))?;
+    let mime_type: String = row.try_get("", "mime_type").map_err(|e| decode_err("mime_type", e))?;
 
     if !mime_type.starts_with("image/") {
         return Err(AppError::ValidationFailed(vec![
@@ -370,9 +347,8 @@ pub async fn read_di_attachment_preview(
         });
     }
 
-    let bytes = std::fs::read(&abs).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("read DI attachment preview: {e}"))
-    })?;
+    let bytes =
+        std::fs::read(&abs).map_err(|e| AppError::Internal(anyhow::anyhow!("read DI attachment preview: {e}")))?;
     if bytes.len() > MAX_FILE_SIZE_BYTES {
         return Err(AppError::ValidationFailed(vec![
             "Fichier trop volumineux pour l'aperçu.".into(),
@@ -390,10 +366,7 @@ pub async fn read_di_attachment_preview(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// List all attachments for a given DI, ordered by upload date descending.
-pub async fn list_di_attachments(
-    db: &impl ConnectionTrait,
-    di_id: i64,
-) -> AppResult<Vec<DiAttachment>> {
+pub async fn list_di_attachments(db: &impl ConnectionTrait, di_id: i64) -> AppResult<Vec<DiAttachment>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -411,10 +384,7 @@ pub async fn list_di_attachments(
 
 /// Delete the attachment DB record. Does NOT delete the file from disk.
 /// The caller (command layer) must hold `di.admin` to invoke this.
-pub async fn delete_di_attachment_record(
-    db: &impl ConnectionTrait,
-    attachment_id: i64,
-) -> AppResult<()> {
+pub async fn delete_di_attachment_record(db: &impl ConnectionTrait, attachment_id: i64) -> AppResult<()> {
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

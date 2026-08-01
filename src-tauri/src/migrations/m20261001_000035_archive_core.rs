@@ -60,22 +60,16 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ai_module ON archive_items(source_module)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ai_class ON archive_items(archive_class)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ai_module ON archive_items(source_module)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ai_class ON archive_items(archive_class)")
+            .await?;
         db.execute_unprepared(
             "CREATE INDEX IF NOT EXISTS idx_ai_record ON archive_items(source_module, source_record_id)",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ai_search ON archive_items(search_text)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ai_search ON archive_items(search_text)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE TABLE IF NOT EXISTS archive_payloads (
@@ -103,14 +97,10 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_aa_item ON archive_actions(archive_item_id)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_aa_action ON archive_actions(action)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_aa_item ON archive_actions(archive_item_id)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_aa_action ON archive_actions(action)")
+            .await?;
 
         db.execute_unprepared(
             "INSERT OR IGNORE INTO retention_policies
@@ -141,7 +131,8 @@ impl MigrationTrait for Migration {
         db.execute_unprepared("DROP INDEX IF EXISTS idx_ai_record").await?;
         db.execute_unprepared("DROP INDEX IF EXISTS idx_ai_class").await?;
         db.execute_unprepared("DROP INDEX IF EXISTS idx_ai_module").await?;
-        db.execute_unprepared("DROP INDEX IF EXISTS uidx_rp_module_class").await?;
+        db.execute_unprepared("DROP INDEX IF EXISTS uidx_rp_module_class")
+            .await?;
 
         db.execute_unprepared("DROP TABLE IF EXISTS archive_actions").await?;
         db.execute_unprepared("DROP TABLE IF EXISTS archive_payloads").await?;

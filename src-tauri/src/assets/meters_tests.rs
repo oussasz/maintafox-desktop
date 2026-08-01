@@ -6,13 +6,11 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{Database, DbBackend, ConnectionTrait, Statement};
+    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     use crate::assets::identity::{self, CreateAssetPayload};
-    use crate::assets::meters::{
-        self, CreateAssetMeterPayload, RecordMeterReadingPayload,
-    };
+    use crate::assets::meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload};
     use crate::errors::AppError;
     use crate::org::node_types::{self, CreateNodeTypePayload};
     use crate::org::nodes::{self, CreateOrgNodePayload};
@@ -132,11 +130,7 @@ mod tests {
     }
 
     /// Create a test asset with a unique code.
-    async fn create_test_asset(
-        db: &sea_orm::DatabaseConnection,
-        code: &str,
-        org_node_id: i64,
-    ) -> identity::Asset {
+    async fn create_test_asset(db: &sea_orm::DatabaseConnection, code: &str, org_node_id: i64) -> identity::Asset {
         identity::create_asset(
             db,
             CreateAssetPayload {
@@ -298,9 +292,7 @@ mod tests {
         assert!(!m2.is_primary);
 
         // Verify list returns both
-        let all = meters::list_asset_meters(&db, asset.id)
-            .await
-            .expect("list meters");
+        let all = meters::list_asset_meters(&db, asset.id).await.expect("list meters");
         assert_eq!(all.len(), 2);
         // Primary should be first (ordered by is_primary DESC)
         assert!(all[0].is_primary);
@@ -611,9 +603,7 @@ mod tests {
         .expect("record reading");
 
         // Reload meters and verify current_reading was updated
-        let meters_list = meters::list_asset_meters(&db, asset.id)
-            .await
-            .expect("list meters");
+        let meters_list = meters::list_asset_meters(&db, asset.id).await.expect("list meters");
         assert_eq!(meters_list.len(), 1);
         assert_eq!(meters_list[0].current_reading, 150.0);
         assert!(meters_list[0].last_read_at.is_some());
@@ -662,10 +652,7 @@ mod tests {
         .expect("manual reading");
 
         assert_eq!(reading.source_type, "MANUAL");
-        assert_eq!(
-            reading.source_reference.as_deref(),
-            Some("Releve terrain operateur #7")
-        );
+        assert_eq!(reading.source_reference.as_deref(), Some("Releve terrain operateur #7"));
         assert_eq!(reading.quality_flag, "accepted");
     }
 

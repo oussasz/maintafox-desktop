@@ -8,11 +8,12 @@ use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
 use crate::inspection::domain::{
     AddInspectionEvidenceInput, CreateInspectionTemplateInput, EnqueueInspectionOfflineInput,
-    InspectionAnomaliesFilter, InspectionAnomaly, InspectionCheckpoint, InspectionCheckpointsFilter, InspectionEvidence,
-    InspectionEvidenceFilter, InspectionOfflineQueueItem, InspectionReliabilitySignal, InspectionReliabilitySignalsFilter,
-    InspectionResult, InspectionResultsFilter, InspectionRound, InspectionTemplate, InspectionTemplateVersion,
-    InspectionTemplateVersionsFilter, PublishInspectionTemplateVersionInput, RecordInspectionResultInput,
-    RefreshInspectionReliabilitySignalsInput, ScheduleInspectionRoundInput, UpdateInspectionAnomalyInput,
+    InspectionAnomaliesFilter, InspectionAnomaly, InspectionCheckpoint, InspectionCheckpointsFilter,
+    InspectionEvidence, InspectionEvidenceFilter, InspectionOfflineQueueItem, InspectionReliabilitySignal,
+    InspectionReliabilitySignalsFilter, InspectionResult, InspectionResultsFilter, InspectionRound, InspectionTemplate,
+    InspectionTemplateVersion, InspectionTemplateVersionsFilter, PublishInspectionTemplateVersionInput,
+    RecordInspectionResultInput, RefreshInspectionReliabilitySignalsInput, ScheduleInspectionRoundInput,
+    UpdateInspectionAnomalyInput,
 };
 use crate::inspection::queries;
 use crate::inspection::results;
@@ -59,7 +60,12 @@ async fn actor_personnel_id(state: &State<'_, AppState>, user_id: i32) -> AppRes
 #[tauri::command]
 pub async fn list_inspection_templates(state: State<'_, AppState>) -> AppResult<Vec<InspectionTemplate>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
     queries::list_inspection_templates(&state.db).await
 }
 
@@ -69,7 +75,12 @@ pub async fn list_inspection_template_versions(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<InspectionTemplateVersion>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
     queries::list_inspection_template_versions(&state.db, filter).await
 }
 
@@ -79,14 +90,24 @@ pub async fn list_inspection_checkpoints(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<InspectionCheckpoint>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
     queries::list_inspection_checkpoints(&state.db, filter).await
 }
 
 #[tauri::command]
 pub async fn list_inspection_rounds(state: State<'_, AppState>) -> AppResult<Vec<InspectionRound>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
     queries::list_inspection_rounds(&state.db).await
 }
 
@@ -96,7 +117,12 @@ pub async fn create_inspection_template(
     state: State<'_, AppState>,
 ) -> AppResult<(InspectionTemplate, InspectionTemplateVersion, Vec<InspectionCheckpoint>)> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_ADMIN, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_ADMIN,
+        PermissionScope::Global
+    );
     queries::create_inspection_template(&state.db, input).await
 }
 
@@ -106,7 +132,12 @@ pub async fn publish_inspection_template_version(
     state: State<'_, AppState>,
 ) -> AppResult<(InspectionTemplate, InspectionTemplateVersion, Vec<InspectionCheckpoint>)> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_ADMIN, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_ADMIN,
+        PermissionScope::Global
+    );
     queries::publish_inspection_template_version(&state.db, input).await
 }
 
@@ -116,7 +147,12 @@ pub async fn schedule_inspection_round(
     state: State<'_, AppState>,
 ) -> AppResult<InspectionRound> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_ADMIN, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_ADMIN,
+        PermissionScope::Global
+    );
     queries::schedule_inspection_round(&state.db, input).await
 }
 
@@ -126,7 +162,12 @@ pub async fn list_inspection_results(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<InspectionResult>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
     results::list_inspection_results(&state.db, filter).await
 }
 
@@ -136,7 +177,12 @@ pub async fn list_inspection_evidence(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<InspectionEvidence>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
     results::list_inspection_evidence(&state.db, filter).await
 }
 
@@ -146,7 +192,12 @@ pub async fn list_inspection_anomalies(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<InspectionAnomaly>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
     results::list_inspection_anomalies(&state.db, filter).await
 }
 
@@ -156,7 +207,12 @@ pub async fn record_inspection_result(
     state: State<'_, AppState>,
 ) -> AppResult<InspectionResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_EXECUTE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_EXECUTE,
+        PermissionScope::Global
+    );
     let pid = actor_personnel_id(&state, user.user_id)
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["User has no personnel_id.".into()]))?;
@@ -169,7 +225,12 @@ pub async fn add_inspection_evidence(
     state: State<'_, AppState>,
 ) -> AppResult<InspectionEvidence> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_EXECUTE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_EXECUTE,
+        PermissionScope::Global
+    );
     let pid = actor_personnel_id(&state, user.user_id)
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["User has no personnel_id.".into()]))?;
@@ -182,7 +243,12 @@ pub async fn update_inspection_anomaly(
     state: State<'_, AppState>,
 ) -> AppResult<InspectionAnomaly> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_EXECUTE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_EXECUTE,
+        PermissionScope::Global
+    );
     results::update_inspection_anomaly(&state.db, input).await
 }
 
@@ -192,21 +258,36 @@ pub async fn enqueue_inspection_offline(
     state: State<'_, AppState>,
 ) -> AppResult<i64> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_EXECUTE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_EXECUTE,
+        PermissionScope::Global
+    );
     results::enqueue_inspection_offline(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn list_inspection_offline_queue(state: State<'_, AppState>) -> AppResult<Vec<InspectionOfflineQueueItem>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
     results::list_inspection_offline_queue(&state.db).await
 }
 
 #[tauri::command]
 pub async fn mark_inspection_offline_synced(queue_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_EXECUTE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_EXECUTE,
+        PermissionScope::Global
+    );
     results::mark_inspection_offline_synced(&state.db, queue_id).await
 }
 
@@ -216,7 +297,12 @@ pub async fn route_inspection_anomaly_to_di(
     state: State<'_, AppState>,
 ) -> AppResult<(crate::di::domain::InterventionRequest, InspectionAnomaly)> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_EXECUTE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_EXECUTE,
+        PermissionScope::Global
+    );
     let has_global = crate::auth::rbac::check_permission(
         &state.db,
         user.user_id,
@@ -225,10 +311,21 @@ pub async fn route_inspection_anomaly_to_di(
     )
     .await?;
     if has_global {
-        crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::DI_CREATE).await?;
-        crate::license::queries::enforce_permission_matrix(&state.db, user.user_id, crate::rbac::permissions::DI_CREATE).await?;
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::DI_CREATE)
+            .await?;
+        crate::license::queries::enforce_permission_matrix(
+            &state.db,
+            user.user_id,
+            crate::rbac::permissions::DI_CREATE,
+        )
+        .await?;
     } else {
-        require_permission!(state, &user, crate::rbac::permissions::DI_CREATE_OWN, PermissionScope::Global);
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::DI_CREATE_OWN,
+            PermissionScope::Global
+        );
     }
     routing::route_inspection_anomaly_to_di(
         &state.db,
@@ -247,8 +344,18 @@ pub async fn route_inspection_anomaly_to_wo(
     state: State<'_, AppState>,
 ) -> AppResult<(crate::wo::domain::WorkOrder, InspectionAnomaly)> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_EXECUTE, PermissionScope::Global);
-    require_permission!(state, &user, crate::rbac::permissions::OT_CREATE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_EXECUTE,
+        PermissionScope::Global
+    );
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_CREATE,
+        PermissionScope::Global
+    );
     let (wo, anomaly) = routing::route_inspection_anomaly_to_wo(
         &state.db,
         input.anomaly_id,
@@ -258,15 +365,18 @@ pub async fn route_inspection_anomaly_to_wo(
         input.title,
     )
     .await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "created".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order created from inspection anomaly".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    })
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "created".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order created from inspection anomaly".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
     .await;
     Ok((wo, anomaly))
 }
@@ -277,7 +387,12 @@ pub async fn defer_inspection_anomaly(
     state: State<'_, AppState>,
 ) -> AppResult<InspectionAnomaly> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_EXECUTE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_EXECUTE,
+        PermissionScope::Global
+    );
     routing::defer_inspection_anomaly(&state.db, input.anomaly_id, input.expected_row_version).await
 }
 
@@ -287,7 +402,12 @@ pub async fn list_inspection_reliability_signals(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<InspectionReliabilitySignal>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_VIEW,
+        PermissionScope::Global
+    );
     signals::list_inspection_reliability_signals(&state.db, filter).await
 }
 
@@ -297,6 +417,11 @@ pub async fn refresh_inspection_reliability_signals(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<InspectionReliabilitySignal>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::INS_ADMIN, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INS_ADMIN,
+        PermissionScope::Global
+    );
     signals::refresh_inspection_reliability_signals(&state.db, input).await
 }

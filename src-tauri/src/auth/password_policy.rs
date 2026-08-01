@@ -32,14 +32,8 @@ impl PasswordPolicy {
                 .await
                 .parse()
                 .unwrap_or(90),
-            warn_days_before_expiry: load_setting(db, "password_warn_days", "14")
-                .await
-                .parse()
-                .unwrap_or(14),
-            min_length: load_setting(db, "password_min_length", "8")
-                .await
-                .parse()
-                .unwrap_or(8),
+            warn_days_before_expiry: load_setting(db, "password_warn_days", "14").await.parse().unwrap_or(14),
+            min_length: load_setting(db, "password_min_length", "8").await.parse().unwrap_or(8),
             require_uppercase: load_setting(db, "password_require_uppercase", "1").await == "1",
             require_lowercase: load_setting(db, "password_require_lowercase", "1").await == "1",
             require_digit: load_setting(db, "password_require_digit", "1").await == "1",
@@ -125,10 +119,7 @@ pub async fn check_password_expiry(
 ///
 /// Returns `Ok(())` if the password meets all requirements, or `Err(violations)`
 /// with a list of human-readable messages describing each violated rule.
-pub fn validate_password_strength(
-    password: &str,
-    policy: &PasswordPolicy,
-) -> Result<(), Vec<String>> {
+pub fn validate_password_strength(password: &str, policy: &PasswordPolicy) -> Result<(), Vec<String>> {
     let mut violations = Vec::new();
 
     if password.len() < policy.min_length {

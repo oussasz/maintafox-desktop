@@ -3,11 +3,12 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Transac
 
 use crate::errors::{AppError, AppResult};
 use crate::inventory::domain::{
-    CreateProcurementRequisitionInput, CreatePurchaseOrderFromRequisitionInput, CreateRepairableOrderInput, GoodsReceipt,
-    GoodsReceiptLine, InventoryStateEvent, ProcurementRequisition, ProcurementRequisitionLine, ProcurementSupplier,
-    PurchaseOrder, PurchaseOrderDetail, PurchaseOrderLine, ReceiveGoodsInput, RepairVsReplaceResult, RepairableHistoryStats,
-    RepairableOrder, RepairableOrderDetail, TransitionProcurementRequisitionInput, TransitionPurchaseOrderInput,
-    TransitionRepairableOrderInput, UpdatePostingStateInput,
+    CreateProcurementRequisitionInput, CreatePurchaseOrderFromRequisitionInput, CreateRepairableOrderInput,
+    GoodsReceipt, GoodsReceiptLine, InventoryStateEvent, ProcurementRequisition, ProcurementRequisitionLine,
+    ProcurementSupplier, PurchaseOrder, PurchaseOrderDetail, PurchaseOrderLine, ReceiveGoodsInput,
+    RepairVsReplaceResult, RepairableHistoryStats, RepairableOrder, RepairableOrderDetail,
+    TransitionProcurementRequisitionInput, TransitionPurchaseOrderInput, TransitionRepairableOrderInput,
+    UpdatePostingStateInput,
 };
 
 const PROC_STATUS_DOMAIN: &str = "inventory.procurement_status";
@@ -28,7 +29,9 @@ fn next_doc_number(prefix: &str) -> String {
 
 /// Treat whitespace-only user input as absent so the column stays NULL instead of blank.
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
-    value.map(|text| text.trim().to_string()).filter(|text| !text.is_empty())
+    value
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
 }
 
 async fn ensure_lookup_code_active<C: ConnectionTrait>(db: &C, domain_key: &str, code: &str) -> AppResult<()> {
@@ -119,7 +122,7 @@ async fn ensure_supplier_active<C: ConnectionTrait>(db: &C, supplier_id: i64) ->
     let is_active: i64 = row.try_get("", "is_active")?;
     if is_active == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Selected supplier is inactive.".to_string(),
+            "Selected supplier is inactive.".to_string()
         ]));
     }
     let status_code: String = row.try_get("", "status_code")?;
@@ -293,7 +296,7 @@ pub async fn list_procurement_suppliers(db: &DatabaseConnection) -> AppResult<Ve
              FROM inventory_suppliers
              WHERE is_active = 1
              ORDER BY name ASC"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
     rows.into_iter()
@@ -352,7 +355,11 @@ pub async fn create_procurement_requisition(
             input.demand_source_type.into(),
             input.demand_source_id.map_or(Value::BigInt(None), Value::from),
             input.demand_source_ref.clone().map_or(Value::String(None), Value::from),
-            input.purchase_priority.clone().unwrap_or_else(|| "NORMAL".to_string()).into(),
+            input
+                .purchase_priority
+                .clone()
+                .unwrap_or_else(|| "NORMAL".to_string())
+                .into(),
             input.actor_id.map_or(Value::BigInt(None), Value::from),
             now_iso().into(),
             now_iso().into(),
@@ -382,7 +389,10 @@ pub async fn create_procurement_requisition(
             input.requested_qty.into(),
             input.demand_source_line_id.map_or(Value::BigInt(None), Value::from),
             input.source_reservation_id.map_or(Value::BigInt(None), Value::from),
-            input.source_reorder_trigger.clone().map_or(Value::String(None), Value::from),
+            input
+                .source_reorder_trigger
+                .clone()
+                .map_or(Value::String(None), Value::from),
             now_iso().into(),
         ],
     ))
@@ -425,7 +435,7 @@ pub async fn transition_procurement_requisition(
     let row_version: i64 = row.try_get("", "row_version")?;
     if row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
-            "Requisition row_version mismatch.".to_string(),
+            "Requisition row_version mismatch.".to_string()
         ]));
     }
     guard_transition(
@@ -449,7 +459,7 @@ pub async fn transition_procurement_requisition(
         let reason = input.reason.as_deref().map(str::trim).unwrap_or("");
         if reason.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "Rejection reason is required.".to_string(),
+                "Rejection reason is required.".to_string()
             ]));
         }
     }
@@ -460,7 +470,11 @@ pub async fn transition_procurement_requisition(
         "UPDATE procurement_requisitions
          SET status = ?, row_version = row_version + 1, updated_at = ?
          WHERE id = ?",
-        [input.next_status.clone().into(), now_iso().into(), input.requisition_id.into()],
+        [
+            input.next_status.clone().into(),
+            now_iso().into(),
+            input.requisition_id.into(),
+        ],
     ))
     .await?;
     record_state_event(
@@ -710,7 +724,9 @@ pub async fn transition_purchase_order(
     let current: String = row.try_get("", "status")?;
     let row_version: i64 = row.try_get("", "row_version")?;
     if row_version != input.expected_row_version {
-        return Err(AppError::ValidationFailed(vec!["Purchase order row_version mismatch.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "Purchase order row_version mismatch.".to_string()
+        ]));
     }
     guard_transition(
         &current,
@@ -769,7 +785,10 @@ pub async fn transition_purchase_order(
     get_purchase_order(db, input.purchase_order_id).await
 }
 
-pub async fn receive_purchase_order_goods(db: &DatabaseConnection, input: ReceiveGoodsInput) -> AppResult<GoodsReceipt> {
+pub async fn receive_purchase_order_goods(
+    db: &DatabaseConnection,
+    input: ReceiveGoodsInput,
+) -> AppResult<GoodsReceipt> {
     if input.lines.is_empty() {
         return Err(AppError::ValidationFailed(vec![
             "At least one receipt line is required.".to_string(),
@@ -1039,7 +1058,10 @@ pub async fn update_procurement_posting_state(
     Ok(())
 }
 
-pub async fn create_repairable_order(db: &DatabaseConnection, input: CreateRepairableOrderInput) -> AppResult<RepairableOrder> {
+pub async fn create_repairable_order(
+    db: &DatabaseConnection,
+    input: CreateRepairableOrderInput,
+) -> AppResult<RepairableOrder> {
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "Repairable quantity must be greater than zero.".to_string(),
@@ -1255,14 +1277,11 @@ pub async fn transition_repairable_order(
         .await?;
     }
     if input.next_status == "SCRAPPED" && current_status == "RETURNED_FROM_REPAIR" {
-        let target_location_id = input
-            .return_location_id
-            .or(current_return_location_id)
-            .ok_or_else(|| {
-                AppError::ValidationFailed(vec![
-                    "return_location_id is required to scrap a returned repairable.".to_string(),
-                ])
-            })?;
+        let target_location_id = input.return_location_id.or(current_return_location_id).ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "return_location_id is required to scrap a returned repairable.".to_string()
+            ])
+        })?;
         let warehouse_id = ensure_location_active(&tx, target_location_id).await?;
         let before = get_balance_snapshot(&tx, article_id, warehouse_id, target_location_id).await?;
         if before.on_hand < quantity {
@@ -1298,8 +1317,7 @@ pub async fn transition_repairable_order(
     // Dispatch/return timestamps are stamped once by the lifecycle so turnaround stays auditable
     // (KPI-015). CLOSED after RETURNED_FROM_REPAIR must not overwrite the actual return date.
     let sent_at = (input.next_status == "SENT_FOR_REPAIR").then(now_iso);
-    let returned_at =
-        matches!(input.next_status.as_str(), "RETURNED_FROM_REPAIR" | "CLOSED").then(now_iso);
+    let returned_at = matches!(input.next_status.as_str(), "RETURNED_FROM_REPAIR" | "CLOSED").then(now_iso);
 
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -1355,7 +1373,7 @@ pub async fn list_procurement_requisitions(db: &DatabaseConnection) -> AppResult
                     status, posting_state, posting_error, requested_by_id, row_version, created_at, updated_at
              FROM procurement_requisitions
              ORDER BY id DESC"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
     rows.into_iter().map(map_requisition_row).collect()
@@ -1397,13 +1415,16 @@ pub async fn list_purchase_orders(db: &DatabaseConnection) -> AppResult<Vec<Purc
              LEFT JOIN inventory_suppliers s ON s.id = po.supplier_id
              LEFT JOIN external_companies ec ON ec.id = po.supplier_company_id
              ORDER BY po.id DESC"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
     rows.into_iter().map(map_purchase_order_row).collect()
 }
 
-pub async fn list_purchase_order_lines(db: &DatabaseConnection, purchase_order_id: i64) -> AppResult<Vec<PurchaseOrderLine>> {
+pub async fn list_purchase_order_lines(
+    db: &DatabaseConnection,
+    purchase_order_id: i64,
+) -> AppResult<Vec<PurchaseOrderLine>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1429,7 +1450,10 @@ pub async fn list_purchase_order_lines(db: &DatabaseConnection, purchase_order_i
 }
 
 /// Single round-trip aggregate backing the purchase order detail workspace.
-pub async fn get_purchase_order_detail(db: &DatabaseConnection, purchase_order_id: i64) -> AppResult<PurchaseOrderDetail> {
+pub async fn get_purchase_order_detail(
+    db: &DatabaseConnection,
+    purchase_order_id: i64,
+) -> AppResult<PurchaseOrderDetail> {
     let order = get_purchase_order(db, purchase_order_id).await?;
     let lines = list_purchase_order_lines(db, purchase_order_id).await?;
 
@@ -1451,7 +1475,8 @@ pub async fn get_purchase_order_detail(db: &DatabaseConnection, purchase_order_i
     let state_events =
         list_inventory_state_events(db, Some("purchase_order".to_string()), Some(purchase_order_id)).await?;
     let document_links =
-        crate::inventory::queries::list_inventory_document_links(db, PO_DOCUMENT_ENTITY_TYPE, purchase_order_id).await?;
+        crate::inventory::queries::list_inventory_document_links(db, PO_DOCUMENT_ENTITY_TYPE, purchase_order_id)
+            .await?;
 
     let priced_total: f64 = lines.iter().filter_map(|line| line.line_total).sum();
     let priced_line_count = lines.iter().filter(|line| line.line_total.is_some()).count();
@@ -1482,7 +1507,10 @@ pub async fn list_goods_receipts(db: &DatabaseConnection) -> AppResult<Vec<Goods
     rows.into_iter().map(map_goods_receipt_row).collect()
 }
 
-pub async fn list_goods_receipt_lines(db: &DatabaseConnection, goods_receipt_id: i64) -> AppResult<Vec<GoodsReceiptLine>> {
+pub async fn list_goods_receipt_lines(
+    db: &DatabaseConnection,
+    goods_receipt_id: i64,
+) -> AppResult<Vec<GoodsReceiptLine>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1502,7 +1530,8 @@ pub async fn list_goods_receipt_lines(db: &DatabaseConnection, goods_receipt_id:
 
 /// Shared projection for repairable orders: vendor label, WO business code (resolved through the
 /// linked reservation) and repair facts. Callers append their own WHERE / ORDER BY.
-const REPAIRABLE_ORDER_SELECT: &str = "SELECT ro.id, ro.order_code, ro.article_id, a.article_code, a.article_name, ro.quantity,
+const REPAIRABLE_ORDER_SELECT: &str =
+    "SELECT ro.id, ro.order_code, ro.article_id, a.article_code, a.article_name, ro.quantity,
             ro.source_location_id, src.code AS source_location_code, ro.return_location_id,
             ret.code AS return_location_code, ro.linked_po_line_id, ro.linked_reservation_id, ro.status,
             ro.reason, ro.serial_number, ro.vendor_supplier_id,
@@ -1551,10 +1580,7 @@ async fn resolve_repair_replace_ratio(db: &DatabaseConnection) -> AppResult<f64>
     Ok(configured.unwrap_or(DEFAULT_REPAIR_REPLACE_RATIO))
 }
 
-async fn get_repairable_history_stats(
-    db: &DatabaseConnection,
-    article_id: i64,
-) -> AppResult<RepairableHistoryStats> {
+async fn get_repairable_history_stats(db: &DatabaseConnection, article_id: i64) -> AppResult<RepairableHistoryStats> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1586,10 +1612,7 @@ async fn get_repairable_history_stats(
 /// Repair cost falls back to the article's historical average when the order has none yet;
 /// replacement cost comes from the active valuation policy (`valuation::evaluate_unit_cost`).
 /// `reason` carries a stable machine code so the UI can translate it.
-pub async fn evaluate_repair_vs_replace(
-    db: &DatabaseConnection,
-    order_id: i64,
-) -> AppResult<RepairVsReplaceResult> {
+pub async fn evaluate_repair_vs_replace(db: &DatabaseConnection, order_id: i64) -> AppResult<RepairVsReplaceResult> {
     let order = get_repairable_order(db, order_id).await?;
     let history = get_repairable_history_stats(db, order.article_id).await?;
     let threshold_ratio = resolve_repair_replace_ratio(db).await?;
@@ -1667,10 +1690,7 @@ pub async fn evaluate_repair_vs_replace(
 }
 
 /// Single round-trip aggregate backing the repairable order detail workspace.
-pub async fn get_repairable_order_detail(
-    db: &DatabaseConnection,
-    order_id: i64,
-) -> AppResult<RepairableOrderDetail> {
+pub async fn get_repairable_order_detail(db: &DatabaseConnection, order_id: i64) -> AppResult<RepairableOrderDetail> {
     let order = get_repairable_order(db, order_id).await?;
     let state_events = list_inventory_state_events(db, Some("repairable_order".to_string()), Some(order_id)).await?;
     let document_links =
@@ -1729,7 +1749,10 @@ pub async fn list_inventory_state_events(
         .collect()
 }
 
-async fn get_procurement_requisition(db: &DatabaseConnection, requisition_id: i64) -> AppResult<ProcurementRequisition> {
+async fn get_procurement_requisition(
+    db: &DatabaseConnection,
+    requisition_id: i64,
+) -> AppResult<ProcurementRequisition> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1810,7 +1833,9 @@ fn map_requisition_row(row: sea_orm::QueryResult) -> AppResult<ProcurementRequis
         demand_source_type: row.try_get("", "demand_source_type")?,
         demand_source_id: row.try_get("", "demand_source_id")?,
         demand_source_ref: row.try_get("", "demand_source_ref")?,
-        purchase_priority: row.try_get("", "purchase_priority").unwrap_or_else(|_| "NORMAL".to_string()),
+        purchase_priority: row
+            .try_get("", "purchase_priority")
+            .unwrap_or_else(|_| "NORMAL".to_string()),
         status: row.try_get("", "status")?,
         posting_state: row.try_get("", "posting_state")?,
         posting_error: row.try_get("", "posting_error")?,

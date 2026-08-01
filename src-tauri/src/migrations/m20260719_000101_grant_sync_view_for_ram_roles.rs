@@ -3,8 +3,8 @@
 //! Sync health UI (`sync.view`) was added with sync infrastructure; operators and other RAM
 //! viewers need read access without a separate admin grant.
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 

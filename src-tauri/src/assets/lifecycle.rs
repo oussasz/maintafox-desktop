@@ -28,10 +28,7 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement,
-    TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -95,9 +92,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_lifecycle_event(row: &QueryResult) -> AppResult<AssetLifecycleEvent> {
     Ok(AssetLifecycleEvent {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         sync_id: row
             .try_get::<String>("", "sync_id")
             .map_err(|e| decode_err("sync_id", e))?,
@@ -153,10 +148,7 @@ fn map_lifecycle_event(row: &QueryResult) -> AppResult<AssetLifecycleEvent> {
 
 /// Validate that `event_type` exists in the `equipment.lifecycle_event_type`
 /// lookup domain.
-async fn validate_event_type(
-    db: &impl ConnectionTrait,
-    code: &str,
-) -> AppResult<()> {
+async fn validate_event_type(db: &impl ConnectionTrait, code: &str) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -203,17 +195,12 @@ async fn assert_asset_exists(
     let node_id: Option<i64> = row
         .try_get("", "installed_at_node_id")
         .map_err(|e| decode_err("installed_at_node_id", e))?;
-    let class_id: Option<i64> = row
-        .try_get("", "class_id")
-        .map_err(|e| decode_err("class_id", e))?;
+    let class_id: Option<i64> = row.try_get("", "class_id").map_err(|e| decode_err("class_id", e))?;
     Ok((status, node_id, class_id))
 }
 
 /// Validate that the related asset exists and is not soft-deleted.
-async fn assert_related_asset_exists(
-    db: &impl ConnectionTrait,
-    related_asset_id: i64,
-) -> AppResult<()> {
+async fn assert_related_asset_exists(db: &impl ConnectionTrait, related_asset_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -238,33 +225,23 @@ fn validate_payload_for_event_type(payload: &RecordLifecycleEventPayload) -> App
     match et {
         "MOVED" => {
             if payload.from_org_node_id.is_none() {
-                errors.push(
-                    "Un evenement de type 'MOVED' requiert 'from_org_node_id'.".into(),
-                );
+                errors.push("Un evenement de type 'MOVED' requiert 'from_org_node_id'.".into());
             }
             if payload.to_org_node_id.is_none() {
-                errors.push(
-                    "Un evenement de type 'MOVED' requiert 'to_org_node_id'.".into(),
-                );
+                errors.push("Un evenement de type 'MOVED' requiert 'to_org_node_id'.".into());
             }
         }
         "REPLACED" => {
             if payload.related_asset_id.is_none() {
-                errors.push(
-                    "Un evenement de type 'REPLACED' requiert 'related_asset_id'.".into(),
-                );
+                errors.push("Un evenement de type 'REPLACED' requiert 'related_asset_id'.".into());
             }
         }
         "RECLASSIFIED" => {
             if payload.from_class_code.is_none() {
-                errors.push(
-                    "Un evenement de type 'RECLASSIFIED' requiert 'from_class_code'.".into(),
-                );
+                errors.push("Un evenement de type 'RECLASSIFIED' requiert 'from_class_code'.".into());
             }
             if payload.to_class_code.is_none() {
-                errors.push(
-                    "Un evenement de type 'RECLASSIFIED' requiert 'to_class_code'.".into(),
-                );
+                errors.push("Un evenement de type 'RECLASSIFIED' requiert 'to_class_code'.".into());
             }
         }
         // Other event types have no mandatory extra fields beyond the base set.
@@ -344,8 +321,7 @@ pub async fn record_lifecycle_event(
     validate_event_type(&txn, &payload.event_type).await?;
 
     // ── 2. Validate asset exists ─────────────────────────────────────────
-    let (current_status, current_node_id, _current_class_id) =
-        assert_asset_exists(&txn, payload.asset_id).await?;
+    let (current_status, current_node_id, _current_class_id) = assert_asset_exists(&txn, payload.asset_id).await?;
 
     // ── 2b. Auto-enrich payload from current asset state ─────────────────
     // For MOVED events, capture the current org node as from_org_node_id
@@ -354,9 +330,7 @@ pub async fn record_lifecycle_event(
         payload.from_org_node_id = current_node_id;
     }
     // For status-changing events, capture the current status as from_status.
-    if STATUS_CHANGING_EVENTS.contains(&payload.event_type.as_str())
-        && payload.from_status_code.is_none()
-    {
+    if STATUS_CHANGING_EVENTS.contains(&payload.event_type.as_str()) && payload.from_status_code.is_none() {
         payload.from_status_code = Some(current_status.clone());
     }
 
@@ -388,8 +362,7 @@ pub async fn record_lifecycle_event(
             // Keep payload.to_status_code aligned with the applied status.
             payload.to_status_code = Some(terminal.clone());
 
-            let status_ref_id =
-                crate::assets::identity::resolve_status_ref_id(&txn, &terminal).await?;
+            let status_ref_id = crate::assets::identity::resolve_status_ref_id(&txn, &terminal).await?;
 
             txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -409,14 +382,9 @@ pub async fn record_lifecycle_event(
             .await?;
         }
         "RECOMMISSIONED" => {
-            let target_status = payload
-                .to_status_code
-                .as_deref()
-                .unwrap_or("ACTIVE_IN_SERVICE");
-            let normalized =
-                crate::assets::identity::normalize_status_code_for_reference(target_status)?;
-            let status_ref_id =
-                crate::assets::identity::resolve_status_ref_id(&txn, &normalized).await?;
+            let target_status = payload.to_status_code.as_deref().unwrap_or("ACTIVE_IN_SERVICE");
+            let normalized = crate::assets::identity::normalize_status_code_for_reference(target_status)?;
+            let status_ref_id = crate::assets::identity::resolve_status_ref_id(&txn, &normalized).await?;
             payload.to_status_code = Some(normalized.clone());
             txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -442,11 +410,7 @@ pub async fn record_lifecycle_event(
                     "UPDATE equipment SET installed_at_node_id = ?, \
                      updated_at = ?, row_version = row_version + 1 \
                      WHERE id = ?",
-                    [
-                        to_node_id.into(),
-                        now.clone().into(),
-                        payload.asset_id.into(),
-                    ],
+                    [to_node_id.into(), now.clone().into(), payload.asset_id.into()],
                 ))
                 .await?;
             }
@@ -497,11 +461,7 @@ pub async fn record_lifecycle_event(
             [sync_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "lifecycle event created but not found after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("lifecycle event created but not found after insert")))?;
     let event = map_lifecycle_event(&row)?;
 
     txn.commit().await?;

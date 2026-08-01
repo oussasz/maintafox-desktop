@@ -1,4 +1,4 @@
-﻿//! Personnel skills matrix computations.
+//! Personnel skills matrix computations.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
@@ -31,10 +31,7 @@ pub struct SkillMatrixRow {
     pub coverage_status: String,
 }
 
-pub async fn list_skills_matrix(
-    db: &DatabaseConnection,
-    filter: SkillsMatrixFilter,
-) -> AppResult<Vec<SkillMatrixRow>> {
+pub async fn list_skills_matrix(db: &DatabaseConnection, filter: SkillsMatrixFilter) -> AppResult<Vec<SkillMatrixRow>> {
     let mut where_sql = vec!["(rd.code = 'PERSONNEL.SKILLS' OR rd.code IS NULL)".to_string()];
     let mut values: Vec<sea_orm::Value> = Vec::new();
 
@@ -99,11 +96,7 @@ pub async fn list_skills_matrix(
     );
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            values,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
     let mapped = rows
@@ -164,5 +157,3 @@ pub async fn declare_personnel_skill(
 
     Ok(())
 }
-
-

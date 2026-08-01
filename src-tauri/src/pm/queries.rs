@@ -2,19 +2,19 @@ use chrono::{DateTime, Duration, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde_json::{json, Value};
 
+use crate::activity::emitter::{emit_activity_event, ActivityEventInput};
+use crate::di::queries::{create_intervention_request, DiCreateInput};
 use crate::errors::{AppError, AppResult};
+use crate::notifications::emitter::{emit_event as emit_notification_event, NotificationEventInput};
 use crate::pm::domain::{
     CreatePmPlanInput, CreatePmPlanVersionInput, ExecutePmOccurrenceInput, ExecutePmOccurrenceResult,
     GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmDueMetrics, PmEffortVarianceKpi, PmExecution,
-    PmExecutionFilter, PmExecutionFindingInput, PmFinding, PmGovernanceKpiInput, PmGovernanceKpiReport,
-    PmOccurrence, PmOccurrenceFilter, PmPlan, PmPlanFilter, PmPlanVersion, PmPlanningCandidate,
-    PmPlanningReadinessBlocker, PmPlanningReadinessInput, PmPlanningReadinessProjection, PmRateKpi,
-    PmRecurringFinding, PmRecurringFindingsInput, PublishPmPlanVersionInput, TransitionPmOccurrenceInput,
-    TransitionPmPlanLifecycleInput, UpdatePmPlanInput, UpdatePmPlanVersionInput,
+    PmExecutionFilter, PmExecutionFindingInput, PmFinding, PmGovernanceKpiInput, PmGovernanceKpiReport, PmOccurrence,
+    PmOccurrenceFilter, PmPlan, PmPlanFilter, PmPlanVersion, PmPlanningCandidate, PmPlanningReadinessBlocker,
+    PmPlanningReadinessInput, PmPlanningReadinessProjection, PmRateKpi, PmRecurringFinding, PmRecurringFindingsInput,
+    PublishPmPlanVersionInput, TransitionPmOccurrenceInput, TransitionPmPlanLifecycleInput, UpdatePmPlanInput,
+    UpdatePmPlanVersionInput,
 };
-use crate::activity::emitter::{emit_activity_event, ActivityEventInput};
-use crate::di::queries::{create_intervention_request, DiCreateInput};
-use crate::notifications::emitter::{emit_event as emit_notification_event, NotificationEventInput};
 use crate::wo::domain::WoCreateInput;
 use crate::wo::queries as wo_queries;
 use crate::wo::types::resolve_work_order_type_code_by_id;
@@ -83,9 +83,8 @@ fn lifecycle_transition_allowed(current: &str, next: &str) -> bool {
 }
 
 fn validate_rfc3339(ts: &str, field: &str) -> AppResult<()> {
-    DateTime::parse_from_rfc3339(ts).map_err(|_| {
-        AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")])
-    })?;
+    DateTime::parse_from_rfc3339(ts)
+        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")]))?;
     Ok(())
 }
 
@@ -95,10 +94,14 @@ fn validate_effective_window(effective_from: &str, effective_to: Option<&str>) -
         validate_rfc3339(effective_to, "effective_to")?;
         if DateTime::parse_from_rfc3339(effective_to)
             .map(|v| v.with_timezone(&Utc))
-            .map_err(|_| AppError::ValidationFailed(vec!["effective_to must be a valid RFC3339 timestamp.".to_string()]))?
+            .map_err(|_| {
+                AppError::ValidationFailed(vec!["effective_to must be a valid RFC3339 timestamp.".to_string()])
+            })?
             < DateTime::parse_from_rfc3339(effective_from)
                 .map(|v| v.with_timezone(&Utc))
-                .map_err(|_| AppError::ValidationFailed(vec!["effective_from must be a valid RFC3339 timestamp.".to_string()]))?
+                .map_err(|_| {
+                    AppError::ValidationFailed(vec!["effective_from must be a valid RFC3339 timestamp.".to_string()])
+                })?
         {
             return Err(AppError::ValidationFailed(vec![
                 "effective_to must be >= effective_from.".to_string(),
@@ -125,7 +128,9 @@ async fn ensure_lookup_value_in_domain(
         ))
         .await?;
     let Some(row) = row else {
-        return Err(AppError::ValidationFailed(vec![format!("{field_name} does not exist.")]));
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{field_name} does not exist."
+        )]));
     };
     let domain_key: String = row.try_get("", "domain_key")?;
     if domain_key != expected_domain_key {
@@ -137,7 +142,9 @@ async fn ensure_lookup_value_in_domain(
 }
 
 async fn validate_required_skills_json(db: &DatabaseConnection, input: Option<&str>) -> AppResult<()> {
-    let Some(raw) = input else { return Ok(()); };
+    let Some(raw) = input else {
+        return Ok(());
+    };
     let parsed = serde_json::from_str::<Value>(raw)
         .map_err(|_| AppError::ValidationFailed(vec!["required_skills_json must be valid JSON.".to_string()]))?;
     let Some(codes) = parsed.as_array() else {
@@ -232,7 +239,7 @@ async fn validate_trigger_definition(
             let code = obj.get("event_code").and_then(Value::as_str).unwrap_or_default();
             if code.trim().is_empty() {
                 return Err(AppError::ValidationFailed(vec![
-                    "Event trigger requires event_code.".to_string(),
+                    "Event trigger requires event_code.".to_string()
                 ]));
             }
         }
@@ -249,29 +256,53 @@ async fn validate_trigger_definition(
     Ok(())
 }
 
-fn decode_pm_plan_row(row: &sea_orm::QueryResult) -> AppResult<PmPlan> { Ok(PmPlan {
-    id: row.try_get("", "id")?, code: row.try_get("", "code")?, title: row.try_get("", "title")?,
-    description: row.try_get("", "description")?, asset_scope_type: row.try_get("", "asset_scope_type")?,
-    asset_scope_id: row.try_get("", "asset_scope_id")?, strategy_type: row.try_get("", "strategy_type")?,
-    criticality_value_id: row.try_get("", "criticality_value_id")?, criticality_code: row.try_get("", "criticality_code")?,
-    criticality_label: row.try_get("", "criticality_label")?, assigned_group_id: row.try_get("", "assigned_group_id")?,
-    requires_shutdown: row.try_get("", "requires_shutdown")?, requires_permit: row.try_get("", "requires_permit")?,
-    is_active: row.try_get("", "is_active")?, lifecycle_status: row.try_get("", "lifecycle_status")?,
-    current_version_id: row.try_get("", "current_version_id")?, row_version: row.try_get("", "row_version")?,
-    created_at: row.try_get("", "created_at")?, updated_at: row.try_get("", "updated_at")?,
-})}
+fn decode_pm_plan_row(row: &sea_orm::QueryResult) -> AppResult<PmPlan> {
+    Ok(PmPlan {
+        id: row.try_get("", "id")?,
+        code: row.try_get("", "code")?,
+        title: row.try_get("", "title")?,
+        description: row.try_get("", "description")?,
+        asset_scope_type: row.try_get("", "asset_scope_type")?,
+        asset_scope_id: row.try_get("", "asset_scope_id")?,
+        strategy_type: row.try_get("", "strategy_type")?,
+        criticality_value_id: row.try_get("", "criticality_value_id")?,
+        criticality_code: row.try_get("", "criticality_code")?,
+        criticality_label: row.try_get("", "criticality_label")?,
+        assigned_group_id: row.try_get("", "assigned_group_id")?,
+        requires_shutdown: row.try_get("", "requires_shutdown")?,
+        requires_permit: row.try_get("", "requires_permit")?,
+        is_active: row.try_get("", "is_active")?,
+        lifecycle_status: row.try_get("", "lifecycle_status")?,
+        current_version_id: row.try_get("", "current_version_id")?,
+        row_version: row.try_get("", "row_version")?,
+        created_at: row.try_get("", "created_at")?,
+        updated_at: row.try_get("", "updated_at")?,
+    })
+}
 
-fn decode_pm_plan_version_row(row: &sea_orm::QueryResult) -> AppResult<PmPlanVersion> { Ok(PmPlanVersion {
-    id: row.try_get("", "id")?, pm_plan_id: row.try_get("", "pm_plan_id")?, version_no: row.try_get("", "version_no")?,
-    status: row.try_get("", "status")?, effective_from: row.try_get("", "effective_from")?,
-    effective_to: row.try_get("", "effective_to")?, trigger_definition_json: row.try_get("", "trigger_definition_json")?,
-    task_package_json: row.try_get("", "task_package_json")?, required_parts_json: row.try_get("", "required_parts_json")?,
-    required_skills_json: row.try_get("", "required_skills_json")?, required_tools_json: row.try_get("", "required_tools_json")?,
-    estimated_duration_hours: row.try_get("", "estimated_duration_hours")?, estimated_labor_cost: row.try_get("", "estimated_labor_cost")?,
-    estimated_parts_cost: row.try_get("", "estimated_parts_cost")?, estimated_service_cost: row.try_get("", "estimated_service_cost")?,
-    change_reason: row.try_get("", "change_reason")?, row_version: row.try_get("", "row_version")?,
-    created_at: row.try_get("", "created_at")?, updated_at: row.try_get("", "updated_at")?,
-})}
+fn decode_pm_plan_version_row(row: &sea_orm::QueryResult) -> AppResult<PmPlanVersion> {
+    Ok(PmPlanVersion {
+        id: row.try_get("", "id")?,
+        pm_plan_id: row.try_get("", "pm_plan_id")?,
+        version_no: row.try_get("", "version_no")?,
+        status: row.try_get("", "status")?,
+        effective_from: row.try_get("", "effective_from")?,
+        effective_to: row.try_get("", "effective_to")?,
+        trigger_definition_json: row.try_get("", "trigger_definition_json")?,
+        task_package_json: row.try_get("", "task_package_json")?,
+        required_parts_json: row.try_get("", "required_parts_json")?,
+        required_skills_json: row.try_get("", "required_skills_json")?,
+        required_tools_json: row.try_get("", "required_tools_json")?,
+        estimated_duration_hours: row.try_get("", "estimated_duration_hours")?,
+        estimated_labor_cost: row.try_get("", "estimated_labor_cost")?,
+        estimated_parts_cost: row.try_get("", "estimated_parts_cost")?,
+        estimated_service_cost: row.try_get("", "estimated_service_cost")?,
+        change_reason: row.try_get("", "change_reason")?,
+        row_version: row.try_get("", "row_version")?,
+        created_at: row.try_get("", "created_at")?,
+        updated_at: row.try_get("", "updated_at")?,
+    })
+}
 
 pub async fn list_pm_plans(db: &DatabaseConnection, _filter: PmPlanFilter) -> AppResult<Vec<PmPlan>> {
     let rows = db.query_all(Statement::from_string(DbBackend::Sqlite,
@@ -295,41 +326,83 @@ pub async fn get_pm_plan(db: &DatabaseConnection, plan_id: i64) -> AppResult<PmP
 pub async fn create_pm_plan(db: &DatabaseConnection, input: CreatePmPlanInput) -> AppResult<PmPlan> {
     let code = input.code.trim().to_uppercase();
     let title = input.title.trim().to_string();
-    if code.is_empty() || title.is_empty() { return Err(AppError::ValidationFailed(vec!["PM plan code and title are required.".to_string()])); }
+    if code.is_empty() || title.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "PM plan code and title are required.".to_string()
+        ]));
+    }
     let strategy_type = normalize_strategy_type(&input.strategy_type)?;
     let asset_scope_type = normalize_asset_scope_type(&input.asset_scope_type)?;
-    if let Some(v) = input.criticality_value_id { ensure_lookup_value_in_domain(db, v, "equipment.criticality", "criticality_value_id").await?; }
+    if let Some(v) = input.criticality_value_id {
+        ensure_lookup_value_in_domain(db, v, "equipment.criticality", "criticality_value_id").await?;
+    }
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "INSERT INTO pm_plans (code,title,description,asset_scope_type,asset_scope_id,strategy_type,criticality_value_id,assigned_group_id,requires_shutdown,requires_permit,is_active,lifecycle_status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')",
         [code.clone().into(),title.into(),input.description.into(),asset_scope_type.into(),input.asset_scope_id.into(),strategy_type.into(),input.criticality_value_id.into(),input.assigned_group_id.into(),i64::from(input.requires_shutdown).into(),i64::from(input.requires_permit).into(),parse_bool_to_i64(input.is_active,true).into()])).await?;
-    let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id FROM pm_plans WHERE code = ?", [code.into()])).await?
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM pm_plans WHERE code = ?",
+            [code.into()],
+        ))
+        .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created pm plan not found")))?;
     get_pm_plan(db, row.try_get("", "id")?).await
 }
 
-pub async fn update_pm_plan(db: &DatabaseConnection, plan_id: i64, expected_row_version: i64, input: UpdatePmPlanInput) -> AppResult<PmPlan> {
+pub async fn update_pm_plan(
+    db: &DatabaseConnection,
+    plan_id: i64,
+    expected_row_version: i64,
+    input: UpdatePmPlanInput,
+) -> AppResult<PmPlan> {
     let current = get_pm_plan(db, plan_id).await?;
-    if current.row_version != expected_row_version { return Err(AppError::ValidationFailed(vec!["PM plan was modified elsewhere (stale row_version).".to_string()])); }
+    if current.row_version != expected_row_version {
+        return Err(AppError::ValidationFailed(vec![
+            "PM plan was modified elsewhere (stale row_version).".to_string(),
+        ]));
+    }
     let title = input.title.unwrap_or(current.title);
     let strategy_type = normalize_strategy_type(&input.strategy_type.unwrap_or(current.strategy_type.clone()))?;
-    let asset_scope_type = normalize_asset_scope_type(&input.asset_scope_type.unwrap_or(current.asset_scope_type.clone()))?;
+    let asset_scope_type =
+        normalize_asset_scope_type(&input.asset_scope_type.unwrap_or(current.asset_scope_type.clone()))?;
     let criticality_value_id = input.criticality_value_id.or(current.criticality_value_id);
-    if let Some(v) = criticality_value_id { ensure_lookup_value_in_domain(db, v, "equipment.criticality", "criticality_value_id").await?; }
+    if let Some(v) = criticality_value_id {
+        ensure_lookup_value_in_domain(db, v, "equipment.criticality", "criticality_value_id").await?;
+    }
     let result = db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plans SET title=?,description=?,asset_scope_type=?,asset_scope_id=?,strategy_type=?,criticality_value_id=?,assigned_group_id=?,requires_shutdown=?,requires_permit=?,is_active=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id=? AND row_version=?",
         [title.into(),input.description.or(current.description).into(),asset_scope_type.into(),input.asset_scope_id.or(current.asset_scope_id).into(),strategy_type.into(),criticality_value_id.into(),input.assigned_group_id.or(current.assigned_group_id).into(),i64::from(input.requires_shutdown.unwrap_or(current.requires_shutdown==1)).into(),i64::from(input.requires_permit.unwrap_or(current.requires_permit==1)).into(),i64::from(input.is_active.unwrap_or(current.is_active==1)).into(),plan_id.into(),expected_row_version.into()])).await?;
-    if result.rows_affected()==0 { return Err(AppError::ValidationFailed(vec!["PM plan update failed.".to_string()])); }
+    if result.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec!["PM plan update failed.".to_string()]));
+    }
     get_pm_plan(db, plan_id).await
 }
 
-pub async fn transition_pm_plan_lifecycle(db: &DatabaseConnection, input: TransitionPmPlanLifecycleInput) -> AppResult<PmPlan> {
+pub async fn transition_pm_plan_lifecycle(
+    db: &DatabaseConnection,
+    input: TransitionPmPlanLifecycleInput,
+) -> AppResult<PmPlan> {
     let current = get_pm_plan(db, input.plan_id).await?;
-    if current.row_version != input.expected_row_version { return Err(AppError::ValidationFailed(vec!["PM lifecycle transition failed (stale row_version).".to_string()])); }
+    if current.row_version != input.expected_row_version {
+        return Err(AppError::ValidationFailed(vec![
+            "PM lifecycle transition failed (stale row_version).".to_string(),
+        ]));
+    }
     let next = normalize_lifecycle_status(&input.next_status)?;
-    if !lifecycle_transition_allowed(&current.lifecycle_status, &next) { return Err(AppError::ValidationFailed(vec![format!("Invalid PM lifecycle transition: {} -> {}.", current.lifecycle_status, next)])); }
-    if next=="active" && current.current_version_id.is_none() { return Err(AppError::ValidationFailed(vec!["Cannot activate PM plan without a published current version.".to_string()])); }
+    if !lifecycle_transition_allowed(&current.lifecycle_status, &next) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Invalid PM lifecycle transition: {} -> {}.",
+            current.lifecycle_status, next
+        )]));
+    }
+    if next == "active" && current.current_version_id.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "Cannot activate PM plan without a published current version.".to_string(),
+        ]));
+    }
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plans SET lifecycle_status=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?",
         [next.into(), input.plan_id.into(), input.expected_row_version.into()])).await?;
@@ -343,19 +416,35 @@ pub async fn list_pm_plan_versions(db: &DatabaseConnection, pm_plan_id: i64) -> 
     rows.iter().map(decode_pm_plan_version_row).collect()
 }
 
-pub async fn create_pm_plan_version(db: &DatabaseConnection, pm_plan_id: i64, input: CreatePmPlanVersionInput) -> AppResult<PmPlanVersion> {
+pub async fn create_pm_plan_version(
+    db: &DatabaseConnection,
+    pm_plan_id: i64,
+    input: CreatePmPlanVersionInput,
+) -> AppResult<PmPlanVersion> {
     let plan = get_pm_plan(db, pm_plan_id).await?;
     validate_effective_window(&input.effective_from, input.effective_to.as_deref())?;
     validate_trigger_definition(db, &plan.strategy_type, &input.trigger_definition_json).await?;
     validate_required_skills_json(db, input.required_skills_json.as_deref()).await?;
-    let version_no_row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT COALESCE(MAX(version_no),0)+1 AS next_no FROM pm_plan_versions WHERE pm_plan_id = ?", [pm_plan_id.into()])).await?
+    let version_no_row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COALESCE(MAX(version_no),0)+1 AS next_no FROM pm_plan_versions WHERE pm_plan_id = ?",
+            [pm_plan_id.into()],
+        ))
+        .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("next version not found")))?;
     let next_no: i64 = version_no_row.try_get("", "next_no")?;
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "INSERT INTO pm_plan_versions (pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason)
          VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [pm_plan_id.into(),next_no.into(),input.effective_from.into(),input.effective_to.into(),input.trigger_definition_json.into(),input.task_package_json.into(),input.required_parts_json.into(),input.required_skills_json.into(),input.required_tools_json.into(),input.estimated_duration_hours.into(),input.estimated_labor_cost.into(),input.estimated_parts_cost.into(),input.estimated_service_cost.into(),input.change_reason.into()])).await?;
-    let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id FROM pm_plan_versions WHERE pm_plan_id = ? AND version_no = ?", [pm_plan_id.into(), next_no.into()])).await?
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM pm_plan_versions WHERE pm_plan_id = ? AND version_no = ?",
+            [pm_plan_id.into(), next_no.into()],
+        ))
+        .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created version not found")))?;
     let id: i64 = row.try_get("", "id")?;
     let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [id.into()])).await?
@@ -363,18 +452,42 @@ pub async fn create_pm_plan_version(db: &DatabaseConnection, pm_plan_id: i64, in
     decode_pm_plan_version_row(&row)
 }
 
-pub async fn update_pm_plan_version(db: &DatabaseConnection, version_id: i64, expected_row_version: i64, input: UpdatePmPlanVersionInput) -> AppResult<PmPlanVersion> {
-    let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT * FROM pm_plan_versions WHERE id = ?", [version_id.into()])).await?
-        .ok_or_else(|| AppError::NotFound{entity:"pm_plan_version".to_string(), id:version_id.to_string()})?;
+pub async fn update_pm_plan_version(
+    db: &DatabaseConnection,
+    version_id: i64,
+    expected_row_version: i64,
+    input: UpdatePmPlanVersionInput,
+) -> AppResult<PmPlanVersion> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT * FROM pm_plan_versions WHERE id = ?",
+            [version_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "pm_plan_version".to_string(),
+            id: version_id.to_string(),
+        })?;
     let status: String = row.try_get("", "status")?;
-    if status != "draft" { return Err(AppError::ValidationFailed(vec!["Only draft PM plan versions can be edited.".to_string()])); }
+    if status != "draft" {
+        return Err(AppError::ValidationFailed(vec![
+            "Only draft PM plan versions can be edited.".to_string(),
+        ]));
+    }
     let rv: i64 = row.try_get("", "row_version")?;
-    if rv != expected_row_version { return Err(AppError::ValidationFailed(vec!["PM plan version was modified elsewhere (stale row_version).".to_string()])); }
+    if rv != expected_row_version {
+        return Err(AppError::ValidationFailed(vec![
+            "PM plan version was modified elsewhere (stale row_version).".to_string(),
+        ]));
+    }
     let plan_id: i64 = row.try_get("", "pm_plan_id")?;
     let plan = get_pm_plan(db, plan_id).await?;
     let effective_from = input.effective_from.unwrap_or(row.try_get("", "effective_from")?);
     let effective_to = input.effective_to.or(row.try_get("", "effective_to")?);
-    let trigger_definition_json = input.trigger_definition_json.unwrap_or(row.try_get("", "trigger_definition_json")?);
+    let trigger_definition_json = input
+        .trigger_definition_json
+        .unwrap_or(row.try_get("", "trigger_definition_json")?);
     validate_effective_window(&effective_from, effective_to.as_deref())?;
     validate_trigger_definition(db, &plan.strategy_type, &trigger_definition_json).await?;
     let required_skills_json = input.required_skills_json.or(row.try_get("", "required_skills_json")?);
@@ -387,27 +500,48 @@ pub async fn update_pm_plan_version(db: &DatabaseConnection, version_id: i64, ex
     decode_pm_plan_version_row(&row)
 }
 
-pub async fn publish_pm_plan_version(db: &DatabaseConnection, input: PublishPmPlanVersionInput) -> AppResult<PmPlanVersion> {
-    let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT * FROM pm_plan_versions WHERE id = ?", [input.version_id.into()])).await?
-        .ok_or_else(|| AppError::NotFound{entity:"pm_plan_version".to_string(), id:input.version_id.to_string()})?;
+pub async fn publish_pm_plan_version(
+    db: &DatabaseConnection,
+    input: PublishPmPlanVersionInput,
+) -> AppResult<PmPlanVersion> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT * FROM pm_plan_versions WHERE id = ?",
+            [input.version_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "pm_plan_version".to_string(),
+            id: input.version_id.to_string(),
+        })?;
     let rv: i64 = row.try_get("", "row_version")?;
-    if rv != input.expected_row_version { return Err(AppError::ValidationFailed(vec!["PM version publish failed (stale row_version).".to_string()])); }
+    if rv != input.expected_row_version {
+        return Err(AppError::ValidationFailed(vec![
+            "PM version publish failed (stale row_version).".to_string(),
+        ]));
+    }
     let plan_id: i64 = row.try_get("", "pm_plan_id")?;
     let plan = get_pm_plan(db, plan_id).await?;
     if !matches!(plan.lifecycle_status.as_str(), "approved" | "active" | "suspended") {
-        return Err(AppError::ValidationFailed(vec!["Plan must be approved, active, or suspended before publishing a version.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "Plan must be approved, active, or suspended before publishing a version.".to_string(),
+        ]));
     }
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plan_versions SET status='superseded',row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE pm_plan_id=? AND status='published' AND id != ?", [plan_id.into(), input.version_id.into()])).await?;
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plan_versions SET status='published',row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?", [input.version_id.into(),input.expected_row_version.into()])).await?;
-    let next_plan_lifecycle = if plan.lifecycle_status == "approved" { "active".to_string() } else { plan.lifecycle_status };
+    let next_plan_lifecycle = if plan.lifecycle_status == "approved" {
+        "active".to_string()
+    } else {
+        plan.lifecycle_status
+    };
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, "UPDATE pm_plans SET current_version_id=?,lifecycle_status=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?", [input.version_id.into(), next_plan_lifecycle.into(), plan_id.into()])).await?;
     tx.commit().await?;
     let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [input.version_id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("published version missing")))?;
     decode_pm_plan_version_row(&row)
 }
-
 
 const OCCURRENCE_STATUSES: &[&str] = &[
     "forecasted",
@@ -484,10 +618,7 @@ fn parse_interval(trigger_obj: &serde_json::Map<String, Value>) -> AppResult<Dur
         .unwrap_or("day")
         .trim()
         .to_lowercase();
-    let value = trigger_obj
-        .get("interval_value")
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
+    let value = trigger_obj.get("interval_value").and_then(Value::as_f64).unwrap_or(0.0);
     if value <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "interval_value must be > 0 for fixed/floating strategies.".to_string(),
@@ -829,21 +960,25 @@ pub async fn list_pm_planning_readiness(
         if json_array_has_items(required_parts_json.as_deref()) {
             blockers.push(PmPlanningReadinessBlocker {
                 code: "missing_parts".to_string(),
-                message: "PM version defines required_parts_json and no planning reservation contract exists yet.".to_string(),
+                message: "PM version defines required_parts_json and no planning reservation contract exists yet."
+                    .to_string(),
                 source: "pm_plan_versions.required_parts_json".to_string(),
             });
         }
         if json_array_has_items(required_skills_json.as_deref()) {
             blockers.push(PmPlanningReadinessBlocker {
                 code: "missing_qualification".to_string(),
-                message: "PM version defines required_skills_json and no assignment qualification has been committed yet.".to_string(),
+                message:
+                    "PM version defines required_skills_json and no assignment qualification has been committed yet."
+                        .to_string(),
                 source: "pm_plan_versions.required_skills_json".to_string(),
             });
         }
         if requires_permit == 1 {
             blockers.push(PmPlanningReadinessBlocker {
                 code: "permit_not_ready".to_string(),
-                message: "Plan requires permit and permit readiness is not committed by planning workflow yet.".to_string(),
+                message: "Plan requires permit and permit readiness is not committed by planning workflow yet."
+                    .to_string(),
                 source: "pm_plans.requires_permit".to_string(),
             });
         }
@@ -871,7 +1006,8 @@ pub async fn list_pm_planning_readiness(
         if occurrence.linked_work_order_id.is_some() {
             blockers.push(PmPlanningReadinessBlocker {
                 code: "prerequisite_incomplete".to_string(),
-                message: "Occurrence already linked to a work order and should not be re-committed by planning.".to_string(),
+                message: "Occurrence already linked to a work order and should not be re-committed by planning."
+                    .to_string(),
                 source: "pm_occurrences.linked_work_order_id".to_string(),
             });
         }
@@ -967,7 +1103,11 @@ pub async fn get_pm_governance_kpi_report(
         overdue_binds.push(code.clone().into());
     }
     let overdue_row = db
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &overdue_sql, overdue_binds))
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &overdue_sql,
+            overdue_binds,
+        ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm overdue KPI row missing")))?;
     let overdue_numerator: i64 = overdue_row.try_get("", "numerator")?;
@@ -1062,7 +1202,11 @@ pub async fn get_pm_governance_kpi_report(
         effort_binds.push(code.clone().into());
     }
     let effort_row = db
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &effort_sql, effort_binds))
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &effort_sql,
+            effort_binds,
+        ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("pm effort KPI row missing")))?;
 
@@ -1209,7 +1353,8 @@ pub async fn generate_pm_occurrences(
                         .await?;
                     } else {
                         if let Some(occurrence_id) =
-                            insert_occurrence(db, pm_plan_id, version_id, &due_basis, Some(due_at.clone()), None).await?
+                            insert_occurrence(db, pm_plan_id, version_id, &due_basis, Some(due_at.clone()), None)
+                                .await?
                         {
                             generated_count += 1;
                             occurrence_ids.push(occurrence_id);
@@ -1265,7 +1410,9 @@ pub async fn generate_pm_occurrences(
                     effective_from.clone()
                 };
                 let mut due = DateTime::parse_from_rfc3339(&base_ts)
-                    .map_err(|_| AppError::ValidationFailed(vec!["floating trigger base timestamp is invalid.".to_string()]))?
+                    .map_err(|_| {
+                        AppError::ValidationFailed(vec!["floating trigger base timestamp is invalid.".to_string()])
+                    })?
                     .with_timezone(&Utc)
                     + interval;
                 while due < as_of_dt {
@@ -1291,7 +1438,8 @@ pub async fn generate_pm_occurrences(
                         .await?;
                     } else {
                         if let Some(occurrence_id) =
-                            insert_occurrence(db, pm_plan_id, version_id, &due_basis, Some(due_at.clone()), None).await?
+                            insert_occurrence(db, pm_plan_id, version_id, &due_basis, Some(due_at.clone()), None)
+                                .await?
                         {
                             generated_count += 1;
                             occurrence_ids.push(occurrence_id);
@@ -1326,7 +1474,7 @@ pub async fn generate_pm_occurrences(
                     trigger_events_recorded += 1;
                 }
             }
-        "meter" => {
+            "meter" => {
                 let legacy_meter_id = trigger_obj
                     .get("asset_meter_id")
                     .and_then(Value::as_i64)
@@ -1371,7 +1519,11 @@ pub async fn generate_pm_occurrences(
                         ]));
                     }
 
-                    let meter_type_code = if meter_source == "odometer" { "DISTANCE" } else { "HOURS" };
+                    let meter_type_code = if meter_source == "odometer" {
+                        "DISTANCE"
+                    } else {
+                        "HOURS"
+                    };
                     let plan_scope_row = db
                         .query_one(Statement::from_sql_and_values(
                             DbBackend::Sqlite,
@@ -1403,13 +1555,10 @@ pub async fn generate_pm_occurrences(
                         ))
                         .await?
                         .ok_or_else(|| {
-                            AppError::ValidationFailed(vec![
-                                format!(
-                                    "No active {} meter found on equipment {} for meter-based PM trigger.",
-                                    meter_type_code,
-                                    equipment_id
-                                ),
-                            ])
+                            AppError::ValidationFailed(vec![format!(
+                                "No active {} meter found on equipment {} for meter-based PM trigger.",
+                                meter_type_code, equipment_id
+                            )])
                         })?;
                     meter_id = meter_row.try_get("", "id")?;
                     current_reading = meter_row.try_get("", "current_reading")?;
@@ -1420,15 +1569,8 @@ pub async fn generate_pm_occurrences(
                 let should_generate = current_reading >= threshold_value;
                 let mut generated_occurrence_id: Option<i64> = None;
                 if should_generate {
-                    let exists = occurrence_exists(
-                        db,
-                        pm_plan_id,
-                        version_id,
-                        &due_basis,
-                        None,
-                        Some(threshold_value),
-                    )
-                    .await?;
+                    let exists =
+                        occurrence_exists(db, pm_plan_id, version_id, &due_basis, None, Some(threshold_value)).await?;
                     if exists {
                         skipped_count += 1;
                     } else {
@@ -1473,7 +1615,7 @@ pub async fn generate_pm_occurrences(
                     .to_uppercase();
                 if event_code.is_empty() {
                     return Err(AppError::ValidationFailed(vec![
-                        "event trigger requires event_code.".to_string(),
+                        "event trigger requires event_code.".to_string()
                     ]));
                 }
                 let due_basis = format!("event:{}:{}", event_code, as_of_dt.format("%Y-%m-%d"));
@@ -1653,7 +1795,10 @@ pub async fn transition_pm_occurrence(
         let wo_type_code = resolve_work_order_type_code_by_id(db, wo_type_id).await?;
         let wo_title = format!(
             "PM {} occurrence #{}",
-            current.plan_code.clone().unwrap_or_else(|| current.pm_plan_id.to_string()),
+            current
+                .plan_code
+                .clone()
+                .unwrap_or_else(|| current.pm_plan_id.to_string()),
             current.id
         );
         let note_text = if let Some(note) = input.note.clone() {
@@ -1750,16 +1895,16 @@ pub async fn transition_pm_occurrence(
     } else if updated.status == "deferred" {
         let _ = emit_pm_deferred_event(db, &updated, input.reason_code.clone()).await;
     }
-    let _ = emit_pm_occurrence_activity(db, &updated, "pm.occurrence.transition", input.actor_id, input.reason_code).await;
+    let _ = emit_pm_occurrence_activity(
+        db,
+        &updated,
+        "pm.occurrence.transition",
+        input.actor_id,
+        input.reason_code,
+    )
+    .await;
     Ok(updated)
 }
-
-
-
-
-
-
-
 
 fn decode_pm_execution_row(row: &sea_orm::QueryResult) -> AppResult<PmExecution> {
     Ok(PmExecution {
@@ -1795,9 +1940,7 @@ fn decode_pm_finding_row(row: &sea_orm::QueryResult) -> AppResult<PmFinding> {
 fn normalize_execution_result(value: &str) -> AppResult<String> {
     let normalized = value.trim().to_lowercase();
     match normalized.as_str() {
-        "completed_no_findings" | "completed_with_findings" | "deferred" | "missed" | "cancelled" => {
-            Ok(normalized)
-        }
+        "completed_no_findings" | "completed_with_findings" | "deferred" | "missed" | "cancelled" => Ok(normalized),
         _ => Err(AppError::ValidationFailed(vec![format!(
             "Unsupported PM execution result '{}'.",
             value
@@ -1810,14 +1953,13 @@ fn normalize_optional_reason(value: Option<String>) -> Option<String> {
 }
 
 fn json_array_has_items(raw: Option<&str>) -> bool {
-    let Some(raw) = raw else { return false; };
+    let Some(raw) = raw else {
+        return false;
+    };
     let Ok(parsed) = serde_json::from_str::<Value>(raw) else {
         return true;
     };
-    parsed
-        .as_array()
-        .map(|arr| !arr.is_empty())
-        .unwrap_or(true)
+    parsed.as_array().map(|arr| !arr.is_empty()).unwrap_or(true)
 }
 
 fn rate_pct(numerator: i64, denominator: i64) -> Option<f64> {
@@ -1843,17 +1985,16 @@ fn bounded_period(input_from: Option<&str>, input_to: Option<&str>) -> AppResult
         None => now,
     };
     if to < from {
-        return Err(AppError::ValidationFailed(vec!["to must be greater than or equal to from.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "to must be greater than or equal to from.".to_string(),
+        ]));
     }
     Ok((
         from.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
         to.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
     ))
 }
-async fn load_pm_routing_context(
-    db: &DatabaseConnection,
-    occurrence_id: i64,
-) -> AppResult<(Option<i64>, Option<i64>)> {
+async fn load_pm_routing_context(db: &DatabaseConnection, occurrence_id: i64) -> AppResult<(Option<i64>, Option<i64>)> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1900,7 +2041,11 @@ async fn emit_pm_occurrence_activity(
             source_record_id: Some(occurrence.id.to_string()),
             entity_scope_id: None,
             actor_id,
-            severity: if occurrence.status == "missed" { "warning".to_string() } else { "info".to_string() },
+            severity: if occurrence.status == "missed" {
+                "warning".to_string()
+            } else {
+                "info".to_string()
+            },
             summary_json: Some(summary_json),
             correlation_id: Some(format!("pm-occ-{}", occurrence.id)),
             visibility_scope: "entity".to_string(),
@@ -1949,7 +2094,10 @@ async fn emit_pm_notification(
             body: Some(format!(
                 "PM occurrence {} for plan {} is {}.",
                 occurrence.id,
-                occurrence.plan_code.clone().unwrap_or_else(|| occurrence.pm_plan_id.to_string()),
+                occurrence
+                    .plan_code
+                    .clone()
+                    .unwrap_or_else(|| occurrence.pm_plan_id.to_string()),
                 occurrence.status
             )),
             action_url: Some(format!("/pm?occurrence={}", occurrence.id)),
@@ -2072,11 +2220,7 @@ async fn create_follow_up_di_from_finding(
         _ => "minor",
     };
 
-    let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(
-        db,
-        &finding.finding_type,
-    )
-    .await?;
+    let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(db, &finding.finding_type).await?;
 
     let di = create_intervention_request(
         db,
@@ -2085,7 +2229,10 @@ async fn create_follow_up_di_from_finding(
             org_node_id,
             title: format!(
                 "PM finding follow-up [{}] {}",
-                occurrence.plan_code.clone().unwrap_or_else(|| occurrence.pm_plan_id.to_string()),
+                occurrence
+                    .plan_code
+                    .clone()
+                    .unwrap_or_else(|| occurrence.pm_plan_id.to_string()),
                 finding.finding_type
             ),
             description: finding.description.clone(),
@@ -2154,14 +2301,20 @@ async fn create_follow_up_wo_from_finding(
             urgency_id: None,
             title: format!(
                 "PM follow-up [{}] {}",
-                occurrence.plan_code.clone().unwrap_or_else(|| occurrence.pm_plan_id.to_string()),
+                occurrence
+                    .plan_code
+                    .clone()
+                    .unwrap_or_else(|| occurrence.pm_plan_id.to_string()),
                 finding.finding_type
             ),
             description: Some(finding.description.clone()),
             notes: Some(format!(
                 "Origin PM occurrence {} / plan {}",
                 occurrence.id,
-                occurrence.plan_code.clone().unwrap_or_else(|| occurrence.pm_plan_id.to_string())
+                occurrence
+                    .plan_code
+                    .clone()
+                    .unwrap_or_else(|| occurrence.pm_plan_id.to_string())
             )),
             planned_start: occurrence.due_at.clone(),
             planned_end: None,
@@ -2230,7 +2383,9 @@ pub async fn list_pm_recurring_findings(
 ) -> AppResult<Vec<PmRecurringFinding>> {
     let days_window = input.days_window.unwrap_or(90).clamp(1, 3650);
     let min_occurrences = input.min_occurrences.unwrap_or(2).max(2);
-    let threshold = (Utc::now() - Duration::days(days_window)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let threshold = (Utc::now() - Duration::days(days_window))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
 
     let mut sql = String::from(
         "SELECT po.pm_plan_id,
@@ -2274,7 +2429,11 @@ pub async fn list_pm_recurring_findings(
             occurrence_count: row.try_get("", "occurrence_count")?,
             first_seen_at: row.try_get("", "first_seen_at")?,
             last_seen_at: row.try_get("", "last_seen_at")?,
-            latest_severity: if latest_severity.is_empty() { None } else { Some(latest_severity) },
+            latest_severity: if latest_severity.is_empty() {
+                None
+            } else {
+                Some(latest_severity)
+            },
         });
     }
 
@@ -2421,9 +2580,8 @@ pub async fn execute_pm_occurrence(
         }
 
         if finding.create_follow_up_work_order == Some(true) {
-            follow_up_wo_id = Some(
-                create_follow_up_wo_from_finding(db, &occurrence, &finding, actor_id, follow_up_di_id).await?,
-            );
+            follow_up_wo_id =
+                Some(create_follow_up_wo_from_finding(db, &occurrence, &finding, actor_id, follow_up_di_id).await?);
         }
 
         db.execute(Statement::from_sql_and_values(
@@ -2453,14 +2611,8 @@ pub async fn execute_pm_occurrence(
                 None,
             )
             .await;
-            let _ = emit_pm_occurrence_activity(
-                db,
-                &occurrence,
-                "pm.finding.follow_up_created",
-                Some(actor_id),
-                None,
-            )
-            .await;
+            let _ = emit_pm_occurrence_activity(db, &occurrence, "pm.finding.follow_up_created", Some(actor_id), None)
+                .await;
         }
     }
 

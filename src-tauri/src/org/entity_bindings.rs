@@ -14,9 +14,7 @@
 use crate::errors::{AppError, AppResult};
 use crate::org::fail::{fail, fail_params};
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -119,11 +117,7 @@ pub async fn list_entity_bindings(
         )
     };
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [node_id.into()],
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [node_id.into()]))
         .await?;
     rows.iter().map(map_binding).collect()
 }
@@ -171,13 +165,8 @@ pub async fn upsert_entity_binding(
     if dup_count > 0 {
         return Err(fail_params(
             "ORG_BINDING_DUPLICATE",
-            format!(
-                "An active binding for ({external_system}, {external_id}) already exists."
-            ),
-            &[
-                ("externalSystem", external_system),
-                ("externalId", external_id),
-            ],
+            format!("An active binding for ({external_system}, {external_id}) already exists."),
+            &[("externalSystem", external_system), ("externalId", external_id)],
         ));
     }
 
@@ -228,11 +217,7 @@ pub async fn upsert_entity_binding(
             ),
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "entity binding created but not found after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("entity binding created but not found after insert")))?;
 
     let binding = map_binding(&row)?;
     txn.commit().await?;
@@ -253,9 +238,7 @@ pub async fn expire_entity_binding(
     _actor_id: i32,
 ) -> AppResult<OrgEntityBinding> {
     // Verify binding exists
-    let check_sql = format!(
-        "SELECT {SELECT_COLS} FROM org_entity_bindings WHERE id = ?"
-    );
+    let check_sql = format!("SELECT {SELECT_COLS} FROM org_entity_bindings WHERE id = ?");
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -290,9 +273,7 @@ pub async fn expire_entity_binding(
     .await?;
 
     // Re-fetch updated row
-    let updated_sql = format!(
-        "SELECT {SELECT_COLS} FROM org_entity_bindings WHERE id = ?"
-    );
+    let updated_sql = format!("SELECT {SELECT_COLS} FROM org_entity_bindings WHERE id = ?");
     let updated_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

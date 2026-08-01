@@ -55,10 +55,7 @@ pub async fn emit_action_event(
     Ok(())
 }
 
-pub async fn list_action_events(
-    db: &DatabaseConnection,
-    wo_id: i64,
-) -> AppResult<Vec<WoActionEvent>> {
+pub async fn list_action_events(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<WoActionEvent>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,

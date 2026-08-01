@@ -89,11 +89,7 @@ pub fn validate_entitlement_transition(
     Err(VpsTypedError {
         family: VpsContractFamily::Admin,
         code: "entitlement_transition_invalid".to_string(),
-        message: format!(
-            "Action {} is not allowed from state {}",
-            action.as_str(),
-            from.as_str()
-        ),
+        message: format!("Action {} is not allowed from state {}", action.as_str(), from.as_str()),
         http_status: 409,
         retryable: false,
     })
@@ -278,9 +274,7 @@ pub fn validate_slot_limits(machine_slots: u32, active_machines: u32) -> Result<
     Err(VpsTypedError {
         family: VpsContractFamily::Admin,
         code: "machine_slots_exceeded".to_string(),
-        message: format!(
-            "Active machines ({active_machines}) exceed entitlement slots ({machine_slots})."
-        ),
+        message: format!("Active machines ({active_machines}) exceed entitlement slots ({machine_slots})."),
         http_status: 409,
         retryable: false,
     })
@@ -290,10 +284,7 @@ pub fn channel_policy_consistent(license_channel: UpdateChannel, rollout_channel
     license_channel == rollout_channel
 }
 
-pub fn bulk_concurrency_ok(
-    expected: &[(String, i64)],
-    current: &[(String, i64)],
-) -> Result<(), VpsTypedError> {
+pub fn bulk_concurrency_ok(expected: &[(String, i64)], current: &[(String, i64)]) -> Result<(), VpsTypedError> {
     for (tid, ev) in expected {
         let Some((_, cv)) = current.iter().find(|(t, _)| t == tid) else {
             return Err(VpsTypedError {

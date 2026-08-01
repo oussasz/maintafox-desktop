@@ -25,7 +25,12 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(Alias::new("entity_sync_id")).text().not_null().unique_key())
+                    .col(
+                        ColumnDef::new(Alias::new("entity_sync_id"))
+                            .text()
+                            .not_null()
+                            .unique_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("permit_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("reason")).text().not_null())
                     .col(ColumnDef::new(Alias::new("suspended_by_id")).integer().not_null())
@@ -65,7 +70,12 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(Alias::new("entity_sync_id")).text().not_null().unique_key())
+                    .col(
+                        ColumnDef::new(Alias::new("entity_sync_id"))
+                            .text()
+                            .not_null()
+                            .unique_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("permit_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("handed_from_role")).text().not_null())
                     .col(ColumnDef::new(Alias::new("handed_to_role")).text().not_null())

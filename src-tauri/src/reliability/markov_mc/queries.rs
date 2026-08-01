@@ -8,8 +8,8 @@ use crate::reliability::markov_mc::domain::{
     UpdateMarkovModelInput, UpdateMcModelInput,
 };
 use crate::reliability::markov_mc::guardrails::{self, GuardrailFlags};
-use crate::reliability::markov_mc::mc_eval::evaluate_mc;
 use crate::reliability::markov_mc::markov_solve::{solve_dtmc_steady_state, MarkovSpec};
+use crate::reliability::markov_mc::mc_eval::evaluate_mc;
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("markov_mc decode '{field}': {err}"))
@@ -29,17 +29,28 @@ async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
 fn map_mc(row: &sea_orm::QueryResult) -> AppResult<McModel> {
     Ok(McModel {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| decode_err("entity_sync_id", e))?,
-        equipment_id: row.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+        equipment_id: row
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
         title: row.try_get("", "title").map_err(|e| decode_err("title", e))?,
         graph_json: row.try_get("", "graph_json").map_err(|e| decode_err("graph_json", e))?,
         trials: row.try_get("", "trials").map_err(|e| decode_err("trials", e))?,
-        seed: row.try_get::<Option<i64>>("", "seed").map_err(|e| decode_err("seed", e))?,
-        result_json: row.try_get("", "result_json").map_err(|e| decode_err("result_json", e))?,
+        seed: row
+            .try_get::<Option<i64>>("", "seed")
+            .map_err(|e| decode_err("seed", e))?,
+        result_json: row
+            .try_get("", "result_json")
+            .map_err(|e| decode_err("result_json", e))?,
         status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
-        created_by_id: row.try_get::<Option<i64>>("", "created_by_id")
+        created_by_id: row
+            .try_get::<Option<i64>>("", "created_by_id")
             .map_err(|e| decode_err("created_by_id", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -48,15 +59,24 @@ fn map_mc(row: &sea_orm::QueryResult) -> AppResult<McModel> {
 fn map_markov(row: &sea_orm::QueryResult) -> AppResult<MarkovModel> {
     Ok(MarkovModel {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| decode_err("entity_sync_id", e))?,
-        equipment_id: row.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+        equipment_id: row
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
         title: row.try_get("", "title").map_err(|e| decode_err("title", e))?,
         graph_json: row.try_get("", "graph_json").map_err(|e| decode_err("graph_json", e))?,
-        result_json: row.try_get("", "result_json").map_err(|e| decode_err("result_json", e))?,
+        result_json: row
+            .try_get("", "result_json")
+            .map_err(|e| decode_err("result_json", e))?,
         status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
-        created_by_id: row.try_get::<Option<i64>>("", "created_by_id")
+        created_by_id: row
+            .try_get::<Option<i64>>("", "created_by_id")
             .map_err(|e| decode_err("created_by_id", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -193,7 +213,9 @@ pub async fn delete_mc_model(db: &DatabaseConnection, id: i64) -> AppResult<()> 
 pub async fn evaluate_mc_model(db: &DatabaseConnection, id: i64) -> AppResult<McModel> {
     let g = guardrails::load_guardrails(db).await?;
     if !g.monte_carlo_enabled {
-        return Err(AppError::ValidationFailed(vec!["Monte Carlo disabled by guardrails.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "Monte Carlo disabled by guardrails.".into()
+        ]));
     }
     let m = load_mc_by_id(db, id).await?;
     if m.trials > g.mc_max_trials {
@@ -296,7 +318,9 @@ pub async fn update_markov_model(db: &DatabaseConnection, input: UpdateMarkovMod
         .await?
         .rows_affected();
     if n == 0 {
-        return Err(AppError::ValidationFailed(vec!["markov_models update conflict.".into()]));
+        return Err(AppError::ValidationFailed(
+            vec!["markov_models update conflict.".into()],
+        ));
     }
     load_markov_by_id(db, input.id).await
 }
@@ -326,7 +350,9 @@ pub async fn delete_markov_model(db: &DatabaseConnection, id: i64) -> AppResult<
 pub async fn evaluate_markov_model(db: &DatabaseConnection, id: i64) -> AppResult<MarkovModel> {
     let g = guardrails::load_guardrails(db).await?;
     if !g.markov_enabled {
-        return Err(AppError::ValidationFailed(vec!["Markov disabled by guardrails.".into()]));
+        return Err(AppError::ValidationFailed(
+            vec!["Markov disabled by guardrails.".into()],
+        ));
     }
     let m = load_markov_by_id(db, id).await?;
     let spec: MarkovSpec = serde_json::from_str(&m.graph_json)

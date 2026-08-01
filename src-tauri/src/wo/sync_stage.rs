@@ -1,7 +1,5 @@
 use crate::errors::AppResult;
-use crate::sync::domain::{
-    StageOutboxItemInput, WorkOrderSyncPayload, SYNC_ENTITY_WORK_ORDERS,
-};
+use crate::sync::domain::{StageOutboxItemInput, WorkOrderSyncPayload, SYNC_ENTITY_WORK_ORDERS};
 use crate::sync::queries::stage_outbox_item;
 
 use super::domain::WorkOrder;

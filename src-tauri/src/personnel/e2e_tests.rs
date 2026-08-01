@@ -8,16 +8,14 @@ mod tests {
     use crate::errors::AppError;
     use crate::personnel::domain::{PersonnelCreateInput, PersonnelListFilter, PersonnelUpdateInput};
     use crate::personnel::queries::{
-        create_external_company, create_personnel, deactivate_personnel, get_active_rate_card,
-        get_personnel, list_personnel, update_personnel,
+        create_external_company, create_personnel, deactivate_personnel, get_active_rate_card, get_personnel,
+        list_personnel, update_personnel,
     };
     use crate::wo::domain::WoCreateInput;
     use crate::wo::queries as wo_queries;
 
     async fn setup() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect");
+        let db = Database::connect("sqlite::memory:").await.expect("connect");
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
@@ -26,13 +24,9 @@ mod tests {
         .await
         .expect("PRAGMA foreign_keys");
 
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations");
+        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
 
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder");
+        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
 
         db
     }
@@ -248,14 +242,8 @@ mod tests {
             .await
             .expect("activity")
             .expect("event row");
-        assert_eq!(
-            ev.try_get::<String>("", "event_code").unwrap(),
-            "personnel.created"
-        );
-        assert_eq!(
-            ev.try_get::<String>("", "source_module").unwrap(),
-            "personnel"
-        );
+        assert_eq!(ev.try_get::<String>("", "event_code").unwrap(), "personnel.created");
+        assert_eq!(ev.try_get::<String>("", "source_module").unwrap(), "personnel");
     }
 
     /// V2 — Contractor + `external_company_id`; `get_personnel` fills `company_name`.
@@ -308,11 +296,7 @@ mod tests {
         .expect("create contractor");
 
         let g = get_personnel(&db, p.id).await.expect("get").expect("found");
-        assert_eq!(
-            g.company_name.as_deref(),
-            Some("Acme Contractors"),
-            "company_name join"
-        );
+        assert_eq!(g.company_name.as_deref(), Some("Acme Contractors"), "company_name join");
     }
 
     /// V3 — Stale `expected_row_version` → validation error.
@@ -601,10 +585,7 @@ mod tests {
         let actor = admin_id(&db).await;
         let (position_id, entity_id, team_id, sched_rv_id) = prepare_prerequisites(&db).await;
 
-        for (i, name) in ["Alice Jones", "Bob unique Smith", "Charlie Brown"]
-            .iter()
-            .enumerate()
-        {
+        for (i, name) in ["Alice Jones", "Bob unique Smith", "Charlie Brown"].iter().enumerate() {
             create_personnel(
                 &db,
                 PersonnelCreateInput {

@@ -21,9 +21,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::errors::{
-    issue_params, AppError, AppResult, AppValidationIssue, org_validation_failed_issues,
-};
+use crate::errors::{issue_params, org_validation_failed_issues, AppError, AppResult, AppValidationIssue};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -98,8 +96,7 @@ fn analyze_type_graph(
     }
 
     // ── Cycle detection via Kahn's topological sort ───────────────────────
-    let mut in_degree: HashMap<String, usize> =
-        all_codes.iter().map(|c| (c.clone(), 0)).collect();
+    let mut in_degree: HashMap<String, usize> = all_codes.iter().map(|c| (c.clone(), 0)).collect();
 
     for (parent, children) in edges {
         if in_degree.contains_key(parent) {
@@ -181,16 +178,12 @@ pub async fn validate_draft_model_for_publish(
             id: model_id.to_string(),
         })?;
 
-    let model_status: String = model_row
-        .try_get("", "status")
-        .map_err(|e| decode_err("status", e))?;
+    let model_status: String = model_row.try_get("", "status").map_err(|e| decode_err("status", e))?;
 
     if model_status != "draft" {
         return Err(crate::errors::org_validation_failed(
             "ORG_VALIDATE_NOT_DRAFT",
-            format!(
-                "This model is '{model_status}', not a draft. Only drafts can be checked for publish."
-            ),
+            format!("This model is '{model_status}', not a draft. Only drafts can be checked for publish."),
             crate::errors::issue_params(&[("status", model_status)]),
         ));
     }
@@ -209,12 +202,8 @@ pub async fn validate_draft_model_for_publish(
         .into_iter()
         .map(|row| {
             Ok(DraftNodeType {
-                id: row
-                    .try_get::<i64>("", "id")
-                    .map_err(|e| decode_err("id", e))?,
-                code: row
-                    .try_get::<String>("", "code")
-                    .map_err(|e| decode_err("code", e))?,
+                id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+                code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
                 is_root_type: row
                     .try_get::<i32>("", "is_root_type")
                     .map_err(|e| decode_err("is_root_type", e))?
@@ -235,18 +224,15 @@ pub async fn validate_draft_model_for_publish(
         })
         .collect::<AppResult<Vec<_>>>()?;
 
-    let draft_type_by_code: HashMap<&str, &DraftNodeType> =
-        draft_types.iter().map(|t| (t.code.as_str(), t)).collect();
+    let draft_type_by_code: HashMap<&str, &DraftNodeType> = draft_types.iter().map(|t| (t.code.as_str(), t)).collect();
 
     // ── 2. Exactly one root node type ─────────────────────────────────────
-    let root_types: Vec<&DraftNodeType> =
-        draft_types.iter().filter(|t| t.is_root_type).collect();
+    let root_types: Vec<&DraftNodeType> = draft_types.iter().filter(|t| t.is_root_type).collect();
 
     if root_types.is_empty() {
         issues.push(blocking_issue(
             "NO_ROOT_TYPE",
-            "This draft has no top-level organization type. Mark exactly one type as the root."
-                .to_string(),
+            "This draft has no top-level organization type. Mark exactly one type as the root.".to_string(),
             None,
             HashMap::new(),
         ));
@@ -254,9 +240,7 @@ pub async fn validate_draft_model_for_publish(
         let root_count = root_types.len().to_string();
         issues.push(blocking_issue(
             "MULTIPLE_ROOT_TYPES",
-            format!(
-                "This draft has {root_count} top-level types. Keep only one type marked as the root."
-            ),
+            format!("This draft has {root_count} top-level types. Keep only one type marked as the root."),
             None,
             issue_params(&[("rootCount", root_count)]),
         ));
@@ -274,9 +258,7 @@ pub async fn validate_draft_model_for_publish(
                 let count_str = count.to_string();
                 issues.push(blocking_issue(
                     "DUPLICATE_TYPE_CODE",
-                    format!(
-                        "The type code '{type_code}' is used {count_str} times. Each type needs a unique code."
-                    ),
+                    format!("The type code '{type_code}' is used {count_str} times. Each type needs a unique code."),
                     None,
                     issue_params(&[("typeCode", type_code), ("count", count_str)]),
                 ));
@@ -304,13 +286,8 @@ pub async fn validate_draft_model_for_publish(
         let parent_code: String = row
             .try_get("", "parent_code")
             .map_err(|e| decode_err("parent_code", e))?;
-        let child_code: String = row
-            .try_get("", "child_code")
-            .map_err(|e| decode_err("child_code", e))?;
-        edges
-            .entry(parent_code.clone())
-            .or_default()
-            .push(child_code.clone());
+        let child_code: String = row.try_get("", "child_code").map_err(|e| decode_err("child_code", e))?;
+        edges.entry(parent_code.clone()).or_default().push(child_code.clone());
         allowed_pairs.insert((parent_code, child_code));
     }
 
@@ -340,8 +317,7 @@ pub async fn validate_draft_model_for_publish(
         if has_cycle {
             issues.push(blocking_issue(
                 "RULE_GRAPH_CYCLE",
-                "Some relationship rules form a loop (A under B and B under A). Remove the circular link."
-                    .to_string(),
+                "Some relationship rules form a loop (A under B and B under A). Remove the circular link.".to_string(),
                 None,
                 HashMap::new(),
             ));
@@ -352,8 +328,7 @@ pub async fn validate_draft_model_for_publish(
     if !draft_types.iter().any(|t| t.can_own_work) {
         issues.push(blocking_issue(
             "NO_WORK_CAPABLE_TYPE",
-            "No organization level is set up to own work. Turn on work ownership for at least one level."
-                .to_string(),
+            "No organization level is set up to own work. Turn on work ownership for at least one level.".to_string(),
             None,
             HashMap::new(),
         ));
@@ -363,8 +338,7 @@ pub async fn validate_draft_model_for_publish(
     if !draft_types.iter().any(|t| t.can_host_assets) {
         issues.push(blocking_issue(
             "NO_ASSET_CAPABLE_TYPE",
-            "No organization level is set up to host assets. Turn on asset hosting for at least one level."
-                .to_string(),
+            "No organization level is set up to host assets. Turn on asset hosting for at least one level.".to_string(),
             None,
             HashMap::new(),
         ));
@@ -472,8 +446,7 @@ pub async fn validate_draft_model_for_publish(
 
     // Unmapped active nodes with ops refs block publish (same rule as publish_model_with_remap).
     if let Some(active_id) = crate::org::model_scope::try_get_active_model_id(db).await? {
-        let unmapped =
-            collect_unmapped_active_nodes_with_ops_refs(db, model_id, active_id).await?;
+        let unmapped = collect_unmapped_active_nodes_with_ops_refs(db, model_id, active_id).await?;
         for u in unmapped {
             let node_name = u.node_name.clone();
             let ops_ref_count = u.ops_ref_count.to_string();
@@ -499,9 +472,7 @@ pub async fn validate_draft_model_for_publish(
         ))
         .await?
         .expect("COUNT always returns a row");
-    let remap_count: i64 = remap_count_row
-        .try_get("", "cnt")
-        .map_err(|e| decode_err("cnt", e))?;
+    let remap_count: i64 = remap_count_row.try_get("", "cnt").map_err(|e| decode_err("cnt", e))?;
 
     // ── Build result ──────────────────────────────────────────────────────
     let blocking_count = issues.iter().filter(|i| i.severity == "error").count() as i64;
@@ -521,10 +492,7 @@ pub async fn validate_draft_model_for_publish(
 /// by matching on the stable node-type `code`.
 ///
 /// Returns an empty vec when no active model exists (first publish).
-pub async fn build_type_remap_plan(
-    db: &impl ConnectionTrait,
-    draft_model_id: i64,
-) -> AppResult<Vec<NodeTypeRemap>> {
+pub async fn build_type_remap_plan(db: &impl ConnectionTrait, draft_model_id: i64) -> AppResult<Vec<NodeTypeRemap>> {
     let active_row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -536,9 +504,7 @@ pub async fn build_type_remap_plan(
         return Ok(Vec::new());
     };
 
-    let active_model_id: i64 = active_row
-        .try_get("", "id")
-        .map_err(|e| decode_err("id", e))?;
+    let active_model_id: i64 = active_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
 
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -644,10 +610,7 @@ async fn remap_scope_reference(
 
 /// Count how many ops records reference a given active node id.
 /// Returns a non-zero count if the node has any live ops references.
-async fn count_ops_references(
-    txn: &impl ConnectionTrait,
-    active_node_id: i64,
-) -> AppResult<i64> {
+async fn count_ops_references(txn: &impl ConnectionTrait, active_node_id: i64) -> AppResult<i64> {
     // Only filter `deleted_at` on tables that actually have that column
     // (equipment, user_scope_assignments). personnel / work_orders /
     // intervention_requests use hard deletes or status flags instead.
@@ -675,9 +638,7 @@ async fn count_ops_references(
         .query_one(Statement::from_string(DbBackend::Sqlite, check_sql))
         .await?
         .expect("scalar COUNT query always returns a row");
-    let total: i64 = row
-        .try_get("", "total")
-        .map_err(|e| decode_err("total", e))?;
+    let total: i64 = row.try_get("", "total").map_err(|e| decode_err("total", e))?;
     Ok(total)
 }
 
@@ -709,9 +670,7 @@ pub async fn collect_unmapped_active_nodes_with_ops_refs(
 
     let mut remapped: HashSet<i64> = HashSet::new();
     for row in &clone_rows {
-        let active_id: i64 = row
-            .try_get("", "active_id")
-            .map_err(|e| decode_err("active_id", e))?;
+        let active_id: i64 = row.try_get("", "active_id").map_err(|e| decode_err("active_id", e))?;
         remapped.insert(active_id);
     }
 
@@ -726,15 +685,11 @@ pub async fn collect_unmapped_active_nodes_with_ops_refs(
 
     let mut out = Vec::new();
     for row in &active_node_rows {
-        let active_id: i64 = row
-            .try_get("", "id")
-            .map_err(|e| decode_err("id", e))?;
+        let active_id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
         if remapped.contains(&active_id) {
             continue;
         }
-        let active_name: String = row
-            .try_get("", "name")
-            .map_err(|e| decode_err("name", e))?;
+        let active_name: String = row.try_get("", "name").map_err(|e| decode_err("name", e))?;
         let ref_count = count_ops_references(db, active_id).await?;
         if ref_count > 0 {
             out.push(UnmappedActiveNodeWithOpsRefs {
@@ -748,12 +703,7 @@ pub async fn collect_unmapped_active_nodes_with_ops_refs(
 }
 
 /// Execute all ops FK remaps for a single (old → new) node pair.
-async fn remap_node_ops_fks(
-    txn: &impl ConnectionTrait,
-    old_id: i64,
-    new_id: i64,
-    now: &str,
-) -> AppResult<()> {
+async fn remap_node_ops_fks(txn: &impl ConnectionTrait, old_id: i64, new_id: i64, now: &str) -> AppResult<()> {
     // Tables whose updated_at column has a different name or might not track it
     // use a simpler form; all standard tables follow the same schema convention.
     remap_integer_fk(txn, "equipment", "installed_at_node_id", old_id, new_id, now).await?;
@@ -827,10 +777,7 @@ pub async fn publish_model_with_remap(
         .await?;
 
     let old_active_model_id: Option<i64> = match active_row {
-        Some(row) => Some(
-            row.try_get("", "id")
-                .map_err(|e| decode_err("id", e))?,
-        ),
+        Some(row) => Some(row.try_get("", "id").map_err(|e| decode_err("id", e))?),
         None => None,
     };
 
@@ -852,23 +799,14 @@ pub async fn publish_model_with_remap(
 
         let mut remap: HashMap<i64, i64> = HashMap::new(); // active_id → draft_id
         for row in &clone_rows {
-            let draft_id: i64 = row
-                .try_get("", "draft_id")
-                .map_err(|e| decode_err("draft_id", e))?;
-            let active_id: i64 = row
-                .try_get("", "active_id")
-                .map_err(|e| decode_err("active_id", e))?;
+            let draft_id: i64 = row.try_get("", "draft_id").map_err(|e| decode_err("draft_id", e))?;
+            let active_id: i64 = row.try_get("", "active_id").map_err(|e| decode_err("active_id", e))?;
             remap.insert(active_id, draft_id);
         }
         effective_remap_count = remap.len() as i64;
 
         // ── Step 3b: detect unmapped active nodes with live ops refs ──────
-        let unmapped = collect_unmapped_active_nodes_with_ops_refs(
-            &txn,
-            draft_model_id,
-            old_model_id,
-        )
-        .await?;
+        let unmapped = collect_unmapped_active_nodes_with_ops_refs(&txn, draft_model_id, old_model_id).await?;
         if !unmapped.is_empty() {
             let issues: Vec<AppValidationIssue> = unmapped
                 .into_iter()

@@ -58,9 +58,7 @@ pub struct AddTaskInput {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn decode_err(field: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "WoTask row decode error for '{field}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("WoTask row decode error for '{field}': {e}"))
 }
 
 fn map_task(row: &sea_orm::QueryResult) -> AppResult<WoTask> {
@@ -202,9 +200,7 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
             [],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("Failed to re-read task after insert"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read task after insert")))?;
     let task = map_task(&row)?;
     let _ = emit_execution_event(
         db,
@@ -286,11 +282,7 @@ pub async fn complete_task(
     let _ = emit_execution_event(
         db,
         task.work_order_id,
-        if cancelled {
-            "task_cancelled"
-        } else {
-            "task_completed"
-        },
+        if cancelled { "task_cancelled" } else { "task_completed" },
         if cancelled {
             "executionLog.taskCancelled"
         } else {
@@ -309,11 +301,7 @@ pub async fn complete_task(
 // C) reopen_task
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn reopen_task(
-    db: &DatabaseConnection,
-    task_id: i64,
-    _actor_id: i64,
-) -> AppResult<WoTask> {
+pub async fn reopen_task(db: &DatabaseConnection, task_id: i64, _actor_id: i64) -> AppResult<WoTask> {
     // Load the task to get wo_id
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -332,10 +320,7 @@ pub async fn reopen_task(
 
     let status_code = load_wo_status_code(db, wo_id).await?;
     // Blocked once mechanically complete or later
-    if matches!(
-        status_code.as_str(),
-        "completed" | "closed" | "cancelled"
-    ) {
+    if matches!(status_code.as_str(), "completed" | "closed" | "cancelled") {
         return Err(AppError::ValidationFailed(vec![format!(
             "La réouverture d'une tâche n'est pas autorisée au statut '{status_code}'."
         )]));

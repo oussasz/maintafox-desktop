@@ -119,10 +119,7 @@ const IMPACT_DIMENSIONS: &[&str] = &[
 ///
 /// Returns a structured assessment of all readiness gates. The `is_ready`
 /// flag is `false` when any blocker issue exists.
-pub async fn compute_publish_readiness(
-    db: &DatabaseConnection,
-    set_id: i64,
-) -> AppResult<ReferencePublishReadiness> {
+pub async fn compute_publish_readiness(db: &DatabaseConnection, set_id: i64) -> AppResult<ReferencePublishReadiness> {
     let set = sets::get_reference_set(db, set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
     let is_protected = crate::reference::governance::requires_publish_impact_preview(&domain);
@@ -176,9 +173,7 @@ pub async fn compute_publish_readiness(
     if unresolved > 0 {
         issues.push(ReferencePublishIssue {
             check: "unresolved_migrations".into(),
-            message: format!(
-                "{unresolved} valeur(s) desactivee(s) sans carte de migration."
-            ),
+            message: format!("{unresolved} valeur(s) desactivee(s) sans carte de migration."),
             severity: "blocker".into(),
         });
     }
@@ -213,10 +208,7 @@ pub async fn compute_publish_readiness(
 /// Probes each dimension and returns an explicit status. For modules not
 /// yet implemented, returns `"unavailable"` with zero affected count.
 /// Calling this function marks the impact preview as computed for the set.
-pub async fn preview_publish_impact(
-    db: &DatabaseConnection,
-    set_id: i64,
-) -> AppResult<ReferenceImpactSummary> {
+pub async fn preview_publish_impact(db: &DatabaseConnection, set_id: i64) -> AppResult<ReferenceImpactSummary> {
     let set = sets::get_reference_set(db, set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
 
@@ -315,10 +307,7 @@ pub async fn publish_reference_set(
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Count deactivated values in a set that have no migration map entry.
-async fn count_unresolved_deactivations(
-    db: &impl ConnectionTrait,
-    set_id: i64,
-) -> AppResult<i64> {
+async fn count_unresolved_deactivations(db: &impl ConnectionTrait, set_id: i64) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -331,9 +320,7 @@ async fn count_unresolved_deactivations(
             [set_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("count_unresolved_deactivations: no result"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("count_unresolved_deactivations: no result")))?;
 
     let cnt: i64 = row
         .try_get("", "cnt")
@@ -369,10 +356,7 @@ async fn find_published_set_id(
 }
 
 /// Collect codes of deactivated values in a set (candidates for impact).
-async fn collect_changed_codes(
-    db: &impl ConnectionTrait,
-    set_id: i64,
-) -> AppResult<Vec<String>> {
+async fn collect_changed_codes(db: &impl ConnectionTrait, set_id: i64) -> AppResult<Vec<String>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -429,11 +413,7 @@ async fn probe_dimension(
 }
 
 /// Probe asset dimension: check equipment_classes and equipment tables.
-async fn probe_assets(
-    db: &impl ConnectionTrait,
-    domain_code: &str,
-    changed_codes: &[String],
-) -> ModuleImpact {
+async fn probe_assets(db: &impl ConnectionTrait, domain_code: &str, changed_codes: &[String]) -> ModuleImpact {
     let mut total: i64 = 0;
 
     // Check equipment_classes for matching codes.
@@ -492,11 +472,7 @@ async fn probe_assets(
 }
 
 /// Probe PM strategy dimension: checks plan criticality and required skill mappings.
-async fn probe_pm_plans(
-    db: &impl ConnectionTrait,
-    domain_code: &str,
-    changed_codes: &[String],
-) -> ModuleImpact {
+async fn probe_pm_plans(db: &impl ConnectionTrait, domain_code: &str, changed_codes: &[String]) -> ModuleImpact {
     let mut total: i64 = 0;
 
     // Criticality-driven impact on PM plans.

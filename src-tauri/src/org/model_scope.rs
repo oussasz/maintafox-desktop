@@ -21,14 +21,8 @@ pub async fn get_active_model_id(db: &impl ConnectionTrait) -> AppResult<i64> {
             "SELECT id FROM org_structure_models WHERE status = 'active' LIMIT 1".to_string(),
         ))
         .await?
-        .ok_or_else(|| {
-            fail(
-                "ORG_NO_ACTIVE_MODEL",
-                "No active organization structure model exists.",
-            )
-        })?;
-    row.try_get::<i64>("", "id")
-        .map_err(|e| decode_err("id", e))
+        .ok_or_else(|| fail("ORG_NO_ACTIVE_MODEL", "No active organization structure model exists."))?;
+    row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))
 }
 
 /// Optional active model id (None when bootstrapping / no publish yet).
@@ -40,10 +34,7 @@ pub async fn try_get_active_model_id(db: &impl ConnectionTrait) -> AppResult<Opt
         ))
         .await?;
     match row {
-        Some(r) => Ok(Some(
-            r.try_get::<i64>("", "id")
-                .map_err(|e| decode_err("id", e))?,
-        )),
+        Some(r) => Ok(Some(r.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?)),
         None => Ok(None),
     }
 }
@@ -60,16 +51,11 @@ pub async fn get_model_status(db: &impl ConnectionTrait, model_id: i64) -> AppRe
             entity: "org_structure_model".to_string(),
             id: model_id.to_string(),
         })?;
-    row.try_get::<String>("", "status")
-        .map_err(|e| decode_err("status", e))
+    row.try_get::<String>("", "status").map_err(|e| decode_err("status", e))
 }
 
 /// Assert a node belongs to the given structure model and is not deleted.
-pub async fn assert_node_in_model(
-    db: &impl ConnectionTrait,
-    node_id: i64,
-    model_id: i64,
-) -> AppResult<()> {
+pub async fn assert_node_in_model(db: &impl ConnectionTrait, node_id: i64, model_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -115,9 +101,7 @@ pub async fn assert_org_node_active(db: &impl ConnectionTrait, org_node_id: i64)
             entity: "org_node".to_string(),
             id: org_node_id.to_string(),
         })?;
-    let status: String = row
-        .try_get("", "status")
-        .map_err(|e| decode_err("status", e))?;
+    let status: String = row.try_get("", "status").map_err(|e| decode_err("status", e))?;
     if status != "active" {
         return Err(fail_params(
             "ORG_NODE_NOT_ACTIVE",
@@ -143,9 +127,7 @@ pub async fn assert_structural_edit_allowed_for_model(
         ))
         .await?
         .expect("COUNT always returns a row");
-    let draft_count: i64 = draft_row
-        .try_get("", "c")
-        .map_err(|e| decode_err("c", e))?;
+    let draft_count: i64 = draft_row.try_get("", "c").map_err(|e| decode_err("c", e))?;
     if draft_count == 0 {
         return Ok(());
     }
@@ -163,10 +145,7 @@ pub async fn assert_structural_edit_allowed_for_model(
 }
 
 /// Resolve an org node id by code from the **active** structure model only.
-pub async fn try_resolve_active_org_node_id_by_code(
-    db: &impl ConnectionTrait,
-    code: &str,
-) -> AppResult<Option<i64>> {
+pub async fn try_resolve_active_org_node_id_by_code(db: &impl ConnectionTrait, code: &str) -> AppResult<Option<i64>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -179,19 +158,13 @@ pub async fn try_resolve_active_org_node_id_by_code(
         ))
         .await?;
     match row {
-        Some(r) => Ok(Some(
-            r.try_get::<i64>("", "id")
-                .map_err(|e| decode_err("id", e))?,
-        )),
+        Some(r) => Ok(Some(r.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?)),
         None => Ok(None),
     }
 }
 
 /// Resolve structure_model_id for a node (non-deleted).
-pub async fn get_node_structure_model_id(
-    db: &impl ConnectionTrait,
-    node_id: i64,
-) -> AppResult<i64> {
+pub async fn get_node_structure_model_id(db: &impl ConnectionTrait, node_id: i64) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -208,10 +181,7 @@ pub async fn get_node_structure_model_id(
 }
 
 /// Assign NULL-scoped live nodes to the given model id. Returns rows updated.
-pub async fn heal_null_structure_model_ids(
-    db: &impl ConnectionTrait,
-    model_id: i64,
-) -> AppResult<u64> {
+pub async fn heal_null_structure_model_ids(db: &impl ConnectionTrait, model_id: i64) -> AppResult<u64> {
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -225,9 +195,7 @@ pub async fn heal_null_structure_model_ids(
 }
 
 /// Heal onto the active model when one exists. Idempotent startup/bootstrap helper.
-pub async fn heal_null_structure_model_ids_onto_active(
-    db: &impl ConnectionTrait,
-) -> AppResult<u64> {
+pub async fn heal_null_structure_model_ids_onto_active(db: &impl ConnectionTrait) -> AppResult<u64> {
     let Some(active_id) = try_get_active_model_id(db).await? else {
         return Ok(0);
     };
@@ -245,15 +213,11 @@ pub async fn assert_no_null_structure_model_ids(db: &impl ConnectionTrait) -> Ap
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("count query returned no row")))?;
-    let count: i64 = row
-        .try_get("", "c")
-        .map_err(|e| decode_err("c", e))?;
+    let count: i64 = row.try_get("", "c").map_err(|e| decode_err("c", e))?;
     if count > 0 {
         return Err(fail_params(
             "ORG_NODES_MISSING_MODEL",
-            format!(
-                "{count} org node(s) still have no structure model — heal or assign before forking."
-            ),
+            format!("{count} org node(s) still have no structure model — heal or assign before forking."),
             &[("count", count.to_string())],
         ));
     }

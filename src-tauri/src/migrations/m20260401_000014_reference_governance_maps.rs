@@ -42,33 +42,17 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     // The domain in which the migration occurred.
-                    .col(
-                        ColumnDef::new(Alias::new("domain_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("domain_id")).integer().not_null())
                     // The value being retired or merged away.
-                    .col(
-                        ColumnDef::new(Alias::new("from_value_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("from_value_id")).integer().not_null())
                     // The surviving target value.
-                    .col(
-                        ColumnDef::new(Alias::new("to_value_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("to_value_id")).integer().not_null())
                     // Optional coded reason for the migration (e.g. "DUPLICATE", "CONSOLIDATION").
                     .col(ColumnDef::new(Alias::new("reason_code")).text())
                     // User who performed the migration (nullable for system-initiated).
                     .col(ColumnDef::new(Alias::new("migrated_by_id")).integer())
                     // ISO 8601 timestamp when the migration was recorded.
-                    .col(
-                        ColumnDef::new(Alias::new("migrated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("migrated_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -122,43 +106,19 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     // The set that was validated.
-                    .col(
-                        ColumnDef::new(Alias::new("set_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("set_id")).integer().not_null())
                     // "passed" | "failed"
-                    .col(
-                        ColumnDef::new(Alias::new("status"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("status")).text().not_null())
                     // Total number of issues found (blocking + non-blocking).
-                    .col(
-                        ColumnDef::new(Alias::new("issue_count"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("issue_count")).integer().not_null())
                     // Number of blocking issues that prevent publish.
-                    .col(
-                        ColumnDef::new(Alias::new("blocking_count"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("blocking_count")).integer().not_null())
                     // Full structured issue list as JSON array.
-                    .col(
-                        ColumnDef::new(Alias::new("report_json"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("report_json")).text().not_null())
                     // User who triggered the validation (nullable for system-initiated).
                     .col(ColumnDef::new(Alias::new("validated_by_id")).integer())
                     // ISO 8601 timestamp of the validation run.
-                    .col(
-                        ColumnDef::new(Alias::new("validated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("validated_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -186,11 +146,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("reference_value_migrations"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("reference_value_migrations")).to_owned())
             .await?;
         Ok(())
     }

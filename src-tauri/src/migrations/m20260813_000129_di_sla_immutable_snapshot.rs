@@ -114,7 +114,7 @@ impl MigrationTrait for Migration {
                    AND r.origin_type IS NULL
                    AND r.asset_criticality_class IS NULL
                )"
-                .to_string(),
+            .to_string(),
         ))
         .await?;
 

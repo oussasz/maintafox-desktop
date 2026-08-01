@@ -20,10 +20,7 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement,
-    TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use super::aliases;
@@ -137,16 +134,13 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
     ))
 }
 
-const BATCH_SELECT: &str =
-    "id, domain_id, source_filename, source_sha256, status, \
+const BATCH_SELECT: &str = "id, domain_id, source_filename, source_sha256, status, \
      total_rows, valid_rows, warning_rows, error_rows, \
      initiated_by_id, created_at, updated_at";
 
 fn map_batch(row: &QueryResult) -> AppResult<RefImportBatchSummary> {
     Ok(RefImportBatchSummary {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         domain_id: row
             .try_get::<i64>("", "domain_id")
             .map_err(|e| decode_err("domain_id", e))?,
@@ -187,19 +181,14 @@ fn map_import_row(row: &QueryResult) -> AppResult<RefImportRow> {
     let messages_raw: String = row
         .try_get("", "messages_json")
         .map_err(|e| decode_err("messages_json", e))?;
-    let messages: Vec<ImportRowMessage> =
-        serde_json::from_str(&messages_raw).unwrap_or_default();
+    let messages: Vec<ImportRowMessage> = serde_json::from_str(&messages_raw).unwrap_or_default();
 
     Ok(RefImportRow {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         batch_id: row
             .try_get::<i64>("", "batch_id")
             .map_err(|e| decode_err("batch_id", e))?,
-        row_no: row
-            .try_get::<i64>("", "row_no")
-            .map_err(|e| decode_err("row_no", e))?,
+        row_no: row.try_get::<i64>("", "row_no").map_err(|e| decode_err("row_no", e))?,
         raw_json: row
             .try_get::<String>("", "raw_json")
             .map_err(|e| decode_err("raw_json", e))?,
@@ -218,10 +207,7 @@ fn map_import_row(row: &QueryResult) -> AppResult<RefImportRow> {
 
 // â”€â”€â”€ Internal helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-async fn get_batch_by_id(
-    db: &impl ConnectionTrait,
-    batch_id: i64,
-) -> AppResult<RefImportBatchSummary> {
+async fn get_batch_by_id(db: &impl ConnectionTrait, batch_id: i64) -> AppResult<RefImportBatchSummary> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -297,9 +283,7 @@ pub async fn create_import_batch(
             [domain_id.into(), source_sha256.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("batch row missing after insert"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("batch row missing after insert")))?;
 
     map_batch(&row)
 }
@@ -332,10 +316,7 @@ pub async fn stage_import_rows(
     for (i, row_input) in rows.iter().enumerate() {
         let row_no = (i + 1) as i64;
         let raw_json = serde_json::to_string(row_input)?;
-        let norm_code = row_input
-            .code
-            .as_ref()
-            .map(|c| normalize_code(c));
+        let norm_code = row_input.code.as_ref().map(|c| normalize_code(c));
 
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -411,8 +392,7 @@ pub async fn validate_import_batch(
         .await?;
 
     // Collect all normalized codes in batch for duplicate detection.
-    let mut batch_codes: std::collections::HashMap<String, i64> =
-        std::collections::HashMap::new();
+    let mut batch_codes: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
 
     // Pre-load existing codes in the latest published set (if any) for collision check.
     let existing_codes = load_published_codes(db, batch.domain_id).await?;
@@ -423,12 +403,8 @@ pub async fn validate_import_batch(
     let mut error_count: i64 = 0;
 
     for staging_row in &staging_rows {
-        let staging_id: i64 = staging_row
-            .try_get("", "id")
-            .map_err(|e| decode_err("id", e))?;
-        let row_no: i64 = staging_row
-            .try_get("", "row_no")
-            .map_err(|e| decode_err("row_no", e))?;
+        let staging_id: i64 = staging_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        let row_no: i64 = staging_row.try_get("", "row_no").map_err(|e| decode_err("row_no", e))?;
         let raw_json: String = staging_row
             .try_get("", "raw_json")
             .map_err(|e| decode_err("raw_json", e))?;
@@ -436,19 +412,18 @@ pub async fn validate_import_batch(
             .try_get("", "normalized_code")
             .map_err(|e| decode_err("normalized_code", e))?;
 
-        let input: ImportRowInput =
-            serde_json::from_str(&raw_json).unwrap_or_else(|_| ImportRowInput {
-                code: None,
-                label: None,
-                description: None,
-                parent_code: None,
-                sort_order: None,
-                color_hex: None,
-                icon_name: None,
-                semantic_tag: None,
-                external_code: None,
-                metadata_json: None,
-            });
+        let input: ImportRowInput = serde_json::from_str(&raw_json).unwrap_or_else(|_| ImportRowInput {
+            code: None,
+            label: None,
+            description: None,
+            parent_code: None,
+            sort_order: None,
+            color_hex: None,
+            icon_name: None,
+            semantic_tag: None,
+            external_code: None,
+            metadata_json: None,
+        });
 
         let mut messages: Vec<ImportRowMessage> = Vec::new();
         let mut status = "valid";
@@ -670,19 +645,18 @@ pub async fn apply_import_batch(
             }
         };
 
-        let input: ImportRowInput =
-            serde_json::from_str(&raw_json).unwrap_or_else(|_| ImportRowInput {
-                code: None,
-                label: None,
-                description: None,
-                parent_code: None,
-                sort_order: None,
-                color_hex: None,
-                icon_name: None,
-                semantic_tag: None,
-                external_code: None,
-                metadata_json: None,
-            });
+        let input: ImportRowInput = serde_json::from_str(&raw_json).unwrap_or_else(|_| ImportRowInput {
+            code: None,
+            label: None,
+            description: None,
+            parent_code: None,
+            sort_order: None,
+            color_hex: None,
+            icon_name: None,
+            semantic_tag: None,
+            external_code: None,
+            metadata_json: None,
+        });
 
         let label = match &input.label {
             Some(l) if !l.trim().is_empty() => l.trim().to_string(),
@@ -785,10 +759,7 @@ pub async fn apply_import_batch(
 /// Export all canonical values and their aliases for a domain set.
 ///
 /// The set must be published (or draft for preview export).
-pub async fn export_domain_set(
-    db: &DatabaseConnection,
-    set_id: i64,
-) -> AppResult<RefExportResult> {
+pub async fn export_domain_set(db: &DatabaseConnection, set_id: i64) -> AppResult<RefExportResult> {
     let set = sets::get_reference_set(db, set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
     let vals = values::list_values(db, set_id).await?;
@@ -810,10 +781,7 @@ pub async fn export_domain_set(
 }
 
 /// Get the full import preview (batch + all staging rows).
-pub async fn get_import_preview(
-    db: &DatabaseConnection,
-    batch_id: i64,
-) -> AppResult<RefImportPreview> {
+pub async fn get_import_preview(db: &DatabaseConnection, batch_id: i64) -> AppResult<RefImportPreview> {
     let batch = get_batch_by_id(db, batch_id).await?;
 
     let rows = db
@@ -827,8 +795,7 @@ pub async fn get_import_preview(
         ))
         .await?;
 
-    let preview_rows: Vec<RefImportRow> =
-        rows.iter().map(map_import_row).collect::<Result<_, _>>()?;
+    let preview_rows: Vec<RefImportRow> = rows.iter().map(map_import_row).collect::<Result<_, _>>()?;
 
     Ok(RefImportPreview {
         batch,
@@ -874,10 +841,7 @@ pub async fn list_import_batches(
 // â”€â”€â”€ Internal helpers for apply â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Load all active value codes from the latest published set for a domain.
-async fn load_published_codes(
-    db: &DatabaseConnection,
-    domain_id: i64,
-) -> AppResult<std::collections::HashSet<String>> {
+async fn load_published_codes(db: &DatabaseConnection, domain_id: i64) -> AppResult<std::collections::HashSet<String>> {
     let mut codes = std::collections::HashSet::new();
 
     let set_row = db
@@ -973,10 +937,7 @@ async fn apply_update_value(
 
     binds.push(value_id.into());
 
-    let sql = format!(
-        "UPDATE reference_values SET {} WHERE id = ?",
-        set_clauses.join(", ")
-    );
+    let sql = format!("UPDATE reference_values SET {} WHERE id = ?", set_clauses.join(", "));
     txn.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
     Ok(())

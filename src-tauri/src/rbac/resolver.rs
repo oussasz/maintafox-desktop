@@ -48,11 +48,7 @@ pub async fn effective_permissions(
     let (scope_sql, values) = build_scope_query(user_id, scope_type, scope_reference, &now);
 
     let role_rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &scope_sql,
-            values,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &scope_sql, values))
         .await?;
 
     let role_ids: Vec<i64> = role_rows
@@ -123,8 +119,7 @@ pub async fn effective_permissions_for_node(
                 return effective_permissions(db, user_id, "tenant", None).await;
             }
 
-            let ref_placeholders: String =
-                scope_refs.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let ref_placeholders: String = scope_refs.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
             let sql = format!(
                 "SELECT DISTINCT usa.role_id \
@@ -150,11 +145,7 @@ pub async fn effective_permissions_for_node(
             values.push(now.into());
 
             let role_rows = db
-                .query_all(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    &sql,
-                    values,
-                ))
+                .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
                 .await?;
 
             let role_ids: Vec<i64> = role_rows
@@ -200,10 +191,7 @@ pub async fn dependency_warnings_for(
          WHERE permission_name IN ({placeholders})"
     );
 
-    let values: Vec<sea_orm::Value> = permission_names
-        .iter()
-        .map(|n| n.clone().into())
-        .collect();
+    let values: Vec<sea_orm::Value> = permission_names.iter().map(|n| n.clone().into()).collect();
 
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
@@ -227,10 +215,7 @@ pub async fn dependency_warnings_for(
 /// Validate that all hard dependencies are satisfied within `names`.
 /// Returns an `Err` listing the missing required permissions if any hard
 /// dependency is unsatisfied.
-pub async fn validate_hard_dependencies(
-    db: &DatabaseConnection,
-    names: &HashSet<String>,
-) -> AppResult<()> {
+pub async fn validate_hard_dependencies(db: &DatabaseConnection, names: &HashSet<String>) -> AppResult<()> {
     let deps = dependency_warnings_for(db, names).await?;
 
     let missing: Vec<String> = deps
@@ -256,10 +241,7 @@ pub async fn validate_hard_dependencies(
 /// Given a set of `role_id`s, resolve the distinct permission names they carry.
 /// Shared by both the legacy `effective_permissions` path and the new
 /// scope-chain-aware `effective_permissions_for_node`.
-async fn resolve_permissions_for_roles(
-    db: &DatabaseConnection,
-    role_ids: &[i64],
-) -> AppResult<HashSet<String>> {
+async fn resolve_permissions_for_roles(db: &DatabaseConnection, role_ids: &[i64]) -> AppResult<HashSet<String>> {
     if role_ids.is_empty() {
         return Ok(HashSet::new());
     }
@@ -315,11 +297,7 @@ fn build_scope_query(
            AND (usa.is_emergency = 0 OR usa.emergency_expires_at > ?)"
     );
 
-    let mut values: Vec<sea_orm::Value> = vec![
-        user_id.into(),
-        now.to_owned().into(),
-        now.to_owned().into(),
-    ];
+    let mut values: Vec<sea_orm::Value> = vec![user_id.into(), now.to_owned().into(), now.to_owned().into()];
 
     if scope_type != "tenant" {
         values.push(scope_type.to_owned().into());

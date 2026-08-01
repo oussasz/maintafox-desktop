@@ -16,17 +16,11 @@ impl MigrationName for Migration {
     }
 }
 
-async fn has_column(
-    db: &dyn sea_orm::ConnectionTrait,
-    table: &str,
-    column: &str,
-) -> Result<bool, DbErr> {
+async fn has_column(db: &dyn sea_orm::ConnectionTrait, table: &str, column: &str) -> Result<bool, DbErr> {
     let row = db
         .query_one(sea_orm::Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
-            format!(
-                "SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{column}' LIMIT 1"
-            ),
+            format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{column}' LIMIT 1"),
         ))
         .await?;
     Ok(row.is_some())
@@ -45,10 +39,8 @@ impl MigrationTrait for Migration {
         }
 
         if !has_column(db, "org_nodes", "origin_node_id").await? {
-            db.execute_unprepared(
-                "ALTER TABLE org_nodes ADD COLUMN origin_node_id INTEGER REFERENCES org_nodes(id)",
-            )
-            .await?;
+            db.execute_unprepared("ALTER TABLE org_nodes ADD COLUMN origin_node_id INTEGER REFERENCES org_nodes(id)")
+                .await?;
         }
 
         // Prefer active model; else any existing model (bootstrap / draft-only).
@@ -131,10 +123,8 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_org_nodes_origin_node_id ON org_nodes(origin_node_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_org_nodes_origin_node_id ON org_nodes(origin_node_id)")
+            .await?;
 
         // Partial unique: one code per model among live (non-deleted) rows.
         db.execute_unprepared(

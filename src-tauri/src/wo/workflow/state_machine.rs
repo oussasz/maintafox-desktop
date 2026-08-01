@@ -40,9 +40,7 @@ impl WoStatus {
             "closed" => Ok(Self::Closed),
             "cancelled" => Ok(Self::Cancelled),
             // Legacy aliases (read-only parse for old logs / mid-migration rows)
-            "awaiting_approval" | "planned" | "ready_to_schedule" | "assigned" => {
-                Ok(Self::Planning)
-            }
+            "awaiting_approval" | "planned" | "ready_to_schedule" | "assigned" => Ok(Self::Planning),
             "waiting_for_prerequisite" | "paused" => Ok(Self::OnHold),
             "mechanically_complete" | "technically_verified" => Ok(Self::Completed),
             other => Err(format!("Unknown WO status: '{other}'")),

@@ -18,14 +18,10 @@ pub struct WoApprovePlanningInput {
     pub expected_row_version: i64,
 }
 
-pub async fn approve_planning(
-    db: &DatabaseConnection,
-    input: WoApprovePlanningInput,
-) -> AppResult<WorkOrder> {
+pub async fn approve_planning(db: &DatabaseConnection, input: WoApprovePlanningInput) -> AppResult<WorkOrder> {
     let txn = db.begin().await?;
     let (from_code, status, _) = load_wo_status(&txn, input.wo_id).await?;
-    assert_action_allowed(&status, WoAction::ApprovePlanning)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    assert_action_allowed(&status, WoAction::ApprovePlanning).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = now_utc_z();
     let result = txn

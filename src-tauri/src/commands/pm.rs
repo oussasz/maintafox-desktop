@@ -7,11 +7,11 @@ use crate::auth::session_manager::AuthenticatedUser;
 use crate::errors::{AppError, AppResult};
 use crate::pm::domain::{
     CreatePmPlanInput, CreatePmPlanVersionInput, ExecutePmOccurrenceInput, ExecutePmOccurrenceResult,
-    GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmDueMetrics, PmExecution, PmExecutionFilter,
-    PmFinding, PmGovernanceKpiInput, PmGovernanceKpiReport, PmOccurrence, PmOccurrenceFilter, PmPlan,
-    PmPlanFilter, PmPlanVersion, PmPlanningReadinessInput, PmPlanningReadinessProjection,
-    PmRecurringFinding, PmRecurringFindingsInput, PublishPmPlanVersionInput, TransitionPmOccurrenceInput,
-    TransitionPmPlanLifecycleInput, UpdatePmPlanInput, UpdatePmPlanVersionInput,
+    GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmDueMetrics, PmExecution, PmExecutionFilter, PmFinding,
+    PmGovernanceKpiInput, PmGovernanceKpiReport, PmOccurrence, PmOccurrenceFilter, PmPlan, PmPlanFilter, PmPlanVersion,
+    PmPlanningReadinessInput, PmPlanningReadinessProjection, PmRecurringFinding, PmRecurringFindingsInput,
+    PublishPmPlanVersionInput, TransitionPmOccurrenceInput, TransitionPmPlanLifecycleInput, UpdatePmPlanInput,
+    UpdatePmPlanVersionInput,
 };
 use crate::pm::queries;
 use crate::state::AppState;
@@ -137,7 +137,6 @@ pub async fn get_pm_due_metrics(state: State<'_, AppState>) -> AppResult<PmDueMe
     queries::get_pm_due_metrics(&state.db).await
 }
 
-
 #[tauri::command]
 pub async fn list_pm_planning_readiness(
     input: PmPlanningReadinessInput,
@@ -168,20 +167,14 @@ pub async fn execute_pm_occurrence(
 }
 
 #[tauri::command]
-pub async fn list_pm_executions(
-    filter: PmExecutionFilter,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<PmExecution>> {
+pub async fn list_pm_executions(filter: PmExecutionFilter, state: State<'_, AppState>) -> AppResult<Vec<PmExecution>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::list_pm_executions(&state.db, filter).await
 }
 
 #[tauri::command]
-pub async fn list_pm_findings(
-    execution_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<PmFinding>> {
+pub async fn list_pm_findings(execution_id: i64, state: State<'_, AppState>) -> AppResult<Vec<PmFinding>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::PM_VIEW, PermissionScope::Global);
     queries::list_pm_findings(&state.db, execution_id).await
@@ -205,7 +198,10 @@ async fn enforce_pm_capability(state: &State<'_, AppState>, user: &Authenticated
 
 /// Require `pm.create` (canonical). Holders of legacy `pm.manage` are migrated to
 /// `pm.create`/`pm.edit`/`pm.delete` by the RBAC normalization migration.
-pub(crate) async fn require_pm_create_or_manage(state: &State<'_, AppState>, user: &AuthenticatedUser) -> AppResult<()> {
+pub(crate) async fn require_pm_create_or_manage(
+    state: &State<'_, AppState>,
+    user: &AuthenticatedUser,
+) -> AppResult<()> {
     let scope = PermissionScope::Global;
     if rbac::check_permission_cached(
         &state.db,
@@ -243,7 +239,10 @@ pub(crate) async fn require_pm_edit_or_manage(state: &State<'_, AppState>, user:
     )))
 }
 
-pub(crate) async fn require_pm_delete_or_manage(state: &State<'_, AppState>, user: &AuthenticatedUser) -> AppResult<()> {
+pub(crate) async fn require_pm_delete_or_manage(
+    state: &State<'_, AppState>,
+    user: &AuthenticatedUser,
+) -> AppResult<()> {
     let scope = PermissionScope::Global;
     if rbac::check_permission_cached(
         &state.db,

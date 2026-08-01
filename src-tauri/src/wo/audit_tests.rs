@@ -14,9 +14,7 @@ mod tests {
     use sea_orm_migration::MigratorTrait;
 
     use crate::wo::audit::{self, WoAuditInput};
-    use crate::wo::closeout::{
-        self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput,
-    };
+    use crate::wo::closeout::{self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput};
     use crate::wo::domain::WoCreateInput;
     use crate::wo::execution::{self, WoAssignInput, WoMechCompleteInput, WoPlanInput, WoStartInput};
     use crate::wo::labor::{self, AddLaborInput};
@@ -82,8 +80,7 @@ mod tests {
         let row = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM user_accounts WHERE username = 'audit_verifier' LIMIT 1"
-                    .to_string(),
+                "SELECT id FROM user_accounts WHERE username = 'audit_verifier' LIMIT 1".to_string(),
             ))
             .await
             .expect("query")
@@ -310,11 +307,7 @@ mod tests {
 
     /// Advance from in_progress to completed+verified with all quality gate data.
     /// In Option B, save_verification does NOT change WO status — stays completed.
-    async fn advance_to_completed_verified(
-        db: &sea_orm::DatabaseConnection,
-        wo_id: i64,
-        rv: i64,
-    ) -> i64 {
+    async fn advance_to_completed_verified(db: &sea_orm::DatabaseConnection, wo_id: i64, rv: i64) -> i64 {
         let actor = admin_id(db).await;
         let verifier = create_verifier(db).await;
 
@@ -404,8 +397,14 @@ mod tests {
         let db = setup().await;
 
         let expected = [
-            crate::rbac::permissions::OT_VIEW, crate::rbac::permissions::OT_CREATE, crate::rbac::permissions::OT_EDIT, crate::rbac::permissions::OT_APPROVE,
-            crate::rbac::permissions::OT_CLOSE, crate::rbac::permissions::OT_REOPEN, crate::rbac::permissions::OT_ADMIN, crate::rbac::permissions::OT_DELETE,
+            crate::rbac::permissions::OT_VIEW,
+            crate::rbac::permissions::OT_CREATE,
+            crate::rbac::permissions::OT_EDIT,
+            crate::rbac::permissions::OT_APPROVE,
+            crate::rbac::permissions::OT_CLOSE,
+            crate::rbac::permissions::OT_REOPEN,
+            crate::rbac::permissions::OT_ADMIN,
+            crate::rbac::permissions::OT_DELETE,
         ];
 
         for name in expected {

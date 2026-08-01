@@ -1,6 +1,6 @@
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use sea_orm::TryGetable;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::{AppError, AppResult};
 use crate::reports::domain::{ReportRun, ReportSchedule, ReportTemplate, UpsertReportScheduleInput};
@@ -29,9 +29,15 @@ pub async fn list_report_templates(db: &DatabaseConnection) -> AppResult<Vec<Rep
 
 fn map_template(row: &sea_orm::QueryResult) -> AppResult<ReportTemplate> {
     Ok(ReportTemplate {
-        id: row.try_get("", "id").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("id: {e}"))))?,
-        code: row.try_get("", "code").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("code: {e}"))))?,
-        title: row.try_get("", "title").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("title: {e}"))))?,
+        id: row
+            .try_get("", "id")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("id: {e}"))))?,
+        code: row
+            .try_get("", "code")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("code: {e}"))))?,
+        title: row
+            .try_get("", "title")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("title: {e}"))))?,
         description: row
             .try_get("", "description")
             .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("description: {e}"))))?,
@@ -41,7 +47,10 @@ fn map_template(row: &sea_orm::QueryResult) -> AppResult<ReportTemplate> {
         spec_json: row
             .try_get("", "spec_json")
             .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("spec_json: {e}"))))?,
-        is_active: row.try_get::<i64>("", "is_active").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("is_active: {e}"))))? != 0,
+        is_active: row
+            .try_get::<i64>("", "is_active")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("is_active: {e}"))))?
+            != 0,
     })
 }
 
@@ -81,8 +90,12 @@ pub async fn list_my_schedules(db: &DatabaseConnection, user_id: i64) -> AppResu
 
 fn map_schedule(row: &sea_orm::QueryResult) -> AppResult<ReportSchedule> {
     Ok(ReportSchedule {
-        id: row.try_get("", "id").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("id: {e}"))))?,
-        user_id: row.try_get("", "user_id").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("user_id: {e}"))))?,
+        id: row
+            .try_get("", "id")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("id: {e}"))))?,
+        user_id: row
+            .try_get("", "user_id")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("user_id: {e}"))))?,
         template_id: row
             .try_get("", "template_id")
             .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("template_id: {e}"))))?,
@@ -92,7 +105,10 @@ fn map_schedule(row: &sea_orm::QueryResult) -> AppResult<ReportSchedule> {
         export_format: row
             .try_get("", "export_format")
             .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("export_format: {e}"))))?,
-        enabled: row.try_get::<i64>("", "enabled").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("enabled: {e}"))))? != 0,
+        enabled: row
+            .try_get::<i64>("", "enabled")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("enabled: {e}"))))?
+            != 0,
         next_run_at: row
             .try_get("", "next_run_at")
             .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("next_run_at: {e}"))))?,
@@ -128,13 +144,19 @@ pub async fn list_my_runs(db: &DatabaseConnection, user_id: i64, limit: i64) -> 
 
 fn map_run(row: &sea_orm::QueryResult) -> AppResult<ReportRun> {
     Ok(ReportRun {
-        id: row.try_get("", "id").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("id: {e}"))))?,
+        id: row
+            .try_get("", "id")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("id: {e}"))))?,
         schedule_id: row.try_get("", "schedule_id").ok(),
         template_id: row
             .try_get("", "template_id")
             .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("template_id: {e}"))))?,
-        user_id: row.try_get("", "user_id").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("user_id: {e}"))))?,
-        status: row.try_get("", "status").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("status: {e}"))))?,
+        user_id: row
+            .try_get("", "user_id")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("user_id: {e}"))))?,
+        status: row
+            .try_get("", "status")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("status: {e}"))))?,
         export_format: row
             .try_get("", "export_format")
             .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("export_format: {e}"))))?,
@@ -373,8 +395,12 @@ pub async fn fetch_open_wo_by_status(db: &DatabaseConnection) -> AppResult<Vec<(
         .await?;
     let mut out = Vec::new();
     for r in rows {
-        let st: String = r.try_get("", "st").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("st: {e}"))))?;
-        let cnt: i64 = r.try_get("", "cnt").map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("cnt: {e}"))))?;
+        let st: String = r
+            .try_get("", "st")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("st: {e}"))))?;
+        let cnt: i64 = r
+            .try_get("", "cnt")
+            .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("cnt: {e}"))))?;
         out.push((st, cnt));
     }
     Ok(out)

@@ -115,13 +115,10 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared("DROP TABLE IF EXISTS sync_rejections")
-            .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS sync_checkpoint")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS sync_rejections").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS sync_checkpoint").await?;
         db.execute_unprepared("DROP TABLE IF EXISTS sync_inbox").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS sync_outbox")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS sync_outbox").await?;
         Ok(())
     }
 }

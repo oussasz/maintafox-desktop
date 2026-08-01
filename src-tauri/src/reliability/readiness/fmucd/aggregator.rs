@@ -4,7 +4,9 @@ use chrono::{DateTime, Utc};
 
 use super::loader::LoadProgress;
 use crate::reliability::readiness::blocking::EvaluationProfile;
-use crate::reliability::readiness::evaluate::{evaluate_asset, evaluate_asset_dual, AssetReadinessReport, EvaluateAssetInput};
+use crate::reliability::readiness::evaluate::{
+    evaluate_asset, evaluate_asset_dual, AssetReadinessReport, EvaluateAssetInput,
+};
 use crate::reliability::readiness::event::ReadinessEvent;
 use crate::reliability::readiness::fmucd::config::FmucdMappingConfig;
 use crate::reliability::readiness::report::{DatasetSummary, LoaderRowStats};
@@ -46,9 +48,7 @@ pub fn aggregate_by_asset(load: LoadProgress, config: &FmucdMappingConfig) -> Ag
     }
 }
 
-pub fn evaluate_dataset_documentary(
-    dataset: &AggregatedDataset,
-) -> Vec<AssetReadinessReport> {
+pub fn evaluate_dataset_documentary(dataset: &AggregatedDataset) -> Vec<AssetReadinessReport> {
     evaluate_dataset_profile(dataset, EvaluationProfile::CmmsDocumentary)
 }
 
@@ -56,10 +56,7 @@ pub fn evaluate_dataset_strict(dataset: &AggregatedDataset) -> Vec<AssetReadines
     evaluate_dataset_profile(dataset, EvaluationProfile::StrictRam)
 }
 
-fn evaluate_dataset_profile(
-    dataset: &AggregatedDataset,
-    profile: EvaluationProfile,
-) -> Vec<AssetReadinessReport> {
+fn evaluate_dataset_profile(dataset: &AggregatedDataset, profile: EvaluationProfile) -> Vec<AssetReadinessReport> {
     let mut reports = Vec::with_capacity(dataset.assets.len());
     for (asset_key, events) in &dataset.assets {
         let input = EvaluateAssetInput {
@@ -78,9 +75,7 @@ fn evaluate_dataset_profile(
     reports
 }
 
-pub fn evaluate_dataset_dual(
-    dataset: &AggregatedDataset,
-) -> (Vec<AssetReadinessReport>, Vec<AssetReadinessReport>) {
+pub fn evaluate_dataset_dual(dataset: &AggregatedDataset) -> (Vec<AssetReadinessReport>, Vec<AssetReadinessReport>) {
     let mut documentary = Vec::new();
     let mut strict = Vec::new();
     for (asset_key, events) in &dataset.assets {
@@ -102,16 +97,15 @@ pub fn evaluate_dataset_dual(
     (documentary, strict)
 }
 
-pub fn summarize_by_university(reports: &[AssetReadinessReport]) -> Vec<crate::reliability::readiness::report::UniversitySummary> {
-    use std::collections::HashMap;
+pub fn summarize_by_university(
+    reports: &[AssetReadinessReport],
+) -> Vec<crate::reliability::readiness::report::UniversitySummary> {
     use crate::reliability::readiness::report::UniversitySummary;
+    use std::collections::HashMap;
 
     let mut by_uni: HashMap<String, Vec<&AssetReadinessReport>> = HashMap::new();
     for r in reports {
-        let uid = r
-            .university_id
-            .clone()
-            .unwrap_or_else(|| "unknown".into());
+        let uid = r.university_id.clone().unwrap_or_else(|| "unknown".into());
         by_uni.entry(uid).or_default().push(r);
     }
 
@@ -122,10 +116,8 @@ pub fn summarize_by_university(reports: &[AssetReadinessReport]) -> Vec<crate::r
             let eligible = reps.iter().filter(|r| r.eligible_event_count > 0).count() as u64;
             let doc_ready = reps.iter().filter(|r| r.documentary_ready).count() as u64;
             let strict_ready = reps.iter().filter(|r| r.strict_ready).count() as u64;
-            let mean_c: f64 = reps.iter().map(|r| r.completeness.completeness_percent).sum::<f64>()
-                / n.max(1) as f64;
-            let mean_dq: f64 =
-                reps.iter().map(|r| r.data_quality_score).sum::<f64>() / n.max(1) as f64;
+            let mean_c: f64 = reps.iter().map(|r| r.completeness.completeness_percent).sum::<f64>() / n.max(1) as f64;
+            let mean_dq: f64 = reps.iter().map(|r| r.data_quality_score).sum::<f64>() / n.max(1) as f64;
             UniversitySummary {
                 university_id,
                 asset_count: n,
@@ -149,9 +141,6 @@ pub fn summarize_by_university(reports: &[AssetReadinessReport]) -> Vec<crate::r
     out
 }
 
-pub fn dataset_summary(
-    profile: EvaluationProfile,
-    reports: &[AssetReadinessReport],
-) -> DatasetSummary {
+pub fn dataset_summary(profile: EvaluationProfile, reports: &[AssetReadinessReport]) -> DatasetSummary {
     DatasetSummary::from_reports(profile, reports)
 }

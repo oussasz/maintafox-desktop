@@ -5,13 +5,11 @@ use crate::errors::{AppError, AppResult};
 use crate::inspection::domain::InspectionAnomaly;
 use crate::inspection::queries::get_inspection_checkpoint_by_id;
 use crate::inspection::results::{map_anomaly, stage_inspection_anomaly};
-use crate::sync::domain::{
-    InterventionRequestSyncPayload, StageOutboxItemInput, SYNC_ENTITY_INTERVENTION_REQUESTS,
-};
+use crate::sync::domain::{InterventionRequestSyncPayload, StageOutboxItemInput, SYNC_ENTITY_INTERVENTION_REQUESTS};
 use crate::sync::queries::stage_outbox_item;
-use crate::wo::sync_stage::stage_work_order_sync;
 use crate::wo::domain::WoCreateInput;
 use crate::wo::queries::create_work_order;
+use crate::wo::sync_stage::stage_work_order_sync;
 
 async fn load_anomaly(db: &DatabaseConnection, id: i64) -> AppResult<InspectionAnomaly> {
     let row = db
@@ -39,7 +37,10 @@ fn assert_routable(a: &InspectionAnomaly) -> AppResult<()> {
     Ok(())
 }
 
-async fn stage_intervention_request_sync(db: &DatabaseConnection, di: &crate::di::domain::InterventionRequest) -> AppResult<()> {
+async fn stage_intervention_request_sync(
+    db: &DatabaseConnection,
+    di: &crate::di::domain::InterventionRequest,
+) -> AppResult<()> {
     let payload = InterventionRequestSyncPayload {
         id: di.id,
         row_version: di.row_version,
@@ -87,7 +88,9 @@ pub async fn route_inspection_anomaly_to_di(
 ) -> AppResult<(crate::di::domain::InterventionRequest, InspectionAnomaly)> {
     let a = load_anomaly(db, anomaly_id).await?;
     if a.row_version != expected_row_version {
-        return Err(AppError::ValidationFailed(vec!["row_version mismatch on inspection_anomalies.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "row_version mismatch on inspection_anomalies.".into(),
+        ]));
     }
     assert_routable(&a)?;
     let Some(rid) = a.result_id else {
@@ -103,9 +106,9 @@ pub async fn route_inspection_anomaly_to_di(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("result missing")))?;
-    let checkpoint_id: i64 = res_row.try_get("", "checkpoint_id").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("checkpoint_id decode: {e}"))
-    })?;
+    let checkpoint_id: i64 = res_row
+        .try_get("", "checkpoint_id")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("checkpoint_id decode: {e}")))?;
     let cp = get_inspection_checkpoint_by_id(db, checkpoint_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
@@ -145,11 +148,7 @@ pub async fn route_inspection_anomaly_to_di(
         _ => "high",
     };
 
-    let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(
-        db,
-        &a.anomaly_type,
-    )
-    .await?;
+    let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(db, &a.anomaly_type).await?;
 
     let di_in = DiCreateInput {
         asset_id,
@@ -157,7 +156,7 @@ pub async fn route_inspection_anomaly_to_di(
         title,
         description,
         origin_type: "inspection".into(),
-            request_type: "repair".to_string(),
+        request_type: "repair".to_string(),
         symptom_code_id: Some(symptom_code_id),
         impact_level: "medium".into(),
         production_impact: false,
@@ -202,7 +201,9 @@ pub async fn route_inspection_anomaly_to_wo(
 ) -> AppResult<(crate::wo::domain::WorkOrder, InspectionAnomaly)> {
     let a = load_anomaly(db, anomaly_id).await?;
     if a.row_version != expected_row_version {
-        return Err(AppError::ValidationFailed(vec!["row_version mismatch on inspection_anomalies.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "row_version mismatch on inspection_anomalies.".into(),
+        ]));
     }
     assert_routable(&a)?;
 
@@ -233,9 +234,9 @@ pub async fn route_inspection_anomaly_to_wo(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("result missing")))?;
-    let checkpoint_id: i64 = res_row.try_get("", "checkpoint_id").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("checkpoint_id decode: {e}"))
-    })?;
+    let checkpoint_id: i64 = res_row
+        .try_get("", "checkpoint_id")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("checkpoint_id decode: {e}")))?;
     let cp = get_inspection_checkpoint_by_id(db, checkpoint_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
@@ -300,7 +301,9 @@ pub async fn defer_inspection_anomaly(
 ) -> AppResult<InspectionAnomaly> {
     let a = load_anomaly(db, anomaly_id).await?;
     if a.row_version != expected_row_version {
-        return Err(AppError::ValidationFailed(vec!["row_version mismatch on inspection_anomalies.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "row_version mismatch on inspection_anomalies.".into(),
+        ]));
     }
     assert_routable(&a)?;
     let new_rv = a.row_version + 1;

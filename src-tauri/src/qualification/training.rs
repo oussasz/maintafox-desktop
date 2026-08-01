@@ -127,7 +127,9 @@ fn map_session(row: &sea_orm::QueryResult) -> AppResult<TrainingSession> {
         entity_sync_id: row
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
-        course_code: row.try_get("", "course_code").map_err(|e| decode_err("course_code", e))?,
+        course_code: row
+            .try_get("", "course_code")
+            .map_err(|e| decode_err("course_code", e))?,
         scheduled_start: row
             .try_get("", "scheduled_start")
             .map_err(|e| decode_err("scheduled_start", e))?,
@@ -137,8 +139,12 @@ fn map_session(row: &sea_orm::QueryResult) -> AppResult<TrainingSession> {
         location: row.try_get("", "location").ok(),
         instructor_id: row.try_get("", "instructor_id").ok(),
         certification_type_id: row.try_get("", "certification_type_id").ok(),
-        min_pass_score: row.try_get("", "min_pass_score").map_err(|e| decode_err("min_pass_score", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        min_pass_score: row
+            .try_get("", "min_pass_score")
+            .map_err(|e| decode_err("min_pass_score", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -149,13 +155,17 @@ fn map_attendance(row: &sea_orm::QueryResult) -> AppResult<TrainingAttendance> {
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
         session_id: row.try_get("", "session_id").map_err(|e| decode_err("session_id", e))?,
-        personnel_id: row.try_get("", "personnel_id").map_err(|e| decode_err("personnel_id", e))?,
+        personnel_id: row
+            .try_get("", "personnel_id")
+            .map_err(|e| decode_err("personnel_id", e))?,
         attendance_status: row
             .try_get("", "attendance_status")
             .map_err(|e| decode_err("attendance_status", e))?,
         completed_at: row.try_get("", "completed_at").ok(),
         score: row.try_get("", "score").ok(),
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -165,14 +175,18 @@ fn map_ack(row: &sea_orm::QueryResult) -> AppResult<DocumentAcknowledgement> {
         entity_sync_id: row
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
-        personnel_id: row.try_get("", "personnel_id").map_err(|e| decode_err("personnel_id", e))?,
+        personnel_id: row
+            .try_get("", "personnel_id")
+            .map_err(|e| decode_err("personnel_id", e))?,
         document_version_id: row
             .try_get("", "document_version_id")
             .map_err(|e| decode_err("document_version_id", e))?,
         acknowledged_at: row
             .try_get("", "acknowledged_at")
             .map_err(|e| decode_err("acknowledged_at", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -239,7 +253,9 @@ async fn maybe_issue_cert_from_pass(
 
     if let Some(erow) = existing {
         let id: i64 = erow.try_get("", "id").map_err(|e| decode_err("id", e))?;
-        let rv: i64 = erow.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?;
+        let rv: i64 = erow
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?;
         upsert_personnel_certification(
             db,
             PersonnelCertificationUpsertInput {
@@ -292,7 +308,10 @@ pub async fn list_training_sessions(db: &DatabaseConnection) -> AppResult<Vec<Tr
     Ok(out)
 }
 
-pub async fn upsert_training_session(db: &DatabaseConnection, input: TrainingSessionUpsertInput) -> AppResult<TrainingSession> {
+pub async fn upsert_training_session(
+    db: &DatabaseConnection,
+    input: TrainingSessionUpsertInput,
+) -> AppResult<TrainingSession> {
     if input.course_code.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec!["course_code is required.".into()]));
     }
@@ -305,12 +324,10 @@ pub async fn upsert_training_session(db: &DatabaseConnection, input: TrainingSes
         let ev = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
-        let current = get_session_by_id(db, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound {
-                entity: "TrainingSession".into(),
-                id: id.to_string(),
-            })?;
+        let current = get_session_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+            entity: "TrainingSession".into(),
+            id: id.to_string(),
+        })?;
         if current.row_version != ev {
             return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
         }
@@ -336,7 +353,9 @@ pub async fn upsert_training_session(db: &DatabaseConnection, input: TrainingSes
             ))
             .await?;
         if affected.rows_affected() == 0 {
-            return Err(AppError::ValidationFailed(vec!["Concurrent update on training_sessions.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "Concurrent update on training_sessions.".into(),
+            ]));
         }
         let updated = get_session_by_id(db, id).await?.expect("row");
         stage_training_session(db, &updated).await?;
@@ -439,12 +458,10 @@ pub async fn upsert_training_attendance(
         let ev = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
-        let current = get_attendance_by_id(db, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound {
-                entity: "TrainingAttendance".into(),
-                id: id.to_string(),
-            })?;
+        let current = get_attendance_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+            entity: "TrainingAttendance".into(),
+            id: id.to_string(),
+        })?;
         if current.row_version != ev {
             return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
         }
@@ -468,19 +485,14 @@ pub async fn upsert_training_attendance(
             ))
             .await?;
         if affected.rows_affected() == 0 {
-            return Err(AppError::ValidationFailed(vec!["Concurrent update on training_attendance.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "Concurrent update on training_attendance.".into(),
+            ]));
         }
         let updated = get_attendance_by_id(db, id).await?.expect("row");
         stage_training_attendance(db, &updated).await?;
         if input.attendance_status == "passed" {
-            maybe_issue_cert_from_pass(
-                db,
-                &session,
-                input.personnel_id,
-                &input.completed_at,
-                input.score,
-            )
-            .await?;
+            maybe_issue_cert_from_pass(db, &session, input.personnel_id, &input.completed_at, input.score).await?;
         }
         return Ok(updated);
     }
@@ -511,14 +523,7 @@ pub async fn upsert_training_attendance(
     let created = get_attendance_by_id(db, new_id).await?.expect("row");
     stage_training_attendance(db, &created).await?;
     if input.attendance_status == "passed" {
-        maybe_issue_cert_from_pass(
-            db,
-            &session,
-            input.personnel_id,
-            &input.completed_at,
-            input.score,
-        )
-        .await?;
+        maybe_issue_cert_from_pass(db, &session, input.personnel_id, &input.completed_at, input.score).await?;
     }
     Ok(created)
 }
@@ -570,19 +575,19 @@ pub async fn upsert_document_acknowledgement(
     input: DocumentAcknowledgementUpsertInput,
 ) -> AppResult<DocumentAcknowledgement> {
     if input.document_version_id <= 0 || input.personnel_id <= 0 {
-        return Err(AppError::ValidationFailed(vec!["personnel_id and document_version_id must be positive.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "personnel_id and document_version_id must be positive.".into(),
+        ]));
     }
 
     if let Some(id) = input.id {
         let ev = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
-        let current = get_ack_by_id(db, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound {
-                entity: "DocumentAcknowledgement".into(),
-                id: id.to_string(),
-            })?;
+        let current = get_ack_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+            entity: "DocumentAcknowledgement".into(),
+            id: id.to_string(),
+        })?;
         if current.row_version != ev {
             return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
         }

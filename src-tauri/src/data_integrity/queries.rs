@@ -29,9 +29,13 @@ fn map_row(row: &sea_orm::QueryResult) -> AppResult<DataIntegrityFindingRow> {
         row_version: row.try_get("", "row_version").map_err(|e| map_err("row_version", e))?,
         severity: row.try_get("", "severity").map_err(|e| map_err("severity", e))?,
         domain: row.try_get("", "domain").map_err(|e| map_err("domain", e))?,
-        record_class: row.try_get("", "record_class").map_err(|e| map_err("record_class", e))?,
+        record_class: row
+            .try_get("", "record_class")
+            .map_err(|e| map_err("record_class", e))?,
         record_id: row.try_get("", "record_id").map_err(|e| map_err("record_id", e))?,
-        finding_code: row.try_get("", "finding_code").map_err(|e| map_err("finding_code", e))?,
+        finding_code: row
+            .try_get("", "finding_code")
+            .map_err(|e| map_err("finding_code", e))?,
         details_json: row
             .try_get("", "details_json")
             .map_err(|e| map_err("details_json", e))?,
@@ -47,10 +51,7 @@ fn map_err(col: &str, e: sea_orm::DbErr) -> crate::errors::AppError {
     crate::errors::AppError::Internal(anyhow::anyhow!("data_integrity row {col}: {e}"))
 }
 
-pub async fn list_open_findings(
-    db: &DatabaseConnection,
-    limit: i64,
-) -> AppResult<Vec<DataIntegrityFindingRow>> {
+pub async fn list_open_findings(db: &DatabaseConnection, limit: i64) -> AppResult<Vec<DataIntegrityFindingRow>> {
     let lim = limit.clamp(1, 500);
     let rows = db
         .query_all(Statement::from_string(
@@ -65,10 +66,7 @@ pub async fn list_open_findings(
     rows.iter().map(map_row).collect()
 }
 
-pub async fn get_finding(
-    db: &impl ConnectionTrait,
-    id: i64,
-) -> AppResult<Option<DataIntegrityFindingRow>> {
+pub async fn get_finding(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<DataIntegrityFindingRow>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -88,8 +86,6 @@ pub async fn last_insert_rowid(db: &impl ConnectionTrait) -> AppResult<i64> {
             "SELECT last_insert_rowid() AS id".to_string(),
         ))
         .await?
-        .ok_or_else(|| {
-            crate::errors::AppError::Internal(anyhow::anyhow!("last_insert_rowid"))
-        })?;
+        .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     row.try_get("", "id").map_err(|e| map_err("id", e))
 }

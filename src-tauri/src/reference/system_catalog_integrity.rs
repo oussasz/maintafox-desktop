@@ -83,15 +83,7 @@ async fn ensure_published_set(db: &DatabaseConnection, domain_code: &str) -> App
 async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
     ensure_domain(db, "DI.SYMPTOM", "Symptômes DI", "flat", "tenant_managed", 1).await?;
     ensure_domain(db, "DI.ORIGIN", "Origines DI", "flat", "tenant_managed", 1).await?;
-    ensure_domain(
-        db,
-        "DI.PRIORITY",
-        "Priorités DI",
-        "flat",
-        "protected_analytical",
-        0,
-    )
-    .await?;
+    ensure_domain(db, "DI.PRIORITY", "Priorités DI", "flat", "protected_analytical", 0).await?;
     ensure_domain(
         db,
         "DI.IMPACT_LEVEL",
@@ -111,7 +103,13 @@ async fn ensure_di_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
     )
     .await?;
 
-    for code in ["DI.SYMPTOM", "DI.ORIGIN", "DI.PRIORITY", "DI.IMPACT_LEVEL", "DI.REQUEST_TYPE"] {
+    for code in [
+        "DI.SYMPTOM",
+        "DI.ORIGIN",
+        "DI.PRIORITY",
+        "DI.IMPACT_LEVEL",
+        "DI.REQUEST_TYPE",
+    ] {
         ensure_published_set(db, code).await?;
     }
 
@@ -320,15 +318,7 @@ async fn ensure_work_failure_modes_reference_catalog(db: &DatabaseConnection) ->
 }
 
 async fn ensure_work_delay_reasons_reference_catalog(db: &DatabaseConnection) -> AppResult<()> {
-    ensure_domain(
-        db,
-        "WORK.DELAY_REASONS",
-        "Delay reasons",
-        "flat",
-        "tenant_managed",
-        1,
-    )
-    .await?;
+    ensure_domain(db, "WORK.DELAY_REASONS", "Delay reasons", "flat", "tenant_managed", 1).await?;
     ensure_published_set(db, "WORK.DELAY_REASONS").await?;
 
     let seed_sql = format!(
@@ -350,8 +340,7 @@ async fn ensure_work_delay_reasons_reference_catalog(db: &DatabaseConnection) ->
            JOIN reference_domains d ON d.code = 'WORK.DELAY_REASONS' \
            JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published'"
     );
-    db.execute(Statement::from_string(DbBackend::Sqlite, seed_sql))
-        .await?;
+    db.execute(Statement::from_string(DbBackend::Sqlite, seed_sql)).await?;
 
     Ok(())
 }
@@ -382,8 +371,7 @@ async fn ensure_work_part_unused_reason_reference_catalog(db: &DatabaseConnectio
            JOIN reference_domains d ON d.code = 'WORK.PART_UNUSED_REASON' \
            JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published'"
     );
-    db.execute(Statement::from_string(DbBackend::Sqlite, seed_sql))
-        .await?;
+    db.execute(Statement::from_string(DbBackend::Sqlite, seed_sql)).await?;
 
     Ok(())
 }

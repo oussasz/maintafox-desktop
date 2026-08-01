@@ -13,9 +13,7 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .get_connection()
-            .execute_unprepared(
-                "ALTER TABLE org_node_types ADD COLUMN color TEXT DEFAULT NULL",
-            )
+            .execute_unprepared("ALTER TABLE org_node_types ADD COLUMN color TEXT DEFAULT NULL")
             .await?;
         Ok(())
     }

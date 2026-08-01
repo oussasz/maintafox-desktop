@@ -73,8 +73,10 @@ pub fn restore_window_state(app: &mut tauri::App) -> AppResult<()> {
 
     // Sanitize bad saved values (e.g. from a minimized window on Windows)
     if state.width == 0 || state.height == 0 || state.x <= -30000 || state.y <= -30000 {
-        warn!("Window state has invalid values (w={}, h={}, x={}, y={}), resetting to defaults",
-              state.width, state.height, state.x, state.y);
+        warn!(
+            "Window state has invalid values (w={}, h={}, x={}, y={}), resetting to defaults",
+            state.width, state.height, state.x, state.y
+        );
         state = WindowState::default();
     }
 

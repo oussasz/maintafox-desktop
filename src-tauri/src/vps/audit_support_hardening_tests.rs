@@ -1,18 +1,13 @@
 #![cfg(test)]
 
 use crate::vps::audit_support_hardening::{
-    audit_record_preimage, compute_record_integrity_sha256, privileged_action_guard_ok,
-    verify_audit_chain, verify_record_integrity, AuditEntityRefsV1, ComplianceExportKindV1,
-    IncidentRunbookEntryV1, IncidentRunbookIdV1, SupportTicketStateV1, SupportTicketV1,
-    VendorAdminAuditActionCategoryV1, VendorAdminAuditRecordV1,
+    audit_record_preimage, compute_record_integrity_sha256, privileged_action_guard_ok, verify_audit_chain,
+    verify_record_integrity, AuditEntityRefsV1, ComplianceExportKindV1, IncidentRunbookEntryV1, IncidentRunbookIdV1,
+    SupportTicketStateV1, SupportTicketV1, VendorAdminAuditActionCategoryV1, VendorAdminAuditRecordV1,
 };
 use crate::vps::sync_rollout_platform_ops::SyncHealthSeverityV1;
 
-fn sample_record(
-    record_id: &str,
-    seq: u64,
-    chain_prev: Option<&str>,
-) -> VendorAdminAuditRecordV1 {
+fn sample_record(record_id: &str, seq: u64, chain_prev: Option<&str>) -> VendorAdminAuditRecordV1 {
     let mut r = VendorAdminAuditRecordV1 {
         record_id: record_id.into(),
         sequence: seq,
@@ -110,8 +105,5 @@ fn runbook_roundtrip() {
 #[test]
 fn compliance_export_kind_json() {
     let k = ComplianceExportKindV1::EntitlementHistory;
-    assert_eq!(
-        serde_json::to_string(&k).unwrap(),
-        "\"entitlement_history\""
-    );
+    assert_eq!(serde_json::to_string(&k).unwrap(), "\"entitlement_history\"");
 }

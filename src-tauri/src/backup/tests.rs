@@ -60,8 +60,7 @@ mod tests {
 
         let expected_migrations = crate::migrations::Migrator::migrations().len() as i64;
         assert_eq!(
-            migration_count,
-            expected_migrations,
+            migration_count, expected_migrations,
             "all registered migrations should be applied"
         );
     }

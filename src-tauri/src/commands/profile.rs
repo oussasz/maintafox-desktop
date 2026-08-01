@@ -76,9 +76,7 @@ fn normalize_email(raw: &str) -> AppResult<Option<String>> {
         && !normalized.ends_with('@')
         && normalized.rfind('.').is_some_and(|dot| dot > at_idx.unwrap_or(0) + 1);
     if !is_valid {
-        return Err(AppError::ValidationFailed(vec![
-            "Adresse e-mail invalide.".into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["Adresse e-mail invalide.".into()]));
     }
     Ok(Some(normalized))
 }
@@ -94,9 +92,7 @@ fn normalize_phone_e164(raw: &str) -> AppResult<Option<String>> {
             if idx == 0 {
                 out.push(ch);
             } else {
-                return Err(AppError::ValidationFailed(vec![
-                    "Numéro de téléphone invalide.".into(),
-                ]));
+                return Err(AppError::ValidationFailed(vec!["Numéro de téléphone invalide.".into()]));
             }
         } else if ch.is_ascii_digit() {
             out.push(ch);
@@ -147,35 +143,19 @@ pub async fn get_my_profile(state: State<'_, AppState>) -> AppResult<UserProfile
 
     Ok(UserProfile {
         id: row.try_get::<i32>("", "id").unwrap_or(0),
-        username: row
-            .try_get::<String>("", "username")
-            .unwrap_or_default(),
-        personnel_id: row
-            .try_get::<Option<i64>>("", "personnel_id")
-            .unwrap_or(None),
-        display_name: row
-            .try_get::<Option<String>>("", "display_name")
-            .unwrap_or(None),
-        email: row
-            .try_get::<Option<String>>("", "email")
-            .unwrap_or(None),
-        phone: row
-            .try_get::<Option<String>>("", "phone")
-            .unwrap_or(None),
+        username: row.try_get::<String>("", "username").unwrap_or_default(),
+        personnel_id: row.try_get::<Option<i64>>("", "personnel_id").unwrap_or(None),
+        display_name: row.try_get::<Option<String>>("", "display_name").unwrap_or(None),
+        email: row.try_get::<Option<String>>("", "email").unwrap_or(None),
+        phone: row.try_get::<Option<String>>("", "phone").unwrap_or(None),
         language: None,
         identity_mode: row
             .try_get::<String>("", "identity_mode")
             .unwrap_or_else(|_| "local".to_string()),
-        created_at: row
-            .try_get::<String>("", "created_at")
-            .unwrap_or_default(),
-        password_changed_at: row
-            .try_get::<Option<String>>("", "password_changed_at")
-            .unwrap_or(None),
+        created_at: row.try_get::<String>("", "created_at").unwrap_or_default(),
+        password_changed_at: row.try_get::<Option<String>>("", "password_changed_at").unwrap_or(None),
         pin_configured: row.try_get::<i32>("", "pin_configured").unwrap_or(0) == 1,
-        role_name: row
-            .try_get::<Option<String>>("", "role_name")
-            .unwrap_or(None),
+        role_name: row.try_get::<Option<String>>("", "role_name").unwrap_or(None),
     })
 }
 
@@ -184,10 +164,7 @@ pub async fn get_my_profile(state: State<'_, AppState>) -> AppResult<UserProfile
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn update_my_profile(
-    payload: UpdateProfilePayload,
-    state: State<'_, AppState>,
-) -> AppResult<UserProfile> {
+pub async fn update_my_profile(payload: UpdateProfilePayload, state: State<'_, AppState>) -> AppResult<UserProfile> {
     let user = require_session!(state);
     let now = Utc::now().to_rfc3339();
 
@@ -243,18 +220,11 @@ pub async fn update_my_profile(
     binds.push(now.into());
     binds.push(user.user_id.into());
 
-    let sql = format!(
-        "UPDATE user_accounts SET {} WHERE id = ?",
-        set_parts.join(", ")
-    );
+    let sql = format!("UPDATE user_accounts SET {} WHERE id = ?", set_parts.join(", "));
 
     state
         .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds,
-        ))
+        .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
     // Update in-memory session display_name if changed
@@ -273,10 +243,7 @@ pub async fn update_my_profile(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn change_password(
-    payload: ChangePasswordPayload,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn change_password(payload: ChangePasswordPayload, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
 
     // Validate new password strength
@@ -325,12 +292,7 @@ pub async fn change_password(
                    password_changed_at = ?,
                    updated_at = ?
                WHERE id = ?",
-            [
-                new_hash.into(),
-                now.clone().into(),
-                now.into(),
-                user.user_id.into(),
-            ],
+            [new_hash.into(), now.clone().into(), now.into(), user.user_id.into()],
         ))
         .await?;
 
@@ -394,18 +356,10 @@ pub async fn get_session_history(
     for row in &rows {
         entries.push(SessionHistoryEntry {
             id: row.try_get::<String>("", "id").unwrap_or_default(),
-            device_label: row
-                .try_get::<Option<String>>("", "device_label")
-                .unwrap_or(None),
-            started_at: row
-                .try_get::<String>("", "started_at")
-                .unwrap_or_default(),
-            ended_at: row
-                .try_get::<Option<String>>("", "ended_at")
-                .unwrap_or(None),
-            duration_seconds: row
-                .try_get::<Option<i64>>("", "duration_seconds")
-                .unwrap_or(None),
+            device_label: row.try_get::<Option<String>>("", "device_label").unwrap_or(None),
+            started_at: row.try_get::<String>("", "started_at").unwrap_or_default(),
+            ended_at: row.try_get::<Option<String>>("", "ended_at").unwrap_or(None),
+            duration_seconds: row.try_get::<Option<i64>>("", "duration_seconds").unwrap_or(None),
             status: row
                 .try_get::<String>("", "status")
                 .unwrap_or_else(|_| "unknown".to_string()),
@@ -429,9 +383,7 @@ pub struct TrustedDeviceEntry {
 }
 
 #[tauri::command]
-pub async fn list_trusted_devices(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<TrustedDeviceEntry>> {
+pub async fn list_trusted_devices(state: State<'_, AppState>) -> AppResult<Vec<TrustedDeviceEntry>> {
     let user = require_session!(state);
 
     let rows = state
@@ -450,15 +402,9 @@ pub async fn list_trusted_devices(
     for row in &rows {
         entries.push(TrustedDeviceEntry {
             id: row.try_get::<String>("", "id").unwrap_or_default(),
-            device_label: row
-                .try_get::<Option<String>>("", "device_label")
-                .unwrap_or(None),
-            trusted_at: row
-                .try_get::<String>("", "trusted_at")
-                .unwrap_or_default(),
-            last_seen_at: row
-                .try_get::<Option<String>>("", "last_seen_at")
-                .unwrap_or(None),
+            device_label: row.try_get::<Option<String>>("", "device_label").unwrap_or(None),
+            trusted_at: row.try_get::<String>("", "trusted_at").unwrap_or_default(),
+            last_seen_at: row.try_get::<Option<String>>("", "last_seen_at").unwrap_or(None),
             is_revoked: row.try_get::<i32>("", "is_revoked").unwrap_or(0) == 1,
         });
     }
@@ -471,10 +417,7 @@ pub async fn list_trusted_devices(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn revoke_my_device(
-    device_id: String,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn revoke_my_device(device_id: String, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
     device::revoke_device_trust(&state.db, &device_id, user.user_id).await?;
 

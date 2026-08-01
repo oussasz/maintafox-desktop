@@ -2,8 +2,8 @@
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
-use crate::errors::AppResult;
 use super::domain::PersonnelAssignmentHistoryEntry;
+use crate::errors::AppResult;
 
 pub async fn list_personnel_assignment_history(
     db: &DatabaseConnection,

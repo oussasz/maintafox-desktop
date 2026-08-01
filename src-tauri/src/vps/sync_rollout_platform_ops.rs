@@ -178,8 +178,7 @@ pub struct OpsAlertV1 {
 pub fn repair_action_allowed(item: &RepairQueueItemV1, action: RepairQueueActionV1) -> bool {
     match action {
         RepairQueueActionV1::Escalate => {
-            item.severity == SyncHealthSeverityV1::Critical
-                || item.severity == SyncHealthSeverityV1::Warn
+            item.severity == SyncHealthSeverityV1::Critical || item.severity == SyncHealthSeverityV1::Warn
         }
         RepairQueueActionV1::Replay | RepairQueueActionV1::Requeue => true,
         RepairQueueActionV1::Acknowledge => {

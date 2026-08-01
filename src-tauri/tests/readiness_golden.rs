@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use maintafox_lib::reliability::readiness::{
-    evaluate_asset, evaluate_asset_dual, evaluate_iso14224_completeness, EvaluationProfile,
-    EvaluateAssetInput, ReadinessEvent,
+    evaluate_asset, evaluate_asset_dual, evaluate_iso14224_completeness, EvaluateAssetInput, EvaluationProfile,
+    ReadinessEvent,
 };
 use serde::Deserialize;
 
@@ -103,11 +103,7 @@ fn to_readiness_events_iso(events: &[IsoFixtureEvent]) -> Vec<ReadinessEvent> {
             failure_mode_coded: e.failure_mode_coded,
             corrective_documented: e.corrective_documented,
             eligible_flags_json: ReadinessEvent::eligible_flags_json(true),
-            failure_mode_id: if e.failure_mode_coded {
-                Some(e.id)
-            } else {
-                None
-            },
+            failure_mode_id: if e.failure_mode_coded { Some(e.id) } else { None },
             downtime_duration_hours: 0.0,
             active_repair_hours: 0.0,
         })
@@ -128,11 +124,7 @@ fn to_readiness_events_rf(events: &[ReadinessFixtureEvent]) -> Vec<ReadinessEven
             failure_mode_coded: e.failure_mode_coded,
             corrective_documented: e.corrective_documented,
             eligible_flags_json: ReadinessEvent::eligible_flags_json(e.eligible),
-            failure_mode_id: if e.failure_mode_coded {
-                Some(e.id)
-            } else {
-                None
-            },
+            failure_mode_id: if e.failure_mode_coded { Some(e.id) } else { None },
             downtime_duration_hours: 0.0,
             active_repair_hours: 0.0,
         })
@@ -291,24 +283,13 @@ fn readiness_golden_decomposition_waterfall() {
         }
     }
 
-    let r_dq = report(
-        2,
-        0.2,
-        90.0,
-        90.0,
-        false,
-        vec![],
-    );
+    let r_dq = report(2, 0.2, 90.0, 90.0, false, vec![]);
     assert_eq!(assign_waterfall_reason(&r_dq), WaterfallReason::LowDq);
 
     let r_int = report(10, 1.0, 70.0, 40.0, false, vec![]);
     assert_eq!(assign_waterfall_reason(&r_int), WaterfallReason::IntervalGap);
 
-    let reports = vec![
-        report(10, 1.0, 95.0, 90.0, true, vec![]),
-        r_dq,
-        r_int,
-    ];
+    let reports = vec![report(10, 1.0, 95.0, 90.0, true, vec![]), r_dq, r_int];
     let out = compute_decomposition(&reports);
     let pct_sum: f64 = out.waterfall.iter().map(|b| b.pct_of_eligible).sum();
     assert!((pct_sum - 100.0).abs() < 0.01);

@@ -76,15 +76,9 @@ fn map_designer_node(row: &QueryResult) -> AppResult<OrgDesignerNodeRow> {
         ancestor_path: row
             .try_get::<String>("", "ancestor_path")
             .map_err(|e| decode_err("ancestor_path", e))?,
-        depth: row
-            .try_get::<i64>("", "depth")
-            .map_err(|e| decode_err("depth", e))?,
-        code: row
-            .try_get::<String>("", "code")
-            .map_err(|e| decode_err("code", e))?,
-        name: row
-            .try_get::<String>("", "name")
-            .map_err(|e| decode_err("name", e))?,
+        depth: row.try_get::<i64>("", "depth").map_err(|e| decode_err("depth", e))?,
+        code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
+        name: row.try_get::<String>("", "name").map_err(|e| decode_err("name", e))?,
         status: row
             .try_get::<String>("", "status")
             .map_err(|e| decode_err("status", e))?,
@@ -201,16 +195,13 @@ pub async fn get_org_designer_snapshot(
     let active_row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, version_number FROM org_structure_models WHERE status = 'active' LIMIT 1"
-                .to_string(),
+            "SELECT id, version_number FROM org_structure_models WHERE status = 'active' LIMIT 1".to_string(),
         ))
         .await?;
 
     let (active_model_id, active_model_version) = match active_row {
         Some(row) => {
-            let mid: i64 = row
-                .try_get("", "id")
-                .map_err(|e| decode_err("id", e))?;
+            let mid: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
             let mver: i64 = row
                 .try_get("", "version_number")
                 .map_err(|e| decode_err("version_number", e))?;
@@ -222,16 +213,13 @@ pub async fn get_org_designer_snapshot(
     let draft_row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, version_number FROM org_structure_models WHERE status = 'draft' LIMIT 1"
-                .to_string(),
+            "SELECT id, version_number FROM org_structure_models WHERE status = 'draft' LIMIT 1".to_string(),
         ))
         .await?;
 
     let (draft_model_id, draft_model_version) = match draft_row {
         Some(row) => {
-            let id: i64 = row
-                .try_get("", "id")
-                .map_err(|e| decode_err("id", e))?;
+            let id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
             let v: i64 = row
                 .try_get("", "version_number")
                 .map_err(|e| decode_err("version_number", e))?;
@@ -266,8 +254,7 @@ pub async fn get_org_designer_snapshot(
         ))
         .await?;
 
-    let nodes: Vec<OrgDesignerNodeRow> =
-        rows.iter().map(map_designer_node).collect::<AppResult<_>>()?;
+    let nodes: Vec<OrgDesignerNodeRow> = rows.iter().map(map_designer_node).collect::<AppResult<_>>()?;
 
     Ok(OrgDesignerSnapshot {
         active_model_id,
@@ -361,11 +348,7 @@ pub async fn search_nodes(
     );
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            values,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
     rows.iter().map(map_designer_node).collect()

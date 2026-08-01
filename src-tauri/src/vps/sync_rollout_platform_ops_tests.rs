@@ -1,16 +1,12 @@
 #![cfg(test)]
 
 use crate::vps::sync_rollout_platform_ops::{
-    repair_action_allowed, rollout_recall_requires_step_up, tenant_safe_drill_through,
-    worst_severity, IncidentDrillThroughRefsV1, OpsAlertStateV1, OpsAlertV1, PlatformServiceKindV1,
-    PlatformServiceStatusV1, RepairQueueActionV1, RepairQueueItemV1, RolloutGovernanceStateV1,
-    SyncFailureDrillDownRowV1, SyncHealthSeverityV1,
+    repair_action_allowed, rollout_recall_requires_step_up, tenant_safe_drill_through, worst_severity,
+    IncidentDrillThroughRefsV1, OpsAlertStateV1, OpsAlertV1, PlatformServiceKindV1, PlatformServiceStatusV1,
+    RepairQueueActionV1, RepairQueueItemV1, RolloutGovernanceStateV1, SyncFailureDrillDownRowV1, SyncHealthSeverityV1,
 };
 
-fn sample_item(
-    severity: SyncHealthSeverityV1,
-    queue_kind: &str,
-) -> RepairQueueItemV1 {
+fn sample_item(severity: SyncHealthSeverityV1, queue_kind: &str) -> RepairQueueItemV1 {
     RepairQueueItemV1 {
         item_id: "rq-1".into(),
         tenant_id: "t-1".into(),
@@ -103,8 +99,7 @@ fn governance_states_parse() {
         "governance": "recalled",
         "paused_at_rfc3339": null
     });
-    let v: crate::vps::sync_rollout_platform_ops::CohortRolloutStageV1 =
-        serde_json::from_value(c).expect("parse");
+    let v: crate::vps::sync_rollout_platform_ops::CohortRolloutStageV1 = serde_json::from_value(c).expect("parse");
     assert_eq!(v.governance, RolloutGovernanceStateV1::Recalled);
 }
 

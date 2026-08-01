@@ -3,8 +3,8 @@
 //! Adds requisition / PO / GR lifecycle tables and repairable execution tables
 //! with demand-source traceability and ERP posting-state compatibility.
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -181,42 +181,42 @@ impl MigrationTrait for Migration {
             DbBackend::Sqlite,
             "CREATE INDEX IF NOT EXISTS idx_requisition_lines_requisition_id
              ON procurement_requisition_lines(requisition_id)"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "CREATE INDEX IF NOT EXISTS idx_po_lines_po_id
              ON purchase_order_lines(purchase_order_id)"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "CREATE INDEX IF NOT EXISTS idx_po_lines_trace
              ON purchase_order_lines(demand_source_type, demand_source_id)"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "CREATE INDEX IF NOT EXISTS idx_gr_lines_gr_id
              ON goods_receipt_lines(goods_receipt_id)"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "CREATE INDEX IF NOT EXISTS idx_repairable_orders_status
              ON repairable_orders(status)"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "CREATE INDEX IF NOT EXISTS idx_inventory_state_events_entity
              ON inventory_state_events(entity_type, entity_id, changed_at)"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
 

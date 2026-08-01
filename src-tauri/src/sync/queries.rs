@@ -2,17 +2,17 @@ use sea_orm::sqlx::error::ErrorKind;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
 use sha2::{Digest, Sha256};
 
+use crate::audit::writer::{write_audit_event, AuditEventInput};
+use crate::commands::product_license::tenant_config_sync_payload;
 use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{
     ApplySyncBatchInput, ApplySyncBatchResult, ExecuteSyncRepairInput, ListOutboxFilter, ReplaySyncFailuresInput,
     ReplaySyncFailuresResult, ResolveSyncConflictInput, StageOutboxItemInput, SyncCheckpoint, SyncConflictFilter,
-    SyncConflictRecord, SyncHealthAlert, SyncHealthMetrics, SyncInboundItemInput, SyncInboxItem, SyncObservabilityReport,
-    SyncOutboxItem, SyncPushPayload, SyncRecoveryProof, SyncReplayRun, SyncRepairActionRecord, SyncRepairExecutionResult,
-    SyncRepairPreview, SyncRepairPreviewInput, SyncStateSummary, SyncTypedRejection, SYNC_ENTITY_BUDGET_LINES,
-    SYNC_ENTITY_BUDGET_VERSIONS, SYNC_PROTOCOL_VERSION_V1,
+    SyncConflictRecord, SyncHealthAlert, SyncHealthMetrics, SyncInboundItemInput, SyncInboxItem,
+    SyncObservabilityReport, SyncOutboxItem, SyncPushPayload, SyncRecoveryProof, SyncRepairActionRecord,
+    SyncRepairExecutionResult, SyncRepairPreview, SyncRepairPreviewInput, SyncReplayRun, SyncStateSummary,
+    SyncTypedRejection, SYNC_ENTITY_BUDGET_LINES, SYNC_ENTITY_BUDGET_VERSIONS, SYNC_PROTOCOL_VERSION_V1,
 };
-use crate::commands::product_license::tenant_config_sync_payload;
-use crate::audit::writer::{write_audit_event, AuditEventInput};
 
 fn hash_payload(payload: &str) -> String {
     let mut hasher = Sha256::new();
@@ -72,9 +72,8 @@ fn map_resolution_to_status(action: &str) -> Option<&'static str> {
 }
 
 fn parse_rfc3339(value: &str, field: &str) -> AppResult<()> {
-    chrono::DateTime::parse_from_rfc3339(value).map_err(|_| {
-        AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")])
-    })?;
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")]))?;
     Ok(())
 }
 
@@ -166,12 +165,8 @@ fn to_sync_outbox_item(row: &sea_orm::QueryResult) -> AppResult<SyncOutboxItem> 
         origin_machine_id: row
             .try_get("", "origin_machine_id")
             .map_err(|e| decode_err("origin_machine_id", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
-        updated_at: row
-            .try_get("", "updated_at")
-            .map_err(|e| decode_err("updated_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
+        updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
 
@@ -209,12 +204,8 @@ fn to_sync_inbox_item(row: &sea_orm::QueryResult) -> AppResult<SyncInboxItem> {
         rejection_message: row
             .try_get("", "rejection_message")
             .map_err(|e| decode_err("rejection_message", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
-        updated_at: row
-            .try_get("", "updated_at")
-            .map_err(|e| decode_err("updated_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
+        updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
 
@@ -284,30 +275,22 @@ fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConflictRecord>
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
-        updated_at: row
-            .try_get("", "updated_at")
-            .map_err(|e| decode_err("updated_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
+        updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
 
 fn to_sync_replay_run(row: &sea_orm::QueryResult) -> AppResult<SyncReplayRun> {
     Ok(SyncReplayRun {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        replay_key: row
-            .try_get("", "replay_key")
-            .map_err(|e| decode_err("replay_key", e))?,
+        replay_key: row.try_get("", "replay_key").map_err(|e| decode_err("replay_key", e))?,
         mode: row.try_get("", "mode").map_err(|e| decode_err("mode", e))?,
         status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
         reason: row.try_get("", "reason").map_err(|e| decode_err("reason", e))?,
         requested_by_id: row
             .try_get("", "requested_by_id")
             .map_err(|e| decode_err("requested_by_id", e))?,
-        scope_json: row
-            .try_get("", "scope_json")
-            .map_err(|e| decode_err("scope_json", e))?,
+        scope_json: row.try_get("", "scope_json").map_err(|e| decode_err("scope_json", e))?,
         pre_replay_checkpoint: row
             .try_get("", "pre_replay_checkpoint")
             .map_err(|e| decode_err("pre_replay_checkpoint", e))?,
@@ -317,12 +300,8 @@ fn to_sync_replay_run(row: &sea_orm::QueryResult) -> AppResult<SyncReplayRun> {
         result_json: row
             .try_get("", "result_json")
             .map_err(|e| decode_err("result_json", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
-        started_at: row
-            .try_get("", "started_at")
-            .map_err(|e| decode_err("started_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
+        started_at: row.try_get("", "started_at").map_err(|e| decode_err("started_at", e))?,
         finished_at: row
             .try_get("", "finished_at")
             .map_err(|e| decode_err("finished_at", e))?,
@@ -342,18 +321,14 @@ fn to_sync_repair_action(row: &sea_orm::QueryResult) -> AppResult<SyncRepairActi
         executed_by_id: row
             .try_get("", "executed_by_id")
             .map_err(|e| decode_err("executed_by_id", e))?,
-        scope_json: row
-            .try_get("", "scope_json")
-            .map_err(|e| decode_err("scope_json", e))?,
+        scope_json: row.try_get("", "scope_json").map_err(|e| decode_err("scope_json", e))?,
         preview_json: row
             .try_get("", "preview_json")
             .map_err(|e| decode_err("preview_json", e))?,
         result_json: row
             .try_get("", "result_json")
             .map_err(|e| decode_err("result_json", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         executed_at: row
             .try_get("", "executed_at")
             .map_err(|e| decode_err("executed_at", e))?,
@@ -513,11 +488,7 @@ async fn upsert_sync_conflict(
         conflict_policy(&conflict_type);
     let conflict_key = format!(
         "{}:{}:{}:{}:{}",
-        source_scope,
-        entity_type,
-        entity_sync_id,
-        operation,
-        conflict_type
+        source_scope, entity_type, entity_sync_id, operation, conflict_type
     );
     let initial_status = if requires_operator_review {
         "new"
@@ -594,9 +565,17 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
             &rejected.idempotency_key,
             &mut validation_errors,
         );
-        validate_non_empty("rejected.entity_sync_id", &rejected.entity_sync_id, &mut validation_errors);
+        validate_non_empty(
+            "rejected.entity_sync_id",
+            &rejected.entity_sync_id,
+            &mut validation_errors,
+        );
         validate_operation(&rejected.operation, &mut validation_errors);
-        validate_non_empty("rejected.rejection_code", &rejected.rejection_code, &mut validation_errors);
+        validate_non_empty(
+            "rejected.rejection_code",
+            &rejected.rejection_code,
+            &mut validation_errors,
+        );
         validate_non_empty(
             "rejected.rejection_message",
             &rejected.rejection_message,
@@ -942,9 +921,7 @@ pub async fn get_sync_state_summary(db: &DatabaseConnection) -> AppResult<SyncSt
                 last_sync_at: row
                     .try_get("", "last_sync_at")
                     .map_err(|e| decode_err("last_sync_at", e))?,
-                updated_at: row
-                    .try_get("", "updated_at")
-                    .map_err(|e| decode_err("updated_at", e))?,
+                updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
             })
         })
         .transpose()?;
@@ -1033,11 +1010,7 @@ pub async fn list_sync_conflicts(
                     .requires_operator_review
                     .map(|v| if v { 1_i64 } else { 0_i64 })
                     .into(),
-                filter
-                    .statuses
-                    .as_ref()
-                    .map(|_| "use_json_filter".to_string())
-                    .into(),
+                filter.statuses.as_ref().map(|_| "use_json_filter".to_string()).into(),
                 filter
                     .statuses
                     .map(|list| serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string()))
@@ -1153,14 +1126,12 @@ pub async fn replay_sync_failures(
     validate_non_empty("reason", &input.reason, &mut validation_errors);
     match input.mode.as_str() {
         "single_item" | "batch" | "window" | "checkpoint_rollback" => {}
-        _ => validation_errors.push(
-            "mode must be one of: single_item, batch, window, checkpoint_rollback.".to_string(),
-        ),
+        _ => {
+            validation_errors.push("mode must be one of: single_item, batch, window, checkpoint_rollback.".to_string())
+        }
     }
     if input.mode == "single_item" && input.outbox_id.is_none() && input.conflict_id.is_none() {
-        validation_errors.push(
-            "single_item replay requires outbox_id or conflict_id scope.".to_string(),
-        );
+        validation_errors.push("single_item replay requires outbox_id or conflict_id scope.".to_string());
     }
     if input.mode == "batch" {
         validate_non_empty(
@@ -1260,9 +1231,7 @@ pub async fn replay_sync_failures(
             input.mode.clone().into(),
             input.reason.clone().into(),
             user_id.into(),
-            serde_json::to_string(&input)
-                .map_err(AppError::Serialization)?
-                .into(),
+            serde_json::to_string(&input).map_err(AppError::Serialization)?.into(),
             pre_checkpoint.clone().into(),
         ],
     ))
@@ -1407,10 +1376,7 @@ pub async fn replay_sync_failures(
                     checkpoint_token = excluded.checkpoint_token,
                     protocol_version = excluded.protocol_version,
                     updated_at = excluded.updated_at",
-                [
-                    checkpoint_token.into(),
-                    SYNC_PROTOCOL_VERSION_V1.to_string().into(),
-                ],
+                [checkpoint_token.into(), SYNC_PROTOCOL_VERSION_V1.to_string().into()],
             ))
             .await?;
         }
@@ -1504,9 +1470,7 @@ pub async fn preview_sync_repair(
         );
     }
     if input.mode.contains("reset") {
-        validation_errors.push(
-            "Destructive reset is disabled. Use scoped repair modes only.".to_string(),
-        );
+        validation_errors.push("Destructive reset is disabled. Use scoped repair modes only.".to_string());
     }
     if input.mode == "checkpoint_realign" {
         validate_non_empty(
@@ -1657,9 +1621,7 @@ pub async fn preview_sync_repair(
             warnings.push("Checkpoint realign updates token pointer only; data rows are untouched.".to_string());
         }
         _ => {
-            return Err(AppError::ValidationFailed(vec![
-                "Unsupported repair mode.".to_string(),
-            ]));
+            return Err(AppError::ValidationFailed(vec!["Unsupported repair mode.".to_string()]));
         }
     }
 
@@ -1761,9 +1723,7 @@ pub async fn execute_sync_repair(
             entity: "sync_repair_action".to_string(),
             id: input.plan_id.clone(),
         })?;
-    let status: String = plan_row
-        .try_get("", "status")
-        .map_err(|e| decode_err("status", e))?;
+    let status: String = plan_row.try_get("", "status").map_err(|e| decode_err("status", e))?;
     if status != "previewed" {
         return Err(AppError::ValidationFailed(vec![
             "Repair plan is no longer executable (must be in previewed status).".to_string(),
@@ -1778,8 +1738,7 @@ pub async fn execute_sync_repair(
     let scope_json: String = plan_row
         .try_get("", "scope_json")
         .map_err(|e| decode_err("scope_json", e))?;
-    let preview_scope: SyncRepairPreviewInput =
-        serde_json::from_str(&scope_json).map_err(AppError::Serialization)?;
+    let preview_scope: SyncRepairPreviewInput = serde_json::from_str(&scope_json).map_err(AppError::Serialization)?;
 
     let tx = db.begin().await?;
     let mut requeued_outbox_count = 0_i64;
@@ -1919,9 +1878,7 @@ pub async fn execute_sync_repair(
             .await?;
         }
         _ => {
-            return Err(AppError::ValidationFailed(vec![
-                "Unsupported repair mode.".to_string(),
-            ]));
+            return Err(AppError::ValidationFailed(vec!["Unsupported repair mode.".to_string()]));
         }
     }
 
@@ -2142,9 +2099,7 @@ pub async fn get_sync_observability_report(db: &DatabaseConnection) -> AppResult
         .await?;
     for row in resolved_conflicts {
         let id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-        let created_at: String = row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?;
+        let created_at: String = row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?;
         let resolved_at: String = row
             .try_get("", "resolved_at")
             .map_err(|e| decode_err("resolved_at", e))?;
@@ -2175,12 +2130,8 @@ pub async fn get_sync_observability_report(db: &DatabaseConnection) -> AppResult
         ))
         .await?;
     for row in executed_repairs {
-        let plan_id: String = row
-            .try_get("", "plan_id")
-            .map_err(|e| decode_err("plan_id", e))?;
-        let created_at: String = row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?;
+        let plan_id: String = row.try_get("", "plan_id").map_err(|e| decode_err("plan_id", e))?;
+        let created_at: String = row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?;
         let executed_at: String = row
             .try_get("", "executed_at")
             .map_err(|e| decode_err("executed_at", e))?;

@@ -79,14 +79,10 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared(
-            "DROP TRIGGER IF EXISTS trg_org_nodes_require_structure_model_id_insert",
-        )
-        .await?;
-        db.execute_unprepared(
-            "DROP TRIGGER IF EXISTS trg_org_nodes_require_structure_model_id_update",
-        )
-        .await?;
+        db.execute_unprepared("DROP TRIGGER IF EXISTS trg_org_nodes_require_structure_model_id_insert")
+            .await?;
+        db.execute_unprepared("DROP TRIGGER IF EXISTS trg_org_nodes_require_structure_model_id_update")
+            .await?;
         Ok(())
     }
 }

@@ -51,10 +51,7 @@ pub struct OrgChangeEvent {
 ///
 /// Fire-and-forget semantics: if the insert fails, a `tracing::error!` is emitted
 /// but the caller's operation is NOT rolled back.
-pub async fn record_org_change(
-    db: &impl ConnectionTrait,
-    input: OrgAuditEventInput,
-) -> AppResult<()> {
+pub async fn record_org_change(db: &impl ConnectionTrait, input: OrgAuditEventInput) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     let step_up_val: i32 = if input.requires_step_up { 1 } else { 0 };
     let change_type_log = input.change_type.clone();
@@ -68,16 +65,10 @@ pub async fn record_org_change(
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 input.entity_kind.into(),
-                input
-                    .entity_id
-                    .map_or(sea_orm::Value::Int(None), |v| (v as i32).into()),
+                input.entity_id.map_or(sea_orm::Value::Int(None), |v| (v as i32).into()),
                 input.change_type.into(),
-                input
-                    .before_json
-                    .map_or(sea_orm::Value::String(None), Into::into),
-                input
-                    .after_json
-                    .map_or(sea_orm::Value::String(None), Into::into),
+                input.before_json.map_or(sea_orm::Value::String(None), Into::into),
+                input.after_json.map_or(sea_orm::Value::String(None), Into::into),
                 input
                     .preview_summary_json
                     .map_or(sea_orm::Value::String(None), Into::into),
@@ -136,40 +127,25 @@ pub async fn list_org_change_events(
     values.push((effective_limit as i32).into());
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            values,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
     let events: Vec<OrgChangeEvent> = rows
         .into_iter()
-        .map(|row| {
-            OrgChangeEvent {
-                id: row.try_get::<i64>("", "id").unwrap_or(0),
-                entity_kind: row.try_get("", "entity_kind").unwrap_or_default(),
-                entity_id: row.try_get::<Option<i64>>("", "entity_id").unwrap_or(None),
-                change_type: row.try_get("", "change_type").unwrap_or_default(),
-                before_json: row
-                    .try_get::<Option<String>>("", "before_json")
-                    .unwrap_or(None),
-                after_json: row
-                    .try_get::<Option<String>>("", "after_json")
-                    .unwrap_or(None),
-                preview_summary_json: row
-                    .try_get::<Option<String>>("", "preview_summary_json")
-                    .unwrap_or(None),
-                changed_by_id: row
-                    .try_get::<Option<i64>>("", "changed_by_id")
-                    .unwrap_or(None),
-                changed_at: row.try_get("", "changed_at").unwrap_or_default(),
-                requires_step_up: row
-                    .try_get::<i32>("", "requires_step_up")
-                    .unwrap_or(0)
-                    != 0,
-                apply_result: row.try_get("", "apply_result").unwrap_or_default(),
-            }
+        .map(|row| OrgChangeEvent {
+            id: row.try_get::<i64>("", "id").unwrap_or(0),
+            entity_kind: row.try_get("", "entity_kind").unwrap_or_default(),
+            entity_id: row.try_get::<Option<i64>>("", "entity_id").unwrap_or(None),
+            change_type: row.try_get("", "change_type").unwrap_or_default(),
+            before_json: row.try_get::<Option<String>>("", "before_json").unwrap_or(None),
+            after_json: row.try_get::<Option<String>>("", "after_json").unwrap_or(None),
+            preview_summary_json: row
+                .try_get::<Option<String>>("", "preview_summary_json")
+                .unwrap_or(None),
+            changed_by_id: row.try_get::<Option<i64>>("", "changed_by_id").unwrap_or(None),
+            changed_at: row.try_get("", "changed_at").unwrap_or_default(),
+            requires_step_up: row.try_get::<i32>("", "requires_step_up").unwrap_or(0) != 0,
+            apply_result: row.try_get("", "apply_result").unwrap_or_default(),
         })
         .collect();
 

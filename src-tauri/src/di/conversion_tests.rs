@@ -12,12 +12,8 @@ mod tests {
     use sea_orm_migration::MigratorTrait;
 
     use crate::di::conversion::{convert_di_to_work_order, WoConversionInput};
-    use crate::di::queries::{
-        create_intervention_request, update_di_draft_fields, DiCreateInput, DiDraftUpdateInput,
-    };
-    use crate::di::review::{
-        approve_di, get_review_events, screen_di, DiApproveInput, DiScreenInput,
-    };
+    use crate::di::queries::{create_intervention_request, update_di_draft_fields, DiCreateInput, DiDraftUpdateInput};
+    use crate::di::review::{approve_di, get_review_events, screen_di, DiApproveInput, DiScreenInput};
 
     // ═══════════════════════════════════════════════════════════════════════
     // Setup helpers
@@ -53,7 +49,8 @@ mod tests {
             DbBackend::Sqlite,
             "INSERT INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
              VALUES (1, 'test-eq-001', 'EQ-TEST-001', 'Test Equipment', 'active_in_service', \
-             datetime('now'), datetime('now'));".to_string(),
+             datetime('now'), datetime('now'));"
+                .to_string(),
         ))
         .await
         .expect("insert test equipment");
@@ -61,7 +58,8 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
-             VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));".to_string(),
+             VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
+                .to_string(),
         ))
         .await
         .expect("insert test structure model");
@@ -95,7 +93,8 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_sets (id, domain_id, version_no, status, created_at) \
-             VALUES (900001, 900001, 1, 'published', datetime('now'));".to_string(),
+             VALUES (900001, 900001, 1, 'published', datetime('now'));"
+                .to_string(),
         ))
         .await
         .expect("insert test reference_set");
@@ -103,7 +102,8 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (900001, 900001, 'MECH', 'Mécanique', 1);".to_string(),
+             VALUES (900001, 900001, 'MECH', 'Mécanique', 1);"
+                .to_string(),
         ))
         .await
         .expect("insert test reference_value");
@@ -250,10 +250,7 @@ mod tests {
         assert!(result.is_err(), "conversion must fail with stale row_version");
 
         let status = get_di_status(&db, di_id).await;
-        assert_eq!(
-            status, "approved",
-            "DI must remain approved after failed conversion"
-        );
+        assert_eq!(status, "approved", "DI must remain approved after failed conversion");
 
         let wo_count: i64 = db
             .query_one(Statement::from_sql_and_values(
@@ -369,7 +366,10 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err(), "conversion must fail when DI is in 'awaiting_approval'");
+        assert!(
+            result.is_err(),
+            "conversion must fail when DI is in 'awaiting_approval'"
+        );
     }
 
     #[tokio::test]
@@ -563,7 +563,10 @@ mod tests {
             .iter()
             .find(|e| e.event_type == "converted")
             .expect("must have a 'converted' event");
-        assert!(convert_event.step_up_used, "converted event must record step_up_used = true");
+        assert!(
+            convert_event.step_up_used,
+            "converted event must record step_up_used = true"
+        );
         assert_eq!(convert_event.from_status.as_str(), "approved");
         assert_eq!(convert_event.to_status.as_str(), "closed");
         assert_eq!(convert_event.reason_code.as_deref(), Some("converted_to_wo"));

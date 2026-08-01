@@ -25,14 +25,38 @@ use crate::state::AppState;
 use crate::{require_permission, require_session};
 
 async fn require_fin_budget_or_legacy_manage(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
-    if check_permission(&state.db, user_id, crate::rbac::permissions::FIN_BUDGET, &PermissionScope::Global).await? {
-        crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::FIN_BUDGET).await?;
-        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::FIN_BUDGET).await?;
+    if check_permission(
+        &state.db,
+        user_id,
+        crate::rbac::permissions::FIN_BUDGET,
+        &PermissionScope::Global,
+    )
+    .await?
+    {
+        crate::entitlements::queries::enforce_capability_for_permission(
+            &state.db,
+            crate::rbac::permissions::FIN_BUDGET,
+        )
+        .await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::FIN_BUDGET)
+            .await?;
         return Ok(());
     }
-    if check_permission(&state.db, user_id, crate::rbac::permissions::FIN_MANAGE, &PermissionScope::Global).await? {
-        crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::FIN_MANAGE).await?;
-        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::FIN_MANAGE).await?;
+    if check_permission(
+        &state.db,
+        user_id,
+        crate::rbac::permissions::FIN_MANAGE,
+        &PermissionScope::Global,
+    )
+    .await?
+    {
+        crate::entitlements::queries::enforce_capability_for_permission(
+            &state.db,
+            crate::rbac::permissions::FIN_MANAGE,
+        )
+        .await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::FIN_MANAGE)
+            .await?;
         return Ok(());
     }
     Err(AppError::PermissionDenied(
@@ -41,20 +65,39 @@ async fn require_fin_budget_or_legacy_manage(state: &State<'_, AppState>, user_i
 }
 
 async fn require_fin_post(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
-    if check_permission(&state.db, user_id, crate::rbac::permissions::FIN_POST, &PermissionScope::Global).await? {
-        crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::FIN_POST).await?;
-        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::FIN_POST).await?;
+    if check_permission(
+        &state.db,
+        user_id,
+        crate::rbac::permissions::FIN_POST,
+        &PermissionScope::Global,
+    )
+    .await?
+    {
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::FIN_POST)
+            .await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::FIN_POST)
+            .await?;
         return Ok(());
     }
-    Err(AppError::PermissionDenied(
-        "Required permission: fin.post.".to_string(),
-    ))
+    Err(AppError::PermissionDenied("Required permission: fin.post.".to_string()))
 }
 
 async fn require_fin_report(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
-    if check_permission(&state.db, user_id, crate::rbac::permissions::FIN_REPORT, &PermissionScope::Global).await? {
-        crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::FIN_REPORT).await?;
-        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::FIN_REPORT).await?;
+    if check_permission(
+        &state.db,
+        user_id,
+        crate::rbac::permissions::FIN_REPORT,
+        &PermissionScope::Global,
+    )
+    .await?
+    {
+        crate::entitlements::queries::enforce_capability_for_permission(
+            &state.db,
+            crate::rbac::permissions::FIN_REPORT,
+        )
+        .await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::FIN_REPORT)
+            .await?;
         return Ok(());
     }
     Err(AppError::PermissionDenied(
@@ -63,20 +106,19 @@ async fn require_fin_report(state: &State<'_, AppState>, user_id: i32) -> AppRes
 }
 
 #[tauri::command]
-pub async fn list_cost_centers(
-    filter: CostCenterFilter,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<CostCenter>> {
+pub async fn list_cost_centers(filter: CostCenterFilter, state: State<'_, AppState>) -> AppResult<Vec<CostCenter>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_cost_centers(&state.db, filter).await
 }
 
 #[tauri::command]
-pub async fn create_cost_center(
-    input: CreateCostCenterInput,
-    state: State<'_, AppState>,
-) -> AppResult<CostCenter> {
+pub async fn create_cost_center(input: CreateCostCenterInput, state: State<'_, AppState>) -> AppResult<CostCenter> {
     let user = require_session!(state);
     require_fin_budget_or_legacy_manage(&state, user.user_id).await?;
     queries::create_cost_center(&state.db, input).await
@@ -100,7 +142,12 @@ pub async fn list_budget_versions(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<BudgetVersion>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_budget_versions(&state.db, filter).await
 }
 
@@ -147,20 +194,19 @@ pub async fn transition_budget_version_lifecycle(
 }
 
 #[tauri::command]
-pub async fn list_budget_lines(
-    filter: BudgetLineFilter,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<BudgetLine>> {
+pub async fn list_budget_lines(filter: BudgetLineFilter, state: State<'_, AppState>) -> AppResult<Vec<BudgetLine>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_budget_lines(&state.db, filter).await
 }
 
 #[tauri::command]
-pub async fn create_budget_line(
-    input: CreateBudgetLineInput,
-    state: State<'_, AppState>,
-) -> AppResult<BudgetLine> {
+pub async fn create_budget_line(input: CreateBudgetLineInput, state: State<'_, AppState>) -> AppResult<BudgetLine> {
     let user = require_session!(state);
     require_fin_budget_or_legacy_manage(&state, user.user_id).await?;
     queries::create_budget_line(&state.db, input).await
@@ -184,7 +230,12 @@ pub async fn list_budget_actuals(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<BudgetActual>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_budget_actuals(&state.db, filter).await
 }
 
@@ -194,16 +245,19 @@ pub async fn create_budget_actual(
     state: State<'_, AppState>,
 ) -> AppResult<BudgetActual> {
     let user = require_session!(state);
-    let allow_posted = check_permission(&state.db, user.user_id, crate::rbac::permissions::FIN_POST, &PermissionScope::Global).await?;
+    let allow_posted = check_permission(
+        &state.db,
+        user.user_id,
+        crate::rbac::permissions::FIN_POST,
+        &PermissionScope::Global,
+    )
+    .await?;
     require_fin_budget_or_legacy_manage(&state, user.user_id).await?;
     queries::create_budget_actual(&state.db, i64::from(user.user_id), input, allow_posted).await
 }
 
 #[tauri::command]
-pub async fn post_budget_actual(
-    input: PostBudgetActualInput,
-    state: State<'_, AppState>,
-) -> AppResult<BudgetActual> {
+pub async fn post_budget_actual(input: PostBudgetActualInput, state: State<'_, AppState>) -> AppResult<BudgetActual> {
     let user = require_session!(state);
     require_fin_post(&state, user.user_id).await?;
     queries::post_budget_actual(&state.db, i64::from(user.user_id), input).await
@@ -225,7 +279,12 @@ pub async fn list_budget_commitments(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<BudgetCommitment>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_budget_commitments(&state.db, filter).await
 }
 
@@ -245,7 +304,12 @@ pub async fn list_forecast_runs(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ForecastRun>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_forecast_runs(&state.db, budget_version_id).await
 }
 
@@ -255,7 +319,12 @@ pub async fn list_budget_forecasts(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<BudgetForecast>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_budget_forecasts(&state.db, filter).await
 }
 
@@ -275,7 +344,12 @@ pub async fn list_budget_variance_reviews(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<BudgetVarianceReview>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_budget_variance_reviews(&state.db, filter).await
 }
 
@@ -305,7 +379,12 @@ pub async fn list_budget_dashboard_rows(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<BudgetDashboardRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_budget_dashboard_rows(&state.db, filter).await
 }
 
@@ -315,7 +394,12 @@ pub async fn list_budget_dashboard_drilldown(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<BudgetDrilldownRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_budget_dashboard_drilldown(&state.db, filter).await
 }
 
@@ -330,9 +414,7 @@ pub async fn import_erp_cost_center_master(
 }
 
 #[tauri::command]
-pub async fn export_posted_actuals_for_erp(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<ErpPostedActualExportItem>> {
+pub async fn export_posted_actuals_for_erp(state: State<'_, AppState>) -> AppResult<Vec<ErpPostedActualExportItem>> {
     let user = require_session!(state);
     require_fin_report(&state, user.user_id).await?;
     queries::export_posted_actuals_for_erp(&state.db).await
@@ -363,7 +445,12 @@ pub async fn list_posted_export_batches(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PostedExportBatch>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_posted_export_batches(&state.db, filter).await
 }
 
@@ -373,7 +460,12 @@ pub async fn list_integration_exceptions(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<IntegrationException>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_integration_exceptions(&state.db, filter).await
 }
 
@@ -395,7 +487,12 @@ pub async fn list_budget_alert_configs(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<BudgetAlertConfig>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_budget_alert_configs(&state.db, filter).await
 }
 
@@ -427,7 +524,12 @@ pub async fn list_budget_alert_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<BudgetAlertEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_budget_alert_events(&state.db, filter).await
 }
 
@@ -447,7 +549,12 @@ pub async fn acknowledge_budget_alert(
     state: State<'_, AppState>,
 ) -> AppResult<BudgetAlertEvent> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::acknowledge_budget_alert(&state.db, i64::from(user.user_id), input).await
 }
 
@@ -457,7 +564,12 @@ pub async fn build_budget_report_pack(
     state: State<'_, AppState>,
 ) -> AppResult<BudgetReportPack> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::build_budget_report_pack(&state.db, filter).await
 }
 

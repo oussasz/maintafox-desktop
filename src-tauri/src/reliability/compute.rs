@@ -98,11 +98,7 @@ pub fn compute_reliability_kpis(input: &ReliabilityKpiComputeInput) -> Reliabili
     } else {
         None
     };
-    let failure_rate = if t_exp > 0.0 {
-        Some(f as f64 / t_exp)
-    } else {
-        None
-    };
+    let failure_rate = if t_exp > 0.0 { Some(f as f64 / t_exp) } else { None };
     let availability = if t_exp > 0.0 {
         Some((t_exp - d_down).max(0.0) / t_exp)
     } else {
@@ -113,22 +109,14 @@ pub fn compute_reliability_kpis(input: &ReliabilityKpiComputeInput) -> Reliabili
     for e in &in_period {
         if let Some(m) = e.mode {
             let has_prior = extended.iter().any(|x| {
-                x.id != e.id
-                    && x.eligible
-                    && x.mode == Some(m)
-                    && x.ts < e.ts
-                    && e.ts.signed_duration_since(x.ts) <= lb
+                x.id != e.id && x.eligible && x.mode == Some(m) && x.ts < e.ts && e.ts.signed_duration_since(x.ts) <= lb
             });
             if has_prior {
                 repeat_n += 1;
             }
         }
     }
-    let repeat_failure_rate = if f > 0 {
-        Some(repeat_n as f64 / f as f64)
-    } else {
-        None
-    };
+    let repeat_failure_rate = if f > 0 { Some(repeat_n as f64 / f as f64) } else { None };
 
     let dq = if f >= min_n {
         1.0

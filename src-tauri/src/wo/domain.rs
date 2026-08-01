@@ -8,9 +8,7 @@ use crate::errors::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 
-pub use crate::wo::workflow::{
-    assert_action_allowed, guard_wo_transition, WoAction, WoStatus,
-};
+pub use crate::wo::workflow::{assert_action_allowed, guard_wo_transition, WoAction, WoStatus};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WoMacroState — dashboard / filter grouping
@@ -267,12 +265,8 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 /// present when the query includes the relevant JOINs.
 pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
     Ok(WorkOrder {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
-        code: row
-            .try_get::<String>("", "code")
-            .map_err(|e| decode_err("code", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
         type_id: row
             .try_get::<i64>("", "type_id")
             .map_err(|e| decode_err("type_id", e))?,
@@ -324,9 +318,7 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         urgency_id: row
             .try_get::<Option<i64>>("", "urgency_id")
             .map_err(|e| decode_err("urgency_id", e))?,
-        title: row
-            .try_get::<String>("", "title")
-            .map_err(|e| decode_err("title", e))?,
+        title: row.try_get::<String>("", "title").map_err(|e| decode_err("title", e))?,
         description: row
             .try_get::<Option<String>>("", "description")
             .map_err(|e| decode_err("description", e))?,
@@ -375,9 +367,7 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         downtime_hours: row
             .try_get::<Option<f64>>("", "downtime_hours")
             .map_err(|e| decode_err("downtime_hours", e))?,
-        planned_downtime_hours: row
-            .try_get::<Option<f64>>("", "planned_downtime_hours")
-            .unwrap_or(None),
+        planned_downtime_hours: row.try_get::<Option<f64>>("", "planned_downtime_hours").unwrap_or(None),
         labor_cost: row
             .try_get::<Option<f64>>("", "labor_cost")
             .map_err(|e| decode_err("labor_cost", e))?,
@@ -466,9 +456,15 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         asset_code: row.try_get::<Option<String>>("", "asset_code").unwrap_or(None),
         asset_label: row.try_get::<Option<String>>("", "asset_label").unwrap_or(None),
         planner_username: row.try_get::<Option<String>>("", "planner_username").unwrap_or(None),
-        responsible_username: row.try_get::<Option<String>>("", "responsible_username").unwrap_or(None),
-        planner_display_name: row.try_get::<Option<String>>("", "planner_display_name").unwrap_or(None),
-        responsible_display_name: row.try_get::<Option<String>>("", "responsible_display_name").unwrap_or(None),
+        responsible_username: row
+            .try_get::<Option<String>>("", "responsible_username")
+            .unwrap_or(None),
+        planner_display_name: row
+            .try_get::<Option<String>>("", "planner_display_name")
+            .unwrap_or(None),
+        responsible_display_name: row
+            .try_get::<Option<String>>("", "responsible_display_name")
+            .unwrap_or(None),
         source_di_code: row.try_get::<Option<String>>("", "source_di_code").unwrap_or(None),
         source_di_title: row.try_get::<Option<String>>("", "source_di_title").unwrap_or(None),
         source_di_status: row.try_get::<Option<String>>("", "source_di_status").unwrap_or(None),
@@ -478,12 +474,8 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
 /// Map a sea-orm `QueryResult` row to a `WoTransitionRow`.
 pub fn map_wo_transition_row(row: &QueryResult) -> AppResult<WoTransitionRow> {
     Ok(WoTransitionRow {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
-        wo_id: row
-            .try_get::<i64>("", "wo_id")
-            .map_err(|e| decode_err("wo_id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        wo_id: row.try_get::<i64>("", "wo_id").map_err(|e| decode_err("wo_id", e))?,
         from_status: row
             .try_get::<String>("", "from_status")
             .map_err(|e| decode_err("from_status", e))?,
@@ -532,11 +524,7 @@ pub async fn generate_wo_code(db: &impl ConnectionTrait) -> AppResult<String> {
                 .to_string(),
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "WO code sequence query returned no rows"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("WO code sequence query returned no rows")))?;
 
     let next_seq: i64 = row
         .try_get::<i64>("", "next_seq")

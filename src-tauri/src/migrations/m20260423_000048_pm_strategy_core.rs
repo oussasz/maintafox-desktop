@@ -130,10 +130,14 @@ impl MigrationTrait for Migration {
 
         db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_pm_plans_lifecycle ON pm_plans(lifecycle_status)")
             .await?;
-        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_pm_versions_plan ON pm_plan_versions(pm_plan_id, status)")
-            .await?;
-        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_pm_occurrences_plan ON pm_occurrences(pm_plan_id, status)")
-            .await?;
+        db.execute_unprepared(
+            "CREATE INDEX IF NOT EXISTS idx_pm_versions_plan ON pm_plan_versions(pm_plan_id, status)",
+        )
+        .await?;
+        db.execute_unprepared(
+            "CREATE INDEX IF NOT EXISTS idx_pm_occurrences_plan ON pm_occurrences(pm_plan_id, status)",
+        )
+        .await?;
 
         Ok(())
     }

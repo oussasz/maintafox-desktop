@@ -129,14 +129,10 @@ mod tests {
         sets::validate_set(&db, set1_id, 1).await.expect("validate");
         sets::publish_set(&db, set1_id, 1).await.expect("publish");
 
-        let set2 = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("draft v2");
+        let set2 = sets::create_draft_set(&db, domain_id, 1).await.expect("draft v2");
 
         // Clone-from-published: MECH already present with a new id
-        let cloned = values::list_values(&db, set2.id)
-            .await
-            .expect("list cloned");
+        let cloned = values::list_values(&db, set2.id).await.expect("list cloned");
         let mech = cloned.iter().find(|v| v.code == "MECH").expect("cloned MECH");
         assert_ne!(mech.id, v1.id, "cloned value must have a new id");
         assert_eq!(mech.label, "MÃ©canique");
@@ -219,9 +215,7 @@ mod tests {
         let mut child_payload = value_payload(set_id, "CHILD", "Child");
         child_payload.parent_id = Some(parent.id);
 
-        let child = values::create_value(&db, child_payload, 1)
-            .await
-            .expect("child");
+        let child = values::create_value(&db, child_payload, 1).await.expect("child");
 
         assert_eq!(child.parent_id, Some(parent.id));
     }
@@ -258,9 +252,7 @@ mod tests {
         let mut p = value_payload(set_id, "ORPHAN", "Orphan");
         p.parent_id = Some(999_999);
 
-        let err = values::create_value(&db, p, 1)
-            .await
-            .expect_err("nonexistent parent");
+        let err = values::create_value(&db, p, 1).await.expect_err("nonexistent parent");
 
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
@@ -492,9 +484,7 @@ mod tests {
             metadata_json: None,
         };
 
-        let updated = values::update_value(&db, v.id, update, 1)
-            .await
-            .expect("update");
+        let updated = values::update_value(&db, v.id, update, 1).await.expect("update");
 
         assert_eq!(updated.label, "Updated Label");
         assert_eq!(updated.color_hex.as_deref(), Some("#FF0000"));
@@ -524,9 +514,7 @@ mod tests {
     async fn edge_get_nonexistent_value() {
         let db = setup().await;
 
-        let err = values::get_value(&db, 999_999)
-            .await
-            .expect_err("not found");
+        let err = values::get_value(&db, 999_999).await.expect_err("not found");
 
         assert!(matches!(err, AppError::NotFound { .. }));
     }
@@ -551,9 +539,7 @@ mod tests {
             metadata_json: None,
         };
 
-        let same = values::update_value(&db, v.id, update, 1)
-            .await
-            .expect("noop update");
+        let same = values::update_value(&db, v.id, update, 1).await.expect("noop update");
 
         assert_eq!(same.id, v.id);
         assert_eq!(same.label, "Noop");
@@ -612,9 +598,14 @@ mod tests {
         let manage = rbac::check_permission(&db, 999, crate::rbac::permissions::REF_MANAGE, &PermissionScope::Global)
             .await
             .expect("check");
-        let publish = rbac::check_permission(&db, 999, crate::rbac::permissions::REF_PUBLISH, &PermissionScope::Global)
-            .await
-            .expect("check");
+        let publish = rbac::check_permission(
+            &db,
+            999,
+            crate::rbac::permissions::REF_PUBLISH,
+            &PermissionScope::Global,
+        )
+        .await
+        .expect("check");
 
         assert!(!view, "unassigned user must not have ref.view");
         assert!(!manage, "unassigned user must not have ref.manage");

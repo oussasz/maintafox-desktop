@@ -143,7 +143,8 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
         db.execute_unprepared("DROP TABLE IF EXISTS budget_forecasts").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS budget_forecast_runs").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS budget_forecast_runs")
+            .await?;
         db.execute_unprepared("DROP TABLE IF EXISTS budget_commitments").await?;
         db.execute_unprepared("DROP TABLE IF EXISTS budget_actuals").await?;
         Ok(())

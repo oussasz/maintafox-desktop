@@ -28,16 +28,12 @@ async fn add_column_if_missing(
             format!("PRAGMA table_info({table})"),
         ))
         .await?;
-    let exists = rows.iter().any(|r| {
-        r.try_get::<String>("", "name")
-            .map(|n| n == column)
-            .unwrap_or(false)
-    });
+    let exists = rows
+        .iter()
+        .any(|r| r.try_get::<String>("", "name").map(|n| n == column).unwrap_or(false));
     if !exists {
-        db.execute_unprepared(&format!(
-            "ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"
-        ))
-        .await?;
+        db.execute_unprepared(&format!("ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"))
+            .await?;
     }
     Ok(())
 }
@@ -107,21 +103,14 @@ impl MigrationTrait for Migration {
                JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published'",
             sys_meta = sys_meta
         );
-        db.execute(Statement::from_string(DbBackend::Sqlite, seed_sql))
-            .await?;
+        db.execute(Statement::from_string(DbBackend::Sqlite, seed_sql)).await?;
 
         // ── IR columns ───────────────────────────────────────────────────────
         add_column_if_missing(db, "intervention_requests", "disposition_code", "TEXT NULL").await?;
         add_column_if_missing(db, "intervention_requests", "disposition_notes", "TEXT NULL").await?;
         add_column_if_missing(db, "intervention_requests", "related_di_id", "INTEGER NULL").await?;
         add_column_if_missing(db, "intervention_requests", "closed_by_id", "INTEGER NULL").await?;
-        add_column_if_missing(
-            db,
-            "intervention_requests",
-            "deferred_from_status",
-            "TEXT NULL",
-        )
-        .await?;
+        add_column_if_missing(db, "intervention_requests", "deferred_from_status", "TEXT NULL").await?;
 
         add_column_if_missing(db, "di_review_events", "related_di_id", "INTEGER NULL").await?;
 
@@ -138,10 +127,8 @@ impl MigrationTrait for Migration {
 
         // ── Status + disposition backfill ────────────────────────────────────
         // Stage renames (non-terminal)
-        db.execute_unprepared(
-            "UPDATE intervention_requests SET status = 'in_review' WHERE status = 'pending_review'",
-        )
-        .await?;
+        db.execute_unprepared("UPDATE intervention_requests SET status = 'in_review' WHERE status = 'pending_review'")
+            .await?;
         db.execute_unprepared(
             "UPDATE intervention_requests SET status = 'awaiting_approval' WHERE status = 'screened'",
         )

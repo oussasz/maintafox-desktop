@@ -1,6 +1,4 @@
-use crate::wo::workflow::readiness::rule::{
-    check, ReadinessOutcome, ReadinessRule, RuleCategory, RuleSeverity,
-};
+use crate::wo::workflow::readiness::rule::{check, ReadinessOutcome, ReadinessRule, RuleCategory, RuleSeverity};
 use crate::wo::workflow::readiness::WoReadinessContext;
 
 /// Permit gate: N/A when WO does not require a permit.

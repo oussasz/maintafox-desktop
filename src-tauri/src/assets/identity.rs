@@ -23,10 +23,7 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement,
-    TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -169,9 +166,7 @@ pub(crate) const ASSET_FROM: &str = r"
 
 pub(crate) fn map_asset(row: &QueryResult) -> AppResult<Asset> {
     Ok(Asset {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         sync_id: row
             .try_get::<String>("", "sync_id")
             .map_err(|e| decode_err("sync_id", e))?,
@@ -264,10 +259,7 @@ pub(crate) fn map_asset(row: &QueryResult) -> AppResult<Asset> {
 
 /// Resolve an equipment class code to its row id.
 /// Returns `(class_id, parent_id)` where `parent_id` is the family-level class.
-pub(crate) async fn resolve_class_code(
-    db: &impl ConnectionTrait,
-    class_code: &str,
-) -> AppResult<(i64, Option<i64>)> {
+pub(crate) async fn resolve_class_code(db: &impl ConnectionTrait, class_code: &str) -> AppResult<(i64, Option<i64>)> {
     let code = class_code.trim();
     if code.is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -283,13 +275,9 @@ pub(crate) async fn resolve_class_code(
         ))
         .await?
         .ok_or_else(|| {
-            AppError::ValidationFailed(vec![format!(
-                "Classe d'équipement '{code}' introuvable ou inactive."
-            )])
+            AppError::ValidationFailed(vec![format!("Classe d'équipement '{code}' introuvable ou inactive.")])
         })?;
-    let id: i64 = row
-        .try_get("", "id")
-        .map_err(|e| decode_err("class.id", e))?;
+    let id: i64 = row.try_get("", "id").map_err(|e| decode_err("class.id", e))?;
     let parent_id: Option<i64> = row
         .try_get("", "parent_id")
         .map_err(|e| decode_err("class.parent_id", e))?;
@@ -317,9 +305,7 @@ pub(crate) async fn validate_family_code(
                 ))
                 .await?
                 .ok_or_else(|| AppError::Internal(anyhow::anyhow!("class row missing")))?;
-            let code: String = row
-                .try_get("", "code")
-                .map_err(|e| decode_err("code", e))?;
+            let code: String = row.try_get("", "code").map_err(|e| decode_err("code", e))?;
             if code != family_code {
                 return Err(AppError::ValidationFailed(vec![format!(
                     "La classe '{code}' n'est liée à aucune famille. \
@@ -340,13 +326,9 @@ pub(crate) async fn validate_family_code(
         ))
         .await?
         .ok_or_else(|| {
-            AppError::ValidationFailed(vec![
-                "La classe parente (famille) est inactive ou supprimée.".into(),
-            ])
+            AppError::ValidationFailed(vec!["La classe parente (famille) est inactive ou supprimée.".into()])
         })?;
-    let parent_code: String = row
-        .try_get("", "code")
-        .map_err(|e| decode_err("parent.code", e))?;
+    let parent_code: String = row.try_get("", "code").map_err(|e| decode_err("parent.code", e))?;
     if parent_code != family_code {
         return Err(AppError::ValidationFailed(vec![format!(
             "La famille choisie ('{family_code}') ne correspond pas à la classe sélectionnée. \
@@ -400,10 +382,7 @@ pub(crate) fn normalize_status_code_for_reference(raw: &str) -> AppResult<String
 }
 
 /// Resolve a criticality code to its lookup_values.id (legacy column) via A–D → lookup mapping.
-pub(crate) async fn resolve_criticality_code(
-    db: &impl ConnectionTrait,
-    code: &str,
-) -> AppResult<i64> {
+pub(crate) async fn resolve_criticality_code(db: &impl ConnectionTrait, code: &str) -> AppResult<i64> {
     let canon = normalize_criticality_to_canon(code)?;
     let legacy = canon_to_legacy_criticality_lookup(&canon);
     let row = db
@@ -426,10 +405,7 @@ pub(crate) async fn resolve_criticality_code(
 }
 
 /// FK to `reference_values` for published `EQUIPMENT.CRITICALITY` catalog.
-pub(crate) async fn resolve_criticality_ref_id(
-    db: &impl ConnectionTrait,
-    code: &str,
-) -> AppResult<i64> {
+pub(crate) async fn resolve_criticality_ref_id(db: &impl ConnectionTrait, code: &str) -> AppResult<i64> {
     let canon = normalize_criticality_to_canon(code)?;
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -452,10 +428,7 @@ pub(crate) async fn resolve_criticality_ref_id(
 }
 
 /// FK to `reference_values` for published `EQUIPMENT.STATUS` catalog.
-pub(crate) async fn resolve_status_ref_id(
-    db: &impl ConnectionTrait,
-    normalized_code: &str,
-) -> AppResult<i64> {
+pub(crate) async fn resolve_status_ref_id(db: &impl ConnectionTrait, normalized_code: &str) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -472,15 +445,11 @@ pub(crate) async fn resolve_status_ref_id(
                 "Statut '{normalized_code}' introuvable dans le domaine de référence EQUIPMENT.STATUS."
             )])
         })?;
-    row.try_get::<i64>("", "id")
-        .map_err(|e| decode_err("status_ref.id", e))
+    row.try_get::<i64>("", "id").map_err(|e| decode_err("status_ref.id", e))
 }
 
 /// Required FK to `reference_values` for published `EQUIPMENT.CLASS`.
-pub(crate) async fn resolve_class_ref_id(
-    db: &impl ConnectionTrait,
-    class_code: &str,
-) -> AppResult<i64> {
+pub(crate) async fn resolve_class_ref_id(db: &impl ConnectionTrait, class_code: &str) -> AppResult<i64> {
     let code = class_code.trim();
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -498,8 +467,7 @@ pub(crate) async fn resolve_class_ref_id(
                 "Classe '{code}' introuvable dans le référentiel EQUIPMENT.CLASS."
             )])
         })?;
-    row.try_get::<i64>("", "id")
-        .map_err(|e| decode_err("class_ref.id", e))
+    row.try_get::<i64>("", "id").map_err(|e| decode_err("class_ref.id", e))
 }
 
 async fn resolve_family_ref_id_and_parent(
@@ -523,9 +491,7 @@ async fn resolve_family_ref_id_and_parent(
                 "Famille '{code}' introuvable dans le référentiel EQUIPMENT.FAMILY."
             )])
         })?;
-    let id: i64 = row
-        .try_get("", "id")
-        .map_err(|e| decode_err("family_ref.id", e))?;
+    let id: i64 = row.try_get("", "id").map_err(|e| decode_err("family_ref.id", e))?;
     let parent_id: Option<i64> = row
         .try_get("", "parent_id")
         .map_err(|e| decode_err("family_ref.parent_id", e))?;
@@ -553,9 +519,7 @@ async fn resolve_subfamily_ref_id_and_parent(
                 "Sous-famille '{code}' introuvable dans le référentiel EQUIPMENT.SUBFAMILY."
             )])
         })?;
-    let id: i64 = row
-        .try_get("", "id")
-        .map_err(|e| decode_err("subfamily_ref.id", e))?;
+    let id: i64 = row.try_get("", "id").map_err(|e| decode_err("subfamily_ref.id", e))?;
     let parent_id: Option<i64> = row
         .try_get("", "parent_id")
         .map_err(|e| decode_err("subfamily_ref.parent_id", e))?;
@@ -591,10 +555,7 @@ pub(crate) async fn validate_subfamily_for_family_ref(
 }
 
 /// Validate that a (normalized) status code exists in the published `EQUIPMENT.STATUS` reference set.
-pub(crate) async fn validate_status_code(
-    db: &impl ConnectionTrait,
-    normalized_code: &str,
-) -> AppResult<()> {
+pub(crate) async fn validate_status_code(db: &impl ConnectionTrait, normalized_code: &str) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -616,10 +577,7 @@ pub(crate) async fn validate_status_code(
 
 /// Validate that an org node id references a non-deleted node in the **active**
 /// (production) structure model with status = active.
-pub(crate) async fn assert_org_node_active(
-    db: &impl ConnectionTrait,
-    org_node_id: i64,
-) -> AppResult<()> {
+pub(crate) async fn assert_org_node_active(db: &impl ConnectionTrait, org_node_id: i64) -> AppResult<()> {
     crate::org::model_scope::assert_org_node_active(db, org_node_id).await
 }
 
@@ -722,9 +680,7 @@ pub async fn list_assets(
         binds.push(node_id.into());
     }
     if let Some(ref q) = query {
-        where_clauses.push(
-            "(e.asset_id_code LIKE ? OR e.name LIKE ? OR e.serial_number LIKE ?)".to_string(),
-        );
+        where_clauses.push("(e.asset_id_code LIKE ? OR e.name LIKE ? OR e.serial_number LIKE ?)".to_string());
         let pattern = format!("%{q}%");
         binds.push(pattern.clone().into());
         binds.push(pattern.clone().into());
@@ -742,21 +698,14 @@ pub async fn list_assets(
     );
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
     rows.iter().map(map_asset).collect()
 }
 
 /// Get a single asset by id with resolved classification and org codes.
-pub async fn get_asset_by_id(
-    db: &DatabaseConnection,
-    asset_id: i64,
-) -> AppResult<Asset> {
+pub async fn get_asset_by_id(db: &DatabaseConnection, asset_id: i64) -> AppResult<Asset> {
     let sql = format!(
         "SELECT {ASSET_SELECT} {ASSET_FROM} \
          WHERE e.id = ? AND e.deleted_at IS NULL"
@@ -786,11 +735,7 @@ pub async fn get_asset_by_id(
 ///   - `status_code` must exist in `equipment.lifecycle_status` domain
 ///   - `org_node_id` must reference an active org node
 ///   - if status = DECOMMISSIONED, `decommissioned_at` is implicitly set to now
-pub async fn create_asset(
-    db: &DatabaseConnection,
-    payload: CreateAssetPayload,
-    _actor_id: i32,
-) -> AppResult<Asset> {
+pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, _actor_id: i32) -> AppResult<Asset> {
     // ── Format and validate asset code ────────────────────────────────────
     let asset_code = validate_asset_code(&payload.asset_code)?;
 
@@ -809,11 +754,7 @@ pub async fn create_asset(
     // ── Org node linkage guard ───────────────────────────────────────────
     assert_org_node_active(&txn, payload.org_node_id).await?;
     if let Some(schedule_ref_id) = payload.rams_schedule_reference_value_id {
-        crate::reference::schedule_patterns::assert_schedule_reference_value_active(
-            &txn,
-            schedule_ref_id,
-        )
-        .await?;
+        crate::reference::schedule_patterns::assert_schedule_reference_value_active(&txn, schedule_ref_id).await?;
     }
     let rams_utilization_factor = normalize_utilization_factor(payload.rams_utilization_factor)?;
 
@@ -831,20 +772,16 @@ pub async fn create_asset(
         if !subfamily_code.trim().is_empty() {
             let family_id = family_ref_id.ok_or_else(|| {
                 AppError::ValidationFailed(vec![
-                    "Sélectionnez d'abord une famille valide avant de choisir une sous-famille."
-                        .into(),
+                    "Sélectionnez d'abord une famille valide avant de choisir une sous-famille.".into(),
                 ])
             })?;
-            subfamily_ref_id =
-                Some(validate_subfamily_for_family_ref(&txn, subfamily_code, family_id).await?);
+            subfamily_ref_id = Some(validate_subfamily_for_family_ref(&txn, subfamily_code, family_id).await?);
         }
     }
 
     // ── Criticality resolution (legacy lookup FK + reference FK) ──────────
-    let criticality_value_id =
-        resolve_criticality_code(&txn, &payload.criticality_code).await?;
-    let criticality_ref_id =
-        resolve_criticality_ref_id(&txn, &payload.criticality_code).await?;
+    let criticality_value_id = resolve_criticality_code(&txn, &payload.criticality_code).await?;
+    let criticality_ref_id = resolve_criticality_ref_id(&txn, &payload.criticality_code).await?;
 
     // ── Status validation (normalized string + reference FK) ──────────────
     let status_code = normalize_status_code_for_reference(&payload.status_code)?;
@@ -913,19 +850,11 @@ pub async fn create_asset(
             [sync_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "asset created but not found after insert"
-            ))
-        })?;
-    let asset_id: i64 = id_row
-        .try_get("", "id")
-        .map_err(|e| decode_err("id", e))?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("asset created but not found after insert")))?;
+    let asset_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
 
     // Fetch the full asset with resolved codes
-    let sql = format!(
-        "SELECT {ASSET_SELECT} {ASSET_FROM} WHERE e.id = ?"
-    );
+    let sql = format!("SELECT {ASSET_SELECT} {ASSET_FROM} WHERE e.id = ?");
     let asset_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -933,11 +862,7 @@ pub async fn create_asset(
             [asset_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "asset {asset_id} not found after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("asset {asset_id} not found after insert")))?;
     let asset = map_asset(&asset_row)?;
 
     txn.commit().await?;
@@ -1049,11 +974,10 @@ pub async fn update_asset_identity(
             } else {
                 let class_ref_id = effective_class_ref_id.ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "Sélectionnez une classe valide avant de choisir une famille.".into(),
+                        "Sélectionnez une classe valide avant de choisir une famille.".into()
                     ])
                 })?;
-                effective_family_ref_id =
-                    Some(validate_family_for_class_ref(&txn, trimmed, class_ref_id).await?);
+                effective_family_ref_id = Some(validate_family_for_class_ref(&txn, trimmed, class_ref_id).await?);
             }
         } else {
             effective_family_ref_id = None;
@@ -1070,8 +994,7 @@ pub async fn update_asset_identity(
             } else {
                 let family_ref_id = effective_family_ref_id.ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "Sélectionnez une famille valide avant de choisir une sous-famille."
-                            .into(),
+                        "Sélectionnez une famille valide avant de choisir une sous-famille.".into(),
                     ])
                 })?;
                 Some(validate_subfamily_for_family_ref(&txn, trimmed, family_ref_id).await?)
@@ -1133,11 +1056,7 @@ pub async fn update_asset_identity(
     }
     if let Some(schedule_change) = payload.rams_schedule_reference_value_id {
         if let Some(schedule_ref_id) = schedule_change {
-            crate::reference::schedule_patterns::assert_schedule_reference_value_active(
-                &txn,
-                schedule_ref_id,
-            )
-            .await?;
+            crate::reference::schedule_patterns::assert_schedule_reference_value_active(&txn, schedule_ref_id).await?;
             sets.push("rams_schedule_reference_value_id = ?".to_string());
             binds.push(schedule_ref_id.into());
         } else {
@@ -1160,9 +1079,7 @@ pub async fn update_asset_identity(
     }
 
     if sets.is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "Aucun champ à mettre à jour.".into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["Aucun champ à mettre à jour.".into()]));
     }
 
     // Always bump version and timestamp
@@ -1176,16 +1093,10 @@ pub async fn update_asset_identity(
     binds.push(expected_row_version.into());
 
     let set_sql = sets.join(", ");
-    let update_sql = format!(
-        "UPDATE equipment SET {set_sql} WHERE id = ? AND row_version = ?"
-    );
+    let update_sql = format!("UPDATE equipment SET {set_sql} WHERE id = ? AND row_version = ?");
 
     let result = txn
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &update_sql,
-            binds,
-        ))
+        .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &update_sql, binds))
         .await?;
 
     if result.rows_affected() == 0 {
@@ -1195,9 +1106,7 @@ pub async fn update_asset_identity(
     }
 
     // Fetch updated asset with resolved codes
-    let select_sql = format!(
-        "SELECT {ASSET_SELECT} {ASSET_FROM} WHERE e.id = ?"
-    );
+    let select_sql = format!("SELECT {ASSET_SELECT} {ASSET_FROM} WHERE e.id = ?");
     let asset_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

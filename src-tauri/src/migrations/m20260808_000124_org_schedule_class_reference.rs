@@ -89,15 +89,15 @@ impl MigrationTrait for Migration {
             .await?;
 
         for (sort_idx, row) in classes.iter().enumerate() {
-            let old_id: i64 = row.try_get("", "id").map_err(|e| {
-                DbErr::Custom(format!("schedule_classes.id decode: {e}"))
-            })?;
-            let name: String = row.try_get("", "name").map_err(|e| {
-                DbErr::Custom(format!("schedule_classes.name decode: {e}"))
-            })?;
-            let code: String = row.try_get("", "shift_pattern_code").map_err(|e| {
-                DbErr::Custom(format!("schedule_classes.shift_pattern_code decode: {e}"))
-            })?;
+            let old_id: i64 = row
+                .try_get("", "id")
+                .map_err(|e| DbErr::Custom(format!("schedule_classes.id decode: {e}")))?;
+            let name: String = row
+                .try_get("", "name")
+                .map_err(|e| DbErr::Custom(format!("schedule_classes.name decode: {e}")))?;
+            let code: String = row
+                .try_get("", "shift_pattern_code")
+                .map_err(|e| DbErr::Custom(format!("schedule_classes.shift_pattern_code decode: {e}")))?;
             let is_continuous: i64 = row.try_get("", "is_continuous").unwrap_or(0);
             let nominal: f64 = row.try_get("", "nominal_hours_per_day").unwrap_or(8.0);
             let is_active: i64 = row.try_get("", "is_active").unwrap_or(1);
@@ -123,9 +123,9 @@ impl MigrationTrait for Migration {
                 .await?;
 
             let new_id: i64 = if let Some(ex) = existing {
-                let id: i64 = ex.try_get("", "id").map_err(|e| {
-                    DbErr::Custom(format!("existing rv.id decode: {e}"))
-                })?;
+                let id: i64 = ex
+                    .try_get("", "id")
+                    .map_err(|e| DbErr::Custom(format!("existing rv.id decode: {e}")))?;
                 // Refresh metadata / active / label from operational row.
                 db.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
@@ -173,9 +173,7 @@ impl MigrationTrait for Migration {
                     ))
                     .await?
                     .ok_or_else(|| {
-                        DbErr::Custom(format!(
-                            "reference_value missing after insert for schedule code {code}"
-                        ))
+                        DbErr::Custom(format!("reference_value missing after insert for schedule code {code}"))
                     })?;
                 inserted
                     .try_get("", "id")
@@ -333,8 +331,7 @@ impl MigrationTrait for Migration {
             .await?;
 
         // ── 5. Drop schedule_classes ─────────────────────────────────────────
-        db.execute_unprepared("DROP TABLE IF EXISTS schedule_classes")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS schedule_classes").await?;
         db.execute_unprepared("DROP TABLE IF EXISTS _tmp_schedule_class_map")
             .await?;
 
@@ -371,10 +368,8 @@ impl MigrationTrait for Migration {
             "#,
         )
         .await?;
-        db.execute_unprepared(
-            "DELETE FROM reference_domains WHERE UPPER(TRIM(code)) = 'ORG.SCHEDULES'",
-        )
-        .await?;
+        db.execute_unprepared("DELETE FROM reference_domains WHERE UPPER(TRIM(code)) = 'ORG.SCHEDULES'")
+            .await?;
 
         Ok(())
     }

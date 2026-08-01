@@ -87,11 +87,7 @@ pub fn map_row_to_event(
         failure_mode_coded,
         corrective_documented,
         eligible_flags_json: ReadinessEvent::eligible_flags_json(eligible),
-        failure_mode_id: if failure_mode_coded {
-            Some(row_index)
-        } else {
-            None
-        },
+        failure_mode_id: if failure_mode_coded { Some(row_index) } else { None },
         downtime_duration_hours: 0.0,
         active_repair_hours: 0.0,
     };

@@ -18,14 +18,10 @@ pub struct WoReturnToPlanningInput {
     pub reason: Option<String>,
 }
 
-pub async fn return_to_planning(
-    db: &DatabaseConnection,
-    input: WoReturnToPlanningInput,
-) -> AppResult<WorkOrder> {
+pub async fn return_to_planning(db: &DatabaseConnection, input: WoReturnToPlanningInput) -> AppResult<WorkOrder> {
     let txn = db.begin().await?;
     let (from_code, status, _) = load_wo_status(&txn, input.wo_id).await?;
-    assert_action_allowed(&status, WoAction::ReturnToPlanning)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    assert_action_allowed(&status, WoAction::ReturnToPlanning).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     apply_status_transition(
         &txn,

@@ -17,7 +17,12 @@ pub async fn submit_reliability_kpi_computation_job(
     state: State<'_, AppState>,
 ) -> AppResult<i64> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
     state
         .computation_jobs
         .spawn_reliability_kpi_refresh(state.db.clone(), app, input)
@@ -27,7 +32,12 @@ pub async fn submit_reliability_kpi_computation_job(
 #[tauri::command]
 pub async fn cancel_computation_job(job_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
     state.computation_jobs.cancel_job(job_id).await;
     Ok(())
 }
@@ -35,13 +45,23 @@ pub async fn cancel_computation_job(job_id: i64, state: State<'_, AppState>) -> 
 #[tauri::command]
 pub async fn get_computation_job(job_id: i64, state: State<'_, AppState>) -> AppResult<Option<ComputationJob>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::get_computation_job(&state.db, job_id).await
 }
 
 #[tauri::command]
 pub async fn list_computation_jobs(limit: Option<i64>, state: State<'_, AppState>) -> AppResult<Vec<ComputationJob>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::list_computation_jobs(&state.db, limit.unwrap_or(50)).await
 }

@@ -18,7 +18,9 @@ use std::collections::HashMap;
 use crate::errors::{issue_params, org_validation_failed_issues, AppError, AppResult, AppValidationIssue};
 use crate::org::fail::{fail, fail_params};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, QueryResult, Statement, TransactionTrait};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, QueryResult, Statement, TransactionTrait,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -269,15 +271,9 @@ pub async fn fork_draft_from_published(
             .try_get::<i64>("", "id")
             .map_err(|e| decode_err("id", e))?
             .try_into()
-            .map_err(|_| {
-                AppError::Internal(anyhow::anyhow!("org_node_types id does not fit i32"))
-            })?;
-        let code: String = row
-            .try_get::<String>("", "code")
-            .map_err(|e| decode_err("code", e))?;
-        let label: String = row
-            .try_get::<String>("", "label")
-            .map_err(|e| decode_err("label", e))?;
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("org_node_types id does not fit i32")))?;
+        let code: String = row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?;
+        let label: String = row.try_get::<String>("", "label").map_err(|e| decode_err("label", e))?;
         let icon_key: Option<String> = row
             .try_get::<Option<String>>("", "icon_key")
             .map_err(|e| decode_err("icon_key", e))?;
@@ -311,34 +307,33 @@ pub async fn fork_draft_from_published(
             .map_err(|e| decode_err("is_active", e))?;
 
         let sync_id = Uuid::new_v4().to_string();
-        txn
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                r"INSERT INTO org_node_types
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT INTO org_node_types
             (sync_id, structure_model_id, code, label, icon_key, color, depth_hint,
              can_host_assets, can_own_work, can_carry_cost_center, can_aggregate_kpis, can_receive_permits,
              is_root_type, is_active, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    sync_id.clone().into(),
-                    draft_id.into(),
-                    code.into(),
-                    label.into(),
-                    icon_key.into(),
-                    color.into(),
-                    depth_hint.into(),
-                    (can_host_assets as i32).into(),
-                    (can_own_work as i32).into(),
-                    (can_carry_cost_center as i32).into(),
-                    (can_aggregate_kpis as i32).into(),
-                    (can_receive_permits as i32).into(),
-                    (is_root_type as i32).into(),
-                    (is_active as i32).into(),
-                    now.clone().into(),
-                    now.clone().into(),
-                ],
-            ))
-            .await?;
+            [
+                sync_id.clone().into(),
+                draft_id.into(),
+                code.into(),
+                label.into(),
+                icon_key.into(),
+                color.into(),
+                depth_hint.into(),
+                (can_host_assets as i32).into(),
+                (can_own_work as i32).into(),
+                (can_carry_cost_center as i32).into(),
+                (can_aggregate_kpis as i32).into(),
+                (can_receive_permits as i32).into(),
+                (is_root_type as i32).into(),
+                (is_active as i32).into(),
+                now.clone().into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
 
         let new_id_row = txn
             .query_one(Statement::from_string(
@@ -346,16 +341,12 @@ pub async fn fork_draft_from_published(
                 "SELECT last_insert_rowid() AS new_id".to_string(),
             ))
             .await?
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!("node type insert did not return row id"))
-            })?;
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("node type insert did not return row id")))?;
         let new_id: i32 = new_id_row
             .try_get::<i64>("", "new_id")
             .map_err(|e| decode_err("new_id", e))?
             .try_into()
-            .map_err(|_| {
-                AppError::Internal(anyhow::anyhow!("new node type id does not fit i32"))
-            })?;
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("new node type id does not fit i32")))?;
         old_to_new.insert(old_id, new_id);
     }
 
@@ -371,12 +362,10 @@ pub async fn fork_draft_from_published(
     for rule in &rules {
         let p_old: i32 = rule
             .try_get::<i64>("", "parent_type_id")
-            .map_err(|e| decode_err("parent_type_id", e))?
-            as i32;
+            .map_err(|e| decode_err("parent_type_id", e))? as i32;
         let c_old: i32 = rule
             .try_get::<i64>("", "child_type_id")
-            .map_err(|e| decode_err("child_type_id", e))?
-            as i32;
+            .map_err(|e| decode_err("child_type_id", e))? as i32;
         let p_new = *old_to_new.get(&p_old).ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!(
                 "parent_type_id {p_old} missing from fork map â€” data integrity"
@@ -440,9 +429,7 @@ pub async fn fork_draft_from_published(
     let node_now = Utc::now().to_rfc3339();
 
     for node_row in &active_node_rows {
-        let old_id: i64 = node_row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?;
+        let old_id: i64 = node_row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?;
         let code: String = node_row
             .try_get::<String>("", "code")
             .map_err(|e| decode_err("code", e))?;
@@ -537,9 +524,7 @@ pub async fn fork_draft_from_published(
                 "SELECT last_insert_rowid() AS new_id".to_string(),
             ))
             .await?
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!("org_nodes clone did not return row id"))
-            })?;
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("org_nodes clone did not return row id")))?;
         let new_node_id: i64 = new_id_row
             .try_get::<i64>("", "new_id")
             .map_err(|e| decode_err("new_id", e))?;
@@ -762,12 +747,8 @@ pub async fn reconcile_org_draft_lineage(
         .await?;
     let mut old_to_new_type: HashMap<i32, i32> = HashMap::new();
     for row in &type_map_rows {
-        let old_id: i32 = row
-            .try_get::<i64>("", "old_id")
-            .map_err(|e| decode_err("old_id", e))? as i32;
-        let new_id: i32 = row
-            .try_get::<i64>("", "new_id")
-            .map_err(|e| decode_err("new_id", e))? as i32;
+        let old_id: i32 = row.try_get::<i64>("", "old_id").map_err(|e| decode_err("old_id", e))? as i32;
+        let new_id: i32 = row.try_get::<i64>("", "new_id").map_err(|e| decode_err("new_id", e))? as i32;
         old_to_new_type.insert(old_id, new_id);
     }
 
@@ -808,18 +789,13 @@ pub async fn reconcile_org_draft_lineage(
             let type_code: String = row
                 .try_get::<String>("", "type_code")
                 .map_err(|e| decode_err("type_code", e))?;
-            let node_name: String = row
-                .try_get::<String>("", "name")
-                .map_err(|e| decode_err("name", e))?;
+            let node_name: String = row.try_get::<String>("", "name").map_err(|e| decode_err("name", e))?;
             type_issues.push(AppValidationIssue::error(
                 "ORG_RECONCILE_MISSING_NODE_TYPE",
                 format!(
                     "The draft model is missing node type '{type_code}' required to clone active node '{node_name}'."
                 ),
-                issue_params(&[
-                    ("typeCode", type_code),
-                    ("nodeName", node_name),
-                ]),
+                issue_params(&[("typeCode", type_code), ("nodeName", node_name)]),
             ));
         }
     }
@@ -839,9 +815,7 @@ pub async fn reconcile_org_draft_lineage(
     let mut old_to_new_node: HashMap<i64, i64> = HashMap::new();
     let mut new_node_paths: HashMap<i64, String> = HashMap::new();
     for row in &existing_clones {
-        let new_id: i64 = row
-            .try_get("", "id")
-            .map_err(|e| decode_err("id", e))?;
+        let new_id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
         let old_id: i64 = row
             .try_get("", "origin_node_id")
             .map_err(|e| decode_err("origin_node_id", e))?;
@@ -871,15 +845,9 @@ pub async fn reconcile_org_draft_lineage(
     let mut cloned_count: i64 = 0;
 
     for node_row in &missing_rows {
-        let old_id: i64 = node_row
-            .try_get("", "id")
-            .map_err(|e| decode_err("id", e))?;
-        let code: String = node_row
-            .try_get("", "code")
-            .map_err(|e| decode_err("code", e))?;
-        let name: String = node_row
-            .try_get("", "name")
-            .map_err(|e| decode_err("name", e))?;
+        let old_id: i64 = node_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        let code: String = node_row.try_get("", "code").map_err(|e| decode_err("code", e))?;
+        let name: String = node_row.try_get("", "name").map_err(|e| decode_err("name", e))?;
         let old_type_id: i32 = node_row
             .try_get::<i64>("", "node_type_id")
             .map_err(|e| decode_err("node_type_id", e))? as i32;
@@ -896,9 +864,7 @@ pub async fn reconcile_org_draft_lineage(
             })?),
             None => None,
         };
-        let depth: i64 = node_row
-            .try_get("", "depth")
-            .map_err(|e| decode_err("depth", e))?;
+        let depth: i64 = node_row.try_get("", "depth").map_err(|e| decode_err("depth", e))?;
         let description: Option<String> = node_row
             .try_get("", "description")
             .map_err(|e| decode_err("description", e))?;
@@ -908,9 +874,7 @@ pub async fn reconcile_org_draft_lineage(
         let external_reference: Option<String> = node_row
             .try_get("", "external_reference")
             .map_err(|e| decode_err("external_reference", e))?;
-        let status: String = node_row
-            .try_get("", "status")
-            .map_err(|e| decode_err("status", e))?;
+        let status: String = node_row.try_get("", "status").map_err(|e| decode_err("status", e))?;
         let effective_from: Option<String> = node_row
             .try_get("", "effective_from")
             .map_err(|e| decode_err("effective_from", e))?;
@@ -920,9 +884,7 @@ pub async fn reconcile_org_draft_lineage(
         let erp_reference: Option<String> = node_row
             .try_get("", "erp_reference")
             .map_err(|e| decode_err("erp_reference", e))?;
-        let notes: Option<String> = node_row
-            .try_get("", "notes")
-            .map_err(|e| decode_err("notes", e))?;
+        let notes: Option<String> = node_row.try_get("", "notes").map_err(|e| decode_err("notes", e))?;
 
         // Re-attach lineage when a same-code draft node already exists (broken
         // origin_node_id) instead of inserting a duplicate code.
@@ -936,9 +898,7 @@ pub async fn reconcile_org_draft_lineage(
             ))
             .await?;
         if let Some(existing) = existing_by_code {
-            let existing_id: i64 = existing
-                .try_get("", "id")
-                .map_err(|e| decode_err("id", e))?;
+            let existing_id: i64 = existing.try_get("", "id").map_err(|e| decode_err("id", e))?;
             let path: String = existing
                 .try_get("", "ancestor_path")
                 .map_err(|e| decode_err("ancestor_path", e))?;
@@ -993,12 +953,8 @@ pub async fn reconcile_org_draft_lineage(
                 "SELECT last_insert_rowid() AS new_id".to_string(),
             ))
             .await?
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!("org_nodes reconcile clone did not return row id"))
-            })?;
-        let new_node_id: i64 = new_id_row
-            .try_get("", "new_id")
-            .map_err(|e| decode_err("new_id", e))?;
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("org_nodes reconcile clone did not return row id")))?;
+        let new_node_id: i64 = new_id_row.try_get("", "new_id").map_err(|e| decode_err("new_id", e))?;
 
         let ancestor_path = match new_parent_id {
             Some(new_pid) => {
@@ -1031,18 +987,12 @@ pub async fn reconcile_org_draft_lineage(
             let responsibility_type: String = resp
                 .try_get("", "responsibility_type")
                 .map_err(|e| decode_err("responsibility_type", e))?;
-            let person_id: Option<i64> = resp
-                .try_get("", "person_id")
-                .map_err(|e| decode_err("person_id", e))?;
-            let team_id: Option<i64> = resp
-                .try_get("", "team_id")
-                .map_err(|e| decode_err("team_id", e))?;
+            let person_id: Option<i64> = resp.try_get("", "person_id").map_err(|e| decode_err("person_id", e))?;
+            let team_id: Option<i64> = resp.try_get("", "team_id").map_err(|e| decode_err("team_id", e))?;
             let valid_from: Option<String> = resp
                 .try_get("", "valid_from")
                 .map_err(|e| decode_err("valid_from", e))?;
-            let valid_to: Option<String> = resp
-                .try_get("", "valid_to")
-                .map_err(|e| decode_err("valid_to", e))?;
+            let valid_to: Option<String> = resp.try_get("", "valid_to").map_err(|e| decode_err("valid_to", e))?;
             txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 r"INSERT INTO org_node_responsibilities
@@ -1088,9 +1038,7 @@ pub async fn reconcile_org_draft_lineage(
             let valid_from: Option<String> = binding
                 .try_get("", "valid_from")
                 .map_err(|e| decode_err("valid_from", e))?;
-            let valid_to: Option<String> = binding
-                .try_get("", "valid_to")
-                .map_err(|e| decode_err("valid_to", e))?;
+            let valid_to: Option<String> = binding.try_get("", "valid_to").map_err(|e| decode_err("valid_to", e))?;
             txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 r"INSERT INTO org_entity_bindings
@@ -1198,10 +1146,7 @@ pub async fn archive_model(db: &DatabaseConnection, model_id: i32) -> AppResult<
         ));
     }
     if model.status == "archived" {
-        return Err(fail(
-            "ORG_ALREADY_ARCHIVED",
-            "This model is already archived.",
-        ));
+        return Err(fail("ORG_ALREADY_ARCHIVED", "This model is already archived."));
     }
 
     let now = Utc::now().to_rfc3339();
@@ -1221,9 +1166,7 @@ pub async fn archive_model(db: &DatabaseConnection, model_id: i32) -> AppResult<
 
         // Hard-delete entity bindings and responsibilities referencing draft nodes
         for row in &node_id_rows {
-            let nid: i64 = row
-                .try_get::<i64>("", "id")
-                .map_err(|e| decode_err("id", e))?;
+            let nid: i64 = row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?;
 
             txn.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -1305,10 +1248,7 @@ pub async fn update_model_description(
 ) -> AppResult<OrgStructureModel> {
     let model = get_model_by_id(db, model_id).await?;
     if model.status != "draft" {
-        return Err(fail(
-            "ORG_EDIT_REQUIRES_DRAFT",
-            "Only draft models can be edited.",
-        ));
+        return Err(fail("ORG_EDIT_REQUIRES_DRAFT", "Only draft models can be edited."));
     }
 
     let now = Utc::now().to_rfc3339();

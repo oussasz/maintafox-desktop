@@ -98,10 +98,7 @@ fn inv2x2(m: [[f64; 2]; 2]) -> Option<[[f64; 2]; 2]> {
     if det.abs() < 1e-18 {
         return None;
     }
-    let inv = [
-        [m[1][1] / det, -m[0][1] / det],
-        [-m[1][0] / det, m[0][0] / det],
-    ];
+    let inv = [[m[1][1] / det, -m[0][1] / det], [-m[1][0] / det, m[0][0] / det]];
     Some(inv)
 }
 
@@ -116,9 +113,7 @@ pub fn fit_weibull_with_ci(times: &[f64]) -> WeibullFitResult {
             eta_ci_low: 0.0,
             eta_ci_high: 0.0,
             adequate_sample: false,
-            message: format!(
-                "need at least {WEIBULL_MIN_ADEQUATE_N} inter-arrival points for Weibull fit + CI"
-            ),
+            message: format!("need at least {WEIBULL_MIN_ADEQUATE_N} inter-arrival points for Weibull fit + CI"),
         };
     }
     let Some((beta, eta)) = fit_weibull_mle(times) else {

@@ -20,7 +20,12 @@ use crate::{require_permission, require_session};
 #[tauri::command]
 pub async fn list_failure_hierarchies(state: State<'_, AppState>) -> AppResult<Vec<FailureHierarchy>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::list_failure_hierarchies(&state.db).await
 }
 
@@ -30,27 +35,36 @@ pub async fn upsert_failure_hierarchy(
     state: State<'_, AppState>,
 ) -> AppResult<FailureHierarchy> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
     queries::upsert_failure_hierarchy(&state.db, input).await
 }
 
 #[tauri::command]
-pub async fn list_failure_codes(
-    filter: FailureCodesFilter,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<FailureCode>> {
+pub async fn list_failure_codes(filter: FailureCodesFilter, state: State<'_, AppState>) -> AppResult<Vec<FailureCode>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::list_failure_codes(&state.db, filter).await
 }
 
 #[tauri::command]
-pub async fn upsert_failure_code(
-    input: FailureCodeUpsertInput,
-    state: State<'_, AppState>,
-) -> AppResult<FailureCode> {
+pub async fn upsert_failure_code(input: FailureCodeUpsertInput, state: State<'_, AppState>) -> AppResult<FailureCode> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
     queries::upsert_failure_code(&state.db, input).await
 }
 
@@ -60,7 +74,12 @@ pub async fn deactivate_failure_code(
     state: State<'_, AppState>,
 ) -> AppResult<FailureCode> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
     queries::deactivate_failure_code(&state.db, input).await
 }
 
@@ -70,7 +89,12 @@ pub async fn list_failure_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<FailureEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::list_failure_events(&state.db, filter).await
 }
 
@@ -80,7 +104,12 @@ pub async fn list_cost_of_failure(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<CostOfFailureRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::FIN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::FIN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_cost_of_failure(&state.db, filter).await
 }
 
@@ -90,7 +119,12 @@ pub async fn upsert_failure_event(
     state: State<'_, AppState>,
 ) -> AppResult<FailureEvent> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
     queries::upsert_failure_event(&state.db, input).await
 }
 
@@ -100,7 +134,12 @@ pub async fn upsert_runtime_exposure_log(
     state: State<'_, AppState>,
 ) -> AppResult<RuntimeExposureLog> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
     queries::upsert_runtime_exposure_log(&state.db, input).await
 }
 
@@ -110,7 +149,12 @@ pub async fn list_runtime_exposure_logs(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<RuntimeExposureLog>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::list_runtime_exposure_logs(&state.db, filter).await
 }
 
@@ -120,7 +164,12 @@ pub async fn evaluate_reliability_analysis_input(
     state: State<'_, AppState>,
 ) -> AppResult<ReliabilityAnalysisInputEvaluation> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::evaluate_reliability_analysis_input(&state.db, input).await
 }
 
@@ -130,7 +179,12 @@ pub async fn refresh_reliability_kpi_snapshot(
     state: State<'_, AppState>,
 ) -> AppResult<ReliabilityKpiSnapshot> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
     queries::refresh_reliability_kpi_snapshot(&state.db, input).await
 }
 
@@ -140,14 +194,24 @@ pub async fn list_reliability_kpi_snapshots(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ReliabilityKpiSnapshot>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::list_reliability_kpi_snapshots(&state.db, filter).await
 }
 
 #[tauri::command]
 pub async fn get_reliability_kpi_snapshot(id: i64, state: State<'_, AppState>) -> AppResult<ReliabilityKpiSnapshot> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::get_reliability_kpi_snapshot(&state.db, id).await
 }
 
@@ -157,7 +221,12 @@ pub async fn list_ram_data_quality_issues(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<RamDataQualityIssue>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::list_ram_data_quality_issues(&state.db, filter, user.user_id).await
 }
 
@@ -168,7 +237,12 @@ pub async fn list_wos_missing_failure_mode(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<WoMissingFailureModeRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::list_wos_missing_failure_mode(&state.db, equipment_id, limit).await
 }
 
@@ -178,7 +252,12 @@ pub async fn list_equipment_missing_exposure_90d(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<EquipmentMissingExposureRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::list_equipment_missing_exposure_90d(&state.db, limit).await
 }
 
@@ -188,7 +267,12 @@ pub async fn get_ram_equipment_quality_badge(
     state: State<'_, AppState>,
 ) -> AppResult<RamEquipmentQualityBadge> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::get_ram_equipment_quality_badge(&state.db, equipment_id, user.user_id).await
 }
 
@@ -198,7 +282,12 @@ pub async fn dismiss_ram_data_quality_issue(
     state: State<'_, AppState>,
 ) -> AppResult<UserDismissal> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
     queries::dismiss_ram_data_quality_issue(&state.db, user.user_id, input).await
 }
 
@@ -208,6 +297,11 @@ pub async fn iso_14224_failure_dataset_completeness(
     state: State<'_, AppState>,
 ) -> AppResult<Iso14224DatasetCompleteness> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::RAM_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
     queries::iso_14224_failure_dataset_completeness(&state.db, equipment_id).await
 }

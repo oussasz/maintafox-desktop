@@ -9,9 +9,7 @@ use tokio::time::{interval, Duration};
 use crate::notifications::emitter::{emit_event, NotificationEventInput};
 
 use super::domain::map_intervention_request;
-use super::sla::{
-    compute_sla_status, mark_resolution_breach_notified, mark_response_breach_notified,
-};
+use super::sla::{compute_sla_status, mark_resolution_breach_notified, mark_response_breach_notified};
 
 const DEFAULT_POLL_INTERVAL_SECS: u64 = 300;
 
@@ -99,10 +97,7 @@ async fn read_poll_interval_secs(db: &DatabaseConnection) -> u64 {
     };
 
     let trimmed = raw.trim().trim_matches('"');
-    trimmed
-        .parse::<u64>()
-        .unwrap_or(DEFAULT_POLL_INTERVAL_SECS)
-        .max(30)
+    trimmed.parse::<u64>().unwrap_or(DEFAULT_POLL_INTERVAL_SECS).max(30)
 }
 
 /// One poll tick — public for tests.
@@ -133,9 +128,7 @@ pub async fn run_sla_poll_tick(db: &DatabaseConnection) -> Result<(), String> {
 
     for row in rows {
         let di = map_intervention_request(&row).map_err(|e| e.to_string())?;
-        let status = compute_sla_status(db, &di)
-            .await
-            .map_err(|e| e.to_string())?;
+        let status = compute_sla_status(db, &di).await.map_err(|e| e.to_string())?;
 
         if status.is_response_breached && di.sla_response_breach_notified_at.is_none() {
             emit_breach(db, &di, "response", status.sla_deadline.as_deref()).await;
@@ -144,13 +137,7 @@ pub async fn run_sla_poll_tick(db: &DatabaseConnection) -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
         }
         if status.is_resolution_breached && di.sla_resolution_breach_notified_at.is_none() {
-            emit_breach(
-                db,
-                &di,
-                "resolution",
-                status.resolution_deadline.as_deref(),
-            )
-            .await;
+            emit_breach(db, &di, "resolution", status.resolution_deadline.as_deref()).await;
             mark_resolution_breach_notified(db, di.id)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -176,10 +163,7 @@ async fn emit_breach(
             "DI {} ({}) exceeded the {} SLA. Deadline was {}.",
             di.code, di.title, kind, d
         ),
-        None => format!(
-            "DI {} ({}) exceeded the {} SLA.",
-            di.code, di.title, kind
-        ),
+        None => format!("DI {} ({}) exceeded the {} SLA.", di.code, di.title, kind),
     };
 
     let payload = serde_json::json!({

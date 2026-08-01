@@ -43,7 +43,7 @@ impl MigrationTrait for Migration {
             DbBackend::Sqlite,
             "CREATE INDEX IF NOT EXISTS idx_val_policies_scope
              ON inventory_valuation_policies(scope_level, sort_order, is_active)"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
 
@@ -99,7 +99,7 @@ impl MigrationTrait for Migration {
             "UPDATE work_order_parts
              SET planned_unit_cost = unit_cost
              WHERE planned_unit_cost IS NULL AND unit_cost IS NOT NULL"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
 

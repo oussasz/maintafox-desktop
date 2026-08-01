@@ -63,7 +63,7 @@ mod tests {
             name: "Tags personnalises".to_string(),
             structure_type: "flat".to_string(),
             governance_level: "tenant_managed".to_string(),
-                governance_category: Some("controlled_catalog".to_string()),
+            governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(true),
             validation_rules_json: None,
         };
@@ -74,10 +74,7 @@ mod tests {
     }
 
     /// Creates a domain + draft set, returns (domain_id, set_id).
-    async fn setup_draft_set(
-        db: &sea_orm::DatabaseConnection,
-        domain_id: i64,
-    ) -> i64 {
+    async fn setup_draft_set(db: &sea_orm::DatabaseConnection, domain_id: i64) -> i64 {
         let set = sets::create_draft_set(db, domain_id, 1)
             .await
             .expect("create draft set");
@@ -132,13 +129,9 @@ mod tests {
         let set_id = setup_draft_set(&db, domain_id).await;
 
         // Create a reference value with code PUMP_FAMILY
-        let val = values::create_value(
-            &db,
-            value_payload(set_id, "PUMP_FAMILY", "Pompes"),
-            1,
-        )
-        .await
-        .expect("create value");
+        let val = values::create_value(&db, value_payload(set_id, "PUMP_FAMILY", "Pompes"), 1)
+            .await
+            .expect("create value");
 
         // Simulate downstream usage: insert an equipment class with the same code
         seed_equipment_class(&db, "PUMP_FAMILY").await;
@@ -175,13 +168,9 @@ mod tests {
         let set_id = setup_draft_set(&db, domain_id).await;
 
         // Create value but do NOT seed any downstream usage
-        let val = values::create_value(
-            &db,
-            value_payload(set_id, "UNUSED_FAMILY", "Famille inutilisee"),
-            1,
-        )
-        .await
-        .expect("create value");
+        let val = values::create_value(&db, value_payload(set_id, "UNUSED_FAMILY", "Famille inutilisee"), 1)
+            .await
+            .expect("create value");
 
         // Deletion should pass â€” no usage found
         protected::assert_can_delete_value(&db, val.id)
@@ -199,13 +188,9 @@ mod tests {
         let domain_id = setup_tenant_domain(&db).await;
         let set_id = setup_draft_set(&db, domain_id).await;
 
-        let val = values::create_value(
-            &db,
-            value_payload(set_id, "CUSTOM_A", "Etiquette A"),
-            1,
-        )
-        .await
-        .expect("create value");
+        let val = values::create_value(&db, value_payload(set_id, "CUSTOM_A", "Etiquette A"), 1)
+            .await
+            .expect("create value");
 
         // No downstream usage â€” delete should pass
         protected::assert_can_delete_value(&db, val.id)
@@ -224,7 +209,7 @@ mod tests {
             name: "Classification tenant".to_string(),
             structure_type: "hierarchical".to_string(),
             governance_level: "tenant_managed".to_string(),
-                governance_category: Some("controlled_catalog".to_string()),
+            governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(true),
             validation_rules_json: None,
         };
@@ -234,13 +219,9 @@ mod tests {
 
         let set_id = setup_draft_set(&db, domain.id).await;
 
-        let val = values::create_value(
-            &db,
-            value_payload(set_id, "MOTOR_CLASS", "Moteurs"),
-            1,
-        )
-        .await
-        .expect("create value");
+        let val = values::create_value(&db, value_payload(set_id, "MOTOR_CLASS", "Moteurs"), 1)
+            .await
+            .expect("create value");
 
         // Seed downstream usage
         seed_equipment_class(&db, "MOTOR_CLASS").await;
@@ -263,13 +244,9 @@ mod tests {
         let domain_id = setup_protected_domain(&db).await;
         let set_id = setup_draft_set(&db, domain_id).await;
 
-        let val = values::create_value(
-            &db,
-            value_payload(set_id, "PUMP_FAMILY", "Pompes"),
-            1,
-        )
-        .await
-        .expect("create value");
+        let val = values::create_value(&db, value_payload(set_id, "PUMP_FAMILY", "Pompes"), 1)
+            .await
+            .expect("create value");
 
         // Seed downstream usage
         seed_equipment_class(&db, "PUMP_FAMILY").await;
@@ -294,22 +271,16 @@ mod tests {
         let domain_id = setup_tenant_domain(&db).await;
         let set_id = setup_draft_set(&db, domain_id).await;
 
-        let val = values::create_value(
-            &db,
-            value_payload(set_id, "TAG_TEMP", "Tag temporaire"),
-            1,
-        )
-        .await
-        .expect("create value");
+        let val = values::create_value(&db, value_payload(set_id, "TAG_TEMP", "Tag temporaire"), 1)
+            .await
+            .expect("create value");
 
         // Policy check passes for non-protected domains
         protected::assert_can_deactivate_value(&db, val.id)
             .await
             .expect("tenant value deactivation should be allowed");
 
-        let deactivated = values::deactivate_value(&db, val.id, 1)
-            .await
-            .expect("deactivate");
+        let deactivated = values::deactivate_value(&db, val.id, 1).await.expect("deactivate");
 
         assert!(!deactivated.is_active);
     }
@@ -349,13 +320,9 @@ mod tests {
         let domain_id = setup_protected_domain(&db).await;
         let set_id = setup_draft_set(&db, domain_id).await;
 
-        let val = values::create_value(
-            &db,
-            value_payload(set_id, "NO_MAP", "Pas de mapping"),
-            1,
-        )
-        .await
-        .expect("create value");
+        let val = values::create_value(&db, value_payload(set_id, "NO_MAP", "Pas de mapping"), 1)
+            .await
+            .expect("create value");
 
         assert!(
             !protected::has_migration_map(&db, val.id)
@@ -371,21 +338,13 @@ mod tests {
         let domain_id = setup_protected_domain(&db).await;
         let set_id = setup_draft_set(&db, domain_id).await;
 
-        let from = values::create_value(
-            &db,
-            value_payload(set_id, "OLD_VAL", "Ancienne valeur"),
-            1,
-        )
-        .await
-        .expect("create from");
+        let from = values::create_value(&db, value_payload(set_id, "OLD_VAL", "Ancienne valeur"), 1)
+            .await
+            .expect("create from");
 
-        let to = values::create_value(
-            &db,
-            value_payload(set_id, "NEW_VAL", "Nouvelle valeur"),
-            1,
-        )
-        .await
-        .expect("create to");
+        let to = values::create_value(&db, value_payload(set_id, "NEW_VAL", "Nouvelle valeur"), 1)
+            .await
+            .expect("create to");
 
         // Insert a migration map row directly
         let now = chrono::Utc::now().to_rfc3339();

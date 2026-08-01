@@ -68,14 +68,11 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
     ))
 }
 
-const SELECT_COLS: &str =
-    "id, reference_value_id, alias_label, locale, alias_type, is_preferred, created_at";
+const SELECT_COLS: &str = "id, reference_value_id, alias_label, locale, alias_type, is_preferred, created_at";
 
 fn map_alias(row: &QueryResult) -> AppResult<ReferenceAlias> {
     Ok(ReferenceAlias {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         reference_value_id: row
             .try_get::<i64>("", "reference_value_id")
             .map_err(|e| decode_err("reference_value_id", e))?,
@@ -198,9 +195,7 @@ async fn auto_promote_preferred(
         .await?;
 
     if let Some(r) = row {
-        let next_id: i64 = r
-            .try_get("", "id")
-            .map_err(|e| decode_err("id", e))?;
+        let next_id: i64 = r.try_get("", "id").map_err(|e| decode_err("id", e))?;
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE reference_aliases SET is_preferred = 1 WHERE id = ?",
@@ -214,10 +209,7 @@ async fn auto_promote_preferred(
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /// Returns all aliases for a reference value, ordered by locale, alias_type, then alias_label.
-pub async fn list_aliases(
-    db: &DatabaseConnection,
-    reference_value_id: i64,
-) -> AppResult<Vec<ReferenceAlias>> {
+pub async fn list_aliases(db: &DatabaseConnection, reference_value_id: i64) -> AppResult<Vec<ReferenceAlias>> {
     assert_value_exists(db, reference_value_id).await?;
 
     let rows = db
@@ -236,10 +228,7 @@ pub async fn list_aliases(
 }
 
 /// Returns a single alias by id.
-pub async fn get_alias(
-    db: &DatabaseConnection,
-    alias_id: i64,
-) -> AppResult<ReferenceAlias> {
+pub async fn get_alias(db: &DatabaseConnection, alias_id: i64) -> AppResult<ReferenceAlias> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -274,8 +263,7 @@ pub async fn create_alias(
 
     // Enforce preferred uniqueness before insert.
     if is_preferred {
-        enforce_preferred_uniqueness(db, payload.reference_value_id, &locale, &alias_type, None)
-            .await?;
+        enforce_preferred_uniqueness(db, payload.reference_value_id, &locale, &alias_type, None).await?;
     }
 
     let now = Utc::now().to_rfc3339();
@@ -323,11 +311,7 @@ pub async fn create_alias(
             ],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "reference_aliases row missing after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_aliases row missing after insert")))?;
 
     map_alias(&row)
 }
@@ -374,14 +358,7 @@ pub async fn update_alias(
 
     // Enforce preferred uniqueness if becoming preferred.
     if is_preferred {
-        enforce_preferred_uniqueness(
-            db,
-            existing.reference_value_id,
-            &locale,
-            &alias_type,
-            Some(alias_id),
-        )
-        .await?;
+        enforce_preferred_uniqueness(db, existing.reference_value_id, &locale, &alias_type, Some(alias_id)).await?;
     }
 
     let preferred_int: i32 = if is_preferred { 1 } else { 0 };
@@ -402,11 +379,9 @@ pub async fn update_alias(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec![
-                "Un alias avec ce libellé existe déjà pour cette combinaison \
+            AppError::ValidationFailed(vec!["Un alias avec ce libellé existe déjà pour cette combinaison \
                  valeur/locale/type."
-                    .into(),
-            ])
+                .into()])
         } else {
             AppError::Database(e)
         }
@@ -417,11 +392,7 @@ pub async fn update_alias(
 
 /// Deletes a reference alias by id. If the deleted alias was preferred,
 /// auto-promotes the oldest remaining alias in the same scope.
-pub async fn delete_alias(
-    db: &DatabaseConnection,
-    alias_id: i64,
-    _actor_id: i64,
-) -> AppResult<()> {
+pub async fn delete_alias(db: &DatabaseConnection, alias_id: i64, _actor_id: i64) -> AppResult<()> {
     let existing = get_alias(db, alias_id).await?;
 
     db.execute(Statement::from_sql_and_values(
@@ -433,13 +404,7 @@ pub async fn delete_alias(
 
     // Auto-promote if deleted alias was preferred.
     if existing.is_preferred {
-        auto_promote_preferred(
-            db,
-            existing.reference_value_id,
-            &existing.locale,
-            &existing.alias_type,
-        )
-        .await?;
+        auto_promote_preferred(db, existing.reference_value_id, &existing.locale, &existing.alias_type).await?;
     }
 
     Ok(())

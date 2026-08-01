@@ -69,11 +69,7 @@ pub async fn get_wo_stats(db: &DatabaseConnection) -> AppResult<WoStatsPayload> 
     let in_progress = count_by_macro_state(db, &["in_progress", "on_hold"]).await?;
 
     // ── Completed count (completed + closed) ──
-    let completed = count_by_macro_state(
-        db,
-        &["completed", "closed"],
-    )
-    .await?;
+    let completed = count_by_macro_state(db, &["completed", "closed"]).await?;
 
     // ── Overdue count (planned_end < now AND status not terminal) ──────────
     let overdue = {
@@ -181,11 +177,7 @@ async fn count_by_macro_state(db: &DatabaseConnection, status_codes: &[&str]) ->
         .map(|c| sea_orm::Value::String(Some(Box::new(c.to_string()))))
         .collect();
     let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            values,
-        ))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?
         .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("stats: macro state count failed")))?;
     use sea_orm::TryGetable;

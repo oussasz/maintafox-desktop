@@ -93,12 +93,8 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_report(row: &QueryResult) -> AppResult<ReferenceValidationReport> {
     Ok(ReferenceValidationReport {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
-        set_id: row
-            .try_get::<i64>("", "set_id")
-            .map_err(|e| decode_err("set_id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        set_id: row.try_get::<i64>("", "set_id").map_err(|e| decode_err("set_id", e))?,
         status: row
             .try_get::<String>("", "status")
             .map_err(|e| decode_err("status", e))?,
@@ -179,21 +175,13 @@ pub async fn validate_reference_set(
     check_protected_deactivations_without_migration(db, &domain, &all_values, &mut issues).await;
 
     // Compute summary.
-    let blocking_count = issues
-        .iter()
-        .filter(|i| i.severity == IssueSeverity::Blocking)
-        .count() as i64;
+    let blocking_count = issues.iter().filter(|i| i.severity == IssueSeverity::Blocking).count() as i64;
     let issue_count = issues.len() as i64;
-    let status = if blocking_count == 0 {
-        "passed"
-    } else {
-        "failed"
-    };
+    let status = if blocking_count == 0 { "passed" } else { "failed" };
 
     // Persist the report.
-    let report_json = serde_json::to_string(&issues).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("failed to serialize validation issues: {e}"))
-    })?;
+    let report_json = serde_json::to_string(&issues)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to serialize validation issues: {e}")))?;
 
     let now = Utc::now().to_rfc3339();
 
@@ -223,15 +211,9 @@ pub async fn validate_reference_set(
             [set_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "reference_validation_reports row missing after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_validation_reports row missing after insert")))?;
 
-    let report_id: i64 = report_row
-        .try_get("", "id")
-        .map_err(|e| decode_err("id", e))?;
+    let report_id: i64 = report_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
 
     Ok(ReferenceValidationResult {
         set_id,
@@ -273,10 +255,7 @@ pub async fn get_latest_validation_report(
 /// The DB unique index (set_id, code) prevents true duplicates at insert time,
 /// but values that differ only in whitespace or were created via raw import
 /// could slip through. This check catches case-normalized duplicates.
-fn check_duplicate_codes(
-    vals: &[values::ReferenceValue],
-    issues: &mut Vec<ReferenceValidationIssue>,
-) {
+fn check_duplicate_codes(vals: &[values::ReferenceValue], issues: &mut Vec<ReferenceValidationIssue>) {
     let mut seen: HashMap<String, i64> = HashMap::new();
     for v in vals {
         let normalized = v.code.trim().to_ascii_uppercase();
@@ -298,18 +277,12 @@ fn check_duplicate_codes(
 }
 
 /// Check 2: missing or blank labels.
-fn check_missing_labels(
-    vals: &[values::ReferenceValue],
-    issues: &mut Vec<ReferenceValidationIssue>,
-) {
+fn check_missing_labels(vals: &[values::ReferenceValue], issues: &mut Vec<ReferenceValidationIssue>) {
     for v in vals {
         if v.label.trim().is_empty() {
             issues.push(ReferenceValidationIssue {
                 check: "missing_label".into(),
-                message: format!(
-                    "La valeur '{}' (id={}) a un libelle vide ou manquant.",
-                    v.code, v.id
-                ),
+                message: format!("La valeur '{}' (id={}) a un libelle vide ou manquant.", v.code, v.id),
                 severity: IssueSeverity::Blocking,
                 value_id: Some(v.id),
                 value_code: Some(v.code.clone()),
@@ -322,15 +295,9 @@ fn check_missing_labels(
 ///
 /// Builds an in-memory adjacency map (child → parent) and walks up from each
 /// node. If a node is revisited during the walk, a cycle exists.
-fn check_hierarchy_cycles(
-    vals: &[values::ReferenceValue],
-    issues: &mut Vec<ReferenceValidationIssue>,
-) {
+fn check_hierarchy_cycles(vals: &[values::ReferenceValue], issues: &mut Vec<ReferenceValidationIssue>) {
     // Build id → parent_id map.
-    let parent_map: HashMap<i64, Option<i64>> = vals
-        .iter()
-        .map(|v| (v.id, v.parent_id))
-        .collect();
+    let parent_map: HashMap<i64, Option<i64>> = vals.iter().map(|v| (v.id, v.parent_id)).collect();
 
     // Track which values are part of a reported cycle to avoid duplicates.
     let mut reported_cycle_members: HashSet<i64> = HashSet::new();
@@ -375,10 +342,7 @@ fn check_hierarchy_cycles(
 /// Check 4: orphan parent references.
 ///
 /// A value has parent_id set, but the parent does not exist in this set.
-fn check_orphan_parents(
-    vals: &[values::ReferenceValue],
-    issues: &mut Vec<ReferenceValidationIssue>,
-) {
+fn check_orphan_parents(vals: &[values::ReferenceValue], issues: &mut Vec<ReferenceValidationIssue>) {
     let id_set: HashSet<i64> = vals.iter().map(|v| v.id).collect();
 
     for v in vals {
@@ -404,10 +368,7 @@ fn check_orphan_parents(
 /// If color_hex is provided it must be a valid 3- or 6-digit hex, optionally
 /// prefixed with `#`. Invalid formats produce a warning (not blocking) since
 /// they affect UI rendering but not semantic integrity.
-fn check_invalid_colors(
-    vals: &[values::ReferenceValue],
-    issues: &mut Vec<ReferenceValidationIssue>,
-) {
+fn check_invalid_colors(vals: &[values::ReferenceValue], issues: &mut Vec<ReferenceValidationIssue>) {
     for v in vals {
         if let Some(ref color) = v.color_hex {
             if !color.is_empty() && !is_valid_color_hex(color) {
@@ -438,15 +399,13 @@ fn check_external_code_format(
 ) {
     // Extract pattern from domain validation rules if present.
     let pattern = match &domain.validation_rules_json {
-        Some(json) if !json.is_empty() => {
-            match serde_json::from_str::<serde_json::Value>(json) {
-                Ok(obj) => obj
-                    .get("external_code_pattern")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                Err(_) => None,
-            }
-        }
+        Some(json) if !json.is_empty() => match serde_json::from_str::<serde_json::Value>(json) {
+            Ok(obj) => obj
+                .get("external_code_pattern")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            Err(_) => None,
+        },
         _ => None,
     };
 

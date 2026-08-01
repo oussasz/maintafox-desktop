@@ -72,9 +72,15 @@ pub async fn record_di_change_event(db: &DatabaseConnection, input: DiAuditInput
                    (di_id, action, actor_id, acted_at, summary, details_json, requires_step_up, apply_result)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                input.di_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::Int(None)),
+                input
+                    .di_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::Int(None)),
                 input.action.clone().into(),
-                input.actor_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::Int(None)),
+                input
+                    .actor_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::Int(None)),
                 now.into(),
                 input
                     .summary
@@ -185,13 +191,9 @@ pub async fn list_all_change_events(
            LIMIT ? OFFSET ?"
     );
 
-    let rows = DiChangeEvent::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        &sql,
-        values,
-    ))
-    .all(db)
-    .await?;
+    let rows = DiChangeEvent::find_by_statement(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+        .all(db)
+        .await?;
 
     Ok(rows)
 }

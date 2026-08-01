@@ -41,12 +41,7 @@ pub async fn mark_as_read(pool: &SqlitePool, notification_id: i64, user_id: i64)
     Ok(())
 }
 
-pub async fn acknowledge(
-    pool: &SqlitePool,
-    notification_id: i64,
-    user_id: i64,
-    note: Option<String>,
-) -> Result<()> {
+pub async fn acknowledge(pool: &SqlitePool, notification_id: i64, user_id: i64, note: Option<String>) -> Result<()> {
     ensure_recipient(pool, notification_id, user_id).await?;
 
     pool.execute(Statement::from_sql_and_values(
@@ -71,12 +66,7 @@ pub async fn acknowledge(
     Ok(())
 }
 
-pub async fn snooze(
-    pool: &SqlitePool,
-    notification_id: i64,
-    user_id: i64,
-    snooze_minutes: i64,
-) -> Result<()> {
+pub async fn snooze(pool: &SqlitePool, notification_id: i64, user_id: i64, snooze_minutes: i64) -> Result<()> {
     ensure_recipient(pool, notification_id, user_id).await?;
 
     if !(1..=480).contains(&snooze_minutes) {
@@ -115,10 +105,7 @@ async fn ensure_recipient(pool: &SqlitePool, notification_id: i64, user_id: i64)
         });
     };
 
-    let recipient_user_id = row
-        .try_get::<Option<i64>>("", "recipient_user_id")
-        .ok()
-        .flatten();
+    let recipient_user_id = row.try_get::<Option<i64>>("", "recipient_user_id").ok().flatten();
 
     if recipient_user_id != Some(user_id) {
         return Err(AppError::PermissionDenied(

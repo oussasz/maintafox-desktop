@@ -16,8 +16,8 @@
 //!   - `user_accounts` (migration 002)
 //!   - `permissions` table (migration 001)
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -44,17 +44,9 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(Alias::new("wo_id")).integer())
-                    .col(
-                        ColumnDef::new(Alias::new("action"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("action")).text().not_null())
                     .col(ColumnDef::new(Alias::new("actor_id")).integer())
-                    .col(
-                        ColumnDef::new(Alias::new("acted_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("acted_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("summary")).text())
                     .col(ColumnDef::new(Alias::new("details_json")).text())
                     .col(
@@ -124,8 +116,14 @@ impl MigrationTrait for Migration {
                    ('ot.admin',   'Override, archive, manage WO settings',       'ot', 1, 0, 1, ?),
                    ('ot.delete',  'Delete draft work orders',                    'ot', 1, 0, 1, ?)",
             [
-                now.clone().into(), now.clone().into(), now.clone().into(), now.clone().into(),
-                now.clone().into(), now.clone().into(), now.clone().into(), now.into(),
+                now.clone().into(),
+                now.clone().into(),
+                now.clone().into(),
+                now.clone().into(),
+                now.clone().into(),
+                now.clone().into(),
+                now.clone().into(),
+                now.into(),
             ],
         ))
         .await?;

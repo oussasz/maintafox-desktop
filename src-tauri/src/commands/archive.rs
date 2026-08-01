@@ -157,7 +157,12 @@ pub async fn list_archive_items(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ArchiveItemSummary>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ARC_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ARC_VIEW,
+        PermissionScope::Global
+    );
 
     let filter = filter.unwrap_or(ArchiveFilterInput {
         source_module: None,
@@ -214,11 +219,7 @@ pub async fn list_archive_items(
 
     let rows = state
         .db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            params,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, params))
         .await?;
 
     let mut items = Vec::with_capacity(rows.len());
@@ -232,7 +233,12 @@ pub async fn list_archive_items(
 #[tauri::command]
 pub async fn get_archive_item(archive_item_id: i64, state: State<'_, AppState>) -> AppResult<ArchiveItemDetail> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ARC_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ARC_VIEW,
+        PermissionScope::Global
+    );
 
     let item_row = state
         .db
@@ -273,9 +279,7 @@ pub async fn get_archive_item(archive_item_id: i64, state: State<'_, AppState>) 
         let payload_json = serde_json::from_slice::<serde_json::Value>(&payload_bytes)?;
         Some(ArchivePayloadRow {
             id: row.try_get::<i64>("", "id").unwrap_or_default(),
-            archive_item_id: row
-                .try_get::<i64>("", "archive_item_id")
-                .unwrap_or(archive_item_id),
+            archive_item_id: row.try_get::<i64>("", "archive_item_id").unwrap_or(archive_item_id),
             payload_json,
             workflow_history_json: row
                 .try_get::<Option<String>>("", "workflow_history_json")
@@ -308,9 +312,7 @@ pub async fn get_archive_item(archive_item_id: i64, state: State<'_, AppState>) 
     for row in action_rows {
         actions.push(ArchiveActionRow {
             id: row.try_get::<i64>("", "id").unwrap_or_default(),
-            archive_item_id: row
-                .try_get::<i64>("", "archive_item_id")
-                .unwrap_or(archive_item_id),
+            archive_item_id: row.try_get::<i64>("", "archive_item_id").unwrap_or(archive_item_id),
             action: row.try_get::<String>("", "action").unwrap_or_default(),
             action_by_id: row.try_get::<Option<i64>>("", "action_by_id").unwrap_or(None),
             action_at: row.try_get::<String>("", "action_at").unwrap_or_default(),
@@ -344,7 +346,12 @@ pub async fn restore_archive_item(
     state: State<'_, AppState>,
 ) -> AppResult<ArchiveRestoreResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ARC_RESTORE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ARC_RESTORE,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     let row = state
@@ -535,14 +542,21 @@ pub async fn restore_archive_item(
 }
 
 #[tauri::command]
-pub async fn export_archive_items(
-    payload: ExportInput,
-    state: State<'_, AppState>,
-) -> AppResult<ExportPayload> {
+pub async fn export_archive_items(payload: ExportInput, state: State<'_, AppState>) -> AppResult<ExportPayload> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ARC_EXPORT, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ARC_EXPORT,
+        PermissionScope::Global
+    );
     // Explicitly enforce arc.view too as requested.
-    require_permission!(state, &user, crate::rbac::permissions::ARC_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ARC_VIEW,
+        PermissionScope::Global
+    );
 
     if payload.archive_item_ids.is_empty() {
         return Ok(ExportPayload { items: Vec::new() });
@@ -593,9 +607,7 @@ pub async fn export_archive_items(
         exported.push(ExportedArchivePayload {
             archive_item_id,
             source_module: row.try_get::<String>("", "source_module").unwrap_or_default(),
-            source_record_id: row
-                .try_get::<String>("", "source_record_id")
-                .unwrap_or_default(),
+            source_record_id: row.try_get::<String>("", "source_record_id").unwrap_or_default(),
             archive_class: row.try_get::<String>("", "archive_class").unwrap_or_default(),
             payload_json,
         });
@@ -605,12 +617,14 @@ pub async fn export_archive_items(
 }
 
 #[tauri::command]
-pub async fn purge_archive_items(
-    payload: PurgeInput,
-    state: State<'_, AppState>,
-) -> AppResult<PurgeResult> {
+pub async fn purge_archive_items(payload: PurgeInput, state: State<'_, AppState>) -> AppResult<PurgeResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ARC_PURGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ARC_PURGE,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     let strict_mode = load_archive_purge_strict_mode(&state).await?;
@@ -710,7 +724,12 @@ pub async fn purge_archive_items(
 #[tauri::command]
 pub async fn set_legal_hold(payload: LegalHoldInput, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ARC_PURGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ARC_PURGE,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     let update_res = state
@@ -761,7 +780,12 @@ pub async fn set_legal_hold(payload: LegalHoldInput, state: State<'_, AppState>)
 #[tauri::command]
 pub async fn list_retention_policies(state: State<'_, AppState>) -> AppResult<Vec<RetentionPolicy>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ARC_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ARC_VIEW,
+        PermissionScope::Global
+    );
 
     let rows = state
         .db
@@ -785,12 +809,14 @@ pub async fn list_retention_policies(state: State<'_, AppState>) -> AppResult<Ve
 }
 
 #[tauri::command]
-pub async fn update_retention_policy(
-    payload: UpdateRetentionInput,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn update_retention_policy(payload: UpdateRetentionInput, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     let existing = state
@@ -809,9 +835,7 @@ pub async fn update_retention_policy(
             id: payload.policy_id.to_string(),
         })?;
 
-    let current_archive_class = existing
-        .try_get::<String>("", "archive_class")
-        .unwrap_or_default();
+    let current_archive_class = existing.try_get::<String>("", "archive_class").unwrap_or_default();
     let current_retention_years = existing.try_get::<i64>("", "retention_years").unwrap_or(7);
     let current_purge_mode = existing
         .try_get::<String>("", "purge_mode")
@@ -819,10 +843,7 @@ pub async fn update_retention_policy(
     let current_allow_purge = existing.try_get::<i32>("", "allow_purge").unwrap_or(0) == 1;
 
     let target_retention_years = payload.retention_years.unwrap_or(current_retention_years);
-    let target_purge_mode = payload
-        .purge_mode
-        .clone()
-        .unwrap_or_else(|| current_purge_mode.clone());
+    let target_purge_mode = payload.purge_mode.clone().unwrap_or_else(|| current_purge_mode.clone());
     let target_allow_purge = payload.allow_purge.unwrap_or(current_allow_purge);
 
     if target_allow_purge && target_purge_mode == "never" {
@@ -842,7 +863,7 @@ pub async fn update_retention_policy(
     if let Some(retention_years) = payload.retention_years {
         if retention_years < 0 {
             return Err(AppError::ValidationFailed(vec![
-                "retention_years must be >= 0".to_string(),
+                "retention_years must be >= 0".to_string()
             ]));
         }
         set_parts.push("retention_years = ?".to_string());
@@ -875,17 +896,10 @@ pub async fn update_retention_policy(
     }
 
     values.push(payload.policy_id.into());
-    let sql = format!(
-        "UPDATE retention_policies SET {} WHERE id = ?",
-        set_parts.join(", ")
-    );
+    let sql = format!("UPDATE retention_policies SET {} WHERE id = ?", set_parts.join(", "));
     state
         .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            values,
-        ))
+        .execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
     Ok(())
@@ -895,29 +909,19 @@ fn parse_archive_item_summary(row: &sea_orm::QueryResult) -> ArchiveItemSummary 
     ArchiveItemSummary {
         id: row.try_get::<i64>("", "id").unwrap_or_default(),
         source_module: row.try_get::<String>("", "source_module").unwrap_or_default(),
-        source_record_id: row
-            .try_get::<String>("", "source_record_id")
-            .unwrap_or_default(),
+        source_record_id: row.try_get::<String>("", "source_record_id").unwrap_or_default(),
         archive_class: row.try_get::<String>("", "archive_class").unwrap_or_default(),
         source_state: row.try_get::<Option<String>>("", "source_state").unwrap_or(None),
-        archive_reason_code: row
-            .try_get::<String>("", "archive_reason_code")
-            .unwrap_or_default(),
+        archive_reason_code: row.try_get::<String>("", "archive_reason_code").unwrap_or_default(),
         archived_at: row.try_get::<String>("", "archived_at").unwrap_or_default(),
         archived_by_id: row.try_get::<Option<i64>>("", "archived_by_id").unwrap_or(None),
-        retention_policy_id: row
-            .try_get::<Option<i64>>("", "retention_policy_id")
-            .unwrap_or(None),
+        retention_policy_id: row.try_get::<Option<i64>>("", "retention_policy_id").unwrap_or(None),
         restore_policy: row
             .try_get::<String>("", "restore_policy")
             .unwrap_or_else(|_| "not_allowed".to_string()),
-        restore_until_at: row
-            .try_get::<Option<String>>("", "restore_until_at")
-            .unwrap_or(None),
+        restore_until_at: row.try_get::<Option<String>>("", "restore_until_at").unwrap_or(None),
         legal_hold: row.try_get::<i32>("", "legal_hold").unwrap_or(0) == 1,
-        checksum_sha256: row
-            .try_get::<Option<String>>("", "checksum_sha256")
-            .unwrap_or(None),
+        checksum_sha256: row.try_get::<Option<String>>("", "checksum_sha256").unwrap_or(None),
         search_text: row.try_get::<Option<String>>("", "search_text").unwrap_or(None),
     }
 }
@@ -933,10 +937,7 @@ fn parse_retention_policy(row: &sea_orm::QueryResult) -> RetentionPolicy {
             .unwrap_or_else(|_| "manual_approval".to_string()),
         allow_restore: row.try_get::<i32>("", "allow_restore").unwrap_or(0) == 1,
         allow_purge: row.try_get::<i32>("", "allow_purge").unwrap_or(0) == 1,
-        requires_legal_hold_check: row
-            .try_get::<i32>("", "requires_legal_hold_check")
-            .unwrap_or(1)
-            == 1,
+        requires_legal_hold_check: row.try_get::<i32>("", "requires_legal_hold_check").unwrap_or(1) == 1,
     }
 }
 
@@ -976,7 +977,11 @@ async fn emit_archive_activity_event(
         source_record_id: Some(archive_item_id.to_string()),
         entity_scope_id: None,
         actor_id: Some(actor_id),
-        severity: if result == "blocked" { "warning".to_string() } else { "info".to_string() },
+        severity: if result == "blocked" {
+            "warning".to_string()
+        } else {
+            "info".to_string()
+        },
         summary_json: Some(serde_json::json!({
             "archive_item_id": archive_item_id,
             "action": action,
@@ -1043,9 +1048,7 @@ pub(crate) async fn evaluate_purge_eligibility_db(
 
     let allow_purge = row.try_get::<Option<i32>>("", "allow_purge").unwrap_or(None) == Some(1);
     if !allow_purge {
-        return Ok(Some(
-            "blocked: retention policy does not allow purge".to_string(),
-        ));
+        return Ok(Some("blocked: retention policy does not allow purge".to_string()));
     }
 
     let purge_mode = row
@@ -1058,9 +1061,7 @@ pub(crate) async fn evaluate_purge_eligibility_db(
 
     let retention_years = row.try_get::<Option<i64>>("", "retention_years").unwrap_or(None);
     let Some(retention_years) = retention_years else {
-        return Ok(Some(
-            "blocked: retention policy is missing retention_years".to_string(),
-        ));
+        return Ok(Some("blocked: retention policy is missing retention_years".to_string()));
     };
 
     let archived_at = row.try_get::<String>("", "archived_at").unwrap_or_default();
@@ -1077,18 +1078,13 @@ pub(crate) async fn evaluate_purge_eligibility_db(
         .unwrap_or(0)
         == 1;
     if !elapsed {
-        return Ok(Some(
-            "blocked: retention period has not elapsed".to_string(),
-        ));
+        return Ok(Some("blocked: retention period has not elapsed".to_string()));
     }
 
     Ok(None)
 }
 
-async fn evaluate_purge_eligibility(
-    state: &State<'_, AppState>,
-    archive_item_id: i64,
-) -> AppResult<Option<String>> {
+async fn evaluate_purge_eligibility(state: &State<'_, AppState>, archive_item_id: i64) -> AppResult<Option<String>> {
     evaluate_purge_eligibility_db(&state.db, archive_item_id).await
 }
 

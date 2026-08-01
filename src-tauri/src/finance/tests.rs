@@ -5,10 +5,9 @@ use crate::errors::AppError;
 use crate::finance::domain::{
     AcknowledgeBudgetAlertInput, BudgetActualFilter, BudgetAlertConfigFilter, BudgetAlertEventFilter,
     BudgetCommitmentFilter, BudgetDashboardFilter, BudgetForecastFilter, BudgetReportPackFilter,
-    BudgetVarianceReviewFilter, CreateBudgetActualInput, CreateBudgetAlertConfigInput,
-    CreateBudgetCommitmentInput, CreateBudgetLineInput, CreateBudgetSuccessorInput,
-    CreateBudgetVarianceReviewInput, CreateBudgetVersionInput, CreateCostCenterInput,
-    EvaluateBudgetAlertsInput, ExportBudgetReportPackInput, GenerateBudgetForecastInput,
+    BudgetVarianceReviewFilter, CreateBudgetActualInput, CreateBudgetAlertConfigInput, CreateBudgetCommitmentInput,
+    CreateBudgetLineInput, CreateBudgetSuccessorInput, CreateBudgetVarianceReviewInput, CreateBudgetVersionInput,
+    CreateCostCenterInput, EvaluateBudgetAlertsInput, ExportBudgetReportPackInput, GenerateBudgetForecastInput,
     ImportErpCostCenterMasterInput, PostBudgetActualInput, ReverseBudgetActualInput,
     TransitionBudgetVarianceReviewInput, TransitionBudgetVersionLifecycleInput, UpdateBudgetLineInput,
     UpdateCostCenterInput,
@@ -16,12 +15,8 @@ use crate::finance::domain::{
 use crate::finance::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None)
-        .await
-        .expect("migrations");
+    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     crate::db::seeder::seed_system_data(&db)
         .await
         .expect("seed system data");
@@ -1069,7 +1064,9 @@ async fn dashboard_drilldown_and_erp_exports_are_traceable_and_flagged() {
     .await
     .expect("dashboard rows");
     assert!(!dashboard.is_empty());
-    assert!(dashboard.iter().any(|row| row.source_links_json.contains("WO-2031-LAB")));
+    assert!(dashboard
+        .iter()
+        .any(|row| row.source_links_json.contains("WO-2031-LAB")));
 
     let drilldown = queries::list_budget_dashboard_drilldown(
         &db,
@@ -1081,14 +1078,20 @@ async fn dashboard_drilldown_and_erp_exports_are_traceable_and_flagged() {
     .await
     .expect("drilldown rows");
     assert!(!drilldown.is_empty());
-    assert!(drilldown.iter().any(|row| row.layer_type == "actual" && row.source_id.as_deref() == Some("WO-2031-LAB")));
+    assert!(drilldown
+        .iter()
+        .any(|row| row.layer_type == "actual" && row.source_id.as_deref() == Some("WO-2031-LAB")));
 
     let posted_payload = queries::export_posted_actuals_for_erp(&db)
         .await
         .expect("posted export");
     assert!(!posted_payload.is_empty());
-    assert!(posted_payload[0].reconciliation_flags.contains(&"inactive_imported_cost_center".to_string()));
-    assert!(posted_payload[0].reconciliation_flags.contains(&"base_currency_drift".to_string()));
+    assert!(posted_payload[0]
+        .reconciliation_flags
+        .contains(&"inactive_imported_cost_center".to_string()));
+    assert!(posted_payload[0]
+        .reconciliation_flags
+        .contains(&"base_currency_drift".to_string()));
 
     let reforecast_payload = queries::export_approved_reforecasts_for_erp(&db)
         .await

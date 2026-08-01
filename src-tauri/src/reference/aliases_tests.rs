@@ -6,13 +6,11 @@
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{Database, DbBackend, Statement, ConnectionTrait};
+    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     use crate::errors::AppError;
-    use crate::reference::aliases::{
-        self, CreateReferenceAliasPayload, UpdateReferenceAliasPayload,
-    };
+    use crate::reference::aliases::{self, CreateReferenceAliasPayload, UpdateReferenceAliasPayload};
     use crate::reference::domains::{self, CreateReferenceDomainPayload};
     use crate::reference::sets;
     use crate::reference::values::{self, CreateReferenceValuePayload};
@@ -112,23 +110,15 @@ mod tests {
         let (_dom, _set, val_id) = setup_value(&db).await;
 
         // Create first preferred alias
-        let a1 = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Ancien nom", "fr", "legacy", true),
-            1,
-        )
-        .await
-        .expect("first preferred");
+        let a1 = aliases::create_alias(&db, alias_payload(val_id, "Ancien nom", "fr", "legacy", true), 1)
+            .await
+            .expect("first preferred");
         assert!(a1.is_preferred);
 
         // Create second preferred alias in same scope â€” should demote a1
-        let a2 = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Autre ancien nom", "fr", "legacy", true),
-            1,
-        )
-        .await
-        .expect("second preferred");
+        let a2 = aliases::create_alias(&db, alias_payload(val_id, "Autre ancien nom", "fr", "legacy", true), 1)
+            .await
+            .expect("second preferred");
         assert!(a2.is_preferred);
 
         // Verify a1 was demoted
@@ -145,31 +135,19 @@ mod tests {
         let (_dom, _set, val_id) = setup_value(&db).await;
 
         // Preferred in fr/legacy
-        let a_fr = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Ancien en FR", "fr", "legacy", true),
-            1,
-        )
-        .await
-        .expect("fr preferred");
+        let a_fr = aliases::create_alias(&db, alias_payload(val_id, "Ancien en FR", "fr", "legacy", true), 1)
+            .await
+            .expect("fr preferred");
 
         // Preferred in en/legacy â€” different locale, should NOT demote fr one
-        let a_en = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Old name EN", "en", "legacy", true),
-            1,
-        )
-        .await
-        .expect("en preferred");
+        let a_en = aliases::create_alias(&db, alias_payload(val_id, "Old name EN", "en", "legacy", true), 1)
+            .await
+            .expect("en preferred");
 
         // Preferred in fr/search â€” different type, should NOT demote fr/legacy one
-        let a_search = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Recherche FR", "fr", "search", true),
-            1,
-        )
-        .await
-        .expect("fr search preferred");
+        let a_search = aliases::create_alias(&db, alias_payload(val_id, "Recherche FR", "fr", "search", true), 1)
+            .await
+            .expect("fr search preferred");
 
         // All three should still be preferred
         let a_fr_r = aliases::get_alias(&db, a_fr.id).await.expect("get fr");
@@ -185,21 +163,13 @@ mod tests {
         let db = setup().await;
         let (_dom, _set, val_id) = setup_value(&db).await;
 
-        let a1 = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Nom A", "fr", "legacy", true),
-            1,
-        )
-        .await
-        .expect("a1");
+        let a1 = aliases::create_alias(&db, alias_payload(val_id, "Nom A", "fr", "legacy", true), 1)
+            .await
+            .expect("a1");
 
-        let a2 = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Nom B", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect("a2");
+        let a2 = aliases::create_alias(&db, alias_payload(val_id, "Nom B", "fr", "legacy", false), 1)
+            .await
+            .expect("a2");
 
         // Update a2 to preferred â€” should demote a1
         let a2_updated = aliases::update_alias(
@@ -230,21 +200,13 @@ mod tests {
         let db = setup().await;
         let (_dom, _set, val_id) = setup_value(&db).await;
 
-        aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Duplicate Label", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect("first alias");
+        aliases::create_alias(&db, alias_payload(val_id, "Duplicate Label", "fr", "legacy", false), 1)
+            .await
+            .expect("first alias");
 
-        let err = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Duplicate Label", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect_err("duplicate should fail");
+        let err = aliases::create_alias(&db, alias_payload(val_id, "Duplicate Label", "fr", "legacy", false), 1)
+            .await
+            .expect_err("duplicate should fail");
 
         assert!(
             matches!(err, AppError::ValidationFailed(_)),
@@ -257,22 +219,14 @@ mod tests {
         let db = setup().await;
         let (_dom, _set, val_id) = setup_value(&db).await;
 
-        aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Same Label", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect("legacy alias");
+        aliases::create_alias(&db, alias_payload(val_id, "Same Label", "fr", "legacy", false), 1)
+            .await
+            .expect("legacy alias");
 
         // Same label but different type â€” should succeed
-        aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Same Label", "fr", "search", false),
-            1,
-        )
-        .await
-        .expect("search alias with same label should be allowed");
+        aliases::create_alias(&db, alias_payload(val_id, "Same Label", "fr", "search", false), 1)
+            .await
+            .expect("search alias with same label should be allowed");
     }
 
     #[tokio::test]
@@ -280,22 +234,14 @@ mod tests {
         let db = setup().await;
         let (_dom, _set, val_id) = setup_value(&db).await;
 
-        aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Same Label", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect("fr alias");
+        aliases::create_alias(&db, alias_payload(val_id, "Same Label", "fr", "legacy", false), 1)
+            .await
+            .expect("fr alias");
 
         // Same label but different locale â€” should succeed
-        aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Same Label", "en", "legacy", false),
-            1,
-        )
-        .await
-        .expect("en alias with same label should be allowed");
+        aliases::create_alias(&db, alias_payload(val_id, "Same Label", "en", "legacy", false), 1)
+            .await
+            .expect("en alias with same label should be allowed");
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -307,34 +253,20 @@ mod tests {
         let db = setup().await;
         let (_dom, _set, val_id) = setup_value(&db).await;
 
-        let a1 = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Preferred Alias", "fr", "legacy", true),
-            1,
-        )
-        .await
-        .expect("preferred");
+        let a1 = aliases::create_alias(&db, alias_payload(val_id, "Preferred Alias", "fr", "legacy", true), 1)
+            .await
+            .expect("preferred");
 
-        let a2 = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Second Alias", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect("second");
+        let a2 = aliases::create_alias(&db, alias_payload(val_id, "Second Alias", "fr", "legacy", false), 1)
+            .await
+            .expect("second");
 
-        let _a3 = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Third Alias", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect("third");
+        let _a3 = aliases::create_alias(&db, alias_payload(val_id, "Third Alias", "fr", "legacy", false), 1)
+            .await
+            .expect("third");
 
         // Delete the preferred alias
-        aliases::delete_alias(&db, a1.id, 1)
-            .await
-            .expect("delete preferred");
+        aliases::delete_alias(&db, a1.id, 1).await.expect("delete preferred");
 
         // a2 should have been auto-promoted (oldest by id)
         let a2_r = aliases::get_alias(&db, a2.id).await.expect("get a2");
@@ -349,21 +281,13 @@ mod tests {
         let db = setup().await;
         let (_dom, _set, val_id) = setup_value(&db).await;
 
-        let a1 = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Preferred", "fr", "legacy", true),
-            1,
-        )
-        .await
-        .expect("preferred");
+        let a1 = aliases::create_alias(&db, alias_payload(val_id, "Preferred", "fr", "legacy", true), 1)
+            .await
+            .expect("preferred");
 
-        let a2 = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Non-preferred", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect("non-preferred");
+        let a2 = aliases::create_alias(&db, alias_payload(val_id, "Non-preferred", "fr", "legacy", false), 1)
+            .await
+            .expect("non-preferred");
 
         // Delete the non-preferred alias
         aliases::delete_alias(&db, a2.id, 1)
@@ -380,13 +304,9 @@ mod tests {
         let db = setup().await;
         let (_dom, _set, val_id) = setup_value(&db).await;
 
-        let a1 = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "Only Alias", "fr", "legacy", true),
-            1,
-        )
-        .await
-        .expect("only alias");
+        let a1 = aliases::create_alias(&db, alias_payload(val_id, "Only Alias", "fr", "legacy", true), 1)
+            .await
+            .expect("only alias");
 
         // Delete the only alias â€” should not panic (nothing to promote)
         aliases::delete_alias(&db, a1.id, 1)
@@ -407,29 +327,17 @@ mod tests {
         let db = setup().await;
         let (_dom, _set, val_id) = setup_value(&db).await;
 
-        aliases::create_alias(
-            &db,
-            alias_payload(val_id, "B Label", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect("b");
+        aliases::create_alias(&db, alias_payload(val_id, "B Label", "fr", "legacy", false), 1)
+            .await
+            .expect("b");
 
-        aliases::create_alias(
-            &db,
-            alias_payload(val_id, "A Label", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect("a");
+        aliases::create_alias(&db, alias_payload(val_id, "A Label", "fr", "legacy", false), 1)
+            .await
+            .expect("a");
 
-        aliases::create_alias(
-            &db,
-            alias_payload(val_id, "C Label", "en", "search", true),
-            1,
-        )
-        .await
-        .expect("c");
+        aliases::create_alias(&db, alias_payload(val_id, "C Label", "en", "search", true), 1)
+            .await
+            .expect("c");
 
         let all = aliases::list_aliases(&db, val_id).await.expect("list");
         assert_eq!(all.len(), 3);
@@ -444,13 +352,9 @@ mod tests {
         let db = setup().await;
         let (_dom, _set, val_id) = setup_value(&db).await;
 
-        let err = aliases::create_alias(
-            &db,
-            alias_payload(val_id, "   ", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect_err("empty label");
+        let err = aliases::create_alias(&db, alias_payload(val_id, "   ", "fr", "legacy", false), 1)
+            .await
+            .expect_err("empty label");
 
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
@@ -475,13 +379,9 @@ mod tests {
     async fn create_alias_rejects_nonexistent_value() {
         let db = setup().await;
 
-        let err = aliases::create_alias(
-            &db,
-            alias_payload(99999, "Some Label", "fr", "legacy", false),
-            1,
-        )
-        .await
-        .expect_err("nonexistent value");
+        let err = aliases::create_alias(&db, alias_payload(99999, "Some Label", "fr", "legacy", false), 1)
+            .await
+            .expect_err("nonexistent value");
 
         assert!(matches!(err, AppError::NotFound { .. }));
     }

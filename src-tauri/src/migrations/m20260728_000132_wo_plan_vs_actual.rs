@@ -85,10 +85,8 @@ impl MigrationTrait for Migration {
         .await?;
 
         // ── Parts plan-vs-actual columns ───────────────────────────────────
-        db.execute_unprepared(
-            "ALTER TABLE work_order_parts ADD COLUMN origin TEXT NOT NULL DEFAULT 'planned';",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE work_order_parts ADD COLUMN origin TEXT NOT NULL DEFAULT 'planned';")
+            .await?;
         db.execute_unprepared(
             "ALTER TABLE work_order_parts ADD COLUMN consumption_status TEXT NOT NULL DEFAULT 'pending';",
         )
@@ -97,10 +95,8 @@ impl MigrationTrait for Migration {
             "ALTER TABLE work_order_parts ADD COLUMN not_used_reason_id INTEGER NULL REFERENCES reference_values(id);",
         )
         .await?;
-        db.execute_unprepared(
-            "ALTER TABLE work_order_parts ADD COLUMN not_used_comment TEXT NULL;",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE work_order_parts ADD COLUMN not_used_comment TEXT NULL;")
+            .await?;
 
         // Backfill consumption_status from quantity_used
         db.execute_unprepared(
@@ -113,16 +109,12 @@ impl MigrationTrait for Migration {
         .await?;
 
         // ── Tasks origin ───────────────────────────────────────────────────
-        db.execute_unprepared(
-            "ALTER TABLE work_order_tasks ADD COLUMN origin TEXT NOT NULL DEFAULT 'planned';",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE work_order_tasks ADD COLUMN origin TEXT NOT NULL DEFAULT 'planned';")
+            .await?;
 
         // ── Planned downtime on WO ─────────────────────────────────────────
-        db.execute_unprepared(
-            "ALTER TABLE work_orders ADD COLUMN planned_downtime_hours REAL NULL;",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE work_orders ADD COLUMN planned_downtime_hours REAL NULL;")
+            .await?;
 
         // ── Execution Log (not Audit) ──────────────────────────────────────
         db.execute_unprepared(
@@ -162,22 +154,16 @@ impl MigrationTrait for Migration {
             "#,
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_wo_tools_wo ON work_order_tools(work_order_id);",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_wo_tools_wo ON work_order_tools(work_order_id);")
+            .await?;
 
         // ── Phase 2: attachment phase ──────────────────────────────────────
-        db.execute_unprepared(
-            "ALTER TABLE work_order_attachments ADD COLUMN phase TEXT NULL;",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE work_order_attachments ADD COLUMN phase TEXT NULL;")
+            .await?;
 
         // ── Phase 2: downtime classification (nullable until taxonomy ships) ─
-        db.execute_unprepared(
-            "ALTER TABLE work_order_downtime_segments ADD COLUMN classification_code TEXT NULL;",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE work_order_downtime_segments ADD COLUMN classification_code TEXT NULL;")
+            .await?;
 
         Ok(())
     }

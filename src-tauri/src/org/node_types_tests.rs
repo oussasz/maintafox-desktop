@@ -231,10 +231,7 @@ mod tests {
         .expect_err("should reject update on published model");
         assert!(matches!(err, AppError::OrgValidationFailed(_)));
         let msg = err.to_string();
-        assert!(
-            msg.contains("draft"),
-            "error should mention draft, got: {msg}"
-        );
+        assert!(msg.contains("draft"), "error should mention draft, got: {msg}");
     }
 
     #[tokio::test]

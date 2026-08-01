@@ -59,11 +59,7 @@ async fn update_finding_waived(
     Ok(())
 }
 
-async fn update_finding_repaired(
-    txn: &impl ConnectionTrait,
-    id: i64,
-    expected_rv: i64,
-) -> AppResult<()> {
+async fn update_finding_repaired(txn: &impl ConnectionTrait, id: i64, expected_rv: i64) -> AppResult<()> {
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let aff = txn
         .execute(Statement::from_sql_and_values(
@@ -83,12 +79,10 @@ async fn update_finding_repaired(
 }
 
 async fn reload_and_stage_finding(txn: &impl ConnectionTrait, id: i64) -> AppResult<DataIntegrityFindingRow> {
-    let f = get_finding(txn, id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "data_integrity_findings".into(),
-            id: id.to_string(),
-        })?;
+    let f = get_finding(txn, id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "data_integrity_findings".into(),
+        id: id.to_string(),
+    })?;
     stage_finding_sync(
         txn,
         f.id,
@@ -171,9 +165,9 @@ pub async fn waive_data_integrity_finding(
         ]));
     }
     let waiver_approver = if f0.severity == "error" {
-        let appr = input.approver_id.ok_or_else(|| {
-            AppError::ValidationFailed(vec!["approver_id required for error severity".into()])
-        })?;
+        let appr = input
+            .approver_id
+            .ok_or_else(|| AppError::ValidationFailed(vec!["approver_id required for error severity".into()]))?;
         if appr == actor_id {
             return Err(AppError::ValidationFailed(vec![
                 "second-person approval required for error findings".into(),
@@ -198,15 +192,7 @@ pub async fn waive_data_integrity_finding(
     let f1 = reload_and_stage_finding(&txn, input.finding_id).await?;
     let after_json = json!({ "finding": serde_json::to_value(&f1)? }).to_string();
 
-    insert_repair_audit(
-        &txn,
-        input.finding_id,
-        "waive",
-        actor_id,
-        &before_json,
-        &after_json,
-    )
-    .await?;
+    insert_repair_audit(&txn, input.finding_id, "waive", actor_id, &before_json, &after_json).await?;
 
     txn.commit().await?;
     get_finding(db, input.finding_id)
@@ -238,10 +224,7 @@ pub async fn apply_data_integrity_repair(
     let details: Value = serde_json::from_str(&f0.details_json)
         .map_err(|e| AppError::ValidationFailed(vec![format!("details_json: {e}")]))?;
 
-    let (before_extra, after_extra, action_label) = match (
-        f0.finding_code.as_str(),
-        input.repair_kind.as_str(),
-    ) {
+    let (before_extra, after_extra, action_label) = match (f0.finding_code.as_str(), input.repair_kind.as_str()) {
         ("FK_ORPHAN_FAILURE_MODE", "clear_failure_mode") => {
             let fd_id = f0.record_id;
             let row = txn
@@ -412,8 +395,7 @@ pub async fn apply_data_integrity_repair(
         }
         ("WO_DOWNTIME_SUM_EXCEEDS_WINDOW", _) => {
             return Err(AppError::ValidationFailed(vec![
-                "no automated repair for WO_DOWNTIME_SUM_EXCEEDS_WINDOW: adjust segments or WO window manually"
-                    .into(),
+                "no automated repair for WO_DOWNTIME_SUM_EXCEEDS_WINDOW: adjust segments or WO window manually".into(),
             ]));
         }
         _ => {

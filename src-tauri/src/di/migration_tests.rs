@@ -10,9 +10,7 @@ mod tests {
     use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
-    use crate::di::domain::{
-        generate_di_code, guard_transition, DiStatus,
-    };
+    use crate::di::domain::{generate_di_code, guard_transition, DiStatus};
 
     /// In-memory SQLite with all migrations applied.
     async fn setup() -> sea_orm::DatabaseConnection {
@@ -90,10 +88,7 @@ mod tests {
             .await
             .expect("PRAGMA table_info should succeed");
 
-        let column_names: Vec<String> = rows
-            .iter()
-            .map(|r| r.try_get::<String>("", "name").unwrap())
-            .collect();
+        let column_names: Vec<String> = rows.iter().map(|r| r.try_get::<String>("", "name").unwrap()).collect();
 
         let expected_columns = [
             "id",
@@ -181,10 +176,7 @@ mod tests {
             .await
             .expect("PRAGMA table_info should succeed");
 
-        let column_names: Vec<String> = rows
-            .iter()
-            .map(|r| r.try_get::<String>("", "name").unwrap())
-            .collect();
+        let column_names: Vec<String> = rows.iter().map(|r| r.try_get::<String>("", "name").unwrap()).collect();
 
         let expected_columns = [
             "id",
@@ -324,11 +316,8 @@ mod tests {
         ];
 
         for (from, to) in invalid_pairs {
-            let err = guard_transition(from, to).expect_err(&format!(
-                "Should reject: {} -> {}",
-                from.as_str(),
-                to.as_str()
-            ));
+            let err =
+                guard_transition(from, to).expect_err(&format!("Should reject: {} -> {}", from.as_str(), to.as_str()));
             assert!(
                 err.contains(from.as_str()) && err.contains(to.as_str()),
                 "Error should mention both states: {}",
@@ -345,9 +334,7 @@ mod tests {
     async fn v3_first_generated_code_is_di_0001() {
         let db = setup().await;
 
-        let code = generate_di_code(&db)
-            .await
-            .expect("code generation should succeed");
+        let code = generate_di_code(&db).await.expect("code generation should succeed");
 
         assert_eq!(code, "DI-0001", "First DI code must be DI-0001");
     }
@@ -360,25 +347,19 @@ mod tests {
         // We need prerequisite rows for FK constraints.
         seed_minimal_fk_data(&db).await;
 
-        let code1 = generate_di_code(&db)
-            .await
-            .expect("first code gen");
+        let code1 = generate_di_code(&db).await.expect("first code gen");
         assert_eq!(code1, "DI-0001");
 
         // Insert the first DI with code1
         insert_stub_di(&db, &code1).await;
 
-        let code2 = generate_di_code(&db)
-            .await
-            .expect("second code gen");
+        let code2 = generate_di_code(&db).await.expect("second code gen");
         assert_eq!(code2, "DI-0002");
 
         // Insert the second DI with code2
         insert_stub_di(&db, &code2).await;
 
-        let code3 = generate_di_code(&db)
-            .await
-            .expect("third code gen");
+        let code3 = generate_di_code(&db).await.expect("third code gen");
         assert_eq!(code3, "DI-0003");
 
         // Verify uniqueness: all three are distinct
@@ -397,9 +378,7 @@ mod tests {
         // Insert DI-0005 (simulating a gap from import or manual)
         insert_stub_di(&db, "DI-0005").await;
 
-        let next = generate_di_code(&db)
-            .await
-            .expect("code gen after gap");
+        let next = generate_di_code(&db).await.expect("code gen after gap");
         assert_eq!(
             next, "DI-0006",
             "Next code must follow the highest existing sequence, not fill gaps"
@@ -429,11 +408,7 @@ mod tests {
             DiStatus::Deferred,
         ];
         for s in &mutable {
-            assert!(
-                !s.is_immutable(),
-                "{} must be mutable (not immutable)",
-                s.as_str()
-            );
+            assert!(!s.is_immutable(), "{} must be mutable (not immutable)", s.as_str());
         }
     }
 
@@ -459,7 +434,8 @@ mod tests {
                 DbBackend::Sqlite,
                 "INSERT INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
                  VALUES (1, 'test-eq-001', 'EQ-TEST-001', 'Test Equipment', 'active_in_service', \
-                 datetime('now'), datetime('now'));".to_string(),
+                 datetime('now'), datetime('now'));"
+                    .to_string(),
             ))
             .await
             .expect("insert test equipment");
@@ -481,7 +457,8 @@ mod tests {
             db.execute(Statement::from_string(
                 DbBackend::Sqlite,
                 "INSERT INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
-                 VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));".to_string(),
+                 VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
+                    .to_string(),
             ))
             .await
             .expect("insert test structure model");
@@ -561,12 +538,7 @@ mod tests {
               impact_level, reported_urgency, submitted_at, submitter_id, created_at, updated_at) \
              VALUES (?, ?, ?, 'submitted', 'Test DI', 'Test description', 'operator', \
               'unknown', 'medium', datetime('now'), ?, datetime('now'), datetime('now'))",
-            [
-                code.into(),
-                equipment_id.into(),
-                org_node_id.into(),
-                user_id.into(),
-            ],
+            [code.into(), equipment_id.into(), org_node_id.into(), user_id.into()],
         ))
         .await
         .unwrap_or_else(|e| panic!("insert stub DI '{code}' failed: {e}"));

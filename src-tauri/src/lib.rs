@@ -8,28 +8,27 @@
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::unnecessary_literal_bound)]
 
-pub mod assets;
-pub mod activity;
 pub mod activation;
+pub mod activity;
 pub mod analytics_contract;
 pub mod archive;
+pub mod assets;
 pub mod audit;
 pub mod auth;
 pub mod background;
 pub mod backup;
 pub mod commands;
-pub mod di;
-pub mod db;
 pub mod data_integrity;
-pub mod wo;
+pub mod db;
+pub mod di;
 pub mod diagnostics;
 pub mod entitlements;
 pub mod errors;
+pub mod finance;
 pub mod inspection;
+pub mod inventory;
 pub mod jobs;
 pub mod kpi_definitions;
-pub mod finance;
-pub mod inventory;
 pub mod library_documents;
 pub mod license;
 pub mod locale;
@@ -37,14 +36,14 @@ pub mod migrations;
 pub mod models;
 pub mod notifications;
 pub mod org;
+pub mod permit;
 pub mod personnel;
 pub mod planning;
-pub mod permit;
-pub mod qualification;
-pub mod reliability;
 pub mod pm;
+pub mod qualification;
 pub mod rbac;
 pub mod reference;
+pub mod reliability;
 pub mod reports;
 pub mod repository;
 pub mod security;
@@ -56,19 +55,20 @@ pub mod sync;
 pub mod tray;
 pub mod vps;
 pub mod window;
+pub mod wo;
 
 #[cfg(test)]
 mod background_tests;
 #[cfg(test)]
 mod errors_tests;
 #[cfg(test)]
+pub mod observability;
+#[cfg(test)]
 mod startup_tests;
 #[cfg(test)]
 mod state_tests;
 #[cfg(test)]
 mod window_tests;
-#[cfg(test)]
-pub mod observability;
 
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
@@ -85,14 +85,12 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Single-instance: focus existing window on second launch
-        .plugin(
-            tauri_plugin_single_instance::init(|app, _args, _cwd| {
-                if let Some(w) = app.get_webview_window("main") {
-                    w.set_focus().ok();
-                    w.show().ok();
-                }
-            }),
-        )
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                w.set_focus().ok();
+                w.show().ok();
+            }
+        }))
         .setup(|app| {
             // Tray icon (non-fatal if tray is not supported on this platform)
             if let Err(e) = tray::setup_tray(app) {
@@ -918,4 +916,3 @@ pub fn run() {
         // the tauri.conf.json is missing. Panic at startup is the correct behavior.
         .expect("error while running Maintafox application");
 }
-

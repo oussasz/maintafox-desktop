@@ -4,19 +4,18 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::settings;
 use crate::reliability::advanced_rams::domain::{
-    CreateFmecaAnalysisInput, CreateRcmStudyInput, FmecaAnalysesFilter, FmecaAnalysis, FmecaItem,
-    FmecaItemWithContext, FmecaItemsEquipmentFilter, FmecaSeverityOccurrenceMatrix, FmecaSoCell,
-    RamIshikawaDiagram, RamIshikawaDiagramsFilter, ReliabilityRulIndicator, RcmDecision, RcmStudiesFilter, RcmStudy,
-    SuggestedPartForFailure, SuggestedPartsForFailureInput,
-    UpdateFmecaAnalysisInput, UpdateRcmStudyInput, UpsertFmecaItemInput, UpsertRamIshikawaDiagramInput,
-    UpsertRcmDecisionInput, WeibullCurvePoint, WeibullDashboardInput, WeibullDashboardPayload, WeibullFitRecord,
-    WeibullFitRunInput, WeibullPmMarker,
+    CreateFmecaAnalysisInput, CreateRcmStudyInput, FmecaAnalysesFilter, FmecaAnalysis, FmecaItem, FmecaItemWithContext,
+    FmecaItemsEquipmentFilter, FmecaSeverityOccurrenceMatrix, FmecaSoCell, RamIshikawaDiagram,
+    RamIshikawaDiagramsFilter, RcmDecision, RcmStudiesFilter, RcmStudy, ReliabilityRulIndicator,
+    SuggestedPartForFailure, SuggestedPartsForFailureInput, UpdateFmecaAnalysisInput, UpdateRcmStudyInput,
+    UpsertFmecaItemInput, UpsertRamIshikawaDiagramInput, UpsertRcmDecisionInput, WeibullCurvePoint,
+    WeibullDashboardInput, WeibullDashboardPayload, WeibullFitRecord, WeibullFitRunInput, WeibullPmMarker,
 };
 use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 use crate::reliability::queries::evaluate_reliability_analysis_input;
 use crate::reliability::weibull_fit::fit_weibull_with_ci;
+use crate::settings;
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("advanced_rams decode '{field}': {err}"))
@@ -39,9 +38,7 @@ fn parse_ts(s: &str) -> AppResult<DateTime<Utc>> {
         .map_err(|e| AppError::ValidationFailed(vec![format!("invalid timestamp: {e}")]))
 }
 
-pub fn inter_arrival_hours_from_events(
-    timestamps: &[DateTime<Utc>],
-) -> Vec<f64> {
+pub fn inter_arrival_hours_from_events(timestamps: &[DateTime<Utc>]) -> Vec<f64> {
     if timestamps.len() < 2 {
         return Vec::new();
     }
@@ -129,16 +126,28 @@ pub async fn run_and_store_weibull_fit(
         [
             eid.into(),
             input.equipment_id.into(),
-            input.period_start.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-            input.period_end.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+            input
+                .period_start
+                .map(sea_orm::Value::from)
+                .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+            input
+                .period_end
+                .map(sea_orm::Value::from)
+                .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
             (gaps.len() as i64).into(),
             inter_json.into(),
-            beta.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
-            eta.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
-            bl.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
-            bh.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
-            el.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
-            eh.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
+            beta.map(sea_orm::Value::from)
+                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
+            eta.map(sea_orm::Value::from)
+                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
+            bl.map(sea_orm::Value::from)
+                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
+            bh.map(sea_orm::Value::from)
+                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
+            el.map(sea_orm::Value::from)
+                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
+            eh.map(sea_orm::Value::from)
+                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
             adequate.into(),
             if include_censored {
                 format!("{} [include_censored=true]", fit.message).into()
@@ -146,12 +155,14 @@ pub async fn run_and_store_weibull_fit(
                 fit.message.clone().into()
             },
             now.clone().into(),
-            uid.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+            uid.map(sea_orm::Value::from)
+                .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
         ],
     ))
     .await?;
     let id = last_insert_id(db).await?;
-    get_weibull_fit(db, id).await?
+    get_weibull_fit(db, id)
+        .await?
         .ok_or_else(|| AppError::SyncError("weibull_fit_results insert missing.".into()))
 }
 
@@ -195,25 +206,52 @@ pub async fn get_latest_weibull_fit_for_equipment(
 fn map_weibull(row: &sea_orm::QueryResult) -> AppResult<WeibullFitRecord> {
     Ok(WeibullFitRecord {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| decode_err("entity_sync_id", e))?,
-        equipment_id: row.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?,
-        period_start: row.try_get::<Option<String>>("", "period_start").map_err(|e| decode_err("period_start", e))?,
-        period_end: row.try_get::<Option<String>>("", "period_end").map_err(|e| decode_err("period_end", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+        equipment_id: row
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
+        period_start: row
+            .try_get::<Option<String>>("", "period_start")
+            .map_err(|e| decode_err("period_start", e))?,
+        period_end: row
+            .try_get::<Option<String>>("", "period_end")
+            .map_err(|e| decode_err("period_end", e))?,
         n_points: row.try_get("", "n_points").map_err(|e| decode_err("n_points", e))?,
         inter_arrival_hours_json: row
             .try_get("", "inter_arrival_hours_json")
             .map_err(|e| decode_err("inter_arrival_hours_json", e))?,
-        beta: row.try_get::<Option<f64>>("", "beta").map_err(|e| decode_err("beta", e))?,
-        eta: row.try_get::<Option<f64>>("", "eta").map_err(|e| decode_err("eta", e))?,
-        beta_ci_low: row.try_get::<Option<f64>>("", "beta_ci_low").map_err(|e| decode_err("beta_ci_low", e))?,
-        beta_ci_high: row.try_get::<Option<f64>>("", "beta_ci_high").map_err(|e| decode_err("beta_ci_high", e))?,
-        eta_ci_low: row.try_get::<Option<f64>>("", "eta_ci_low").map_err(|e| decode_err("eta_ci_low", e))?,
-        eta_ci_high: row.try_get::<Option<f64>>("", "eta_ci_high").map_err(|e| decode_err("eta_ci_high", e))?,
-        adequate_sample: row.try_get::<i64>("", "adequate_sample").map_err(|e| decode_err("adequate_sample", e))? != 0,
+        beta: row
+            .try_get::<Option<f64>>("", "beta")
+            .map_err(|e| decode_err("beta", e))?,
+        eta: row
+            .try_get::<Option<f64>>("", "eta")
+            .map_err(|e| decode_err("eta", e))?,
+        beta_ci_low: row
+            .try_get::<Option<f64>>("", "beta_ci_low")
+            .map_err(|e| decode_err("beta_ci_low", e))?,
+        beta_ci_high: row
+            .try_get::<Option<f64>>("", "beta_ci_high")
+            .map_err(|e| decode_err("beta_ci_high", e))?,
+        eta_ci_low: row
+            .try_get::<Option<f64>>("", "eta_ci_low")
+            .map_err(|e| decode_err("eta_ci_low", e))?,
+        eta_ci_high: row
+            .try_get::<Option<f64>>("", "eta_ci_high")
+            .map_err(|e| decode_err("eta_ci_high", e))?,
+        adequate_sample: row
+            .try_get::<i64>("", "adequate_sample")
+            .map_err(|e| decode_err("adequate_sample", e))?
+            != 0,
         message: row.try_get("", "message").map_err(|e| decode_err("message", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
-        created_by_id: row.try_get::<Option<i64>>("", "created_by_id").map_err(|e| decode_err("created_by_id", e))?,
+        created_by_id: row
+            .try_get::<Option<i64>>("", "created_by_id")
+            .map_err(|e| decode_err("created_by_id", e))?,
     })
 }
 
@@ -284,14 +322,24 @@ async fn ensure_failure_mode_id_governed(db: &DatabaseConnection, failure_mode_i
 fn map_fmeca_analysis(row: &sea_orm::QueryResult) -> AppResult<FmecaAnalysis> {
     Ok(FmecaAnalysis {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| decode_err("entity_sync_id", e))?,
-        equipment_id: row.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+        equipment_id: row
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
         title: row.try_get("", "title").map_err(|e| decode_err("title", e))?,
-        boundary_definition: row.try_get("", "boundary_definition").map_err(|e| decode_err("boundary_definition", e))?,
+        boundary_definition: row
+            .try_get("", "boundary_definition")
+            .map_err(|e| decode_err("boundary_definition", e))?,
         status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
-        created_by_id: row.try_get::<Option<i64>>("", "created_by_id").map_err(|e| decode_err("created_by_id", e))?,
+        created_by_id: row
+            .try_get::<Option<i64>>("", "created_by_id")
+            .map_err(|e| decode_err("created_by_id", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
@@ -374,9 +422,18 @@ pub async fn update_fmeca_analysis(
                 updated_at = ?
              WHERE id = ? AND row_version = ?",
             [
-                input.title.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-                input.boundary_definition.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-                input.status.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+                input
+                    .title
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+                input
+                    .boundary_definition
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+                input
+                    .status
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
                 Utc::now().to_rfc3339().into(),
                 input.id.into(),
                 input.expected_row_version.into(),
@@ -385,7 +442,9 @@ pub async fn update_fmeca_analysis(
         .await?
         .rows_affected();
     if n == 0 {
-        return Err(AppError::ValidationFailed(vec!["fmeca_analyses update conflict.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "fmeca_analyses update conflict.".into()
+        ]));
     }
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -416,28 +475,54 @@ pub async fn delete_fmeca_analysis(db: &DatabaseConnection, id: i64) -> AppResul
 fn map_fmeca_item(row: &sea_orm::QueryResult) -> AppResult<FmecaItem> {
     Ok(FmecaItem {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| decode_err("entity_sync_id", e))?,
-        analysis_id: row.try_get("", "analysis_id").map_err(|e| decode_err("analysis_id", e))?,
-        component_id: row.try_get::<Option<i64>>("", "component_id").map_err(|e| decode_err("component_id", e))?,
-        functional_failure: row.try_get("", "functional_failure").map_err(|e| decode_err("functional_failure", e))?,
-        failure_mode_id: row.try_get::<Option<i64>>("", "failure_mode_id").map_err(|e| decode_err("failure_mode_id", e))?,
-        failure_effect: row.try_get("", "failure_effect").map_err(|e| decode_err("failure_effect", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+        analysis_id: row
+            .try_get("", "analysis_id")
+            .map_err(|e| decode_err("analysis_id", e))?,
+        component_id: row
+            .try_get::<Option<i64>>("", "component_id")
+            .map_err(|e| decode_err("component_id", e))?,
+        functional_failure: row
+            .try_get("", "functional_failure")
+            .map_err(|e| decode_err("functional_failure", e))?,
+        failure_mode_id: row
+            .try_get::<Option<i64>>("", "failure_mode_id")
+            .map_err(|e| decode_err("failure_mode_id", e))?,
+        failure_effect: row
+            .try_get("", "failure_effect")
+            .map_err(|e| decode_err("failure_effect", e))?,
         severity: row.try_get("", "severity").map_err(|e| decode_err("severity", e))?,
         occurrence: row.try_get("", "occurrence").map_err(|e| decode_err("occurrence", e))?,
-        detectability: row.try_get("", "detectability").map_err(|e| decode_err("detectability", e))?,
+        detectability: row
+            .try_get("", "detectability")
+            .map_err(|e| decode_err("detectability", e))?,
         rpn: row.try_get("", "rpn").map_err(|e| decode_err("rpn", e))?,
-        recommended_action: row.try_get("", "recommended_action").map_err(|e| decode_err("recommended_action", e))?,
-        current_control: row.try_get("", "current_control").map_err(|e| decode_err("current_control", e))?,
-        linked_pm_plan_id: row.try_get::<Option<i64>>("", "linked_pm_plan_id").map_err(|e| decode_err("linked_pm_plan_id", e))?,
-        linked_work_order_id: row.try_get::<Option<i64>>("", "linked_work_order_id").map_err(|e| decode_err("linked_work_order_id", e))?,
-        revised_rpn: row.try_get::<Option<i64>>("", "revised_rpn").map_err(|e| decode_err("revised_rpn", e))?,
+        recommended_action: row
+            .try_get("", "recommended_action")
+            .map_err(|e| decode_err("recommended_action", e))?,
+        current_control: row
+            .try_get("", "current_control")
+            .map_err(|e| decode_err("current_control", e))?,
+        linked_pm_plan_id: row
+            .try_get::<Option<i64>>("", "linked_pm_plan_id")
+            .map_err(|e| decode_err("linked_pm_plan_id", e))?,
+        linked_work_order_id: row
+            .try_get::<Option<i64>>("", "linked_work_order_id")
+            .map_err(|e| decode_err("linked_work_order_id", e))?,
+        revised_rpn: row
+            .try_get::<Option<i64>>("", "revised_rpn")
+            .map_err(|e| decode_err("revised_rpn", e))?,
         source_ram_ishikawa_diagram_id: row
             .try_get::<Option<i64>>("", "source_ram_ishikawa_diagram_id")
             .map_err(|e| decode_err("source_ram_ishikawa_diagram_id", e))?,
         source_ishikawa_flow_node_id: row
             .try_get::<Option<String>>("", "source_ishikawa_flow_node_id")
             .map_err(|e| decode_err("source_ishikawa_flow_node_id", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
@@ -485,9 +570,15 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
                     row_version = row_version + 1, updated_at = ?
                  WHERE id = ? AND row_version = ?",
                 [
-                    input.component_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    input
+                        .component_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
                     ff.into(),
-                    input.failure_mode_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    input
+                        .failure_mode_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
                     fe.into(),
                     input.severity.into(),
                     input.occurrence.into(),
@@ -495,9 +586,18 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
                     rpn.into(),
                     ra.into(),
                     cc.into(),
-                    input.linked_pm_plan_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                    input.linked_work_order_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                    input.revised_rpn.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    input
+                        .linked_pm_plan_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    input
+                        .linked_work_order_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    input
+                        .revised_rpn
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
                     now.clone().into(),
                     id.into(),
                     exp.into(),
@@ -536,9 +636,15 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
             [
                 eid.into(),
                 input.analysis_id.into(),
-                input.component_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                input
+                    .component_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
                 ff.into(),
-                input.failure_mode_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                input
+                    .failure_mode_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
                 fe.into(),
                 input.severity.into(),
                 input.occurrence.into(),
@@ -546,9 +652,18 @@ pub async fn upsert_fmeca_item(db: &DatabaseConnection, input: UpsertFmecaItemIn
                 rpn.into(),
                 ra.into(),
                 cc.into(),
-                input.linked_pm_plan_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                input.linked_work_order_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
-                input.revised_rpn.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                input
+                    .linked_pm_plan_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                input
+                    .linked_work_order_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                input
+                    .revised_rpn
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
                 input
                     .source_ram_ishikawa_diagram_id
                     .map(sea_orm::Value::from)
@@ -597,13 +712,21 @@ pub async fn delete_fmeca_item(db: &DatabaseConnection, id: i64) -> AppResult<()
 fn map_rcm_study(row: &sea_orm::QueryResult) -> AppResult<RcmStudy> {
     Ok(RcmStudy {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| decode_err("entity_sync_id", e))?,
-        equipment_id: row.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+        equipment_id: row
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
         title: row.try_get("", "title").map_err(|e| decode_err("title", e))?,
         status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
-        created_by_id: row.try_get::<Option<i64>>("", "created_by_id").map_err(|e| decode_err("created_by_id", e))?,
+        created_by_id: row
+            .try_get::<Option<i64>>("", "created_by_id")
+            .map_err(|e| decode_err("created_by_id", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
@@ -646,7 +769,10 @@ pub async fn create_rcm_study(
             input.title.into(),
             status.into(),
             now.clone().into(),
-            user_id.map(i64::from).map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+            user_id
+                .map(i64::from)
+                .map(sea_orm::Value::from)
+                .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
             now.into(),
         ],
     ))
@@ -675,8 +801,14 @@ pub async fn update_rcm_study(db: &DatabaseConnection, input: UpdateRcmStudyInpu
                 updated_at = ?
              WHERE id = ? AND row_version = ?",
             [
-                input.title.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-                input.status.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+                input
+                    .title
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+                input
+                    .status
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
                 Utc::now().to_rfc3339().into(),
                 input.id.into(),
                 input.expected_row_version.into(),
@@ -715,17 +847,37 @@ pub async fn delete_rcm_study(db: &DatabaseConnection, id: i64) -> AppResult<()>
 fn map_rcm_decision(row: &sea_orm::QueryResult) -> AppResult<RcmDecision> {
     Ok(RcmDecision {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| decode_err("entity_sync_id", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
         study_id: row.try_get("", "study_id").map_err(|e| decode_err("study_id", e))?,
-        function_description: row.try_get("", "function_description").map_err(|e| decode_err("function_description", e))?,
-        functional_failure: row.try_get("", "functional_failure").map_err(|e| decode_err("functional_failure", e))?,
-        failure_mode_id: row.try_get::<Option<i64>>("", "failure_mode_id").map_err(|e| decode_err("failure_mode_id", e))?,
-        consequence_category: row.try_get("", "consequence_category").map_err(|e| decode_err("consequence_category", e))?,
-        selected_tactic: row.try_get("", "selected_tactic").map_err(|e| decode_err("selected_tactic", e))?,
-        justification: row.try_get("", "justification").map_err(|e| decode_err("justification", e))?,
-        review_due_at: row.try_get::<Option<String>>("", "review_due_at").map_err(|e| decode_err("review_due_at", e))?,
-        linked_pm_plan_id: row.try_get::<Option<i64>>("", "linked_pm_plan_id").map_err(|e| decode_err("linked_pm_plan_id", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        function_description: row
+            .try_get("", "function_description")
+            .map_err(|e| decode_err("function_description", e))?,
+        functional_failure: row
+            .try_get("", "functional_failure")
+            .map_err(|e| decode_err("functional_failure", e))?,
+        failure_mode_id: row
+            .try_get::<Option<i64>>("", "failure_mode_id")
+            .map_err(|e| decode_err("failure_mode_id", e))?,
+        consequence_category: row
+            .try_get("", "consequence_category")
+            .map_err(|e| decode_err("consequence_category", e))?,
+        selected_tactic: row
+            .try_get("", "selected_tactic")
+            .map_err(|e| decode_err("selected_tactic", e))?,
+        justification: row
+            .try_get("", "justification")
+            .map_err(|e| decode_err("justification", e))?,
+        review_due_at: row
+            .try_get::<Option<String>>("", "review_due_at")
+            .map_err(|e| decode_err("review_due_at", e))?,
+        linked_pm_plan_id: row
+            .try_get::<Option<i64>>("", "linked_pm_plan_id")
+            .map_err(|e| decode_err("linked_pm_plan_id", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
@@ -786,12 +938,21 @@ pub async fn upsert_rcm_decision(db: &DatabaseConnection, input: UpsertRcmDecisi
                 [
                     fd.into(),
                     ff.into(),
-                    input.failure_mode_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    input
+                        .failure_mode_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
                     cc.into(),
                     input.selected_tactic.into(),
                     jus.into(),
-                    input.review_due_at.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-                    input.linked_pm_plan_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                    input
+                        .review_due_at
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+                    input
+                        .linked_pm_plan_id
+                        .map(sea_orm::Value::from)
+                        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
                     now.clone().into(),
                     id.into(),
                     exp.into(),
@@ -800,7 +961,9 @@ pub async fn upsert_rcm_decision(db: &DatabaseConnection, input: UpsertRcmDecisi
             .await?
             .rows_affected();
         if n == 0 {
-            return Err(AppError::ValidationFailed(vec!["rcm_decisions update conflict.".into()]));
+            return Err(AppError::ValidationFailed(
+                vec!["rcm_decisions update conflict.".into()],
+            ));
         }
     } else {
         let eid = format!("rcm_decision:{}", Uuid::new_v4());
@@ -816,12 +979,21 @@ pub async fn upsert_rcm_decision(db: &DatabaseConnection, input: UpsertRcmDecisi
                 input.study_id.into(),
                 fd.into(),
                 ff.into(),
-                input.failure_mode_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                input
+                    .failure_mode_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
                 cc.into(),
                 input.selected_tactic.into(),
                 jus.into(),
-                input.review_due_at.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-                input.linked_pm_plan_id.map(sea_orm::Value::from).unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+                input
+                    .review_due_at
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+                input
+                    .linked_pm_plan_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
                 now.into(),
             ],
         ))
@@ -898,7 +1070,10 @@ pub async fn fmeca_rpn_critical_threshold_i64(db: &DatabaseConnection) -> AppRes
     let Some(s) = row else {
         return Ok(DEFAULT_FMECA_RPN_CRITICAL);
     };
-    Ok(parse_json_int_setting(&s.setting_value_json, DEFAULT_FMECA_RPN_CRITICAL))
+    Ok(parse_json_int_setting(
+        &s.setting_value_json,
+        DEFAULT_FMECA_RPN_CRITICAL,
+    ))
 }
 
 fn weibull_r(beta: f64, eta: f64, t: f64) -> Option<f64> {
@@ -1003,9 +1178,7 @@ async fn load_reliability_dashboard_policy(db: &DatabaseConnection) -> AppResult
         ))
         .await?
         .ok_or_else(|| {
-            AppError::SyncError(
-                "Missing reliability_dashboard_policies row for scope_code='global'".into(),
-            )
+            AppError::SyncError("Missing reliability_dashboard_policies row for scope_code='global'".into())
         })?;
     let danger_threshold_r: f64 = row
         .try_get("", "danger_threshold_r")
@@ -1013,12 +1186,11 @@ async fn load_reliability_dashboard_policy(db: &DatabaseConnection) -> AppResult
     let pm_threshold_r: f64 = row
         .try_get("", "pm_threshold_r")
         .map_err(|e| decode_err("pm_threshold_r", e))?;
-    let pm_label: String = row
-        .try_get("", "pm_label")
-        .map_err(|e| decode_err("pm_label", e))?;
+    let pm_label: String = row.try_get("", "pm_label").map_err(|e| decode_err("pm_label", e))?;
     if !(0.0..=1.0).contains(&danger_threshold_r) || !(0.0..1.0).contains(&pm_threshold_r) {
         return Err(AppError::ValidationFailed(vec![
-            "reliability_dashboard_policies.danger_threshold_r must be in [0.0, 1.0], pm_threshold_r in (0.0, 1.0)".into(),
+            "reliability_dashboard_policies.danger_threshold_r must be in [0.0, 1.0], pm_threshold_r in (0.0, 1.0)"
+                .into(),
         ]));
     }
     Ok((danger_threshold_r, pm_threshold_r, pm_label))
@@ -1156,9 +1328,7 @@ pub async fn get_fmeca_severity_occurrence_matrix(
     } else if fmeca_orphan_mode_links_count > 0 {
         (
             Some("fmeca_mode_links_orphaned".to_string()),
-            Some(
-                "Some FMECA failure_mode_id links are orphaned/outside published WORK.FAILURE_MODES.".to_string(),
-            ),
+            Some("Some FMECA failure_mode_id links are orphaned/outside published WORK.FAILURE_MODES.".to_string()),
         )
     } else {
         (None, None)
@@ -1228,7 +1398,10 @@ pub async fn list_fmeca_items_for_equipment(
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, vals))
         .await?;
-    let mut out: Vec<FmecaItemWithContext> = rows.iter().map(map_fmeca_item_with_ctx).collect::<Result<Vec<_>, _>>()?;
+    let mut out: Vec<FmecaItemWithContext> = rows
+        .iter()
+        .map(map_fmeca_item_with_ctx)
+        .collect::<Result<Vec<_>, _>>()?;
     let rpn_critical = fmeca_rpn_critical_threshold_i64(db).await?;
     for row in &mut out {
         if row.item.rpn <= rpn_critical {
@@ -1267,7 +1440,9 @@ fn map_suggested_part_for_failure(row: &sea_orm::QueryResult) -> AppResult<Sugge
             .try_get("", "suggested_quantity")
             .map_err(|e| decode_err("suggested_quantity", e))?,
         priority: row.try_get("", "priority").map_err(|e| decode_err("priority", e))?,
-        notes: row.try_get::<Option<String>>("", "notes").map_err(|e| decode_err("notes", e))?,
+        notes: row
+            .try_get::<Option<String>>("", "notes")
+            .map_err(|e| decode_err("notes", e))?,
         stock_on_hand: row
             .try_get("", "stock_on_hand")
             .map_err(|e| decode_err("stock_on_hand", e))?,
@@ -1492,8 +1667,7 @@ pub async fn get_weibull_dashboard_payload(
     let class_code = class_row
         .and_then(|r| r.try_get::<Option<String>>("", "class_code").ok())
         .flatten();
-    let (beta_standard, beta_standard_source) =
-        industrial_beta_reference_for_equipment_class(db, class_code).await?;
+    let (beta_standard, beta_standard_source) = industrial_beta_reference_for_equipment_class(db, class_code).await?;
 
     Ok(WeibullDashboardPayload {
         equipment_id: input.equipment_id,
@@ -1521,10 +1695,14 @@ fn map_ram_ishikawa(row: &sea_orm::QueryResult) -> AppResult<RamIshikawaDiagram>
         entity_sync_id: row
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
-        equipment_id: row.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?,
+        equipment_id: row
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
         title: row.try_get("", "title").map_err(|e| decode_err("title", e))?,
         flow_json: row.try_get("", "flow_json").map_err(|e| decode_err("flow_json", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -1584,7 +1762,9 @@ pub async fn upsert_ram_ishikawa_diagram(
             .await?
             .rows_affected();
         if n == 0 {
-            return Err(AppError::ValidationFailed(vec!["ram_ishikawa_diagrams update conflict.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "ram_ishikawa_diagrams update conflict.".into(),
+            ]));
         }
     } else {
         let eid = format!("ram_ishikawa:{}", Uuid::new_v4());

@@ -16,8 +16,8 @@
 //!   - `user_accounts` (migration 002)
 //!   - `permissions` table (migration 001)
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -44,17 +44,9 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(Alias::new("di_id")).integer())
-                    .col(
-                        ColumnDef::new(Alias::new("action"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("action")).text().not_null())
                     .col(ColumnDef::new(Alias::new("actor_id")).integer())
-                    .col(
-                        ColumnDef::new(Alias::new("acted_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("acted_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("summary")).text())
                     .col(ColumnDef::new(Alias::new("details_json")).text())
                     .col(
@@ -127,8 +119,7 @@ impl MigrationTrait for Migration {
         // ── Update di.approve to mark as dangerous (was not flagged in original seeder) ──
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "UPDATE permissions SET is_dangerous = 1 WHERE name = 'di.approve' AND is_dangerous = 0"
-                .to_string(),
+            "UPDATE permissions SET is_dangerous = 1 WHERE name = 'di.approve' AND is_dangerous = 0".to_string(),
         ))
         .await?;
 
@@ -146,8 +137,7 @@ impl MigrationTrait for Migration {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "DELETE FROM permissions WHERE name IN ('di.edit', 'di.delete', 'di.close')"
-                .to_string(),
+            "DELETE FROM permissions WHERE name IN ('di.edit', 'di.delete', 'di.close')".to_string(),
         ))
         .await?;
 
@@ -163,8 +153,7 @@ impl MigrationTrait for Migration {
         let db = manager.get_connection();
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "DELETE FROM permissions WHERE name IN ('di.create.own', 'di.convert', 'di.admin')"
-                .to_string(),
+            "DELETE FROM permissions WHERE name IN ('di.create.own', 'di.convert', 'di.admin')".to_string(),
         ))
         .await?;
 

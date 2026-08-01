@@ -16,12 +16,20 @@ pub struct AnalyticsContractVersionRow {
 fn map_row(row: &sea_orm::QueryResult) -> AppResult<AnalyticsContractVersionRow> {
     Ok(AnalyticsContractVersionRow {
         id: row.try_get("", "id").map_err(|e| map_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| map_err("entity_sync_id", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| map_err("entity_sync_id", e))?,
         row_version: row.try_get("", "row_version").map_err(|e| map_err("row_version", e))?,
         contract_id: row.try_get("", "contract_id").map_err(|e| map_err("contract_id", e))?,
-        version_semver: row.try_get("", "version_semver").map_err(|e| map_err("version_semver", e))?,
-        content_sha256: row.try_get("", "content_sha256").map_err(|e| map_err("content_sha256", e))?,
-        activated_at: row.try_get("", "activated_at").map_err(|e| map_err("activated_at", e))?,
+        version_semver: row
+            .try_get("", "version_semver")
+            .map_err(|e| map_err("version_semver", e))?,
+        content_sha256: row
+            .try_get("", "content_sha256")
+            .map_err(|e| map_err("content_sha256", e))?,
+        activated_at: row
+            .try_get("", "activated_at")
+            .map_err(|e| map_err("activated_at", e))?,
     })
 }
 

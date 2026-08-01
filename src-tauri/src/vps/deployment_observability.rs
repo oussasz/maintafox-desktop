@@ -254,26 +254,24 @@ pub fn deploy_preflight_checklist() -> Vec<DeployPreflightItem> {
         },
         DeployPreflightItem {
             kind: DeployPreflightKind::QueueDrainPolicy,
-            description: "Workers finish in-flight idempotent jobs or checkpoint; surge policy avoids unbounded backlog."
-                .to_string(),
+            description:
+                "Workers finish in-flight idempotent jobs or checkpoint; surge policy avoids unbounded backlog."
+                    .to_string(),
             blocking: true,
         },
         DeployPreflightItem {
             kind: DeployPreflightKind::ArtifactIntegrityVerified,
-            description: "Container images and update manifests match signed digests / manifest hashes."
-                .to_string(),
+            description: "Container images and update manifests match signed digests / manifest hashes.".to_string(),
             blocking: true,
         },
         DeployPreflightItem {
             kind: DeployPreflightKind::SecretRefsResolvable,
-            description: "Runtime can resolve all secret refs; no plaintext keys in compose files on disk."
-                .to_string(),
+            description: "Runtime can resolve all secret refs; no plaintext keys in compose files on disk.".to_string(),
             blocking: true,
         },
         DeployPreflightItem {
             kind: DeployPreflightKind::SloBaselineHealthy,
-            description: "Control-plane SLO signals green or explicitly waived for maintenance."
-                .to_string(),
+            description: "Control-plane SLO signals green or explicitly waived for maintenance.".to_string(),
             blocking: false,
         },
     ]
@@ -338,8 +336,7 @@ pub fn default_control_plane_slos() -> Vec<ControlPlaneSlo> {
     vec![
         ControlPlaneSlo {
             slo_id: "license_heartbeat_availability".to_string(),
-            description: "License heartbeat endpoint success (non-5xx) for authenticated clients."
-                .to_string(),
+            description: "License heartbeat endpoint success (non-5xx) for authenticated clients.".to_string(),
             target_ratio: 0.999,
             window_days: 30,
             metric_keys: vec![
@@ -457,10 +454,7 @@ pub fn default_on_call_routing_contract() -> OnCallRoutingContract {
                 IncidentSeverity::Sev3,
                 "Ticket + Slack; next business day review if unresolved.".to_string(),
             ),
-            (
-                IncidentSeverity::Sev4,
-                "Log and batch into weekly review.".to_string(),
-            ),
+            (IncidentSeverity::Sev4, "Log and batch into weekly review.".to_string()),
         ],
         ack_required_within_minutes: 30,
         escalation_note: "Unacked Sev1/Sev2 pages escalate per vendor policy.".to_string(),
@@ -524,7 +518,8 @@ pub fn failure_injection_scenarios() -> Vec<FailureInjectionScenario> {
             title: "Object storage list/get errors or credential expiry".to_string(),
             operator_response_steps: vec![
                 "Follow expired-credentials emergency steps; verify IAM and bucket policy.".to_string(),
-                "Serve cached manifests at edge only if integrity verified; disable new publishes if unsafe.".to_string(),
+                "Serve cached manifests at edge only if integrity verified; disable new publishes if unsafe."
+                    .to_string(),
             ],
         },
     ]

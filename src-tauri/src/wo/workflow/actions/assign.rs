@@ -21,14 +21,10 @@ pub struct WoAssignSaveInput {
     pub scheduled_at: Option<String>,
 }
 
-pub async fn save_assignment(
-    db: &DatabaseConnection,
-    input: WoAssignSaveInput,
-) -> AppResult<WorkOrder> {
+pub async fn save_assignment(db: &DatabaseConnection, input: WoAssignSaveInput) -> AppResult<WorkOrder> {
     if input.assigned_group_id.is_none() && input.primary_responsible_id.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Au moins un champ parmi assigned_group_id ou primary_responsible_id est obligatoire."
-                .to_string(),
+            "Au moins un champ parmi assigned_group_id ou primary_responsible_id est obligatoire.".to_string(),
         ]));
     }
 

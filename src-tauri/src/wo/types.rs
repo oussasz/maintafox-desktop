@@ -81,10 +81,7 @@ pub async fn ensure_required_work_order_types(db: &DatabaseConnection) -> AppRes
     Ok(())
 }
 
-pub async fn resolve_work_order_type_id_by_code(
-    db: &DatabaseConnection,
-    type_code: &str,
-) -> AppResult<i64> {
+pub async fn resolve_work_order_type_id_by_code(db: &DatabaseConnection, type_code: &str) -> AppResult<i64> {
     let normalized = normalize_type_code(type_code);
     if normalized.is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -124,10 +121,7 @@ pub async fn resolve_work_order_type_id_by_code(
     Ok(id)
 }
 
-pub async fn resolve_work_order_type_code_by_id(
-    db: &DatabaseConnection,
-    type_id: i64,
-) -> AppResult<String> {
+pub async fn resolve_work_order_type_code_by_id(db: &DatabaseConnection, type_id: i64) -> AppResult<String> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -172,15 +166,15 @@ pub async fn list_work_order_types(db: &DatabaseConnection) -> AppResult<Vec<Wor
 
     let mut out: Vec<WorkOrderTypeOption> = Vec::with_capacity(rows.len());
     for row in rows {
-        let id: i64 = row.try_get("", "id").map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("work_order_types.id decode: {e}"))
-        })?;
-        let code: String = row.try_get("", "code").map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("work_order_types.code decode: {e}"))
-        })?;
-        let label: String = row.try_get("", "label").map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("work_order_types.label decode: {e}"))
-        })?;
+        let id: i64 = row
+            .try_get("", "id")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("work_order_types.id decode: {e}")))?;
+        let code: String = row
+            .try_get("", "code")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("work_order_types.code decode: {e}")))?;
+        let label: String = row
+            .try_get("", "label")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("work_order_types.label decode: {e}")))?;
         let is_system_raw: i64 = row.try_get("", "is_system").unwrap_or(0);
         let is_active_raw: i64 = row.try_get("", "is_active").unwrap_or(1);
         out.push(WorkOrderTypeOption {
@@ -225,10 +219,7 @@ fn validate_custom_type_code(raw: &str) -> AppResult<String> {
     Ok(s)
 }
 
-async fn work_order_type_by_id(
-    db: &DatabaseConnection,
-    id: i64,
-) -> AppResult<Option<WorkOrderTypeOption>> {
+async fn work_order_type_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option<WorkOrderTypeOption>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -242,15 +233,15 @@ async fn work_order_type_by_id(
         return Ok(None);
     };
 
-    let id: i64 = row.try_get("", "id").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("work_order_types.id decode: {e}"))
-    })?;
-    let code: String = row.try_get("", "code").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("work_order_types.code decode: {e}"))
-    })?;
-    let label: String = row.try_get("", "label").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("work_order_types.label decode: {e}"))
-    })?;
+    let id: i64 = row
+        .try_get("", "id")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("work_order_types.id decode: {e}")))?;
+    let code: String = row
+        .try_get("", "code")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("work_order_types.code decode: {e}")))?;
+    let label: String = row
+        .try_get("", "label")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("work_order_types.label decode: {e}")))?;
     let is_system_raw: i64 = row.try_get("", "is_system").unwrap_or(0);
     let is_active_raw: i64 = row.try_get("", "is_active").unwrap_or(1);
     Ok(Some(WorkOrderTypeOption {
@@ -298,9 +289,9 @@ pub async fn create_work_order_type(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("work_order_types insert id missing")))?;
-    let new_id: i64 = row.try_get("", "id").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("last_insert_rowid decode: {e}"))
-    })?;
+    let new_id: i64 = row
+        .try_get("", "id")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("last_insert_rowid decode: {e}")))?;
 
     work_order_type_by_id(db, new_id)
         .await?
@@ -317,12 +308,10 @@ pub async fn update_work_order_type(
 ) -> AppResult<WorkOrderTypeOption> {
     ensure_required_work_order_types(db).await?;
 
-    let current = work_order_type_by_id(db, id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrderType".into(),
-            id: id.to_string(),
-        })?;
+    let current = work_order_type_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "WorkOrderType".into(),
+        id: id.to_string(),
+    })?;
 
     if current.is_system {
         if let Some(ref c) = input.code {
@@ -376,31 +365,24 @@ pub async fn update_work_order_type(
     }
 
     params.push(id.into());
-    let sql = format!(
-        "UPDATE work_order_types SET {} WHERE id = ?",
-        sets.join(", ")
-    );
+    let sql = format!("UPDATE work_order_types SET {} WHERE id = ?", sets.join(", "));
 
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, params))
         .await?;
 
-    work_order_type_by_id(db, id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrderType".into(),
-            id: id.to_string(),
-        })
+    work_order_type_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "WorkOrderType".into(),
+        id: id.to_string(),
+    })
 }
 
 pub async fn delete_work_order_type(db: &DatabaseConnection, id: i64) -> AppResult<()> {
     ensure_required_work_order_types(db).await?;
 
-    let current = work_order_type_by_id(db, id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkOrderType".into(),
-            id: id.to_string(),
-        })?;
+    let current = work_order_type_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "WorkOrderType".into(),
+        id: id.to_string(),
+    })?;
 
     if current.is_system {
         return Err(AppError::ValidationFailed(vec![

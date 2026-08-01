@@ -225,13 +225,7 @@ mod tests {
                        (setting_key, category, setting_scope, setting_value_json,
                         setting_risk, validation_status, last_modified_at)
                    VALUES (?, ?, ?, ?, 'low', 'valid', ?)",
-                [
-                    key.into(),
-                    cat.into(),
-                    scope.into(),
-                    val.into(),
-                    now.clone().into(),
-                ],
+                [key.into(), cat.into(), scope.into(), val.into(), now.clone().into()],
             ))
             .await
             .expect("device-only seed insert");

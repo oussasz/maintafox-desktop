@@ -230,10 +230,7 @@ pub async fn update_work_order_status(
     }
 
     params.push(id.into());
-    let sql = format!(
-        "UPDATE work_order_statuses SET {} WHERE id = ?",
-        sets.join(", ")
-    );
+    let sql = format!("UPDATE work_order_statuses SET {} WHERE id = ?", sets.join(", "));
 
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, params))
         .await?;

@@ -97,8 +97,10 @@ impl MigrationTrait for Migration {
         let db = manager.get_connection();
         db.execute_unprepared("DROP TABLE IF EXISTS inspection_offline_queue")
             .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS inspection_anomalies").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS inspection_evidence").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS inspection_anomalies")
+            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS inspection_evidence")
+            .await?;
         db.execute_unprepared("DROP TABLE IF EXISTS inspection_results").await?;
         Ok(())
     }

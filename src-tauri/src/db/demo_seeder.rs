@@ -55,7 +55,12 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
         r"INSERT INTO org_structure_models
             (sync_id, version_number, status, description, activated_at, created_at, updated_at)
           VALUES (?, 1, 'active', 'Modèle démo', ?, ?, ?)",
-        [model_sync.clone().into(), now.clone().into(), now.clone().into(), now.clone().into()],
+        [
+            model_sync.clone().into(),
+            now.clone().into(),
+            now.clone().into(),
+            now.clone().into(),
+        ],
     ))
     .await?;
 
@@ -63,10 +68,10 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
 
     // ── 2. Org node types ─────────────────────────────────────────────
     let types = [
-        ("SITE",       "Site industriel", 1, 0, 1),
-        ("ZONE",       "Zone de production", 0, 1, 0),
-        ("BUILDING",   "Bâtiment",        0, 0, 0),
-        ("LINE",       "Ligne de production", 1, 1, 0),
+        ("SITE", "Site industriel", 1, 0, 1),
+        ("ZONE", "Zone de production", 0, 1, 0),
+        ("BUILDING", "Bâtiment", 0, 0, 0),
+        ("LINE", "Ligne de production", 1, 1, 0),
     ];
     let mut type_ids: Vec<i64> = Vec::new();
     for (code, label, can_host, can_own, is_root) in &types {
@@ -93,21 +98,120 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
 
     // ── 3. Org nodes (site → zones → buildings → lines) ──────────────
     // Root site
-    let site_id = insert_org_node(db, model_id, "DEMO-SITE", "Site Casablanca", type_ids[0], None, "/", 0, &now).await?;
+    let site_id = insert_org_node(
+        db,
+        model_id,
+        "DEMO-SITE",
+        "Site Casablanca",
+        type_ids[0],
+        None,
+        "/",
+        0,
+        &now,
+    )
+    .await?;
 
     // Zones
-    let zone_prod = insert_org_node(db, model_id, "ZONE-PROD", "Zone Production", type_ids[1], Some(site_id), &format!("/{site_id}/"), 1, &now).await?;
-    let zone_util = insert_org_node(db, model_id, "ZONE-UTIL", "Zone Utilités", type_ids[1], Some(site_id), &format!("/{site_id}/"), 1, &now).await?;
+    let zone_prod = insert_org_node(
+        db,
+        model_id,
+        "ZONE-PROD",
+        "Zone Production",
+        type_ids[1],
+        Some(site_id),
+        &format!("/{site_id}/"),
+        1,
+        &now,
+    )
+    .await?;
+    let zone_util = insert_org_node(
+        db,
+        model_id,
+        "ZONE-UTIL",
+        "Zone Utilités",
+        type_ids[1],
+        Some(site_id),
+        &format!("/{site_id}/"),
+        1,
+        &now,
+    )
+    .await?;
 
     // Buildings
-    let bat_a = insert_org_node(db, model_id, "BAT-A", "Bâtiment A – Production", type_ids[2], Some(zone_prod), &format!("/{site_id}/{zone_prod}/"), 2, &now).await?;
-    let _bat_b = insert_org_node(db, model_id, "BAT-B", "Bâtiment B – Conditionnement", type_ids[2], Some(zone_prod), &format!("/{site_id}/{zone_prod}/"), 2, &now).await?;
-    let bat_util = insert_org_node(db, model_id, "BAT-UTIL", "Bâtiment Utilités", type_ids[2], Some(zone_util), &format!("/{site_id}/{zone_util}/"), 2, &now).await?;
+    let bat_a = insert_org_node(
+        db,
+        model_id,
+        "BAT-A",
+        "Bâtiment A – Production",
+        type_ids[2],
+        Some(zone_prod),
+        &format!("/{site_id}/{zone_prod}/"),
+        2,
+        &now,
+    )
+    .await?;
+    let _bat_b = insert_org_node(
+        db,
+        model_id,
+        "BAT-B",
+        "Bâtiment B – Conditionnement",
+        type_ids[2],
+        Some(zone_prod),
+        &format!("/{site_id}/{zone_prod}/"),
+        2,
+        &now,
+    )
+    .await?;
+    let bat_util = insert_org_node(
+        db,
+        model_id,
+        "BAT-UTIL",
+        "Bâtiment Utilités",
+        type_ids[2],
+        Some(zone_util),
+        &format!("/{site_id}/{zone_util}/"),
+        2,
+        &now,
+    )
+    .await?;
 
     // Lines
-    let line_1 = insert_org_node(db, model_id, "LIGNE-01", "Ligne 1 – Embouteillage", type_ids[3], Some(bat_a), &format!("/{site_id}/{zone_prod}/{bat_a}/"), 3, &now).await?;
-    let line_2 = insert_org_node(db, model_id, "LIGNE-02", "Ligne 2 – Mélange", type_ids[3], Some(bat_a), &format!("/{site_id}/{zone_prod}/{bat_a}/"), 3, &now).await?;
-    let _line_util = insert_org_node(db, model_id, "LIGNE-UTIL", "Circuit eau glacée", type_ids[3], Some(bat_util), &format!("/{site_id}/{zone_util}/{bat_util}/"), 3, &now).await?;
+    let line_1 = insert_org_node(
+        db,
+        model_id,
+        "LIGNE-01",
+        "Ligne 1 – Embouteillage",
+        type_ids[3],
+        Some(bat_a),
+        &format!("/{site_id}/{zone_prod}/{bat_a}/"),
+        3,
+        &now,
+    )
+    .await?;
+    let line_2 = insert_org_node(
+        db,
+        model_id,
+        "LIGNE-02",
+        "Ligne 2 – Mélange",
+        type_ids[3],
+        Some(bat_a),
+        &format!("/{site_id}/{zone_prod}/{bat_a}/"),
+        3,
+        &now,
+    )
+    .await?;
+    let _line_util = insert_org_node(
+        db,
+        model_id,
+        "LIGNE-UTIL",
+        "Circuit eau glacée",
+        type_ids[3],
+        Some(bat_util),
+        &format!("/{site_id}/{zone_util}/{bat_util}/"),
+        3,
+        &now,
+    )
+    .await?;
 
     // ── 4. Equipment classes ──────────────────────────────────────────
     let cls_pump = insert_eq_class(db, "POMPE", "Pompes", None, "class", &now).await?;
@@ -122,18 +226,84 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
 
     // ── 5. Equipment items ────────────────────────────────────────────
     let eq_data: &[(&str, &str, Option<i64>, i64, &str)] = &[
-        ("POMPE-001", "Pompe centrifuge alimentation chaudière", Some(cls_pump), line_1, "Grundfos"),
-        ("POMPE-002", "Pompe doseuse produit chimique", Some(cls_pump), line_2, "Grundfos"),
-        ("MOT-001",   "Moteur principal convoyeur L1", Some(cls_motor), line_1, "ABB"),
-        ("MOT-002",   "Moteur agitateur cuve T2", Some(cls_motor), line_2, "Siemens"),
-        ("CONV-001",  "Convoyeur à bande entrée ligne 1", Some(cls_conv), line_1, "FlexLink"),
-        ("CONV-002",  "Convoyeur à rouleaux sortie L2", Some(cls_conv), line_2, "Hytrol"),
-        ("COMP-001",  "Compresseur air comprimé bâtiment A", Some(cls_comp), bat_a, "Atlas Copco"),
-        ("COMP-002",  "Compresseur réfrigérant", Some(cls_comp), bat_util, "Bitzer"),
-        ("VAN-001",   "Vanne de régulation vapeur", Some(cls_valve), line_1, "Fisher"),
-        ("VAN-002",   "Vanne papillon circuit eau", Some(cls_valve), bat_util, "Butterfly"),
-        ("POMPE-003", "Pompe circulation eau glacée", Some(cls_pump), bat_util, "Wilo"),
-        ("MOT-003",   "Moteur pompe surpression", Some(cls_motor), bat_util, "WEG"),
+        (
+            "POMPE-001",
+            "Pompe centrifuge alimentation chaudière",
+            Some(cls_pump),
+            line_1,
+            "Grundfos",
+        ),
+        (
+            "POMPE-002",
+            "Pompe doseuse produit chimique",
+            Some(cls_pump),
+            line_2,
+            "Grundfos",
+        ),
+        (
+            "MOT-001",
+            "Moteur principal convoyeur L1",
+            Some(cls_motor),
+            line_1,
+            "ABB",
+        ),
+        (
+            "MOT-002",
+            "Moteur agitateur cuve T2",
+            Some(cls_motor),
+            line_2,
+            "Siemens",
+        ),
+        (
+            "CONV-001",
+            "Convoyeur à bande entrée ligne 1",
+            Some(cls_conv),
+            line_1,
+            "FlexLink",
+        ),
+        (
+            "CONV-002",
+            "Convoyeur à rouleaux sortie L2",
+            Some(cls_conv),
+            line_2,
+            "Hytrol",
+        ),
+        (
+            "COMP-001",
+            "Compresseur air comprimé bâtiment A",
+            Some(cls_comp),
+            bat_a,
+            "Atlas Copco",
+        ),
+        (
+            "COMP-002",
+            "Compresseur réfrigérant",
+            Some(cls_comp),
+            bat_util,
+            "Bitzer",
+        ),
+        (
+            "VAN-001",
+            "Vanne de régulation vapeur",
+            Some(cls_valve),
+            line_1,
+            "Fisher",
+        ),
+        (
+            "VAN-002",
+            "Vanne papillon circuit eau",
+            Some(cls_valve),
+            bat_util,
+            "Butterfly",
+        ),
+        (
+            "POMPE-003",
+            "Pompe circulation eau glacée",
+            Some(cls_pump),
+            bat_util,
+            "Wilo",
+        ),
+        ("MOT-003", "Moteur pompe surpression", Some(cls_motor), bat_util, "WEG"),
     ];
 
     let mut eq_ids: Vec<i64> = Vec::new();
@@ -162,62 +332,122 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
         (
             "Vibration anormale pompe P-001",
             "Vibrations détectées sur palier côté accouplement. Amplitude 8mm/s dépassant le seuil ISO 10816.",
-            0, line_1, "high", "operator", "submitted", false,
+            0,
+            line_1,
+            "high",
+            "operator",
+            "submitted",
+            false,
         ),
         (
             "Fuite huile réducteur moteur M-001",
             "Fuite d'huile visible au niveau du joint SPI côté ventilateur. Tache au sol ~30cm diamètre.",
-            2, line_1, "medium", "technician", "pending_review", false,
+            2,
+            line_1,
+            "medium",
+            "technician",
+            "pending_review",
+            false,
         ),
         (
             "Bande convoyeur décentrée CONV-001",
             "La bande du convoyeur a tendance à dériver vers la droite. Risque de détérioration bord de bande.",
-            4, line_1, "high", "operator", "screened", false,
+            4,
+            line_1,
+            "high",
+            "operator",
+            "screened",
+            false,
         ),
         (
             "Alarme surpression compresseur COMP-001",
             "Alarme surpression répétée 3 fois ce matin. Soupape de sécurité s'est déclenchée une fois.",
-            6, bat_a, "critical", "operator", "approved_for_planning", true,
+            6,
+            bat_a,
+            "critical",
+            "operator",
+            "approved_for_planning",
+            true,
         ),
         (
             "Roulement bruyant moteur agitateur M-002",
             "Bruit de roulement type grincement sur moteur agitateur cuve T2. Détecté lors de la ronde hebdomadaire.",
-            3, line_2, "medium", "inspection", "submitted", false,
+            3,
+            line_2,
+            "medium",
+            "inspection",
+            "submitted",
+            false,
         ),
         (
             "Vanne VAN-001 fuit en position fermée",
             "La vanne de régulation vapeur ne ferme plus complètement. Passage de vapeur détecté en aval.",
-            8, line_1, "high", "technician", "pending_review", true,
+            8,
+            line_1,
+            "high",
+            "technician",
+            "pending_review",
+            true,
         ),
         (
             "Pompe doseuse P-002 débit irrégulier",
             "Le débit de la pompe doseuse oscille entre 30% et 80% de la consigne. Impact sur la qualité produit.",
-            1, line_2, "critical", "quality", "approved_for_planning", false,
+            1,
+            line_2,
+            "critical",
+            "quality",
+            "approved_for_planning",
+            false,
         ),
         (
             "Convoyeur CONV-002 moteur en surcharge",
             "Courant moteur supérieur à 120% nominal depuis hier. Risque de déclenchement thermique.",
-            5, line_2, "high", "operator", "submitted", false,
+            5,
+            line_2,
+            "high",
+            "operator",
+            "submitted",
+            false,
         ),
         (
             "Compresseur COMP-002 niveau huile bas",
             "Niveau huile compresseur réfrigérant sous le minimum. À compléter avant prochaine mise en route.",
-            7, bat_util, "low", "inspection", "screened", false,
+            7,
+            bat_util,
+            "low",
+            "inspection",
+            "screened",
+            false,
         ),
         (
             "Pompe eau glacée P-003 cavitation",
             "Bruit de cavitation détecté à la mise en route. Pression d'aspiration insuffisante ?",
-            10, bat_util, "medium", "technician", "submitted", false,
+            10,
+            bat_util,
+            "medium",
+            "technician",
+            "submitted",
+            false,
         ),
         (
             "Moteur surpression M-003 échauffement",
             "Température carter moteur 95°C relevée par caméra thermique. Normal < 70°C.",
-            11, bat_util, "high", "inspection", "pending_review", false,
+            11,
+            bat_util,
+            "high",
+            "inspection",
+            "pending_review",
+            false,
         ),
         (
             "Remplacement joint pompe P-001 (planifié)",
             "Suite DI vibrations : le joint mécanique doit être remplacé lors de l'arrêt programmé.",
-            0, line_1, "medium", "pm", "deferred", false,
+            0,
+            line_1,
+            "medium",
+            "pm",
+            "deferred",
+            false,
         ),
     ];
 
@@ -242,8 +472,12 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
         .await?;
     }
 
-    tracing::info!("demo_seeder: complete — {} org nodes, {} equipment, {} DIs inserted",
-        8, eq_data.len(), di_data.len());
+    tracing::info!(
+        "demo_seeder: complete — {} org nodes, {} equipment, {} DIs inserted",
+        8,
+        eq_data.len(),
+        di_data.len()
+    );
 
     // Seed reference domain governance demo data (separate sentinel)
     seed_reference_demo_data(db).await?;
@@ -284,15 +518,57 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
 
     // ── Reference domains ─────────────────────────────────────────────
     let domains: &[(&str, &str, &str, &str, bool)] = &[
-        ("EQUIPMENT.FAMILY",       "Familles d'équipements",          "hierarchical",       "tenant_managed",       true),
-        ("EQUIPMENT.CLASS",        "Classes d'équipements",           "flat",                "system_seeded",        false),
-        ("EQUIPMENT.STATUS",       "Statuts équipement",              "flat",                "system_seeded",        false),
-        ("WORK.PRIORITY",          "Priorités ordre de travail",      "flat",                "protected_analytical", false),
-        ("WORK.FAILURE_MODES",     "Modes de défaillance",            "hierarchical",        "system_seeded",        false),
-        ("ORG.POSITIONS",          "Postes organisationnels",         "flat",                "tenant_managed",       true),
-        ("ORG.SCHEDULE_CLASS",     "Classes horaires",                "flat",                "tenant_managed",       true),
-        ("PERSONNEL.SKILLS",       "Compétences techniques",          "hierarchical",        "tenant_managed",       true),
-        ("PERSONNEL.CERTIFICATIONS", "Certifications et habilitations", "flat",              "tenant_managed",       true),
+        (
+            "EQUIPMENT.FAMILY",
+            "Familles d'équipements",
+            "hierarchical",
+            "tenant_managed",
+            true,
+        ),
+        (
+            "EQUIPMENT.CLASS",
+            "Classes d'équipements",
+            "flat",
+            "system_seeded",
+            false,
+        ),
+        ("EQUIPMENT.STATUS", "Statuts équipement", "flat", "system_seeded", false),
+        (
+            "WORK.PRIORITY",
+            "Priorités ordre de travail",
+            "flat",
+            "protected_analytical",
+            false,
+        ),
+        (
+            "WORK.FAILURE_MODES",
+            "Modes de défaillance",
+            "hierarchical",
+            "system_seeded",
+            false,
+        ),
+        (
+            "ORG.POSITIONS",
+            "Postes organisationnels",
+            "flat",
+            "tenant_managed",
+            true,
+        ),
+        ("ORG.SCHEDULE_CLASS", "Classes horaires", "flat", "tenant_managed", true),
+        (
+            "PERSONNEL.SKILLS",
+            "Compétences techniques",
+            "hierarchical",
+            "tenant_managed",
+            true,
+        ),
+        (
+            "PERSONNEL.CERTIFICATIONS",
+            "Certifications et habilitations",
+            "flat",
+            "tenant_managed",
+            true,
+        ),
     ];
 
     let mut domain_ids: Vec<(i64, &str)> = Vec::new();
@@ -340,92 +616,153 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
         // Seed values for key domains
         match *code {
             "EQUIPMENT.FAMILY" => {
-                seed_ref_values(db, set_id, &[
-                    ("POMPES",       "Pompes",             None,    1, None),
-                    ("MOTEURS",      "Moteurs électriques", None,   2, None),
-                    ("CONVOYEURS",   "Convoyeurs",         None,    3, None),
-                    ("COMPRESSEURS", "Compresseurs",       None,    4, None),
-                    ("VANNES",       "Vannes industrielles", None,  5, None),
-                    ("INSTRUMENTS",  "Instrumentation",    None,    6, None),
-                ], &now).await?;
+                seed_ref_values(
+                    db,
+                    set_id,
+                    &[
+                        ("POMPES", "Pompes", None, 1, None),
+                        ("MOTEURS", "Moteurs électriques", None, 2, None),
+                        ("CONVOYEURS", "Convoyeurs", None, 3, None),
+                        ("COMPRESSEURS", "Compresseurs", None, 4, None),
+                        ("VANNES", "Vannes industrielles", None, 5, None),
+                        ("INSTRUMENTS", "Instrumentation", None, 6, None),
+                    ],
+                    &now,
+                )
+                .await?;
                 // Add some child values for hierarchical demo
                 let parent = get_ref_value_id(db, set_id, "POMPES").await?;
-                seed_ref_values(db, set_id, &[
-                    ("POMPES.CENTRIFUGES", "Pompes centrifuges",   Some(parent), 1, None),
-                    ("POMPES.ENGRENAGES",  "Pompes à engrenages",  Some(parent), 2, None),
-                    ("POMPES.DOSEUSES",    "Pompes doseuses",      Some(parent), 3, None),
-                ], &now).await?;
+                seed_ref_values(
+                    db,
+                    set_id,
+                    &[
+                        ("POMPES.CENTRIFUGES", "Pompes centrifuges", Some(parent), 1, None),
+                        ("POMPES.ENGRENAGES", "Pompes à engrenages", Some(parent), 2, None),
+                        ("POMPES.DOSEUSES", "Pompes doseuses", Some(parent), 3, None),
+                    ],
+                    &now,
+                )
+                .await?;
             }
             "EQUIPMENT.CLASS" => {
-                seed_ref_values(db, set_id, &[
-                    ("ROTATING",  "Machines tournantes",  None, 1, None),
-                    ("STATIC",    "Équipements statiques", None, 2, None),
-                    ("ELECTRICAL", "Équipements électriques", None, 3, None),
-                    ("PIPING",    "Tuyauterie et robinetterie", None, 4, None),
-                ], &now).await?;
+                seed_ref_values(
+                    db,
+                    set_id,
+                    &[
+                        ("ROTATING", "Machines tournantes", None, 1, None),
+                        ("STATIC", "Équipements statiques", None, 2, None),
+                        ("ELECTRICAL", "Équipements électriques", None, 3, None),
+                        ("PIPING", "Tuyauterie et robinetterie", None, 4, None),
+                    ],
+                    &now,
+                )
+                .await?;
             }
             "EQUIPMENT.STATUS" => {
-                seed_ref_values(db, set_id, &[
-                    ("IN_SERVICE",     "En service",        None, 1, Some("#198754")),
-                    ("OUT_OF_SERVICE", "Hors service",      None, 2, Some("#dc3545")),
-                    ("STANDBY",        "En attente",        None, 3, Some("#ffc107")),
-                    ("DECOMMISSIONED", "Déclassé",          None, 4, Some("#6c757d")),
-                ], &now).await?;
+                seed_ref_values(
+                    db,
+                    set_id,
+                    &[
+                        ("IN_SERVICE", "En service", None, 1, Some("#198754")),
+                        ("OUT_OF_SERVICE", "Hors service", None, 2, Some("#dc3545")),
+                        ("STANDBY", "En attente", None, 3, Some("#ffc107")),
+                        ("DECOMMISSIONED", "Déclassé", None, 4, Some("#6c757d")),
+                    ],
+                    &now,
+                )
+                .await?;
             }
             "WORK.PRIORITY" => {
-                seed_ref_values(db, set_id, &[
-                    ("P1_CRITICAL",  "P1 – Critique",       None, 1, Some("#dc3545")),
-                    ("P2_HIGH",      "P2 – Haute",          None, 2, Some("#fd7e14")),
-                    ("P3_MEDIUM",    "P3 – Moyenne",        None, 3, Some("#ffc107")),
-                    ("P4_LOW",       "P4 – Basse",          None, 4, Some("#198754")),
-                ], &now).await?;
+                seed_ref_values(
+                    db,
+                    set_id,
+                    &[
+                        ("P1_CRITICAL", "P1 – Critique", None, 1, Some("#dc3545")),
+                        ("P2_HIGH", "P2 – Haute", None, 2, Some("#fd7e14")),
+                        ("P3_MEDIUM", "P3 – Moyenne", None, 3, Some("#ffc107")),
+                        ("P4_LOW", "P4 – Basse", None, 4, Some("#198754")),
+                    ],
+                    &now,
+                )
+                .await?;
             }
             "WORK.FAILURE_MODES" => {
-                seed_ref_values(db, set_id, &[
-                    ("MECHANICAL",  "Défaillance mécanique",  None, 1, None),
-                    ("ELECTRICAL",  "Défaillance électrique",  None, 2, None),
-                    ("PROCESS",     "Défaillance processus",   None, 3, None),
-                    ("INSTRUMENT",  "Défaillance instrumentation", None, 4, None),
-                ], &now).await?;
+                seed_ref_values(
+                    db,
+                    set_id,
+                    &[
+                        ("MECHANICAL", "Défaillance mécanique", None, 1, None),
+                        ("ELECTRICAL", "Défaillance électrique", None, 2, None),
+                        ("PROCESS", "Défaillance processus", None, 3, None),
+                        ("INSTRUMENT", "Défaillance instrumentation", None, 4, None),
+                    ],
+                    &now,
+                )
+                .await?;
                 // Hierarchical children
                 let mech = get_ref_value_id(db, set_id, "MECHANICAL").await?;
-                seed_ref_values(db, set_id, &[
-                    ("MECH.BEARING",   "Roulement défectueux",   Some(mech), 1, None),
-                    ("MECH.VIBRATION", "Vibration excessive",    Some(mech), 2, None),
-                    ("MECH.SEAL",      "Fuite joint mécanique",  Some(mech), 3, None),
-                ], &now).await?;
+                seed_ref_values(
+                    db,
+                    set_id,
+                    &[
+                        ("MECH.BEARING", "Roulement défectueux", Some(mech), 1, None),
+                        ("MECH.VIBRATION", "Vibration excessive", Some(mech), 2, None),
+                        ("MECH.SEAL", "Fuite joint mécanique", Some(mech), 3, None),
+                    ],
+                    &now,
+                )
+                .await?;
             }
             "PERSONNEL.SKILLS" => {
-                seed_ref_values(db, set_id, &[
-                    ("MECH_GENERAL",    "Mécanique générale",     None, 1, None),
-                    ("ELEC_INDUSTRIAL", "Électricité industrielle", None, 2, None),
-                    ("INSTRUMENTATION", "Instrumentation",        None, 3, None),
-                    ("WELDING",         "Soudure",                None, 4, None),
-                    ("HYDRAULICS",      "Hydraulique",            None, 5, None),
-                ], &now).await?;
+                seed_ref_values(
+                    db,
+                    set_id,
+                    &[
+                        ("MECH_GENERAL", "Mécanique générale", None, 1, None),
+                        ("ELEC_INDUSTRIAL", "Électricité industrielle", None, 2, None),
+                        ("INSTRUMENTATION", "Instrumentation", None, 3, None),
+                        ("WELDING", "Soudure", None, 4, None),
+                        ("HYDRAULICS", "Hydraulique", None, 5, None),
+                    ],
+                    &now,
+                )
+                .await?;
             }
             "PERSONNEL.CERTIFICATIONS" => {
-                seed_ref_values(db, set_id, &[
-                    ("ELEC_HAB",     "Habilitation électrique",     None, 1, None),
-                    ("HEIGHT_CERT",  "Travail en hauteur",          None, 2, None),
-                    ("CONFINED",     "Espace confiné",              None, 3, None),
-                    ("HOT_WORK",     "Permis feu / travaux chauds", None, 4, None),
-                ], &now).await?;
+                seed_ref_values(
+                    db,
+                    set_id,
+                    &[
+                        ("ELEC_HAB", "Habilitation électrique", None, 1, None),
+                        ("HEIGHT_CERT", "Travail en hauteur", None, 2, None),
+                        ("CONFINED", "Espace confiné", None, 3, None),
+                        ("HOT_WORK", "Permis feu / travaux chauds", None, 4, None),
+                    ],
+                    &now,
+                )
+                .await?;
             }
             "ORG.SCHEDULE_CLASS" => {
                 // Prefer integrity guard for weekday details; seed identity row here for demo.
-                seed_ref_values(db, set_id, &[
-                    ("DAY_SHIFT", "Journée normale", None, 1, None),
-                    ("NIGHT_SHIFT", "Équipe de nuit", None, 2, None),
-                    ("CONTINUOUS_24", "Continuité 24h", None, 3, None),
-                ], &now).await?;
+                seed_ref_values(
+                    db,
+                    set_id,
+                    &[
+                        ("DAY_SHIFT", "Journée normale", None, 1, None),
+                        ("NIGHT_SHIFT", "Équipe de nuit", None, 2, None),
+                        ("CONTINUOUS_24", "Continuité 24h", None, 3, None),
+                    ],
+                    &now,
+                )
+                .await?;
                 // Attach schedule metadata on DAY_SHIFT
                 db.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "UPDATE reference_values SET metadata_json = ?, semantic_tag = 'schedule_class' \
                      WHERE set_id = ? AND code = 'DAY_SHIFT'",
                     [
-                        r#"{"shift_pattern_code":"DAY_SHIFT","is_continuous":false,"nominal_hours_per_day":8.0}"#.into(),
+                        r#"{"shift_pattern_code":"DAY_SHIFT","is_continuous":false,"nominal_hours_per_day":8.0}"#
+                            .into(),
                         set_id.into(),
                     ],
                 ))
@@ -435,7 +772,8 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                     "UPDATE reference_values SET metadata_json = ?, semantic_tag = 'schedule_class' \
                      WHERE set_id = ? AND code = 'NIGHT_SHIFT'",
                     [
-                        r#"{"shift_pattern_code":"NIGHT_SHIFT","is_continuous":false,"nominal_hours_per_day":8.0}"#.into(),
+                        r#"{"shift_pattern_code":"NIGHT_SHIFT","is_continuous":false,"nominal_hours_per_day":8.0}"#
+                            .into(),
                         set_id.into(),
                     ],
                 ))
@@ -445,7 +783,8 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
                     "UPDATE reference_values SET metadata_json = ?, semantic_tag = 'schedule_class' \
                      WHERE set_id = ? AND code = 'CONTINUOUS_24'",
                     [
-                        r#"{"shift_pattern_code":"CONTINUOUS_24","is_continuous":true,"nominal_hours_per_day":24.0}"#.into(),
+                        r#"{"shift_pattern_code":"CONTINUOUS_24","is_continuous":true,"nominal_hours_per_day":24.0}"#
+                            .into(),
                         set_id.into(),
                     ],
                 ))
@@ -453,9 +792,7 @@ pub async fn seed_reference_demo_data(db: &DatabaseConnection) -> AppResult<()> 
             }
             _ => {
                 // ORG.POSITIONS — minimal seed
-                seed_ref_values(db, set_id, &[
-                    ("DEFAULT", "Valeur par défaut", None, 1, None),
-                ], &now).await?;
+                seed_ref_values(db, set_id, &[("DEFAULT", "Valeur par défaut", None, 1, None)], &now).await?;
             }
         }
 
@@ -515,8 +852,7 @@ async fn get_ref_value_id(db: &DatabaseConnection, set_id: i64, code: &str) -> A
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("ref value not found: {code}")))?;
     use sea_orm::TryGetable;
-    let id = i64::try_get(&row, "", "id")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e:?}")))?;
+    let id = i64::try_get(&row, "", "id").map_err(|e| AppError::Internal(anyhow::anyhow!("{e:?}")))?;
     Ok(id)
 }
 
@@ -632,8 +968,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
     let sentinel = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id FROM work_orders WHERE title = 'Remplacement roulement pompe P-001' LIMIT 1"
-                .to_string(),
+            "SELECT id FROM work_orders WHERE title = 'Remplacement roulement pompe P-001' LIMIT 1".to_string(),
         ))
         .await?;
     if sentinel.is_some() {
@@ -810,7 +1145,11 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
     ];
 
     for (demo_key, title, desc, type_id, sid, urgency_id, eq_idx, p_start, p_end, dur) in wo_defs {
-        let eq_id = if *eq_idx < eq_ids.len() { Some(eq_ids[*eq_idx]) } else { None };
+        let eq_id = if *eq_idx < eq_ids.len() {
+            Some(eq_ids[*eq_idx])
+        } else {
+            None
+        };
         let code = crate::wo::domain::generate_wo_code(db).await?;
 
         db.execute(Statement::from_sql_and_values(
@@ -826,7 +1165,9 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
                 code.into(),
                 (*type_id).into(),
                 (*sid).into(),
-                eq_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<i64>)),
+                eq_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<i64>)),
                 entity_id.into(),
                 admin_id.into(),
                 admin_id.into(),
@@ -1106,8 +1447,7 @@ async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
         .await?
         .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("last_insert_rowid failed")))?;
     use sea_orm::TryGetable;
-    let id = i64::try_get(&row, "", "id")
-        .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("{e:?}")))?;
+    let id = i64::try_get(&row, "", "id").map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("{e:?}")))?;
     Ok(id)
 }
 

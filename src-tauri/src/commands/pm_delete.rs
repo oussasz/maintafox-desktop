@@ -1,4 +1,4 @@
-﻿//! PM delete IPC commands.
+//! PM delete IPC commands.
 //!
 //! Restricted to `pm.delete` and guarded by optimistic concurrency checks.
 
@@ -7,8 +7,8 @@ use tauri::State;
 
 use crate::commands::pm::require_pm_delete_or_manage;
 use crate::errors::{AppError, AppResult};
-use crate::state::AppState;
 use crate::require_session;
+use crate::state::AppState;
 
 #[tauri::command]
 pub async fn delete_pm_plan_version(
@@ -73,9 +73,9 @@ pub async fn delete_pm_plan_version(
         ))
         .await?;
     if delete_result.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "PM version delete failed.".to_string(),
-        ]));
+        return Err(AppError::ValidationFailed(
+            vec!["PM version delete failed.".to_string()],
+        ));
     }
 
     tx.execute(Statement::from_sql_and_values(
@@ -90,11 +90,7 @@ pub async fn delete_pm_plan_version(
 }
 
 #[tauri::command]
-pub async fn delete_pm_plan(
-    plan_id: i64,
-    expected_row_version: i64,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn delete_pm_plan(plan_id: i64, expected_row_version: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
     require_pm_delete_or_manage(&state, &user).await?;
 
@@ -121,7 +117,7 @@ pub async fn delete_pm_plan(
     let lifecycle_status: String = plan_row.try_get("", "lifecycle_status")?;
     if lifecycle_status != "draft" {
         return Err(AppError::ValidationFailed(vec![
-            "Only draft PM plans can be deleted.".to_string(),
+            "Only draft PM plans can be deleted.".to_string()
         ]));
     }
 
@@ -166,9 +162,7 @@ pub async fn delete_pm_plan(
         ))
         .await?;
     if delete_result.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec![
-            "PM plan delete failed.".to_string(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["PM plan delete failed.".to_string()]));
     }
 
     Ok(())

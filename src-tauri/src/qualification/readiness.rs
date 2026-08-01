@@ -4,7 +4,9 @@ use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
 use crate::permit::queries::get_work_permit_linked_to_work_order;
-use crate::sync::domain::{PersonnelReadinessSnapshotSyncPayload, StageOutboxItemInput, SYNC_ENTITY_PERSONNEL_READINESS_SNAPSHOTS};
+use crate::sync::domain::{
+    PersonnelReadinessSnapshotSyncPayload, StageOutboxItemInput, SYNC_ENTITY_PERSONNEL_READINESS_SNAPSHOTS,
+};
 use crate::sync::queries::stage_outbox_item;
 use crate::wo::queries::get_work_order;
 
@@ -38,10 +40,7 @@ fn cert_acceptable_for_requirement(pc: &PersonnelCertification) -> bool {
     }
 }
 
-fn required_cert_type_ids_for_permit(
-    profiles: &[QualificationRequirementProfile],
-    permit_type_code: &str,
-) -> Vec<i64> {
+fn required_cert_type_ids_for_permit(profiles: &[QualificationRequirementProfile], permit_type_code: &str) -> Vec<i64> {
     let mut out: Vec<i64> = Vec::new();
     for p in profiles {
         let codes: Vec<String> = serde_json::from_str(&p.applies_to_permit_type_codes_json).unwrap_or_default();
@@ -89,7 +88,10 @@ fn evaluate_readiness(
 
     for ct_id in &required {
         let mut found = false;
-        for pc in certs.iter().filter(|c| c.personnel_id == personnel_id && c.certification_type_id == *ct_id) {
+        for pc in certs
+            .iter()
+            .filter(|c| c.personnel_id == personnel_id && c.certification_type_id == *ct_id)
+        {
             if cert_acceptable_for_requirement(pc) {
                 found = true;
                 if let Some(ref e) = pc.expires_at {
@@ -107,10 +109,7 @@ fn evaluate_readiness(
     let earliest = qualifying_expiries.first().cloned();
 
     let (is_qualified, reason) = if !missing.is_empty() {
-        (
-            false,
-            Some(format!("missing_required_certification_types:{missing:?}")),
-        )
+        (false, Some(format!("missing_required_certification_types:{missing:?}")))
     } else {
         (true, None)
     };
@@ -183,7 +182,9 @@ pub async fn evaluate_crew_permit_skill_gaps(
     input: CrewPermitSkillGapInput,
 ) -> AppResult<CrewPermitSkillGapResult> {
     if input.personnel_ids.is_empty() {
-        return Err(AppError::ValidationFailed(vec!["personnel_ids must not be empty.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "personnel_ids must not be empty.".into()
+        ]));
     }
 
     let wo = get_work_order(db, input.work_order_id)
@@ -262,18 +263,18 @@ async fn get_snapshot_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Optio
         ))
         .await?;
     match row {
-        Some(r) => Ok(Some(
-            PersonnelReadinessSnapshot {
-                id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
-                entity_sync_id: r
-                    .try_get("", "entity_sync_id")
-                    .map_err(|e| decode_err("entity_sync_id", e))?,
-                period: r.try_get("", "period").map_err(|e| decode_err("period", e))?,
-                payload_json: r.try_get("", "payload_json").map_err(|e| decode_err("payload_json", e))?,
-                row_version: r.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
-                created_at: r.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
-            },
-        )),
+        Some(r) => Ok(Some(PersonnelReadinessSnapshot {
+            id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
+            entity_sync_id: r
+                .try_get("", "entity_sync_id")
+                .map_err(|e| decode_err("entity_sync_id", e))?,
+            period: r.try_get("", "period").map_err(|e| decode_err("period", e))?,
+            payload_json: r
+                .try_get("", "payload_json")
+                .map_err(|e| decode_err("payload_json", e))?,
+            row_version: r.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+            created_at: r.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
+        })),
         None => Ok(None),
     }
 }
@@ -323,7 +324,9 @@ pub async fn list_personnel_readiness_snapshots(db: &DatabaseConnection) -> AppR
                 .try_get("", "entity_sync_id")
                 .map_err(|e| decode_err("entity_sync_id", e))?,
             period: r.try_get("", "period").map_err(|e| decode_err("period", e))?,
-            payload_json: r.try_get("", "payload_json").map_err(|e| decode_err("payload_json", e))?,
+            payload_json: r
+                .try_get("", "payload_json")
+                .map_err(|e| decode_err("payload_json", e))?,
             row_version: r.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
             created_at: r.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         });
@@ -345,12 +348,10 @@ pub async fn upsert_personnel_readiness_snapshot(
         let ev = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
-        let current = get_snapshot_by_id(db, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound {
-                entity: "PersonnelReadinessSnapshot".into(),
-                id: id.to_string(),
-            })?;
+        let current = get_snapshot_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+            entity: "PersonnelReadinessSnapshot".into(),
+            id: id.to_string(),
+        })?;
         if current.row_version != ev {
             return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
         }

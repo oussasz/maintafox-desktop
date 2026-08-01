@@ -29,26 +29,10 @@ pub fn evaluate_iso14224_completeness(events: &[ReadinessEvent]) -> IsoCompleten
     }
 
     let n_f = n as f64;
-    let d_eq = events
-        .iter()
-        .filter(|e| e.equipment_identified)
-        .count() as f64
-        / n_f;
-    let d_win = events
-        .iter()
-        .filter(|e| e.interval_complete)
-        .count() as f64
-        / n_f;
-    let d_mode = events
-        .iter()
-        .filter(|e| e.failure_mode_coded)
-        .count() as f64
-        / n_f;
-    let d_corr = events
-        .iter()
-        .filter(|e| e.corrective_documented)
-        .count() as f64
-        / n_f;
+    let d_eq = events.iter().filter(|e| e.equipment_identified).count() as f64 / n_f;
+    let d_win = events.iter().filter(|e| e.interval_complete).count() as f64 / n_f;
+    let d_mode = events.iter().filter(|e| e.failure_mode_coded).count() as f64 / n_f;
+    let d_corr = events.iter().filter(|e| e.corrective_documented).count() as f64 / n_f;
 
     let completeness_percent = ((d_eq + d_win + d_mode + d_corr) / 4.0) * 100.0;
 
@@ -65,8 +49,8 @@ pub fn evaluate_iso14224_completeness(events: &[ReadinessEvent]) -> IsoCompleten
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
     use crate::reliability::readiness::event::ReadinessEvent;
+    use chrono::TimeZone;
 
     fn ts(s: &str) -> chrono::DateTime<chrono::Utc> {
         chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()

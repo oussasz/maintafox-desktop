@@ -140,8 +140,7 @@ mod tests {
         let node_type_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM org_node_types WHERE code = 'SITE' LIMIT 1"
-                    .to_string(),
+                "SELECT id FROM org_node_types WHERE code = 'SITE' LIMIT 1".to_string(),
             ))
             .await
             .expect("query node type")
@@ -156,12 +155,7 @@ mod tests {
               created_at, updated_at, row_version, structure_model_id) \
              VALUES (?, 'SITE-002', 'Second Site', ?, NULL, 'active', ?, ?, 1, \
                      (SELECT id FROM org_structure_models WHERE status = 'active' ORDER BY id DESC LIMIT 1))",
-            [
-                sync_id.into(),
-                node_type_id.into(),
-                now.clone().into(),
-                now.into(),
-            ],
+            [sync_id.into(), node_type_id.into(), now.clone().into(), now.into()],
         ))
         .await
         .expect("insert second org node");
@@ -194,11 +188,7 @@ mod tests {
     }
 
     /// Create an asset with a unique code and return its full record.
-    async fn create_test_asset(
-        db: &sea_orm::DatabaseConnection,
-        code: &str,
-        org_node_id: i64,
-    ) -> identity::Asset {
+    async fn create_test_asset(db: &sea_orm::DatabaseConnection, code: &str, org_node_id: i64) -> identity::Asset {
         identity::create_asset(
             db,
             CreateAssetPayload {
@@ -258,16 +248,8 @@ mod tests {
         .expect("move event should succeed");
 
         assert_eq!(event.event_type, "MOVED");
-        assert_eq!(
-            event.from_org_node_id,
-            Some(node_id),
-            "from_org_node_id must be saved"
-        );
-        assert_eq!(
-            event.to_org_node_id,
-            Some(node_id_2),
-            "to_org_node_id must be saved"
-        );
+        assert_eq!(event.from_org_node_id, Some(node_id), "from_org_node_id must be saved");
+        assert_eq!(event.to_org_node_id, Some(node_id_2), "to_org_node_id must be saved");
 
         // Verify the DB row directly
         let row = db
@@ -360,9 +342,7 @@ mod tests {
         .expect("move event");
 
         // Re-fetch asset — installed_at_node_id must be updated
-        let updated = identity::get_asset_by_id(&db, asset.id)
-            .await
-            .expect("re-fetch asset");
+        let updated = identity::get_asset_by_id(&db, asset.id).await.expect("re-fetch asset");
         assert_eq!(
             updated.org_node_id,
             Some(node_id_2),
@@ -463,9 +443,7 @@ mod tests {
             .expect("query")
             .expect("event row");
 
-        let related_db: Option<i64> = row
-            .try_get("", "related_asset_id")
-            .expect("related_asset_id");
+        let related_db: Option<i64> = row.try_get("", "related_asset_id").expect("related_asset_id");
         assert_eq!(related_db, Some(new_asset.id));
     }
 
@@ -595,9 +573,7 @@ mod tests {
         );
 
         // Re-fetch the asset — status must be updated
-        let updated = identity::get_asset_by_id(&db, asset.id)
-            .await
-            .expect("re-fetch asset");
+        let updated = identity::get_asset_by_id(&db, asset.id).await.expect("re-fetch asset");
 
         assert_eq!(
             updated.status_code, "DECOMMISSIONED",
@@ -648,10 +624,7 @@ mod tests {
             .await
             .expect("list events");
 
-        assert!(
-            !events.is_empty(),
-            "at least one lifecycle event must exist"
-        );
+        assert!(!events.is_empty(), "at least one lifecycle event must exist");
         let decom = events
             .iter()
             .find(|e| e.event_type == "DECOMMISSIONED")
@@ -927,10 +900,7 @@ mod tests {
             .expect("list events");
 
         assert_eq!(events.len(), 2);
-        assert_eq!(
-            events[0].event_type, "PRESERVED",
-            "newest event should be first"
-        );
+        assert_eq!(events[0].event_type, "PRESERVED", "newest event should be first");
         assert_eq!(events[1].event_type, "INSTALLED");
     }
 }

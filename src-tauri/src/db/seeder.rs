@@ -264,12 +264,60 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         false,
     )
     .await?;
-    seed_domain(db, "inventory.supplier_status", "Statut fournisseur", "system", false, false).await?;
-    seed_domain(db, "inventory.replenishment_policy", "Politique de réapprovisionnement", "system", false, false).await?;
-    seed_domain(db, "inventory.demand_source_type", "Type de source de demande", "system", false, false).await?;
-    seed_domain(db, "inventory.purchase_priority", "Priorité achat", "system", false, false).await?;
-    seed_domain(db, "inventory.equivalence_type", "Type d'équivalence article", "system", false, false).await?;
-    seed_domain(db, "inventory.document_link_purpose", "Objet lien document inventaire", "system", false, false).await?;
+    seed_domain(
+        db,
+        "inventory.supplier_status",
+        "Statut fournisseur",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.replenishment_policy",
+        "Politique de réapprovisionnement",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.demand_source_type",
+        "Type de source de demande",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.purchase_priority",
+        "Priorité achat",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.equivalence_type",
+        "Type d'équivalence article",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.document_link_purpose",
+        "Objet lien document inventaire",
+        "system",
+        false,
+        false,
+    )
+    .await?;
     seed_domain(db, "inventory.abc_class", "Classe ABC article", "system", false, false).await?;
     seed_domain(db, "inventory.xyz_class", "Classe XYZ article", "system", false, false).await?;
     seed_domain(
@@ -460,13 +508,90 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     // equipment.lifecycle_event_type
     {
         let d = get_domain_id(db, "equipment.lifecycle_event_type").await?;
-        seed_value(db, d, "INSTALLED", "Install\u{00e9}", "Install\u{00e9}", "Installed", None, 1, true).await?;
-        seed_value(db, d, "MOVED", "D\u{00e9}plac\u{00e9}", "D\u{00e9}plac\u{00e9}", "Moved", None, 2, true).await?;
-        seed_value(db, d, "REPLACED", "Remplac\u{00e9}", "Remplac\u{00e9}", "Replaced", None, 3, true).await?;
-        seed_value(db, d, "RECLASSIFIED", "Reclass\u{00e9}", "Reclass\u{00e9}", "Reclassified", None, 4, true).await?;
-        seed_value(db, d, "PRESERVED", "Pr\u{00e9}serv\u{00e9}", "Pr\u{00e9}serv\u{00e9}", "Preserved", None, 5, true).await?;
-        seed_value(db, d, "DECOMMISSIONED", "Mis hors service", "Mis hors service", "Decommissioned", None, 6, true).await?;
-        seed_value(db, d, "RECOMMISSIONED", "Remis en service", "Remis en service", "Recommissioned", None, 7, true).await?;
+        seed_value(
+            db,
+            d,
+            "INSTALLED",
+            "Install\u{00e9}",
+            "Install\u{00e9}",
+            "Installed",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "MOVED",
+            "D\u{00e9}plac\u{00e9}",
+            "D\u{00e9}plac\u{00e9}",
+            "Moved",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REPLACED",
+            "Remplac\u{00e9}",
+            "Remplac\u{00e9}",
+            "Replaced",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RECLASSIFIED",
+            "Reclass\u{00e9}",
+            "Reclass\u{00e9}",
+            "Reclassified",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PRESERVED",
+            "Pr\u{00e9}serv\u{00e9}",
+            "Pr\u{00e9}serv\u{00e9}",
+            "Preserved",
+            None,
+            5,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "DECOMMISSIONED",
+            "Mis hors service",
+            "Mis hors service",
+            "Decommissioned",
+            None,
+            6,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RECOMMISSIONED",
+            "Remis en service",
+            "Remis en service",
+            "Recommissioned",
+            None,
+            7,
+            true,
+        )
+        .await?;
     }
 
     // equipment.meter_type
@@ -476,25 +601,80 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         seed_value(db, d, "CYCLES", "Cycles", "Cycles", "Cycles", None, 2, true).await?;
         seed_value(db, d, "DISTANCE", "Distance", "Distance", "Distance", None, 3, true).await?;
         seed_value(db, d, "VOLUME", "Volume", "Volume", "Volume", None, 4, true).await?;
-        seed_value(db, d, "CUSTOM", "Personnalis\u{00e9}", "Personnalis\u{00e9}", "Custom", None, 5, true).await?;
+        seed_value(
+            db,
+            d,
+            "CUSTOM",
+            "Personnalis\u{00e9}",
+            "Personnalis\u{00e9}",
+            "Custom",
+            None,
+            5,
+            true,
+        )
+        .await?;
     }
 
     // equipment.reading_source_type
     {
         let d = get_domain_id(db, "equipment.reading_source_type").await?;
         seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 1, true).await?;
-        seed_value(db, d, "IOT", "IoT / Capteur", "IoT / Capteur", "IoT / Sensor", None, 2, true).await?;
+        seed_value(
+            db,
+            d,
+            "IOT",
+            "IoT / Capteur",
+            "IoT / Capteur",
+            "IoT / Sensor",
+            None,
+            2,
+            true,
+        )
+        .await?;
         seed_value(db, d, "IMPORT", "Import", "Import", "Import", None, 3, true).await?;
     }
 
     // equipment.document_link_purpose
     {
         let d = get_domain_id(db, "equipment.document_link_purpose").await?;
-        seed_value(db, d, "TECHNICAL_DOSSIER", "Dossier technique", "Dossier technique", "Technical Dossier", None, 1, true).await?;
+        seed_value(
+            db,
+            d,
+            "TECHNICAL_DOSSIER",
+            "Dossier technique",
+            "Dossier technique",
+            "Technical Dossier",
+            None,
+            1,
+            true,
+        )
+        .await?;
         seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 2, true).await?;
         seed_value(db, d, "WARRANTY", "Garantie", "Garantie", "Warranty", None, 3, true).await?;
-        seed_value(db, d, "CERTIFICATE", "Certificat", "Certificat", "Certificate", None, 4, true).await?;
-        seed_value(db, d, "INSPECTION_PACK", "Dossier d'inspection", "Dossier d'inspection", "Inspection Pack", None, 5, true).await?;
+        seed_value(
+            db,
+            d,
+            "CERTIFICATE",
+            "Certificat",
+            "Certificat",
+            "Certificate",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "INSPECTION_PACK",
+            "Dossier d'inspection",
+            "Dossier d'inspection",
+            "Inspection Pack",
+            None,
+            5,
+            true,
+        )
+        .await?;
     }
 
     // intervention_request.type (tenant-extensible examples)
@@ -1374,13 +1554,35 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         seed_value(db, d, "CANCELLED", "Annulée", "Annulée", "Cancelled", None, 6, true).await?;
         seed_value(db, d, "CLOSED", "Clôturée", "Clôturée", "Closed", None, 7, true).await?;
         // First-class approval rejection — distinct from CANCELLED for audit and future KPIs.
-        seed_value(db, d, "REJECTED", "Rejetée", "Rejetée", "Rejected", Some("#dc3545"), 8, true).await?;
+        seed_value(
+            db,
+            d,
+            "REJECTED",
+            "Rejetée",
+            "Rejetée",
+            "Rejected",
+            Some("#dc3545"),
+            8,
+            true,
+        )
+        .await?;
     }
 
     // inventory.erp_posting_state
     {
         let d = get_domain_id(db, "inventory.erp_posting_state").await?;
-        seed_value(db, d, "PENDING_POSTING", "À publier", "À publier", "Pending posting", None, 1, true).await?;
+        seed_value(
+            db,
+            d,
+            "PENDING_POSTING",
+            "À publier",
+            "À publier",
+            "Pending posting",
+            None,
+            1,
+            true,
+        )
+        .await?;
         seed_value(db, d, "POSTED", "Publié", "Publié", "Posted", None, 2, true).await?;
         seed_value(
             db,
@@ -1394,14 +1596,36 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
             true,
         )
         .await?;
-        seed_value(db, d, "RECONCILED", "Rapproché", "Rapproché", "Reconciled", None, 4, true).await?;
+        seed_value(
+            db,
+            d,
+            "RECONCILED",
+            "Rapproché",
+            "Rapproché",
+            "Reconciled",
+            None,
+            4,
+            true,
+        )
+        .await?;
     }
 
     // inventory.repairable_status
     {
         let d = get_domain_id(db, "inventory.repairable_status").await?;
         seed_value(db, d, "REQUESTED", "Demandée", "Demandée", "Requested", None, 1, true).await?;
-        seed_value(db, d, "RELEASED", "Sortie magasin", "Sortie magasin", "Released", None, 2, true).await?;
+        seed_value(
+            db,
+            d,
+            "RELEASED",
+            "Sortie magasin",
+            "Sortie magasin",
+            "Released",
+            None,
+            2,
+            true,
+        )
+        .await?;
         seed_value(
             db,
             d,
@@ -1495,49 +1719,247 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     {
         let d = get_domain_id(db, "inventory.erp_reconcile_state").await?;
         seed_value(db, d, "POSTED", "Comptabilise", "Comptabilise", "Posted", None, 1, true).await?;
-        seed_value(db, d, "PENDING_RECONCILE", "En attente rapprochement", "En attente rapprochement", "Pending reconcile", None, 2, true).await?;
-        seed_value(db, d, "RECONCILED", "Rapproche", "Rapproche", "Reconciled", None, 3, true).await?;
+        seed_value(
+            db,
+            d,
+            "PENDING_RECONCILE",
+            "En attente rapprochement",
+            "En attente rapprochement",
+            "Pending reconcile",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RECONCILED",
+            "Rapproche",
+            "Rapproche",
+            "Reconciled",
+            None,
+            3,
+            true,
+        )
+        .await?;
         seed_value(db, d, "CONFLICT", "Conflit", "Conflit", "Conflict", None, 4, true).await?;
     }
 
     // inventory.supplier_status
     {
         let d = get_domain_id(db, "inventory.supplier_status").await?;
-        seed_value(db, d, "PREFERRED", "Préféré", "Préféré", "Preferred", Some("#198754"), 1, true).await?;
-        seed_value(db, d, "APPROVED", "Approuvé", "Approuvé", "Approved", Some("#0d6efd"), 2, true).await?;
-        seed_value(db, d, "UNDER_EVALUATION", "En évaluation", "En évaluation", "Under evaluation", Some("#ffc107"), 3, true).await?;
-        seed_value(db, d, "BLOCKED", "Bloqué", "Bloqué", "Blocked", Some("#dc3545"), 4, true).await?;
+        seed_value(
+            db,
+            d,
+            "PREFERRED",
+            "Préféré",
+            "Préféré",
+            "Preferred",
+            Some("#198754"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "APPROVED",
+            "Approuvé",
+            "Approuvé",
+            "Approved",
+            Some("#0d6efd"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "UNDER_EVALUATION",
+            "En évaluation",
+            "En évaluation",
+            "Under evaluation",
+            Some("#ffc107"),
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "BLOCKED",
+            "Bloqué",
+            "Bloqué",
+            "Blocked",
+            Some("#dc3545"),
+            4,
+            true,
+        )
+        .await?;
     }
 
     // inventory.replenishment_policy
     {
         let d = get_domain_id(db, "inventory.replenishment_policy").await?;
         seed_value(db, d, "MIN_MAX", "Min/Max", "Min/Max", "Min/Max", None, 1, true).await?;
-        seed_value(db, d, "FIXED_QTY", "Quantité fixe", "Quantité fixe", "Fixed quantity", None, 2, true).await?;
-        seed_value(db, d, "ORDER_UP_TO", "Commande jusqu'à", "Commande jusqu'à", "Order up to", None, 3, true).await?;
+        seed_value(
+            db,
+            d,
+            "FIXED_QTY",
+            "Quantité fixe",
+            "Quantité fixe",
+            "Fixed quantity",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "ORDER_UP_TO",
+            "Commande jusqu'à",
+            "Commande jusqu'à",
+            "Order up to",
+            None,
+            3,
+            true,
+        )
+        .await?;
         seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 4, true).await?;
         seed_value(db, d, "KANBAN", "Kanban", "Kanban", "Kanban", None, 5, true).await?;
-        seed_value(db, d, "EMERGENCY_ONLY", "Urgence uniquement", "Urgence uniquement", "Emergency only", None, 6, true).await?;
-        seed_value(db, d, "REPAIR_ONLY", "Réparation uniquement", "Réparation uniquement", "Repair only", None, 7, true).await?;
-        seed_value(db, d, "VENDOR_MANAGED", "Géré fournisseur", "Géré fournisseur", "Vendor managed", None, 8, true).await?;
+        seed_value(
+            db,
+            d,
+            "EMERGENCY_ONLY",
+            "Urgence uniquement",
+            "Urgence uniquement",
+            "Emergency only",
+            None,
+            6,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REPAIR_ONLY",
+            "Réparation uniquement",
+            "Réparation uniquement",
+            "Repair only",
+            None,
+            7,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "VENDOR_MANAGED",
+            "Géré fournisseur",
+            "Géré fournisseur",
+            "Vendor managed",
+            None,
+            8,
+            true,
+        )
+        .await?;
     }
 
     // inventory.demand_source_type
     {
         let d = get_domain_id(db, "inventory.demand_source_type").await?;
         seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 1, true).await?;
-        seed_value(db, d, "REORDER", "Réapprovisionnement", "Réapprovisionnement", "Reorder", None, 2, true).await?;
-        seed_value(db, d, "WORK_ORDER", "Ordre de travail", "Ordre de travail", "Work order", None, 3, true).await?;
-        seed_value(db, d, "WORK_ORDER_PART", "Pièce OT", "Pièce OT", "WO part", None, 4, true).await?;
-        seed_value(db, d, "REPAIRABLE", "Réparable", "Réparable", "Repairable", None, 5, true).await?;
-        seed_value(db, d, "STOCK_COUNT", "Inventaire", "Inventaire", "Stock count", None, 6, true).await?;
-        seed_value(db, d, "PM", "Maintenance préventive", "Maintenance préventive", "Preventive maintenance", None, 7, true).await?;
+        seed_value(
+            db,
+            d,
+            "REORDER",
+            "Réapprovisionnement",
+            "Réapprovisionnement",
+            "Reorder",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "WORK_ORDER",
+            "Ordre de travail",
+            "Ordre de travail",
+            "Work order",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "WORK_ORDER_PART",
+            "Pièce OT",
+            "Pièce OT",
+            "WO part",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REPAIRABLE",
+            "Réparable",
+            "Réparable",
+            "Repairable",
+            None,
+            5,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "STOCK_COUNT",
+            "Inventaire",
+            "Inventaire",
+            "Stock count",
+            None,
+            6,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PM",
+            "Maintenance préventive",
+            "Maintenance préventive",
+            "Preventive maintenance",
+            None,
+            7,
+            true,
+        )
+        .await?;
     }
 
     // inventory.purchase_priority
     {
         let d = get_domain_id(db, "inventory.purchase_priority").await?;
-        seed_value(db, d, "EMERGENCY", "Urgence", "Urgence", "Emergency", Some("#dc3545"), 1, true).await?;
+        seed_value(
+            db,
+            d,
+            "EMERGENCY",
+            "Urgence",
+            "Urgence",
+            "Emergency",
+            Some("#dc3545"),
+            1,
+            true,
+        )
+        .await?;
         seed_value(db, d, "HIGH", "Haute", "Haute", "High", Some("#fd7e14"), 2, true).await?;
         seed_value(db, d, "NORMAL", "Normale", "Normale", "Normal", None, 3, true).await?;
         seed_value(db, d, "LOW", "Basse", "Basse", "Low", Some("#6c757d"), 4, true).await?;
@@ -1546,16 +1968,71 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     // inventory.equivalence_type
     {
         let d = get_domain_id(db, "inventory.equivalence_type").await?;
-        seed_value(db, d, "DIRECT", "Remplacement direct", "Remplacement direct", "Direct replacement", None, 1, true).await?;
-        seed_value(db, d, "FUNCTIONAL", "Équivalent fonctionnel", "Équivalent fonctionnel", "Functional equivalent", None, 2, true).await?;
-        seed_value(db, d, "UPGRADE", "Amélioration", "Amélioration", "Upgrade", None, 3, true).await?;
+        seed_value(
+            db,
+            d,
+            "DIRECT",
+            "Remplacement direct",
+            "Remplacement direct",
+            "Direct replacement",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "FUNCTIONAL",
+            "Équivalent fonctionnel",
+            "Équivalent fonctionnel",
+            "Functional equivalent",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "UPGRADE",
+            "Amélioration",
+            "Amélioration",
+            "Upgrade",
+            None,
+            3,
+            true,
+        )
+        .await?;
     }
 
     // inventory.document_link_purpose
     {
         let d = get_domain_id(db, "inventory.document_link_purpose").await?;
-        seed_value(db, d, "DATASHEET", "Fiche technique", "Fiche technique", "Datasheet", None, 1, true).await?;
-        seed_value(db, d, "CERTIFICATE", "Certificat", "Certificat", "Certificate", None, 2, true).await?;
+        seed_value(
+            db,
+            d,
+            "DATASHEET",
+            "Fiche technique",
+            "Fiche technique",
+            "Datasheet",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "CERTIFICATE",
+            "Certificat",
+            "Certificat",
+            "Certificate",
+            None,
+            2,
+            true,
+        )
+        .await?;
         seed_value(db, d, "INVOICE", "Facture", "Facture", "Invoice", None, 3, true).await?;
         seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 4, true).await?;
         seed_value(db, d, "PHOTO", "Photo", "Photo", "Photo", None, 5, true).await?;
@@ -1564,17 +2041,83 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     // inventory.abc_class
     {
         let d = get_domain_id(db, "inventory.abc_class").await?;
-        seed_value(db, d, "A", "A – Critique (80%)", "A – Critique (80%)", "A – Critical (80%)", Some("#dc3545"), 1, true).await?;
-        seed_value(db, d, "B", "B – Important (95%)", "B – Important (95%)", "B – Important (95%)", Some("#ffc107"), 2, true).await?;
-        seed_value(db, d, "C", "C – Courant", "C – Courant", "C – Standard", Some("#198754"), 3, true).await?;
+        seed_value(
+            db,
+            d,
+            "A",
+            "A – Critique (80%)",
+            "A – Critique (80%)",
+            "A – Critical (80%)",
+            Some("#dc3545"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "B",
+            "B – Important (95%)",
+            "B – Important (95%)",
+            "B – Important (95%)",
+            Some("#ffc107"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "C",
+            "C – Courant",
+            "C – Courant",
+            "C – Standard",
+            Some("#198754"),
+            3,
+            true,
+        )
+        .await?;
     }
 
     // inventory.xyz_class
     {
         let d = get_domain_id(db, "inventory.xyz_class").await?;
-        seed_value(db, d, "X", "X – Régulier", "X – Régulier", "X – Regular", Some("#0d6efd"), 1, true).await?;
-        seed_value(db, d, "Y", "Y – Variable", "Y – Variable", "Y – Variable", Some("#ffc107"), 2, true).await?;
-        seed_value(db, d, "Z", "Z – Irrégulier", "Z – Irrégulier", "Z – Irregular", Some("#dc3545"), 3, true).await?;
+        seed_value(
+            db,
+            d,
+            "X",
+            "X – Régulier",
+            "X – Régulier",
+            "X – Regular",
+            Some("#0d6efd"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "Y",
+            "Y – Variable",
+            "Y – Variable",
+            "Y – Variable",
+            Some("#ffc107"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "Z",
+            "Z – Irrégulier",
+            "Z – Irrégulier",
+            "Z – Irregular",
+            Some("#dc3545"),
+            3,
+            true,
+        )
+        .await?;
     }
 
     // org.responsibility_type
@@ -1792,7 +2335,13 @@ async fn seed_inventory_valuation_policies(db: &DatabaseConnection) -> AppResult
     let policies: [(&str, &str, &str, i32, Option<f64>); 3] = [
         ("DEFAULT-LAST-RECEIPT", "Default last receipt", "LAST_RECEIPT", 10, None),
         ("DEFAULT-MOVING", "Default moving average", "MOVING_AVG", 20, None),
-        ("DEFAULT-STANDARD", "Default standard fallback", "STANDARD", 100, Some(0.0)),
+        (
+            "DEFAULT-STANDARD",
+            "Default standard fallback",
+            "STANDARD",
+            100,
+            Some(0.0),
+        ),
     ];
     for (code, name, method, sort, std) in policies {
         let std_v: Value = match std {
@@ -2275,7 +2824,11 @@ async fn ensure_admin_role_assignment(db: &DatabaseConnection) -> AppResult<()> 
                 ],
             ))
             .await?;
-            tracing::info!("seeder::admin_role_assignment ensured (user_id={}, role_id={})", user_id, role_id);
+            tracing::info!(
+                "seeder::admin_role_assignment ensured (user_id={}, role_id={})",
+                user_id,
+                role_id
+            );
         }
     }
 

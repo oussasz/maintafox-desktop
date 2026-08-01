@@ -215,7 +215,10 @@ mod tests {
 
         // Active model must be present.
         assert!(snapshot.active_model_id.is_some(), "active_model_id should be Some");
-        assert!(snapshot.active_model_version.is_some(), "active_model_version should be Some");
+        assert!(
+            snapshot.active_model_version.is_some(),
+            "active_model_version should be Some"
+        );
 
         // Must contain exactly 3 nodes.
         assert_eq!(snapshot.nodes.len(), 3, "expected 3 nodes in the tree");
@@ -223,7 +226,10 @@ mod tests {
         // Ordered by ancestor_path: root first, then child, then grandchild.
         assert_eq!(snapshot.nodes[0].node_id, root_id, "first node must be root");
         assert_eq!(snapshot.nodes[1].node_id, child_id, "second node must be child");
-        assert_eq!(snapshot.nodes[2].node_id, grandchild_id, "third node must be grandchild");
+        assert_eq!(
+            snapshot.nodes[2].node_id, grandchild_id,
+            "third node must be grandchild"
+        );
 
         // Ancestor paths must be strictly increasing.
         for i in 1..snapshot.nodes.len() {
@@ -290,10 +296,7 @@ mod tests {
         let has_cycle_blocker = preview
             .blockers
             .iter()
-            .any(|b| {
-                b.code == "ORG_PREVIEW_MOVE_CYCLE"
-                    || b.message.to_lowercase().contains("descendant")
-            });
+            .any(|b| b.code == "ORG_PREVIEW_MOVE_CYCLE" || b.message.to_lowercase().contains("descendant"));
         assert!(
             has_cycle_blocker,
             "blocker text must mention cycle or descendant, got: {:?}",
@@ -301,10 +304,7 @@ mod tests {
         );
 
         // affected_node_count should include root + its descendants.
-        assert!(
-            preview.affected_node_count >= 1,
-            "affected count should be >= 1"
-        );
+        assert!(preview.affected_node_count >= 1, "affected count should be >= 1");
     }
 
     #[tokio::test]
@@ -341,17 +341,25 @@ mod tests {
             .await
             .expect("preview should succeed");
 
-        let domains: Vec<&str> = preview
-            .dependencies
-            .iter()
-            .map(|d| d.domain.as_str())
-            .collect();
+        let domains: Vec<&str> = preview.dependencies.iter().map(|d| d.domain.as_str()).collect();
 
         // Must include all four placeholder domains.
-        assert!(domains.contains(&"assets"), "missing 'assets' dependency, got: {domains:?}");
-        assert!(domains.contains(&"open_work"), "missing 'open_work' dependency, got: {domains:?}");
-        assert!(domains.contains(&"permits"), "missing 'permits' dependency, got: {domains:?}");
-        assert!(domains.contains(&"inventory"), "missing 'inventory' dependency, got: {domains:?}");
+        assert!(
+            domains.contains(&"assets"),
+            "missing 'assets' dependency, got: {domains:?}"
+        );
+        assert!(
+            domains.contains(&"open_work"),
+            "missing 'open_work' dependency, got: {domains:?}"
+        );
+        assert!(
+            domains.contains(&"permits"),
+            "missing 'permits' dependency, got: {domains:?}"
+        );
+        assert!(
+            domains.contains(&"inventory"),
+            "missing 'inventory' dependency, got: {domains:?}"
+        );
 
         // All must have status = "unavailable".
         for dep in &preview.dependencies {
@@ -367,7 +375,8 @@ mod tests {
             assert!(
                 dep.count.is_none(),
                 "dependency '{}' count must be None (null), got {:?}",
-                dep.domain, dep.count,
+                dep.domain,
+                dep.count,
             );
         }
 
@@ -376,7 +385,8 @@ mod tests {
             assert!(
                 dep.note.is_some() && !dep.note.as_ref().unwrap().is_empty(),
                 "dependency '{}' note must not be empty, got {:?}",
-                dep.domain, dep.note,
+                dep.domain,
+                dep.note,
             );
         }
     }
@@ -423,11 +433,7 @@ mod tests {
         .await
         .expect("dispatch_preview should succeed");
 
-        let domains: Vec<&str> = preview
-            .dependencies
-            .iter()
-            .map(|d| d.domain.as_str())
-            .collect();
+        let domains: Vec<&str> = preview.dependencies.iter().map(|d| d.domain.as_str()).collect();
 
         assert!(domains.contains(&"assets"), "via dispatch: missing 'assets'");
         assert!(domains.contains(&"open_work"), "via dispatch: missing 'open_work'");

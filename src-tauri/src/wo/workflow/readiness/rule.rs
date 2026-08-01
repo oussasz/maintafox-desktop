@@ -54,11 +54,7 @@ pub trait ReadinessRule: Send + Sync {
     fn validate(&self, ctx: &WoReadinessContext) -> ReadinessCheck;
 }
 
-pub fn check(
-    rule: &dyn ReadinessRule,
-    outcome: ReadinessOutcome,
-    message: Option<String>,
-) -> ReadinessCheck {
+pub fn check(rule: &dyn ReadinessRule, outcome: ReadinessOutcome, message: Option<String>) -> ReadinessCheck {
     ReadinessCheck {
         code: rule.code(),
         category: rule.category(),

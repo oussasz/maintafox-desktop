@@ -67,19 +67,11 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
     ))
 }
 
-fn preview_blocker(
-    code: &str,
-    message: impl Into<String>,
-    pairs: &[(&str, String)],
-) -> AppValidationIssue {
+fn preview_blocker(code: &str, message: impl Into<String>, pairs: &[(&str, String)]) -> AppValidationIssue {
     AppValidationIssue::error(code, message, issue_params(pairs))
 }
 
-fn preview_warning(
-    code: &str,
-    message: impl Into<String>,
-    pairs: &[(&str, String)],
-) -> AppValidationIssue {
+fn preview_warning(code: &str, message: impl Into<String>, pairs: &[(&str, String)]) -> AppValidationIssue {
     AppValidationIssue::warning(code, message, issue_params(pairs))
 }
 
@@ -136,10 +128,7 @@ impl NodeBrief {
     }
 }
 
-async fn fetch_node_brief(
-    db: &impl ConnectionTrait,
-    node_id: i64,
-) -> AppResult<NodeBrief> {
+async fn fetch_node_brief(db: &impl ConnectionTrait, node_id: i64) -> AppResult<NodeBrief> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -154,9 +143,7 @@ async fn fetch_node_brief(
             id: node_id.to_string(),
         })?;
     Ok(NodeBrief {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         node_type_id: row
             .try_get::<i64>("", "node_type_id")
             .map_err(|e| decode_err("node_type_id", e))?,
@@ -197,8 +184,7 @@ async fn count_descendants(
         ))
         .await?
         .expect("COUNT always returns a row");
-    row.try_get::<i64>("", "cnt")
-        .map_err(|e| decode_err("cnt", e))
+    row.try_get::<i64>("", "cnt").map_err(|e| decode_err("cnt", e))
 }
 
 /// Count active descendants (status = 'active') within the same structure model.
@@ -223,8 +209,7 @@ async fn count_active_descendants(
         ))
         .await?
         .expect("COUNT always returns a row");
-    row.try_get::<i64>("", "cnt")
-        .map_err(|e| decode_err("cnt", e))
+    row.try_get::<i64>("", "cnt").map_err(|e| decode_err("cnt", e))
 }
 
 /// Count active responsibilities on a node and its structural descendants.
@@ -232,10 +217,7 @@ async fn count_active_descendants(
 /// The ops node id (origin when draft clone) is used for the subject node.
 /// Descendants are resolved within the same structure model, then their ops
 /// ids are similarly resolved.
-async fn count_subtree_active_responsibilities(
-    db: &impl ConnectionTrait,
-    node: &NodeBrief,
-) -> AppResult<i64> {
+async fn count_subtree_active_responsibilities(db: &impl ConnectionTrait, node: &NodeBrief) -> AppResult<i64> {
     let ops_id = node.ops_node_id();
 
     // Collect all descendant ids within the same model, resolve to ops ids.
@@ -257,9 +239,7 @@ async fn count_subtree_active_responsibilities(
     // Build set of effective (ops) ids to query responsibilities for.
     let mut ops_ids: Vec<i64> = vec![ops_id];
     for row in &desc_rows {
-        let desc_id: i64 = row
-            .try_get("", "id")
-            .map_err(|e| decode_err("id", e))?;
+        let desc_id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
         let desc_origin: Option<i64> = row
             .try_get("", "origin_node_id")
             .map_err(|e| decode_err("origin_node_id", e))?;
@@ -288,15 +268,11 @@ async fn count_subtree_active_responsibilities(
         ))
         .await?
         .expect("COUNT always returns a row");
-    row.try_get::<i64>("", "cnt")
-        .map_err(|e| decode_err("cnt", e))
+    row.try_get::<i64>("", "cnt").map_err(|e| decode_err("cnt", e))
 }
 
 /// Count active bindings on a node and its structural descendants (ops ids).
-async fn count_subtree_active_bindings(
-    db: &impl ConnectionTrait,
-    node: &NodeBrief,
-) -> AppResult<i64> {
+async fn count_subtree_active_bindings(db: &impl ConnectionTrait, node: &NodeBrief) -> AppResult<i64> {
     let ops_id = node.ops_node_id();
 
     let desc_rows = db
@@ -316,9 +292,7 @@ async fn count_subtree_active_bindings(
 
     let mut ops_ids: Vec<i64> = vec![ops_id];
     for row in &desc_rows {
-        let desc_id: i64 = row
-            .try_get("", "id")
-            .map_err(|e| decode_err("id", e))?;
+        let desc_id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
         let desc_origin: Option<i64> = row
             .try_get("", "origin_node_id")
             .map_err(|e| decode_err("origin_node_id", e))?;
@@ -346,8 +320,7 @@ async fn count_subtree_active_bindings(
         ))
         .await?
         .expect("COUNT always returns a row");
-    row.try_get::<i64>("", "cnt")
-        .map_err(|e| decode_err("cnt", e))
+    row.try_get::<i64>("", "cnt").map_err(|e| decode_err("cnt", e))
 }
 
 /// Check whether a parent-child type rule exists in the model that owns both nodes.
@@ -387,8 +360,7 @@ pub async fn preview_move_node(
     let node = fetch_node_brief(db, node_id).await?;
     let parent = fetch_node_brief(db, new_parent_id).await?;
 
-    let descendant_count =
-        count_descendants(db, node.id, &node.ancestor_path, node.structure_model_id).await?;
+    let descendant_count = count_descendants(db, node.id, &node.ancestor_path, node.structure_model_id).await?;
     let active_resp = count_subtree_active_responsibilities(db, &node).await?;
     let active_bind = count_subtree_active_bindings(db, &node).await?;
 
@@ -417,9 +389,7 @@ pub async fn preview_move_node(
     if active_resp > 0 {
         warnings.push(preview_warning(
             "ORG_PREVIEW_SUBTREE_RESPONSIBILITIES",
-            format!(
-                "{active_resp} active responsibility assignment(s) in the affected subtree."
-            ),
+            format!("{active_resp} active responsibility assignment(s) in the affected subtree."),
             &[("count", active_resp.to_string())],
         ));
     }
@@ -446,16 +416,11 @@ pub async fn preview_move_node(
 }
 
 /// Preview the consequences of deactivating `node_id`.
-pub async fn preview_deactivate_node(
-    db: &DatabaseConnection,
-    node_id: i64,
-) -> AppResult<OrgImpactPreview> {
+pub async fn preview_deactivate_node(db: &DatabaseConnection, node_id: i64) -> AppResult<OrgImpactPreview> {
     let node = fetch_node_brief(db, node_id).await?;
 
-    let descendant_count =
-        count_descendants(db, node.id, &node.ancestor_path, node.structure_model_id).await?;
-    let active_desc =
-        count_active_descendants(db, node.id, &node.ancestor_path, node.structure_model_id).await?;
+    let descendant_count = count_descendants(db, node.id, &node.ancestor_path, node.structure_model_id).await?;
+    let active_desc = count_active_descendants(db, node.id, &node.ancestor_path, node.structure_model_id).await?;
 
     let ops_id = node.ops_node_id();
 
@@ -468,9 +433,7 @@ pub async fn preview_deactivate_node(
         ))
         .await?
         .expect("COUNT always returns a row");
-    let active_resp: i64 = resp_row
-        .try_get("", "cnt")
-        .map_err(|e| decode_err("cnt", e))?;
+    let active_resp: i64 = resp_row.try_get("", "cnt").map_err(|e| decode_err("cnt", e))?;
 
     let bind_row = db
         .query_one(Statement::from_sql_and_values(
@@ -481,9 +444,7 @@ pub async fn preview_deactivate_node(
         ))
         .await?
         .expect("COUNT always returns a row");
-    let active_bind: i64 = bind_row
-        .try_get("", "cnt")
-        .map_err(|e| decode_err("cnt", e))?;
+    let active_bind: i64 = bind_row.try_get("", "cnt").map_err(|e| decode_err("cnt", e))?;
 
     let mut blockers: Vec<AppValidationIssue> = Vec::new();
     let mut warnings: Vec<AppValidationIssue> = Vec::new();
@@ -499,9 +460,7 @@ pub async fn preview_deactivate_node(
     if active_resp > 0 {
         blockers.push(preview_blocker(
             "ORG_PREVIEW_ACTIVE_RESPONSIBILITIES",
-            format!(
-                "{active_resp} active responsibility assignment(s) must be ended first."
-            ),
+            format!("{active_resp} active responsibility assignment(s) must be ended first."),
             &[("count", active_resp.to_string())],
         ));
     }
@@ -561,9 +520,7 @@ pub async fn preview_responsibility_reassignment(
 
     match current_row {
         Some(row) => {
-            let valid_to: Option<String> = row
-                .try_get("", "valid_to")
-                .map_err(|e| decode_err("valid_to", e))?;
+            let valid_to: Option<String> = row.try_get("", "valid_to").map_err(|e| decode_err("valid_to", e))?;
             if valid_to.is_some() {
                 warnings.push(preview_warning(
                     "ORG_PREVIEW_ASSIGNMENT_ENDED",
@@ -594,9 +551,7 @@ pub async fn preview_responsibility_reassignment(
         ))
         .await?
         .expect("COUNT always returns a row");
-    let active_resp: i64 = resp_row
-        .try_get("", "cnt")
-        .map_err(|e| decode_err("cnt", e))?;
+    let active_resp: i64 = resp_row.try_get("", "cnt").map_err(|e| decode_err("cnt", e))?;
 
     let bind_row = db
         .query_one(Statement::from_sql_and_values(
@@ -607,9 +562,7 @@ pub async fn preview_responsibility_reassignment(
         ))
         .await?
         .expect("COUNT always returns a row");
-    let active_bind: i64 = bind_row
-        .try_get("", "cnt")
-        .map_err(|e| decode_err("cnt", e))?;
+    let active_bind: i64 = bind_row.try_get("", "cnt").map_err(|e| decode_err("cnt", e))?;
 
     Ok(OrgImpactPreview {
         action: OrgPreviewAction::ReassignResponsibility,
@@ -658,9 +611,7 @@ pub async fn dispatch_preview(
         }
         other => Err(fail_params(
             "ORG_PREVIEW_UNKNOWN_ACTION",
-            format!(
-                "Unknown preview action '{other}'. Expected: move, deactivate, reassign_responsibility."
-            ),
+            format!("Unknown preview action '{other}'. Expected: move, deactivate, reassign_responsibility."),
             &[("action", other.to_string())],
         )),
     }

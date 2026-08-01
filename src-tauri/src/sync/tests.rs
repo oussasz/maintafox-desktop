@@ -3,18 +3,14 @@ use sea_orm_migration::MigratorTrait;
 
 use crate::sync::domain::{
     ApplySyncBatchInput, ExecuteSyncRepairInput, ReplaySyncFailuresInput, ResolveSyncConflictInput,
-    StageOutboxItemInput, SyncAckInput, SyncConflictFilter, SyncInboundItemInput, SyncRepairPreviewInput,
-    SyncRejectedItemInput, SYNC_PROTOCOL_VERSION_V1,
+    StageOutboxItemInput, SyncAckInput, SyncConflictFilter, SyncInboundItemInput, SyncRejectedItemInput,
+    SyncRepairPreviewInput, SYNC_PROTOCOL_VERSION_V1,
 };
 use crate::sync::queries;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None)
-        .await
-        .expect("migrations");
+    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     db
 }
 
@@ -34,9 +30,7 @@ async fn staging_outbox_is_idempotent_for_duplicate_envelope() {
     let first = queries::stage_outbox_item(&db, input.clone())
         .await
         .expect("first staging");
-    let second = queries::stage_outbox_item(&db, input)
-        .await
-        .expect("duplicate staging");
+    let second = queries::stage_outbox_item(&db, input).await.expect("duplicate staging");
 
     assert_eq!(first.id, second.id);
     assert_eq!(second.status, "pending");
@@ -95,9 +89,7 @@ async fn partial_apply_with_invalid_inbound_does_not_advance_checkpoint() {
     assert!(!result.checkpoint_advanced);
     assert_eq!(result.typed_rejections.len(), 1);
 
-    let state = queries::get_sync_state_summary(&db)
-        .await
-        .expect("state summary");
+    let state = queries::get_sync_state_summary(&db).await.expect("state summary");
     assert!(state.checkpoint.is_none());
 }
 
@@ -129,9 +121,7 @@ async fn replaying_same_batch_is_duplicate_safe_and_checkpoint_stable() {
     let first = queries::apply_sync_batch(&db, input.clone())
         .await
         .expect("first apply");
-    let second = queries::apply_sync_batch(&db, input)
-        .await
-        .expect("replay apply");
+    let second = queries::apply_sync_batch(&db, input).await.expect("replay apply");
 
     assert!(first.checkpoint_advanced);
     assert!(second.checkpoint_advanced);
@@ -307,10 +297,7 @@ async fn replay_checkpoint_guard_and_resolution_enable_replay() {
     .await
     .expect("replay succeeds");
     assert!(replay.guard_applied);
-    assert_eq!(
-        replay.checkpoint_token_after.as_deref(),
-        Some("ckpt-rollback-target")
-    );
+    assert_eq!(replay.checkpoint_token_after.as_deref(), Some("ckpt-rollback-target"));
 }
 
 #[derive(Clone)]
@@ -405,7 +392,14 @@ async fn deterministic_sync_matrix_covers_record_classes_partial_acceptance_repl
     let summary = queries::get_sync_state_summary(&db)
         .await
         .expect("summary after matrix");
-    assert_eq!(summary.checkpoint.as_ref().and_then(|c| c.checkpoint_token.clone()).as_deref(), Some("ckpt-103"));
+    assert_eq!(
+        summary
+            .checkpoint
+            .as_ref()
+            .and_then(|c| c.checkpoint_token.clone())
+            .as_deref(),
+        Some("ckpt-103")
+    );
     assert_eq!(summary.pending_outbox_count, 0);
     assert!(summary.rejected_outbox_count >= 3);
 
@@ -656,8 +650,7 @@ async fn sync_observability_report_includes_alerts_runbooks_and_recovery_proofs(
     assert!(!report.alerts.is_empty());
     assert!(!report.diagnostics_links.is_empty());
     assert!(!report.recovery_proofs.is_empty());
-    assert!(report
-        .alerts
-        .iter()
-        .all(|alert| alert.runbook_url.starts_with("https://docs.maintafox.com/runbooks/sync/")));
+    assert!(report.alerts.iter().all(|alert| alert
+        .runbook_url
+        .starts_with("https://docs.maintafox.com/runbooks/sync/")));
 }

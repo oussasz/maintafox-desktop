@@ -4,9 +4,7 @@ use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statemen
 use sea_orm_migration::MigratorTrait;
 use uuid::Uuid;
 
-use crate::activity::emitter::{
-    emit_activity_event, emit_di_event, emit_wo_event, ActivityEventInput,
-};
+use crate::activity::emitter::{emit_activity_event, emit_di_event, emit_wo_event, ActivityEventInput};
 use crate::archive::integrity::verify_checksum;
 use crate::archive::writer::{archive_record, ArchiveInput};
 use crate::audit::writer::{write_audit_event, AuditEventInput};
@@ -21,9 +19,7 @@ use crate::notifications::delivery;
 use crate::notifications::emitter::{emit_event, NotificationEventInput};
 use crate::notifications::scheduler;
 use crate::state::AppState;
-use crate::wo::closeout::{
-    self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput,
-};
+use crate::wo::closeout::{self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput};
 use crate::wo::domain::WoCreateInput;
 use crate::wo::execution::{self, WoAssignInput, WoMechCompleteInput, WoPlanInput};
 use crate::wo::labor::{self, AddLaborInput};
@@ -108,7 +104,8 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
         "INSERT OR IGNORE INTO equipment \
          (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
          VALUES (1, 'obs-eq-001', 'EQ-OBS-001', 'Obs Equipment', 'active_in_service', \
-                 datetime('now'), datetime('now'));".to_string(),
+                 datetime('now'), datetime('now'));"
+            .to_string(),
     ))
     .await
     .expect("equipment");
@@ -117,7 +114,8 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO org_structure_models \
          (id, sync_id, version_number, status, created_at, updated_at) \
-         VALUES (1, 'obs-model-001', 1, 'active', datetime('now'), datetime('now'));".to_string(),
+         VALUES (1, 'obs-model-001', 1, 'active', datetime('now'), datetime('now'));"
+            .to_string(),
     ))
     .await
     .expect("structure model");
@@ -126,7 +124,8 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO org_node_types \
          (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
-         VALUES (1, 'obs-nt-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));".to_string(),
+         VALUES (1, 'obs-nt-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));"
+            .to_string(),
     ))
     .await
     .expect("node type");
@@ -136,7 +135,8 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
         "INSERT OR IGNORE INTO org_nodes \
          (id, sync_id, code, name, node_type_id, status, created_at, updated_at) \
          VALUES (1, 'obs-on-001', 'SITE-OBS', 'Obs Site', 1, 'active', \
-                 datetime('now'), datetime('now'));".to_string(),
+                 datetime('now'), datetime('now'));"
+            .to_string(),
     ))
     .await
     .expect("org_nodes");
@@ -146,7 +146,8 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
         "INSERT OR IGNORE INTO reference_domains \
          (id, code, name, structure_type, governance_level, is_extendable, created_at, updated_at) \
          VALUES (1, 'DI_CLASSIFICATION', 'DI Classification', 'flat', 'tenant_managed', 1, \
-                 datetime('now'), datetime('now'));".to_string(),
+                 datetime('now'), datetime('now'));"
+            .to_string(),
     ))
     .await
     .expect("reference_domains");
@@ -155,7 +156,8 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO reference_sets \
          (id, domain_id, version_no, status, created_at) \
-         VALUES (1, 1, 1, 'published', datetime('now'));".to_string(),
+         VALUES (1, 1, 1, 'published', datetime('now'));"
+            .to_string(),
     ))
     .await
     .expect("reference_sets");
@@ -164,7 +166,8 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO reference_values \
          (id, set_id, code, label, is_active) \
-         VALUES (1, 1, 'MECH', 'Mécanique', 1);".to_string(),
+         VALUES (1, 1, 'MECH', 'Mécanique', 1);"
+            .to_string(),
     ))
     .await
     .expect("reference_values");
@@ -177,7 +180,7 @@ async fn di_create_input(db: &sea_orm::DatabaseConnection, submitter_id: i64) ->
         title: "Obs DI".to_string(),
         description: "Observability chain".to_string(),
         origin_type: "operator".to_string(),
-            request_type: "repair".to_string(),
+        request_type: "repair".to_string(),
         symptom_code_id: Some(
             crate::di::reference_catalog::resolve_di_symptom_id_by_code(db, "vibration")
                 .await
@@ -707,9 +710,7 @@ async fn test_obs_03_snooze_wakes() {
     .await
     .expect("backdate snooze");
 
-    scheduler::run_scheduler_tick_for_test(&db)
-        .await
-        .expect("tick");
+    scheduler::run_scheduler_tick_for_test(&db).await.expect("tick");
 
     let st2: String = db
         .query_one(Statement::from_sql_and_values(
@@ -880,10 +881,7 @@ async fn test_obs_05_archive_wo_and_verify() {
         .expect("q");
     assert_eq!(actions.len(), 2);
     assert_eq!(actions[0].try_get::<String>("", "action").unwrap(), "archive");
-    assert_eq!(
-        actions[1].try_get::<String>("", "action").unwrap(),
-        "checksum_verified"
-    );
+    assert_eq!(actions[1].try_get::<String>("", "action").unwrap(), "checksum_verified");
 }
 
 #[tokio::test]
@@ -1230,15 +1228,7 @@ async fn test_obs_12_full_observability_chain() {
 
     let (di_id, approved_rv) = advance_di_to_approved(&db, actor).await;
 
-    let _ = emit_di_event(
-        &db,
-        di_id,
-        "di.submitted",
-        Some(actor),
-        None,
-        Some(corr.clone()),
-    )
-    .await;
+    let _ = emit_di_event(&db, di_id, "di.submitted", Some(actor), None, Some(corr.clone())).await;
 
     let di_ev: i64 = db
         .query_one(Statement::from_sql_and_values(
@@ -1264,15 +1254,7 @@ async fn test_obs_12_full_observability_chain() {
     .await
     .expect("convert");
 
-    let _ = emit_wo_event(
-        &db,
-        conv.wo_id,
-        "wo.created",
-        Some(actor),
-        None,
-        Some(corr.clone()),
-    )
-    .await;
+    let _ = emit_wo_event(&db, conv.wo_id, "wo.created", Some(actor), None, Some(corr.clone())).await;
 
     let wo_ev: i64 = db
         .query_one(Statement::from_sql_and_values(
@@ -1286,14 +1268,7 @@ async fn test_obs_12_full_observability_chain() {
         .try_get("", "id")
         .expect("id");
 
-    let wo_work = transition_planned_assigned_in_progress_for_user(
-        &db,
-        conv.wo_id,
-        1,
-        actor,
-        actor,
-    )
-    .await;
+    let wo_work = transition_planned_assigned_in_progress_for_user(&db, conv.wo_id, 1, actor, actor).await;
 
     labor::add_labor_entry(
         &db,
@@ -1480,11 +1455,7 @@ async fn test_obs_12_full_observability_chain() {
     .await
     .expect("chain");
 
-    let codes: Vec<String> = chain
-        .events
-        .iter()
-        .filter_map(|n| n.event_code.clone())
-        .collect();
+    let codes: Vec<String> = chain.events.iter().filter_map(|n| n.event_code.clone()).collect();
     assert_eq!(codes.len(), 5, "codes={codes:?}");
     let expected = [
         "iot.threshold_exceeded",

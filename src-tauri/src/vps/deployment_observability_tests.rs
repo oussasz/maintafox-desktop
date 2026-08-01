@@ -3,10 +3,9 @@
 use crate::vps::deployment_observability::{
     certificate_renewal_runbook_steps, default_control_plane_slos, default_on_call_routing_contract,
     deploy_preflight_checklist, failure_injection_scenarios, hardened_network_segment_rules,
-    production_compose_topology_order, rollback_workflow_steps, safe_deploy_workflow_steps,
-    sizing_hints, structured_log_contract_v1, ComposeServiceRole, DeploymentReadinessChecklist,
-    DeploymentSizingProfile, NetworkExposureTier, ProductionDnsBoundaries, SecretHandlingContract,
-    TenantHealthIndicators,
+    production_compose_topology_order, rollback_workflow_steps, safe_deploy_workflow_steps, sizing_hints,
+    structured_log_contract_v1, ComposeServiceRole, DeploymentReadinessChecklist, DeploymentSizingProfile,
+    NetworkExposureTier, ProductionDnsBoundaries, SecretHandlingContract, TenantHealthIndicators,
 };
 
 #[test]

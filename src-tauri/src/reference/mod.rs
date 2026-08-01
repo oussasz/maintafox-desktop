@@ -38,26 +38,26 @@ pub mod values;
 #[cfg(test)]
 mod aliases_tests;
 #[cfg(test)]
-mod imports_tests;
-#[cfg(test)]
-mod publish_tests;
-#[cfg(test)]
-mod search_tests;
-#[cfg(test)]
 mod domains_tests;
 #[cfg(test)]
 mod governance_tests;
+#[cfg(test)]
+mod imports_tests;
 #[cfg(test)]
 mod migrations_tests;
 #[cfg(test)]
 mod protected_tests;
 #[cfg(test)]
+mod publish_tests;
+#[cfg(test)]
+mod schedule_patterns_tests;
+#[cfg(test)]
+mod search_tests;
+#[cfg(test)]
 mod sets_tests;
+#[cfg(test)]
+mod system_catalog_integrity_tests;
 #[cfg(test)]
 mod validation_tests;
 #[cfg(test)]
 mod values_tests;
-#[cfg(test)]
-mod system_catalog_integrity_tests;
-#[cfg(test)]
-mod schedule_patterns_tests;

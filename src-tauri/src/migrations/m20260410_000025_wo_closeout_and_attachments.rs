@@ -12,8 +12,8 @@
 //!   - `reopen_count INTEGER NOT NULL DEFAULT 0` — incremented on each reopen
 //!   - `last_closed_at TEXT NULL` — preserved timestamp from prior closure on reopen
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -85,20 +85,17 @@ impl MigrationTrait for Migration {
         // ── Indexes ───────────────────────────────────────────────────────
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_wofd_wo_id ON work_order_failure_details(work_order_id)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_wofd_wo_id ON work_order_failure_details(work_order_id)".to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_wov_wo_id ON work_order_verifications(work_order_id)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_wov_wo_id ON work_order_verifications(work_order_id)".to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_woa_wo_id ON work_order_attachments(work_order_id)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_woa_wo_id ON work_order_attachments(work_order_id)".to_string(),
         ))
         .await?;
 
@@ -106,22 +103,19 @@ impl MigrationTrait for Migration {
         // NOTE: parts_actuals_confirmed already added by migration 023.
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "ALTER TABLE work_orders ADD COLUMN service_cost_input REAL NULL DEFAULT 0"
-                .to_string(),
+            "ALTER TABLE work_orders ADD COLUMN service_cost_input REAL NULL DEFAULT 0".to_string(),
         ))
         .await?;
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "ALTER TABLE work_orders ADD COLUMN reopen_count INTEGER NOT NULL DEFAULT 0"
-                .to_string(),
+            "ALTER TABLE work_orders ADD COLUMN reopen_count INTEGER NOT NULL DEFAULT 0".to_string(),
         ))
         .await?;
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "ALTER TABLE work_orders ADD COLUMN last_closed_at TEXT NULL"
-                .to_string(),
+            "ALTER TABLE work_orders ADD COLUMN last_closed_at TEXT NULL".to_string(),
         ))
         .await?;
 

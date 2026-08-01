@@ -36,11 +36,7 @@ fn parse_iso_date(s: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(&prefix, "%Y-%m-%d").ok()
 }
 
-fn readiness_status(
-    verification_status: &str,
-    expires_at: &Option<String>,
-    renewal_lead_days: Option<i64>,
-) -> String {
+fn readiness_status(verification_status: &str, expires_at: &Option<String>, renewal_lead_days: Option<i64>) -> String {
     match verification_status {
         "rejected" => "rejected".to_string(),
         "pending" => "pending".to_string(),
@@ -77,7 +73,9 @@ fn map_cert_type(row: &sea_orm::QueryResult) -> AppResult<CertificationType> {
         name: row.try_get("", "name").map_err(|e| decode_err("name", e))?,
         default_validity_months: row.try_get("", "default_validity_months").ok(),
         renewal_lead_days: row.try_get("", "renewal_lead_days").ok(),
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -87,14 +85,18 @@ fn map_profile(row: &sea_orm::QueryResult) -> AppResult<QualificationRequirement
         entity_sync_id: row
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
-        profile_name: row.try_get("", "profile_name").map_err(|e| decode_err("profile_name", e))?,
+        profile_name: row
+            .try_get("", "profile_name")
+            .map_err(|e| decode_err("profile_name", e))?,
         required_certification_type_ids_json: row
             .try_get("", "required_certification_type_ids_json")
             .map_err(|e| decode_err("required_certification_type_ids_json", e))?,
         applies_to_permit_type_codes_json: row
             .try_get("", "applies_to_permit_type_codes_json")
             .map_err(|e| decode_err("applies_to_permit_type_codes_json", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -114,7 +116,9 @@ fn map_personnel_cert(
         entity_sync_id: row
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
-        personnel_id: row.try_get("", "personnel_id").map_err(|e| decode_err("personnel_id", e))?,
+        personnel_id: row
+            .try_get("", "personnel_id")
+            .map_err(|e| decode_err("personnel_id", e))?,
         certification_type_id: row
             .try_get("", "certification_type_id")
             .map_err(|e| decode_err("certification_type_id", e))?,
@@ -123,7 +127,9 @@ fn map_personnel_cert(
         issuing_body: row.try_get("", "issuing_body").ok(),
         certificate_ref: row.try_get("", "certificate_ref").ok(),
         verification_status,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         readiness_status: rs,
         certification_type_code: type_code,
         certification_type_name: type_name,
@@ -174,10 +180,7 @@ async fn stage_personnel_certification(db: &DatabaseConnection, row: &PersonnelC
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "personnel_certifications:{}:v{}",
-                row.entity_sync_id, row.row_version
-            ),
+            idempotency_key: format!("personnel_certifications:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_PERSONNEL_CERTIFICATIONS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
@@ -190,10 +193,7 @@ async fn stage_personnel_certification(db: &DatabaseConnection, row: &PersonnelC
     Ok(())
 }
 
-async fn stage_qualification_profile(
-    db: &DatabaseConnection,
-    row: &QualificationRequirementProfile,
-) -> AppResult<()> {
+async fn stage_qualification_profile(db: &DatabaseConnection, row: &QualificationRequirementProfile) -> AppResult<()> {
     let ids: Vec<i64> = serde_json::from_str(&row.required_certification_type_ids_json)
         .map_err(|e| AppError::ValidationFailed(vec![format!("required_certification_type_ids_json: {e}")]))?;
     let codes: Vec<String> = serde_json::from_str(&row.applies_to_permit_type_codes_json)
@@ -242,18 +242,22 @@ fn validate_profile_json_ids(raw: &str) -> AppResult<()> {
         serde_json::from_str(raw).map_err(|e| AppError::ValidationFailed(vec![format!("JSON array of i64: {e}")]))?;
     for i in v {
         if i <= 0 {
-            return Err(AppError::ValidationFailed(vec!["certification type ids must be positive.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "certification type ids must be positive.".into(),
+            ]));
         }
     }
     Ok(())
 }
 
 fn validate_profile_json_codes(raw: &str) -> AppResult<()> {
-    let v: Vec<String> =
-        serde_json::from_str(raw).map_err(|e| AppError::ValidationFailed(vec![format!("JSON array of string: {e}")]))?;
+    let v: Vec<String> = serde_json::from_str(raw)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("JSON array of string: {e}")]))?;
     for c in v {
         if c.trim().is_empty() {
-            return Err(AppError::ValidationFailed(vec!["permit type codes must be non-empty.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "permit type codes must be non-empty.".into()
+            ]));
         }
     }
     Ok(())
@@ -275,7 +279,10 @@ pub async fn list_certification_types(db: &DatabaseConnection) -> AppResult<Vec<
     Ok(out)
 }
 
-pub(crate) async fn get_certification_type_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option<CertificationType>> {
+pub(crate) async fn get_certification_type_by_id(
+    db: &DatabaseConnection,
+    id: i64,
+) -> AppResult<Option<CertificationType>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -327,7 +334,9 @@ pub async fn upsert_certification_type(
             ))
             .await?;
         if affected.rows_affected() == 0 {
-            return Err(AppError::ValidationFailed(vec!["Concurrent update on certification_types.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "Concurrent update on certification_types.".into(),
+            ]));
         }
         let updated = get_certification_type_by_id(db, id).await?.expect("row");
         stage_certification_type(db, &updated).await?;
@@ -381,10 +390,7 @@ pub async fn list_qualification_requirement_profiles(
 }
 
 /// List skill reference_value_ids linked to a profile via `qualification_profile_skills`.
-pub async fn list_profile_skill_ids(
-    db: &DatabaseConnection,
-    profile_id: i64,
-) -> AppResult<Vec<i64>> {
+pub async fn list_profile_skill_ids(db: &DatabaseConnection, profile_id: i64) -> AppResult<Vec<i64>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -455,12 +461,10 @@ pub async fn upsert_qualification_requirement_profile(
         if id <= 0 {
             return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
         }
-        let current = get_profile_by_id(db, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound {
-                entity: "QualificationRequirementProfile".into(),
-                id: id.to_string(),
-            })?;
+        let current = get_profile_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+            entity: "QualificationRequirementProfile".into(),
+            id: id.to_string(),
+        })?;
         let new_rv = current.row_version + 1;
         let affected = db
             .execute(Statement::from_sql_and_values(
@@ -626,7 +630,9 @@ pub async fn upsert_personnel_certification(
             ))
             .await?;
         if affected.rows_affected() == 0 {
-            return Err(AppError::ValidationFailed(vec!["Concurrent update on personnel_certifications.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "Concurrent update on personnel_certifications.".into(),
+            ]));
         }
         let updated = get_personnel_cert_by_id(db, id).await?.expect("row");
         stage_personnel_certification(db, &updated).await?;

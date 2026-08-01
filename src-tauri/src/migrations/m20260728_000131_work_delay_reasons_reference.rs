@@ -165,14 +165,10 @@ impl MigrationTrait for Migration {
 
         db.execute_unprepared("DROP TABLE IF EXISTS work_order_delay_segments;")
             .await?;
-        db.execute_unprepared(
-            "ALTER TABLE work_order_delay_segments_new RENAME TO work_order_delay_segments;",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_wods_wo_id ON work_order_delay_segments(work_order_id);",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE work_order_delay_segments_new RENAME TO work_order_delay_segments;")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_wods_wo_id ON work_order_delay_segments(work_order_id);")
+            .await?;
 
         Ok(())
     }

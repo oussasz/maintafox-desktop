@@ -14,10 +14,8 @@ impl MigrationName for Migration {
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared(
-            "ALTER TABLE work_orders ADD COLUMN requires_permit INTEGER NOT NULL DEFAULT 0",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE work_orders ADD COLUMN requires_permit INTEGER NOT NULL DEFAULT 0")
+            .await?;
         Ok(())
     }
 

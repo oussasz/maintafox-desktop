@@ -5,9 +5,9 @@ use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
 use crate::reliability::fta_rbd_eta::domain::{
-    CreateEventTreeModelInput, CreateFtaModelInput, CreateRbdModelInput, EventTreeModel,
-    EventTreeModelsFilter, FtaModel, FtaModelsFilter, RbdModel, RbdModelsFilter, UpdateEventTreeModelInput,
-    UpdateFtaModelInput, UpdateRbdModelInput,
+    CreateEventTreeModelInput, CreateFtaModelInput, CreateRbdModelInput, EventTreeModel, EventTreeModelsFilter,
+    FtaModel, FtaModelsFilter, RbdModel, RbdModelsFilter, UpdateEventTreeModelInput, UpdateFtaModelInput,
+    UpdateRbdModelInput,
 };
 use crate::reliability::fta_rbd_eta::eta_eval::{evaluate_eta, EtaGraph};
 use crate::reliability::fta_rbd_eta::fta_eval::{evaluate_fta, FtaGraph};
@@ -39,10 +39,7 @@ fn clamp01(x: f64) -> f64 {
 
 type EquipmentStats = (i64, f64, f64, f64);
 
-async fn latest_rams_data_change_at(
-    db: &DatabaseConnection,
-    equipment_id: i64,
-) -> AppResult<Option<String>> {
+async fn latest_rams_data_change_at(db: &DatabaseConnection, equipment_id: i64) -> AppResult<Option<String>> {
     let ev_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -175,9 +172,7 @@ async fn fetch_equipment_stats(
     let downtime_h: f64 = ev_row
         .try_get("", "downtime_h")
         .map_err(|e| decode_err("downtime_h", e))?;
-    let repair_h: f64 = ev_row
-        .try_get("", "repair_h")
-        .map_err(|e| decode_err("repair_h", e))?;
+    let repair_h: f64 = ev_row.try_get("", "repair_h").map_err(|e| decode_err("repair_h", e))?;
 
     let exp_row = db
         .query_one(Statement::from_sql_and_values(
@@ -219,14 +214,11 @@ async fn resolve_fta_graph_from_real_data(
             continue;
         }
 
-        let p_manual = node_spec
-            .as_object()
-            .and_then(|o| as_f64(o.get("p")))
-            .ok_or_else(|| {
-                AppError::ValidationFailed(vec![format!(
-                    "node '{node_id}': basic event requires numeric field 'p' for manual mode"
-                )])
-            })?;
+        let p_manual = node_spec.as_object().and_then(|o| as_f64(o.get("p"))).ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "node '{node_id}': basic event requires numeric field 'p' for manual mode"
+            )])
+        })?;
         let binding_cfg = match parse_node_binding(node_id, node_spec, equipment_id) {
             Ok(v) => v,
             Err(msg) => {
@@ -313,14 +305,11 @@ async fn resolve_rbd_graph_from_real_data(
             continue;
         }
 
-        let r_manual = node_spec
-            .as_object()
-            .and_then(|o| as_f64(o.get("r")))
-            .ok_or_else(|| {
-                AppError::ValidationFailed(vec![format!(
-                    "node '{node_id}': block requires numeric field 'r' for manual mode"
-                )])
-            })?;
+        let r_manual = node_spec.as_object().and_then(|o| as_f64(o.get("r"))).ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "node '{node_id}': block requires numeric field 'r' for manual mode"
+            )])
+        })?;
 
         let binding_cfg = match parse_node_binding(node_id, node_spec, equipment_id) {
             Ok(v) => v,
@@ -357,10 +346,7 @@ async fn resolve_rbd_graph_from_real_data(
         let lambda = (event_count as f64 / exposure_h).max(0.0);
         let availability = clamp01(1.0 - downtime_h / exposure_h);
         let reliability = clamp01((-lambda * cfg.mission_hours).exp());
-        let metric = cfg
-            .source_metric
-            .clone()
-            .unwrap_or_else(|| "availability".to_string());
+        let metric = cfg.source_metric.clone().unwrap_or_else(|| "availability".to_string());
         let r_real = if metric == "reliability" {
             reliability
         } else {
@@ -410,15 +396,24 @@ async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
 fn map_fta(row: &sea_orm::QueryResult) -> AppResult<FtaModel> {
     Ok(FtaModel {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| decode_err("entity_sync_id", e))?,
-        equipment_id: row.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+        equipment_id: row
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
         title: row.try_get("", "title").map_err(|e| decode_err("title", e))?,
         graph_json: row.try_get("", "graph_json").map_err(|e| decode_err("graph_json", e))?,
-        result_json: row.try_get("", "result_json").map_err(|e| decode_err("result_json", e))?,
+        result_json: row
+            .try_get("", "result_json")
+            .map_err(|e| decode_err("result_json", e))?,
         status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
-        created_by_id: row.try_get::<Option<i64>>("", "created_by_id")
+        created_by_id: row
+            .try_get::<Option<i64>>("", "created_by_id")
             .map_err(|e| decode_err("created_by_id", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -427,15 +422,24 @@ fn map_fta(row: &sea_orm::QueryResult) -> AppResult<FtaModel> {
 fn map_rbd(row: &sea_orm::QueryResult) -> AppResult<RbdModel> {
     Ok(RbdModel {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| decode_err("entity_sync_id", e))?,
-        equipment_id: row.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+        equipment_id: row
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
         title: row.try_get("", "title").map_err(|e| decode_err("title", e))?,
         graph_json: row.try_get("", "graph_json").map_err(|e| decode_err("graph_json", e))?,
-        result_json: row.try_get("", "result_json").map_err(|e| decode_err("result_json", e))?,
+        result_json: row
+            .try_get("", "result_json")
+            .map_err(|e| decode_err("result_json", e))?,
         status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
-        created_by_id: row.try_get::<Option<i64>>("", "created_by_id")
+        created_by_id: row
+            .try_get::<Option<i64>>("", "created_by_id")
             .map_err(|e| decode_err("created_by_id", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -444,15 +448,24 @@ fn map_rbd(row: &sea_orm::QueryResult) -> AppResult<RbdModel> {
 fn map_eta(row: &sea_orm::QueryResult) -> AppResult<EventTreeModel> {
     Ok(EventTreeModel {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| decode_err("entity_sync_id", e))?,
-        equipment_id: row.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+        equipment_id: row
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
         title: row.try_get("", "title").map_err(|e| decode_err("title", e))?,
         graph_json: row.try_get("", "graph_json").map_err(|e| decode_err("graph_json", e))?,
-        result_json: row.try_get("", "result_json").map_err(|e| decode_err("result_json", e))?,
+        result_json: row
+            .try_get("", "result_json")
+            .map_err(|e| decode_err("result_json", e))?,
         status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
-        created_by_id: row.try_get::<Option<i64>>("", "created_by_id")
+        created_by_id: row
+            .try_get::<Option<i64>>("", "created_by_id")
             .map_err(|e| decode_err("created_by_id", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -827,7 +840,9 @@ pub async fn update_event_tree_model(
         .await?
         .rows_affected();
     if n == 0 {
-        return Err(AppError::ValidationFailed(vec!["event_tree_models update conflict.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "event_tree_models update conflict.".into()
+        ]));
     }
     load_eta_by_id(db, input.id).await
 }

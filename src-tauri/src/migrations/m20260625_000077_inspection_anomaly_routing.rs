@@ -15,10 +15,8 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
 
-        db.execute_unprepared(
-            "ALTER TABLE inspection_anomalies ADD COLUMN routing_decision TEXT NULL",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE inspection_anomalies ADD COLUMN routing_decision TEXT NULL")
+            .await?;
 
         db.execute_unprepared(
             "ALTER TABLE intervention_requests ADD COLUMN source_inspection_anomaly_id INTEGER NULL \
@@ -44,10 +42,8 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared(
-            "DROP INDEX IF EXISTS idx_work_orders_one_open_per_source_inspection_anomaly",
-        )
-        .await?;
+        db.execute_unprepared("DROP INDEX IF EXISTS idx_work_orders_one_open_per_source_inspection_anomaly")
+            .await?;
         // SQLite cannot DROP COLUMN in older versions — leave columns on downgrade.
         Ok(())
     }

@@ -17,10 +17,7 @@ pub struct AuditEventInput {
     pub details_json: Option<serde_json::Value>,
 }
 
-pub async fn write_audit_event(
-    pool: &sea_orm::DatabaseConnection,
-    input: AuditEventInput,
-) -> AppResult<i64> {
+pub async fn write_audit_event(pool: &sea_orm::DatabaseConnection, input: AuditEventInput) -> AppResult<i64> {
     let details_json = input.details_json.map(|value| value.to_string());
 
     let insert = pool
@@ -102,10 +99,7 @@ mod tests {
         )
         .await;
 
-        assert!(
-            result.is_err(),
-            "write_audit_event must propagate insert errors"
-        );
+        assert!(result.is_err(), "write_audit_event must propagate insert errors");
     }
 
     #[test]

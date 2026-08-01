@@ -68,10 +68,7 @@ fn expected_signature(input: &EntitlementEnvelopeInput) -> Option<String> {
     let issuer_secrets = trusted_issuer_secrets();
     let secret = issuer_secrets.get(&(input.issuer.as_str(), input.key_id.as_str()))?;
     let payload_hash = payload_hash(input);
-    let material = format!(
-        "{}:{}:{}:{}",
-        input.issuer, input.key_id, payload_hash, secret
-    );
+    let material = format!("{}:{}:{}:{}", input.issuer, input.key_id, payload_hash, secret);
     let mut hasher = Sha256::new();
     hasher.update(material);
     Some(hex::encode(hasher.finalize()))
@@ -148,9 +145,7 @@ fn to_entitlement_envelope(row: &sea_orm::QueryResult) -> AppResult<EntitlementE
             .map_err(|e| decode_err("signature_alg", e))?,
         tier: row.try_get("", "tier").map_err(|e| decode_err("tier", e))?,
         state: row.try_get("", "state").map_err(|e| decode_err("state", e))?,
-        channel: row
-            .try_get("", "channel")
-            .map_err(|e| decode_err("channel", e))?,
+        channel: row.try_get("", "channel").map_err(|e| decode_err("channel", e))?,
         machine_slots: row
             .try_get("", "machine_slots")
             .map_err(|e| decode_err("machine_slots", e))?,
@@ -163,12 +158,8 @@ fn to_entitlement_envelope(row: &sea_orm::QueryResult) -> AppResult<EntitlementE
         policy_json: row
             .try_get("", "policy_json")
             .map_err(|e| decode_err("policy_json", e))?,
-        issued_at: row
-            .try_get("", "issued_at")
-            .map_err(|e| decode_err("issued_at", e))?,
-        valid_from: row
-            .try_get("", "valid_from")
-            .map_err(|e| decode_err("valid_from", e))?,
+        issued_at: row.try_get("", "issued_at").map_err(|e| decode_err("issued_at", e))?,
+        valid_from: row.try_get("", "valid_from").map_err(|e| decode_err("valid_from", e))?,
         valid_until: row
             .try_get("", "valid_until")
             .map_err(|e| decode_err("valid_until", e))?,
@@ -178,18 +169,14 @@ fn to_entitlement_envelope(row: &sea_orm::QueryResult) -> AppResult<EntitlementE
         payload_hash: row
             .try_get("", "payload_hash")
             .map_err(|e| decode_err("payload_hash", e))?,
-        signature: row
-            .try_get("", "signature")
-            .map_err(|e| decode_err("signature", e))?,
+        signature: row.try_get("", "signature").map_err(|e| decode_err("signature", e))?,
         verified_at: row
             .try_get("", "verified_at")
             .map_err(|e| decode_err("verified_at", e))?,
         verification_result: row
             .try_get("", "verification_result")
             .map_err(|e| decode_err("verification_result", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
     })
 }
 
@@ -270,9 +257,7 @@ async fn active_envelope(db: &DatabaseConnection) -> AppResult<Option<Entitlemen
 }
 
 /// Active envelope identity for License Enforcement view-model (no full row decode).
-pub async fn peek_active_envelope_meta(
-    db: &DatabaseConnection,
-) -> AppResult<Option<(String, String, String)>> {
+pub async fn peek_active_envelope_meta(db: &DatabaseConnection) -> AppResult<Option<(String, String, String)>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -448,8 +433,7 @@ pub async fn apply_entitlement_envelope(
         Some(_) => "invalid_signature".to_string(),
         None => "untrusted_issuer".to_string(),
     };
-    let verified =
-        verification_result == "verified" || verification_result == "soft_accepted";
+    let verified = verification_result == "verified" || verification_result == "soft_accepted";
     let tx = db.begin().await?;
 
     if input.lineage_version > 1 {
@@ -459,24 +443,17 @@ pub async fn apply_entitlement_envelope(
                 "SELECT COUNT(*) AS count
                  FROM entitlement_envelopes
                  WHERE envelope_id = ?",
-                [input
-                    .previous_envelope_id
-                    .clone()
-                    .unwrap_or_default()
-                    .into()],
+                [input.previous_envelope_id.clone().unwrap_or_default().into()],
             ))
             .await?
             .ok_or_else(|| {
-                AppError::ValidationFailed(vec![
-                    "Failed to validate previous envelope lineage.".to_string(),
-                ])
+                AppError::ValidationFailed(vec!["Failed to validate previous envelope lineage.".to_string()])
             })?
             .try_get("", "count")
             .map_err(|e| decode_err("previous_exists", e))?;
         if previous_exists == 0 {
             return Err(AppError::ValidationFailed(vec![
-                "previous_envelope_id must reference an existing envelope for lineage continuity."
-                    .to_string(),
+                "previous_envelope_id must reference an existing envelope for lineage continuity.".to_string(),
             ]));
         }
     }
@@ -578,9 +555,7 @@ pub async fn apply_entitlement_envelope(
                     [input.envelope_id.clone().into()],
                 ))
                 .await?
-                .ok_or_else(|| {
-                    AppError::SyncError("Failed to resolve inserted entitlement envelope.".to_string())
-                })?
+                .ok_or_else(|| AppError::SyncError("Failed to resolve inserted entitlement envelope.".to_string()))?
                 .try_get("", "id")
                 .map_err(|e| decode_err("id", e))?;
         }
@@ -629,9 +604,7 @@ pub async fn apply_entitlement_envelope(
                 [input.envelope_id.clone().into()],
             ))
             .await?
-            .ok_or_else(|| {
-                AppError::SyncError("Failed to resolve inserted entitlement envelope.".to_string())
-            })?
+            .ok_or_else(|| AppError::SyncError("Failed to resolve inserted entitlement envelope.".to_string()))?
             .try_get("", "id")
             .map_err(|e| decode_err("id", e))?;
     }
@@ -703,16 +676,11 @@ pub async fn get_entitlement_summary(db: &DatabaseConnection) -> AppResult<Entit
         let effective_state = compute_effective_state(&envelope);
         // #region agent log
         {
-            let false_count = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
-                &envelope.capabilities_json,
-            )
-            .ok()
-            .map(|m| {
-                m.values()
-                    .filter(|v| v.as_bool() == Some(false))
-                    .count()
-            })
-            .unwrap_or(0);
+            let false_count =
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&envelope.capabilities_json)
+                    .ok()
+                    .map(|m| m.values().filter(|v| v.as_bool() == Some(false)).count())
+                    .unwrap_or(0);
             let line = format!(
                 "{{\"sessionId\":\"a6aab3\",\"runId\":\"pre-fix\",\"hypothesisId\":\"A-D\",\"location\":\"entitlements/queries.rs:get_entitlement_summary\",\"message\":\"active envelope summary\",\"data\":{{\"hasEnvelope\":true,\"envelopeId\":\"{}\",\"tier\":\"{}\",\"effectiveState\":\"{}\",\"capJsonLen\":{},\"falseCapabilityCount\":{}}},\"timestamp\":{}}}\n",
                 envelope.envelope_id.replace('"', ""),
@@ -868,10 +836,7 @@ fn capability_from_permission(permission: &str) -> Option<&'static str> {
     }
 }
 
-pub async fn enforce_capability_for_permission(
-    db: &DatabaseConnection,
-    permission: &str,
-) -> AppResult<()> {
+pub async fn enforce_capability_for_permission(db: &DatabaseConnection, permission: &str) -> AppResult<()> {
     let Some(capability) = capability_from_permission(permission) else {
         return Ok(());
     };
@@ -885,7 +850,10 @@ pub async fn enforce_capability_for_permission(
     Ok(())
 }
 
-pub async fn get_entitlement_diagnostics(db: &DatabaseConnection, limit: Option<i64>) -> AppResult<EntitlementDiagnostics> {
+pub async fn get_entitlement_diagnostics(
+    db: &DatabaseConnection,
+    limit: Option<i64>,
+) -> AppResult<EntitlementDiagnostics> {
     let page_size = limit.unwrap_or(25).clamp(1, 200);
     let summary = get_entitlement_summary(db).await?;
     let cache_state = db

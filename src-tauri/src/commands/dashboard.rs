@@ -11,8 +11,8 @@ use tauri::State;
 use crate::auth::rbac::{check_permission, PermissionScope};
 use crate::errors::{AppError, AppResult};
 use crate::kpi_definitions;
-use crate::state::AppState;
 use crate::require_session;
+use crate::state::AppState;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
@@ -111,13 +111,17 @@ fn validate_dashboard_layout_json(raw: &str) -> AppResult<()> {
         .as_object()
         .ok_or_else(|| AppError::ValidationFailed(vec!["layout_json must be an object.".into()]))?;
     if obj.get("version").and_then(|x| x.as_u64()) != Some(1) {
-        return Err(AppError::ValidationFailed(vec!["layout_json.version must be 1.".into()]));
+        return Err(AppError::ValidationFailed(
+            vec!["layout_json.version must be 1.".into()],
+        ));
     }
     let Some(widgets) = obj.get("widgets").and_then(|x| x.as_array()) else {
         return Err(AppError::ValidationFailed(vec!["layout_json.widgets required.".into()]));
     };
     if widgets.is_empty() || widgets.len() > 32 {
-        return Err(AppError::ValidationFailed(vec!["layout_json.widgets length invalid.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "layout_json.widgets length invalid.".into()
+        ]));
     }
     for w in widgets {
         let wo = w
@@ -163,10 +167,34 @@ pub async fn get_dashboard_kpis(state: State<'_, AppState>) -> AppResult<Dashboa
     let user = require_session!(state);
     let db = &state.db;
 
-    let can_di = check_permission(db, user.user_id, crate::rbac::permissions::DI_VIEW, &PermissionScope::Global).await?;
-    let can_ot = check_permission(db, user.user_id, crate::rbac::permissions::OT_VIEW, &PermissionScope::Global).await?;
-    let can_eq = check_permission(db, user.user_id, crate::rbac::permissions::EQ_VIEW, &PermissionScope::Global).await?;
-    let can_pm = check_permission(db, user.user_id, crate::rbac::permissions::PM_VIEW, &PermissionScope::Global).await?;
+    let can_di = check_permission(
+        db,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    let can_ot = check_permission(
+        db,
+        user.user_id,
+        crate::rbac::permissions::OT_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    let can_eq = check_permission(
+        db,
+        user.user_id,
+        crate::rbac::permissions::EQ_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    let can_pm = check_permission(
+        db,
+        user.user_id,
+        crate::rbac::permissions::PM_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
 
     // ── Open DIs (current) ────────────────────────────────────────────
     let open_di_count = if can_di {
@@ -358,9 +386,27 @@ pub async fn get_dashboard_workload_chart(
     let db = &state.db;
     let period = if period_days == 30 { 30 } else { 7 };
 
-    let can_di = check_permission(db, user.user_id, crate::rbac::permissions::DI_VIEW, &PermissionScope::Global).await?;
-    let can_ot = check_permission(db, user.user_id, crate::rbac::permissions::OT_VIEW, &PermissionScope::Global).await?;
-    let can_pm = check_permission(db, user.user_id, crate::rbac::permissions::PM_VIEW, &PermissionScope::Global).await?;
+    let can_di = check_permission(
+        db,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    let can_ot = check_permission(
+        db,
+        user.user_id,
+        crate::rbac::permissions::OT_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    let can_pm = check_permission(
+        db,
+        user.user_id,
+        crate::rbac::permissions::PM_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
     let any_series = can_di || can_ot || can_pm;
 
     let mut days = Vec::with_capacity(period as usize);
@@ -502,7 +548,14 @@ pub async fn save_dashboard_layout(
 #[tauri::command]
 pub async fn get_dashboard_di_status_chart(state: State<'_, AppState>) -> AppResult<DashboardDiStatusChart> {
     let user = require_session!(state);
-    if !check_permission(&state.db, user.user_id, crate::rbac::permissions::DI_VIEW, &PermissionScope::Global).await? {
+    if !check_permission(
+        &state.db,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?
+    {
         return Ok(DashboardDiStatusChart {
             segments: vec![],
             available: false,
@@ -512,8 +565,7 @@ pub async fn get_dashboard_di_status_chart(state: State<'_, AppState>) -> AppRes
         .db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT status, COUNT(*) AS cnt FROM intervention_requests GROUP BY status ORDER BY cnt DESC"
-                .to_string(),
+            "SELECT status, COUNT(*) AS cnt FROM intervention_requests GROUP BY status ORDER BY cnt DESC".to_string(),
         ))
         .await?;
     use sea_orm::TryGetable;
@@ -534,7 +586,14 @@ pub async fn get_dashboard_reliability_snapshot_summary(
     state: State<'_, AppState>,
 ) -> AppResult<DashboardReliabilitySnapshotSummary> {
     let user = require_session!(state);
-    if !check_permission(&state.db, user.user_id, crate::rbac::permissions::REP_VIEW, &PermissionScope::Global).await? {
+    if !check_permission(
+        &state.db,
+        user.user_id,
+        crate::rbac::permissions::REP_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?
+    {
         return Ok(DashboardReliabilitySnapshotSummary {
             available: false,
             snapshot_count: 0,
@@ -585,10 +644,34 @@ pub async fn get_dashboard_kpi_validation(state: State<'_, AppState>) -> AppResu
     let user = require_session!(state);
     let db = &state.db;
 
-    let can_di = check_permission(db, user.user_id, crate::rbac::permissions::DI_VIEW, &PermissionScope::Global).await?;
-    let can_ot = check_permission(db, user.user_id, crate::rbac::permissions::OT_VIEW, &PermissionScope::Global).await?;
-    let can_eq = check_permission(db, user.user_id, crate::rbac::permissions::EQ_VIEW, &PermissionScope::Global).await?;
-    let can_pm = check_permission(db, user.user_id, crate::rbac::permissions::PM_VIEW, &PermissionScope::Global).await?;
+    let can_di = check_permission(
+        db,
+        user.user_id,
+        crate::rbac::permissions::DI_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    let can_ot = check_permission(
+        db,
+        user.user_id,
+        crate::rbac::permissions::OT_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    let can_eq = check_permission(
+        db,
+        user.user_id,
+        crate::rbac::permissions::EQ_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
+    let can_pm = check_permission(
+        db,
+        user.user_id,
+        crate::rbac::permissions::PM_VIEW,
+        &PermissionScope::Global,
+    )
+    .await?;
 
     const SQL_OPEN_DIS: &str = "SELECT COUNT(*) AS cnt FROM intervention_requests \
          WHERE status NOT IN ('rejected','converted_to_work_order',\
@@ -635,11 +718,7 @@ pub async fn get_dashboard_kpi_validation(state: State<'_, AppState>) -> AppResu
     } else {
         0
     };
-    let total_assets = if can_eq {
-        count_scalar(db, SQL_ASSETS).await
-    } else {
-        0
-    };
+    let total_assets = if can_eq { count_scalar(db, SQL_ASSETS).await } else { 0 };
     let overdue_di = if can_di {
         count_scalar(db, SQL_OVERDUE_DI).await
     } else {

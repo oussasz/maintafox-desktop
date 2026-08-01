@@ -2,8 +2,8 @@
 //!
 //! Files stored under app data `library_documents/`, same pattern as WO/DI attachments.
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 

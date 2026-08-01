@@ -103,8 +103,7 @@ impl MigrationTrait for Migration {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_urgency_levels_code ON urgency_levels(code)"
-                .to_string(),
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_urgency_levels_code ON urgency_levels(code)".to_string(),
         ))
         .await?;
 

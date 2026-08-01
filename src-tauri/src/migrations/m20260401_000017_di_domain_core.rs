@@ -43,24 +43,11 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     // -- Code (DI-0001 format, unique, non-recycled) --
-                    .col(
-                        ColumnDef::new(Alias::new("code"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
+                    .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
                     // -- Origin context --
-                    .col(
-                        ColumnDef::new(Alias::new("asset_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("asset_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("sub_asset_ref")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("org_node_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("org_node_id")).integer().not_null())
                     // -- State (PRD §6.4 11-state machine) --
                     .col(
                         ColumnDef::new(Alias::new("status"))
@@ -69,21 +56,9 @@ impl MigrationTrait for Migration {
                             .default("submitted"),
                     )
                     // -- Triage evidence --
-                    .col(
-                        ColumnDef::new(Alias::new("title"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("description"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("origin_type"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("title")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("description")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("origin_type")).text().not_null())
                     .col(ColumnDef::new(Alias::new("symptom_code_id")).integer())
                     // -- Impact flags --
                     .col(
@@ -126,11 +101,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("validated_urgency")).text())
                     // -- Timing (SLA origin) --
                     .col(ColumnDef::new(Alias::new("observed_at")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("submitted_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("submitted_at")).text().not_null())
                     // -- Review / approval tracking --
                     .col(ColumnDef::new(Alias::new("review_team_id")).integer())
                     .col(ColumnDef::new(Alias::new("reviewer_id")).integer())
@@ -145,9 +116,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("converted_at")).text())
                     // -- Review decision fields --
                     .col(ColumnDef::new(Alias::new("reviewer_note")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("classification_code_id")).integer(),
-                    )
+                    .col(ColumnDef::new(Alias::new("classification_code_id")).integer())
                     // -- Recurrence --
                     .col(
                         ColumnDef::new(Alias::new("is_recurrence_flag"))
@@ -164,21 +133,9 @@ impl MigrationTrait for Migration {
                             .default(1),
                     )
                     // -- Metadata --
-                    .col(
-                        ColumnDef::new(Alias::new("submitter_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("updated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("submitter_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -247,34 +204,14 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("di_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("from_status"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("to_status"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("action"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("di_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("from_status")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("to_status")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("action")).text().not_null())
                     .col(ColumnDef::new(Alias::new("actor_id")).integer())
                     .col(ColumnDef::new(Alias::new("reason_code")).text())
                     .col(ColumnDef::new(Alias::new("notes")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("acted_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("acted_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -294,18 +231,10 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("di_state_transition_log"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("di_state_transition_log")).to_owned())
             .await?;
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("intervention_requests"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("intervention_requests")).to_owned())
             .await?;
         Ok(())
     }

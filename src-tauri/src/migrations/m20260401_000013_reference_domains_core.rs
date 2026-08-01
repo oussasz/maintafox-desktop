@@ -42,28 +42,15 @@ impl MigrationTrait for Migration {
                     )
                     // Stable programmatic code (e.g. "FAILURE_CLASS", "EQUIPMENT_FAMILY").
                     // Uppercase snake or dot-safe token, unique across catalog.
-                    .col(
-                        ColumnDef::new(Alias::new("code"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
+                    .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
                     // Human-readable display name.
                     .col(ColumnDef::new(Alias::new("name")).text().not_null())
                     // Structure type governs how values are organized and edited.
                     // Allowed: flat, hierarchical, versioned_code_set, unit_set, external_code_set
-                    .col(
-                        ColumnDef::new(Alias::new("structure_type"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("structure_type")).text().not_null())
                     // Governance level controls edit constraints and downstream impact.
                     // Allowed: protected_analytical, tenant_managed, system_seeded, erp_synced
-                    .col(
-                        ColumnDef::new(Alias::new("governance_level"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("governance_level")).text().not_null())
                     // Whether tenant users can add values to this domain.
                     .col(
                         ColumnDef::new(Alias::new("is_extendable"))
@@ -156,12 +143,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("semantic_tag")).text())
                     // ERP or external system mapping code.
                     .col(ColumnDef::new(Alias::new("external_code")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("is_active"))
-                            .integer()
-                            .not_null()
-                            .default(1),
-                    )
+                    .col(ColumnDef::new(Alias::new("is_active")).integer().not_null().default(1))
                     // Open JSON extension bag for domain-specific attributes.
                     .col(ColumnDef::new(Alias::new("metadata_json")).text())
                     .to_owned(),

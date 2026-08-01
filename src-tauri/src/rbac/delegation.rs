@@ -9,8 +9,8 @@
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
-use crate::errors::AppResult;
 use super::model::DelegatedAdminPolicy;
+use crate::errors::AppResult;
 
 /// Check whether `delegator_user_id` is permitted — via delegation policies —
 /// to assign `permission_name` to `target_user_id` at the given scope.
@@ -71,28 +71,18 @@ pub async fn can_delegate_permission(
 /// `permission_domain` should be the prefix up to the first `.`
 /// (e.g. `"ot"` for `crate::rbac::permissions::OT_CREATE`), or a full permission name — in which case
 /// the domain is extracted automatically.
-pub fn validate_delegation_boundary(
-    policy: &DelegatedAdminPolicy,
-    permission_name: &str,
-) -> bool {
-    let domain = permission_name
-        .split('.')
-        .next()
-        .unwrap_or(permission_name);
+pub fn validate_delegation_boundary(policy: &DelegatedAdminPolicy, permission_name: &str) -> bool {
+    let domain = permission_name.split('.').next().unwrap_or(permission_name);
 
     // Parse allowed_domains_json as a JSON array of strings
-    let domains: Vec<String> = serde_json::from_str(&policy.allowed_domains_json)
-        .unwrap_or_default();
+    let domains: Vec<String> = serde_json::from_str(&policy.allowed_domains_json).unwrap_or_default();
 
     domains.iter().any(|d| d == domain)
 }
 
 /// Load all `delegated_admin_policies` whose `admin_role_id` is held by the
 /// given user through an active `user_scope_assignments` row.
-async fn load_policies_for_user(
-    db: &DatabaseConnection,
-    user_id: i64,
-) -> AppResult<Vec<DelegatedAdminPolicy>> {
+async fn load_policies_for_user(db: &DatabaseConnection, user_id: i64) -> AppResult<Vec<DelegatedAdminPolicy>> {
     let sql = "\
         SELECT dap.id, dap.admin_role_id, dap.managed_scope_type, \
                dap.managed_scope_reference, dap.allowed_domains_json, \
@@ -105,11 +95,7 @@ async fn load_policies_for_user(
           AND (usa.is_emergency = 0 OR usa.emergency_expires_at > datetime('now'))";
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [user_id.into()],
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [user_id.into()]))
         .await?;
 
     let policies = rows

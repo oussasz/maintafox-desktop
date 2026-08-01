@@ -75,9 +75,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_set(row: &QueryResult) -> AppResult<ReferenceSet> {
     Ok(ReferenceSet {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         domain_id: row
             .try_get::<i64>("", "domain_id")
             .map_err(|e| decode_err("domain_id", e))?,
@@ -102,8 +100,7 @@ fn map_set(row: &QueryResult) -> AppResult<ReferenceSet> {
     })
 }
 
-const SELECT_COLS: &str =
-    "id, domain_id, version_no, status, effective_from, created_by_id, created_at, published_at";
+const SELECT_COLS: &str = "id, domain_id, version_no, status, effective_from, created_by_id, created_at, published_at";
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
@@ -132,21 +129,14 @@ async fn next_version_no(db: &impl ConnectionTrait, domain_id: i64) -> AppResult
             [domain_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("MAX query returned no row"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("MAX query returned no row")))?;
 
-    let max_v: i64 = row
-        .try_get("", "max_v")
-        .map_err(|e| decode_err("max_v", e))?;
+    let max_v: i64 = row.try_get("", "max_v").map_err(|e| decode_err("max_v", e))?;
     Ok(max_v + 1)
 }
 
 /// Latest published set for a domain, if any.
-async fn find_published_set_id(
-    db: &impl ConnectionTrait,
-    domain_id: i64,
-) -> AppResult<Option<i64>> {
+async fn find_published_set_id(db: &impl ConnectionTrait, domain_id: i64) -> AppResult<Option<i64>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -157,16 +147,12 @@ async fn find_published_set_id(
         ))
         .await?;
     Ok(match row {
-        Some(r) => Some(
-            r.try_get::<i64>("", "id")
-                .map_err(|e| decode_err("id", e))?,
-        ),
+        Some(r) => Some(r.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?),
         None => None,
     })
 }
 
-const VALUE_CLONE_COLS: &str =
-    "id, parent_id, code, label, description, sort_order, \
+const VALUE_CLONE_COLS: &str = "id, parent_id, code, label, description, sort_order, \
      color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json";
 
 /// Clone all values (+ aliases) from a published set into a new draft set.
@@ -192,39 +178,23 @@ async fn clone_published_values_into_draft(
     let mut parent_jobs: Vec<(i64, i64)> = Vec::new(); // (new_id, old_parent_id)
 
     for row in &source_rows {
-        let old_id: i64 = row
-            .try_get("", "id")
-            .map_err(|e| decode_err("id", e))?;
-        let old_parent: Option<i64> = row
-            .try_get("", "parent_id")
-            .map_err(|e| decode_err("parent_id", e))?;
-        let code: String = row
-            .try_get("", "code")
-            .map_err(|e| decode_err("code", e))?;
-        let label: String = row
-            .try_get("", "label")
-            .map_err(|e| decode_err("label", e))?;
+        let old_id: i64 = row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        let old_parent: Option<i64> = row.try_get("", "parent_id").map_err(|e| decode_err("parent_id", e))?;
+        let code: String = row.try_get("", "code").map_err(|e| decode_err("code", e))?;
+        let label: String = row.try_get("", "label").map_err(|e| decode_err("label", e))?;
         let description: Option<String> = row
             .try_get("", "description")
             .map_err(|e| decode_err("description", e))?;
-        let sort_order: Option<i64> = row
-            .try_get("", "sort_order")
-            .map_err(|e| decode_err("sort_order", e))?;
-        let color_hex: Option<String> = row
-            .try_get("", "color_hex")
-            .map_err(|e| decode_err("color_hex", e))?;
-        let icon_name: Option<String> = row
-            .try_get("", "icon_name")
-            .map_err(|e| decode_err("icon_name", e))?;
+        let sort_order: Option<i64> = row.try_get("", "sort_order").map_err(|e| decode_err("sort_order", e))?;
+        let color_hex: Option<String> = row.try_get("", "color_hex").map_err(|e| decode_err("color_hex", e))?;
+        let icon_name: Option<String> = row.try_get("", "icon_name").map_err(|e| decode_err("icon_name", e))?;
         let semantic_tag: Option<String> = row
             .try_get("", "semantic_tag")
             .map_err(|e| decode_err("semantic_tag", e))?;
         let external_code: Option<String> = row
             .try_get("", "external_code")
             .map_err(|e| decode_err("external_code", e))?;
-        let is_active: i64 = row
-            .try_get("", "is_active")
-            .map_err(|e| decode_err("is_active", e))?;
+        let is_active: i64 = row.try_get("", "is_active").map_err(|e| decode_err("is_active", e))?;
         let metadata_json: Option<String> = row
             .try_get("", "metadata_json")
             .map_err(|e| decode_err("metadata_json", e))?;
@@ -258,14 +228,8 @@ async fn clone_published_values_into_draft(
                 [draft_set_id.into(), code.into()],
             ))
             .await?
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!(
-                    "cloned reference_values row missing after insert"
-                ))
-            })?;
-        let new_id: i64 = inserted
-            .try_get("", "id")
-            .map_err(|e| decode_err("id", e))?;
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("cloned reference_values row missing after insert")))?;
+        let new_id: i64 = inserted.try_get("", "id").map_err(|e| decode_err("id", e))?;
         id_map.insert(old_id, new_id);
         if let Some(pid) = old_parent {
             parent_jobs.push((new_id, pid));
@@ -295,11 +259,7 @@ async fn clone_published_values_into_draft(
     }
 
     let old_ids: Vec<i64> = id_map.keys().copied().collect();
-    let placeholders = old_ids
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(", ");
+    let placeholders = old_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let mut params: Vec<sea_orm::Value> = old_ids.iter().map(|id| (*id).into()).collect();
 
     let alias_rows = db
@@ -323,12 +283,8 @@ async fn clone_published_values_into_draft(
         let alias_label: String = row
             .try_get("", "alias_label")
             .map_err(|e| decode_err("alias_label", e))?;
-        let locale: String = row
-            .try_get("", "locale")
-            .map_err(|e| decode_err("locale", e))?;
-        let alias_type: String = row
-            .try_get("", "alias_type")
-            .map_err(|e| decode_err("alias_type", e))?;
+        let locale: String = row.try_get("", "locale").map_err(|e| decode_err("locale", e))?;
+        let alias_type: String = row.try_get("", "alias_type").map_err(|e| decode_err("alias_type", e))?;
         let is_preferred: i64 = row
             .try_get("", "is_preferred")
             .map_err(|e| decode_err("is_preferred", e))?;
@@ -394,10 +350,7 @@ async fn assert_no_active_draft(db: &DatabaseConnection, domain_id: i64) -> AppR
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /// Returns all sets for a domain, ordered by version descending.
-pub async fn list_sets_for_domain(
-    db: &DatabaseConnection,
-    domain_id: i64,
-) -> AppResult<Vec<ReferenceSet>> {
+pub async fn list_sets_for_domain(db: &DatabaseConnection, domain_id: i64) -> AppResult<Vec<ReferenceSet>> {
     assert_domain_exists(db, domain_id).await?;
 
     let rows = db
@@ -415,10 +368,7 @@ pub async fn list_sets_for_domain(
 }
 
 /// Returns a single set by id.
-pub async fn get_reference_set(
-    db: &DatabaseConnection,
-    set_id: i64,
-) -> AppResult<ReferenceSet> {
+pub async fn get_reference_set(db: &DatabaseConnection, set_id: i64) -> AppResult<ReferenceSet> {
     get_set_by_id(db, set_id).await
 }
 
@@ -429,11 +379,7 @@ pub async fn get_reference_set(
 ///
 /// When a published set exists, all values (and aliases) are cloned into the
 /// new draft in one transaction. When none exists (bootstrap), the draft is empty.
-pub async fn create_draft_set(
-    db: &DatabaseConnection,
-    domain_id: i64,
-    actor_id: i64,
-) -> AppResult<ReferenceSet> {
+pub async fn create_draft_set(db: &DatabaseConnection, domain_id: i64, actor_id: i64) -> AppResult<ReferenceSet> {
     let domain = super::domains::get_reference_domain(db, domain_id).await?;
     super::governance::assert_allows_create_draft_set(&domain)?;
     assert_no_active_draft(db, domain_id).await?;
@@ -448,12 +394,7 @@ pub async fn create_draft_set(
         "INSERT INTO reference_sets \
              (domain_id, version_no, status, created_by_id, created_at) \
          VALUES (?, ?, 'draft', ?, ?)",
-        [
-            domain_id.into(),
-            version_no.into(),
-            actor_id.into(),
-            now.into(),
-        ],
+        [domain_id.into(), version_no.into(), actor_id.into(), now.into()],
     ))
     .await?;
 
@@ -467,11 +408,7 @@ pub async fn create_draft_set(
             [domain_id.into(), version_no.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "reference_sets row missing after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_sets row missing after insert")))?;
 
     let draft = map_set(&row)?;
 
@@ -485,10 +422,7 @@ pub async fn create_draft_set(
 
 /// Hard-deletes a draft set and its values/aliases/validation reports.
 /// Never affects published or superseded sets.
-pub async fn discard_draft_set(
-    db: &DatabaseConnection,
-    set_id: i64,
-) -> AppResult<()> {
+pub async fn discard_draft_set(db: &DatabaseConnection, set_id: i64) -> AppResult<()> {
     let set = get_set_by_id(db, set_id).await?;
     let domain = super::domains::get_reference_domain(db, set.domain_id).await?;
     super::governance::assert_allows_create_draft_set(&domain)?;
@@ -536,8 +470,7 @@ pub async fn discard_draft_set(
 
     if deleted.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Le brouillon n'a pas pu être supprimé (statut modifié pendant l'opération)."
-                .into(),
+            "Le brouillon n'a pas pu être supprimé (statut modifié pendant l'opération).".into(),
         ]));
     }
 
@@ -551,11 +484,7 @@ pub async fn discard_draft_set(
 /// first; the transition is blocked when any blocking issues exist
 /// (`blocking_count > 0`). The validation report is always persisted regardless
 /// of the outcome.
-pub async fn validate_set(
-    db: &DatabaseConnection,
-    set_id: i64,
-    actor_id: i64,
-) -> AppResult<ReferenceSet> {
+pub async fn validate_set(db: &DatabaseConnection, set_id: i64, actor_id: i64) -> AppResult<ReferenceSet> {
     let set = get_set_by_id(db, set_id).await?;
 
     if set.status != SET_STATUS_DRAFT {
@@ -595,11 +524,7 @@ pub async fn validate_set(
 /// - Publishing automatically supersedes any previously published set in the
 ///   same domain (at most one published set per domain).
 /// - Sets `published_at` timestamp.
-pub async fn publish_set(
-    db: &DatabaseConnection,
-    set_id: i64,
-    _actor_id: i64,
-) -> AppResult<ReferenceSet> {
+pub async fn publish_set(db: &DatabaseConnection, set_id: i64, _actor_id: i64) -> AppResult<ReferenceSet> {
     let set = get_set_by_id(db, set_id).await?;
     let domain = super::domains::get_reference_domain(db, set.domain_id).await?;
     super::governance::assert_allows_publish(&domain)?;

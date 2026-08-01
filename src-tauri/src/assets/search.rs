@@ -78,9 +78,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResult> {
     Ok(AssetSearchResult {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         sync_id: row
             .try_get::<String>("", "sync_id")
             .map_err(|e| decode_err("sync_id", e))?,
@@ -152,9 +150,7 @@ fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResult> {
 
 fn map_suggestion(row: &QueryResult) -> AppResult<AssetSuggestion> {
     Ok(AssetSuggestion {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         asset_code: row
             .try_get::<String>("", "asset_code")
             .map_err(|e| decode_err("asset_code", e))?,
@@ -242,19 +238,14 @@ const SEARCH_FROM: &str = r"
 ///   - `org_node_ids` — restrict to specific org nodes
 ///   - `include_decommissioned` — when false (default), excludes DECOMMISSIONED
 ///   - `limit` — max rows returned (capped at 200)
-pub async fn search_assets(
-    db: &DatabaseConnection,
-    filters: AssetSearchFilters,
-) -> AppResult<Vec<AssetSearchResult>> {
+pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters) -> AppResult<Vec<AssetSearchResult>> {
     let mut where_clauses = vec!["e.deleted_at IS NULL".to_string()];
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
     // ── Decommissioned filter (resolved status, same as SEARCH_SELECT) ────
     if !filters.include_decommissioned.unwrap_or(false) {
-        where_clauses.push(
-            "COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')"
-                .to_string(),
-        );
+        where_clauses
+            .push("COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')".to_string());
     }
 
     // ── Text query (domain-aware: code, name, serial, external IDs) ──────
@@ -278,9 +269,7 @@ pub async fn search_assets(
     if let Some(ref codes) = filters.class_codes {
         if !codes.is_empty() {
             let placeholders = codes.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-            where_clauses.push(format!(
-                "COALESCE(rs_class.code, ec.code) IN ({placeholders})"
-            ));
+            where_clauses.push(format!("COALESCE(rs_class.code, ec.code) IN ({placeholders})"));
             for code in codes {
                 binds.push(code.clone().into());
             }
@@ -345,16 +334,10 @@ pub async fn search_assets(
         "ORDER BY e.asset_id_code ASC".to_string()
     };
 
-    let sql = format!(
-        "SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_sql} LIMIT {row_limit}"
-    );
+    let sql = format!("SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_sql} LIMIT {row_limit}");
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
     rows.iter().map(map_search_result).collect()

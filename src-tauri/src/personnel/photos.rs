@@ -17,9 +17,9 @@ fn extension_mime(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
     match ext.as_str() {
         "jpg" | "jpeg" => Some("image/jpeg"),
-        "png"          => Some("image/png"),
-        "webp"         => Some("image/webp"),
-        "gif"          => Some("image/gif"),
+        "png" => Some("image/png"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
         _ => None,
     }
 }
@@ -67,9 +67,8 @@ pub async fn upload_personnel_photo(
         ]));
     };
 
-    let meta = std::fs::metadata(src).map_err(|e| {
-        AppError::ValidationFailed(vec![format!("Impossible de lire le fichier source : {e}")])
-    })?;
+    let meta = std::fs::metadata(src)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de lire le fichier source : {e}")]))?;
     if !meta.is_file() {
         return Err(AppError::ValidationFailed(vec![
             "Le chemin source n'est pas un fichier.".into(),
@@ -101,9 +100,8 @@ pub async fn upload_personnel_photo(
         std::fs::create_dir_all(parent)?;
     }
 
-    let bytes = std::fs::read(src).map_err(|e| {
-        AppError::ValidationFailed(vec![format!("Impossible de lire le fichier : {e}")])
-    })?;
+    let bytes = std::fs::read(src)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de lire le fichier : {e}")]))?;
     std::fs::write(&absolute, &bytes)?;
 
     let mut abs_str = absolute.to_string_lossy().to_string();

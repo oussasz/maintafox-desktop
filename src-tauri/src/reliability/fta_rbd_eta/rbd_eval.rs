@@ -22,19 +22,12 @@ pub struct RbdEvalResult {
     pub message: String,
 }
 
-fn eval_rbd(
-    graph: &RbdGraph,
-    id: &str,
-    visiting: &mut HashSet<String>,
-) -> Result<f64, String> {
+fn eval_rbd(graph: &RbdGraph, id: &str, visiting: &mut HashSet<String>) -> Result<f64, String> {
     if visiting.contains(id) {
         return Err(format!("RBD cycle at '{id}'"));
     }
     visiting.insert(id.to_string());
-    let node = graph
-        .nodes
-        .get(id)
-        .ok_or_else(|| format!("RBD missing node '{id}'"))?;
+    let node = graph.nodes.get(id).ok_or_else(|| format!("RBD missing node '{id}'"))?;
     let r = match node {
         RbdNodeKind::Block { r } => Ok(r.clamp(0.0, 1.0)),
         RbdNodeKind::Series { children } => {

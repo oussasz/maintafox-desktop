@@ -9,11 +9,15 @@ mod tests {
     use crate::errors::AppError;
     use crate::wo::analytics;
     use crate::wo::audit;
-    use crate::wo::closeout::{self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput, WoReopenInput};
+    use crate::wo::closeout::{
+        self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput, WoReopenInput,
+    };
     use crate::wo::costs;
     use crate::wo::delay::{self, OpenDowntimeInput};
     use crate::wo::domain::{guard_wo_transition, WoCreateInput, WoStatus};
-    use crate::wo::execution::{self, WoAssignInput, WoMechCompleteInput, WoPauseInput, WoPlanInput, WoResumeInput, WoStartInput};
+    use crate::wo::execution::{
+        self, WoAssignInput, WoMechCompleteInput, WoPauseInput, WoPlanInput, WoResumeInput, WoStartInput,
+    };
     use crate::wo::labor::{self, AddLaborInput};
     use crate::wo::parts::{self, AddPartInput};
     use crate::wo::queries;
@@ -959,9 +963,7 @@ mod tests {
         .await
         .expect("close_wo");
 
-        let summary = costs::get_cost_summary(&db, wo.id)
-            .await
-            .expect("get_cost_summary");
+        let summary = costs::get_cost_summary(&db, wo.id).await.expect("get_cost_summary");
 
         approx_eq(summary.labor_cost, 280.0, 0.01);
         approx_eq(summary.parts_cost, 90.0, 0.01);

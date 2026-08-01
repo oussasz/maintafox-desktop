@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::policy::{
-    DQ_GREEN_THRESHOLD, EXPOSURE_LOOKBACK_DAYS, INSPECTION_COVERAGE_WARNING_THRESHOLD,
-};
+use super::policy::{DQ_GREEN_THRESHOLD, EXPOSURE_LOOKBACK_DAYS, INSPECTION_COVERAGE_WARNING_THRESHOLD};
 
 /// Evaluation profile — no hidden defaults; CLI must select explicitly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,9 +48,7 @@ pub fn evaluate_issues(input: &BlockingInput, profile: EvaluationProfile) -> Vec
         });
     }
 
-    if input.data_quality_score < DQ_GREEN_THRESHOLD
-        || input.eligible_event_count < input.min_sample_n.max(1)
-    {
+    if input.data_quality_score < DQ_GREEN_THRESHOLD || input.eligible_event_count < input.min_sample_n.max(1) {
         issues.push(ReadinessIssue {
             issue_code: "LOW_SAMPLE".into(),
             severity: "warning".into(),

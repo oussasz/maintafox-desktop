@@ -21,13 +21,7 @@ use super::queries::{
     stage_inspection_round,
 };
 
-const RESULT_STATUSES: &[&str] = &[
-    "pass",
-    "warning",
-    "fail",
-    "not_accessible",
-    "not_done",
-];
+const RESULT_STATUSES: &[&str] = &["pass", "warning", "fail", "not_accessible", "not_done"];
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("inspection_results decode '{field}': {err}"))
@@ -124,11 +118,15 @@ fn map_result(row: &sea_orm::QueryResult) -> AppResult<InspectionResult> {
         text_value: row.try_get("", "text_value").ok(),
         boolean_value: b.map(|x| x != 0),
         comment: row.try_get("", "comment").ok(),
-        recorded_at: row.try_get("", "recorded_at").map_err(|e| decode_err("recorded_at", e))?,
+        recorded_at: row
+            .try_get("", "recorded_at")
+            .map_err(|e| decode_err("recorded_at", e))?,
         recorded_by_id: row
             .try_get("", "recorded_by_id")
             .map_err(|e| decode_err("recorded_by_id", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -142,11 +140,15 @@ fn map_evidence(row: &sea_orm::QueryResult) -> AppResult<InspectionEvidence> {
         file_path_or_value: row
             .try_get("", "file_path_or_value")
             .map_err(|e| decode_err("file_path_or_value", e))?,
-        captured_at: row.try_get("", "captured_at").map_err(|e| decode_err("captured_at", e))?,
+        captured_at: row
+            .try_get("", "captured_at")
+            .map_err(|e| decode_err("captured_at", e))?,
         entity_sync_id: row
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -162,7 +164,9 @@ pub(crate) fn map_anomaly(row: &sea_orm::QueryResult) -> AppResult<InspectionAno
             .try_get("", "anomaly_type")
             .map_err(|e| decode_err("anomaly_type", e))?,
         severity: row.try_get("", "severity").map_err(|e| decode_err("severity", e))?,
-        description: row.try_get("", "description").map_err(|e| decode_err("description", e))?,
+        description: row
+            .try_get("", "description")
+            .map_err(|e| decode_err("description", e))?,
         linked_di_id: row.try_get("", "linked_di_id").ok(),
         linked_work_order_id: row.try_get("", "linked_work_order_id").ok(),
         requires_permit_review: rpr != 0,
@@ -173,7 +177,9 @@ pub(crate) fn map_anomaly(row: &sea_orm::QueryResult) -> AppResult<InspectionAno
         entity_sync_id: row
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -301,10 +307,7 @@ async fn maybe_bump_round(db: &DatabaseConnection, round: &InspectionRound) -> A
     Ok(())
 }
 
-fn resolve_status(
-    cp: &InspectionCheckpoint,
-    input: &RecordInspectionResultInput,
-) -> AppResult<String> {
+fn resolve_status(cp: &InspectionCheckpoint, input: &RecordInspectionResultInput) -> AppResult<String> {
     if let Some(ref s) = input.result_status {
         validate_result_status(s)?;
         return Ok(s.clone());
@@ -476,10 +479,14 @@ pub async fn record_inspection_result(
                 entity: "InspectionResult".into(),
                 id: eid.to_string(),
             })?;
-        let cur_rv: i64 = cur_row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?;
+        let cur_rv: i64 = cur_row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?;
         if let Some(exp) = input.expected_row_version {
             if cur_rv != exp {
-                return Err(AppError::ValidationFailed(vec!["row_version mismatch on inspection_results.".into()]));
+                return Err(AppError::ValidationFailed(vec![
+                    "row_version mismatch on inspection_results.".into(),
+                ]));
             }
         }
         let new_rv = cur_rv + 1;
@@ -582,7 +589,9 @@ pub async fn record_inspection_result(
     let round_refresh = get_inspection_round_by_id(db, round.id).await?.expect("row");
     maybe_bump_round(db, &round_refresh).await?;
 
-    get_inspection_result_by_id(db, result.id).await?.ok_or_else(|| AppError::Internal(anyhow::anyhow!("result")))
+    get_inspection_result_by_id(db, result.id)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("result")))
 }
 
 async fn insert_auto_anomaly(
@@ -658,7 +667,9 @@ pub async fn add_inspection_evidence(
     _actor_personnel_id: i64,
 ) -> AppResult<InspectionEvidence> {
     if input.evidence_type.trim().is_empty() || input.file_path_or_value.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["evidence_type and file_path_or_value required.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "evidence_type and file_path_or_value required.".into(),
+        ]));
     }
     let res = get_inspection_result_by_id(db, input.result_id)
         .await?
@@ -668,7 +679,9 @@ pub async fn add_inspection_evidence(
         })?;
     if let Some(exp) = input.expected_row_version {
         if res.row_version != exp {
-            return Err(AppError::ValidationFailed(vec!["row_version mismatch on inspection_results.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "row_version mismatch on inspection_results.".into(),
+            ]));
         }
     }
     let cap = input.captured_at.unwrap_or_else(|| Utc::now().to_rfc3339());
@@ -731,9 +744,13 @@ pub async fn update_inspection_anomaly(
             entity: "InspectionAnomaly".into(),
             id: input.id.to_string(),
         })?;
-    let rv: i64 = cur.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?;
+    let rv: i64 = cur
+        .try_get("", "row_version")
+        .map_err(|e| decode_err("row_version", e))?;
     if rv != input.expected_row_version {
-        return Err(AppError::ValidationFailed(vec!["row_version mismatch on inspection_anomalies.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "row_version mismatch on inspection_anomalies.".into(),
+        ]));
     }
     let new_rv = rv + 1;
     let rpr = input.requires_permit_review.unwrap_or(false);
@@ -765,7 +782,10 @@ pub async fn update_inspection_anomaly(
     Ok(an)
 }
 
-pub async fn enqueue_inspection_offline(db: &DatabaseConnection, input: EnqueueInspectionOfflineInput) -> AppResult<i64> {
+pub async fn enqueue_inspection_offline(
+    db: &DatabaseConnection,
+    input: EnqueueInspectionOfflineInput,
+) -> AppResult<i64> {
     if input.local_temp_id.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec!["local_temp_id required.".into()]));
     }
@@ -799,8 +819,12 @@ pub async fn list_inspection_offline_queue(db: &DatabaseConnection) -> AppResult
     for r in rows {
         out.push(InspectionOfflineQueueItem {
             id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
-            payload_json: r.try_get("", "payload_json").map_err(|e| decode_err("payload_json", e))?,
-            local_temp_id: r.try_get("", "local_temp_id").map_err(|e| decode_err("local_temp_id", e))?,
+            payload_json: r
+                .try_get("", "payload_json")
+                .map_err(|e| decode_err("payload_json", e))?,
+            local_temp_id: r
+                .try_get("", "local_temp_id")
+                .map_err(|e| decode_err("local_temp_id", e))?,
             sync_status: r.try_get("", "sync_status").map_err(|e| decode_err("sync_status", e))?,
         });
     }

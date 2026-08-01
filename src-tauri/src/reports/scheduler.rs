@@ -50,15 +50,7 @@ async fn run_due_schedules(db: &DatabaseConnection) -> AppResult<()> {
             Some(t) if t.is_active => t,
             _ => continue,
         };
-        let run_id = insert_run(
-            db,
-            Some(s.id),
-            s.template_id,
-            s.user_id,
-            "running",
-            &s.export_format,
-        )
-        .await?;
+        let run_id = insert_run(db, Some(s.id), s.template_id, s.user_id, "running", &s.export_format).await?;
 
         let doc = match export_report_document(db, &template.code, &s.export_format).await {
             Ok(d) => d,

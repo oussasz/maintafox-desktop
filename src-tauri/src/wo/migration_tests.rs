@@ -44,16 +44,12 @@ mod tests {
         let exists = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='work_orders';"
-                    .to_string(),
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='work_orders';".to_string(),
             ))
             .await
             .expect("query should succeed");
 
-        assert!(
-            exists.is_some(),
-            "work_orders table must exist after migration 022"
-        );
+        assert!(exists.is_some(), "work_orders table must exist after migration 022");
     }
 
     #[tokio::test]
@@ -63,8 +59,7 @@ mod tests {
         let exists = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='wo_state_transition_log';"
-                    .to_string(),
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='wo_state_transition_log';".to_string(),
             ))
             .await
             .expect("query should succeed");
@@ -82,8 +77,7 @@ mod tests {
         let exists = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='work_order_stubs';"
-                    .to_string(),
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='work_order_stubs';".to_string(),
             ))
             .await
             .expect("query should succeed");
@@ -106,31 +100,66 @@ mod tests {
             .await
             .expect("PRAGMA table_info should succeed");
 
-        let column_names: Vec<String> = rows
-            .iter()
-            .map(|r| r.try_get::<String>("", "name").unwrap())
-            .collect();
+        let column_names: Vec<String> = rows.iter().map(|r| r.try_get::<String>("", "name").unwrap()).collect();
 
         let expected_columns = [
-            "id", "code", "type_id", "status_id",
-            "equipment_id", "component_id", "location_id",
-            "requester_id", "source_di_id", "source_inspection_anomaly_id", "entity_id",
-            "planner_id", "approver_id", "assigned_group_id", "primary_responsible_id",
-            "urgency_id", "title", "description",
-            "planned_start", "planned_end", "shift", "scheduled_at",
-            "actual_start", "actual_end",
-            "mechanically_completed_at", "technically_verified_at",
-            "closed_at", "cancelled_at",
-            "expected_duration_hours", "actual_duration_hours",
-            "active_labor_hours", "total_waiting_hours", "downtime_hours",
-            "labor_cost", "parts_cost", "service_cost", "total_cost",
-            "recurrence_risk_level", "production_impact_id",
-            "root_cause_summary", "corrective_action_summary", "verification_method",
-            "notes", "cancel_reason",
-            "parts_actuals_confirmed", "service_cost_input", "reopen_count", "last_closed_at",
-            "requires_permit", "row_version", "created_at", "updated_at",
-            "entity_sync_id", "closeout_validation_profile_id", "closeout_validation_passed",
-            "no_downtime_attestation", "no_downtime_attestation_reason",
+            "id",
+            "code",
+            "type_id",
+            "status_id",
+            "equipment_id",
+            "component_id",
+            "location_id",
+            "requester_id",
+            "source_di_id",
+            "source_inspection_anomaly_id",
+            "entity_id",
+            "planner_id",
+            "approver_id",
+            "assigned_group_id",
+            "primary_responsible_id",
+            "urgency_id",
+            "title",
+            "description",
+            "planned_start",
+            "planned_end",
+            "shift",
+            "scheduled_at",
+            "actual_start",
+            "actual_end",
+            "mechanically_completed_at",
+            "technically_verified_at",
+            "closed_at",
+            "cancelled_at",
+            "expected_duration_hours",
+            "actual_duration_hours",
+            "active_labor_hours",
+            "total_waiting_hours",
+            "downtime_hours",
+            "labor_cost",
+            "parts_cost",
+            "service_cost",
+            "total_cost",
+            "recurrence_risk_level",
+            "production_impact_id",
+            "root_cause_summary",
+            "corrective_action_summary",
+            "verification_method",
+            "notes",
+            "cancel_reason",
+            "parts_actuals_confirmed",
+            "service_cost_input",
+            "reopen_count",
+            "last_closed_at",
+            "requires_permit",
+            "row_version",
+            "created_at",
+            "updated_at",
+            "entity_sync_id",
+            "closeout_validation_profile_id",
+            "closeout_validation_passed",
+            "no_downtime_attestation",
+            "no_downtime_attestation_reason",
         ];
 
         for col in &expected_columns {
@@ -167,8 +196,7 @@ mod tests {
         let row = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM work_order_statuses WHERE is_system = 1;"
-                    .to_string(),
+                "SELECT COUNT(*) AS cnt FROM work_order_statuses WHERE is_system = 1;".to_string(),
             ))
             .await
             .expect("query")

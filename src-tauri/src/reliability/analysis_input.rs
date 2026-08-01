@@ -127,9 +127,6 @@ mod tests {
             vec![],
             vec![],
         );
-        assert_eq!(
-            h,
-            "8979cea7ed742c0839b03a3990a37545133fd62e582da6e5fec603eef4ab07d7"
-        );
+        assert_eq!(h, "8979cea7ed742c0839b03a3990a37545133fd62e582da6e5fec603eef4ab07d7");
     }
 }

@@ -1,6 +1,4 @@
-use crate::wo::workflow::readiness::rule::{
-    check, ReadinessOutcome, ReadinessRule, RuleCategory, RuleSeverity,
-};
+use crate::wo::workflow::readiness::rule::{check, ReadinessOutcome, ReadinessRule, RuleCategory, RuleSeverity};
 use crate::wo::workflow::readiness::WoReadinessContext;
 
 pub struct ScheduleDefined;

@@ -20,10 +20,7 @@ use crate::assets::governance::{self, NormalizedImportRow, ValidationMessage};
 use crate::assets::identity;
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement,
-    TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -79,16 +76,12 @@ pub struct ImportEvent {
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "import row decode failed for column '{column}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("import row decode failed for column '{column}': {e}"))
 }
 
 fn map_batch_summary(row: &QueryResult) -> AppResult<ImportBatchSummary> {
     Ok(ImportBatchSummary {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         source_filename: row
             .try_get::<String>("", "source_filename")
             .map_err(|e| decode_err("source_filename", e))?,
@@ -126,16 +119,11 @@ fn map_preview_row(row: &QueryResult) -> AppResult<ImportPreviewRow> {
     let messages_json: String = row
         .try_get("", "validation_messages_json")
         .map_err(|e| decode_err("validation_messages_json", e))?;
-    let messages: Vec<ValidationMessage> =
-        serde_json::from_str(&messages_json).unwrap_or_default();
+    let messages: Vec<ValidationMessage> = serde_json::from_str(&messages_json).unwrap_or_default();
 
     Ok(ImportPreviewRow {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
-        row_no: row
-            .try_get::<i64>("", "row_no")
-            .map_err(|e| decode_err("row_no", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        row_no: row.try_get::<i64>("", "row_no").map_err(|e| decode_err("row_no", e))?,
         normalized_asset_code: row
             .try_get::<Option<String>>("", "normalized_asset_code")
             .map_err(|e| decode_err("normalized_asset_code", e))?,
@@ -157,9 +145,7 @@ fn map_preview_row(row: &QueryResult) -> AppResult<ImportPreviewRow> {
 
 fn map_import_event(row: &QueryResult) -> AppResult<ImportEvent> {
     Ok(ImportEvent {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         batch_id: row
             .try_get::<i64>("", "batch_id")
             .map_err(|e| decode_err("batch_id", e))?,
@@ -186,13 +172,9 @@ fn normalize_header(header: &str) -> Option<&'static str> {
     let h = header.trim().to_lowercase();
     match h.as_str() {
         // Asset code
-        "asset_code" | "code_equipement" | "code_equip" | "equipment_code" | "code" => {
-            Some("asset_code")
-        }
+        "asset_code" | "code_equipement" | "code_equip" | "equipment_code" | "code" => Some("asset_code"),
         // External key
-        "external_key" | "cle_externe" | "external_id" | "id_externe" | "erp_id" => {
-            Some("external_key")
-        }
+        "external_key" | "cle_externe" | "external_id" | "id_externe" | "erp_id" => Some("external_key"),
         // Name
         "asset_name" | "nom" | "name" | "designation" | "nom_equipement" => Some("asset_name"),
         // Class
@@ -200,17 +182,13 @@ fn normalize_header(header: &str) -> Option<&'static str> {
         // Family
         "family_code" | "famille" | "code_famille" | "equipment_family" => Some("family_code"),
         // Criticality
-        "criticality_code" | "criticite" | "code_criticite" | "criticality" => {
-            Some("criticality_code")
-        }
+        "criticality_code" | "criticite" | "code_criticite" | "criticality" => Some("criticality_code"),
         // Status
         "status_code" | "statut" | "lifecycle_status" | "status" => Some("status_code"),
         // Org node
         "org_node_id" | "noeud_org" | "site" | "location" | "emplacement" => Some("org_node_id"),
         // Parent
-        "parent_asset_code" | "code_parent" | "parent_code" | "parent" => {
-            Some("parent_asset_code")
-        }
+        "parent_asset_code" | "code_parent" | "parent_code" | "parent" => Some("parent_asset_code"),
         // Manufacturer
         "manufacturer" | "fabricant" | "constructeur" => Some("manufacturer"),
         // Model
@@ -218,21 +196,15 @@ fn normalize_header(header: &str) -> Option<&'static str> {
         // Serial number
         "serial_number" | "numero_serie" | "no_serie" | "serial" => Some("serial_number"),
         // Maintainable boundary
-        "maintainable_boundary" | "frontiere_maintenable" | "maintainable" => {
-            Some("maintainable_boundary")
-        }
+        "maintainable_boundary" | "frontiere_maintenable" | "maintainable" => Some("maintainable_boundary"),
         // Commissioned at
-        "commissioned_at" | "date_mise_en_service" | "commissioning_date" => {
-            Some("commissioned_at")
-        }
+        "commissioned_at" | "date_mise_en_service" | "commissioning_date" => Some("commissioned_at"),
         _ => None,
     }
 }
 
 /// Parse a single CSV record (HashMap of header→value) into a NormalizedImportRow.
-fn normalize_record(
-    fields: &std::collections::HashMap<String, String>,
-) -> NormalizedImportRow {
+fn normalize_record(fields: &std::collections::HashMap<String, String>) -> NormalizedImportRow {
     let get = |key: &str| -> Option<String> {
         fields.get(key).and_then(|v| {
             let t = v.trim().to_string();
@@ -257,9 +229,8 @@ fn normalize_record(
         manufacturer: get("manufacturer"),
         model: get("model"),
         serial_number: get("serial_number"),
-        maintainable_boundary: get("maintainable_boundary").map(|v| {
-            matches!(v.to_lowercase().as_str(), "1" | "true" | "oui" | "yes")
-        }),
+        maintainable_boundary: get("maintainable_boundary")
+            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "oui" | "yes")),
         commissioned_at: get("commissioned_at"),
     }
 }
@@ -290,7 +261,9 @@ pub async fn create_import_batch(
         [
             filename.into(),
             file_sha256.into(),
-            actor_id.map(|id| sea_orm::Value::BigInt(Some(id))).unwrap_or(sea_orm::Value::BigInt(None)),
+            actor_id
+                .map(|id| sea_orm::Value::BigInt(Some(id)))
+                .unwrap_or(sea_orm::Value::BigInt(None)),
             now.clone().into(),
             now.clone().into(),
         ],
@@ -311,10 +284,13 @@ pub async fn create_import_batch(
         &txn,
         batch_id,
         "uploaded",
-        Some(&serde_json::json!({
-            "filename": filename,
-            "sha256": file_sha256,
-        }).to_string()),
+        Some(
+            &serde_json::json!({
+                "filename": filename,
+                "sha256": file_sha256,
+            })
+            .to_string(),
+        ),
         actor_id,
     )
     .await?;
@@ -355,26 +331,22 @@ pub async fn parse_and_stage_csv(
 
     let raw_headers: Vec<String> = reader
         .headers()
-        .map_err(|e| AppError::ValidationFailed(vec![format!(
-            "Impossible de lire les en-tetes CSV: {e}"
-        )]))?
+        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de lire les en-tetes CSV: {e}")]))?
         .iter()
         .map(|h| h.to_string())
         .collect();
 
     // Map raw headers to normalized field names
-    let header_map: Vec<Option<&'static str>> = raw_headers
-        .iter()
-        .map(|h| normalize_header(h))
-        .collect();
+    let header_map: Vec<Option<&'static str>> = raw_headers.iter().map(|h| normalize_header(h)).collect();
 
     // Check that at least asset_code or external_key is in headers
-    let has_identity = header_map.iter().any(|h| {
-        matches!(h, Some("asset_code") | Some("external_key"))
-    });
+    let has_identity = header_map
+        .iter()
+        .any(|h| matches!(h, Some("asset_code") | Some("external_key")));
     if !has_identity {
         return Err(AppError::ValidationFailed(vec![
-            "Le fichier CSV doit contenir au moins une colonne 'asset_code' ou 'external_key' (ou leurs equivalents).".into(),
+            "Le fichier CSV doit contenir au moins une colonne 'asset_code' ou 'external_key' (ou leurs equivalents)."
+                .into(),
         ]));
     }
 
@@ -382,9 +354,8 @@ pub async fn parse_and_stage_csv(
 
     let mut row_no: i64 = 0;
     for result in reader.records() {
-        let record = result.map_err(|e| {
-            AppError::ValidationFailed(vec![format!("Erreur CSV ligne {}: {e}", row_no + 2)])
-        })?;
+        let record =
+            result.map_err(|e| AppError::ValidationFailed(vec![format!("Erreur CSV ligne {}: {e}", row_no + 2)]))?;
         row_no += 1;
 
         // Build normalized field map
@@ -410,8 +381,12 @@ pub async fn parse_and_stage_csv(
                 batch_id.into(),
                 row_no.into(),
                 raw_json.into(),
-                norm_code.map(|c| sea_orm::Value::String(Some(Box::new(c)))).unwrap_or(sea_orm::Value::String(None)),
-                norm_ext.map(|c| sea_orm::Value::String(Some(Box::new(c)))).unwrap_or(sea_orm::Value::String(None)),
+                norm_code
+                    .map(|c| sea_orm::Value::String(Some(Box::new(c))))
+                    .unwrap_or(sea_orm::Value::String(None)),
+                norm_ext
+                    .map(|c| sea_orm::Value::String(Some(Box::new(c))))
+                    .unwrap_or(sea_orm::Value::String(None)),
             ],
         ))
         .await?;
@@ -471,19 +446,14 @@ pub async fn validate_import_batch(
     let mut error_count: i64 = 0;
 
     for staging_row in &staging_rows {
-        let staging_id: i64 = staging_row
-            .try_get("", "id")
-            .map_err(|e| decode_err("id", e))?;
-        let row_no: i64 = staging_row
-            .try_get("", "row_no")
-            .map_err(|e| decode_err("row_no", e))?;
+        let staging_id: i64 = staging_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        let row_no: i64 = staging_row.try_get("", "row_no").map_err(|e| decode_err("row_no", e))?;
         let raw_json: String = staging_row
             .try_get("", "raw_json")
             .map_err(|e| decode_err("raw_json", e))?;
 
         // Deserialize raw_json back to field map and normalize
-        let fields: std::collections::HashMap<String, String> =
-            serde_json::from_str(&raw_json).unwrap_or_default();
+        let fields: std::collections::HashMap<String, String> = serde_json::from_str(&raw_json).unwrap_or_default();
         let normalized = normalize_record(&fields);
 
         // Run governance validation
@@ -502,13 +472,19 @@ pub async fn validate_import_batch(
             [
                 outcome.status.clone().into(),
                 messages_json.into(),
-                outcome.proposed_action.clone()
+                outcome
+                    .proposed_action
+                    .clone()
                     .map(|a| sea_orm::Value::String(Some(Box::new(a))))
                     .unwrap_or(sea_orm::Value::String(None)),
-                normalized.asset_code.clone()
+                normalized
+                    .asset_code
+                    .clone()
                     .map(|c| sea_orm::Value::String(Some(Box::new(c))))
                     .unwrap_or(sea_orm::Value::String(None)),
-                normalized.external_key.clone()
+                normalized
+                    .external_key
+                    .clone()
                     .map(|c| sea_orm::Value::String(Some(Box::new(c))))
                     .unwrap_or(sea_orm::Value::String(None)),
                 staging_id.into(),
@@ -569,10 +545,7 @@ pub async fn validate_import_batch(
 ///
 /// Returns the batch summary and all staging rows with their validation
 /// outcomes, ordered by row number.
-pub async fn get_import_preview(
-    db: &DatabaseConnection,
-    batch_id: i64,
-) -> AppResult<ImportPreview> {
+pub async fn get_import_preview(db: &DatabaseConnection, batch_id: i64) -> AppResult<ImportPreview> {
     let batch = get_batch_by_id(db, batch_id).await?;
 
     let rows = db
@@ -628,10 +601,7 @@ pub async fn list_import_batches(
 }
 
 /// List import events for a batch (audit trail).
-pub async fn list_import_events(
-    db: &DatabaseConnection,
-    batch_id: i64,
-) -> AppResult<Vec<ImportEvent>> {
+pub async fn list_import_events(db: &DatabaseConnection, batch_id: i64) -> AppResult<Vec<ImportEvent>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -648,10 +618,7 @@ pub async fn list_import_events(
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Fetch a single batch by id.
-pub(crate) async fn get_batch_by_id(
-    db: &impl ConnectionTrait,
-    batch_id: i64,
-) -> AppResult<ImportBatchSummary> {
+pub(crate) async fn get_batch_by_id(db: &impl ConnectionTrait, batch_id: i64) -> AppResult<ImportBatchSummary> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -750,7 +717,7 @@ pub async fn apply_import_batch(
     // ── Idempotency guard ────────────────────────────────────────────────
     if batch.status == "applied" {
         return Err(AppError::ValidationFailed(vec![
-            "Ce lot d'import a déjà été appliqué.".into(),
+            "Ce lot d'import a déjà été appliqué.".into()
         ]));
     }
     if batch.status != "validated" {
@@ -779,10 +746,7 @@ pub async fn apply_import_batch(
         ))
         .await?;
 
-    let ext_system = policy
-        .external_system_code
-        .as_deref()
-        .unwrap_or("import");
+    let ext_system = policy.external_system_code.as_deref().unwrap_or("import");
 
     let txn = db.begin().await?;
 
@@ -792,9 +756,7 @@ pub async fn apply_import_batch(
     let mut errored: i64 = 0;
 
     for staging_row in &staging_rows {
-        let row_no: i64 = staging_row
-            .try_get("", "row_no")
-            .map_err(|e| decode_err("row_no", e))?;
+        let row_no: i64 = staging_row.try_get("", "row_no").map_err(|e| decode_err("row_no", e))?;
         let raw_json: String = staging_row
             .try_get("", "raw_json")
             .map_err(|e| decode_err("raw_json", e))?;
@@ -806,8 +768,7 @@ pub async fn apply_import_batch(
             .map_err(|e| decode_err("normalized_asset_code", e))?;
 
         // Re-normalize from raw_json
-        let fields: std::collections::HashMap<String, String> =
-            serde_json::from_str(&raw_json).unwrap_or_default();
+        let fields: std::collections::HashMap<String, String> = serde_json::from_str(&raw_json).unwrap_or_default();
         let normalized = normalize_record(&fields);
 
         // Attempt to apply this single row; row-level errors are counted, not propagated.
@@ -946,8 +907,7 @@ async fn apply_single_row(
         .criticality_code
         .as_deref()
         .ok_or_else(|| AppError::ValidationFailed(vec!["criticality_code requis.".into()]))?;
-    let criticality_value_id =
-        identity::resolve_criticality_code(txn, criticality_code).await?;
+    let criticality_value_id = identity::resolve_criticality_code(txn, criticality_code).await?;
 
     let status_code = normalized.status_code.as_deref().unwrap_or("IN_SERVICE");
     identity::validate_status_code(txn, status_code).await?;
@@ -960,7 +920,8 @@ async fn apply_single_row(
 
     match existing_id {
         Some(equip_id) => {
-            update_equipment_from_import(txn, equip_id, normalized, class_id, criticality_value_id, status_code).await?;
+            update_equipment_from_import(txn, equip_id, normalized, class_id, criticality_value_id, status_code)
+                .await?;
             Ok(RowOutcome::Updated)
         }
         None => {
@@ -1060,12 +1021,8 @@ async fn insert_equipment_from_import(
             [sync_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("import insert succeeded but row not found"))
-        })?;
-    id_row
-        .try_get::<i64>("", "id")
-        .map_err(|e| decode_err("id", e))
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("import insert succeeded but row not found")))?;
+    id_row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))
 }
 
 /// Update mutable identity fields on an existing equipment row.
@@ -1103,17 +1060,38 @@ async fn update_equipment_from_import(
             row_version = row_version + 1
           WHERE id = ? AND deleted_at IS NULL",
         [
-            n.asset_name.clone().map(|s| sea_orm::Value::String(Some(Box::new(s)))).unwrap_or(sea_orm::Value::String(None)),
+            n.asset_name
+                .clone()
+                .map(|s| sea_orm::Value::String(Some(Box::new(s))))
+                .unwrap_or(sea_orm::Value::String(None)),
             class_id.into(),
             status_code.into(),
             criticality_value_id.into(),
-            n.org_node_id.map(|id| sea_orm::Value::BigInt(Some(id))).unwrap_or(sea_orm::Value::BigInt(None)),
-            n.manufacturer.clone().map(|s| sea_orm::Value::String(Some(Box::new(s)))).unwrap_or(sea_orm::Value::String(None)),
-            n.model.clone().map(|s| sea_orm::Value::String(Some(Box::new(s)))).unwrap_or(sea_orm::Value::String(None)),
-            n.serial_number.clone().map(|s| sea_orm::Value::String(Some(Box::new(s)))).unwrap_or(sea_orm::Value::String(None)),
-            n.maintainable_boundary.map(|b| sea_orm::Value::BigInt(Some(i64::from(b)))).unwrap_or(sea_orm::Value::BigInt(None)),
-            n.commissioned_at.clone().map(|s| sea_orm::Value::String(Some(Box::new(s)))).unwrap_or(sea_orm::Value::String(None)),
-            decommissioned_at.map(|s| sea_orm::Value::String(Some(Box::new(s)))).unwrap_or(sea_orm::Value::String(None)),
+            n.org_node_id
+                .map(|id| sea_orm::Value::BigInt(Some(id)))
+                .unwrap_or(sea_orm::Value::BigInt(None)),
+            n.manufacturer
+                .clone()
+                .map(|s| sea_orm::Value::String(Some(Box::new(s))))
+                .unwrap_or(sea_orm::Value::String(None)),
+            n.model
+                .clone()
+                .map(|s| sea_orm::Value::String(Some(Box::new(s))))
+                .unwrap_or(sea_orm::Value::String(None)),
+            n.serial_number
+                .clone()
+                .map(|s| sea_orm::Value::String(Some(Box::new(s))))
+                .unwrap_or(sea_orm::Value::String(None)),
+            n.maintainable_boundary
+                .map(|b| sea_orm::Value::BigInt(Some(i64::from(b))))
+                .unwrap_or(sea_orm::Value::BigInt(None)),
+            n.commissioned_at
+                .clone()
+                .map(|s| sea_orm::Value::String(Some(Box::new(s))))
+                .unwrap_or(sea_orm::Value::String(None)),
+            decommissioned_at
+                .map(|s| sea_orm::Value::String(Some(Box::new(s))))
+                .unwrap_or(sea_orm::Value::String(None)),
             now.into(),
             equip_id.into(),
         ],

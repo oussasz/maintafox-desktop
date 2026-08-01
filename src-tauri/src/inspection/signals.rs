@@ -25,7 +25,9 @@ fn map_signal(row: &sea_orm::QueryResult) -> AppResult<InspectionReliabilitySign
         equipment_id: row
             .try_get("", "equipment_id")
             .map_err(|e| decode_err("equipment_id", e))?,
-        period_start: row.try_get("", "period_start").map_err(|e| decode_err("period_start", e))?,
+        period_start: row
+            .try_get("", "period_start")
+            .map_err(|e| decode_err("period_start", e))?,
         period_end: row.try_get("", "period_end").map_err(|e| decode_err("period_end", e))?,
         warning_count: row
             .try_get("", "warning_count")
@@ -37,7 +39,9 @@ fn map_signal(row: &sea_orm::QueryResult) -> AppResult<InspectionReliabilitySign
         checkpoint_coverage_ratio: row
             .try_get("", "checkpoint_coverage_ratio")
             .map_err(|e| decode_err("checkpoint_coverage_ratio", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -74,11 +78,7 @@ async fn stage_signal(db: &DatabaseConnection, row: &InspectionReliabilitySignal
     Ok(())
 }
 
-async fn count_i64(
-    db: &DatabaseConnection,
-    sql: &str,
-    binds: Vec<sea_orm::Value>,
-) -> AppResult<i64> {
+async fn count_i64(db: &DatabaseConnection, sql: &str, binds: Vec<sea_orm::Value>) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, binds))
         .await?
@@ -115,7 +115,9 @@ pub async fn refresh_inspection_reliability_signals(
     let mut out: Vec<InspectionReliabilitySignal> = Vec::with_capacity(eq_rows.len());
 
     for er in eq_rows {
-        let equipment_id: i64 = er.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?;
+        let equipment_id: i64 = er
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?;
 
         let warning_count = count_i64(
             db,

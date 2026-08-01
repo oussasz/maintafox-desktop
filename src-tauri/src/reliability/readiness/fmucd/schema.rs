@@ -18,10 +18,7 @@ impl FmucdRow {
                 fields.insert(h.clone(), v.to_string());
             }
         }
-        Self {
-            line_number,
-            fields,
-        }
+        Self { line_number, fields }
     }
 
     #[must_use]
@@ -39,12 +36,7 @@ pub fn parse_fmucd_datetime(raw: &str) -> Result<chrono::DateTime<Utc>> {
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
         return Ok(dt.with_timezone(&Utc));
     }
-    const FORMATS: [&str; 4] = [
-        "%m/%d/%Y %H:%M:%S",
-        "%Y-%m-%d %H:%M:%S",
-        "%m/%d/%Y",
-        "%Y-%m-%d",
-    ];
+    const FORMATS: [&str; 4] = ["%m/%d/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y", "%Y-%m-%d"];
     for fmt in FORMATS {
         if let Ok(nd) = NaiveDateTime::parse_from_str(s, fmt) {
             return Ok(nd.and_utc());

@@ -821,11 +821,7 @@ pub async fn generate_personnel_code(db: &impl ConnectionTrait) -> AppResult<Str
                 .to_string(),
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "Personnel code sequence query returned no rows"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Personnel code sequence query returned no rows")))?;
 
     let next_seq: i64 = row
         .try_get::<i64>("", "next_seq")

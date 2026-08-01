@@ -87,12 +87,7 @@ impl MigrationTrait for Migration {
                 r"INSERT OR IGNORE INTO permission_dependencies
                        (permission_name, required_permission_name, dependency_type, created_at)
                    VALUES (?, ?, ?, ?)",
-                [
-                    (*perm).into(),
-                    (*req).into(),
-                    (*dep_type).into(),
-                    now.clone().into(),
-                ],
+                [(*perm).into(), (*req).into(), (*dep_type).into(), now.clone().into()],
             ))
             .await?;
         }

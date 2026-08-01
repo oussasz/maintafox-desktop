@@ -40,11 +40,7 @@ pub struct ScopeChain {
 impl ScopeChain {
     /// Return all `org_node` ids in the chain (excludes the synthetic tenant 0).
     pub fn node_ids(&self) -> Vec<i64> {
-        self.nodes
-            .iter()
-            .filter(|n| n.id != 0)
-            .map(|n| n.id)
-            .collect()
+        self.nodes.iter().filter(|n| n.id != 0).map(|n| n.id).collect()
     }
 
     /// Return all scope reference strings suitable for matching against
@@ -76,10 +72,7 @@ impl ScopeChain {
 /// 4. A synthetic tenant node (id=0, scope_type = `"tenant"`) is prepended.
 ///
 /// Returns `Err(NotFound)` if `org_node_id` does not exist in `org_nodes`.
-pub async fn resolve_scope_chain(
-    db: &DatabaseConnection,
-    org_node_id: i64,
-) -> AppResult<ScopeChain> {
+pub async fn resolve_scope_chain(db: &DatabaseConnection, org_node_id: i64) -> AppResult<ScopeChain> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -143,9 +136,21 @@ mod tests {
     fn scope_chain_accessors() {
         let chain = ScopeChain {
             nodes: vec![
-                ScopeNode { id: 0, parent_id: None, scope_type: "tenant".into() },
-                ScopeNode { id: 1, parent_id: None, scope_type: "site".into() },
-                ScopeNode { id: 5, parent_id: Some(1), scope_type: "entity".into() },
+                ScopeNode {
+                    id: 0,
+                    parent_id: None,
+                    scope_type: "tenant".into(),
+                },
+                ScopeNode {
+                    id: 1,
+                    parent_id: None,
+                    scope_type: "site".into(),
+                },
+                ScopeNode {
+                    id: 5,
+                    parent_id: Some(1),
+                    scope_type: "entity".into(),
+                },
             ],
         };
 

@@ -40,21 +40,15 @@ mod tests {
         .await
         .expect("enable FK");
 
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations");
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder");
+        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
+        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
 
         db
     }
 
     /// Create a test user and return their `user_accounts.id`.
     async fn create_test_user(db: &DatabaseConnection, username: &str) -> i64 {
-        let now = chrono::Utc::now()
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let sync_id = Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
@@ -110,9 +104,7 @@ mod tests {
         valid_from: Option<&str>,
         valid_to: Option<&str>,
     ) -> i64 {
-        let now = chrono::Utc::now()
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let sync_id = Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
@@ -162,9 +154,7 @@ mod tests {
         emergency_expires_at: &str,
         reason: &str,
     ) -> i64 {
-        let now = chrono::Utc::now()
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let sync_id = Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
@@ -201,14 +191,8 @@ mod tests {
 
     /// Create a custom role with specific permission names (direct SQL).
     /// Returns the new role's id.
-    async fn create_test_role(
-        db: &DatabaseConnection,
-        name: &str,
-        permission_names: &[&str],
-    ) -> i64 {
-        let now = chrono::Utc::now()
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
+    async fn create_test_role(db: &DatabaseConnection, name: &str, permission_names: &[&str]) -> i64 {
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let sync_id = Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
@@ -216,12 +200,7 @@ mod tests {
             "INSERT INTO roles (sync_id, name, description, role_type, status, is_system, \
                                 created_at, updated_at, row_version) \
              VALUES (?, ?, NULL, 'custom', 'active', 0, ?, ?, 1)",
-            [
-                sync_id.into(),
-                name.into(),
-                now.clone().into(),
-                now.clone().into(),
-            ],
+            [sync_id.into(), name.into(), now.clone().into(), now.clone().into()],
         ))
         .await
         .expect("insert test role");
@@ -355,10 +334,22 @@ mod tests {
             .await
             .expect("effective_permissions");
 
-        assert!(perms.contains(crate::rbac::permissions::OT_VIEW), "missing ot.view: {perms:?}");
-        assert!(perms.contains(crate::rbac::permissions::OT_EDIT), "missing ot.edit: {perms:?}");
-        assert!(perms.contains(crate::rbac::permissions::DI_VIEW), "missing di.view: {perms:?}");
-        assert!(perms.contains(crate::rbac::permissions::DI_APPROVE), "missing di.approve: {perms:?}");
+        assert!(
+            perms.contains(crate::rbac::permissions::OT_VIEW),
+            "missing ot.view: {perms:?}"
+        );
+        assert!(
+            perms.contains(crate::rbac::permissions::OT_EDIT),
+            "missing ot.edit: {perms:?}"
+        );
+        assert!(
+            perms.contains(crate::rbac::permissions::DI_VIEW),
+            "missing di.view: {perms:?}"
+        );
+        assert!(
+            perms.contains(crate::rbac::permissions::DI_APPROVE),
+            "missing di.approve: {perms:?}"
+        );
     }
 
     /// 02 — Entity-scoped Technician role grants permissions only at the assigned entity.
@@ -369,32 +360,21 @@ mod tests {
         let role_id = get_role_id(&db, "Maintenance Technician").await;
 
         // Assign at entity_A only
-        assign_role(
-            &db,
-            user_id,
-            role_id,
-            "org_node",
-            Some("entity_A"),
-            None,
-            None,
-        )
-        .await;
+        assign_role(&db, user_id, role_id, "org_node", Some("entity_A"), None, None).await;
 
         // entity_A: should have permissions
-        let perms_a =
-            resolver::effective_permissions(&db, user_id, "org_node", Some("entity_A"))
-                .await
-                .expect("perms for entity_A");
+        let perms_a = resolver::effective_permissions(&db, user_id, "org_node", Some("entity_A"))
+            .await
+            .expect("perms for entity_A");
         assert!(
             perms_a.contains(crate::rbac::permissions::OT_VIEW),
             "entity_A should have ot.view: {perms_a:?}"
         );
 
         // entity_B: should NOT have permissions
-        let perms_b =
-            resolver::effective_permissions(&db, user_id, "org_node", Some("entity_B"))
-                .await
-                .expect("perms for entity_B");
+        let perms_b = resolver::effective_permissions(&db, user_id, "org_node", Some("entity_B"))
+            .await
+            .expect("perms for entity_B");
         assert!(
             !perms_b.contains(crate::rbac::permissions::OT_VIEW),
             "entity_B should NOT have ot.view: {perms_b:?}"
@@ -411,10 +391,7 @@ mod tests {
             .await
             .expect("effective_permissions");
 
-        assert!(
-            perms.is_empty(),
-            "deny-all fallback: expected empty set, got {perms:?}"
-        );
+        assert!(perms.is_empty(), "deny-all fallback: expected empty set, got {perms:?}");
     }
 
     /// 04 — Expired scope assignment (valid_to in the past) is excluded.
@@ -425,25 +402,13 @@ mod tests {
         let role_id = get_role_id(&db, "Supervisor").await;
         let yesterday = date_offset_days(-1);
 
-        assign_role(
-            &db,
-            user_id,
-            role_id,
-            "tenant",
-            None,
-            None,
-            Some(&yesterday),
-        )
-        .await;
+        assign_role(&db, user_id, role_id, "tenant", None, None, Some(&yesterday)).await;
 
         let perms = resolver::effective_permissions(&db, user_id, "tenant", None)
             .await
             .expect("effective_permissions");
 
-        assert!(
-            perms.is_empty(),
-            "expired assignment should yield empty set: {perms:?}"
-        );
+        assert!(perms.is_empty(), "expired assignment should yield empty set: {perms:?}");
     }
 
     /// 05 — Future scope assignment (valid_from in the future) is not yet active.
@@ -454,25 +419,13 @@ mod tests {
         let role_id = get_role_id(&db, "Supervisor").await;
         let tomorrow = date_offset_days(1);
 
-        assign_role(
-            &db,
-            user_id,
-            role_id,
-            "tenant",
-            None,
-            Some(&tomorrow),
-            None,
-        )
-        .await;
+        assign_role(&db, user_id, role_id, "tenant", None, Some(&tomorrow), None).await;
 
         let perms = resolver::effective_permissions(&db, user_id, "tenant", None)
             .await
             .expect("effective_permissions");
 
-        assert!(
-            perms.is_empty(),
-            "future assignment should yield empty set: {perms:?}"
-        );
+        assert!(perms.is_empty(), "future assignment should yield empty set: {perms:?}");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -485,7 +438,10 @@ mod tests {
         let db = setup_db().await;
 
         // ot.close depends hard on ot.edit; ot.edit depends hard on ot.view
-        let names: HashSet<String> = [crate::rbac::permissions::OT_CLOSE].iter().map(|s| s.to_string()).collect();
+        let names: HashSet<String> = [crate::rbac::permissions::OT_CLOSE]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let result = resolver::validate_hard_dependencies(&db, &names).await;
 
         assert!(result.is_err(), "expected hard-dep error");
@@ -503,10 +459,15 @@ mod tests {
         let db = setup_db().await;
 
         // Set with all hard deps satisfied: ot.view → ot.edit → ot.close + ot.reopen
-        let names: HashSet<String> = [crate::rbac::permissions::OT_REOPEN, crate::rbac::permissions::OT_CLOSE, crate::rbac::permissions::OT_EDIT, crate::rbac::permissions::OT_VIEW]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let names: HashSet<String> = [
+            crate::rbac::permissions::OT_REOPEN,
+            crate::rbac::permissions::OT_CLOSE,
+            crate::rbac::permissions::OT_EDIT,
+            crate::rbac::permissions::OT_VIEW,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
         // Hard deps should pass
         let hard_result = resolver::validate_hard_dependencies(&db, &names).await;
@@ -517,14 +478,10 @@ mod tests {
             .await
             .expect("dependency_warnings_for");
 
-        let has_reopen_warn = warns.iter().any(|d| {
-            d.permission_name == crate::rbac::permissions::OT_REOPEN
-                && d.dependency_type == "warn"
-        });
-        assert!(
-            has_reopen_warn,
-            "expected ot.reopen warn dependency in {warns:?}"
-        );
+        let has_reopen_warn = warns
+            .iter()
+            .any(|d| d.permission_name == crate::rbac::permissions::OT_REOPEN && d.dependency_type == "warn");
+        assert!(has_reopen_warn, "expected ot.reopen warn dependency in {warns:?}");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -606,9 +563,8 @@ mod tests {
         // Here we validate the same logic: any permission starting with a system
         // prefix (like "ot.") is disallowed for custom permissions.
         let system_prefixes = [
-            "eq.", "di.", "ot.", "org.", "per.", "ref.", "inv.", "pm.", "ram.", "rep.",
-            "arc.", "doc.", "plan.", "log.", "trn.", "iot.", "erp.", "ptw.", "fin.",
-            "ins.", "cfg.", "adm.",
+            "eq.", "di.", "ot.", "org.", "per.", "ref.", "inv.", "pm.", "ram.", "rep.", "arc.", "doc.", "plan.",
+            "log.", "trn.", "iot.", "erp.", "ptw.", "fin.", "ins.", "cfg.", "adm.",
         ];
 
         let test_name = "ot.my_override";
@@ -620,8 +576,7 @@ mod tests {
 
         // Also verify that a valid cst. name passes
         let valid_name = "cst.my_custom";
-        let is_valid = valid_name.starts_with("cst.")
-            && !system_prefixes.iter().any(|p| valid_name.starts_with(p));
+        let is_valid = valid_name.starts_with("cst.") && !system_prefixes.iter().any(|p| valid_name.starts_with(p));
         assert!(is_valid, "'cst.my_custom' should be allowed");
     }
 
@@ -637,8 +592,7 @@ mod tests {
         let role_id = get_role_id(&db, "Supervisor").await;
         let future_expiry = date_offset_days(1); // expires tomorrow
 
-        insert_emergency_grant(&db, user_id, role_id, "tenant", &future_expiry, "Incident response")
-            .await;
+        insert_emergency_grant(&db, user_id, role_id, "tenant", &future_expiry, "Incident response").await;
 
         let perms = resolver::effective_permissions(&db, user_id, "tenant", None)
             .await
@@ -658,8 +612,7 @@ mod tests {
         let role_id = get_role_id(&db, "Supervisor").await;
         let past_expiry = date_offset_days(-1); // expired yesterday
 
-        insert_emergency_grant(&db, user_id, role_id, "tenant", &past_expiry, "Past incident")
-            .await;
+        insert_emergency_grant(&db, user_id, role_id, "tenant", &past_expiry, "Past incident").await;
 
         let perms = resolver::effective_permissions(&db, user_id, "tenant", None)
             .await
@@ -684,14 +637,7 @@ mod tests {
         let site_admin_role_id = create_test_role(&db, "SiteAdmin_t13", &[crate::rbac::permissions::ADM_USERS]).await;
 
         // Create delegation policy: this role can manage ot and di domains at entity_A
-        insert_delegation_policy(
-            &db,
-            site_admin_role_id,
-            "org_node",
-            Some("entity_A"),
-            &["ot", "di"],
-        )
-        .await;
+        insert_delegation_policy(&db, site_admin_role_id, "org_node", Some("entity_A"), &["ot", "di"]).await;
 
         // Create Bob and assign SiteAdmin role at entity_A
         let bob_id = create_test_user(&db, "bob_t13").await;
@@ -745,7 +691,11 @@ mod tests {
         let db = setup_db().await;
 
         // Create a test role with known permissions
-        let perm_names = [crate::rbac::permissions::OT_VIEW, crate::rbac::permissions::OT_CREATE, crate::rbac::permissions::OT_EDIT];
+        let perm_names = [
+            crate::rbac::permissions::OT_VIEW,
+            crate::rbac::permissions::OT_CREATE,
+            crate::rbac::permissions::OT_EDIT,
+        ];
         let role_id = create_test_role(&db, "TestRole_t14", &perm_names).await;
 
         // Export: read the role's permissions from DB
@@ -777,12 +727,7 @@ mod tests {
         .expect("retire role");
 
         // Import as a new role with the exported permissions
-        let imported_role_id = create_test_role(
-            &db,
-            "TestRoleImported_t14",
-            &perm_names,
-        )
-        .await;
+        let imported_role_id = create_test_role(&db, "TestRoleImported_t14", &perm_names).await;
 
         // Verify the imported role has the correct permissions
         let imported_perms: HashSet<String> = {
@@ -807,8 +752,7 @@ mod tests {
         );
 
         // Validate dependencies are satisfied
-        let hard_result =
-            resolver::validate_hard_dependencies(&db, &imported_perms).await;
+        let hard_result = resolver::validate_hard_dependencies(&db, &imported_perms).await;
         assert!(
             hard_result.is_ok(),
             "imported permissions should satisfy all hard dependencies"
@@ -841,20 +785,18 @@ mod tests {
         assert_eq!(is_active, 1, "Alice should be active");
 
         // No scope assignments yet
-        let initial_perms =
-            resolver::effective_permissions(&db, alice_id, "tenant", None)
-                .await
-                .expect("initial perms");
+        let initial_perms = resolver::effective_permissions(&db, alice_id, "tenant", None)
+            .await
+            .expect("initial perms");
         assert!(initial_perms.is_empty(), "no assignments → empty perms");
 
         // ── Step 2: Assign Maintenance Technician role at tenant scope ───
         let tech_role_id = get_role_id(&db, "Maintenance Technician").await;
         assign_role(&db, alice_id, tech_role_id, "tenant", None, None, None).await;
 
-        let perms_after_assign =
-            resolver::effective_permissions(&db, alice_id, "tenant", None)
-                .await
-                .expect("perms after assign");
+        let perms_after_assign = resolver::effective_permissions(&db, alice_id, "tenant", None)
+            .await
+            .expect("perms after assign");
         assert!(
             perms_after_assign.contains(crate::rbac::permissions::OT_VIEW),
             "Technician should have ot.view: {perms_after_assign:?}"
@@ -880,16 +822,16 @@ mod tests {
         // ── Step 4: Validate ot.create in Technician's permission set ────
         // Maintenance Technician has ot.view, ot.create, ot.edit
         // ot.create depends hard on ot.view → satisfied
-        let tech_perm_set: HashSet<String> = [crate::rbac::permissions::OT_VIEW, crate::rbac::permissions::OT_CREATE, crate::rbac::permissions::OT_EDIT]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let valid_result =
-            resolver::validate_hard_dependencies(&db, &tech_perm_set).await;
-        assert!(
-            valid_result.is_ok(),
-            "ot.create + ot.view should satisfy hard deps"
-        );
+        let tech_perm_set: HashSet<String> = [
+            crate::rbac::permissions::OT_VIEW,
+            crate::rbac::permissions::OT_CREATE,
+            crate::rbac::permissions::OT_EDIT,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let valid_result = resolver::validate_hard_dependencies(&db, &tech_perm_set).await;
+        assert!(valid_result.is_ok(), "ot.create + ot.view should satisfy hard deps");
 
         // ── Step 5: Admin audit event ────────────────────────────────────
         // The IPC command `assign_role_scope` writes to admin_change_events.
@@ -906,14 +848,7 @@ mod tests {
             .try_get("", "id")
             .expect("admin id");
 
-        insert_admin_event(
-            &db,
-            "role_assigned",
-            admin_id,
-            Some(alice_id),
-            Some(tech_role_id),
-        )
-        .await;
+        insert_admin_event(&db, "role_assigned", admin_id, Some(alice_id), Some(tech_role_id)).await;
 
         // Verify the event exists
         let events = db
@@ -972,10 +907,9 @@ mod tests {
         // The resolver itself still returns permissions (is_active is checked
         // at the command layer, not in the resolver). This documents the design:
         // the resolver is scope-and-time-based; activation checks are in IPC commands.
-        let perms_after_deactivate =
-            resolver::effective_permissions(&db, alice_id, "tenant", None)
-                .await
-                .expect("perms after deactivate");
+        let perms_after_deactivate = resolver::effective_permissions(&db, alice_id, "tenant", None)
+            .await
+            .expect("perms after deactivate");
         // Assignments are still present, resolver doesn't check is_active
         assert!(
             perms_after_deactivate.contains(crate::rbac::permissions::OT_VIEW),
@@ -1160,10 +1094,7 @@ mod tests {
         let valid = password::verify_password("Pass#1234", &stored_hash).expect("verify password");
         assert!(valid, "password should still verify after PIN lockout");
 
-        assert!(
-            sm.unlock_session(),
-            "password unlock path should remain available"
-        );
+        assert!(sm.unlock_session(), "password unlock path should remain available");
         let info = sm.session_info();
         assert!(info.is_authenticated, "session should be authenticated");
         assert!(!info.is_locked, "session should be unlocked");

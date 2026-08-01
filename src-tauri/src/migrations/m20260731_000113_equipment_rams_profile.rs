@@ -28,8 +28,7 @@ impl MigrationTrait for Migration {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "ALTER TABLE equipment ADD COLUMN rams_utilization_factor REAL NOT NULL DEFAULT 1.0"
-                .to_string(),
+            "ALTER TABLE equipment ADD COLUMN rams_utilization_factor REAL NOT NULL DEFAULT 1.0".to_string(),
         ))
         .await?;
 
@@ -57,4 +56,3 @@ impl MigrationTrait for Migration {
         Ok(())
     }
 }
-

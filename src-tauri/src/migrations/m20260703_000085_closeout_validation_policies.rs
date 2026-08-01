@@ -1,7 +1,7 @@
 //! Closeout validation policies + work_orders closeout sync columns (gap 06 sprint 01).
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -42,7 +42,7 @@ impl MigrationTrait for Migration {
             DbBackend::Sqlite,
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_closeout_policies_entity_sync_id \
              ON closeout_validation_policies(entity_sync_id)"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
 
@@ -56,14 +56,12 @@ impl MigrationTrait for Migration {
              VALUES (NULL, 'default_corrective', \
               '{\"maintenance_type\":[\"corrective\",\"emergency\"]}', 1, 1, 1, 0, 1, 10, \
               'closeout_policy:1', 1)"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
 
-        db.execute_unprepared(
-            "ALTER TABLE work_orders ADD COLUMN entity_sync_id TEXT NULL",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE work_orders ADD COLUMN entity_sync_id TEXT NULL")
+            .await?;
         db.execute_unprepared(
             "UPDATE work_orders SET entity_sync_id = lower(hex(randomblob(16))) \
              WHERE entity_sync_id IS NULL",
@@ -90,14 +88,10 @@ impl MigrationTrait for Migration {
             "ALTER TABLE work_orders ADD COLUMN closeout_validation_passed INTEGER NOT NULL DEFAULT 0",
         )
         .await?;
-        db.execute_unprepared(
-            "ALTER TABLE work_orders ADD COLUMN no_downtime_attestation INTEGER NOT NULL DEFAULT 0",
-        )
-        .await?;
-        db.execute_unprepared(
-            "ALTER TABLE work_orders ADD COLUMN no_downtime_attestation_reason TEXT NULL",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE work_orders ADD COLUMN no_downtime_attestation INTEGER NOT NULL DEFAULT 0")
+            .await?;
+        db.execute_unprepared("ALTER TABLE work_orders ADD COLUMN no_downtime_attestation_reason TEXT NULL")
+            .await?;
 
         Ok(())
     }

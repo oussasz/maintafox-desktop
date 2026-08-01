@@ -35,10 +35,7 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement,
-    TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -106,25 +103,19 @@ pub struct RecordMeterReadingPayload {
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "meter row decode failed for column '{column}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("meter row decode failed for column '{column}': {e}"))
 }
 
 fn map_meter(row: &QueryResult) -> AppResult<AssetMeter> {
     Ok(AssetMeter {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         sync_id: row
             .try_get::<String>("", "sync_id")
             .map_err(|e| decode_err("sync_id", e))?,
         asset_id: row
             .try_get::<i64>("", "equipment_id")
             .map_err(|e| decode_err("equipment_id", e))?,
-        name: row
-            .try_get::<String>("", "name")
-            .map_err(|e| decode_err("name", e))?,
+        name: row.try_get::<String>("", "name").map_err(|e| decode_err("name", e))?,
         meter_code: row
             .try_get::<Option<String>>("", "meter_code")
             .map_err(|e| decode_err("meter_code", e))?,
@@ -163,9 +154,7 @@ fn map_meter(row: &QueryResult) -> AppResult<AssetMeter> {
 
 fn map_reading(row: &QueryResult) -> AppResult<MeterReading> {
     Ok(MeterReading {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         meter_id: row
             .try_get::<i64>("", "meter_id")
             .map_err(|e| decode_err("meter_id", e))?,
@@ -196,12 +185,7 @@ fn map_reading(row: &QueryResult) -> AppResult<MeterReading> {
 // ─── Validation helpers ───────────────────────────────────────────────────────
 
 /// Validate that a code exists in a given lookup domain.
-async fn validate_lookup(
-    db: &impl ConnectionTrait,
-    domain_key: &str,
-    code: &str,
-    field_label: &str,
-) -> AppResult<()> {
+async fn validate_lookup(db: &impl ConnectionTrait, domain_key: &str, code: &str, field_label: &str) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -223,10 +207,7 @@ async fn validate_lookup(
 }
 
 /// Assert that an equipment row exists and is not soft-deleted.
-async fn assert_asset_exists(
-    db: &impl ConnectionTrait,
-    asset_id: i64,
-) -> AppResult<()> {
+async fn assert_asset_exists(db: &impl ConnectionTrait, asset_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -245,10 +226,7 @@ async fn assert_asset_exists(
 
 /// Assert that a meter exists and is active. Returns meter details needed
 /// for reading validation: `(equipment_id, rollover_value)`.
-async fn assert_meter_exists(
-    db: &impl ConnectionTrait,
-    meter_id: i64,
-) -> AppResult<(i64, Option<f64>)> {
+async fn assert_meter_exists(db: &impl ConnectionTrait, meter_id: i64) -> AppResult<(i64, Option<f64>)> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -321,10 +299,7 @@ const READING_SELECT: &str = r"
 /// List all meters for an asset.
 ///
 /// Returns active meters first, ordered by `is_primary DESC, name ASC`.
-pub async fn list_asset_meters(
-    db: &DatabaseConnection,
-    asset_id: i64,
-) -> AppResult<Vec<AssetMeter>> {
+pub async fn list_asset_meters(db: &DatabaseConnection, asset_id: i64) -> AppResult<Vec<AssetMeter>> {
     let sql = format!(
         "SELECT {METER_SELECT} \
          FROM equipment_meters \
@@ -378,9 +353,7 @@ pub async fn create_asset_meter(
 
     if let Some(rv) = payload.rollover_value {
         if rv <= 0.0 {
-            errors.push(
-                "La valeur de retournement (rollover) doit etre strictement positive.".into(),
-            );
+            errors.push("La valeur de retournement (rollover) doit etre strictement positive.".into());
         }
     }
 
@@ -431,17 +404,11 @@ pub async fn create_asset_meter(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
-                "SELECT {METER_SELECT} FROM equipment_meters WHERE sync_id = ?"
-            ),
+            &format!("SELECT {METER_SELECT} FROM equipment_meters WHERE sync_id = ?"),
             [sync_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "meter created but not found after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("meter created but not found after insert")))?;
     let meter = map_meter(&row)?;
 
     txn.commit().await?;
@@ -496,11 +463,7 @@ pub async fn record_meter_reading(
     }
 
     // ── 4. Quality flag: default to 'accepted' ──────────────────────────
-    let quality_flag = payload
-        .quality_flag
-        .as_deref()
-        .unwrap_or("accepted")
-        .to_string();
+    let quality_flag = payload.quality_flag.as_deref().unwrap_or("accepted").to_string();
 
     let now = Utc::now().to_rfc3339();
     let reading_at = payload.reading_at.unwrap_or_else(|| now.clone());
@@ -592,11 +555,7 @@ pub async fn record_meter_reading(
             [payload.meter_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "meter reading created but not found after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("meter reading created but not found after insert")))?;
     let reading = map_reading(&row)?;
 
     txn.commit().await?;
@@ -615,10 +574,7 @@ pub async fn record_meter_reading(
 ///
 /// Returns the most recent accepted (non-corrected) reading, or `None`
 /// if the meter has no readings yet.
-pub async fn get_latest_meter_value(
-    db: &DatabaseConnection,
-    meter_id: i64,
-) -> AppResult<Option<MeterReading>> {
+pub async fn get_latest_meter_value(db: &DatabaseConnection, meter_id: i64) -> AppResult<Option<MeterReading>> {
     let sql = format!(
         "SELECT {READING_SELECT} FROM asset_meter_readings \
          WHERE meter_id = ? AND quality_flag != 'corrected' \

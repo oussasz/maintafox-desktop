@@ -58,10 +58,7 @@ pub async fn notify_returned(db: &DatabaseConnection, di: &InterventionRequest) 
         "di_returned",
         "warning",
         format!("DI renvoyée — {}", di.code),
-        Some(format!(
-            "{} nécessite des précisions du demandeur.",
-            di.title
-        )),
+        Some(format!("{} nécessite des précisions du demandeur.", di.title)),
     )
     .await;
 }
@@ -74,19 +71,13 @@ pub async fn notify_approved(db: &DatabaseConnection, di: &InterventionRequest) 
         "di_approved",
         "info",
         format!("DI approuvée — {}", di.code),
-        Some(format!(
-            "{} est autorisée ; conversion en OT possible.",
-            di.title
-        )),
+        Some(format!("{} est autorisée ; conversion en OT possible.", di.title)),
     )
     .await;
 }
 
 pub async fn notify_closed(db: &DatabaseConnection, di: &InterventionRequest) {
-    let disposition = di
-        .disposition_code
-        .as_deref()
-        .unwrap_or("closed");
+    let disposition = di.disposition_code.as_deref().unwrap_or("closed");
     emit_di_lifecycle(
         db,
         di,
@@ -94,19 +85,13 @@ pub async fn notify_closed(db: &DatabaseConnection, di: &InterventionRequest) {
         "di_closed",
         "info",
         format!("DI clôturée — {}", di.code),
-        Some(format!(
-            "{} clôturée (disposition: {disposition}).",
-            di.title
-        )),
+        Some(format!("{} clôturée (disposition: {disposition}).", di.title)),
     )
     .await;
 }
 
 pub async fn notify_converted(db: &DatabaseConnection, di: &InterventionRequest) {
-    let wo = di
-        .converted_to_wo_code
-        .as_deref()
-        .unwrap_or("OT");
+    let wo = di.converted_to_wo_code.as_deref().unwrap_or("OT");
     emit_di_lifecycle(
         db,
         di,

@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::badge::BadgeResult;
 use super::badge::evaluate_badge;
+use super::badge::BadgeResult;
 use super::blocking::{evaluate_issues, BlockingInput, EvaluationProfile, ReadinessIssue};
 use super::completeness::IsoCompletenessResult;
 use super::event::ReadinessEvent;

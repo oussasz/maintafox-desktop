@@ -38,14 +38,10 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ne_category ON notification_events(category_code)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ne_dedupe ON notification_events(dedupe_key)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ne_category ON notification_events(category_code)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ne_dedupe ON notification_events(dedupe_key)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE TABLE IF NOT EXISTS notification_categories (
@@ -118,10 +114,8 @@ impl MigrationTrait for Migration {
             "CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(recipient_user_id, delivery_state)",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_notif_event ON notifications(notification_event_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_notif_event ON notifications(notification_event_id)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE TABLE IF NOT EXISTS notification_deliveries (
@@ -363,15 +357,22 @@ impl MigrationTrait for Migration {
         db.execute_unprepared("DROP INDEX IF EXISTS idx_ne_dedupe").await?;
         db.execute_unprepared("DROP INDEX IF EXISTS idx_ne_category").await?;
 
-        db.execute_unprepared("DROP TABLE IF EXISTS notification_preferences").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS notification_acknowledgements").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS notification_deliveries").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS notification_preferences")
+            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS notification_acknowledgements")
+            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS notification_deliveries")
+            .await?;
         db.execute_unprepared("DROP TABLE IF EXISTS notifications").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS notification_escalation_steps").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS notification_escalation_steps")
+            .await?;
         db.execute_unprepared("DROP TABLE IF EXISTS notification_rules").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS notification_escalation_policies").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS notification_categories").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS notification_events").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS notification_escalation_policies")
+            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS notification_categories")
+            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS notification_events")
+            .await?;
 
         Ok(())
     }

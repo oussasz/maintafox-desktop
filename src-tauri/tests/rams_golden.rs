@@ -1,7 +1,5 @@
 use chrono::{DateTime, Utc};
-use maintafox_lib::reliability::compute::{
-    compute_reliability_kpis, KpiFailureEvent, ReliabilityKpiComputeInput,
-};
+use maintafox_lib::reliability::compute::{compute_reliability_kpis, KpiFailureEvent, ReliabilityKpiComputeInput};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

@@ -224,10 +224,7 @@ pub async fn create_node_type(db: &DatabaseConnection, payload: CreateNodeTypePa
     if existing > 0 {
         return Err(fail_params(
             "ORG_TYPE_DUPLICATE_CODE",
-            format!(
-                "Node type code '{}' already exists in this model.",
-                payload.code
-            ),
+            format!("Node type code '{}' already exists in this model.", payload.code),
             &[("typeCode", payload.code.clone())],
         ));
     }
@@ -338,10 +335,7 @@ pub async fn deactivate_node_type(db: &DatabaseConnection, id: i32) -> AppResult
 
 /// Update mutable fields of a node type. Only fields with `Some` values are updated.
 /// Only draft models may be mutated (same policy as [`create_node_type`]).
-pub async fn update_node_type(
-    db: &DatabaseConnection,
-    payload: UpdateNodeTypePayload,
-) -> AppResult<OrgNodeType> {
+pub async fn update_node_type(db: &DatabaseConnection, payload: UpdateNodeTypePayload) -> AppResult<OrgNodeType> {
     let existing = get_node_type_by_id(db, payload.id).await?;
 
     // Structural schema mutations are draft-only (align with create_node_type).
@@ -356,9 +350,7 @@ pub async fn update_node_type(
             entity: "org_structure_model".to_string(),
             id: existing.structure_model_id.to_string(),
         })?;
-    let model_status: String = model_row
-        .try_get("", "status")
-        .map_err(|e| decode_err("status", e))?;
+    let model_status: String = model_row.try_get("", "status").map_err(|e| decode_err("status", e))?;
     if model_status != "draft" {
         return Err(fail(
             "ORG_TYPE_DRAFT_ONLY",
@@ -415,10 +407,7 @@ pub async fn update_node_type(
     values.push(now.into());
     values.push(payload.id.into());
 
-    let sql = format!(
-        "UPDATE org_node_types SET {} WHERE id = ?",
-        sets.join(", ")
-    );
+    let sql = format!("UPDATE org_node_types SET {} WHERE id = ?", sets.join(", "));
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 

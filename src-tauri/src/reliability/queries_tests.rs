@@ -9,18 +9,14 @@ mod tests {
     use crate::reliability::queries;
 
     async fn setup() -> DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory db");
+        let db = Database::connect("sqlite::memory:").await.expect("in-memory db");
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "PRAGMA foreign_keys = ON;".to_string(),
         ))
         .await
         .expect("pragma foreign_keys");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations");
+        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
         crate::db::seeder::seed_system_data(&db).await.expect("seed");
         db
     }
@@ -142,9 +138,6 @@ mod tests {
             exp.get("source").and_then(|x| x.as_str()),
             Some("runtime_exposure_logs_fallback_no_completed_wo")
         );
-        assert_eq!(
-            exp.get("utilization_factor").and_then(|x| x.as_f64()),
-            Some(1.0)
-        );
+        assert_eq!(exp.get("utilization_factor").and_then(|x| x.as_f64()), Some(1.0));
     }
 }

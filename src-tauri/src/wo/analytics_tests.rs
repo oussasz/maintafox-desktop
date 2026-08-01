@@ -11,9 +11,7 @@ mod tests {
     use sea_orm_migration::MigratorTrait;
 
     use crate::wo::analytics;
-    use crate::wo::closeout::{
-        self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput,
-    };
+    use crate::wo::closeout::{self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput};
     use crate::wo::costs;
     use crate::wo::domain::WoCreateInput;
     use crate::wo::execution::{self, WoAssignInput, WoMechCompleteInput, WoPlanInput, WoStartInput};
@@ -215,11 +213,7 @@ mod tests {
     }
 
     /// Advance from draft to in_progress via Option B lifecycle.
-    async fn advance_to_in_progress(
-        db: &sea_orm::DatabaseConnection,
-        wo_id: i64,
-        rv: i64,
-    ) -> i64 {
+    async fn advance_to_in_progress(db: &sea_orm::DatabaseConnection, wo_id: i64, rv: i64) -> i64 {
         let actor = admin_id(db).await;
 
         // submit: draft → planning
@@ -298,11 +292,7 @@ mod tests {
     /// Full close pipeline from in_progress: add labor + parts + service cost,
     /// mech complete, failure detail, root_cause, verification, close.
     /// Returns the closed WO's row_version.
-    async fn close_wo_with_data(
-        db: &sea_orm::DatabaseConnection,
-        wo_id: i64,
-        rv: i64,
-    ) -> i64 {
+    async fn close_wo_with_data(db: &sea_orm::DatabaseConnection, wo_id: i64, rv: i64) -> i64 {
         let actor = admin_id(db).await;
         let verifier = create_second_user(db).await;
 

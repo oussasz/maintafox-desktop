@@ -215,9 +215,7 @@ fn normalize_email(raw: &str) -> AppResult<Option<String>> {
         && !normalized.ends_with('@')
         && normalized.rfind('.').is_some_and(|dot| dot > at_idx.unwrap_or(0) + 1);
     if !is_valid {
-        return Err(AppError::ValidationFailed(vec![
-            "Email format is invalid.".into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["Email format is invalid.".into()]));
     }
     Ok(Some(normalized))
 }
@@ -236,7 +234,7 @@ fn normalize_phone_e164(raw: &str) -> AppResult<Option<String>> {
                 out.push(ch);
             } else {
                 return Err(AppError::ValidationFailed(vec![
-                    "Phone number format is invalid.".into(),
+                    "Phone number format is invalid.".into()
                 ]));
             }
         } else if ch.is_ascii_digit() {
@@ -309,12 +307,14 @@ fn notify_rbac_global_change(app: &AppHandle, state: &AppState, action: &str) {
 
 /// List users with their current role assignments.
 #[tauri::command]
-pub async fn list_users(
-    filter: UserListFilter,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<UserWithRoles>> {
+pub async fn list_users(filter: UserListFilter, state: State<'_, AppState>) -> AppResult<Vec<UserWithRoles>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
 
     // Build WHERE clauses dynamically
     let mut conditions = vec!["ua.deleted_at IS NULL".to_owned()];
@@ -374,12 +374,14 @@ pub async fn list_users(
 
 /// Get detailed user info including all scope assignments and effective permissions.
 #[tauri::command]
-pub async fn get_user(
-    user_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<UserDetail> {
+pub async fn get_user(user_id: i64, state: State<'_, AppState>) -> AppResult<UserDetail> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
 
     let row = state
         .db
@@ -429,7 +431,12 @@ pub async fn get_user(
 #[tauri::command]
 pub async fn list_assignable_roles(state: State<'_, AppState>) -> AppResult<Vec<AssignableRoleSummary>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
 
     let rows = state
         .db
@@ -463,7 +470,7 @@ where
 {
     if role_id <= 0 {
         return Err(AppError::ValidationFailed(vec![
-            "role_id must be a positive integer.".into(),
+            "role_id must be a positive integer.".into()
         ]));
     }
     let ok = conn
@@ -486,13 +493,14 @@ where
 
 /// Create a new user account.
 #[tauri::command]
-pub async fn create_user(
-    input: CreateUserInput,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<IdPayload> {
+pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_, AppState>) -> AppResult<IdPayload> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
     // TODO: re-enable require_step_up!(state) once StepUpDialog UI is built (SP06-F03)
 
     // Validate identity_mode
@@ -506,9 +514,7 @@ pub async fn create_user(
     let password_hash = match input.identity_mode.as_str() {
         "local" => {
             let pw = input.initial_password.as_deref().ok_or_else(|| {
-                AppError::ValidationFailed(vec![
-                    "initial_password is required for local identity mode".into(),
-                ])
+                AppError::ValidationFailed(vec!["initial_password is required for local identity mode".into()])
             })?;
             validate_password_strength(pw)?;
             Some(crate::auth::password::hash_password(pw)?)
@@ -531,9 +537,7 @@ pub async fn create_user(
         _ => unreachable!(),
     };
 
-    let force_pw = input
-        .force_password_change
-        .unwrap_or(password_hash.is_some());
+    let force_pw = input.force_password_change.unwrap_or(password_hash.is_some());
 
     // Check username uniqueness
     let exists = state
@@ -562,9 +566,7 @@ pub async fn create_user(
             ))
             .await?;
         if p_exists.is_none() {
-            return Err(AppError::ValidationFailed(vec![
-                "Personnel record not found.".into(),
-            ]));
+            return Err(AppError::ValidationFailed(vec!["Personnel record not found.".into()]));
         }
         let linked = state
             .db
@@ -589,32 +591,33 @@ pub async fn create_user(
     let identity_mode_for_audit = input.identity_mode.clone();
     let role_id = input.role_id;
 
-    let activated_tenant_id =
-        crate::commands::product_license::get_activation_claim_tenant_id(&state.db).await?;
+    let activated_tenant_id = crate::commands::product_license::get_activation_claim_tenant_id(&state.db).await?;
 
     let tx = state.db.begin().await?;
 
     ensure_assignable_role_id(&tx, role_id).await?;
 
     tx.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO user_accounts \
+        DbBackend::Sqlite,
+        "INSERT INTO user_accounts \
                 (sync_id, username, identity_mode, password_hash, personnel_id, \
                  is_active, is_admin, force_password_change, \
                  failed_login_attempts, created_at, updated_at, row_version) \
              VALUES (?, ?, ?, ?, ?, 1, 0, ?, 0, ?, ?, 1)",
-            vec![
-                sync_id.into(),
-                input.username.into(),
-                input.identity_mode.into(),
-                password_hash.map_or(sea_orm::Value::String(None), |h| h.into()),
-                input.personnel_id.map_or(sea_orm::Value::Int(None), |pid| (pid as i32).into()),
-                i32::from(force_pw).into(),
-                now.clone().into(),
-                now.clone().into(),
-            ],
-        ))
-        .await?;
+        vec![
+            sync_id.into(),
+            input.username.into(),
+            input.identity_mode.into(),
+            password_hash.map_or(sea_orm::Value::String(None), |h| h.into()),
+            input
+                .personnel_id
+                .map_or(sea_orm::Value::Int(None), |pid| (pid as i32).into()),
+            i32::from(force_pw).into(),
+            now.clone().into(),
+            now.clone().into(),
+        ],
+    ))
+    .await?;
 
     // Get the inserted ID
     let id_row = tx
@@ -683,25 +686,30 @@ pub async fn create_user(
 
 /// List active users that cannot log in under the activated tenant due to missing tenant scope.
 #[tauri::command]
-pub async fn list_users_missing_tenant_scope(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<MissingTenantScopeUser>> {
+pub async fn list_users_missing_tenant_scope(state: State<'_, AppState>) -> AppResult<Vec<MissingTenantScopeUser>> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
     list_missing_tenant_scope_users(&state.db).await
 }
 
 /// Backfill tenant scope for users missing it, using the currently activated tenant claim.
 #[tauri::command]
-pub async fn backfill_users_missing_tenant_scope(
-    state: State<'_, AppState>,
-) -> AppResult<TenantScopeBackfillResult> {
+pub async fn backfill_users_missing_tenant_scope(state: State<'_, AppState>) -> AppResult<TenantScopeBackfillResult> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
-    let activated_tenant_id =
-        crate::commands::product_license::get_activation_claim_tenant_id(&state.db).await?;
+    let activated_tenant_id = crate::commands::product_license::get_activation_claim_tenant_id(&state.db).await?;
     let missing = list_missing_tenant_scope_users(&state.db).await?;
     if missing.is_empty() {
         return Ok(TenantScopeBackfillResult {
@@ -757,17 +765,19 @@ pub async fn backfill_users_missing_tenant_scope(
 
 /// Update an existing user account.
 #[tauri::command]
-pub async fn update_user(
-    input: UpdateUserInput,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn update_user(input: UpdateUserInput, state: State<'_, AppState>) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
 
     // Guard: cannot deactivate self
     if input.is_active == Some(false) && i64::from(caller.user_id) == input.user_id {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot deactivate your own account".into(),
+            "Cannot deactivate your own account".into()
         ]));
     }
 
@@ -868,19 +878,20 @@ pub async fn update_user(
 
 /// Deactivate a user account (set is_active = 0).
 #[tauri::command]
-pub async fn deactivate_user(
-    user_id: i64,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn deactivate_user(user_id: i64, app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     // Guard: cannot deactivate self
     if i64::from(caller.user_id) == user_id {
         return Err(AppError::ValidationFailed(vec![
-            "Cannot deactivate your own account".into(),
+            "Cannot deactivate your own account".into()
         ]));
     }
 
@@ -977,10 +988,7 @@ pub(crate) async fn assign_role_scope_impl(
     // Replace-at-scope: at most one assignment per (user_id, scope_type,
     // scope_reference) before insert. Supersedes prior rows including
     // emergency elevations so admins can assign without duplicate-key errors.
-    let scope_ref_key = input
-        .scope_reference
-        .as_deref()
-        .unwrap_or("");
+    let scope_ref_key = input.scope_reference.as_deref().unwrap_or("");
     state
         .db
         .execute(Statement::from_sql_and_values(
@@ -1030,9 +1038,7 @@ pub(crate) async fn assign_role_scope_impl(
         .await
         .map_err(|e| {
             if e.to_string().contains("UNIQUE constraint failed") {
-                AppError::ValidationFailed(vec![
-                    "This user already has this role assigned at the same scope".into(),
-                ])
+                AppError::ValidationFailed(vec!["This user already has this role assigned at the same scope".into()])
             } else {
                 AppError::Database(e)
             }
@@ -1115,7 +1121,12 @@ pub async fn assign_role_scope(
     state: State<'_, AppState>,
 ) -> AppResult<IdPayload> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     assign_role_scope_impl(state.inner(), &caller, input, true, Some(&app)).await
@@ -1123,13 +1134,14 @@ pub async fn assign_role_scope(
 
 /// Revoke a role-scope assignment (soft-delete).
 #[tauri::command]
-pub async fn revoke_role_scope(
-    assignment_id: i64,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn revoke_role_scope(assignment_id: i64, app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     // Look up the affected user_id before soft-deleting
@@ -1192,7 +1204,12 @@ pub async fn revoke_role_scope(
 #[tauri::command]
 pub async fn list_roles(state: State<'_, AppState>) -> AppResult<Vec<RoleWithPermissions>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
 
     let rows = state
         .db
@@ -1224,12 +1241,14 @@ pub async fn list_roles(state: State<'_, AppState>) -> AppResult<Vec<RoleWithPer
 
 /// Get detailed info about a single role.
 #[tauri::command]
-pub async fn get_role(
-    role_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<RoleDetail> {
+pub async fn get_role(role_id: i64, state: State<'_, AppState>) -> AppResult<RoleDetail> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
 
     let row = state
         .db
@@ -1275,19 +1294,19 @@ pub async fn get_role(
 
 /// Create a new custom role with a set of permissions.
 #[tauri::command]
-pub async fn create_role(
-    input: CreateRoleInput,
-    state: State<'_, AppState>,
-) -> AppResult<IdPayload> {
+pub async fn create_role(input: CreateRoleInput, state: State<'_, AppState>) -> AppResult<IdPayload> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     // Validate name is not empty
     if input.name.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "Role name cannot be empty".into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["Role name cannot be empty".into()]));
     }
 
     // Check name uniqueness
@@ -1369,13 +1388,14 @@ pub async fn create_role(
 
 /// Update a custom role's description and/or permission set.
 #[tauri::command]
-pub async fn update_role(
-    input: UpdateRoleInput,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn update_role(input: UpdateRoleInput, app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     // Load current role
@@ -1472,13 +1492,14 @@ pub async fn update_role(
 
 /// Soft-retire a role (set status = 'retired').
 #[tauri::command]
-pub async fn delete_role(
-    role_id: i64,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn delete_role(role_id: i64, app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     let row = state
@@ -1495,9 +1516,7 @@ pub async fn delete_role(
         })?;
 
     if row.try_get::<i32>("", "is_system")? == 1 {
-        return Err(AppError::PermissionDenied(
-            "System role cannot be modified".into(),
-        ));
+        return Err(AppError::PermissionDenied("System role cannot be modified".into()));
     }
 
     // Check for active assignments
@@ -1535,11 +1554,14 @@ pub async fn delete_role(
 
 /// List all role templates.
 #[tauri::command]
-pub async fn list_role_templates(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<model::RoleTemplate>> {
+pub async fn list_role_templates(state: State<'_, AppState>) -> AppResult<Vec<model::RoleTemplate>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
 
     let rows = state
         .db
@@ -1574,7 +1596,12 @@ pub async fn simulate_access(
     state: State<'_, AppState>,
 ) -> AppResult<SimulateAccessResult> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
 
     // Get effective permissions
     let perms = resolver::effective_permissions(
@@ -1631,7 +1658,12 @@ pub async fn grant_emergency_elevation(
     state: State<'_, AppState>,
 ) -> AppResult<IdPayload> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     // Validate reason is non-empty
@@ -1690,7 +1722,9 @@ pub async fn grant_emergency_elevation(
         let target_str = input.user_id.to_string();
         let detail = format!(
             r#"{{"role_id":{},"reason":"{}","assignment_id":{}}}"#,
-            input.role_id, input.reason.replace('"', "\\\""), id
+            input.role_id,
+            input.reason.replace('"', "\\\""),
+            id
         );
         crate::audit::emit(
             &state.db,
@@ -1719,7 +1753,12 @@ pub async fn revoke_emergency_elevation(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
 
     // Lookup the assignment to get user_id and verify it is an emergency assignment
     let row = state
@@ -1731,11 +1770,9 @@ pub async fn revoke_emergency_elevation(
             [input.assignment_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::NotFound {
-                entity: "assignment".into(),
-                id: input.assignment_id.to_string(),
-            }
+        .ok_or_else(|| AppError::NotFound {
+            entity: "assignment".into(),
+            id: input.assignment_id.to_string(),
         })?;
 
     let target_user_id: i64 = row
@@ -1773,12 +1810,14 @@ pub async fn revoke_emergency_elevation(
 /// Unlock a locked user account. Resets failed attempts, lockout timer, and
 /// consecutive lockout counter. Writes an admin change event for audit.
 #[tauri::command]
-pub async fn unlock_user_account(
-    user_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn unlock_user_account(user_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let admin = require_session!(state);
-    require_permission!(state, &admin, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &admin,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     // Verify user exists
@@ -1821,10 +1860,7 @@ pub async fn unlock_user_account(
             "INSERT INTO admin_change_events \
              (action, actor_id, target_user_id, summary, step_up_used) \
              VALUES ('account_unlocked', ?, ?, 'Admin unlocked user account', 1)",
-            [
-                (admin.user_id as i64).into(),
-                user_id.into(),
-            ],
+            [(admin.user_id as i64).into(), user_id.into()],
         ))
         .await;
 
@@ -1838,10 +1874,7 @@ pub async fn unlock_user_account(
 /// Batch-fetch presence status for a list of user IDs.
 /// Any authenticated user can call this — presence is not sensitive data.
 #[tauri::command]
-pub async fn get_user_presence(
-    user_ids: Vec<i64>,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<UserPresence>> {
+pub async fn get_user_presence(user_ids: Vec<i64>, state: State<'_, AppState>) -> AppResult<Vec<UserPresence>> {
     let _user = require_session!(state);
 
     if user_ids.is_empty() {
@@ -1861,19 +1894,12 @@ pub async fn get_user_presence(
         placeholders.join(", ")
     );
 
-    let mut values: Vec<sea_orm::Value> = user_ids
-        .iter()
-        .map(|id| sea_orm::Value::from(id.to_string()))
-        .collect();
+    let mut values: Vec<sea_orm::Value> = user_ids.iter().map(|id| sea_orm::Value::from(id.to_string())).collect();
     values.push(now_str.into());
 
     let rows = state
         .db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            values,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
     // Collect best (most recent) session per user
@@ -1892,10 +1918,11 @@ pub async fn get_user_presence(
         let uid_str = uid.to_string();
         let (status, last_activity_at) = match best.get(&uid_str) {
             Some(Some(ts)) => {
-                let parsed = chrono::DateTime::parse_from_rfc3339(ts)
-                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%SZ")
+                let parsed = chrono::DateTime::parse_from_rfc3339(ts).or_else(|_| {
+                    chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%SZ")
                         .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S"))
-                        .map(|ndt| ndt.and_utc().fixed_offset()));
+                        .map(|ndt| ndt.and_utc().fixed_offset())
+                });
                 match parsed {
                     Ok(dt) => {
                         if now.signed_duration_since(dt) <= idle_threshold {
@@ -1996,9 +2023,7 @@ where
     Ok(bootstrap_role_id)
 }
 
-async fn list_missing_tenant_scope_users(
-    db: &sea_orm::DatabaseConnection,
-) -> AppResult<Vec<MissingTenantScopeUser>> {
+async fn list_missing_tenant_scope_users(db: &sea_orm::DatabaseConnection) -> AppResult<Vec<MissingTenantScopeUser>> {
     let now = chrono::Utc::now().to_rfc3339();
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -2086,10 +2111,7 @@ async fn load_scope_assignments(
 }
 
 /// Load permission names for a role.
-async fn load_role_permission_names(
-    db: &sea_orm::DatabaseConnection,
-    role_id: i64,
-) -> AppResult<Vec<String>> {
+async fn load_role_permission_names(db: &sea_orm::DatabaseConnection, role_id: i64) -> AppResult<Vec<String>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2110,18 +2132,13 @@ async fn load_role_permission_names(
 }
 
 /// Validate that all permission names exist in the permissions table.
-async fn validate_permission_names_exist(
-    db: &sea_orm::DatabaseConnection,
-    names: &HashSet<String>,
-) -> AppResult<()> {
+async fn validate_permission_names_exist(db: &sea_orm::DatabaseConnection, names: &HashSet<String>) -> AppResult<()> {
     if names.is_empty() {
         return Ok(());
     }
 
     let placeholders: String = names.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let sql = format!(
-        "SELECT name FROM permissions WHERE name IN ({placeholders})"
-    );
+    let sql = format!("SELECT name FROM permissions WHERE name IN ({placeholders})");
     let values: Vec<sea_orm::Value> = names.iter().map(|n| n.clone().into()).collect();
 
     let rows = db
@@ -2147,10 +2164,7 @@ async fn validate_permission_names_exist(
 }
 
 /// Guard: prevent deactivating the last active user holding the Superadmin role.
-async fn guard_last_superadmin(
-    db: &sea_orm::DatabaseConnection,
-    target_user_id: i64,
-) -> AppResult<()> {
+async fn guard_last_superadmin(db: &sea_orm::DatabaseConnection, target_user_id: i64) -> AppResult<()> {
     // Count active users who hold the Superadmin role (or Administrator - Phase 1 name)
     let count = db
         .query_one(Statement::from_sql_and_values(

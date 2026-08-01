@@ -44,16 +44,8 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("source_filename"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("source_sha256"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("source_filename")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("source_sha256")).text().not_null())
                     .col(ColumnDef::new(Alias::new("initiated_by_id")).integer())
                     .col(
                         ColumnDef::new(Alias::new("status"))
@@ -61,40 +53,17 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default("uploaded"),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("total_rows"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("valid_rows"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("total_rows")).integer().not_null().default(0))
+                    .col(ColumnDef::new(Alias::new("valid_rows")).integer().not_null().default(0))
                     .col(
                         ColumnDef::new(Alias::new("warning_rows"))
                             .integer()
                             .not_null()
                             .default(0),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("error_rows"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("updated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("error_rows")).integer().not_null().default(0))
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -134,21 +103,9 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("batch_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("row_no"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("raw_json"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("batch_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("row_no")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("raw_json")).text().not_null())
                     .col(ColumnDef::new(Alias::new("normalized_asset_code")).text())
                     .col(ColumnDef::new(Alias::new("normalized_external_key")).text())
                     .col(
@@ -216,23 +173,11 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("batch_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("event_type"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("batch_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("event_type")).text().not_null())
                     .col(ColumnDef::new(Alias::new("summary_json")).text())
                     .col(ColumnDef::new(Alias::new("created_by_id")).integer())
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -254,9 +199,7 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // Reverse order: events → staging → batches.
-        for idx in [
-            "idx_import_events_batch_type",
-        ] {
+        for idx in ["idx_import_events_batch_type"] {
             manager
                 .drop_index(
                     Index::drop()
@@ -268,11 +211,7 @@ impl MigrationTrait for Migration {
         }
 
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("asset_import_events"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("asset_import_events")).to_owned())
             .await?;
 
         for idx in [
@@ -291,17 +230,10 @@ impl MigrationTrait for Migration {
         }
 
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("asset_import_staging"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("asset_import_staging")).to_owned())
             .await?;
 
-        for idx in [
-            "idx_import_batches_status",
-            "idx_import_batches_sha256",
-        ] {
+        for idx in ["idx_import_batches_status", "idx_import_batches_sha256"] {
             manager
                 .drop_index(
                     Index::drop()
@@ -313,11 +245,7 @@ impl MigrationTrait for Migration {
         }
 
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("asset_import_batches"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("asset_import_batches")).to_owned())
             .await?;
 
         Ok(())

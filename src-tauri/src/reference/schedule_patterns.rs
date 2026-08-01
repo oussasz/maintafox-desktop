@@ -81,9 +81,7 @@ fn serialize_metadata(meta: &ScheduleMetadata) -> String {
         "is_continuous": meta.is_continuous.unwrap_or(false),
         "nominal_hours_per_day": meta.nominal_hours_per_day.unwrap_or(8.0),
     }))
-    .unwrap_or_else(|_| {
-        r#"{"shift_pattern_code":"","is_continuous":false,"nominal_hours_per_day":8.0}"#.into()
-    })
+    .unwrap_or_else(|_| r#"{"shift_pattern_code":"","is_continuous":false,"nominal_hours_per_day":8.0}"#.into())
 }
 
 fn validate_time(raw: &str) -> AppResult<()> {
@@ -140,11 +138,7 @@ pub async fn assert_schedule_reference_value_active(
             [reference_value_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec![format!(
-                "Classe horaire {reference_value_id} introuvable."
-            )])
-        })?;
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("Classe horaire {reference_value_id} introuvable.")]))?;
 
     let domain_code: String = row
         .try_get("", "domain_code")
@@ -154,9 +148,7 @@ pub async fn assert_schedule_reference_value_active(
             "La valeur sélectionnée n'appartient pas au domaine Classes horaires.".into(),
         ]));
     }
-    let is_active: i64 = row
-        .try_get("", "is_active")
-        .map_err(|e| decode_err("is_active", e))?;
+    let is_active: i64 = row.try_get("", "is_active").map_err(|e| decode_err("is_active", e))?;
     if is_active == 0 {
         return Err(AppError::ValidationFailed(vec![format!(
             "Classe horaire {reference_value_id} inactive."
@@ -254,10 +246,7 @@ pub async fn seed_default_details_if_schedule_class(
     Ok(())
 }
 
-async fn load_details(
-    db: &DatabaseConnection,
-    reference_value_id: i64,
-) -> AppResult<Vec<ScheduleDayPattern>> {
+async fn load_details(db: &DatabaseConnection, reference_value_id: i64) -> AppResult<Vec<ScheduleDayPattern>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -268,29 +257,18 @@ async fn load_details(
         .await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
-        let is_rest: i64 = r
-            .try_get("", "is_rest_day")
-            .map_err(|e| decode_err("is_rest_day", e))?;
+        let is_rest: i64 = r.try_get("", "is_rest_day").map_err(|e| decode_err("is_rest_day", e))?;
         out.push(ScheduleDayPattern {
-            day_of_week: r
-                .try_get("", "day_of_week")
-                .map_err(|e| decode_err("day_of_week", e))?,
-            shift_start: r
-                .try_get("", "shift_start")
-                .map_err(|e| decode_err("shift_start", e))?,
-            shift_end: r
-                .try_get("", "shift_end")
-                .map_err(|e| decode_err("shift_end", e))?,
+            day_of_week: r.try_get("", "day_of_week").map_err(|e| decode_err("day_of_week", e))?,
+            shift_start: r.try_get("", "shift_start").map_err(|e| decode_err("shift_start", e))?,
+            shift_end: r.try_get("", "shift_end").map_err(|e| decode_err("shift_end", e))?,
             is_rest_day: is_rest != 0,
         });
     }
     Ok(out)
 }
 
-pub async fn get_schedule_pattern(
-    db: &DatabaseConnection,
-    reference_value_id: i64,
-) -> AppResult<SchedulePattern> {
+pub async fn get_schedule_pattern(db: &DatabaseConnection, reference_value_id: i64) -> AppResult<SchedulePattern> {
     let value = assert_is_schedule_class_value(db, reference_value_id).await?;
     let meta = parse_metadata(value.metadata_json.as_deref(), &value.code);
     let mut details = load_details(db, reference_value_id).await?;
@@ -303,9 +281,7 @@ pub async fn get_schedule_pattern(
         code: value.code.clone(),
         label: value.label.clone(),
         is_active: value.is_active,
-        shift_pattern_code: meta
-            .shift_pattern_code
-            .unwrap_or_else(|| value.code.clone()),
+        shift_pattern_code: meta.shift_pattern_code.unwrap_or_else(|| value.code.clone()),
         is_continuous: meta.is_continuous.unwrap_or(false),
         nominal_hours_per_day: meta.nominal_hours_per_day.unwrap_or(8.0),
         details,
@@ -348,10 +324,7 @@ pub async fn upsert_schedule_pattern(
         DbBackend::Sqlite,
         "UPDATE reference_values SET metadata_json = ?, semantic_tag = COALESCE(semantic_tag, 'schedule_class') \
          WHERE id = ?",
-        [
-            serialize_metadata(&meta).into(),
-            payload.reference_value_id.into(),
-        ],
+        [serialize_metadata(&meta).into(), payload.reference_value_id.into()],
     ))
     .await?;
 

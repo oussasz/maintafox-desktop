@@ -211,8 +211,7 @@ async fn fetch_expiry_days(pool: &SqlitePool) -> Result<i64> {
     };
 
     let raw_value = row.try_get::<String>("", "setting_value_json")?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&raw_value).unwrap_or_else(|_| serde_json::json!(180));
+    let parsed: serde_json::Value = serde_json::from_str(&raw_value).unwrap_or_else(|_| serde_json::json!(180));
 
     let days = parsed
         .as_i64()

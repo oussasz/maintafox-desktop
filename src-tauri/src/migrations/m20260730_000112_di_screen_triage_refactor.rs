@@ -80,15 +80,13 @@ impl MigrationTrait for Migration {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "DELETE FROM permission_dependencies WHERE permission_name IN ('di.submit', 'di.submit.own')"
-                .to_string(),
+            "DELETE FROM permission_dependencies WHERE permission_name IN ('di.submit', 'di.submit.own')".to_string(),
         ))
         .await?;
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "DELETE FROM permissions WHERE name IN ('di.submit', 'di.submit.own')"
-                .to_string(),
+            "DELETE FROM permissions WHERE name IN ('di.submit', 'di.submit.own')".to_string(),
         ))
         .await?;
 

@@ -13,9 +13,8 @@ mod tests {
 
     use crate::di::domain::InterventionRequest;
     use crate::di::queries::{
-        create_intervention_request, get_di_transition_log, get_intervention_request,
-        get_recent_similar_dis, list_intervention_requests, update_di_draft_fields,
-        DiCreateInput, DiDraftUpdateInput, DiListFilter,
+        create_intervention_request, get_di_transition_log, get_intervention_request, get_recent_similar_dis,
+        list_intervention_requests, update_di_draft_fields, DiCreateInput, DiDraftUpdateInput, DiListFilter,
     };
 
     /// In-memory SQLite with all migrations applied + seeded system data.
@@ -51,7 +50,8 @@ mod tests {
             DbBackend::Sqlite,
             "INSERT INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
              VALUES (1, 'test-eq-001', 'EQ-TEST-001', 'Test Equipment', 'active_in_service', \
-             datetime('now'), datetime('now'));".to_string(),
+             datetime('now'), datetime('now'));"
+                .to_string(),
         ))
         .await
         .expect("insert test equipment");
@@ -59,7 +59,8 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
-             VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));".to_string(),
+             VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
+                .to_string(),
         ))
         .await
         .expect("insert test structure model");
@@ -176,7 +177,13 @@ mod tests {
 
         let di = create_intervention_request(
             &db,
-            make_create_input(&db, user_id, "Pump vibration alert", "Excessive vibration on pump P-101").await,
+            make_create_input(
+                &db,
+                user_id,
+                "Pump vibration alert",
+                "Excessive vibration on pump P-101",
+            )
+            .await,
         )
         .await
         .expect("create_di should succeed");
@@ -197,12 +204,9 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(
-            &db,
-            make_create_input(&db, user_id, "Test DI", "Description").await,
-        )
-        .await
-        .expect("create_di");
+        let di = create_intervention_request(&db, make_create_input(&db, user_id, "Test DI", "Description").await)
+            .await
+            .expect("create_di");
 
         let log = get_di_transition_log(&db, di.id).await.expect("log");
 
@@ -218,12 +222,10 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let created = create_intervention_request(
-            &db,
-            make_create_input(&db, user_id, "Fetched DI", "Fetch test").await,
-        )
-        .await
-        .expect("create_di");
+        let created =
+            create_intervention_request(&db, make_create_input(&db, user_id, "Fetched DI", "Fetch test").await)
+                .await
+                .expect("create_di");
 
         let fetched = get_intervention_request(&db, created.id)
             .await
@@ -290,10 +292,7 @@ mod tests {
 
         assert!(result.is_err(), "Should reject update on screened DI");
         let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("screened"),
-            "Error should mention current status: {err}"
-        );
+        assert!(err.contains("screened"), "Error should mention current status: {err}");
     }
 
     #[tokio::test]
@@ -338,12 +337,9 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di = create_intervention_request(
-            &db,
-            make_create_input(&db, user_id, "RFC test", "RFC desc").await,
-        )
-        .await
-        .expect("create_di");
+        let di = create_intervention_request(&db, make_create_input(&db, user_id, "RFC test", "RFC desc").await)
+            .await
+            .expect("create_di");
 
         // Forcibly set status to 'returned_for_clarification'
         db.execute(Statement::from_sql_and_values(
@@ -437,10 +433,7 @@ mod tests {
         )
         .await;
 
-        assert!(
-            result.is_err(),
-            "Stale row_version must return concurrency error"
-        );
+        assert!(result.is_err(), "Stale row_version must return concurrency error");
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("version") || err.contains("Conflit"),
@@ -520,7 +513,13 @@ mod tests {
         // Create 3 DIs with distinct titles
         create_intervention_request(
             &db,
-            make_create_input(&db, user_id, "Motor overheating alert", "Motor M-200 temp above threshold").await,
+            make_create_input(
+                &db,
+                user_id,
+                "Motor overheating alert",
+                "Motor M-200 temp above threshold",
+            )
+            .await,
         )
         .await
         .expect("di1");
@@ -534,7 +533,13 @@ mod tests {
 
         create_intervention_request(
             &db,
-            make_create_input(&db, user_id, "Hydraulic leak on press", "Oil pooling under press HP-400").await,
+            make_create_input(
+                &db,
+                user_id,
+                "Hydraulic leak on press",
+                "Oil pooling under press HP-400",
+            )
+            .await,
         )
         .await
         .expect("di3");
@@ -561,19 +566,13 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        let di1 = create_intervention_request(
-            &db,
-            make_create_input(&db, user_id, "DI-A", "A").await,
-        )
-        .await
-        .expect("di1");
+        let di1 = create_intervention_request(&db, make_create_input(&db, user_id, "DI-A", "A").await)
+            .await
+            .expect("di1");
 
-        create_intervention_request(
-            &db,
-            make_create_input(&db, user_id, "DI-B", "B").await,
-        )
-        .await
-        .expect("di2");
+        create_intervention_request(&db, make_create_input(&db, user_id, "DI-B", "B").await)
+            .await
+            .expect("di2");
 
         // Set di1 to screened
         db.execute(Statement::from_sql_and_values(
@@ -670,9 +669,7 @@ mod tests {
         .await
         .expect("di-b");
 
-        let similar = get_recent_similar_dis(&db, 1, None, 7)
-            .await
-            .expect("similar query");
+        let similar = get_recent_similar_dis(&db, 1, None, 7).await.expect("similar query");
 
         assert_eq!(
             similar.len(),
@@ -702,9 +699,7 @@ mod tests {
             .expect("create");
         }
 
-        let similar = get_recent_similar_dis(&db, 1, None, 30)
-            .await
-            .expect("similar query");
+        let similar = get_recent_similar_dis(&db, 1, None, 30).await.expect("similar query");
 
         assert!(
             similar.len() <= 5,

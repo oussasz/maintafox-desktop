@@ -25,7 +25,12 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(Alias::new("entity_sync_id")).text().not_null().unique_key())
+                    .col(
+                        ColumnDef::new(Alias::new("entity_sync_id"))
+                            .text()
+                            .not_null()
+                            .unique_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("name")).text().not_null())
                     .col(ColumnDef::new(Alias::new("description")).text().not_null())
@@ -82,7 +87,12 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(Alias::new("entity_sync_id")).text().not_null().unique_key())
+                    .col(
+                        ColumnDef::new(Alias::new("entity_sync_id"))
+                            .text()
+                            .not_null()
+                            .unique_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("linked_work_order_id")).integer())
                     .col(ColumnDef::new(Alias::new("permit_type_id")).integer().not_null())
@@ -117,7 +127,12 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(Alias::new("entity_sync_id")).text().not_null().unique_key())
+                    .col(
+                        ColumnDef::new(Alias::new("entity_sync_id"))
+                            .text()
+                            .not_null()
+                            .unique_key(),
+                    )
                     .col(ColumnDef::new(Alias::new("permit_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("isolation_point")).text().not_null())
                     .col(ColumnDef::new(Alias::new("energy_type")).text().not_null())

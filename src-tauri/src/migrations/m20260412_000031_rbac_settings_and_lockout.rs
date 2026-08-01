@@ -35,18 +35,15 @@ impl MigrationTrait for Migration {
         // ── consecutive_lockouts column on user_accounts ──
         // Tracks how many times a user has been locked out (for progressive lockout).
         // Resets on successful login or admin unlock.
-        db.execute_unprepared(
-            "ALTER TABLE user_accounts ADD COLUMN consecutive_lockouts INTEGER NOT NULL DEFAULT 0",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE user_accounts ADD COLUMN consecutive_lockouts INTEGER NOT NULL DEFAULT 0")
+            .await?;
 
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared("DROP TABLE IF EXISTS rbac_settings")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS rbac_settings").await?;
         // SQLite does not support DROP COLUMN; consecutive_lockouts will remain.
         Ok(())
     }

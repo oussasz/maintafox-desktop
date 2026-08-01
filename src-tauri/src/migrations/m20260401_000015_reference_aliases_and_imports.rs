@@ -41,29 +41,13 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     // FK to reference_values.id — the canonical value this alias maps to.
-                    .col(
-                        ColumnDef::new(Alias::new("reference_value_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("reference_value_id")).integer().not_null())
                     // The alias text itself.
-                    .col(
-                        ColumnDef::new(Alias::new("alias_label"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("alias_label")).text().not_null())
                     // BCP-47 locale tag (e.g. "fr", "en").
-                    .col(
-                        ColumnDef::new(Alias::new("locale"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("locale")).text().not_null())
                     // Alias classification: legacy | import | search.
-                    .col(
-                        ColumnDef::new(Alias::new("alias_type"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("alias_type")).text().not_null())
                     // At most one preferred alias per (value, locale, type).
                     // Enforced in application logic, stored as 0/1.
                     .col(
@@ -72,11 +56,7 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(0),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -126,65 +106,26 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     // The reference domain this import targets.
-                    .col(
-                        ColumnDef::new(Alias::new("domain_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("domain_id")).integer().not_null())
                     // Original file name for audit display.
-                    .col(
-                        ColumnDef::new(Alias::new("source_filename"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("source_filename")).text().not_null())
                     // SHA-256 digest of the source file content.
-                    .col(
-                        ColumnDef::new(Alias::new("source_sha256"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("source_sha256")).text().not_null())
                     // Lifecycle state: uploaded | validated | applied | failed
-                    .col(
-                        ColumnDef::new(Alias::new("status"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("total_rows"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("valid_rows"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("status")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("total_rows")).integer().not_null().default(0))
+                    .col(ColumnDef::new(Alias::new("valid_rows")).integer().not_null().default(0))
                     .col(
                         ColumnDef::new(Alias::new("warning_rows"))
                             .integer()
                             .not_null()
                             .default(0),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("error_rows"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("error_rows")).integer().not_null().default(0))
                     // User who initiated the import (null for system-initiated).
                     .col(ColumnDef::new(Alias::new("initiated_by_id")).integer())
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("updated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -216,37 +157,17 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("batch_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("batch_id")).integer().not_null())
                     // 1-based row number from the source file.
-                    .col(
-                        ColumnDef::new(Alias::new("row_no"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("row_no")).integer().not_null())
                     // Original row data as JSON object.
-                    .col(
-                        ColumnDef::new(Alias::new("raw_json"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("raw_json")).text().not_null())
                     // Normalized reference value code extracted from the row.
                     .col(ColumnDef::new(Alias::new("normalized_code")).text())
                     // Row validation outcome: pending | valid | warning | error
-                    .col(
-                        ColumnDef::new(Alias::new("validation_status"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("validation_status")).text().not_null())
                     // JSON array of diagnostic messages.
-                    .col(
-                        ColumnDef::new(Alias::new("messages_json"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("messages_json")).text().not_null())
                     // Resolution action: create | update | skip | null
                     .col(ColumnDef::new(Alias::new("proposed_action")).text())
                     .to_owned(),

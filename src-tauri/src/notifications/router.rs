@@ -159,10 +159,7 @@ pub async fn resolve_recipients(
             }
         }
         "role" => {
-            if let Some(role_name) = payload
-                .get("routing_role_name")
-                .and_then(serde_json::Value::as_str)
-            {
+            if let Some(role_name) = payload.get("routing_role_name").and_then(serde_json::Value::as_str) {
                 if let Some(role_id) = query_optional_i64(
                     pool,
                     "SELECT id FROM roles WHERE name = ? LIMIT 1",
@@ -263,10 +260,7 @@ pub async fn resolve_recipients(
             }
         }
         "watcher" => {
-            if let Some(watchers) = payload
-                .get("watcher_user_ids")
-                .and_then(serde_json::Value::as_array)
-            {
+            if let Some(watchers) = payload.get("watcher_user_ids").and_then(serde_json::Value::as_array) {
                 for watcher in watchers {
                     if let Some(user_id) = as_i64(watcher) {
                         user_ids.insert(user_id);
@@ -313,11 +307,7 @@ async fn query_optional_i64<const N: usize>(
     col: &str,
 ) -> Result<Option<i64>> {
     let row = pool
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            values,
-        ))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
     Ok(row.and_then(|r| r.try_get::<Option<i64>>("", col).ok().flatten()))
 }

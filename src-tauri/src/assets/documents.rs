@@ -23,10 +23,7 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement,
-    TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -65,9 +62,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_doc_link(row: &QueryResult) -> AppResult<AssetDocumentLink> {
     Ok(AssetDocumentLink {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         asset_id: row
             .try_get::<i64>("", "asset_id")
             .map_err(|e| decode_err("asset_id", e))?,
@@ -98,12 +93,7 @@ fn map_doc_link(row: &QueryResult) -> AppResult<AssetDocumentLink> {
 // ─── Validation helpers ───────────────────────────────────────────────────────
 
 /// Validate that a code exists in a given lookup domain.
-async fn validate_lookup(
-    db: &impl ConnectionTrait,
-    domain_key: &str,
-    code: &str,
-    field_label: &str,
-) -> AppResult<()> {
+async fn validate_lookup(db: &impl ConnectionTrait, domain_key: &str, code: &str, field_label: &str) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -125,10 +115,7 @@ async fn validate_lookup(
 }
 
 /// Assert that an equipment row exists and is not soft-deleted.
-async fn assert_asset_exists(
-    db: &impl ConnectionTrait,
-    asset_id: i64,
-) -> AppResult<()> {
+async fn assert_asset_exists(db: &impl ConnectionTrait, asset_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -246,8 +233,7 @@ pub async fn upsert_asset_document_link(
     let now = Utc::now().to_rfc3339();
 
     if is_primary {
-        expire_existing_primary(&txn, payload.asset_id, &payload.link_purpose, &now)
-            .await?;
+        expire_existing_primary(&txn, payload.asset_id, &payload.link_purpose, &now).await?;
     }
 
     // ── 5. Insert the new link ───────────────────────────────────────────
@@ -280,11 +266,7 @@ pub async fn upsert_asset_document_link(
             [payload.asset_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "document link created but not found after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("document link created but not found after insert")))?;
     let link = map_doc_link(&row)?;
 
     txn.commit().await?;
@@ -329,9 +311,7 @@ pub async fn expire_asset_document_link(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
-                "SELECT {DOC_LINK_SELECT} FROM asset_document_links WHERE id = ?"
-            ),
+            &format!("SELECT {DOC_LINK_SELECT} FROM asset_document_links WHERE id = ?"),
             [link_id.into()],
         ))
         .await?

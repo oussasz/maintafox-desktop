@@ -80,12 +80,7 @@ impl MigrationTrait for Migration {
 
         // ── Remap work_orders to new status codes ─────────────────────────
         // awaiting_approval / planned / ready_to_schedule / assigned → planning
-        for old in [
-            "awaiting_approval",
-            "planned",
-            "ready_to_schedule",
-            "assigned",
-        ] {
+        for old in ["awaiting_approval", "planned", "ready_to_schedule", "assigned"] {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE work_orders SET status_id = (\
@@ -148,15 +143,11 @@ impl MigrationTrait for Migration {
 
         // ── planning_approved_at for approval_required readiness rule ─────
         let _ = db
-            .execute_unprepared(
-                "ALTER TABLE work_orders ADD COLUMN planning_approved_at TEXT",
-            )
+            .execute_unprepared("ALTER TABLE work_orders ADD COLUMN planning_approved_at TEXT")
             .await;
 
         let _ = db
-            .execute_unprepared(
-                "ALTER TABLE work_orders ADD COLUMN planning_approved_by_id INTEGER",
-            )
+            .execute_unprepared("ALTER TABLE work_orders ADD COLUMN planning_approved_by_id INTEGER")
             .await;
 
         // ── Action / event log ────────────────────────────────────────────

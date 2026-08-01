@@ -197,41 +197,21 @@ async fn ensure_root_node_type(db: &DatabaseConnection, model_id: i64, now: &str
              can_carry_cost_center, can_aggregate_kpis, can_receive_permits,
              is_root_type, is_active, created_at, updated_at)
           VALUES (?, ?, 'ROOT', 'Root Organization', 1, 1, 1, 1, 1, 1, 1, ?, ?)",
-        [Uuid::new_v4().to_string().into(), model_id.into(), now.into(), now.into()],
+        [
+            Uuid::new_v4().to_string().into(),
+            model_id.into(),
+            now.into(),
+            now.into(),
+        ],
     ))
     .await?;
     last_insert_id(db).await
 }
 
-async fn seed_generic_demo_sandbox(
-    db: &DatabaseConnection,
-    tenant_id: &str,
-    root_id: i64,
-    now: &str,
-) -> AppResult<()> {
+async fn seed_generic_demo_sandbox(db: &DatabaseConnection, tenant_id: &str, root_id: i64, now: &str) -> AppResult<()> {
     let model_id = ensure_active_org_model(db, now).await?;
-    let zone_type_id = ensure_node_type(
-        db,
-        model_id,
-        "ZONE",
-        "Zone",
-        false,
-        true,
-        false,
-        now,
-    )
-    .await?;
-    let line_type_id = ensure_node_type(
-        db,
-        model_id,
-        "LINE",
-        "Line",
-        true,
-        true,
-        false,
-        now,
-    )
-    .await?;
+    let zone_type_id = ensure_node_type(db, model_id, "ZONE", "Zone", false, true, false, now).await?;
+    let line_type_id = ensure_node_type(db, model_id, "LINE", "Line", true, true, false, now).await?;
 
     let suffix = code_fragment(tenant_id);
     let zone_code = format!("GEN-ZONE-1-{suffix}");
@@ -646,9 +626,7 @@ async fn resolve_submitter_id(db: &DatabaseConnection) -> AppResult<i64> {
                 .to_string(),
         ))
         .await?;
-    Ok(row
-        .and_then(|r| i64::try_get(&r, "", "id").ok())
-        .unwrap_or(1))
+    Ok(row.and_then(|r| i64::try_get(&r, "", "id").ok()).unwrap_or(1))
 }
 
 async fn resolve_work_order_status_id(db: &DatabaseConnection, code: &str) -> AppResult<i64> {

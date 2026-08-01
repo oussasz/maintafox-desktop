@@ -1,6 +1,4 @@
-use crate::wo::workflow::readiness::rule::{
-    check, ReadinessOutcome, ReadinessRule, RuleCategory, RuleSeverity,
-};
+use crate::wo::workflow::readiness::rule::{check, ReadinessOutcome, ReadinessRule, RuleCategory, RuleSeverity};
 use crate::wo::workflow::readiness::WoReadinessContext;
 
 pub struct EquipmentAssigned;
@@ -19,11 +17,7 @@ impl ReadinessRule for EquipmentAssigned {
         if ctx.equipment_id.is_some() {
             check(self, ReadinessOutcome::Pass, None)
         } else {
-            check(
-                self,
-                ReadinessOutcome::Fail,
-                Some("Équipement non assigné.".into()),
-            )
+            check(self, ReadinessOutcome::Fail, Some("Équipement non assigné.".into()))
         }
     }
 }

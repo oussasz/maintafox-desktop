@@ -1,4 +1,4 @@
-﻿//! Migration 051 - PM execution follow-up and notification hardening.
+//! Migration 051 - PM execution follow-up and notification hardening.
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use sea_orm_migration::prelude::*;
@@ -25,13 +25,7 @@ impl MigrationTrait for Migration {
         .await?;
         add_column_if_missing(db, "pm_executions", "actual_duration_hours", "REAL NULL").await?;
         add_column_if_missing(db, "pm_executions", "actual_labor_hours", "REAL NULL").await?;
-        add_column_if_missing(
-            db,
-            "pm_executions",
-            "created_at",
-            "TEXT NULL",
-        )
-        .await?;
+        add_column_if_missing(db, "pm_executions", "created_at", "TEXT NULL").await?;
 
         db.execute_unprepared(
             "UPDATE pm_executions
@@ -93,9 +87,12 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
 
-        db.execute_unprepared("DROP INDEX IF EXISTS idx_pm_findings_followup").await?;
-        db.execute_unprepared("DROP INDEX IF EXISTS idx_pm_findings_execution").await?;
-        db.execute_unprepared("DROP INDEX IF EXISTS idx_pm_exec_occurrence").await?;
+        db.execute_unprepared("DROP INDEX IF EXISTS idx_pm_findings_followup")
+            .await?;
+        db.execute_unprepared("DROP INDEX IF EXISTS idx_pm_findings_execution")
+            .await?;
+        db.execute_unprepared("DROP INDEX IF EXISTS idx_pm_exec_occurrence")
+            .await?;
 
         db.execute_unprepared(
             "DELETE FROM notification_rules
@@ -126,15 +123,9 @@ async fn add_column_if_missing<C: ConnectionTrait>(
     Ok(())
 }
 
-async fn has_column<C: ConnectionTrait>(
-    db: &C,
-    table: &str,
-    column: &str,
-) -> Result<bool, DbErr> {
+async fn has_column<C: ConnectionTrait>(db: &C, table: &str, column: &str) -> Result<bool, DbErr> {
     let sql = format!("PRAGMA table_info('{table}')");
-    let rows = db
-        .query_all(Statement::from_string(DbBackend::Sqlite, sql))
-        .await?;
+    let rows = db.query_all(Statement::from_string(DbBackend::Sqlite, sql)).await?;
     for row in rows {
         if row.try_get::<String>("", "name").unwrap_or_default() == column {
             return Ok(true);

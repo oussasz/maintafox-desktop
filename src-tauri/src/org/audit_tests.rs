@@ -45,9 +45,7 @@ mod tests {
 
     /// Create and publish a base model with SITE (root) → PLANT → ZONE.
     /// Returns `(model_id, site_type_id, plant_type_id, zone_type_id)`.
-    async fn create_base_active_model(
-        db: &sea_orm::DatabaseConnection,
-    ) -> (i32, i32, i32, i32) {
+    async fn create_base_active_model(db: &sea_orm::DatabaseConnection) -> (i32, i32, i32, i32) {
         let model = structure_model::create_model(
             db,
             CreateStructureModelPayload {
@@ -235,11 +233,7 @@ mod tests {
         .id
     }
 
-    async fn draft_type_id_by_code(
-        db: &sea_orm::DatabaseConnection,
-        draft_id: i32,
-        code: &str,
-    ) -> i32 {
+    async fn draft_type_id_by_code(db: &sea_orm::DatabaseConnection, draft_id: i32, code: &str) -> i32 {
         let types = node_types::list_node_types(db, draft_id)
             .await
             .expect("list draft types");
@@ -381,9 +375,7 @@ mod tests {
                 entity_id: Some(draft.id as i64),
                 change_type: "publish_model".to_string(),
                 before_json: None,
-                after_json: Some(
-                    serde_json::to_string(&publish_result).unwrap_or_default(),
-                ),
+                after_json: Some(serde_json::to_string(&publish_result).unwrap_or_default()),
                 preview_summary_json: None,
                 changed_by_id: Some(1),
                 requires_step_up: true,
@@ -432,16 +424,12 @@ mod tests {
             .await
             .expect_err("publish should fail — ZONE type inactive on draft");
 
-        assert!(matches!(
-            publish_err,
-            crate::errors::AppError::OrgValidationFailed(_)
-        ));
+        assert!(matches!(publish_err, crate::errors::AppError::OrgValidationFailed(_)));
 
         // Record the blocked audit event (mimics command handler on error path).
-        let blocked_validation =
-            validation::validate_draft_model_for_publish(&db, draft_id as i64)
-                .await
-                .ok();
+        let blocked_validation = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+            .await
+            .ok();
 
         audit::record_org_change(
             &db,
@@ -451,8 +439,7 @@ mod tests {
                 change_type: "publish_model".to_string(),
                 before_json: None,
                 after_json: None,
-                preview_summary_json: blocked_validation
-                    .and_then(|v| serde_json::to_string(&v).ok()),
+                preview_summary_json: blocked_validation.and_then(|v| serde_json::to_string(&v).ok()),
                 changed_by_id: Some(1),
                 requires_step_up: true,
                 apply_result: "blocked".to_string(),
@@ -477,7 +464,10 @@ mod tests {
 
         let evt = blocked_event.unwrap();
         assert_eq!(evt.entity_kind, "structure_model");
-        assert!(evt.preview_summary_json.is_some(), "AT2: blocked event should contain validation summary");
+        assert!(
+            evt.preview_summary_json.is_some(),
+            "AT2: blocked event should contain validation summary"
+        );
 
         // Verify the summary contains the blocking issue.
         let summary = evt.preview_summary_json.as_ref().unwrap();
@@ -518,9 +508,7 @@ mod tests {
 
         assert!(!events.is_empty(), "AT3: at least one event after record");
 
-        let move_event = events
-            .iter()
-            .find(|e| e.change_type == "move_node");
+        let move_event = events.iter().find(|e| e.change_type == "move_node");
 
         assert!(move_event.is_some(), "AT3: expected move_node event");
         let evt = move_event.unwrap();
@@ -574,14 +562,9 @@ mod tests {
         .expect("write model event");
 
         // Filter by entity_kind = org_node
-        let node_events = audit::list_org_change_events(
-            &db,
-            Some(50),
-            Some("org_node"),
-            None,
-        )
-        .await
-        .expect("filter by kind");
+        let node_events = audit::list_org_change_events(&db, Some(50), Some("org_node"), None)
+            .await
+            .expect("filter by kind");
 
         assert!(
             node_events.iter().all(|e| e.entity_kind == "org_node"),
@@ -590,14 +573,9 @@ mod tests {
         assert!(!node_events.is_empty());
 
         // Filter by entity_kind + entity_id
-        let specific = audit::list_org_change_events(
-            &db,
-            Some(50),
-            Some("structure_model"),
-            Some(5),
-        )
-        .await
-        .expect("filter by kind + id");
+        let specific = audit::list_org_change_events(&db, Some(50), Some("structure_model"), Some(5))
+            .await
+            .expect("filter by kind + id");
 
         assert_eq!(specific.len(), 1);
         assert_eq!(specific[0].entity_id, Some(5));
@@ -664,11 +642,7 @@ mod tests {
 
         // After step-up → must succeed.
         let result = step_up_gate(&state).await;
-        assert!(
-            result.is_ok(),
-            "SV-V1b: expected Ok after step-up — got: {:?}",
-            result,
-        );
+        assert!(result.is_ok(), "SV-V1b: expected Ok after step-up — got: {:?}", result,);
     }
 
     // ── SV-V2 — Successful publish writes audit row ───────────────────────
@@ -688,7 +662,9 @@ mod tests {
         // Build a valid v2 draft with the same type codes.
         let draft = structure_model::create_model(
             &db,
-            CreateStructureModelPayload { description: Some("SV-V2 draft".into()) },
+            CreateStructureModelPayload {
+                description: Some("SV-V2 draft".into()),
+            },
             1,
         )
         .await
@@ -777,7 +753,10 @@ mod tests {
         let row = row.unwrap();
         assert_eq!(row.apply_result, "applied", "SV-V2: apply_result must be 'applied'");
         assert!(row.requires_step_up, "SV-V2: requires_step_up must be true");
-        assert!(row.after_json.is_some(), "SV-V2: after_json should contain the validation result");
+        assert!(
+            row.after_json.is_some(),
+            "SV-V2: after_json should contain the validation result"
+        );
     }
 
     // ── SV-V3 — Blocked publish writes blocked audit row ──────────────────
@@ -806,10 +785,9 @@ mod tests {
         assert!(matches!(err, AppError::OrgValidationFailed(_)));
 
         // Record blocked audit (mirrors command handler error path).
-        let blocked_validation =
-            validation::validate_draft_model_for_publish(&db, draft_id as i64)
-                .await
-                .ok();
+        let blocked_validation = validation::validate_draft_model_for_publish(&db, draft_id as i64)
+            .await
+            .ok();
 
         audit::record_org_change(
             &db,
@@ -819,8 +797,7 @@ mod tests {
                 change_type: "publish_model".into(),
                 before_json: None,
                 after_json: None,
-                preview_summary_json: blocked_validation
-                    .and_then(|v| serde_json::to_string(&v).ok()),
+                preview_summary_json: blocked_validation.and_then(|v| serde_json::to_string(&v).ok()),
                 changed_by_id: Some(1),
                 requires_step_up: true,
                 apply_result: "blocked".into(),

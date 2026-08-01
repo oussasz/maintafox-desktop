@@ -8,20 +8,16 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use maintafox_lib::reliability::readiness::analysis::{
-    build_root_cause, compute_baseline_comparison, compute_decomposition, run_mapping_sensitivity,
-    run_nmin_sensitivity,
+    build_root_cause, compute_baseline_comparison, compute_decomposition, run_mapping_sensitivity, run_nmin_sensitivity,
 };
 use maintafox_lib::reliability::readiness::blocking::EvaluationProfile;
 use maintafox_lib::reliability::readiness::fmucd::{
-    aggregate_by_asset, evaluate_dataset_dual, load_fmucd_csv, summarize_by_university,
-    FmucdMappingConfig,
+    aggregate_by_asset, evaluate_dataset_dual, load_fmucd_csv, summarize_by_university, FmucdMappingConfig,
 };
 use maintafox_lib::reliability::readiness::policy::{
     COMPLETENESS_GREEN_THRESHOLD, DQ_GREEN_THRESHOLD, EXPOSURE_LOOKBACK_DAYS,
 };
-use maintafox_lib::reliability::readiness::report::{
-    DatasetSummary, DualRunOutput, PolicyManifest, RunManifest,
-};
+use maintafox_lib::reliability::readiness::report::{DatasetSummary, DualRunOutput, PolicyManifest, RunManifest};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -104,10 +100,7 @@ fn run_evaluate_fixtures(fixtures_dir: &Path, output_dir: Option<&Path>) -> Resu
             "fixtures_dir": fixtures_dir.display().to_string(),
             "timestamp_utc": Utc::now().to_rfc3339(),
         });
-        fs::write(
-            out.join("stage1_summary.json"),
-            serde_json::to_string_pretty(&summary)?,
-        )?;
+        fs::write(out.join("stage1_summary.json"), serde_json::to_string_pretty(&summary)?)?;
     }
     info!("Stage 1 fixtures: all tests passed");
     Ok(())
@@ -165,10 +158,7 @@ fn run_evaluate_fmucd(
         by_university_strict: by_uni_strict,
     };
 
-    fs::write(
-        output_dir.join("summary.json"),
-        serde_json::to_string_pretty(&dual)?,
-    )?;
+    fs::write(output_dir.join("summary.json"), serde_json::to_string_pretty(&dual)?)?;
 
     write_university_csv(&output_dir.join("by_university_documentary.csv"), &by_uni_doc)?;
     write_blocking_csv(
@@ -179,11 +169,7 @@ fn run_evaluate_fmucd(
         &output_dir.join("blocking_breakdown_strict.csv"),
         &strict_summary.blocking_breakdown,
     )?;
-    write_asset_sample(
-        &output_dir.join("by_asset_sample.csv"),
-        &doc_reports,
-        &strict_reports,
-    )?;
+    write_asset_sample(&output_dir.join("by_asset_sample.csv"), &doc_reports, &strict_reports)?;
 
     fs::write(
         output_dir.join("run_manifest.json"),
@@ -231,11 +217,7 @@ fn run_scientific_analysis(
     )?;
     write_decomposition_csvs(&analysis_dir, &decomposition)?;
 
-    let baseline = compute_baseline_comparison(
-        doc_reports,
-        strict_reports,
-        dataset.min_sample_n,
-    );
+    let baseline = compute_baseline_comparison(doc_reports, strict_reports, dataset.min_sample_n);
     fs::write(
         analysis_dir.join("baseline_comparison.json"),
         serde_json::to_string_pretty(&baseline)?,
@@ -255,10 +237,7 @@ fn run_scientific_analysis(
         .map(|(name, path)| (*name, path.as_path()))
         .collect();
     let mapping_rows = run_mapping_sensitivity(csv, &mapping_refs)?;
-    write_mapping_sensitivity_csv(
-        &analysis_dir.join("sensitivity_mapping.csv"),
-        &mapping_rows,
-    )?;
+    write_mapping_sensitivity_csv(&analysis_dir.join("sensitivity_mapping.csv"), &mapping_rows)?;
 
     let root_cause = build_root_cause(doc_summary, strict_summary, &decomposition, &baseline);
     fs::write(
@@ -489,7 +468,8 @@ fn print_summary(doc: &DatasetSummary, strict: &DatasetSummary) {
         "STRICT (full RAM): {:.1}% ready | red badges={}",
         strict.strict_ready_pct, strict.badge_red_count
     );
-    println!("Dimensions (mean): eq={:.1}% int={:.1}% mode={:.1}% corr={:.1}%",
+    println!(
+        "Dimensions (mean): eq={:.1}% int={:.1}% mode={:.1}% corr={:.1}%",
         doc.mean_dimensions.dim_equipment_id_pct,
         doc.mean_dimensions.dim_failure_interval_pct,
         doc.mean_dimensions.dim_failure_mode_pct,

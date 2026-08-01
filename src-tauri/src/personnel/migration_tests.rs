@@ -6,8 +6,8 @@ mod tests {
     use sea_orm_migration::MigratorTrait;
 
     use crate::personnel::domain::{
-        insert_personnel_with_auto_code, AvailabilityStatus, AuthorizationType, EmploymentType,
-        InsuranceStatus, OnboardingStatus, PositionCategory,
+        insert_personnel_with_auto_code, AuthorizationType, AvailabilityStatus, EmploymentType, InsuranceStatus,
+        OnboardingStatus, PositionCategory,
     };
 
     async fn setup_migrated_seeded(db: &sea_orm::DatabaseConnection) {
@@ -30,9 +30,7 @@ mod tests {
     /// V1 — Migration applies cleanly; tables; seeds: 7 positions, ORG.SCHEDULE_CLASS + details.
     #[tokio::test]
     async fn v1_migration_tables_and_seed_counts() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect");
+        let db = Database::connect("sqlite::memory:").await.expect("connect");
         setup_migrated_seeded(&db).await;
 
         let expected_tables = [
@@ -51,25 +49,18 @@ mod tests {
             let row = db
                 .query_one(Statement::from_string(
                     DbBackend::Sqlite,
-                    format!(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name='{name}';"
-                    )
-                    .to_string(),
+                    format!("SELECT name FROM sqlite_master WHERE type='table' AND name='{name}';").to_string(),
                 ))
                 .await
                 .expect("sqlite_master query");
-            assert!(
-                row.is_some(),
-                "table `{name}` must exist after migrations"
-            );
+            assert!(row.is_some(), "table `{name}` must exist after migrations");
         }
 
         // schedule_classes must be gone after ORG.SCHEDULE_CLASS migration.
         let legacy = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='schedule_classes'"
-                    .to_string(),
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='schedule_classes'".to_string(),
             ))
             .await
             .expect("legacy table query");
@@ -119,8 +110,7 @@ mod tests {
         let sd: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS c FROM schedule_details WHERE reference_value_id IS NOT NULL"
-                    .to_string(),
+                "SELECT COUNT(*) AS c FROM schedule_details WHERE reference_value_id IS NOT NULL".to_string(),
             ))
             .await
             .expect("count schedule_details")
@@ -136,9 +126,7 @@ mod tests {
             ("personnel_rate_cards", "idx_prc_personnel"),
             ("personnel_authorizations", "idx_pa_personnel"),
         ] {
-            let q = format!(
-                "SELECT 1 FROM sqlite_master WHERE type='index' AND tbl_name='{tbl}' AND name='{idx}'"
-            );
+            let q = format!("SELECT 1 FROM sqlite_master WHERE type='index' AND tbl_name='{tbl}' AND name='{idx}'");
             let ok = db
                 .query_one(Statement::from_string(DbBackend::Sqlite, q))
                 .await
@@ -213,9 +201,7 @@ mod tests {
     /// V4 — Seed integrity (also covered by V1; explicit rest-day count).
     #[tokio::test]
     async fn v4_seed_positions_and_rest_days() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect");
+        let db = Database::connect("sqlite::memory:").await.expect("connect");
         setup_migrated_seeded(&db).await;
 
         let pos: i64 = db

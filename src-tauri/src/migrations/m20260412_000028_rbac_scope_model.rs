@@ -15,8 +15,8 @@
 //! Prerequisites: migrations 001-002 (user_accounts, roles, permissions,
 //! role_permissions, user_scope_assignments, permission_dependencies).
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -41,17 +41,13 @@ impl MigrationTrait for Migration {
         }
 
         if !column_exists(db, "user_scope_assignments", "emergency_reason").await? {
-            db.execute_unprepared(
-                "ALTER TABLE user_scope_assignments ADD COLUMN emergency_reason TEXT NULL",
-            )
-            .await?;
+            db.execute_unprepared("ALTER TABLE user_scope_assignments ADD COLUMN emergency_reason TEXT NULL")
+                .await?;
         }
 
         if !column_exists(db, "user_scope_assignments", "emergency_expires_at").await? {
-            db.execute_unprepared(
-                "ALTER TABLE user_scope_assignments ADD COLUMN emergency_expires_at TEXT NULL",
-            )
-            .await?;
+            db.execute_unprepared("ALTER TABLE user_scope_assignments ADD COLUMN emergency_expires_at TEXT NULL")
+                .await?;
         }
 
         // ── 2. Additional indexes on user_scope_assignments ──────────────
@@ -76,10 +72,8 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_usa_role ON user_scope_assignments(role_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_usa_role ON user_scope_assignments(role_id)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE INDEX IF NOT EXISTS idx_usa_scope \
@@ -144,10 +138,7 @@ impl MigrationTrait for Migration {
                 "Maintenance Technician",
                 "Executes WOs, submits DIs, records labor and parts",
             ),
-            (
-                "Planner/Scheduler",
-                "Plans and schedules WOs and PM occurrences",
-            ),
+            ("Planner/Scheduler", "Plans and schedules WOs and PM occurrences"),
             (
                 "Read Only Observer",
                 "Read-only access to all operational modules, no write permissions",
@@ -254,12 +245,7 @@ impl MigrationTrait for Migration {
                 "INSERT OR IGNORE INTO permission_dependencies \
                  (permission_name, required_permission_name, dependency_type, created_at) \
                  VALUES (?, ?, ?, ?)",
-                [
-                    (*perm).into(),
-                    (*req).into(),
-                    (*dep_type).into(),
-                    now.clone().into(),
-                ],
+                [(*perm).into(), (*req).into(), (*dep_type).into(), now.clone().into()],
             ))
             .await?;
         }
@@ -289,18 +275,14 @@ impl MigrationTrait for Migration {
         // Drop new tables
         db.execute_unprepared("DROP TABLE IF EXISTS delegated_admin_policies")
             .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS role_templates")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS role_templates").await?;
 
         // Drop augmentation indexes
         db.execute_unprepared("DROP INDEX IF EXISTS uidx_usa_user_role_scope")
             .await?;
-        db.execute_unprepared("DROP INDEX IF EXISTS idx_usa_role")
-            .await?;
-        db.execute_unprepared("DROP INDEX IF EXISTS idx_usa_scope")
-            .await?;
-        db.execute_unprepared("DROP INDEX IF EXISTS uidx_pd_pair")
-            .await?;
+        db.execute_unprepared("DROP INDEX IF EXISTS idx_usa_role").await?;
+        db.execute_unprepared("DROP INDEX IF EXISTS idx_usa_scope").await?;
+        db.execute_unprepared("DROP INDEX IF EXISTS uidx_pd_pair").await?;
 
         // Remove seeded system roles (only the 5 added by this migration)
         db.execute_unprepared(
@@ -321,15 +303,9 @@ impl MigrationTrait for Migration {
 
 /// Checks whether a column exists on a table using `PRAGMA table_info`.
 /// Returns `false` if the table doesn't exist or the column is not found.
-async fn column_exists(
-    db: &impl ConnectionTrait,
-    table: &str,
-    column: &str,
-) -> Result<bool, DbErr> {
+async fn column_exists(db: &impl ConnectionTrait, table: &str, column: &str) -> Result<bool, DbErr> {
     let sql = format!("PRAGMA table_info('{table}')");
-    let rows = db
-        .query_all(Statement::from_string(DbBackend::Sqlite, sql))
-        .await?;
+    let rows = db.query_all(Statement::from_string(DbBackend::Sqlite, sql)).await?;
     for row in rows {
         let col_name: String = row.try_get("", "name").unwrap_or_default();
         if col_name == column {

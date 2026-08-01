@@ -9,9 +9,7 @@ use crate::sync::domain::{
 };
 use crate::sync::queries::stage_outbox_item;
 
-use super::domain::{
-    CertificationExpiryDrilldownRow, TrainingExpiryAlertEvent, TrainingExpiryAlertEventListFilter,
-};
+use super::domain::{CertificationExpiryDrilldownRow, TrainingExpiryAlertEvent, TrainingExpiryAlertEventListFilter};
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("expiry_alerts decode '{field}': {err}"))
@@ -69,7 +67,9 @@ fn map_event(row: &sea_orm::QueryResult) -> AppResult<TrainingExpiryAlertEvent> 
             .map_err(|e| decode_err("alert_dedupe_key", e))?,
         fired_at: row.try_get("", "fired_at").map_err(|e| decode_err("fired_at", e))?,
         severity: row.try_get("", "severity").map_err(|e| decode_err("severity", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -145,7 +145,10 @@ pub async fn list_training_expiry_alert_events(
     Ok(out)
 }
 
-pub async fn scan_training_expiry_alerts(db: &DatabaseConnection, lookahead_days: i64) -> AppResult<Vec<TrainingExpiryAlertEvent>> {
+pub async fn scan_training_expiry_alerts(
+    db: &DatabaseConnection,
+    lookahead_days: i64,
+) -> AppResult<Vec<TrainingExpiryAlertEvent>> {
     let lookahead = lookahead_days.clamp(1, 730);
     let horizon = today() + chrono::Duration::days(lookahead);
 
@@ -165,7 +168,9 @@ pub async fn scan_training_expiry_alerts(db: &DatabaseConnection, lookahead_days
 
     for r in rows {
         let cert_id: i64 = r.try_get("", "id").map_err(|e| decode_err("id", e))?;
-        let personnel_id: i64 = r.try_get("", "personnel_id").map_err(|e| decode_err("personnel_id", e))?;
+        let personnel_id: i64 = r
+            .try_get("", "personnel_id")
+            .map_err(|e| decode_err("personnel_id", e))?;
         let cert_type_id: i64 = r
             .try_get("", "certification_type_id")
             .map_err(|e| decode_err("certification_type_id", e))?;
@@ -300,9 +305,15 @@ pub async fn list_certification_expiry_drilldown(
         };
 
         out.push(CertificationExpiryDrilldownRow {
-            certification_id: r.try_get("", "certification_id").map_err(|e| decode_err("certification_id", e))?,
-            personnel_id: r.try_get("", "personnel_id").map_err(|e| decode_err("personnel_id", e))?,
-            employee_code: r.try_get("", "employee_code").map_err(|e| decode_err("employee_code", e))?,
+            certification_id: r
+                .try_get("", "certification_id")
+                .map_err(|e| decode_err("certification_id", e))?,
+            personnel_id: r
+                .try_get("", "personnel_id")
+                .map_err(|e| decode_err("personnel_id", e))?,
+            employee_code: r
+                .try_get("", "employee_code")
+                .map_err(|e| decode_err("employee_code", e))?,
             full_name: r.try_get("", "full_name").map_err(|e| decode_err("full_name", e))?,
             primary_entity_id: r.try_get("", "primary_entity_id").ok(),
             certification_type_id: r

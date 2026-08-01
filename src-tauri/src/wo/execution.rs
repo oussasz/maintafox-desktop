@@ -8,11 +8,9 @@ use crate::wo::queries;
 use crate::wo::time::now_utc_z;
 use crate::wo::workflow::events::emit_action_event;
 use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
-use uuid::Uuid;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::domain::{guard_wo_transition, WoStatus, WorkOrder};
 
@@ -91,9 +89,7 @@ pub struct WoMechCompleteInput {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn decode_err(field: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "WO execution row decode error for '{field}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("WO execution row decode error for '{field}': {e}"))
 }
 
 /// Verify `rows_affected == 1`. Returns a concurrency conflict error on mismatch.
@@ -110,10 +106,7 @@ fn check_concurrency(rows_affected: u64) -> AppResult<()> {
 
 /// Load current WO status from the DB and parse it.
 /// Returns `(current_status_code: String, parsed: WoStatus, current_row_version: i64)`.
-async fn load_wo_status(
-    txn: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<(String, WoStatus, i64)> {
+async fn load_wo_status(txn: &impl ConnectionTrait, wo_id: i64) -> AppResult<(String, WoStatus, i64)> {
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -150,13 +143,8 @@ async fn resolve_status_id(txn: &impl ConnectionTrait, code: &str) -> AppResult<
             [code.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "work_order_statuses missing row for code '{code}'"
-            ))
-        })?;
-    row.try_get::<i64>("", "id")
-        .map_err(|e| decode_err("status id", e))
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("work_order_statuses missing row for code '{code}'")))?;
+    row.try_get::<i64>("", "id").map_err(|e| decode_err("status id", e))
 }
 
 /// Write an entry to the append-only state transition log.
@@ -247,10 +235,8 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
     let txn = db.begin().await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
-    assert_action_allowed(&current_status, WoAction::Start)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    guard_wo_transition(&current_status, &WoStatus::InProgress)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    assert_action_allowed(&current_status, WoAction::Start).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_wo_transition(&current_status, &WoStatus::InProgress).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let in_progress_status_id = resolve_status_id(&txn, "in_progress").await?;
     let now = now_utc_z();
@@ -326,13 +312,7 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
                     input.wo_id
                 ))
             })?;
-        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(
-            db,
-            &wo,
-            &permit,
-            &Uuid::new_v4().to_string(),
-        )
-        .await?;
+        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(db, &wo, &permit, &Uuid::new_v4().to_string()).await?;
     }
 
     Ok(wo)
@@ -346,10 +326,8 @@ pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult
     let txn = db.begin().await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
-    assert_action_allowed(&current_status, WoAction::Hold)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    guard_wo_transition(&current_status, &WoStatus::OnHold)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    assert_action_allowed(&current_status, WoAction::Hold).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_wo_transition(&current_status, &WoStatus::OnHold).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     // Validate delay_reason_id resolves to WORK.DELAY_REASONS reference value
     let reason_row = txn
@@ -463,10 +441,8 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
     let txn = db.begin().await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
-    assert_action_allowed(&current_status, WoAction::Resume)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    guard_wo_transition(&current_status, &WoStatus::InProgress)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    assert_action_allowed(&current_status, WoAction::Resume).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_wo_transition(&current_status, &WoStatus::InProgress).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let in_progress_status_id = resolve_status_id(&txn, "in_progress").await?;
     let now = now_utc_z();
@@ -491,9 +467,7 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
             [input.wo_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("Waiting hours query returned no row"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Waiting hours query returned no row")))?;
     let total_waiting: f64 = waiting_row
         .try_get::<f64>("", "total_waiting")
         .map_err(|e| decode_err("total_waiting", e))?;
@@ -560,13 +534,7 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
                     input.wo_id
                 ))
             })?;
-        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(
-            db,
-            &wo,
-            &permit,
-            &Uuid::new_v4().to_string(),
-        )
-        .await?;
+        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(db, &wo, &permit, &Uuid::new_v4().to_string()).await?;
     }
 
     Ok(wo)
@@ -576,10 +544,7 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
 // F) set_waiting_for_prerequisite / hold — in_progress → on_hold
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn set_waiting_for_prerequisite(
-    db: &DatabaseConnection,
-    input: WoHoldInput,
-) -> AppResult<WorkOrder> {
+pub async fn set_waiting_for_prerequisite(db: &DatabaseConnection, input: WoHoldInput) -> AppResult<WorkOrder> {
     // Alias of pause/hold under Option B (single On Hold status).
     pause_wo(
         db,
@@ -608,10 +573,7 @@ pub struct WoCompletionGate {
     pub detail: Option<String>,
 }
 
-async fn collect_completion_gates(
-    conn: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<Vec<WoCompletionGate>> {
+async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> AppResult<Vec<WoCompletionGate>> {
     let mut gates = Vec::new();
 
     // ── Labor: no open entries ────────────────────────────────────────────
@@ -626,9 +588,7 @@ async fn collect_completion_gates(
             [wo_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("Labor open-entry check returned no row"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Labor open-entry check returned no row")))?;
     let open_labor: i64 = open_labor_row
         .try_get::<i64>("", "cnt")
         .map_err(|e| decode_err("open_labor cnt", e))?;
@@ -733,9 +693,7 @@ async fn collect_completion_gates(
             [wo_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("Downtime gate check returned no row"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Downtime gate check returned no row")))?;
     let open_dt: i64 = open_dt_row
         .try_get::<i64>("", "cnt")
         .map_err(|e| decode_err("open_dt cnt", e))?;
@@ -784,9 +742,7 @@ async fn collect_completion_gates(
             .await?;
         match fd_row {
             Some(r) => {
-                let symptom_id: Option<i64> = r
-                    .try_get("", "symptom_id")
-                    .map_err(|e| decode_err("symptom_id", e))?;
+                let symptom_id: Option<i64> = r.try_get("", "symptom_id").map_err(|e| decode_err("symptom_id", e))?;
                 let failure_mode_id: Option<i64> = r
                     .try_get("", "failure_mode_id")
                     .map_err(|e| decode_err("failure_mode_id", e))?;
@@ -805,11 +761,7 @@ async fn collect_completion_gates(
         let root_cause: Option<String> = wo_type_row
             .try_get("", "root_cause_summary")
             .map_err(|e| decode_err("root_cause_summary", e))?;
-        root_cause_ok = !root_cause
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or_default()
-            .is_empty();
+        root_cause_ok = !root_cause.as_deref().map(str::trim).unwrap_or_default().is_empty();
     }
 
     gates.push(WoCompletionGate {
@@ -835,24 +787,16 @@ async fn collect_completion_gates(
 }
 
 /// Public evaluate API for Completion / Closeout progress checklists.
-pub async fn evaluate_completion_gates(
-    db: &DatabaseConnection,
-    wo_id: i64,
-) -> AppResult<Vec<WoCompletionGate>> {
+pub async fn evaluate_completion_gates(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<WoCompletionGate>> {
     collect_completion_gates(db, wo_id).await
 }
 
-pub async fn complete_wo_mechanically(
-    db: &DatabaseConnection,
-    input: WoMechCompleteInput,
-) -> AppResult<WorkOrder> {
+pub async fn complete_wo_mechanically(db: &DatabaseConnection, input: WoMechCompleteInput) -> AppResult<WorkOrder> {
     let txn = db.begin().await?;
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
-    assert_action_allowed(&current_status, WoAction::Complete)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    guard_wo_transition(&current_status, &WoStatus::Completed)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    assert_action_allowed(&current_status, WoAction::Complete).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_wo_transition(&current_status, &WoStatus::Completed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let gates = collect_completion_gates(&txn, input.wo_id).await?;
     let blocking: Vec<String> = gates
@@ -913,9 +857,7 @@ pub async fn complete_wo_mechanically(
             [input.wo_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("Labor sum query returned no row"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Labor sum query returned no row")))?;
     let total_labor: f64 = labor_row
         .try_get::<f64>("", "total_labor")
         .map_err(|e| decode_err("total_labor", e))?;
@@ -940,9 +882,20 @@ pub async fn complete_wo_mechanically(
                 completed_status_id.into(),
                 now.clone().into(),
                 total_labor.into(),
-                input.actual_end.clone().map(|v| v.into()).unwrap_or(sea_orm::Value::String(None)),
-                input.actual_duration_hours.map(|v| v.into()).unwrap_or(sea_orm::Value::Double(None)),
-                input.conclusion.clone().map(|v| v.into()).unwrap_or(sea_orm::Value::String(None)),
+                input
+                    .actual_end
+                    .clone()
+                    .map(|v| v.into())
+                    .unwrap_or(sea_orm::Value::String(None)),
+                input
+                    .actual_duration_hours
+                    .map(|v| v.into())
+                    .unwrap_or(sea_orm::Value::Double(None)),
+                input
+                    .conclusion
+                    .clone()
+                    .map(|v| v.into())
+                    .unwrap_or(sea_orm::Value::String(None)),
                 now.clone().into(),
                 input.wo_id.into(),
                 input.expected_row_version.into(),

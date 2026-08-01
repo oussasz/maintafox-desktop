@@ -99,16 +99,12 @@ impl MigrationTrait for Migration {
             .await?;
         db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_aud_actor ON audit_events(actor_id)")
             .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_aud_target ON audit_events(target_type, target_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_aud_target ON audit_events(target_type, target_id)")
+            .await?;
         db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_aud_result ON audit_events(result)")
             .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_aud_date ON audit_events(happened_at DESC)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_aud_date ON audit_events(happened_at DESC)")
+            .await?;
 
         Ok(())
     }

@@ -133,7 +133,12 @@ mod tests {
         to_value_id: i64,
     ) -> AppResult<ref_migrations::ReferenceUsageMigrationResult> {
         let user = crate::require_session!(state);
-        crate::require_permission!(state, &user, crate::rbac::permissions::REF_PUBLISH, PermissionScope::Global);
+        crate::require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::REF_PUBLISH,
+            PermissionScope::Global
+        );
         crate::require_step_up!(state);
 
         ref_migrations::merge_reference_values(
@@ -230,15 +235,9 @@ mod tests {
             result.source_deactivated,
             "source should be deactivated after migration"
         );
-        assert!(
-            !result.source_value.is_active,
-            "source value should now be inactive"
-        );
+        assert!(!result.source_value.is_active, "source value should now be inactive");
         assert!(result.target_value.is_active, "target must remain active");
-        assert_eq!(
-            result.migration.reason_code.as_deref(),
-            Some("usage_migration")
-        );
+        assert_eq!(result.migration.reason_code.as_deref(), Some("usage_migration"));
 
         let source = values::get_value(&db, from.id).await.expect("reload source");
         let target = values::get_value(&db, to.id).await.expect("reload target");

@@ -17,7 +17,7 @@
 
 use crate::errors::{AppError, AppResult};
 use crate::reference::governance::{
-    derive_category_for_persist, default_is_extendable, GovernanceCategory, GOVERNANCE_CATEGORIES,
+    default_is_extendable, derive_category_for_persist, GovernanceCategory, GOVERNANCE_CATEGORIES,
 };
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
@@ -35,12 +35,7 @@ pub const STRUCTURE_TYPES: &[&str] = &[
 ];
 
 /// PRD 6.13 allowed governance levels (legacy; prefer `governance_category`).
-pub const GOVERNANCE_LEVELS: &[&str] = &[
-    "protected_analytical",
-    "tenant_managed",
-    "system_seeded",
-    "erp_synced",
-];
+pub const GOVERNANCE_LEVELS: &[&str] = &["protected_analytical", "tenant_managed", "system_seeded", "erp_synced"];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -98,15 +93,9 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_domain(row: &QueryResult) -> AppResult<ReferenceDomain> {
     Ok(ReferenceDomain {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
-        code: row
-            .try_get::<String>("", "code")
-            .map_err(|e| decode_err("code", e))?,
-        name: row
-            .try_get::<String>("", "name")
-            .map_err(|e| decode_err("name", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
+        name: row.try_get::<String>("", "name").map_err(|e| decode_err("name", e))?,
         structure_type: row
             .try_get::<String>("", "structure_type")
             .map_err(|e| decode_err("structure_type", e))?,
@@ -223,9 +212,7 @@ fn normalize_code(code: &str) -> String {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /// Returns all reference domains ordered by name.
-pub async fn list_reference_domains(
-    db: &DatabaseConnection,
-) -> AppResult<Vec<ReferenceDomain>> {
+pub async fn list_reference_domains(db: &DatabaseConnection) -> AppResult<Vec<ReferenceDomain>> {
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -241,10 +228,7 @@ pub async fn list_reference_domains(
 }
 
 /// Returns a single reference domain by id.
-pub async fn get_reference_domain(
-    db: &DatabaseConnection,
-    domain_id: i64,
-) -> AppResult<ReferenceDomain> {
+pub async fn get_reference_domain(db: &DatabaseConnection, domain_id: i64) -> AppResult<ReferenceDomain> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -264,15 +248,12 @@ pub async fn get_reference_domain(
 }
 
 /// Returns a single reference domain by canonical code (case-insensitive).
-pub async fn get_reference_domain_by_code(
-    db: &DatabaseConnection,
-    domain_code: &str,
-) -> AppResult<ReferenceDomain> {
+pub async fn get_reference_domain_by_code(db: &DatabaseConnection, domain_code: &str) -> AppResult<ReferenceDomain> {
     let code = normalize_code(domain_code);
     if code.is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "Le code de domaine est requis.".into(),
-        ]));
+        return Err(AppError::ValidationFailed(
+            vec!["Le code de domaine est requis.".into()],
+        ));
     }
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -311,11 +292,8 @@ pub async fn create_reference_domain(
 
     let category = if let Some(ref raw) = payload.governance_category {
         validate_governance_category(raw)?;
-        GovernanceCategory::parse(raw).ok_or_else(|| {
-            AppError::ValidationFailed(vec![format!(
-                "Catégorie de gouvernance '{raw}' invalide."
-            )])
-        })?
+        GovernanceCategory::parse(raw)
+            .ok_or_else(|| AppError::ValidationFailed(vec![format!("Catégorie de gouvernance '{raw}' invalide.")]))?
     } else {
         derive_category_for_persist(&code, &payload.governance_level)
     };
@@ -355,9 +333,7 @@ pub async fn create_reference_domain(
     .map_err(|e| {
         // SQLite unique constraint violation on code
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec![format!(
-                "Un domaine avec le code '{code}' existe déjà."
-            )])
+            AppError::ValidationFailed(vec![format!("Un domaine avec le code '{code}' existe déjà.")])
         } else {
             AppError::Database(e)
         }
@@ -374,11 +350,7 @@ pub async fn create_reference_domain(
             [code.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "reference_domains row missing after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_domains row missing after insert")))?;
 
     map_domain(&row)
 }
@@ -451,17 +423,10 @@ pub async fn update_reference_domain(
     values.push(now.into());
     values.push(domain_id.into());
 
-    let sql = format!(
-        "UPDATE reference_domains SET {} WHERE id = ?",
-        sets.join(", ")
-    );
+    let sql = format!("UPDATE reference_domains SET {} WHERE id = ?", sets.join(", "));
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        &sql,
-        values,
-    ))
-    .await?;
+    db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+        .await?;
 
     get_reference_domain(db, domain_id).await
 }
@@ -533,9 +498,7 @@ mod tests {
     fn valid_rules_json() {
         assert!(validate_rules_json(&None).is_ok());
         assert!(validate_rules_json(&Some(String::new())).is_ok());
-        assert!(
-            validate_rules_json(&Some(r#"{"max_depth": 3}"#.into())).is_ok()
-        );
+        assert!(validate_rules_json(&Some(r#"{"max_depth": 3}"#.into())).is_ok());
     }
 
     #[test]

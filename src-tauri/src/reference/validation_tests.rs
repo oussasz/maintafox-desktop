@@ -63,7 +63,7 @@ mod tests {
             name: "Tags personnalises".to_string(),
             structure_type: "flat".to_string(),
             governance_level: "tenant_managed".to_string(),
-                governance_category: Some("controlled_catalog".to_string()),
+            governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(true),
             validation_rules_json: None,
         };
@@ -74,10 +74,7 @@ mod tests {
     }
 
     /// Creates a domain + draft set, returns (domain_id, set_id).
-    async fn setup_draft_set(
-        db: &sea_orm::DatabaseConnection,
-        domain_id: i64,
-    ) -> i64 {
+    async fn setup_draft_set(db: &sea_orm::DatabaseConnection, domain_id: i64) -> i64 {
         let set = sets::create_draft_set(db, domain_id, 1)
             .await
             .expect("create draft set");
@@ -134,16 +131,9 @@ mod tests {
         assert_eq!(result.status, "failed", "should fail with duplicates");
         assert!(result.blocking_count > 0, "should have blocking issues");
 
-        let dup_issues: Vec<_> = result
-            .issues
-            .iter()
-            .filter(|i| i.check == "duplicate_code")
-            .collect();
+        let dup_issues: Vec<_> = result.issues.iter().filter(|i| i.check == "duplicate_code").collect();
 
-        assert!(
-            !dup_issues.is_empty(),
-            "should have at least one duplicate_code issue"
-        );
+        assert!(!dup_issues.is_empty(), "should have at least one duplicate_code issue");
         assert_eq!(dup_issues[0].severity, IssueSeverity::Blocking);
         assert!(
             dup_issues[0].message.to_ascii_lowercase().contains("alpha"),
@@ -208,9 +198,7 @@ mod tests {
         }
 
         // Verify set is still in draft
-        let set = sets::get_reference_set(&db, set_id)
-            .await
-            .expect("get set");
+        let set = sets::get_reference_set(&db, set_id).await.expect("get set");
         assert_eq!(set.status, "draft", "set should remain draft after failed validation");
     }
 
@@ -248,16 +236,9 @@ mod tests {
 
         assert_eq!(result.status, "failed");
 
-        let cycle_issues: Vec<_> = result
-            .issues
-            .iter()
-            .filter(|i| i.check == "hierarchy_cycle")
-            .collect();
+        let cycle_issues: Vec<_> = result.issues.iter().filter(|i| i.check == "hierarchy_cycle").collect();
 
-        assert!(
-            !cycle_issues.is_empty(),
-            "should detect hierarchy cycle"
-        );
+        assert!(!cycle_issues.is_empty(), "should detect hierarchy cycle");
         assert_eq!(cycle_issues[0].severity, IssueSeverity::Blocking);
     }
 
@@ -291,13 +272,12 @@ mod tests {
             .await
             .expect("validate");
 
-        let cycle_count = result
-            .issues
-            .iter()
-            .filter(|i| i.check == "hierarchy_cycle")
-            .count();
+        let cycle_count = result.issues.iter().filter(|i| i.check == "hierarchy_cycle").count();
 
-        assert!(cycle_count >= 2, "deep cycle should flag multiple members, got {cycle_count}");
+        assert!(
+            cycle_count >= 2,
+            "deep cycle should flag multiple members, got {cycle_count}"
+        );
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -404,8 +384,7 @@ mod tests {
         assert!(report.issue_count > 0);
 
         // Verify report_json is valid and contains issue details
-        let issues: Vec<serde_json::Value> =
-            serde_json::from_str(&report.report_json).expect("parse report_json");
+        let issues: Vec<serde_json::Value> = serde_json::from_str(&report.report_json).expect("parse report_json");
         assert!(!issues.is_empty(), "report_json should contain issues");
     }
 
@@ -432,11 +411,7 @@ mod tests {
             .await
             .expect("validate");
 
-        let label_issues: Vec<_> = result
-            .issues
-            .iter()
-            .filter(|i| i.check == "missing_label")
-            .collect();
+        let label_issues: Vec<_> = result.issues.iter().filter(|i| i.check == "missing_label").collect();
 
         assert!(!label_issues.is_empty(), "should detect missing label");
         assert_eq!(label_issues[0].severity, IssueSeverity::Blocking);
@@ -462,11 +437,7 @@ mod tests {
             .await
             .expect("validate");
 
-        let orphan_issues: Vec<_> = result
-            .issues
-            .iter()
-            .filter(|i| i.check == "orphan_parent")
-            .collect();
+        let orphan_issues: Vec<_> = result.issues.iter().filter(|i| i.check == "orphan_parent").collect();
 
         assert!(!orphan_issues.is_empty(), "should detect orphan parent");
         assert_eq!(orphan_issues[0].severity, IssueSeverity::Blocking);
@@ -561,9 +532,7 @@ mod tests {
             governance_level: "erp_synced".to_string(),
             governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(true),
-            validation_rules_json: Some(
-                r#"{"external_code_pattern": "^SAP-[0-9]{4}$"}"#.to_string(),
-            ),
+            validation_rules_json: Some(r#"{"external_code_pattern": "^SAP-[0-9]{4}$"}"#.to_string()),
         };
         let domain = domains::create_reference_domain(&db, payload, 1)
             .await
@@ -616,9 +585,7 @@ mod tests {
         let val = values::create_value(&db, value_payload(set_id, "OLD_CODE", "Old"), 1)
             .await
             .expect("create");
-        values::deactivate_value(&db, val.id, 1)
-            .await
-            .expect("deactivate");
+        values::deactivate_value(&db, val.id, 1).await.expect("deactivate");
 
         let result = validation::validate_reference_set(&db, set_id, 1)
             .await

@@ -65,12 +65,7 @@ mod tests {
     }
 
     /// Helper: create a value and return its id.
-    async fn add_value(
-        db: &sea_orm::DatabaseConnection,
-        set_id: i64,
-        code: &str,
-        label: &str,
-    ) -> i64 {
+    async fn add_value(db: &sea_orm::DatabaseConnection, set_id: i64, code: &str, label: &str) -> i64 {
         let v = values::create_value(
             db,
             CreateReferenceValuePayload {
@@ -184,11 +179,9 @@ mod tests {
         add_alias(&db, val_id, "Moteur electrique triphasÃ©", "fr", "search", false).await;
 
         // Both contain "Moteur electrique" but preferred should win
-        let results = search::search_reference_values(
-            &db, &domain_code, "Moteur electrique", "fr", 10,
-        )
-        .await
-        .expect("search");
+        let results = search::search_reference_values(&db, &domain_code, "Moteur electrique", "fr", 10)
+            .await
+            .expect("search");
 
         assert!(!results.is_empty());
         // The hit should reflect the preferred alias match (higher rank)
@@ -214,18 +207,17 @@ mod tests {
         add_alias(&db, val_en, "Palier", "en", "search", true).await;
 
         // Search "Palier" in locale fr â€” val_fr should rank higher
-        let results = search::search_reference_values(
-            &db, &domain_code, "Palier", "fr", 10,
-        )
-        .await
-        .expect("search");
+        let results = search::search_reference_values(&db, &domain_code, "Palier", "fr", 10)
+            .await
+            .expect("search");
 
         assert!(results.len() >= 2, "should find both values");
         assert_eq!(results[0].value_id, val_fr, "locale-matched alias should rank first");
         assert!(
             results[0].rank > results[1].rank,
             "locale rank ({}) > fallback rank ({})",
-            results[0].rank, results[1].rank
+            results[0].rank,
+            results[1].rank
         );
     }
 
@@ -245,11 +237,9 @@ mod tests {
         add_alias(&db, val_alias, "PUMP_HP", "fr", "import", true).await;
 
         // Search "PUMP_HP" â€” canonical code should beat alias
-        let results = search::search_reference_values(
-            &db, &domain_code, "PUMP_HP", "fr", 10,
-        )
-        .await
-        .expect("search");
+        let results = search::search_reference_values(&db, &domain_code, "PUMP_HP", "fr", 10)
+            .await
+            .expect("search");
 
         assert!(results.len() >= 2, "should find both values");
         assert_eq!(results[0].value_id, val_code, "canonical code match must rank first");
@@ -269,11 +259,9 @@ mod tests {
         add_alias(&db, val_alias, "Compresseur centrifuge", "fr", "search", true).await;
 
         // Search "Compresseur centrifuge" â€” canonical label should beat alias
-        let results = search::search_reference_values(
-            &db, &domain_code, "Compresseur centrifuge", "fr", 10,
-        )
-        .await
-        .expect("search");
+        let results = search::search_reference_values(&db, &domain_code, "Compresseur centrifuge", "fr", 10)
+            .await
+            .expect("search");
 
         assert!(results.len() >= 2);
         assert_eq!(results[0].value_id, val_label, "canonical label match must rank first");

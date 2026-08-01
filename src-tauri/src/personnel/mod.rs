@@ -3,15 +3,15 @@
 //! Workforce registry: positions, schedules, personnel master, contractor companies,
 //! rate cards, and execution authorizations.
 
-pub mod domain;
-pub mod queries;
-pub mod skills;
-pub mod availability;
-pub mod teams;
-pub mod import;
-pub mod reports;
 pub mod assignment_history;
+pub mod availability;
+pub mod domain;
+pub mod import;
 pub mod photos;
+pub mod queries;
+pub mod reports;
+pub mod skills;
+pub mod teams;
 
 #[cfg(test)]
 mod e2e_tests;

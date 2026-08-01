@@ -76,7 +76,7 @@ mod tests {
                 name: "Protected Import Domain".to_string(),
                 structure_type: "flat".to_string(),
                 governance_level: "protected_analytical".to_string(),
-            governance_category: Some("controlled_catalog".to_string()),
+                governance_category: Some("controlled_catalog".to_string()),
                 is_extendable: Some(true),
                 validation_rules_json: None,
             },
@@ -116,23 +116,17 @@ mod tests {
         let db = setup().await;
         let (domain_id, _set_id) = setup_tenant_domain(&db).await;
 
-        let batch = imports::create_import_batch(
-            &db,
-            domain_id,
-            "test_v1.json",
-            "abc123sha256",
-            Some(1),
-        )
-        .await
-        .expect("create batch");
+        let batch = imports::create_import_batch(&db, domain_id, "test_v1.json", "abc123sha256", Some(1))
+            .await
+            .expect("create batch");
 
         // Stage 5 rows: 2 valid, 3 with various errors
         let rows = vec![
-            row(Some("VALID_A"), Some("Valid A")),             // valid
-            row(Some("VALID_B"), Some("Valid B")),             // valid
-            row(None, Some("No Code")),                        // missing code â†’ error
-            row(Some("lowercase"), Some("Bad Code Format")),   // invalid code â†’ error
-            row(Some("NO_LABEL"), None),                       // missing label â†’ error
+            row(Some("VALID_A"), Some("Valid A")),           // valid
+            row(Some("VALID_B"), Some("Valid B")),           // valid
+            row(None, Some("No Code")),                      // missing code â†’ error
+            row(Some("lowercase"), Some("Bad Code Format")), // invalid code â†’ error
+            row(Some("NO_LABEL"), None),                     // missing label â†’ error
         ];
 
         imports::stage_import_rows(&db, batch.id, rows)
@@ -149,9 +143,7 @@ mod tests {
         assert_eq!(validated.error_rows, 3);
 
         // Verify row-level diagnostics in preview
-        let preview = imports::get_import_preview(&db, batch.id)
-            .await
-            .expect("preview");
+        let preview = imports::get_import_preview(&db, batch.id).await.expect("preview");
 
         assert_eq!(preview.rows.len(), 5);
 
@@ -161,10 +153,7 @@ mod tests {
 
         // Row 3: missing code
         assert_eq!(preview.rows[2].validation_status, "error");
-        assert!(preview.rows[2]
-            .messages
-            .iter()
-            .any(|m| m.category == "MissingCode"));
+        assert!(preview.rows[2].messages.iter().any(|m| m.category == "MissingCode"));
 
         // Row 4: invalid code format
         assert_eq!(preview.rows[3].validation_status, "error");
@@ -175,10 +164,7 @@ mod tests {
 
         // Row 5: missing label
         assert_eq!(preview.rows[4].validation_status, "error");
-        assert!(preview.rows[4]
-            .messages
-            .iter()
-            .any(|m| m.category == "MissingLabel"));
+        assert!(preview.rows[4].messages.iter().any(|m| m.category == "MissingLabel"));
     }
 
     #[tokio::test]
@@ -186,24 +172,16 @@ mod tests {
         let db = setup().await;
         let (domain_id, _set_id) = setup_tenant_domain(&db).await;
 
-        let batch = imports::create_import_batch(
-            &db,
-            domain_id,
-            "dup_test.json",
-            "dup_sha256",
-            Some(1),
-        )
-        .await
-        .expect("create batch");
+        let batch = imports::create_import_batch(&db, domain_id, "dup_test.json", "dup_sha256", Some(1))
+            .await
+            .expect("create batch");
 
         let rows = vec![
             row(Some("DUP_CODE"), Some("First occurrence")),
             row(Some("DUP_CODE"), Some("Second occurrence")),
         ];
 
-        imports::stage_import_rows(&db, batch.id, rows)
-            .await
-            .expect("stage");
+        imports::stage_import_rows(&db, batch.id, rows).await.expect("stage");
 
         let validated = imports::validate_import_batch(&db, batch.id, Some(1))
             .await
@@ -212,9 +190,7 @@ mod tests {
         assert_eq!(validated.valid_rows, 1);
         assert_eq!(validated.error_rows, 1);
 
-        let preview = imports::get_import_preview(&db, batch.id)
-            .await
-            .expect("preview");
+        let preview = imports::get_import_preview(&db, batch.id).await.expect("preview");
 
         // Second row should have DuplicateInBatch error
         assert!(preview.rows[1]
@@ -228,15 +204,9 @@ mod tests {
         let db = setup().await;
         let (domain_id, set_id) = setup_tenant_domain(&db).await;
 
-        let batch = imports::create_import_batch(
-            &db,
-            domain_id,
-            "not_validated.json",
-            "nv_sha256",
-            Some(1),
-        )
-        .await
-        .expect("create batch");
+        let batch = imports::create_import_batch(&db, domain_id, "not_validated.json", "nv_sha256", Some(1))
+            .await
+            .expect("create batch");
 
         let policy = RefImportApplyPolicy {
             include_warnings: false,
@@ -255,15 +225,9 @@ mod tests {
         let db = setup().await;
         let (domain_id, set_id) = setup_tenant_domain(&db).await;
 
-        let batch = imports::create_import_batch(
-            &db,
-            domain_id,
-            "idempotent.json",
-            "idem_sha256",
-            Some(1),
-        )
-        .await
-        .expect("create batch");
+        let batch = imports::create_import_batch(&db, domain_id, "idempotent.json", "idem_sha256", Some(1))
+            .await
+            .expect("create batch");
 
         imports::stage_import_rows(&db, batch.id, vec![row(Some("IDEM_A"), Some("A"))])
             .await
@@ -324,24 +288,16 @@ mod tests {
         sets::publish_set(&db, set_id, 1).await.expect("publish set");
 
         // Create new batch importing an existing code in the protected domain
-        let batch = imports::create_import_batch(
-            &db,
-            domain_id,
-            "protected_import.json",
-            "prot_sha256",
-            Some(1),
-        )
-        .await
-        .expect("create batch");
+        let batch = imports::create_import_batch(&db, domain_id, "protected_import.json", "prot_sha256", Some(1))
+            .await
+            .expect("create batch");
 
         let rows = vec![
             row(Some("EXISTING_CODE"), Some("Updated Label")),
             row(Some("NEW_CODE"), Some("New Value")),
         ];
 
-        imports::stage_import_rows(&db, batch.id, rows)
-            .await
-            .expect("stage");
+        imports::stage_import_rows(&db, batch.id, rows).await.expect("stage");
 
         let validated = imports::validate_import_batch(&db, batch.id, Some(1))
             .await
@@ -350,17 +306,12 @@ mod tests {
         assert_eq!(validated.valid_rows, 1); // NEW_CODE â†’ valid
         assert_eq!(validated.warning_rows, 1); // EXISTING_CODE â†’ warning
 
-        let preview = imports::get_import_preview(&db, batch.id)
-            .await
-            .expect("preview");
+        let preview = imports::get_import_preview(&db, batch.id).await.expect("preview");
 
         // First row: protected domain update â†’ warning
         let prot_row = &preview.rows[0];
         assert_eq!(prot_row.validation_status, "warning");
-        assert!(prot_row
-            .messages
-            .iter()
-            .any(|m| m.category == "ProtectedDomainUpdate"));
+        assert!(prot_row.messages.iter().any(|m| m.category == "ProtectedDomainUpdate"));
         assert_eq!(prot_row.proposed_action.as_deref(), Some("update"));
     }
 
@@ -423,9 +374,7 @@ mod tests {
         .expect("create alias en");
 
         // Export the set
-        let export = imports::export_domain_set(&db, set_id)
-            .await
-            .expect("export");
+        let export = imports::export_domain_set(&db, set_id).await.expect("export");
 
         assert_eq!(export.domain.id, domain_id);
         assert_eq!(export.set.id, set_id);
@@ -436,11 +385,7 @@ mod tests {
         assert_eq!(export_row.aliases.len(), 2);
 
         // Verify aliases are present
-        let alias_labels: Vec<&str> = export_row
-            .aliases
-            .iter()
-            .map(|a| a.alias_label.as_str())
-            .collect();
+        let alias_labels: Vec<&str> = export_row.aliases.iter().map(|a| a.alias_label.as_str()).collect();
         assert!(alias_labels.contains(&"Ancien nom A"));
         assert!(alias_labels.contains(&"Old name A"));
     }
@@ -475,24 +420,16 @@ mod tests {
         .await
         .expect("create pre-existing");
 
-        let batch = imports::create_import_batch(
-            &db,
-            domain_id,
-            "apply_test.json",
-            "apply_sha256",
-            Some(1),
-        )
-        .await
-        .expect("create batch");
+        let batch = imports::create_import_batch(&db, domain_id, "apply_test.json", "apply_sha256", Some(1))
+            .await
+            .expect("create batch");
 
         let rows = vec![
-            row(Some("PRE_EXIST"), Some("Updated Label")),  // update
+            row(Some("PRE_EXIST"), Some("Updated Label")),   // update
             row(Some("BRAND_NEW"), Some("Brand New Value")), // create
         ];
 
-        imports::stage_import_rows(&db, batch.id, rows)
-            .await
-            .expect("stage");
+        imports::stage_import_rows(&db, batch.id, rows).await.expect("stage");
 
         imports::validate_import_batch(&db, batch.id, Some(1))
             .await
@@ -538,14 +475,9 @@ mod tests {
             .expect("list all");
         assert_eq!(all.len(), 2);
 
-        let uploaded = imports::list_import_batches(
-            &db,
-            domain_id,
-            Some("uploaded".to_string()),
-            None,
-        )
-        .await
-        .expect("list uploaded");
+        let uploaded = imports::list_import_batches(&db, domain_id, Some("uploaded".to_string()), None)
+            .await
+            .expect("list uploaded");
         assert_eq!(uploaded.len(), 2);
     }
 }

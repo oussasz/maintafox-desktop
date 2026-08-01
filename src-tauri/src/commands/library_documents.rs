@@ -5,9 +5,7 @@ use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
-use crate::library_documents::{
-    self, LibraryDocumentRow, LibraryDocumentUploadInput, UpdateLibraryDocumentInput,
-};
+use crate::library_documents::{self, LibraryDocumentRow, LibraryDocumentUploadInput, UpdateLibraryDocumentInput};
 use crate::state::AppState;
 use crate::{require_permission, require_session};
 
@@ -18,7 +16,12 @@ pub async fn list_library_documents(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<LibraryDocumentRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DOC_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DOC_VIEW,
+        PermissionScope::Global
+    );
     library_documents::list_library_documents(&state.db, category, equipment_id).await
 }
 
@@ -35,7 +38,12 @@ pub async fn upload_library_document(
     state: State<'_, AppState>,
 ) -> AppResult<LibraryDocumentRow> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DOC_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DOC_MANAGE,
+        PermissionScope::Global
+    );
 
     let app_data_dir = app
         .path()
@@ -63,7 +71,12 @@ pub async fn get_library_document_file(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<u8>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DOC_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DOC_VIEW,
+        PermissionScope::Global
+    );
 
     let app_data_dir = app
         .path()
@@ -74,12 +87,14 @@ pub async fn get_library_document_file(
 }
 
 #[tauri::command]
-pub async fn delete_library_document(
-    id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn delete_library_document(id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DOC_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DOC_MANAGE,
+        PermissionScope::Global
+    );
     library_documents::delete_library_document_record(&state.db, id).await
 }
 
@@ -89,6 +104,11 @@ pub async fn update_library_document(
     state: State<'_, AppState>,
 ) -> AppResult<LibraryDocumentRow> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DOC_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DOC_MANAGE,
+        PermissionScope::Global
+    );
     library_documents::update_library_document_metadata(&state.db, input).await
 }

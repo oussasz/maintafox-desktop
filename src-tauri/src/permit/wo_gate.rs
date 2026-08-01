@@ -19,17 +19,16 @@ pub async fn assert_in_progress_permit_gate(db: &DatabaseConnection, wo_id: i64)
             entity: "WorkOrder".into(),
             id: wo_id.to_string(),
         })?;
-    let requires: i64 = row.try_get("", "requires_permit").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("requires_permit decode: {e}"))
-    })?;
+    let requires: i64 = row
+        .try_get("", "requires_permit")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("requires_permit decode: {e}")))?;
     if requires == 0 {
         return Ok(());
     }
     let permit = get_work_permit_linked_to_work_order(db, wo_id).await?;
     let Some(p) = permit else {
         return Err(AppError::ValidationFailed(vec![
-            "Un permis de travail actif lié est requis pour passer cet ordre de travail en cours."
-                .into(),
+            "Un permis de travail actif lié est requis pour passer cet ordre de travail en cours.".into(),
         ]));
     };
     if p.status == "suspended" {

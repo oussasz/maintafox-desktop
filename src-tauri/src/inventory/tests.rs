@@ -5,20 +5,17 @@ use crate::errors::AppError;
 use crate::inventory::domain::{
     ApproveInventoryCountLineInput, CreateInventoryCountSessionInput, CreateProcurementRequisitionInput,
     CreatePurchaseOrderFromRequisitionInput, CreateRepairableOrderInput, InventoryArticleFilter, InventoryArticleInput,
-    InventoryIssueInput, InventoryReleaseReservationInput, InventoryReserveInput, InventoryReturnInput, InventoryStockAdjustInput,
-    InventoryStockFilter, InventoryTransferInput, PostInventoryCountSessionInput, ReceiveGoodsInput, ReceivePurchaseOrderLineInput,
-    ReverseInventoryCountSessionInput, RunInventoryReconciliationInput, TransitionInventoryCountSessionInput,
-    TransitionProcurementRequisitionInput, TransitionPurchaseOrderInput, TransitionRepairableOrderInput, UpsertInventoryCountLineInput,
+    InventoryIssueInput, InventoryReleaseReservationInput, InventoryReserveInput, InventoryReturnInput,
+    InventoryStockAdjustInput, InventoryStockFilter, InventoryTransferInput, PostInventoryCountSessionInput,
+    ReceiveGoodsInput, ReceivePurchaseOrderLineInput, ReverseInventoryCountSessionInput,
+    RunInventoryReconciliationInput, TransitionInventoryCountSessionInput, TransitionProcurementRequisitionInput,
+    TransitionPurchaseOrderInput, TransitionRepairableOrderInput, UpsertInventoryCountLineInput,
 };
 use crate::inventory::{controls, procurement, queries};
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None)
-        .await
-        .expect("migrations");
+    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     crate::db::seeder::seed_system_data(&db)
         .await
         .expect("seed system data");
@@ -1340,7 +1337,7 @@ async fn reconciliation_detects_drift_under_realistic_volume() {
                 delta_qty: (idx + 1) as f64,
                 reason_code: Some("bulk seed".to_string()),
                 notes: None,
-            source_ref: None,
+                source_ref: None,
             },
         )
         .await

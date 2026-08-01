@@ -374,7 +374,10 @@ pub fn process_worker_round(
     }
     let max_processed = state.metrics.per_tenant_processed.values().copied().max().unwrap_or(0);
     for (tenant, processed) in &state.metrics.per_tenant_processed {
-        state.metrics.per_tenant_lag.insert(tenant.clone(), max_processed - processed);
+        state
+            .metrics
+            .per_tenant_lag
+            .insert(tenant.clone(), max_processed - processed);
     }
     update_metrics_from_state(state);
     Ok(report)

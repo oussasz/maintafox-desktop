@@ -1,4 +1,4 @@
-﻿//! Sprint S2 – Full DI test suite (lifecycle redesign, migration 139).
+//! Sprint S2 – Full DI test suite (lifecycle redesign, migration 139).
 //!
 //! Covers: state machine (tests 01–03), DI code generation (test 04),
 //! SLA engine (tests 05–07), optimistic locking (tests 08–09),
@@ -14,16 +14,15 @@ mod tests {
     use crate::di::conversion::{convert_di_to_work_order, WoConversionInput};
     use crate::di::domain::{guard_transition, DiStatus};
     use crate::di::queries::{
-        create_intervention_request, get_di_transition_log, update_di_draft_fields, DiCreateInput,
-        DiDraftUpdateInput,
+        create_intervention_request, get_di_transition_log, update_di_draft_fields, DiCreateInput, DiDraftUpdateInput,
     };
+    use crate::di::review::get_review_events;
     use crate::di::review::{
-        approve_di, close_di, return_di_for_clarification, screen_di,
-        DiApproveInput, DiCloseInput, DiReturnInput, DiScreenInput,
+        approve_di, close_di, return_di_for_clarification, screen_di, DiApproveInput, DiCloseInput, DiReturnInput,
+        DiScreenInput,
     };
     use crate::di::sla::{compute_sla_status, resolve_sla_rule, DiSlaLifecycleStatus};
     use crate::di::sla_poller::run_sla_poll_tick;
-    use crate::di::review::get_review_events;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Setup helpers
@@ -59,7 +58,8 @@ mod tests {
             DbBackend::Sqlite,
             "INSERT INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
              VALUES (1, 'test-eq-001', 'EQ-TEST-001', 'Test Equipment', 'active_in_service', \
-             datetime('now'), datetime('now'));".to_string(),
+             datetime('now'), datetime('now'));"
+                .to_string(),
         ))
         .await
         .expect("insert test equipment");
@@ -67,7 +67,8 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
-             VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));".to_string(),
+             VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
+                .to_string(),
         ))
         .await
         .expect("insert test structure model");
@@ -101,7 +102,8 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_sets (id, domain_id, version_no, status, created_at) \
-             VALUES (900001, 900001, 1, 'published', datetime('now'));".to_string(),
+             VALUES (900001, 900001, 1, 'published', datetime('now'));"
+                .to_string(),
         ))
         .await
         .expect("insert test reference_set");
@@ -109,7 +111,8 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (900001, 900001, 'MECH', 'Mécanique', 1);".to_string(),
+             VALUES (900001, 900001, 'MECH', 'Mécanique', 1);"
+                .to_string(),
         ))
         .await
         .expect("insert test reference_value");
@@ -232,7 +235,9 @@ mod tests {
             assert!(
                 result.is_ok(),
                 "Transition {} → {} should be valid, got: {:?}",
-                from.as_str(), to.as_str(), result.err()
+                from.as_str(),
+                to.as_str(),
+                result.err()
             );
         }
 
@@ -261,7 +266,8 @@ mod tests {
             assert!(
                 result.is_err(),
                 "Transition {} → {} should be INVALID",
-                from.as_str(), to.as_str()
+                from.as_str(),
+                to.as_str()
             );
         }
     }
@@ -284,11 +290,7 @@ mod tests {
             DiStatus::Deferred,
         ];
         for status in &mutable {
-            assert!(
-                !status.is_immutable(),
-                "{} must NOT be immutable",
-                status.as_str()
-            );
+            assert!(!status.is_immutable(), "{} must NOT be immutable", status.as_str());
         }
     }
 
@@ -302,19 +304,22 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         let di1 = create_intervention_request(&db, make_create_input(&db, user_id).await)
-            .await.expect("create DI #1");
+            .await
+            .expect("create DI #1");
         let di2 = create_intervention_request(&db, make_create_input(&db, user_id).await)
-            .await.expect("create DI #2");
+            .await
+            .expect("create DI #2");
         let di3 = create_intervention_request(&db, make_create_input(&db, user_id).await)
-            .await.expect("create DI #3");
+            .await
+            .expect("create DI #3");
 
         assert_eq!(di1.code, "DI-0001");
         assert_eq!(di2.code, "DI-0002");
         assert_eq!(di3.code, "DI-0003");
 
-        let codes: std::collections::HashSet<&str> =
-            [di1.code.as_str(), di2.code.as_str(), di3.code.as_str()]
-                .into_iter().collect();
+        let codes: std::collections::HashSet<&str> = [di1.code.as_str(), di2.code.as_str(), di3.code.as_str()]
+            .into_iter()
+            .collect();
         assert_eq!(codes.len(), 3, "All DI codes must be unique");
     }
 
@@ -326,27 +331,43 @@ mod tests {
     async fn test_05_sla_rule_priority() {
         let db = setup().await;
 
-        db.execute(Statement::from_string(DbBackend::Sqlite, "DELETE FROM di_sla_rules;".to_string()))
-            .await.expect("clear seeded SLA rules");
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "DELETE FROM di_sla_rules;".to_string(),
+        ))
+        .await
+        .expect("clear seeded SLA rules");
 
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
              target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
-             VALUES ('High+IoT', 'high', 'iot', NULL, 2, 24, 1, 1)", [],
-        )).await.expect("insert high+iot SLA rule");
+             VALUES ('High+IoT', 'high', 'iot', NULL, 2, 24, 1, 1)",
+            [],
+        ))
+        .await
+        .expect("insert high+iot SLA rule");
 
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
              target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
-             VALUES ('High+Any', 'high', NULL, NULL, 8, 48, 4, 1)", [],
-        )).await.expect("insert high+NULL SLA rule");
+             VALUES ('High+Any', 'high', NULL, NULL, 8, 48, 4, 1)",
+            [],
+        ))
+        .await
+        .expect("insert high+NULL SLA rule");
 
-        let rule_iot = resolve_sla_rule(&db, "high", "iot", None).await
-            .expect("resolve").expect("must exist");
+        let rule_iot = resolve_sla_rule(&db, "high", "iot", None)
+            .await
+            .expect("resolve")
+            .expect("must exist");
         assert_eq!(rule_iot.target_response_hours, 2);
 
-        let rule_operator = resolve_sla_rule(&db, "high", "operator", None).await
-            .expect("resolve").expect("must exist");
+        let rule_operator = resolve_sla_rule(&db, "high", "operator", None)
+            .await
+            .expect("resolve")
+            .expect("must exist");
         assert_eq!(rule_operator.target_response_hours, 8);
     }
 
@@ -360,15 +381,21 @@ mod tests {
         let user_id = get_user_id(&db).await;
         ensure_equipment_criticality_path(&db).await;
 
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
              target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
-             VALUES ('Critical', 'critical', NULL, NULL, 1, 8, 1, 1)", [],
-        )).await.expect("insert critical SLA rule");
+             VALUES ('Critical', 'critical', NULL, NULL, 1, 8, 1, 1)",
+            [],
+        ))
+        .await
+        .expect("insert critical SLA rule");
 
         let mut input = make_create_input(&db, user_id).await;
         input.reported_urgency = "critical".to_string();
-        let di = create_intervention_request(&db, input).await.expect("create critical DI");
+        let di = create_intervention_request(&db, input)
+            .await
+            .expect("create critical DI");
 
         db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
             "UPDATE intervention_requests SET submitted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 hours') WHERE id = ?",
@@ -376,10 +403,15 @@ mod tests {
         )).await.expect("backdate submitted_at");
 
         let di_updated = crate::di::queries::get_intervention_request(&db, di.id)
-            .await.expect("re-read DI").expect("DI must exist");
+            .await
+            .expect("re-read DI")
+            .expect("DI must exist");
         let sla_status = compute_sla_status(&db, &di_updated).await.expect("compute SLA status");
 
-        assert!(sla_status.is_response_breached, "DI submitted 10h ago with 1h target must be response-breached");
+        assert!(
+            sla_status.is_response_breached,
+            "DI submitted 10h ago with 1h target must be response-breached"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -392,29 +424,43 @@ mod tests {
         let user_id = get_user_id(&db).await;
         ensure_equipment_criticality_path(&db).await;
 
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
              target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
-             VALUES ('Critical', 'critical', NULL, NULL, 1, 8, 1, 1)", [],
-        )).await.expect("insert critical SLA rule");
+             VALUES ('Critical', 'critical', NULL, NULL, 1, 8, 1, 1)",
+            [],
+        ))
+        .await
+        .expect("insert critical SLA rule");
 
         let mut input = make_create_input(&db, user_id).await;
         input.reported_urgency = "critical".to_string();
-        let di = create_intervention_request(&db, input).await.expect("create critical DI");
+        let di = create_intervention_request(&db, input)
+            .await
+            .expect("create critical DI");
 
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
              submitted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 hours'), \
              screened_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 minutes') \
              WHERE id = ?",
             [di.id.into()],
-        )).await.expect("set timestamps");
+        ))
+        .await
+        .expect("set timestamps");
 
         let di_updated = crate::di::queries::get_intervention_request(&db, di.id)
-            .await.expect("re-read DI").expect("DI must exist");
+            .await
+            .expect("re-read DI")
+            .expect("DI must exist");
         let sla_status = compute_sla_status(&db, &di_updated).await.expect("compute SLA status");
 
-        assert!(!sla_status.is_response_breached, "DI with screened_at set must NOT be response-breached");
+        assert!(
+            !sla_status.is_response_breached,
+            "DI with screened_at set must NOT be response-breached"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -426,28 +472,41 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        db.execute(Statement::from_string(DbBackend::Sqlite, "DELETE FROM di_sla_rules;".to_string()))
-            .await.expect("clear rules");
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "DELETE FROM di_sla_rules;".to_string(),
+        ))
+        .await
+        .expect("clear rules");
 
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
              target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
-             VALUES ('Medium', 'medium', NULL, NULL, 24, 72, 4, 1)", [],
-        )).await.expect("insert rule");
+             VALUES ('Medium', 'medium', NULL, NULL, 24, 72, 4, 1)",
+            [],
+        ))
+        .await
+        .expect("insert rule");
 
         let mut input = make_create_input(&db, user_id).await;
         input.reported_urgency = "medium".to_string();
         let di = create_intervention_request(&db, input).await.expect("create DI");
 
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
              submitted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-6 hours') \
              WHERE id = ?",
             [di.id.into()],
-        )).await.expect("backdate");
+        ))
+        .await
+        .expect("backdate");
 
         let di_updated = crate::di::queries::get_intervention_request(&db, di.id)
-            .await.expect("re-read").expect("exists");
+            .await
+            .expect("re-read")
+            .expect("exists");
         let sla_status = compute_sla_status(&db, &di_updated).await.expect("compute");
 
         assert!(!sla_status.is_response_breached);
@@ -464,14 +523,20 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
-            .await.expect("create DI");
+            .await
+            .expect("create DI");
 
         let events = get_review_events(&db, di.id).await.expect("events");
-        let init = events.iter().find(|e| e.event_type == "sla_initialized")
+        let init = events
+            .iter()
+            .find(|e| e.event_type == "sla_initialized")
             .expect("sla_initialized event must exist");
         assert!(init.sla_target_hours.is_some(), "sla_target_hours must be populated");
         assert!(init.sla_deadline.is_some(), "sla_deadline must be populated");
-        assert!(di.sla_response_deadline.is_some(), "DI must have frozen sla_response_deadline");
+        assert!(
+            di.sla_response_deadline.is_some(),
+            "DI must have frozen sla_response_deadline"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -483,14 +548,22 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        db.execute(Statement::from_string(DbBackend::Sqlite, "DELETE FROM di_sla_rules;".to_string()))
-            .await.expect("clear rules");
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "DELETE FROM di_sla_rules;".to_string(),
+        ))
+        .await
+        .expect("clear rules");
 
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
              target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
-             VALUES ('High', 'high', NULL, NULL, 4, 24, 2, 1)", [],
-        )).await.expect("insert 4h rule");
+             VALUES ('High', 'high', NULL, NULL, 4, 24, 2, 1)",
+            [],
+        ))
+        .await
+        .expect("insert 4h rule");
 
         let mut input = make_create_input(&db, user_id).await;
         input.reported_urgency = "high".to_string();
@@ -499,12 +572,18 @@ mod tests {
         assert_eq!(di.sla_target_response_hours, Some(4));
         let frozen_deadline = di.sla_response_deadline.clone().expect("deadline");
 
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
-            "UPDATE di_sla_rules SET target_response_hours = 2 WHERE urgency_level = 'high'", [],
-        )).await.expect("update rule");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE di_sla_rules SET target_response_hours = 2 WHERE urgency_level = 'high'",
+            [],
+        ))
+        .await
+        .expect("update rule");
 
         let di2 = crate::di::queries::get_intervention_request(&db, di.id)
-            .await.expect("re-read").expect("exists");
+            .await
+            .expect("re-read")
+            .expect("exists");
         let status = compute_sla_status(&db, &di2).await.expect("status");
 
         assert_eq!(status.target_response_hours, Some(4));
@@ -520,42 +599,60 @@ mod tests {
         let db = setup().await;
         let user_id = get_user_id(&db).await;
 
-        db.execute(Statement::from_string(DbBackend::Sqlite, "DELETE FROM di_sla_rules;".to_string()))
-            .await.expect("clear rules");
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            "DELETE FROM di_sla_rules;".to_string(),
+        ))
+        .await
+        .expect("clear rules");
 
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "INSERT INTO di_sla_rules (name, urgency_level, origin_type, asset_criticality_class, \
              target_response_hours, target_resolution_hours, escalation_threshold_hours, is_active) \
-             VALUES ('Critical', 'critical', NULL, NULL, 1, 8, 1, 1)", [],
-        )).await.expect("insert rule");
+             VALUES ('Critical', 'critical', NULL, NULL, 1, 8, 1, 1)",
+            [],
+        ))
+        .await
+        .expect("insert rule");
 
         let mut input = make_create_input(&db, user_id).await;
         input.reported_urgency = "critical".to_string();
         let di = create_intervention_request(&db, input).await.expect("create DI");
 
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
              submitted_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 hours'), \
              sla_response_deadline = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-9 hours'), \
              sla_resolution_deadline = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-2 hours') \
              WHERE id = ?",
             [di.id.into()],
-        )).await.expect("backdate");
+        ))
+        .await
+        .expect("backdate");
 
         run_sla_poll_tick(&db).await.expect("first tick");
         run_sla_poll_tick(&db).await.expect("second tick");
 
         let di_after = crate::di::queries::get_intervention_request(&db, di.id)
-            .await.expect("re-read").expect("exists");
+            .await
+            .expect("re-read")
+            .expect("exists");
         assert!(di_after.sla_response_breach_notified_at.is_some());
         assert!(di_after.sla_resolution_breach_notified_at.is_some());
 
         let response_count: i64 = db
-            .query_one(Statement::from_sql_and_values(DbBackend::Sqlite,
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
                 "SELECT COUNT(*) AS c FROM notification_events WHERE dedupe_key = ?",
                 [format!("di-sla-response-breach-{}", di.id).into()],
             ))
-            .await.expect("query").expect("row").try_get("", "c").expect("c");
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get("", "c")
+            .expect("c");
 
         assert_eq!(response_count, 1, "response breach must emit once across ticks");
     }
@@ -570,7 +667,8 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
-            .await.expect("create DI");
+            .await
+            .expect("create DI");
 
         let result = update_di_draft_fields(
             &db,
@@ -578,17 +676,26 @@ mod tests {
                 id: di.id,
                 expected_row_version: 0, // stale!
                 title: Some("Updated title".into()),
-                description: None, request_type: None, symptom_code_id: None,
-                impact_level: None, production_impact: None, safety_flag: None,
-                environmental_flag: None, quality_flag: None, reported_urgency: None,
+                description: None,
+                request_type: None,
+                symptom_code_id: None,
+                impact_level: None,
+                production_impact: None,
+                safety_flag: None,
+                environmental_flag: None,
+                quality_flag: None,
+                reported_urgency: None,
                 observed_at: None,
             },
-        ).await;
+        )
+        .await;
 
         assert!(result.is_err(), "update_di_draft with stale row_version=0 must fail");
 
         let current = crate::di::queries::get_intervention_request(&db, di.id)
-            .await.expect("re-read DI").expect("DI must exist");
+            .await
+            .expect("re-read DI")
+            .expect("DI must exist");
         assert_eq!(current.title, di.title);
         assert_eq!(current.row_version, 1);
     }
@@ -603,7 +710,8 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
-            .await.expect("create DI");
+            .await
+            .expect("create DI");
 
         advance_to_in_review(&db, di.id).await;
 
@@ -618,12 +726,16 @@ mod tests {
                 classification_code_id: Some(900001),
                 reviewer_note: Some("Test".into()),
             },
-        ).await;
+        )
+        .await;
 
         assert!(result.is_err(), "screen_di with stale row_version=999 must fail");
 
         let status = get_di_status(&db, di.id).await;
-        assert_eq!(status, "in_review", "DI status must remain in_review after failed screen");
+        assert_eq!(
+            status, "in_review",
+            "DI status must remain in_review after failed screen"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -637,7 +749,8 @@ mod tests {
 
         // Phase A: Submission
         let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
-            .await.expect("create DI");
+            .await
+            .expect("create DI");
         assert_eq!(di.status, "submitted");
 
         let transitions = get_di_transition_log(&db, di.id).await.expect("get transition log");
@@ -645,55 +758,99 @@ mod tests {
         assert_eq!(transitions[0].action, "intake_submitted");
         assert_eq!(transitions[0].to_status, "submitted");
 
-        audit::record_di_change_event(&db, audit::DiAuditInput {
-            di_id: Some(di.id), action: "submitted".into(), actor_id: Some(user_id),
-            summary: Some("DI submitted".into()), details_json: None,
-            requires_step_up: false, apply_result: "applied".into(),
-        }).await;
+        audit::record_di_change_event(
+            &db,
+            audit::DiAuditInput {
+                di_id: Some(di.id),
+                action: "submitted".into(),
+                actor_id: Some(user_id),
+                summary: Some("DI submitted".into()),
+                details_json: None,
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+        )
+        .await;
 
         // Phase B: Triage → screen
         advance_to_in_review(&db, di.id).await;
         let rv = get_row_version(&db, di.id).await;
 
-        let screened = screen_di(&db, DiScreenInput {
-            di_id: di.id, actor_id: user_id, expected_row_version: rv,
-            validated_urgency: "high".into(), review_team_id: None,
-            classification_code_id: Some(900001),
-            reviewer_note: Some("Validated by reviewer".into()),
-        }).await.expect("screen_di should succeed");
+        let screened = screen_di(
+            &db,
+            DiScreenInput {
+                di_id: di.id,
+                actor_id: user_id,
+                expected_row_version: rv,
+                validated_urgency: "high".into(),
+                review_team_id: None,
+                classification_code_id: Some(900001),
+                reviewer_note: Some("Validated by reviewer".into()),
+            },
+        )
+        .await
+        .expect("screen_di should succeed");
 
         assert_eq!(screened.status, "awaiting_approval");
         assert!(screened.screened_at.is_some());
         assert_eq!(screened.reviewer_id, Some(user_id));
 
-        audit::record_di_change_event(&db, audit::DiAuditInput {
-            di_id: Some(di.id), action: "screened".into(), actor_id: Some(user_id),
-            summary: Some("DI screened".into()), details_json: None,
-            requires_step_up: false, apply_result: "applied".into(),
-        }).await;
+        audit::record_di_change_event(
+            &db,
+            audit::DiAuditInput {
+                di_id: Some(di.id),
+                action: "screened".into(),
+                actor_id: Some(user_id),
+                summary: Some("DI screened".into()),
+                details_json: None,
+                requires_step_up: false,
+                apply_result: "applied".into(),
+            },
+        )
+        .await;
 
         // Phase C: Approval
-        let approved = approve_di(&db, DiApproveInput {
-            di_id: di.id, actor_id: user_id,
-            expected_row_version: screened.row_version,
-            notes: Some("Approved for planning".into()),
-        }).await.expect("approve_di should succeed");
+        let approved = approve_di(
+            &db,
+            DiApproveInput {
+                di_id: di.id,
+                actor_id: user_id,
+                expected_row_version: screened.row_version,
+                notes: Some("Approved for planning".into()),
+            },
+        )
+        .await
+        .expect("approve_di should succeed");
 
         assert_eq!(approved.status, "approved");
         assert!(approved.approved_at.is_some());
 
-        audit::record_di_change_event(&db, audit::DiAuditInput {
-            di_id: Some(di.id), action: "approved".into(), actor_id: Some(user_id),
-            summary: Some("DI approuvée.".into()), details_json: None,
-            requires_step_up: true, apply_result: "applied".into(),
-        }).await;
+        audit::record_di_change_event(
+            &db,
+            audit::DiAuditInput {
+                di_id: Some(di.id),
+                action: "approved".into(),
+                actor_id: Some(user_id),
+                summary: Some("DI approuvée.".into()),
+                details_json: None,
+                requires_step_up: true,
+                apply_result: "applied".into(),
+            },
+        )
+        .await;
 
         // Phase D: Conversion
-        let conversion = convert_di_to_work_order(&db, WoConversionInput {
-            di_id: di.id, actor_id: user_id,
-            expected_row_version: approved.row_version,
-            conversion_notes: Some("Converting to WO".into()),
-        }).await.expect("convert_di_to_work_order should succeed");
+        let conversion = convert_di_to_work_order(
+            &db,
+            WoConversionInput {
+                di_id: di.id,
+                actor_id: user_id,
+                expected_row_version: approved.row_version,
+                conversion_notes: Some("Converting to WO".into()),
+            },
+        )
+        .await
+        .expect("convert_di_to_work_order should succeed");
 
         assert_eq!(conversion.di.status, "closed", "Status after conversion must be closed");
         assert_eq!(conversion.di.disposition_code.as_deref(), Some("converted_to_wo"));
@@ -703,18 +860,31 @@ mod tests {
         assert!(conversion.di.closed_at.is_some());
 
         // Phase E: Immutability (closed DI cannot be draft-edited)
-        let update_result = update_di_draft_fields(&db, DiDraftUpdateInput {
-            id: di.id, expected_row_version: conversion.di.row_version,
-            title: Some("Should fail".into()), description: None, request_type: None,
-            symptom_code_id: None, impact_level: None, production_impact: None,
-            safety_flag: None, environmental_flag: None, quality_flag: None,
-            reported_urgency: None, observed_at: None,
-        }).await;
+        let update_result = update_di_draft_fields(
+            &db,
+            DiDraftUpdateInput {
+                id: di.id,
+                expected_row_version: conversion.di.row_version,
+                title: Some("Should fail".into()),
+                description: None,
+                request_type: None,
+                symptom_code_id: None,
+                impact_level: None,
+                production_impact: None,
+                safety_flag: None,
+                environmental_flag: None,
+                quality_flag: None,
+                reported_urgency: None,
+                observed_at: None,
+            },
+        )
+        .await;
         assert!(update_result.is_err(), "update_di_draft on closed DI must fail");
 
         // Phase F: Audit completeness
         let events = audit::list_di_change_events(&db, di.id, 100)
-            .await.expect("list change events");
+            .await
+            .expect("list change events");
         let actions: Vec<&str> = events.iter().map(|e| e.action.as_str()).collect();
         assert!(actions.contains(&"submitted"));
         assert!(actions.contains(&"screened"));
@@ -732,37 +902,65 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
-            .await.expect("create DI");
+            .await
+            .expect("create DI");
         advance_to_in_review(&db, di.id).await;
         let rv = get_row_version(&db, di.id).await;
 
-        let returned = return_di_for_clarification(&db, DiReturnInput {
-            di_id: di.id, actor_id: user_id, expected_row_version: rv,
-            reviewer_note: "Need more details on vibration frequency".into(),
-        }).await.expect("return_for_clarification should succeed");
+        let returned = return_di_for_clarification(
+            &db,
+            DiReturnInput {
+                di_id: di.id,
+                actor_id: user_id,
+                expected_row_version: rv,
+                reviewer_note: "Need more details on vibration frequency".into(),
+            },
+        )
+        .await
+        .expect("return_for_clarification should succeed");
 
         assert_eq!(returned.status, "returned_for_clarification");
 
-        let updated = update_di_draft_fields(&db, DiDraftUpdateInput {
-            id: di.id, expected_row_version: returned.row_version,
-            title: None,
-            description: Some("Updated: vibration at 120Hz on bearing DE".into()),
-            request_type: None, symptom_code_id: None, impact_level: None,
-            production_impact: None, safety_flag: None, environmental_flag: None,
-            quality_flag: None, reported_urgency: None, observed_at: None,
-        }).await.expect("update_di_draft in returned state must succeed");
+        let updated = update_di_draft_fields(
+            &db,
+            DiDraftUpdateInput {
+                id: di.id,
+                expected_row_version: returned.row_version,
+                title: None,
+                description: Some("Updated: vibration at 120Hz on bearing DE".into()),
+                request_type: None,
+                symptom_code_id: None,
+                impact_level: None,
+                production_impact: None,
+                safety_flag: None,
+                environmental_flag: None,
+                quality_flag: None,
+                reported_urgency: None,
+                observed_at: None,
+            },
+        )
+        .await
+        .expect("update_di_draft in returned state must succeed");
         assert_eq!(updated.description, "Updated: vibration at 120Hz on bearing DE");
 
         // Resubmit: returned_for_clarification → in_review
         advance_to_in_review(&db, di.id).await;
         let rv2 = get_row_version(&db, di.id).await;
 
-        let re_screened = screen_di(&db, DiScreenInput {
-            di_id: di.id, actor_id: user_id, expected_row_version: rv2,
-            validated_urgency: "high".into(), review_team_id: None,
-            classification_code_id: Some(900001),
-            reviewer_note: Some("Re-screened after clarification".into()),
-        }).await.expect("re-screen should succeed");
+        let re_screened = screen_di(
+            &db,
+            DiScreenInput {
+                di_id: di.id,
+                actor_id: user_id,
+                expected_row_version: rv2,
+                validated_urgency: "high".into(),
+                review_team_id: None,
+                classification_code_id: Some(900001),
+                reviewer_note: Some("Re-screened after clarification".into()),
+            },
+        )
+        .await
+        .expect("re-screen should succeed");
 
         assert_eq!(re_screened.status, "awaiting_approval");
         assert!(re_screened.screened_at.is_some());
@@ -778,36 +976,57 @@ mod tests {
         let user_id = get_user_id(&db).await;
 
         let di = create_intervention_request(&db, make_create_input(&db, user_id).await)
-            .await.expect("create DI");
+            .await
+            .expect("create DI");
         advance_to_in_review(&db, di.id).await;
         let rv = get_row_version(&db, di.id).await;
 
-        let screened = screen_di(&db, DiScreenInput {
-            di_id: di.id, actor_id: user_id, expected_row_version: rv,
-            validated_urgency: "medium".into(), review_team_id: None,
-            classification_code_id: Some(900001), reviewer_note: None,
-        }).await.expect("screen should succeed");
+        let screened = screen_di(
+            &db,
+            DiScreenInput {
+                di_id: di.id,
+                actor_id: user_id,
+                expected_row_version: rv,
+                validated_urgency: "medium".into(),
+                review_team_id: None,
+                classification_code_id: Some(900001),
+                reviewer_note: None,
+            },
+        )
+        .await
+        .expect("screen should succeed");
 
         // Close from awaiting_approval with disposition duplicate
-        let closed = close_di(&db, DiCloseInput {
-            di_id: di.id, actor_id: user_id,
-            expected_row_version: screened.row_version,
-            disposition_code: "duplicate".into(),
-            notes: Some("Already reported as DI-0001".into()),
-            related_di_id: None,
-        }).await;
+        let closed = close_di(
+            &db,
+            DiCloseInput {
+                di_id: di.id,
+                actor_id: user_id,
+                expected_row_version: screened.row_version,
+                disposition_code: "duplicate".into(),
+                notes: Some("Already reported as DI-0001".into()),
+                related_di_id: None,
+            },
+        )
+        .await;
 
         // duplicate requires related_di_id → should fail
         assert!(closed.is_err(), "close with duplicate but no related_di_id must fail");
 
         // Now close with rejected_invalid disposition (no related_di_id required)
-        let closed_ok = close_di(&db, DiCloseInput {
-            di_id: di.id, actor_id: user_id,
-            expected_row_version: screened.row_version,
-            disposition_code: "rejected_invalid".into(),
-            notes: Some("Request does not meet criteria".into()),
-            related_di_id: None,
-        }).await.expect("close with rejected_invalid should succeed");
+        let closed_ok = close_di(
+            &db,
+            DiCloseInput {
+                di_id: di.id,
+                actor_id: user_id,
+                expected_row_version: screened.row_version,
+                disposition_code: "rejected_invalid".into(),
+                notes: Some("Request does not meet criteria".into()),
+                related_di_id: None,
+            },
+        )
+        .await
+        .expect("close with rejected_invalid should succeed");
 
         assert_eq!(closed_ok.status, "closed");
         assert!(closed_ok.closed_at.is_some());

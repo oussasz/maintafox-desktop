@@ -17,10 +17,7 @@ use super::values;
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /// Returns `true` if the domain requires analytical protection semantics.
-pub async fn is_protected_domain(
-    db: &DatabaseConnection,
-    domain_id: i64,
-) -> AppResult<bool> {
+pub async fn is_protected_domain(db: &DatabaseConnection, domain_id: i64) -> AppResult<bool> {
     let domain = domains::get_reference_domain(db, domain_id).await?;
     Ok(governance::requires_analytical_protection(&domain))
 }
@@ -33,10 +30,7 @@ pub async fn is_protected_domain(
 ///
 /// This guard exists so that future policy extensions (e.g. requiring a
 /// migration map before deactivation) can be enforced centrally.
-pub async fn assert_can_deactivate_value(
-    db: &DatabaseConnection,
-    value_id: i64,
-) -> AppResult<()> {
+pub async fn assert_can_deactivate_value(db: &DatabaseConnection, value_id: i64) -> AppResult<()> {
     let value = values::get_value(db, value_id).await?;
     let set = sets::get_reference_set(db, value.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
@@ -60,10 +54,7 @@ pub async fn assert_can_deactivate_value(
 ///   - **Protected analytical domain + value not in use** → allowed.
 ///   - **Non-protected domain + value in use** → blocked.
 ///   - **Non-protected domain + value not in use** → allowed.
-pub async fn assert_can_delete_value(
-    db: &DatabaseConnection,
-    value_id: i64,
-) -> AppResult<()> {
+pub async fn assert_can_delete_value(db: &DatabaseConnection, value_id: i64) -> AppResult<()> {
     let value = values::get_value(db, value_id).await?;
     let set = sets::get_reference_set(db, value.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
@@ -298,10 +289,7 @@ fn format_usage_summary(usages: &[UsageReference]) -> String {
 ///
 /// This is used by future policy rules that require a migration map before
 /// deactivation is allowed in protected domains.
-pub async fn has_migration_map(
-    db: &DatabaseConnection,
-    from_value_id: i64,
-) -> AppResult<bool> {
+pub async fn has_migration_map(db: &DatabaseConnection, from_value_id: i64) -> AppResult<bool> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

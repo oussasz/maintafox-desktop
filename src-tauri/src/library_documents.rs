@@ -56,9 +56,7 @@ fn map_row(row: &QueryResult) -> AppResult<LibraryDocumentRow> {
         equipment_name: row
             .try_get::<Option<String>>("", "equipment_name")
             .map_err(|e| decode_err("equipment_name", e))?,
-        title: row
-            .try_get::<String>("", "title")
-            .map_err(|e| decode_err("title", e))?,
+        title: row.try_get::<String>("", "title").map_err(|e| decode_err("title", e))?,
         file_name: row
             .try_get::<String>("", "file_name")
             .map_err(|e| decode_err("file_name", e))?,
@@ -178,10 +176,7 @@ pub async fn save_library_document(
     }
 
     let uuid = Uuid::new_v4();
-    let relative_path = format!(
-        "library_documents/{}/{}-{}",
-        input.category, uuid, sanitized_name
-    );
+    let relative_path = format!("library_documents/{}/{}-{}", input.category, uuid, sanitized_name);
 
     let absolute_path: PathBuf = app_data_dir.join(&relative_path);
     if let Some(parent) = absolute_path.parent() {
@@ -237,19 +232,13 @@ pub async fn save_library_document(
             [relative_path.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("Failed to re-fetch library_documents row"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch library_documents row")))?;
 
     map_row(&row)
 }
 
 /// Read file bytes for a document (path validated against stored prefix).
-pub async fn read_library_document_file(
-    db: &impl ConnectionTrait,
-    app_data_dir: &Path,
-    id: i64,
-) -> AppResult<Vec<u8>> {
+pub async fn read_library_document_file(db: &impl ConnectionTrait, app_data_dir: &Path, id: i64) -> AppResult<Vec<u8>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -273,15 +262,11 @@ pub async fn read_library_document_file(
     }
 
     let absolute = app_data_dir.join(&relative_path);
-    std::fs::read(&absolute).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("Failed to read library file {relative_path}: {e}"))
-    })
+    std::fs::read(&absolute)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to read library file {relative_path}: {e}")))
 }
 
-pub async fn delete_library_document_record(
-    db: &impl ConnectionTrait,
-    id: i64,
-) -> AppResult<()> {
+pub async fn delete_library_document_record(db: &impl ConnectionTrait, id: i64) -> AppResult<()> {
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -349,11 +334,7 @@ pub async fn update_library_document_metadata(
 
     let new_title = input.title.map(|s| s.trim().to_string());
 
-    match (
-        new_title.as_ref(),
-        input.clear_equipment_link,
-        input.equipment_id,
-    ) {
+    match (new_title.as_ref(), input.clear_equipment_link, input.equipment_id) {
         (Some(t), true, _) => {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -409,9 +390,7 @@ pub async fn update_library_document_metadata(
             [input.id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("library document row missing after update"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("library document row missing after update")))?;
 
     map_row(&row)
 }

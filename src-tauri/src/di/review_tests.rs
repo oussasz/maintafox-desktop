@@ -1,4 +1,4 @@
-﻿//! Review workflow tests (lifecycle redesign, 7-state model).
+//! Review workflow tests (lifecycle redesign, 7-state model).
 //!
 //! V1 – Screen action atomicity (transaction rollback on failure).
 //! V2 – Return requires non-empty reviewer_note.
@@ -13,9 +13,8 @@ mod tests {
 
     use crate::di::queries::{create_intervention_request, DiCreateInput};
     use crate::di::review::{
-        approve_di, close_di, defer_di, get_review_events, reactivate_deferred_di,
-        return_di_for_clarification, screen_di, DiApproveInput, DiCloseInput, DiDeferInput,
-        DiReactivateInput, DiReturnInput, DiScreenInput,
+        approve_di, close_di, defer_di, get_review_events, reactivate_deferred_di, return_di_for_clarification,
+        screen_di, DiApproveInput, DiCloseInput, DiDeferInput, DiReactivateInput, DiReturnInput, DiScreenInput,
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -52,7 +51,8 @@ mod tests {
             DbBackend::Sqlite,
             "INSERT INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
              VALUES (1, 'test-eq-001', 'EQ-TEST-001', 'Test Equipment', 'active_in_service', \
-             datetime('now'), datetime('now'));".to_string(),
+             datetime('now'), datetime('now'));"
+                .to_string(),
         ))
         .await
         .expect("insert test equipment");
@@ -60,7 +60,8 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
-             VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));".to_string(),
+             VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
+                .to_string(),
         ))
         .await
         .expect("insert test structure model");
@@ -94,7 +95,8 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_sets (id, domain_id, version_no, status, created_at) \
-             VALUES (900001, 900001, 1, 'published', datetime('now'));".to_string(),
+             VALUES (900001, 900001, 1, 'published', datetime('now'));"
+                .to_string(),
         ))
         .await
         .expect("insert test reference_set");
@@ -102,7 +104,8 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (900001, 900001, 'MECH', 'Mécanique', 1);".to_string(),
+             VALUES (900001, 900001, 'MECH', 'Mécanique', 1);"
+                .to_string(),
         ))
         .await
         .expect("insert test reference_value");
@@ -222,9 +225,7 @@ mod tests {
 
         let events = get_review_events(&db, di.id).await.expect("events query");
         assert!(
-            events
-                .iter()
-                .all(|e| e.event_type == "sla_initialized"),
+            events.iter().all(|e| e.event_type == "sla_initialized"),
             "No screening review events should exist after failed screen; found: {:?}",
             events.iter().map(|e| &e.event_type).collect::<Vec<_>>()
         );
@@ -372,10 +373,7 @@ mod tests {
         .expect("return should succeed with valid note");
 
         assert_eq!(updated.status, "returned_for_clarification");
-        assert_eq!(
-            updated.reviewer_note.as_deref(),
-            Some("Please add sensor readings.")
-        );
+        assert_eq!(updated.reviewer_note.as_deref(), Some("Please add sensor readings."));
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -576,7 +574,10 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err(), "defer must fail with today's date (not strictly future)");
+        assert!(
+            result.is_err(),
+            "defer must fail with today's date (not strictly future)"
+        );
     }
 
     #[tokio::test]
@@ -722,29 +723,26 @@ mod tests {
         );
 
         // screened_at and approved_at survive reactivation
-        assert!(reactivated.screened_at.is_some(), "screened_at must survive reactivation");
-        assert!(reactivated.approved_at.is_some(), "approved_at must survive reactivation");
+        assert!(
+            reactivated.screened_at.is_some(),
+            "screened_at must survive reactivation"
+        );
+        assert!(
+            reactivated.approved_at.is_some(),
+            "approved_at must survive reactivation"
+        );
 
         // Event log: sla_initialized + screen + approve + defer + reactivate
         let events = get_review_events(&db, di.id).await.expect("events");
         let event_types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
         assert_eq!(
             event_types,
-            vec![
-                "sla_initialized",
-                "screened",
-                "approved",
-                "deferred",
-                "reactivated"
-            ],
+            vec!["sla_initialized", "screened", "approved", "deferred", "reactivated"],
             "Event types must follow lifecycle order"
         );
 
         // Status chain (skip sla_initialized intake event)
-        let lifecycle: Vec<_> = events
-            .iter()
-            .filter(|e| e.event_type != "sla_initialized")
-            .collect();
+        let lifecycle: Vec<_> = events.iter().filter(|e| e.event_type != "sla_initialized").collect();
         assert_eq!(lifecycle[0].from_status, "in_review");
         assert_eq!(lifecycle[0].to_status, "awaiting_approval");
         assert_eq!(lifecycle[1].from_status, "awaiting_approval");

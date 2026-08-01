@@ -87,9 +87,7 @@ pub struct MarkPartNotUsedInput {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn decode_err(field: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "WoPart row decode error for '{field}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("WoPart row decode error for '{field}': {e}"))
 }
 
 fn map_part(row: &sea_orm::QueryResult) -> AppResult<WoPart> {
@@ -128,9 +126,7 @@ fn map_part(row: &sea_orm::QueryResult) -> AppResult<WoPart> {
         notes: row
             .try_get::<Option<String>>("", "notes")
             .map_err(|e| decode_err("notes", e))?,
-        article_label: row
-            .try_get::<Option<String>>("", "article_label")
-            .unwrap_or(None),
+        article_label: row.try_get::<Option<String>>("", "article_label").unwrap_or(None),
         origin: row
             .try_get::<Option<String>>("", "origin")
             .ok()
@@ -141,12 +137,8 @@ fn map_part(row: &sea_orm::QueryResult) -> AppResult<WoPart> {
             .ok()
             .flatten()
             .unwrap_or_else(|| "pending".into()),
-        not_used_reason_id: row
-            .try_get::<Option<i64>>("", "not_used_reason_id")
-            .unwrap_or(None),
-        not_used_comment: row
-            .try_get::<Option<String>>("", "not_used_comment")
-            .unwrap_or(None),
+        not_used_reason_id: row.try_get::<Option<i64>>("", "not_used_reason_id").unwrap_or(None),
+        not_used_comment: row.try_get::<Option<String>>("", "not_used_comment").unwrap_or(None),
         not_used_reason_label: row
             .try_get::<Option<String>>("", "not_used_reason_label")
             .unwrap_or(None),
@@ -173,8 +165,7 @@ async fn load_wo_status_code(db: &DatabaseConnection, wo_id: i64) -> AppResult<S
         .map_err(|e| decode_err("status_code", e))
 }
 
-const PART_COLS: &str =
-    "wop.id, wop.work_order_id, wop.article_id, wop.article_ref, wop.quantity_planned, \
+const PART_COLS: &str = "wop.id, wop.work_order_id, wop.article_id, wop.article_ref, wop.quantity_planned, \
      wop.quantity_used, wop.unit_cost, wop.stock_location_id, wop.reservation_id, \
      wop.quantity_reserved, wop.quantity_issued, wop.notes, \
      COALESCE(NULLIF(TRIM(wop.article_ref), ''), a.article_code) AS article_label, \
@@ -186,10 +177,7 @@ const PART_FROM: &str = "\
     LEFT JOIN articles a ON a.id = wop.article_id \
     LEFT JOIN reference_values nur ON nur.id = wop.not_used_reason_id";
 
-async fn load_wo_source_context(
-    db: &DatabaseConnection,
-    wo_id: i64,
-) -> AppResult<(String, Option<i64>, String)> {
+async fn load_wo_source_context(db: &DatabaseConnection, wo_id: i64) -> AppResult<(String, Option<i64>, String)> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -221,10 +209,7 @@ async fn load_wo_source_context(
 // A) add_planned_part
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn add_planned_part(
-    db: &DatabaseConnection,
-    input: AddPartInput,
-) -> AppResult<WoPart> {
+pub async fn add_planned_part(db: &DatabaseConnection, input: AddPartInput) -> AppResult<WoPart> {
     let status_code = load_wo_status_code(db, input.wo_id).await?;
     if matches!(status_code.as_str(), "closed" | "cancelled") {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -234,7 +219,7 @@ pub async fn add_planned_part(
 
     if input.quantity_planned < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "quantity_planned doit être >= 0.".to_string(),
+            "quantity_planned doit être >= 0.".to_string()
         ]));
     }
 
@@ -328,9 +313,7 @@ pub async fn add_planned_part(
             [],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("Failed to re-read part after insert"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read part after insert")))?;
     let mut created = map_part(&row)?;
 
     let should_auto_reserve = input.auto_reserve.unwrap_or(true) && origin == "planned";
@@ -356,7 +339,11 @@ pub async fn add_planned_part(
                     "UPDATE work_order_parts
                      SET reservation_id = ?, quantity_reserved = ?
                      WHERE id = ?",
-                    [reservation.id.into(), reservation.quantity_reserved.into(), created.id.into()],
+                    [
+                        reservation.id.into(),
+                        reservation.quantity_reserved.into(),
+                        created.id.into(),
+                    ],
                 ))
                 .await?;
                 let updated = db
@@ -366,9 +353,7 @@ pub async fn add_planned_part(
                         [created.id.into()],
                     ))
                     .await?
-                    .ok_or_else(|| {
-                        AppError::Internal(anyhow::anyhow!("Failed to re-read part after reservation"))
-                    })?;
+                    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read part after reservation")))?;
                 created = map_part(&updated)?;
             }
         }
@@ -427,10 +412,7 @@ pub async fn record_actual_usage(
     let part = map_part(&part_row)?;
 
     let status_code = load_wo_status_code(db, part.work_order_id).await?;
-    if !matches!(
-        status_code.as_str(),
-        "in_progress" | "on_hold" | "completed"
-    ) {
+    if !matches!(status_code.as_str(), "in_progress" | "on_hold" | "completed") {
         return Err(AppError::ValidationFailed(vec![format!(
             "Les réels des pièces ne peuvent être saisis qu'au statut 'in_progress', \
              'on_hold' ou 'completed'. Statut actuel : '{status_code}'."
@@ -439,7 +421,7 @@ pub async fn record_actual_usage(
 
     if quantity_used < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "quantity_used doit être >= 0.".to_string(),
+            "quantity_used doit être >= 0.".to_string()
         ]));
     }
 
@@ -529,10 +511,7 @@ pub async fn record_actual_usage(
 // B2) mark_part_not_used
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn mark_part_not_used(
-    db: &DatabaseConnection,
-    input: MarkPartNotUsedInput,
-) -> AppResult<WoPart> {
+pub async fn mark_part_not_used(db: &DatabaseConnection, input: MarkPartNotUsedInput) -> AppResult<WoPart> {
     let part_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -547,10 +526,7 @@ pub async fn mark_part_not_used(
     let part = map_part(&part_row)?;
 
     let status_code = load_wo_status_code(db, part.work_order_id).await?;
-    if !matches!(
-        status_code.as_str(),
-        "in_progress" | "on_hold" | "completed"
-    ) {
+    if !matches!(status_code.as_str(), "in_progress" | "on_hold" | "completed") {
         return Err(AppError::ValidationFailed(vec![format!(
             "Impossible de marquer une pièce non utilisée au statut '{status_code}'."
         )]));
@@ -581,13 +557,9 @@ pub async fn mark_part_not_used(
                 input.not_used_reason_id
             )])
         })?;
-    let reason_code: String = reason_row
-        .try_get("", "code")
-        .map_err(|e| decode_err("code", e))?;
+    let reason_code: String = reason_row.try_get("", "code").map_err(|e| decode_err("code", e))?;
     let comment = input.not_used_comment.as_ref().map(|s| s.trim().to_string());
-    if reason_code.eq_ignore_ascii_case("other")
-        && comment.as_ref().map(|s| s.is_empty()).unwrap_or(true)
-    {
+    if reason_code.eq_ignore_ascii_case("other") && comment.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
         return Err(AppError::ValidationFailed(vec![
             "Un commentaire est obligatoire lorsque le motif est « Other ».".into(),
         ]));
@@ -660,11 +632,7 @@ pub async fn mark_part_not_used(
 // C) confirm_no_parts_used
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn confirm_no_parts_used(
-    db: &DatabaseConnection,
-    wo_id: i64,
-    actor_id: i64,
-) -> AppResult<()> {
+pub async fn confirm_no_parts_used(db: &DatabaseConnection, wo_id: i64, actor_id: i64) -> AppResult<()> {
     // Only when there are no planned part lines — planned lines must be
     // disposed individually (used / not_used).
     let planned = db
@@ -675,12 +643,8 @@ pub async fn confirm_no_parts_used(
             [wo_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("confirm_no_parts planned count returned no row"))
-        })?;
-    let planned_count: i64 = planned
-        .try_get("", "cnt")
-        .map_err(|e| decode_err("planned_count", e))?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("confirm_no_parts planned count returned no row")))?;
+    let planned_count: i64 = planned.try_get("", "cnt").map_err(|e| decode_err("planned_count", e))?;
     if planned_count > 0 {
         return Err(AppError::ValidationFailed(vec![
             "Des pièces planifiées existent : marquez chaque ligne Utilisée ou Non utilisée. \
@@ -742,11 +706,7 @@ pub async fn confirm_no_parts_used(
 }
 
 /// Clear the "no parts used" attestation so the technician can add parts again.
-pub async fn unconfirm_no_parts_used(
-    db: &DatabaseConnection,
-    wo_id: i64,
-    actor_id: i64,
-) -> AppResult<()> {
+pub async fn unconfirm_no_parts_used(db: &DatabaseConnection, wo_id: i64, actor_id: i64) -> AppResult<()> {
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -778,16 +738,11 @@ pub async fn unconfirm_no_parts_used(
 // D) list_wo_parts
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn list_wo_parts(
-    db: &DatabaseConnection,
-    wo_id: i64,
-) -> AppResult<Vec<WoPart>> {
+pub async fn list_wo_parts(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<WoPart>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
-                "SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.work_order_id = ? ORDER BY wop.id ASC"
-            ),
+            &format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.work_order_id = ? ORDER BY wop.id ASC"),
             [wo_id.into()],
         ))
         .await?;

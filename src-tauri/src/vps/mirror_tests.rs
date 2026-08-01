@@ -33,11 +33,7 @@ fn base_job(tenant: &str, idempotency_key: &str, queue_kind: MirrorQueueKind) ->
 #[test]
 fn tenant_provisioning_plan_enforces_baseline_and_invariants() {
     let plan = build_tenant_provisioning_plan("tenant-a").expect("plan");
-    let ok = validate_tenant_provisioning(
-        &plan,
-        &plan.baseline_migrations,
-        &plan.required_invariants,
-    );
+    let ok = validate_tenant_provisioning(&plan, &plan.baseline_migrations, &plan.required_invariants);
     assert!(ok.is_ok());
 
     let bad = validate_tenant_provisioning(
@@ -189,18 +185,8 @@ fn fairness_guardrails_prevent_single_tenant_starvation() {
     .expect("enqueue tenant-b");
 
     process_worker_round(&mut state, &cfg).expect("process");
-    let a_processed = state
-        .metrics
-        .per_tenant_processed
-        .get("tenant-a")
-        .copied()
-        .unwrap_or(0);
-    let b_processed = state
-        .metrics
-        .per_tenant_processed
-        .get("tenant-b")
-        .copied()
-        .unwrap_or(0);
+    let a_processed = state.metrics.per_tenant_processed.get("tenant-a").copied().unwrap_or(0);
+    let b_processed = state.metrics.per_tenant_processed.get("tenant-b").copied().unwrap_or(0);
     assert!(a_processed >= 1);
     assert!(b_processed >= 1);
 }

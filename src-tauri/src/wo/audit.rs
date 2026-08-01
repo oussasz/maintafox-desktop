@@ -73,9 +73,15 @@ pub async fn record_wo_change_event(db: &DatabaseConnection, input: WoAuditInput
                    (wo_id, action, actor_id, acted_at, summary, details_json, requires_step_up, apply_result)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                input.wo_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::BigInt(None)),
+                input
+                    .wo_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::BigInt(None)),
                 input.action.clone().into(),
-                input.actor_id.map(sea_orm::Value::from).unwrap_or(sea_orm::Value::BigInt(None)),
+                input
+                    .actor_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::BigInt(None)),
                 now.into(),
                 input
                     .summary
@@ -190,13 +196,9 @@ pub async fn list_all_wo_change_events(
            LIMIT ? OFFSET ?"
     );
 
-    let rows = WoChangeEvent::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        &sql,
-        values,
-    ))
-    .all(db)
-    .await?;
+    let rows = WoChangeEvent::find_by_statement(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+        .all(db)
+        .await?;
 
     Ok(rows)
 }

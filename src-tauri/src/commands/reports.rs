@@ -7,9 +7,7 @@ use tauri::State;
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
 use crate::planning::domain::ExportedBinaryDocument;
-use crate::reports::domain::{
-    ExportReportInput, ReportRun, ReportSchedule, ReportTemplate, UpsertReportScheduleInput,
-};
+use crate::reports::domain::{ExportReportInput, ReportRun, ReportSchedule, ReportTemplate, UpsertReportScheduleInput};
 use crate::reports::export::export_report_document;
 use crate::reports::queries::{
     delete_schedule, get_template_by_code, get_template_by_id, list_my_runs, list_my_schedules,
@@ -24,31 +22,45 @@ fn validate_export_format(s: &str) -> AppResult<()> {
     if x == "pdf" || x == "xlsx" {
         Ok(())
     } else {
-        Err(AppError::ValidationFailed(vec!["export_format must be pdf or xlsx.".into()]))
+        Err(AppError::ValidationFailed(vec![
+            "export_format must be pdf or xlsx.".into()
+        ]))
     }
 }
 
 #[tauri::command]
 pub async fn list_report_templates(state: State<'_, AppState>) -> AppResult<Vec<ReportTemplate>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::REP_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REP_VIEW,
+        PermissionScope::Global
+    );
     query_list_report_templates(&state.db).await
 }
 
 #[tauri::command]
 pub async fn list_my_report_schedules(state: State<'_, AppState>) -> AppResult<Vec<ReportSchedule>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::REP_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REP_VIEW,
+        PermissionScope::Global
+    );
     list_my_schedules(&state.db, i64::from(user.user_id)).await
 }
 
 #[tauri::command]
-pub async fn upsert_my_report_schedule(
-    input: UpsertReportScheduleInput,
-    state: State<'_, AppState>,
-) -> AppResult<i64> {
+pub async fn upsert_my_report_schedule(input: UpsertReportScheduleInput, state: State<'_, AppState>) -> AppResult<i64> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::REP_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REP_MANAGE,
+        PermissionScope::Global
+    );
     validate_export_format(&input.export_format)?;
     let template = get_template_by_id(&state.db, input.template_id)
         .await?
@@ -68,7 +80,12 @@ pub async fn upsert_my_report_schedule(
 #[tauri::command]
 pub async fn delete_my_report_schedule(schedule_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::REP_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REP_MANAGE,
+        PermissionScope::Global
+    );
     let n = delete_schedule(&state.db, i64::from(user.user_id), schedule_id).await?;
     if n == 0 {
         return Err(AppError::NotFound {
@@ -82,14 +99,27 @@ pub async fn delete_my_report_schedule(schedule_id: i64, state: State<'_, AppSta
 #[tauri::command]
 pub async fn list_my_report_runs(limit: Option<i64>, state: State<'_, AppState>) -> AppResult<Vec<ReportRun>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::REP_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REP_VIEW,
+        PermissionScope::Global
+    );
     list_my_runs(&state.db, i64::from(user.user_id), limit.unwrap_or(50)).await
 }
 
 #[tauri::command]
-pub async fn export_report_now(input: ExportReportInput, state: State<'_, AppState>) -> AppResult<ExportedBinaryDocument> {
+pub async fn export_report_now(
+    input: ExportReportInput,
+    state: State<'_, AppState>,
+) -> AppResult<ExportedBinaryDocument> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::REP_EXPORT, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REP_EXPORT,
+        PermissionScope::Global
+    );
     validate_export_format(&input.export_format)?;
     let t = get_template_by_code(&state.db, &input.template_code)
         .await?

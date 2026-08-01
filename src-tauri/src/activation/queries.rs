@@ -160,14 +160,14 @@ fn get_or_initialize_activation_binding_secret() -> AppResult<Vec<u8>> {
 
     #[cfg(not(test))]
     {
-    if let Some(secret) = get_activation_binding_secret()? {
-        return Ok(secret);
-    }
-    use rand_core::{OsRng, RngCore};
-    let mut secret = [0_u8; 32];
-    OsRng.fill_bytes(&mut secret);
-    set_activation_binding_secret(&secret)?;
-    Ok(secret.to_vec())
+        if let Some(secret) = get_activation_binding_secret()? {
+            return Ok(secret);
+        }
+        use rand_core::{OsRng, RngCore};
+        let mut secret = [0_u8; 32];
+        OsRng.fill_bytes(&mut secret);
+        set_activation_binding_secret(&secret)?;
+        Ok(secret.to_vec())
     }
 }
 
@@ -208,7 +208,11 @@ fn drift_score(expected: &BTreeMap<String, String>, current: &BTreeMap<String, S
         .iter()
         .map(|(k, v)| {
             let same = current.get(k) == Some(v);
-            if same { 0_i64 } else { 1_i64 }
+            if same {
+                0_i64
+            } else {
+                1_i64
+            }
         })
         .sum()
 }
@@ -257,7 +261,9 @@ async fn write_lineage_event(
 
 fn to_status_row(row: sea_orm::QueryResult) -> AppResult<MachineActivationStatus> {
     Ok(MachineActivationStatus {
-        contract_id: row.try_get("", "contract_id").map_err(|e| decode_err("contract_id", e))?,
+        contract_id: row
+            .try_get("", "contract_id")
+            .map_err(|e| decode_err("contract_id", e))?,
         machine_id: row.try_get("", "machine_id").map_err(|e| decode_err("machine_id", e))?,
         slot_assignment_id: row
             .try_get("", "slot_assignment_id")
@@ -359,10 +365,7 @@ pub async fn apply_machine_activation(
              WHERE slot_assignment_id = ?
                AND machine_id <> ?
                AND revocation_state <> 'revoked'",
-            [
-                input.slot_assignment_id.clone().into(),
-                input.machine_id.clone().into(),
-            ],
+            [input.slot_assignment_id.clone().into(), input.machine_id.clone().into()],
         ))
         .await?
         .ok_or_else(|| AppError::SyncError("Failed slot consistency check".to_string()))?
@@ -616,7 +619,9 @@ pub async fn evaluate_offline_activation_policy(
         return Ok(OfflineActivationDecision {
             allowed: false,
             denial_code: Some("fingerprint_drift_exceeded".to_string()),
-            denial_message: Some("Offline login denied: device fingerprint drift exceeds tolerance policy.".to_string()),
+            denial_message: Some(
+                "Offline login denied: device fingerprint drift exceeds tolerance policy.".to_string(),
+            ),
             requires_online_reconnect: true,
             grace_hours_remaining: None,
         });
@@ -637,10 +642,9 @@ pub async fn evaluate_offline_activation_policy(
     }
 
     let now = Utc::now();
-    let grace_until = status
-        .offline_grace_until
-        .as_deref()
-        .ok_or_else(|| AppError::ValidationFailed(vec!["offline_grace_until missing in activation state".to_string()]))?;
+    let grace_until = status.offline_grace_until.as_deref().ok_or_else(|| {
+        AppError::ValidationFailed(vec!["offline_grace_until missing in activation state".to_string()])
+    })?;
     let grace_until_dt = chrono::DateTime::parse_from_rfc3339(grace_until)
         .map_err(|e| AppError::ValidationFailed(vec![format!("Invalid offline_grace_until: {e}")]))?
         .with_timezone(&Utc);
@@ -760,9 +764,9 @@ pub async fn process_reconnect_revocation(db: &DatabaseConnection) -> AppResult<
     )
     .await;
 
-    Ok(Some(
-        reason.unwrap_or_else(|| "Machine activation revoked and applied during reconnect.".to_string()),
-    ))
+    Ok(Some(reason.unwrap_or_else(|| {
+        "Machine activation revoked and applied during reconnect.".to_string()
+    })))
 }
 
 pub async fn store_activation_refresh_token(refresh_token: &str) -> AppResult<()> {
@@ -957,9 +961,7 @@ pub async fn get_machine_activation_diagnostics(
         .map(|row| {
             Ok(ActivationLineageRecord {
                 id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-                event_code: row
-                    .try_get("", "event_code")
-                    .map_err(|e| decode_err("event_code", e))?,
+                event_code: row.try_get("", "event_code").map_err(|e| decode_err("event_code", e))?,
                 contract_id: row
                     .try_get("", "contract_id")
                     .map_err(|e| decode_err("contract_id", e))?,

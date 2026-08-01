@@ -86,10 +86,8 @@ impl MigrationTrait for Migration {
             )",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_fmeca_items_analysis ON fmeca_items(analysis_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_fmeca_items_analysis ON fmeca_items(analysis_id)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE TABLE IF NOT EXISTS rcm_studies (
@@ -105,10 +103,8 @@ impl MigrationTrait for Migration {
             )",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_rcm_studies_equipment ON rcm_studies(equipment_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_rcm_studies_equipment ON rcm_studies(equipment_id)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE TABLE IF NOT EXISTS rcm_decisions (
@@ -128,10 +124,8 @@ impl MigrationTrait for Migration {
             )",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_rcm_decisions_study ON rcm_decisions(study_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_rcm_decisions_study ON rcm_decisions(study_id)")
+            .await?;
 
         Ok(())
     }
@@ -142,7 +136,8 @@ impl MigrationTrait for Migration {
         db.execute_unprepared("DROP TABLE IF EXISTS rcm_studies").await?;
         db.execute_unprepared("DROP TABLE IF EXISTS fmeca_items").await?;
         db.execute_unprepared("DROP TABLE IF EXISTS fmeca_analyses").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS weibull_fit_results").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS weibull_fit_results")
+            .await?;
         Ok(())
     }
 }

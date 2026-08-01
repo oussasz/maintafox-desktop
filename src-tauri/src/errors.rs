@@ -23,11 +23,7 @@ fn default_error_severity() -> String {
 }
 
 impl AppValidationIssue {
-    pub fn error(
-        code: impl Into<String>,
-        message: impl Into<String>,
-        params: HashMap<String, String>,
-    ) -> Self {
+    pub fn error(code: impl Into<String>, message: impl Into<String>, params: HashMap<String, String>) -> Self {
         Self {
             code: code.into(),
             severity: "error".to_string(),
@@ -52,11 +48,7 @@ impl AppValidationIssue {
         }
     }
 
-    pub fn warning(
-        code: impl Into<String>,
-        message: impl Into<String>,
-        params: HashMap<String, String>,
-    ) -> Self {
+    pub fn warning(code: impl Into<String>, message: impl Into<String>, params: HashMap<String, String>) -> Self {
         Self {
             code: code.into(),
             severity: "warning".to_string(),
@@ -143,11 +135,7 @@ pub enum AppError {
 }
 
 /// Build a single-issue org validation error.
-pub fn org_validation_failed(
-    code: &str,
-    message: impl Into<String>,
-    params: HashMap<String, String>,
-) -> AppError {
+pub fn org_validation_failed(code: &str, message: impl Into<String>, params: HashMap<String, String>) -> AppError {
     AppError::OrgValidationFailed(vec![AppValidationIssue::error(code, message, params)])
 }
 
@@ -158,10 +146,7 @@ pub fn org_validation_failed_issues(issues: Vec<AppValidationIssue>) -> AppError
 
 /// Convenience for building params from `&[(&str, String)]`.
 pub fn issue_params(pairs: &[(&str, String)]) -> HashMap<String, String> {
-    pairs
-        .iter()
-        .map(|(k, v)| ((*k).to_string(), v.clone()))
-        .collect()
+    pairs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()
 }
 
 /// Serialize `AppError` to JSON for the Tauri IPC boundary.
@@ -222,9 +207,7 @@ impl Serialize for AppError {
                     })
                     .collect(),
             )),
-            Self::OrgValidationFailed(issues) => {
-                Some(serde_json::to_value(issues).unwrap_or(serde_json::Value::Null))
-            }
+            Self::OrgValidationFailed(issues) => Some(serde_json::to_value(issues).unwrap_or(serde_json::Value::Null)),
             _ => None,
         };
         state.serialize_field("details", &details)?;

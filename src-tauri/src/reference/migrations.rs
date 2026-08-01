@@ -11,10 +11,7 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement,
-    TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use super::domains;
@@ -62,9 +59,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_migration(row: &QueryResult) -> AppResult<ReferenceValueMigration> {
     Ok(ReferenceValueMigration {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         domain_id: row
             .try_get::<i64>("", "domain_id")
             .map_err(|e| decode_err("domain_id", e))?,
@@ -86,10 +81,7 @@ fn map_migration(row: &QueryResult) -> AppResult<ReferenceValueMigration> {
     })
 }
 
-async fn load_bound_value(
-    db: &DatabaseConnection,
-    value_id: i64,
-) -> AppResult<BoundValue> {
+async fn load_bound_value(db: &DatabaseConnection, value_id: i64) -> AppResult<BoundValue> {
     let value = values::get_value(db, value_id).await?;
     let set = sets::get_reference_set(db, value.set_id).await?;
     Ok(BoundValue {
@@ -179,11 +171,7 @@ async fn insert_migration_row<C: ConnectionTrait>(
             [domain_id.into(), from_value_id.into(), to_value_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "reference_value_migrations row missing after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_value_migrations row missing after insert")))?;
 
     map_migration(&row)
 }
@@ -373,18 +361,9 @@ async fn execute_migration_operation(
 
     let tx = db.begin().await?;
 
-    let remapped_references =
-        remap_usage_references(&tx, &domain, &source_value, &target_value).await?;
+    let remapped_references = remap_usage_references(&tx, &domain, &source_value, &target_value).await?;
 
-    let migration = insert_migration_row(
-        &tx,
-        domain_id,
-        from_value_id,
-        to_value_id,
-        reason_code,
-        actor_id,
-    )
-    .await?;
+    let migration = insert_migration_row(&tx, domain_id, from_value_id, to_value_id, reason_code, actor_id).await?;
 
     let source_deactivated = if source_value.is_active {
         let result = tx
@@ -426,15 +405,7 @@ pub async fn merge_reference_values(
     to_value_id: i64,
     actor_id: i64,
 ) -> AppResult<ReferenceUsageMigrationResult> {
-    execute_migration_operation(
-        db,
-        domain_id,
-        from_value_id,
-        to_value_id,
-        actor_id,
-        "merge",
-    )
-    .await
+    execute_migration_operation(db, domain_id, from_value_id, to_value_id, actor_id, "merge").await
 }
 
 /// Migrate active usage from one value to another within the same domain.
@@ -448,15 +419,7 @@ pub async fn migrate_reference_usage(
     to_value_id: i64,
     actor_id: i64,
 ) -> AppResult<ReferenceUsageMigrationResult> {
-    execute_migration_operation(
-        db,
-        domain_id,
-        from_value_id,
-        to_value_id,
-        actor_id,
-        "usage_migration",
-    )
-    .await
+    execute_migration_operation(db, domain_id, from_value_id, to_value_id, actor_id, "usage_migration").await
 }
 
 /// List recent value migration map rows for a domain.

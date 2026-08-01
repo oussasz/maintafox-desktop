@@ -52,10 +52,8 @@ impl MigrationTrait for Migration {
             )",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_markov_models_equipment ON markov_models(equipment_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_markov_models_equipment ON markov_models(equipment_id)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE TABLE IF NOT EXISTS ram_advanced_guardrails (

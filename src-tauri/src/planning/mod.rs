@@ -1,9 +1,8 @@
-﻿//! Planning and scheduling bounded context (PRD §6.16).
+//! Planning and scheduling bounded context (PRD §6.16).
 
 pub mod domain;
-pub mod scheduling;
 pub mod queries;
+pub mod scheduling;
 
 #[cfg(test)]
 mod tests;
-

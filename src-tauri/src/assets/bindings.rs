@@ -76,10 +76,7 @@ pub async fn count_open_wo(db: &DatabaseConnection, asset_id: i64) -> AppResult<
 }
 
 /// Fetch cross-module binding summary for a given asset.
-pub async fn get_asset_binding_summary(
-    db: &DatabaseConnection,
-    asset_id: i64,
-) -> AppResult<AssetBindingSummary> {
+pub async fn get_asset_binding_summary(db: &DatabaseConnection, asset_id: i64) -> AppResult<AssetBindingSummary> {
     let doc_count = {
         let row = db
             .query_one(Statement::from_sql_and_values(

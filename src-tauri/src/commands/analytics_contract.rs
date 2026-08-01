@@ -5,8 +5,8 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::analytics_contract::{
-    get_contract_version_by_id, insert_contract_version, list_contract_versions,
-    stage_analytics_contract_version_sync, AnalyticsContractVersionRow,
+    get_contract_version_by_id, insert_contract_version, list_contract_versions, stage_analytics_contract_version_sync,
+    AnalyticsContractVersionRow,
 };
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
@@ -25,8 +25,18 @@ pub async fn list_analytics_contract_versions(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AnalyticsContractVersionRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::SYNC_MANAGE, PermissionScope::Global);
-    require_permission!(state, &user, crate::rbac::permissions::INTEGRITY_REPAIR, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_MANAGE,
+        PermissionScope::Global
+    );
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INTEGRITY_REPAIR,
+        PermissionScope::Global
+    );
     list_contract_versions(&state.db).await
 }
 
@@ -36,12 +46,15 @@ pub async fn register_analytics_contract_version(
     state: State<'_, AppState>,
 ) -> AppResult<AnalyticsContractVersionRow> {
     let u = require_session!(state);
-    require_permission!(state, &u, crate::rbac::permissions::SYNC_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &u,
+        crate::rbac::permissions::SYNC_MANAGE,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
-    if input.contract_id.trim().is_empty()
-        || input.version_semver.trim().is_empty()
-        || input.content_sha256.len() != 64
+    if input.contract_id.trim().is_empty() || input.version_semver.trim().is_empty() || input.content_sha256.len() != 64
     {
         return Err(crate::errors::AppError::ValidationFailed(vec![
             "contract_id, version_semver, and 64-char content_sha256 required".into(),

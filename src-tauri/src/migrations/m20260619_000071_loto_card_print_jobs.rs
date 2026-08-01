@@ -33,7 +33,12 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("isolation_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("printed_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("printed_by_id")).integer().not_null())
-                    .col(ColumnDef::new(Alias::new("entity_sync_id")).text().not_null().unique_key())
+                    .col(
+                        ColumnDef::new(Alias::new("entity_sync_id"))
+                            .text()
+                            .not_null()
+                            .unique_key(),
+                    )
                     .col(
                         ColumnDef::new(Alias::new("row_version"))
                             .integer()

@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::reliability::readiness::blocking::blocking_codes;
 use crate::reliability::readiness::evaluate::AssetReadinessReport;
-use crate::reliability::readiness::policy::{
-    COMPLETENESS_GREEN_THRESHOLD, DQ_GREEN_THRESHOLD,
-};
+use crate::reliability::readiness::policy::{COMPLETENESS_GREEN_THRESHOLD, DQ_GREEN_THRESHOLD};
 
 /// Exclusive waterfall bucket (one reason per not-ready asset).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -150,8 +148,7 @@ pub fn assign_waterfall_reason(report: &AssetReadinessReport) -> WaterfallReason
     }
 
     if low_c && !low_dq {
-        return weakest_dimension_below_threshold(report)
-            .unwrap_or(WaterfallReason::MultipleGates);
+        return weakest_dimension_below_threshold(report).unwrap_or(WaterfallReason::MultipleGates);
     }
 
     if low_dq && low_c {
@@ -193,10 +190,7 @@ pub fn collect_overlap_gates(report: &AssetReadinessReport) -> Vec<OverlapGate> 
 /// Compute waterfall and overlap decomposition for documentary profile reports.
 #[must_use]
 pub fn compute_decomposition(reports: &[AssetReadinessReport]) -> DecompositionOutput {
-    let eligible: Vec<&AssetReadinessReport> = reports
-        .iter()
-        .filter(|r| r.eligible_event_count > 0)
-        .collect();
+    let eligible: Vec<&AssetReadinessReport> = reports.iter().filter(|r| r.eligible_event_count > 0).collect();
     let eligible_n = eligible.len() as u64;
     let denom = eligible_n.max(1) as f64;
 
@@ -267,10 +261,7 @@ pub fn compute_decomposition(reports: &[AssetReadinessReport]) -> DecompositionO
 
     let mut thresholds = HashMap::new();
     thresholds.insert("dq_green".to_string(), DQ_GREEN_THRESHOLD);
-    thresholds.insert(
-        "completeness_green".to_string(),
-        COMPLETENESS_GREEN_THRESHOLD,
-    );
+    thresholds.insert("completeness_green".to_string(), COMPLETENESS_GREEN_THRESHOLD);
 
     DecompositionOutput {
         methodology: DecompositionMethodology {

@@ -19,10 +19,7 @@
 use crate::assets::identity;
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement,
-    TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -62,9 +59,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_hierarchy_row(row: &QueryResult) -> AppResult<AssetHierarchyRow> {
     Ok(AssetHierarchyRow {
-        relation_id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        relation_id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         parent_asset_id: row
             .try_get::<i64>("", "parent_equipment_id")
             .map_err(|e| decode_err("parent_equipment_id", e))?,
@@ -87,10 +82,7 @@ fn map_hierarchy_row(row: &QueryResult) -> AppResult<AssetHierarchyRow> {
 
 /// Assert that an equipment row exists, is not deleted, and is not
 /// DECOMMISSIONED or SCRAPPED.
-async fn assert_asset_active(
-    db: &impl ConnectionTrait,
-    asset_id: i64,
-) -> AppResult<()> {
+async fn assert_asset_active(db: &impl ConnectionTrait, asset_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -117,10 +109,7 @@ async fn assert_asset_active(
 
 /// Validate that `relationship_type` exists in the
 /// `equipment.hierarchy_relationship` lookup domain.
-async fn validate_relationship_type(
-    db: &impl ConnectionTrait,
-    code: &str,
-) -> AppResult<()> {
+async fn validate_relationship_type(db: &impl ConnectionTrait, code: &str) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -144,11 +133,7 @@ async fn validate_relationship_type(
 
 /// For single-parent relation types (PARENT_CHILD, INSTALLED_IN), verify that
 /// the child does not already have an active parent with the same type.
-async fn assert_single_parent(
-    db: &impl ConnectionTrait,
-    child_id: i64,
-    relation_type: &str,
-) -> AppResult<()> {
+async fn assert_single_parent(db: &impl ConnectionTrait, child_id: i64, relation_type: &str) -> AppResult<()> {
     if !SINGLE_PARENT_TYPES.contains(&relation_type) {
         return Ok(());
     }
@@ -176,11 +161,7 @@ async fn assert_single_parent(
 /// Detect hierarchy cycles via BFS. Starting from `parent_id`, walk up through
 /// active relations. If `child_id` is encountered as an ancestor, creating the
 /// proposed link would form a cycle.
-async fn detect_cycle(
-    db: &impl ConnectionTrait,
-    parent_id: i64,
-    child_id: i64,
-) -> AppResult<()> {
+async fn detect_cycle(db: &impl ConnectionTrait, parent_id: i64, child_id: i64) -> AppResult<()> {
     if parent_id == child_id {
         return Err(AppError::ValidationFailed(vec![
             "Un équipement ne peut pas être son propre parent.".into(),
@@ -224,10 +205,7 @@ async fn detect_cycle(
 // ─── Service functions ────────────────────────────────────────────────────────
 
 /// List active child relations for a given parent asset.
-pub async fn list_asset_children(
-    db: &DatabaseConnection,
-    parent_asset_id: i64,
-) -> AppResult<Vec<AssetHierarchyRow>> {
+pub async fn list_asset_children(db: &DatabaseConnection, parent_asset_id: i64) -> AppResult<Vec<AssetHierarchyRow>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -243,10 +221,7 @@ pub async fn list_asset_children(
 }
 
 /// List active parent relations for a given child asset.
-pub async fn list_asset_parents(
-    db: &DatabaseConnection,
-    child_asset_id: i64,
-) -> AppResult<Vec<AssetHierarchyRow>> {
+pub async fn list_asset_parents(db: &DatabaseConnection, child_asset_id: i64) -> AppResult<Vec<AssetHierarchyRow>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -287,18 +262,11 @@ pub async fn link_asset_hierarchy(
     validate_relationship_type(&txn, &payload.relation_type).await?;
 
     // ── Single-parent enforcement ────────────────────────────────────────
-    assert_single_parent(
-        &txn,
-        payload.child_asset_id,
-        &payload.relation_type,
-    )
-    .await?;
+    assert_single_parent(&txn, payload.child_asset_id, &payload.relation_type).await?;
 
     // ── Insert hierarchy relation ────────────────────────────────────────
     let now = Utc::now().to_rfc3339();
-    let effective_from = payload
-        .effective_from
-        .unwrap_or_else(|| now.clone());
+    let effective_from = payload.effective_from.unwrap_or_else(|| now.clone());
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -324,9 +292,7 @@ pub async fn link_asset_hierarchy(
         ))
         .await?
         .expect("last_insert_rowid always returns");
-    let relation_id: i64 = id_row
-        .try_get("", "id")
-        .map_err(|e| decode_err("id", e))?;
+    let relation_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
 
     let row = txn
         .query_one(Statement::from_sql_and_values(
@@ -337,19 +303,12 @@ pub async fn link_asset_hierarchy(
             [relation_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "hierarchy link created but not found after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("hierarchy link created but not found after insert")))?;
     let result = map_hierarchy_row(&row)?;
 
     txn.commit().await?;
 
-    tracing::info!(
-        relation_id = result.relation_id,
-        "asset hierarchy link created"
-    );
+    tracing::info!(relation_id = result.relation_id, "asset hierarchy link created");
     Ok(result)
 }
 
@@ -497,11 +456,7 @@ pub async fn move_asset_org_node(
             [asset_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "equipment {asset_id} not found after org-node move"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("equipment {asset_id} not found after org-node move")))?;
     let asset = identity::map_asset(&asset_row)?;
 
     txn.commit().await?;

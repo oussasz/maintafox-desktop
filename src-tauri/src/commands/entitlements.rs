@@ -2,8 +2,8 @@ use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
 use crate::entitlements::domain::{
-    EntitlementCapabilityCheck, EntitlementDiagnostics, EntitlementRefreshResult, EntitlementSummary,
-    EntitlementEnvelopeInput,
+    EntitlementCapabilityCheck, EntitlementDiagnostics, EntitlementEnvelopeInput, EntitlementRefreshResult,
+    EntitlementSummary,
 };
 use crate::entitlements::queries;
 use crate::errors::AppResult;
@@ -16,7 +16,12 @@ pub async fn apply_entitlement_envelope(
     state: State<'_, AppState>,
 ) -> AppResult<EntitlementRefreshResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ENT_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ENT_MANAGE,
+        PermissionScope::Global
+    );
     require_step_up!(state);
     queries::apply_entitlement_envelope(&state.db, input).await
 }
@@ -42,6 +47,11 @@ pub async fn get_entitlement_diagnostics(
     state: State<'_, AppState>,
 ) -> AppResult<EntitlementDiagnostics> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ENT_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ENT_VIEW,
+        PermissionScope::Global
+    );
     queries::get_entitlement_diagnostics(&state.db, limit).await
 }

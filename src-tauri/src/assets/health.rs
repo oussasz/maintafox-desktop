@@ -31,7 +31,11 @@ fn parse_ts(s: &str) -> Option<DateTime<Utc>> {
 
 async fn count_i64(db: &DatabaseConnection, sql: &str, asset_id: i64) -> AppResult<i64> {
     let row = db
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [asset_id.into()]))
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            [asset_id.into()],
+        ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("expected COUNT row")))?;
     Ok(row.try_get::<i64>("", "cnt").unwrap_or(0))
@@ -55,13 +59,11 @@ pub async fn get_asset_health_score(db: &DatabaseConnection, asset_id: i64) -> A
     }
 
     let last_lifecycle_row = db
-        .query_one(
-            Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT MAX(occurred_at) AS t FROM equipment_lifecycle_events WHERE equipment_id = ?",
-                [asset_id.into()],
-            ),
-        )
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT MAX(occurred_at) AS t FROM equipment_lifecycle_events WHERE equipment_id = ?",
+            [asset_id.into()],
+        ))
         .await?;
     let last_lifecycle: Option<String> = last_lifecycle_row
         .as_ref()
@@ -69,22 +71,17 @@ pub async fn get_asset_health_score(db: &DatabaseConnection, asset_id: i64) -> A
         .flatten();
 
     let meter_row = db
-        .query_one(
-            Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) AS c, MAX(last_read_at) AS m \
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS c, MAX(last_read_at) AS m \
                  FROM equipment_meters WHERE equipment_id = ? AND is_active = 1",
-                [asset_id.into()],
-            ),
-        )
+            [asset_id.into()],
+        ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("meter aggregate missing")))?;
 
     let meter_count: i64 = meter_row.try_get("", "c").unwrap_or(0);
-    let last_meter: Option<String> = meter_row
-        .try_get::<Option<String>>("", "m")
-        .ok()
-        .flatten();
+    let last_meter: Option<String> = meter_row.try_get::<Option<String>>("", "m").ok().flatten();
 
     let mut candidates: Vec<DateTime<Utc>> = Vec::new();
     if let Some(ref s) = last_lifecycle {

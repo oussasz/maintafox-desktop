@@ -36,24 +36,14 @@ fn map_tool(row: &sea_orm::QueryResult) -> AppResult<WoTool> {
         work_order_id: row
             .try_get("", "work_order_id")
             .map_err(|e| decode_err("work_order_id", e))?,
-        origin: row
-            .try_get("", "origin")
-            .map_err(|e| decode_err("origin", e))?,
-        tool_code: row
-            .try_get("", "tool_code")
-            .map_err(|e| decode_err("tool_code", e))?,
-        tool_label: row
-            .try_get("", "tool_label")
-            .map_err(|e| decode_err("tool_label", e))?,
+        origin: row.try_get("", "origin").map_err(|e| decode_err("origin", e))?,
+        tool_code: row.try_get("", "tool_code").map_err(|e| decode_err("tool_code", e))?,
+        tool_label: row.try_get("", "tool_label").map_err(|e| decode_err("tool_label", e))?,
         usage_status: row
             .try_get("", "usage_status")
             .map_err(|e| decode_err("usage_status", e))?,
-        notes: row
-            .try_get("", "notes")
-            .map_err(|e| decode_err("notes", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
+        notes: row.try_get("", "notes").map_err(|e| decode_err("notes", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
     })
 }
 
@@ -102,9 +92,7 @@ pub async fn add_tool(db: &DatabaseConnection, input: AddToolInput) -> AppResult
         ]));
     }
     let origin = if matches!(status.as_str(), "in_progress" | "on_hold") {
-        input
-            .origin
-            .unwrap_or_else(|| "execution_added".into())
+        input.origin.unwrap_or_else(|| "execution_added".into())
     } else {
         input.origin.unwrap_or_else(|| "planned".into())
     };
@@ -113,11 +101,7 @@ pub async fn add_tool(db: &DatabaseConnection, input: AddToolInput) -> AppResult
             "origin invalide (planned|execution_added).".into(),
         ]));
     }
-    let usage = if origin == "execution_added" {
-        "used"
-    } else {
-        "planned"
-    };
+    let usage = if origin == "execution_added" { "used" } else { "planned" };
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,

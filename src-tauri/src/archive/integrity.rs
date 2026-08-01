@@ -109,9 +109,7 @@ mod tests {
             .expect("apply migrations");
 
         let archive_item_id = setup_archived_record(&db).await;
-        let is_valid = verify_checksum(&db, archive_item_id)
-            .await
-            .expect("verify checksum");
+        let is_valid = verify_checksum(&db, archive_item_id).await.expect("verify checksum");
         assert!(is_valid, "freshly archived payload should verify");
     }
 
@@ -136,9 +134,7 @@ mod tests {
         .await
         .expect("tamper payload");
 
-        let is_valid = verify_checksum(&db, archive_item_id)
-            .await
-            .expect("verify checksum");
+        let is_valid = verify_checksum(&db, archive_item_id).await.expect("verify checksum");
         assert!(!is_valid, "tampered payload should fail checksum verification");
     }
 }

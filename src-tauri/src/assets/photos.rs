@@ -47,7 +47,9 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 }
 
 fn map_row(row: &QueryResult, app_data_dir: &Path) -> AppResult<AssetPhoto> {
-    let relative_path: String = row.try_get("", "relative_path").map_err(|e| decode_err("relative_path", e))?;
+    let relative_path: String = row
+        .try_get("", "relative_path")
+        .map_err(|e| decode_err("relative_path", e))?;
     let abs: PathBuf = app_data_dir.join(&relative_path);
     if !abs.exists() {
         tracing::warn!(
@@ -69,7 +71,9 @@ fn map_row(row: &QueryResult, app_data_dir: &Path) -> AppResult<AssetPhoto> {
         file_name: row.try_get("", "file_name").map_err(|e| decode_err("file_name", e))?,
         file_path,
         mime_type: row.try_get("", "mime_type").map_err(|e| decode_err("mime_type", e))?,
-        file_size_bytes: row.try_get("", "file_size_bytes").map_err(|e| decode_err("file_size_bytes", e))?,
+        file_size_bytes: row
+            .try_get("", "file_size_bytes")
+            .map_err(|e| decode_err("file_size_bytes", e))?,
         caption: row
             .try_get::<Option<String>>("", "caption")
             .map_err(|e| decode_err("caption", e))?,
@@ -113,7 +117,11 @@ fn sanitize_file_name(path: &Path) -> AppResult<String> {
     Ok(name.to_string())
 }
 
-pub async fn list_asset_photos(db: &DatabaseConnection, app_data_dir: &Path, asset_id: i64) -> AppResult<Vec<AssetPhoto>> {
+pub async fn list_asset_photos(
+    db: &DatabaseConnection,
+    app_data_dir: &Path,
+    asset_id: i64,
+) -> AppResult<Vec<AssetPhoto>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -143,7 +151,9 @@ pub async fn read_asset_photo_preview(
             id: photo_id.to_string(),
         })?;
 
-    let relative_path: String = row.try_get("", "relative_path").map_err(|e| decode_err("relative_path", e))?;
+    let relative_path: String = row
+        .try_get("", "relative_path")
+        .map_err(|e| decode_err("relative_path", e))?;
     let mime_type: String = row.try_get("", "mime_type").map_err(|e| decode_err("mime_type", e))?;
     let abs: PathBuf = app_data_dir.join(&relative_path);
 
@@ -185,13 +195,11 @@ pub async fn upload_asset_photo(
     created_by_id: i64,
 ) -> AppResult<AssetPhoto> {
     let exists = db
-        .query_one(
-            Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id FROM equipment WHERE id = ? AND deleted_at IS NULL",
-                [payload.asset_id.into()],
-            ),
-        )
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM equipment WHERE id = ? AND deleted_at IS NULL",
+            [payload.asset_id.into()],
+        ))
         .await?
         .is_some();
     if !exists {
@@ -209,9 +217,8 @@ pub async fn upload_asset_photo(
         ]));
     };
 
-    let meta = std::fs::metadata(src).map_err(|e| {
-        AppError::ValidationFailed(vec![format!("Cannot read source file: {e}")])
-    })?;
+    let meta = std::fs::metadata(src)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("Cannot read source file: {e}")]))?;
     if !meta.is_file() {
         return Err(AppError::ValidationFailed(vec!["Source path is not a file.".into()]));
     }
@@ -222,9 +229,8 @@ pub async fn upload_asset_photo(
         )]));
     }
 
-    let bytes = std::fs::read(src).map_err(|e| {
-        AppError::ValidationFailed(vec![format!("Failed to read file: {e}")])
-    })?;
+    let bytes =
+        std::fs::read(src).map_err(|e| AppError::ValidationFailed(vec![format!("Failed to read file: {e}")]))?;
     let size_bytes = bytes.len() as i64;
 
     let ext = src
@@ -284,15 +290,13 @@ pub async fn upload_asset_photo(
 
     let id = last_insert_id(db).await?;
     let row = db
-        .query_one(
-            Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id, asset_id, file_name, relative_path, mime_type, file_size_bytes, \
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, asset_id, file_name, relative_path, mime_type, file_size_bytes, \
                         caption, created_by_id, created_at \
                  FROM asset_photos WHERE id = ?",
-                [id.into()],
-            ),
-        )
+            [id.into()],
+        ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("asset_photos insert not found")))?;
 
@@ -301,20 +305,20 @@ pub async fn upload_asset_photo(
 
 pub async fn delete_asset_photo(db: &DatabaseConnection, app_data_dir: &Path, photo_id: i64) -> AppResult<()> {
     let row = db
-        .query_one(
-            Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT relative_path FROM asset_photos WHERE id = ?",
-                [photo_id.into()],
-            ),
-        )
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT relative_path FROM asset_photos WHERE id = ?",
+            [photo_id.into()],
+        ))
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "asset_photo".into(),
             id: photo_id.to_string(),
         })?;
 
-    let relative_path: String = row.try_get("", "relative_path").map_err(|e| decode_err("relative_path", e))?;
+    let relative_path: String = row
+        .try_get("", "relative_path")
+        .map_err(|e| decode_err("relative_path", e))?;
     let abs = app_data_dir.join(&relative_path);
     let _ = std::fs::remove_file(&abs);
 

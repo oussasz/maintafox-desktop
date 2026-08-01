@@ -106,11 +106,7 @@ pub async fn list_node_responsibilities(
         )
     };
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [node_id.into()],
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [node_id.into()]))
         .await?;
     rows.iter().map(map_responsibility).collect()
 }
@@ -207,11 +203,7 @@ pub async fn assign_responsibility(
             ),
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "responsibility created but not found after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("responsibility created but not found after insert")))?;
 
     let assignment = map_responsibility(&row)?;
     tracing::info!(
@@ -230,9 +222,7 @@ pub async fn end_responsibility_assignment(
     valid_to: Option<String>,
     _actor_id: i32,
 ) -> AppResult<OrgNodeResponsibility> {
-    let sql = format!(
-        "SELECT {SELECT_COLS} FROM org_node_responsibilities WHERE id = ?"
-    );
+    let sql = format!("SELECT {SELECT_COLS} FROM org_node_responsibilities WHERE id = ?");
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -268,9 +258,7 @@ pub async fn end_responsibility_assignment(
     .await?;
 
     // Re-fetch the updated row
-    let updated_sql = format!(
-        "SELECT {SELECT_COLS} FROM org_node_responsibilities WHERE id = ?"
-    );
+    let updated_sql = format!("SELECT {SELECT_COLS} FROM org_node_responsibilities WHERE id = ?");
     let updated_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -307,12 +295,7 @@ pub async fn resolve_current_responsibility(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             sql,
-            [
-                node_id.into(),
-                responsibility_type.into(),
-                at_ts.into(),
-                at_ts.into(),
-            ],
+            [node_id.into(), responsibility_type.into(), at_ts.into(), at_ts.into()],
         ))
         .await?;
     row.as_ref().map(map_responsibility).transpose()

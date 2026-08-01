@@ -7,9 +7,7 @@ use std::io::Cursor;
 
 use calamine::{Reader, Xlsx};
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
@@ -113,7 +111,7 @@ pub async fn create_import_batch(
     let source_kind = input.source_kind.trim().to_lowercase();
     if source_kind != "csv" && source_kind != "xlsx" {
         return Err(AppError::ValidationFailed(vec![
-            "source_kind must be csv or xlsx.".to_string(),
+            "source_kind must be csv or xlsx.".to_string()
         ]));
     }
 
@@ -181,10 +179,7 @@ pub async fn create_import_batch(
     get_batch_summary(db, batch_id).await
 }
 
-pub async fn get_import_preview(
-    db: &DatabaseConnection,
-    batch_id: i64,
-) -> AppResult<PersonnelImportPreview> {
+pub async fn get_import_preview(db: &DatabaseConnection, batch_id: i64) -> AppResult<PersonnelImportPreview> {
     let batch = get_batch_summary(db, batch_id).await?;
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -282,7 +277,7 @@ pub async fn apply_import_batch(
                 };
                 let full_name = normalized.full_name.clone().ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "full_name is required when creating a personnel record.".to_string(),
+                        "full_name is required when creating a personnel record.".to_string()
                     ])
                 })?;
                 let employment_type = normalized
@@ -320,14 +315,10 @@ pub async fn apply_import_batch(
             }
             Some("update") => {
                 let personnel_id = target_personnel_id.ok_or_else(|| {
-                    AppError::ValidationFailed(vec![
-                        "Missing target_personnel_id for update action.".to_string(),
-                    ])
+                    AppError::ValidationFailed(vec!["Missing target_personnel_id for update action.".to_string()])
                 })?;
                 let expected_version = target_row_version.ok_or_else(|| {
-                    AppError::ValidationFailed(vec![
-                        "Missing target_row_version for update action.".to_string(),
-                    ])
+                    AppError::ValidationFailed(vec!["Missing target_row_version for update action.".to_string()])
                 })?;
 
                 let result = txn
@@ -657,9 +648,7 @@ async fn validate_mapped_fields(
         }
     }
     if let Some(entity_code) = normalized.entity_code.as_deref() {
-        let found =
-            crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, entity_code)
-                .await?;
+        let found = crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, entity_code).await?;
         if found.is_none() {
             push_message(
                 messages,
@@ -670,8 +659,7 @@ async fn validate_mapped_fields(
         }
     }
     if let Some(team_code) = normalized.team_code.as_deref() {
-        let found =
-            crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, team_code).await?;
+        let found = crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, team_code).await?;
         if found.is_none() {
             push_message(
                 messages,
@@ -726,25 +714,17 @@ struct MappedIds {
     external_company_id: Option<i64>,
 }
 
-async fn resolve_mapped_fields(
-    db: &impl ConnectionTrait,
-    normalized: &NormalizedPersonnelRow,
-) -> AppResult<MappedIds> {
+async fn resolve_mapped_fields(db: &impl ConnectionTrait, normalized: &NormalizedPersonnelRow) -> AppResult<MappedIds> {
     let entity_id = match normalized.entity_code.as_deref() {
-        Some(code) => {
-            crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, code).await?
-        }
+        Some(code) => crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, code).await?,
         None => None,
     };
     let team_id = match normalized.team_code.as_deref() {
-        Some(code) => {
-            crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, code).await?
-        }
+        Some(code) => crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, code).await?,
         None => None,
     };
     Ok(MappedIds {
-        position_id: map_code_to_id(db, "positions", "code", normalized.position_code.as_deref())
-            .await?,
+        position_id: map_code_to_id(db, "positions", "code", normalized.position_code.as_deref()).await?,
         entity_id,
         team_id,
         supervisor_id: map_code_to_id(
@@ -773,11 +753,7 @@ async fn map_code_to_id(
     let Some(value) = value else { return Ok(None) };
     let sql = format!("SELECT id FROM {table} WHERE {column} = ? LIMIT 1");
     let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [value.into()],
-        ))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [value.into()]))
         .await?;
     row.map(|r| decode_col::<i64>(&r, "id")).transpose()
 }
@@ -786,9 +762,7 @@ fn parse_file_rows(source_kind: &str, file_content: &[u8]) -> AppResult<Vec<Hash
     match source_kind {
         "csv" => parse_csv_rows(file_content),
         "xlsx" => parse_xlsx_rows(file_content),
-        _ => Err(AppError::ValidationFailed(vec![
-            "Unsupported source_kind.".to_string(),
-        ])),
+        _ => Err(AppError::ValidationFailed(vec!["Unsupported source_kind.".to_string()])),
     }
 }
 
@@ -807,8 +781,7 @@ fn parse_csv_rows(file_content: &[u8]) -> AppResult<Vec<HashMap<String, String>>
 
     let mut rows = Vec::new();
     for record in reader.records() {
-        let record = record
-            .map_err(|e| AppError::ValidationFailed(vec![format!("Cannot parse CSV row: {e}")]))?;
+        let record = record.map_err(|e| AppError::ValidationFailed(vec![format!("Cannot parse CSV row: {e}")]))?;
         let mut map = HashMap::new();
         for (index, value) in record.iter().enumerate() {
             if let Some(header) = headers.get(index) {
@@ -825,8 +798,8 @@ fn parse_csv_rows(file_content: &[u8]) -> AppResult<Vec<HashMap<String, String>>
 
 fn parse_xlsx_rows(file_content: &[u8]) -> AppResult<Vec<HashMap<String, String>>> {
     let cursor = Cursor::new(file_content.to_vec());
-    let mut workbook = Xlsx::new(cursor)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("Cannot parse XLSX file: {e}")]))?;
+    let mut workbook =
+        Xlsx::new(cursor).map_err(|e| AppError::ValidationFailed(vec![format!("Cannot parse XLSX file: {e}")]))?;
     let range = workbook
         .worksheet_range_at(0)
         .ok_or_else(|| AppError::ValidationFailed(vec!["XLSX file has no worksheet.".to_string()]))?
@@ -916,12 +889,7 @@ fn normalize_row(fields: &HashMap<String, String>) -> NormalizedPersonnelRow {
     }
 }
 
-fn push_message(
-    messages: &mut Vec<PersonnelImportMessage>,
-    category: &str,
-    severity: &str,
-    message: &str,
-) {
+fn push_message(messages: &mut Vec<PersonnelImportMessage>, category: &str, severity: &str, message: &str) {
     messages.push(PersonnelImportMessage {
         category: category.to_string(),
         severity: severity.to_string(),
@@ -929,10 +897,7 @@ fn push_message(
     });
 }
 
-async fn get_batch_summary(
-    db: &impl ConnectionTrait,
-    batch_id: i64,
-) -> AppResult<PersonnelImportBatchSummary> {
+async fn get_batch_summary(db: &impl ConnectionTrait, batch_id: i64) -> AppResult<PersonnelImportBatchSummary> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

@@ -99,8 +99,7 @@ macro_rules! require_permission_allowing_system_admin {
             $crate::require_permission!($state, $user, $perm, $scope);
         } else {
             $crate::entitlements::queries::enforce_capability_for_permission(&$state.db, $perm).await?;
-            $crate::license::queries::enforce_permission_matrix(&$state.db, $user.user_id, $perm)
-                .await?;
+            $crate::license::queries::enforce_permission_matrix(&$state.db, $user.user_id, $perm).await?;
         }
     }};
 }

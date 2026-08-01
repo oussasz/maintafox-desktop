@@ -29,7 +29,10 @@ pub struct MappingSensitivityRow {
     pub missing_failure_mode_block_pct: f64,
 }
 
-fn evaluate_with_nmin(dataset: &AggregatedDataset, n_min: i64) -> (Vec<AssetReadinessReport>, Vec<AssetReadinessReport>) {
+fn evaluate_with_nmin(
+    dataset: &AggregatedDataset,
+    n_min: i64,
+) -> (Vec<AssetReadinessReport>, Vec<AssetReadinessReport>) {
     use crate::reliability::readiness::evaluate::{evaluate_asset_dual, EvaluateAssetInput};
 
     let mut documentary = Vec::with_capacity(dataset.assets.len());
@@ -62,13 +65,9 @@ pub fn run_nmin_sensitivity(dataset: &AggregatedDataset, n_values: &[i64]) -> Ve
         .iter()
         .map(|&n_min| {
             let (doc_reports, strict_reports) = evaluate_with_nmin(dataset, n_min);
-            let doc_summary =
-                DatasetSummary::from_reports(EvaluationProfile::CmmsDocumentary, &doc_reports);
-            let strict_summary =
-                DatasetSummary::from_reports(EvaluationProfile::StrictRam, &strict_reports);
-            let badge_green_pct = doc_summary.badge_green_count as f64
-                / doc_summary.total_assets.max(1) as f64
-                * 100.0;
+            let doc_summary = DatasetSummary::from_reports(EvaluationProfile::CmmsDocumentary, &doc_reports);
+            let strict_summary = DatasetSummary::from_reports(EvaluationProfile::StrictRam, &strict_reports);
+            let badge_green_pct = doc_summary.badge_green_count as f64 / doc_summary.total_assets.max(1) as f64 * 100.0;
 
             NminSensitivityRow {
                 n_min,
@@ -92,10 +91,8 @@ pub fn run_mapping_sensitivity(
         let load = load_fmucd_csv(csv_path, &config)?;
         let dataset = aggregate_by_asset(load, &config);
         let (doc_reports, strict_reports) = evaluate_dataset_dual(&dataset);
-        let doc_summary =
-            DatasetSummary::from_reports(EvaluationProfile::CmmsDocumentary, &doc_reports);
-        let strict_summary =
-            DatasetSummary::from_reports(EvaluationProfile::StrictRam, &strict_reports);
+        let doc_summary = DatasetSummary::from_reports(EvaluationProfile::CmmsDocumentary, &doc_reports);
+        let strict_summary = DatasetSummary::from_reports(EvaluationProfile::StrictRam, &strict_reports);
 
         let missing_mode = doc_reports
             .iter()
@@ -105,8 +102,7 @@ pub fn run_mapping_sensitivity(
                     .any(|i| i.issue_code == "MISSING_FAILURE_MODE" && i.severity == "blocking")
             })
             .count();
-        let missing_mode_pct =
-            missing_mode as f64 / doc_reports.len().max(1) as f64 * 100.0;
+        let missing_mode_pct = missing_mode as f64 / doc_reports.len().max(1) as f64 * 100.0;
 
         rows.push(MappingSensitivityRow {
             mapping_variant: (*variant).to_string(),

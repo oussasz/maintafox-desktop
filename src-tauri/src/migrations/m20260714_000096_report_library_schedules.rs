@@ -42,10 +42,8 @@ impl MigrationTrait for Migration {
             )",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_report_schedules_user ON report_schedules(user_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_report_schedules_user ON report_schedules(user_id)")
+            .await?;
         db.execute_unprepared(
             "CREATE INDEX IF NOT EXISTS idx_report_schedules_next ON report_schedules(enabled, next_run_at)",
         )

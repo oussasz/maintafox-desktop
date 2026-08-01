@@ -133,7 +133,8 @@ pub async fn validate_import_row(
                 messages.push(ValidationMessage {
                     category: ConflictCategory::InvalidAssetCodeFormat,
                     field: "asset_code".into(),
-                    message: "Le code equipement ne peut contenir que des majuscules, chiffres, tirets et tirets bas.".into(),
+                    message: "Le code equipement ne peut contenir que des majuscules, chiffres, tirets et tirets bas."
+                        .into(),
                     severity: ValidationSeverity::Error,
                 });
             }
@@ -172,10 +173,7 @@ pub async fn validate_import_row(
                 messages.push(ValidationMessage {
                     category: ConflictCategory::UnknownClassCode,
                     field: "class_code".into(),
-                    message: format!(
-                        "Classe d'equipement '{}' introuvable ou inactive.",
-                        class_code
-                    ),
+                    message: format!("Classe d'equipement '{}' introuvable ou inactive.", class_code),
                     severity: ValidationSeverity::Error,
                 });
                 None
@@ -296,10 +294,7 @@ pub async fn validate_import_row(
             messages.push(ValidationMessage {
                 category: ConflictCategory::DuplicateAssetCodeInBatch,
                 field: "asset_code".into(),
-                message: format!(
-                    "Le code '{}' apparait plusieurs fois dans ce lot d'import.",
-                    code
-                ),
+                message: format!("Le code '{}' apparait plusieurs fois dans ce lot d'import.", code),
                 severity: ValidationSeverity::Error,
             });
         }
@@ -356,7 +351,8 @@ pub async fn validate_import_row(
                 messages.push(ValidationMessage {
                     category: ConflictCategory::ForbiddenStatusTransition,
                     field: "status_code".into(),
-                    message: "La mise hors service via import est interdite. Utilisez le processus de cycle de vie.".into(),
+                    message: "La mise hors service via import est interdite. Utilisez le processus de cycle de vie."
+                        .into(),
                     severity: ValidationSeverity::Error,
                 });
             }
@@ -383,12 +379,8 @@ pub async fn validate_import_row(
     }
 
     // ── 7. Compute aggregate outcome ──────────────────────────────────────
-    let has_errors = messages
-        .iter()
-        .any(|m| m.severity == ValidationSeverity::Error);
-    let has_warnings = messages
-        .iter()
-        .any(|m| m.severity == ValidationSeverity::Warning);
+    let has_errors = messages.iter().any(|m| m.severity == ValidationSeverity::Error);
+    let has_warnings = messages.iter().any(|m| m.severity == ValidationSeverity::Warning);
 
     let status = if has_errors {
         "error"
@@ -429,10 +421,7 @@ struct ExistingAssetInfo {
 
 /// Check if an equipment class code exists and is active.
 /// Returns `(class_id, parent_id)` if found.
-async fn resolve_class_exists(
-    db: &impl ConnectionTrait,
-    class_code: &str,
-) -> AppResult<Option<(i64, Option<i64>)>> {
+async fn resolve_class_exists(db: &impl ConnectionTrait, class_code: &str) -> AppResult<Option<(i64, Option<i64>)>> {
     let code = class_code.trim();
     if code.is_empty() {
         return Ok(None);
@@ -447,12 +436,12 @@ async fn resolve_class_exists(
         .await?;
     match row {
         Some(r) => {
-            let id: i64 = r.try_get("", "id").map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("class.id decode: {e}"))
-            })?;
-            let parent_id: Option<i64> = r.try_get("", "parent_id").map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("class.parent_id decode: {e}"))
-            })?;
+            let id: i64 = r
+                .try_get("", "id")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("class.id decode: {e}")))?;
+            let parent_id: Option<i64> = r
+                .try_get("", "parent_id")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("class.parent_id decode: {e}")))?;
             Ok(Some((id, parent_id)))
         }
         None => Ok(None),
@@ -460,11 +449,7 @@ async fn resolve_class_exists(
 }
 
 /// Validate that a family code is the parent of the given class code.
-async fn validate_family_exists(
-    db: &impl ConnectionTrait,
-    family_code: &str,
-    class_code: &str,
-) -> AppResult<()> {
+async fn validate_family_exists(db: &impl ConnectionTrait, family_code: &str, class_code: &str) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -492,10 +477,7 @@ enum OrgNodeCheck {
 }
 
 /// Check org node existence and active status (mirrors identity.rs::assert_org_node_active).
-async fn check_org_node_active(
-    db: &impl ConnectionTrait,
-    org_node_id: i64,
-) -> AppResult<OrgNodeCheck> {
+async fn check_org_node_active(db: &impl ConnectionTrait, org_node_id: i64) -> AppResult<OrgNodeCheck> {
     if let Err(e) = crate::org::model_scope::assert_node_is_active_tree(db, org_node_id).await {
         return Ok(match e {
             AppError::NotFound { .. } | AppError::ValidationFailed(_) => OrgNodeCheck::NotFound,
@@ -512,9 +494,9 @@ async fn check_org_node_active(
     match row {
         None => Ok(OrgNodeCheck::NotFound),
         Some(r) => {
-            let status: String = r.try_get("", "status").map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("org_node.status decode: {e}"))
-            })?;
+            let status: String = r
+                .try_get("", "status")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("org_node.status decode: {e}")))?;
             if status == "active" {
                 Ok(OrgNodeCheck::Active)
             } else {
@@ -543,14 +525,14 @@ async fn find_existing_asset_by_code(
         .await?;
     match row {
         Some(r) => Ok(Some(ExistingAssetInfo {
-            id: r.try_get("", "id").map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("equipment.id decode: {e}"))
-            })?,
+            id: r
+                .try_get("", "id")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.id decode: {e}")))?,
             class_code: r.try_get("", "class_code").unwrap_or(None),
             criticality_code: r.try_get("", "criticality_code").unwrap_or(None),
-            status_code: r.try_get("", "status_code").map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("equipment.status_code decode: {e}"))
-            })?,
+            status_code: r
+                .try_get("", "status_code")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.status_code decode: {e}")))?,
         })),
         None => Ok(None),
     }
@@ -577,14 +559,14 @@ async fn find_existing_asset_by_external_key(
         .await?;
     match row {
         Some(r) => Ok(Some(ExistingAssetInfo {
-            id: r.try_get("", "id").map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("equipment.id decode: {e}"))
-            })?,
+            id: r
+                .try_get("", "id")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.id decode: {e}")))?,
             class_code: r.try_get("", "class_code").unwrap_or(None),
             criticality_code: r.try_get("", "criticality_code").unwrap_or(None),
-            status_code: r.try_get("", "status_code").map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("equipment.status_code decode: {e}"))
-            })?,
+            status_code: r
+                .try_get("", "status_code")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment.status_code decode: {e}")))?,
         })),
         None => Ok(None),
     }
@@ -641,9 +623,9 @@ async fn would_create_cycle(
             ))
             .await?;
         for r in &rows {
-            let pid: i64 = r.try_get("", "parent_equipment_id").map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("parent_equipment_id decode: {e}"))
-            })?;
+            let pid: i64 = r
+                .try_get("", "parent_equipment_id")
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("parent_equipment_id decode: {e}")))?;
             queue.push(pid);
         }
     }

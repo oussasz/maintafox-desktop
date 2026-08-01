@@ -151,11 +151,7 @@ pub async fn list_notifications(
 
     let rows = state
         .db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            params,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, params))
         .await?;
 
     let mut items = Vec::with_capacity(rows.len());
@@ -164,22 +160,14 @@ pub async fn list_notifications(
             id: row.try_get::<i64>("", "id").unwrap_or_default(),
             title: row.try_get::<String>("", "title").unwrap_or_default(),
             body: row.try_get::<Option<String>>("", "body").unwrap_or(None),
-            category_code: row
-                .try_get::<String>("", "category_code")
-                .unwrap_or_default(),
+            category_code: row.try_get::<String>("", "category_code").unwrap_or_default(),
             severity: row.try_get::<String>("", "severity").unwrap_or_default(),
-            delivery_state: row
-                .try_get::<String>("", "delivery_state")
-                .unwrap_or_default(),
+            delivery_state: row.try_get::<String>("", "delivery_state").unwrap_or_default(),
             created_at: row.try_get::<String>("", "created_at").unwrap_or_default(),
             read_at: row.try_get::<Option<String>>("", "read_at").unwrap_or(None),
-            acknowledged_at: row
-                .try_get::<Option<String>>("", "acknowledged_at")
-                .unwrap_or(None),
+            acknowledged_at: row.try_get::<Option<String>>("", "acknowledged_at").unwrap_or(None),
             action_url: row.try_get::<Option<String>>("", "action_url").unwrap_or(None),
-            escalation_level: row
-                .try_get::<i64>("", "escalation_level")
-                .unwrap_or_default(),
+            escalation_level: row.try_get::<i64>("", "escalation_level").unwrap_or_default(),
             requires_ack: row.try_get::<i32>("", "requires_ack").unwrap_or(0) == 1,
         });
     }
@@ -207,10 +195,7 @@ pub async fn get_unread_count(state: State<'_, AppState>) -> AppResult<i64> {
 }
 
 #[tauri::command]
-pub async fn mark_notification_read(
-    notification_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn mark_notification_read(notification_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
     delivery::mark_as_read(&state.db, notification_id, i64::from(user.user_id)).await
 }
@@ -298,13 +283,7 @@ pub async fn snooze_notification(
             "snooze_minutes must be within 1..=480".to_string(),
         ]));
     }
-    delivery::snooze(
-        &state.db,
-        notification_id,
-        i64::from(user.user_id),
-        snooze_minutes,
-    )
-    .await
+    delivery::snooze(&state.db, notification_id, i64::from(user.user_id), snooze_minutes).await
 }
 
 #[tauri::command]
@@ -336,22 +315,15 @@ pub async fn get_notification_preferences(state: State<'_, AppState>) -> AppResu
     let mut prefs = Vec::with_capacity(rows.len());
     for row in rows {
         prefs.push(UserPreferenceRow {
-            category_code: row
-                .try_get::<String>("", "category_code")
-                .unwrap_or_default(),
+            category_code: row.try_get::<String>("", "category_code").unwrap_or_default(),
             label: row.try_get::<String>("", "label").unwrap_or_default(),
-            is_user_configurable: row
-                .try_get::<i32>("", "is_user_configurable")
-                .unwrap_or(1)
-                == 1,
+            is_user_configurable: row.try_get::<i32>("", "is_user_configurable").unwrap_or(1) == 1,
             in_app_enabled: row.try_get::<i32>("", "in_app_enabled").unwrap_or(1) == 1,
             os_enabled: row.try_get::<i32>("", "os_enabled").unwrap_or(1) == 1,
             email_enabled: row.try_get::<i32>("", "email_enabled").unwrap_or(0) == 1,
             sms_enabled: row.try_get::<i32>("", "sms_enabled").unwrap_or(0) == 1,
             digest_mode: row.try_get::<String>("", "digest_mode").unwrap_or_default(),
-            muted_until: row
-                .try_get::<Option<String>>("", "muted_until")
-                .unwrap_or(None),
+            muted_until: row.try_get::<Option<String>>("", "muted_until").unwrap_or(None),
         });
     }
 
@@ -378,10 +350,7 @@ pub async fn update_notification_preference(
             id: payload.category_code.clone(),
         })?;
 
-    let is_user_configurable = category
-        .try_get::<i32>("", "is_user_configurable")
-        .unwrap_or(0)
-        == 1;
+    let is_user_configurable = category.try_get::<i32>("", "is_user_configurable").unwrap_or(0) == 1;
     if !is_user_configurable {
         return Err(AppError::PermissionDenied(
             "System-managed category cannot be customized".to_string(),
@@ -436,10 +405,7 @@ pub async fn update_notification_preference(
         .in_app_enabled
         .map(|v| if v { 1 } else { 0 })
         .unwrap_or(current_in_app);
-    let os_enabled = payload
-        .os_enabled
-        .map(|v| if v { 1 } else { 0 })
-        .unwrap_or(current_os);
+    let os_enabled = payload.os_enabled.map(|v| if v { 1 } else { 0 }).unwrap_or(current_os);
     let email_enabled = payload
         .email_enabled
         .map(|v| if v { 1 } else { 0 })
@@ -493,7 +459,12 @@ pub async fn update_notification_preference(
 #[tauri::command]
 pub async fn list_notification_rules(state: State<'_, AppState>) -> AppResult<Vec<NotificationRuleDetail>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
 
     let rows = state
         .db
@@ -522,25 +493,15 @@ pub async fn list_notification_rules(state: State<'_, AppState>) -> AppResult<Ve
     for row in rows {
         rules.push(NotificationRuleDetail {
             id: row.try_get::<i64>("", "id").unwrap_or_default(),
-            category_code: row
-                .try_get::<String>("", "category_code")
-                .unwrap_or_default(),
-            category_label: row
-                .try_get::<String>("", "category_label")
-                .unwrap_or_default(),
-            routing_mode: row
-                .try_get::<String>("", "routing_mode")
-                .unwrap_or_default(),
+            category_code: row.try_get::<String>("", "category_code").unwrap_or_default(),
+            category_label: row.try_get::<String>("", "category_label").unwrap_or_default(),
+            routing_mode: row.try_get::<String>("", "routing_mode").unwrap_or_default(),
             requires_ack: row.try_get::<i32>("", "requires_ack").unwrap_or(0) == 1,
-            dedupe_window_minutes: row
-                .try_get::<i64>("", "dedupe_window_minutes")
-                .unwrap_or(60),
+            dedupe_window_minutes: row.try_get::<i64>("", "dedupe_window_minutes").unwrap_or(60),
             quiet_hours_policy_json: row
                 .try_get::<Option<String>>("", "quiet_hours_policy_json")
                 .unwrap_or(None),
-            escalation_policy_id: row
-                .try_get::<Option<i64>>("", "escalation_policy_id")
-                .unwrap_or(None),
+            escalation_policy_id: row.try_get::<Option<i64>>("", "escalation_policy_id").unwrap_or(None),
             escalation_policy_name: row
                 .try_get::<Option<String>>("", "escalation_policy_name")
                 .unwrap_or(None),
@@ -557,7 +518,12 @@ pub async fn update_notification_rule(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
 
     if let Some(ref routing_mode) = payload.routing_mode {
         if !matches!(
@@ -565,8 +531,7 @@ pub async fn update_notification_rule(
             "assignee" | "reviewer" | "role" | "team" | "entity_manager" | "watcher" | "manual"
         ) {
             return Err(AppError::ValidationFailed(vec![
-                "routing_mode must be one of: assignee/reviewer/role/team/entity_manager/watcher/manual"
-                    .to_string(),
+                "routing_mode must be one of: assignee/reviewer/role/team/entity_manager/watcher/manual".to_string(),
             ]));
         }
     }
@@ -604,17 +569,10 @@ pub async fn update_notification_rule(
     }
 
     values.push(payload.rule_id.into());
-    let sql = format!(
-        "UPDATE notification_rules SET {} WHERE id = ?",
-        set_parts.join(", ")
-    );
+    let sql = format!("UPDATE notification_rules SET {} WHERE id = ?", set_parts.join(", "));
     let update_res = state
         .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            values,
-        ))
+        .execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
     if update_res.rows_affected() == 0 {
@@ -628,11 +586,14 @@ pub async fn update_notification_rule(
 }
 
 #[tauri::command]
-pub async fn list_notification_categories(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<NotificationCategory>> {
+pub async fn list_notification_categories(state: State<'_, AppState>) -> AppResult<Vec<NotificationCategory>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
 
     let rows = state
         .db
@@ -651,17 +612,9 @@ pub async fn list_notification_categories(
             id: row.try_get::<i64>("", "id").unwrap_or_default(),
             code: row.try_get::<String>("", "code").unwrap_or_default(),
             label: row.try_get::<String>("", "label").unwrap_or_default(),
-            default_severity: row
-                .try_get::<String>("", "default_severity")
-                .unwrap_or_default(),
-            default_requires_ack: row
-                .try_get::<i32>("", "default_requires_ack")
-                .unwrap_or(0)
-                == 1,
-            is_user_configurable: row
-                .try_get::<i32>("", "is_user_configurable")
-                .unwrap_or(1)
-                == 1,
+            default_severity: row.try_get::<String>("", "default_severity").unwrap_or_default(),
+            default_requires_ack: row.try_get::<i32>("", "default_requires_ack").unwrap_or(0) == 1,
+            is_user_configurable: row.try_get::<i32>("", "is_user_configurable").unwrap_or(1) == 1,
         });
     }
 

@@ -218,7 +218,10 @@ pub fn verify_manifest_against_parts(manifest: &BackupManifestV1) -> Result<(), 
         return Err(typed("snapshot_id_required", "snapshot_id is required."));
     }
     if manifest.parts.is_empty() {
-        return Err(typed("manifest_parts_required", "Manifest must list at least one part."));
+        return Err(typed(
+            "manifest_parts_required",
+            "Manifest must list at least one part.",
+        ));
     }
     for p in &manifest.parts {
         if p.sha256.len() != 64 || !p.sha256.chars().all(|c| c.is_ascii_hexdigit()) {

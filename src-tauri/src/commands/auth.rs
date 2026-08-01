@@ -163,11 +163,9 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
                 crate::activation::queries::evaluate_offline_activation_policy(&state.db, user_id, &fingerprint)
                     .await?;
             if !decision.allowed {
-                return Err(AppError::Auth(
-                    decision.denial_message.unwrap_or_else(|| {
-                        "Connexion hors ligne refus\u{00e9}e par la politique d'activation.".to_string()
-                    }),
-                ));
+                return Err(AppError::Auth(decision.denial_message.unwrap_or_else(|| {
+                    "Connexion hors ligne refus\u{00e9}e par la politique d'activation.".to_string()
+                })));
             }
             tracing::info!(username = %username, "login::offline_access_granted");
         }
@@ -287,9 +285,7 @@ pub async fn login(payload: LoginRequest, state: State<'_, AppState>) -> AppResu
     let (session_id, expires_rfc3339) = match session_guard.current.as_ref() {
         Some(s) => (s.session_db_id.clone(), s.expires_at.to_rfc3339()),
         None => {
-            return Err(AppError::Auth(
-                "Impossible de créer la session utilisateur.".into(),
-            ));
+            return Err(AppError::Auth("Impossible de créer la session utilisateur.".into()));
         }
     };
 
@@ -688,9 +684,7 @@ pub(crate) async fn unlock_session_with_pin_internal(
     let user_id = match &sm.current {
         Some(s) if !s.is_expired() && s.is_idle_locked() => {
             if s.pin_unlock_disabled {
-                return Err(AppError::Auth(
-                    "PIN désactivé, utilisez le mot de passe.".into(),
-                ));
+                return Err(AppError::Auth("PIN désactivé, utilisez le mot de passe.".into()));
             }
             s.user.user_id
         }
@@ -700,9 +694,7 @@ pub(crate) async fn unlock_session_with_pin_internal(
             ));
         }
         None => {
-            return Err(AppError::Auth(
-                "Session expirée. Veuillez vous reconnecter.".into(),
-            ));
+            return Err(AppError::Auth("Session expirée. Veuillez vous reconnecter.".into()));
         }
     };
 
@@ -716,9 +708,7 @@ pub(crate) async fn unlock_session_with_pin_internal(
             s.pin_failed_attempts = s.pin_failed_attempts.saturating_add(1);
             if s.pin_failed_attempts >= 3 {
                 s.pin_unlock_disabled = true;
-                return Err(AppError::Auth(
-                    "PIN désactivé, utilisez le mot de passe.".into(),
-                ));
+                return Err(AppError::Auth("PIN désactivé, utilisez le mot de passe.".into()));
             }
         }
 
@@ -731,9 +721,7 @@ pub(crate) async fn unlock_session_with_pin_internal(
     }
 
     if !sm.unlock_session() {
-        return Err(AppError::Auth(
-            "Session expirée. Veuillez vous reconnecter.".into(),
-        ));
+        return Err(AppError::Auth("Session expirée. Veuillez vous reconnecter.".into()));
     }
 
     crate::audit::emit(
@@ -764,9 +752,7 @@ pub async fn unlock_session_with_pin(
         match &sm.current {
             Some(s) if !s.is_expired() && s.is_idle_locked() => {
                 if s.pin_unlock_disabled {
-                    return Err(AppError::Auth(
-                        "PIN désactivé, utilisez le mot de passe.".into(),
-                    ));
+                    return Err(AppError::Auth("PIN désactivé, utilisez le mot de passe.".into()));
                 }
                 s.user.user_id
             }
@@ -776,9 +762,7 @@ pub async fn unlock_session_with_pin(
                 ));
             }
             None => {
-                return Err(AppError::Auth(
-                    "Session expirée. Veuillez vous reconnecter.".into(),
-                ));
+                return Err(AppError::Auth("Session expirée. Veuillez vous reconnecter.".into()));
             }
         }
     };
@@ -794,9 +778,7 @@ pub async fn unlock_session_with_pin(
         match &sm.current {
             Some(s) if !s.is_expired() && s.is_idle_locked() => {
                 if s.pin_unlock_disabled {
-                    return Err(AppError::Auth(
-                        "PIN désactivé, utilisez le mot de passe.".into(),
-                    ));
+                    return Err(AppError::Auth("PIN désactivé, utilisez le mot de passe.".into()));
                 }
             }
             Some(_) => {
@@ -805,9 +787,7 @@ pub async fn unlock_session_with_pin(
                 ));
             }
             None => {
-                return Err(AppError::Auth(
-                    "Session expirée. Veuillez vous reconnecter.".into(),
-                ));
+                return Err(AppError::Auth("Session expirée. Veuillez vous reconnecter.".into()));
             }
         }
 
@@ -816,9 +796,7 @@ pub async fn unlock_session_with_pin(
                 s.pin_failed_attempts = s.pin_failed_attempts.saturating_add(1);
                 if s.pin_failed_attempts >= 3 {
                     s.pin_unlock_disabled = true;
-                    return Err(AppError::Auth(
-                        "PIN désactivé, utilisez le mot de passe.".into(),
-                    ));
+                    return Err(AppError::Auth("PIN désactivé, utilisez le mot de passe.".into()));
                 }
             }
 
@@ -831,9 +809,7 @@ pub async fn unlock_session_with_pin(
         }
 
         if !sm.unlock_session() {
-            return Err(AppError::Auth(
-                "Session expirée. Veuillez vous reconnecter.".into(),
-            ));
+            return Err(AppError::Auth("Session expirée. Veuillez vous reconnecter.".into()));
         }
 
         sm.session_info()
@@ -894,8 +870,7 @@ pub async fn force_change_password(
     // Validate password strength (minimum 8 characters)
     let new_password = payload.new_password.trim();
     let policy = password_policy::PasswordPolicy::load(&state.db).await;
-    password_policy::validate_password_strength(new_password, &policy)
-        .map_err(AppError::ValidationFailed)?;
+    password_policy::validate_password_strength(new_password, &policy).map_err(AppError::ValidationFailed)?;
 
     // Hash the new password with argon2id
     let new_hash = password::hash_password(new_password)?;

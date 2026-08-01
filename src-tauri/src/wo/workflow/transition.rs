@@ -14,19 +14,12 @@ pub async fn resolve_status_id(txn: &impl ConnectionTrait, code: &str) -> AppRes
             [code.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "work_order_statuses missing row for code '{code}'"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("work_order_statuses missing row for code '{code}'")))?;
     row.try_get::<i64>("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("status id decode: {e}")))
 }
 
-pub async fn load_wo_status(
-    txn: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<(String, WoStatus, i64)> {
+pub async fn load_wo_status(txn: &impl ConnectionTrait, wo_id: i64) -> AppResult<(String, WoStatus, i64)> {
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

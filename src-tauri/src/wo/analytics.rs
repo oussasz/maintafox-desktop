@@ -86,10 +86,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 /// Assemble a full analytics snapshot for a WO.
 /// WO must be in `closed` or `technically_verified` state.
-pub async fn get_wo_analytics_snapshot(
-    db: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<WoAnalyticsSnapshot> {
+pub async fn get_wo_analytics_snapshot(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<WoAnalyticsSnapshot> {
     // ── Load core WO data with joins ──────────────────────────────────────
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -200,9 +197,7 @@ pub async fn get_wo_analytics_snapshot(
             ],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("Sub-entity counts query returned no row"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Sub-entity counts query returned no row")))?;
 
     // ── Failure details + verifications ───────────────────────────────────
     let failure_details = closeout::get_failure_details(db, wo_id).await?;
@@ -223,9 +218,7 @@ pub async fn get_wo_analytics_snapshot(
 
     // ── Assemble snapshot ─────────────────────────────────────────────────
     Ok(WoAnalyticsSnapshot {
-        wo_id: row
-            .try_get::<i64>("", "wo_id")
-            .map_err(|e| decode_err("wo_id", e))?,
+        wo_id: row.try_get::<i64>("", "wo_id").map_err(|e| decode_err("wo_id", e))?,
         wo_code: row
             .try_get::<String>("", "wo_code")
             .map_err(|e| decode_err("wo_code", e))?,

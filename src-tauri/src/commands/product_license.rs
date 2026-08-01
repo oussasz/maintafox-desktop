@@ -9,9 +9,9 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
+use crate::require_session;
 use crate::settings;
 use crate::state::AppState;
-use crate::require_session;
 use crate::sync::domain::TenantConfigSyncPayload;
 
 const PRODUCT_LICENSE_ONBOARDING_KEY: &str = "product.license_onboarding";
@@ -68,7 +68,12 @@ pub struct ProductActivationClaimRecord {
     pub offline_grace_hours: Option<u32>,
     pub trust_revocation_disconnects_immediately: Option<bool>,
     pub reconnect_requires_fresh_heartbeat: Option<bool>,
-    #[serde(default, alias = "company_display_name", alias = "company_name", alias = "tenant_name")]
+    #[serde(
+        default,
+        alias = "company_display_name",
+        alias = "company_name",
+        alias = "tenant_name"
+    )]
     pub tenant_display_name: Option<String>,
     #[serde(default)]
     pub tenant_slug: Option<String>,
@@ -236,21 +241,14 @@ pub struct ProductLicenseDiagnostics {
 /// its serde `alias` (e.g. `license_tier` + `edition`). Serde rejects that as a duplicate field;
 /// this sanitizer keeps one value per field so activation never fails on alias co-presence.
 fn sanitize_activation_claim_object(obj: &mut serde_json::Map<String, serde_json::Value>) {
-    fn take_non_null(
-        obj: &mut serde_json::Map<String, serde_json::Value>,
-        key: &str,
-    ) -> Option<serde_json::Value> {
+    fn take_non_null(obj: &mut serde_json::Map<String, serde_json::Value>, key: &str) -> Option<serde_json::Value> {
         match obj.remove(key) {
             Some(v) if !v.is_null() => Some(v),
             _ => None,
         }
     }
 
-    fn prefer_canonical(
-        obj: &mut serde_json::Map<String, serde_json::Value>,
-        canonical: &str,
-        aliases: &[&str],
-    ) {
+    fn prefer_canonical(obj: &mut serde_json::Map<String, serde_json::Value>, canonical: &str, aliases: &[&str]) {
         let mut chosen = take_non_null(obj, canonical);
         for alias in aliases {
             if let Some(v) = take_non_null(obj, alias) {
@@ -302,9 +300,8 @@ fn extract_claim_and_envelope(
     ProductActivationClaimRecord,
     Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
 )> {
-    let mut value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
-        AppError::ValidationFailed(vec![format!("claimJson must be valid JSON: {e}")])
-    })?;
+    let mut value: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("claimJson must be valid JSON: {e}")]))?;
 
     let envelope = match value
         .as_object_mut()
@@ -312,12 +309,8 @@ fn extract_claim_and_envelope(
         .filter(|v| !v.is_null())
     {
         Some(env_value) => Some(
-            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(
-                env_value,
-            )
-            .map_err(|e| {
-                AppError::ValidationFailed(vec![format!("entitlement_envelope is invalid: {e}")])
-            })?,
+            serde_json::from_value::<crate::entitlements::domain::EntitlementEnvelopeInput>(env_value)
+                .map_err(|e| AppError::ValidationFailed(vec![format!("entitlement_envelope is invalid: {e}")]))?,
         ),
         None => None,
     };
@@ -519,18 +512,12 @@ pub async fn is_product_activation_complete(db: &DatabaseConnection) -> AppResul
 }
 
 fn commercial_edition_from_claim(claim: &ProductActivationClaimRecord) -> Option<String> {
-    for candidate in [
-        claim.license_tier.as_deref(),
-        claim.license_plan.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
+    for candidate in [claim.license_tier.as_deref(), claim.license_plan.as_deref()]
+        .into_iter()
+        .flatten()
     {
         let v = candidate.trim().to_ascii_lowercase();
-        if matches!(
-            v.as_str(),
-            "core" | "professional" | "enterprise" | "development"
-        ) {
+        if matches!(v.as_str(), "core" | "professional" | "enterprise" | "development") {
             return Some(v);
         }
     }
@@ -553,17 +540,12 @@ fn onboarding_state_from_record(record: &ProductLicenseStateRecord) -> ProductLi
         last_error_message: record.reconciliation.last_error_message.clone(),
         tenant_id: record.activation_claim.as_ref().map(|c| c.tenant_id.clone()),
         company_display_name: record.company_display_name.clone(),
-        license_edition: record
-            .activation_claim
-            .as_ref()
-            .and_then(commercial_edition_from_claim),
+        license_edition: record.activation_claim.as_ref().and_then(commercial_edition_from_claim),
     }
 }
 
 /// Fields for the License Enforcement canonical view-model.
-pub async fn product_activation_view_fields(
-    db: &DatabaseConnection,
-) -> AppResult<(String, Option<String>)> {
+pub async fn product_activation_view_fields(db: &DatabaseConnection) -> AppResult<(String, Option<String>)> {
     let Some(record) = load_state_record_from_db(db).await? else {
         return Ok(("uninitialized".to_string(), None));
     };
@@ -571,10 +553,7 @@ pub async fn product_activation_view_fields(
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_else(|| "uninitialized".to_string());
-    let edition = record
-        .activation_claim
-        .as_ref()
-        .and_then(commercial_edition_from_claim);
+    let edition = record.activation_claim.as_ref().and_then(commercial_edition_from_claim);
     Ok((status, edition))
 }
 
@@ -614,10 +593,7 @@ pub async fn tenant_has_administrator_for_id(db: &DatabaseConnection, tenant_id:
             [tenant_id.into()],
         ))
         .await?;
-    let count: i64 = row
-        .as_ref()
-        .and_then(|r| r.try_get::<i64>("", "c").ok())
-        .unwrap_or(0);
+    let count: i64 = row.as_ref().and_then(|r| r.try_get::<i64>("", "c").ok()).unwrap_or(0);
     Ok(count > 0)
 }
 
@@ -635,7 +611,10 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         "licensing_trust_keys",
     ]);
 
-    tracing::warn!(event = "desktop_tenant_runtime_reset_begin", "Starting runtime tenant data reset");
+    tracing::warn!(
+        event = "desktop_tenant_runtime_reset_begin",
+        "Starting runtime tenant data reset"
+    );
     let table_rows = state
         .db
         .query_all(Statement::from_string(
@@ -697,8 +676,7 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
     crate::db::seeder::seed_system_data(&state.db).await?;
     // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
     // reference_* catalogs that seed_system_data does not cover (lookup_* only).
-    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db)
-        .await?;
+    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db).await?;
     tracing::warn!(
         event = "desktop_tenant_runtime_reset_complete",
         wiped_rows_total,
@@ -757,7 +735,9 @@ pub async fn get_activation_bootstrap_state(state: State<'_, AppState>) -> AppRe
 }
 
 #[tauri::command]
-pub async fn get_activation_license_metadata(state: State<'_, AppState>) -> AppResult<Option<ActivationLicenseMetadata>> {
+pub async fn get_activation_license_metadata(
+    state: State<'_, AppState>,
+) -> AppResult<Option<ActivationLicenseMetadata>> {
     let record = load_state_record(&state).await?;
     let Some(record) = record else {
         return Ok(None);
@@ -907,7 +887,12 @@ pub async fn bootstrap_initial_tenant_admin(
     Ok(())
 }
 
-async fn persist_state_record(state: &State<'_, AppState>, user_id: i32, record: &ProductLicenseStateRecord, summary: &str) -> AppResult<()> {
+async fn persist_state_record(
+    state: &State<'_, AppState>,
+    user_id: i32,
+    record: &ProductLicenseStateRecord,
+    summary: &str,
+) -> AppResult<()> {
     let json = serde_json::to_string(record)?;
     settings::set_setting(
         &state.db,
@@ -921,7 +906,9 @@ async fn persist_state_record(state: &State<'_, AppState>, user_id: i32, record:
 }
 
 #[tauri::command]
-pub async fn get_product_license_onboarding_state(state: State<'_, AppState>) -> AppResult<ProductLicenseOnboardingState> {
+pub async fn get_product_license_onboarding_state(
+    state: State<'_, AppState>,
+) -> AppResult<ProductLicenseOnboardingState> {
     let record = load_state_record(&state).await?;
     if let Some(record) = record {
         Ok(onboarding_state_from_record(&record))
@@ -963,7 +950,9 @@ pub async fn submit_product_license_key(
         .unwrap_or(0);
     let trimmed = key.trim();
     if trimmed.len() < 8 {
-        return Err(AppError::ValidationFailed(vec!["License key must be at least 8 characters.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "License key must be at least 8 characters.".into(),
+        ]));
     }
     let mut entitlement_envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput> = None;
     let parsed_claim = match claim_json {
@@ -1054,8 +1043,13 @@ pub async fn submit_product_license_key(
             .unwrap_or(0),
         "Product license key submit processed"
     );
-    persist_state_record(&state, changed_by_id, &record, "product license key submitted (state machine)")
-        .await?;
+    persist_state_record(
+        &state,
+        changed_by_id,
+        &record,
+        "product license key submitted (state machine)",
+    )
+    .await?;
     apply_claim_entitlement_envelope(&state.db, entitlement_envelope).await?;
     crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, changed_by_id).await?;
     Ok(())
@@ -1077,11 +1071,8 @@ pub async fn apply_product_license_reconciliation(
     let mut record = load_state_record(&state)
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["No local product license state found.".into()]))?;
-    let outcome_value: serde_json::Value = serde_json::from_str(&outcome_json).map_err(|e| {
-        AppError::ValidationFailed(vec![format!(
-            "outcomeJson must be valid JSON: {e}"
-        )])
-    })?;
+    let outcome_value: serde_json::Value = serde_json::from_str(&outcome_json)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("outcomeJson must be valid JSON: {e}")]))?;
     // #region agent log
     {
         let kind = outcome_value.get("kind").and_then(|v| v.as_str()).unwrap_or("");
@@ -1244,7 +1235,8 @@ pub async fn apply_product_license_reconciliation(
                     .unwrap_or_else(|| "Activation API unavailable; running in degraded mode.".into()),
             );
             record.reconciliation.retry_attempt = record.reconciliation.retry_attempt.saturating_add(1);
-            record.reconciliation.next_retry_at = Some(compute_backoff_at(record.reconciliation.retry_attempt).to_rfc3339());
+            record.reconciliation.next_retry_at =
+                Some(compute_backoff_at(record.reconciliation.retry_attempt).to_rfc3339());
             record.reconciliation.last_error_code = outcome.error_code.clone();
             record.reconciliation.last_error_message = outcome.error_message.clone();
             record.push_diagnostic(
@@ -1275,10 +1267,7 @@ pub async fn apply_product_license_reconciliation(
         "product license reconciliation state updated",
     )
     .await?;
-    if matches!(
-        outcome.kind,
-        ProductLicenseReconciliationOutcomeKind::Success
-    ) {
+    if matches!(outcome.kind, ProductLicenseReconciliationOutcomeKind::Success) {
         apply_claim_entitlement_envelope(&state.db, outcome.entitlement_envelope).await?;
     }
     crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, changed_by_id).await?;
@@ -1287,7 +1276,9 @@ pub async fn apply_product_license_reconciliation(
 }
 
 #[tauri::command]
-pub async fn get_product_license_diagnostics(state: State<'_, AppState>) -> AppResult<Option<ProductLicenseDiagnostics>> {
+pub async fn get_product_license_diagnostics(
+    state: State<'_, AppState>,
+) -> AppResult<Option<ProductLicenseDiagnostics>> {
     let record = load_state_record(&state).await?;
     Ok(record.map(|record| {
         let has_activation_claim = record_has_valid_activation_claim(&record);
@@ -1334,8 +1325,7 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
         };
         if has_admin {
             return Err(AppError::Auth(
-                "Session requise pour réinitialiser l'activation une fois un administrateur créé."
-                    .into(),
+                "Session requise pour réinitialiser l'activation une fois un administrateur créé.".into(),
             ));
         }
     }
@@ -1369,7 +1359,11 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
         let mut session_guard = state.session.write().await;
         session_guard.clear_session();
     }
-    tracing::warn!(event = "desktop_activation_reset", wiped_rows, "Product activation state reset and tenant runtime wiped");
+    tracing::warn!(
+        event = "desktop_activation_reset",
+        wiped_rows,
+        "Product activation state reset and tenant runtime wiped"
+    );
     Ok(())
 }
 
@@ -1396,13 +1390,15 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
         };
         if has_admin {
             return Err(AppError::Auth(
-                "Session requise pour réinitialiser les données runtime une fois un administrateur créé."
-                    .into(),
+                "Session requise pour réinitialiser les données runtime une fois un administrateur créé.".into(),
             ));
         }
     }
 
-    tracing::warn!(event = "desktop_tenant_runtime_reset_command", "reset_local_tenant_runtime_data command invoked");
+    tracing::warn!(
+        event = "desktop_tenant_runtime_reset_command",
+        "reset_local_tenant_runtime_data command invoked"
+    );
     let wiped_rows = reset_local_tenant_runtime_data_impl(&state).await?;
     {
         let mut session_guard = state.session.write().await;

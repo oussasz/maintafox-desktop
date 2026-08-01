@@ -22,13 +22,9 @@ use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 use crate::reliability::markov_mc::domain::CreateMarkovModelInput;
 use crate::reliability::markov_mc::queries as markov_queries;
 use crate::reliability::queries as reliability_queries;
-use crate::wo::closeout::{
-    self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput,
-};
+use crate::wo::closeout::{self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput};
 use crate::wo::domain::WoCreateInput;
-use crate::wo::execution::{
-    self, WoAssignInput, WoMechCompleteInput, WoPlanInput, WoStartInput,
-};
+use crate::wo::execution::{self, WoAssignInput, WoMechCompleteInput, WoPlanInput, WoStartInput};
 use crate::wo::labor::{self, AddLaborInput};
 use crate::wo::parts;
 use crate::wo::queries;
@@ -187,8 +183,7 @@ pub async fn seed_rams_presentation_data(
     if !force && presentation_already_seeded(db, equipment_id).await? {
         report.skipped = true;
         report.warnings.push(
-            "Presentation seed already present for this equipment (use force=true to re-run analytics only)."
-                .into(),
+            "Presentation seed already present for this equipment (use force=true to re-run analytics only).".into(),
         );
         return finalize_analytics(db, actor_id, equipment_id, months_back, report).await;
     }
@@ -248,7 +243,9 @@ pub async fn seed_rams_presentation_data(
     }
 
     if wo_ids.is_empty() {
-        report.errors.push("No work orders were created; aborting analytics.".into());
+        report
+            .errors
+            .push("No work orders were created; aborting analytics.".into());
         return Ok(report);
     }
 
@@ -321,7 +318,9 @@ async fn finalize_analytics(
             report.weibull_eta = fit.eta;
             report.weibull_adequate = fit.adequate_sample;
             if !fit.adequate_sample {
-                report.warnings.push(format!("Weibull inadequate sample: {}", fit.message));
+                report
+                    .warnings
+                    .push(format!("Weibull inadequate sample: {}", fit.message));
             }
         }
         Err(e) => report.errors.push(format!("Weibull fit: {e}")),
@@ -355,19 +354,15 @@ async fn finalize_analytics(
     }
 
     if report.exposure_hours.unwrap_or(0.0) <= 0.0 {
-        report.warnings.push(
-            "Exposure hours remain zero after seed — verify RAMS schedule class and governed WO anchors."
-                .into(),
-        );
+        report
+            .warnings
+            .push("Exposure hours remain zero after seed — verify RAMS schedule class and governed WO anchors.".into());
     }
 
     Ok(report)
 }
 
-async fn neutralize_injector_work_order_anchors(
-    db: &DatabaseConnection,
-    equipment_id: i64,
-) -> AppResult<()> {
+async fn neutralize_injector_work_order_anchors(db: &DatabaseConnection, equipment_id: i64) -> AppResult<()> {
     let updated = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -402,10 +397,7 @@ struct CreateWoSeedCtx {
     repair_hours: f64,
 }
 
-async fn create_and_close_corrective_wo(
-    db: &DatabaseConnection,
-    ctx: CreateWoSeedCtx,
-) -> AppResult<i64> {
+async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSeedCtx) -> AppResult<i64> {
     let wo = queries::create_work_order(
         db,
         WoCreateInput {
@@ -541,10 +533,7 @@ async fn create_and_close_corrective_wo(
         db,
         UpdateWoRcaInput {
             wo_id: wo.id,
-            root_cause_summary: Some(
-                "Progressive mechanical degradation identified during governed close-out."
-                    .into(),
-            ),
+            root_cause_summary: Some("Progressive mechanical degradation identified during governed close-out.".into()),
             corrective_action_summary: Some("Component replaced and alignment verified.".into()),
         },
     )
@@ -607,11 +596,7 @@ async fn backdate_closed_wo_and_failure_event(
     Ok(())
 }
 
-async fn assign_rams_schedule_class(
-    db: &DatabaseConnection,
-    equipment_id: i64,
-    actor_id: i32,
-) -> AppResult<()> {
+async fn assign_rams_schedule_class(db: &DatabaseConnection, equipment_id: i64, actor_id: i32) -> AppResult<()> {
     let schedule_ref_id = resolve_schedule_reference_value_id(db).await?;
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -625,9 +610,7 @@ async fn assign_rams_schedule_class(
             id: equipment_id.to_string(),
         })?;
     let rv: i64 = row.try_get("", "row_version").map_err(decode)?;
-    let current: Option<i64> = row
-        .try_get("", "rams_schedule_reference_value_id")
-        .map_err(decode)?;
+    let current: Option<i64> = row.try_get("", "rams_schedule_reference_value_id").map_err(decode)?;
     if current == Some(schedule_ref_id) {
         return Ok(());
     }
@@ -754,7 +737,8 @@ async fn resolve_active_failure_mode_id(db: &DatabaseConnection) -> AppResult<i6
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "No published active WORK.FAILURE_MODES reference value. Publish failure modes in Reference Data.".into(),
+                "No published active WORK.FAILURE_MODES reference value. Publish failure modes in Reference Data."
+                    .into(),
             ])
         })?;
     row.try_get("", "id").map_err(decode)
@@ -771,11 +755,7 @@ async fn resolve_failure_cause_id(db: &DatabaseConnection) -> AppResult<i64> {
             [],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec![
-                "No active failure.cause lookup value found.".into(),
-            ])
-        })?;
+        .ok_or_else(|| AppError::ValidationFailed(vec!["No active failure.cause lookup value found.".into()]))?;
     row.try_get("", "id").map_err(decode)
 }
 
@@ -795,8 +775,7 @@ async fn resolve_schedule_reference_value_id(db: &DatabaseConnection) -> AppResu
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "No active ORG.SCHEDULE_CLASS reference value found (required for exposure inference)."
-                    .into(),
+                "No active ORG.SCHEDULE_CLASS reference value found (required for exposure inference).".into(),
             ])
         })?;
     row.try_get("", "id").map_err(decode)
@@ -854,8 +833,7 @@ async fn list_equipment_needing_rams_seed(db: &DatabaseConnection) -> AppResult<
     let all_rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, asset_id_code FROM equipment WHERE deleted_at IS NULL ORDER BY id ASC"
-                .to_string(),
+            "SELECT id, asset_id_code FROM equipment WHERE deleted_at IS NULL ORDER BY id ASC".to_string(),
         ))
         .await?;
     let mut demo_targets: Vec<i64> = Vec::new();
@@ -947,9 +925,7 @@ async fn resolve_default_equipment_id(db: &DatabaseConnection) -> AppResult<i64>
             "SELECT id FROM equipment WHERE deleted_at IS NULL ORDER BY id ASC LIMIT 1".to_string(),
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::ValidationFailed(vec!["No equipment found in database.".into()])
-        })?;
+        .ok_or_else(|| AppError::ValidationFailed(vec!["No equipment found in database.".into()]))?;
     row.try_get("", "id").map_err(decode)
 }
 
@@ -1015,8 +991,7 @@ mod tests {
 
     #[test]
     fn markov_graph_is_valid_json() {
-        let parsed: serde_json::Value =
-            serde_json::from_str(PRESENTATION_MARKOV_GRAPH).expect("valid markov json");
+        let parsed: serde_json::Value = serde_json::from_str(PRESENTATION_MARKOV_GRAPH).expect("valid markov json");
         assert_eq!(parsed["kind"], "discrete");
         assert_eq!(parsed["states"].as_array().map(|a| a.len()), Some(3));
     }

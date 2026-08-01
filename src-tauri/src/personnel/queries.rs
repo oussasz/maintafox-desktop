@@ -1,20 +1,19 @@
 //! Personnel SQL layer (PRD §6.6) — SeaORM `Statement` + `DatabaseConnection`, same pattern as DI/WO.
 
-use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use crate::activity::emitter::{emit_activity_event, ActivityEventInput};
 use crate::errors::{AppError, AppResult};
+use chrono::Utc;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
 use super::domain::{
-    AuthorizationType, AvailabilityStatus, CompanyListFilter, EmploymentOrigin, EmploymentStatus,
-    EmploymentType, ExternalCompany, ExternalCompanyContact, Personnel,
-    PersonnelAuthorization, PersonnelAvailabilityBlock, PersonnelCertDraft, PersonnelCreateInput,
-    PersonnelDetailPayload, PersonnelListFilter, PersonnelListPage, PersonnelRateCard,
-    PersonnelSkillDraft, PersonnelSkillReferenceValue, PersonnelTeamAssignment, PersonnelUpdateInput,
-    PersonnelWorkHistoryEntry, PersonnelWorkloadSummary, Position, PositionCategory,
+    AuthorizationType, AvailabilityStatus, CompanyListFilter, EmploymentOrigin, EmploymentStatus, EmploymentType,
+    ExternalCompany, ExternalCompanyContact, Personnel, PersonnelAuthorization, PersonnelAvailabilityBlock,
+    PersonnelCertDraft, PersonnelCreateInput, PersonnelDetailPayload, PersonnelListFilter, PersonnelListPage,
+    PersonnelRateCard, PersonnelSkillDraft, PersonnelSkillReferenceValue, PersonnelTeamAssignment,
+    PersonnelUpdateInput, PersonnelWorkHistoryEntry, PersonnelWorkloadSummary, Position, PositionCategory,
     PositionChangeEvent, PositionDetailPayload, PositionListFilter, PositionRequirementProfileInput,
-    PositionRequirementSeed, PositionUpsertInput, ScheduleClass, ScheduleClassWithDetails,
-    ScheduleDetail, SuccessionRiskRow,
+    PositionRequirementSeed, PositionUpsertInput, ScheduleClass, ScheduleClassWithDetails, ScheduleDetail,
+    SuccessionRiskRow,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -212,12 +211,7 @@ pub async fn close_open_assignment_history_segment(
         "UPDATE personnel_assignment_history \
          SET ended_at = ?, reason = CASE WHEN reason IS NULL THEN ? ELSE reason || ' / ' || ? END \
          WHERE personnel_id = ? AND ended_at IS NULL",
-        [
-            ended_at.into(),
-            reason.into(),
-            reason.into(),
-            personnel_id.into(),
-        ],
+        [ended_at.into(), reason.into(), reason.into(), personnel_id.into()],
     ))
     .await?;
     Ok(())
@@ -281,7 +275,12 @@ async fn write_skill_draft(
                 skill.proficiency_level.into(),
                 skill.source_type.clone().into(),
                 opt_string_val(skill.valid_to.clone()),
-                (if skill.is_primary.unwrap_or(false) { 1_i64 } else { 0_i64 }).into(),
+                (if skill.is_primary.unwrap_or(false) {
+                    1_i64
+                } else {
+                    0_i64
+                })
+                .into(),
                 now.into(),
                 now.into(),
             ],
@@ -291,11 +290,7 @@ async fn write_skill_draft(
 }
 
 /// Write an initial personnel_certifications draft row.
-async fn write_cert_draft(
-    db: &impl ConnectionTrait,
-    personnel_id: i64,
-    cert: &PersonnelCertDraft,
-) -> AppResult<()> {
+async fn write_cert_draft(db: &impl ConnectionTrait, personnel_id: i64, cert: &PersonnelCertDraft) -> AppResult<()> {
     let sync_id = uuid::Uuid::new_v4().to_string();
     let _ = db
         .execute(Statement::from_sql_and_values(
@@ -336,15 +331,17 @@ pub async fn assert_position_exists(db: &DatabaseConnection, id: i64) -> AppResu
 }
 
 pub async fn assert_org_node_exists(db: &DatabaseConnection, id: i64) -> AppResult<()> {
-    crate::org::model_scope::assert_org_node_active(db, id).await.map_err(|e| match e {
-        AppError::NotFound { .. } => AppError::ValidationFailed(vec![format!(
-            "Nœud d'organisation (id={id}) introuvable."
-        )]),
-        AppError::ValidationFailed(_) => AppError::ValidationFailed(vec![format!(
-            "Nœud d'organisation (id={id}) introuvable ou non publié."
-        )]),
-        other => other,
-    })
+    crate::org::model_scope::assert_org_node_active(db, id)
+        .await
+        .map_err(|e| match e {
+            AppError::NotFound { .. } => {
+                AppError::ValidationFailed(vec![format!("Nœud d'organisation (id={id}) introuvable.")])
+            }
+            AppError::ValidationFailed(_) => AppError::ValidationFailed(vec![format!(
+                "Nœud d'organisation (id={id}) introuvable ou non publié."
+            )]),
+            other => other,
+        })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -422,18 +419,16 @@ pub async fn list_personnel(db: &DatabaseConnection, filter: PersonnelListFilter
     }
 
     let where_sql = where_clauses.join(" AND ");
-    let limit = if filter.limit > 0 {
-        filter.limit
-    } else {
-        100
-    };
+    let limit = if filter.limit > 0 { filter.limit } else { 100 };
     let offset = filter.offset.max(0);
 
-    let count_sql = format!(
-        "SELECT COUNT(*) AS c {P_JOINS} WHERE {where_sql}"
-    );
+    let count_sql = format!("SELECT COUNT(*) AS c {P_JOINS} WHERE {where_sql}");
     let total: i64 = db
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &count_sql, binds.clone()))
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &count_sql,
+            binds.clone(),
+        ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("count personnel")))?
         .try_get::<i64>("", "c")
@@ -443,16 +438,10 @@ pub async fn list_personnel(db: &DatabaseConnection, filter: PersonnelListFilter
     list_binds.push(limit.into());
     list_binds.push(offset.into());
 
-    let list_sql = format!(
-        "{P_SELECT} {P_JOINS} WHERE {where_sql} ORDER BY p.full_name ASC LIMIT ? OFFSET ?"
-    );
+    let list_sql = format!("{P_SELECT} {P_JOINS} WHERE {where_sql} ORDER BY p.full_name ASC LIMIT ? OFFSET ?");
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &list_sql,
-            list_binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &list_sql, list_binds))
         .await?;
 
     let mut items = Vec::with_capacity(rows.len());
@@ -505,10 +494,8 @@ pub async fn create_personnel(
     input: PersonnelCreateInput,
     actor_id: i64,
 ) -> AppResult<Personnel> {
-    EmploymentType::try_from(input.employment_type.as_str())
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    EmploymentOrigin::try_from(input.employment_origin.as_str())
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    EmploymentType::try_from(input.employment_type.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    EmploymentOrigin::try_from(input.employment_origin.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let emp_status = input.employment_status.as_deref().unwrap_or("active");
     EmploymentStatus::try_from(emp_status).map_err(|e| AppError::ValidationFailed(vec![e]))?;
@@ -662,11 +649,9 @@ pub async fn create_personnel(
 
     emit_personnel_event(db, "personnel.created", new_id, Some(actor_id)).await?;
 
-    get_personnel(db, new_id).await?.ok_or_else(|| {
-        AppError::Internal(anyhow::anyhow!(
-            "personnel row missing after insert id={new_id}"
-        ))
-    })
+    get_personnel(db, new_id)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("personnel row missing after insert id={new_id}")))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -678,12 +663,10 @@ pub async fn update_personnel(
     input: PersonnelUpdateInput,
     actor_id: i64,
 ) -> AppResult<Personnel> {
-    let current = get_personnel(db, input.id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "Personnel".into(),
-            id: input.id.to_string(),
-        })?;
+    let current = get_personnel(db, input.id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "Personnel".into(),
+        id: input.id.to_string(),
+    })?;
 
     // Gate: terminated personnel cannot be edited
     if current.employment_status == "terminated" {
@@ -693,14 +676,10 @@ pub async fn update_personnel(
     }
     // Gate: inactive requires reactivation first
     if current.employment_status == "inactive" {
-        let reactivates = input
-            .employment_status
-            .as_deref()
-            .map_or(false, |s| s != "inactive");
+        let reactivates = input.employment_status.as_deref().map_or(false, |s| s != "inactive");
         if !reactivates {
             return Err(AppError::ValidationFailed(vec![
-                "Impossible de modifier un collaborateur inactif sans le réactiver (employment_status)."
-                    .into(),
+                "Impossible de modifier un collaborateur inactif sans le réactiver (employment_status).".into(),
             ]));
         }
     }
@@ -743,8 +722,7 @@ pub async fn update_personnel(
 
     // Schedule validation
     if let Some(sched_id) = input.home_schedule_reference_value_id {
-        crate::reference::schedule_patterns::assert_schedule_reference_value_active(db, sched_id)
-            .await?;
+        crate::reference::schedule_patterns::assert_schedule_reference_value_active(db, sched_id).await?;
     }
 
     // Determine if any assignment-tracked fields change
@@ -763,9 +741,7 @@ pub async fn update_personnel(
         || input
             .primary_team_id
             .is_some_and(|v| Some(v) != current.primary_team_id)
-        || input
-            .supervisor_id
-            .is_some_and(|v| Some(v) != current.supervisor_id)
+        || input.supervisor_id.is_some_and(|v| Some(v) != current.supervisor_id)
         || input
             .home_schedule_reference_value_id
             .is_some_and(|v| Some(v) != current.home_schedule_reference_value_id);
@@ -864,10 +840,7 @@ pub async fn update_personnel(
 
     // Handle assignment history if tracked fields changed
     if assignment_changed {
-        let reason = input
-            .assignment_reason
-            .as_deref()
-            .unwrap_or("assignment_update");
+        let reason = input.assignment_reason.as_deref().unwrap_or("assignment_update");
         close_open_assignment_history_segment(&txn, input.id, &now, reason).await?;
         open_assignment_history_segment(
             &txn,
@@ -922,11 +895,7 @@ pub async fn update_personnel(
         sets.join(", ")
     );
     let result = txn
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            values,
-        ))
+        .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
     if result.rows_affected() == 0 {
@@ -974,12 +943,7 @@ pub async fn deactivate_personnel(
                 row_version = row_version + 1, \
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
-            [
-                today.into(),
-                now.clone().into(),
-                id.into(),
-                expected_row_version.into(),
-            ],
+            [today.into(), now.clone().into(), id.into(), expected_row_version.into()],
         ))
         .await?;
 
@@ -1027,10 +991,7 @@ async fn collect_deactivation_blockers(db: &DatabaseConnection, personnel_id: i6
             .iter()
             .filter_map(|r| r.try_get::<String>("", "code").ok())
             .collect();
-        parts.push(format!(
-            "Ordres de travail actifs : {}.",
-            codes.join(", ")
-        ));
+        parts.push(format!("Ordres de travail actifs : {}.", codes.join(", ")));
     }
 
     // Work permit schema (6.23) not yet in local DB — no SQL guard here.
@@ -1038,10 +999,7 @@ async fn collect_deactivation_blockers(db: &DatabaseConnection, personnel_id: i6
     if parts.is_empty() {
         Ok(String::new())
     } else {
-        Ok(format!(
-            "Désactivation impossible : {}",
-            parts.join(" ")
-        ))
+        Ok(format!("Désactivation impossible : {}", parts.join(" ")))
     }
 }
 
@@ -1053,10 +1011,7 @@ pub async fn list_positions(db: &DatabaseConnection) -> AppResult<Vec<Position>>
     list_positions_filtered(db, PositionListFilter::default()).await
 }
 
-pub async fn list_positions_filtered(
-    db: &DatabaseConnection,
-    filter: PositionListFilter,
-) -> AppResult<Vec<Position>> {
+pub async fn list_positions_filtered(db: &DatabaseConnection, filter: PositionListFilter) -> AppResult<Vec<Position>> {
     let mut where_clauses = vec!["1 = 1".to_string()];
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
@@ -1082,11 +1037,7 @@ pub async fn list_positions_filtered(
          FROM positions WHERE {where_sql} ORDER BY name ASC LIMIT {limit} OFFSET {offset}"
     );
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
@@ -1095,10 +1046,7 @@ pub async fn list_positions_filtered(
     Ok(out)
 }
 
-pub async fn get_position(
-    db: &DatabaseConnection,
-    id: i64,
-) -> AppResult<Option<PositionDetailPayload>> {
+pub async fn get_position(db: &DatabaseConnection, id: i64) -> AppResult<Option<PositionDetailPayload>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1129,8 +1077,7 @@ pub async fn upsert_position(
     input: PositionUpsertInput,
     actor_id: Option<i64>,
 ) -> AppResult<Position> {
-    PositionCategory::try_from(input.category.as_str())
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    PositionCategory::try_from(input.category.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     if input.code.trim().is_empty() || input.name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -1235,10 +1182,7 @@ pub async fn upsert_position(
     // Emit position change event
     let event_type = if input.id.is_some() { "updated" } else { "created" };
     let summary = if input.id.is_some() {
-        format!(
-            "Position updated: {} → {}",
-            old_code, input.code
-        )
+        format!("Position updated: {} → {}", old_code, input.code)
     } else {
         format!("Position created: {} — {}", input.code, input.name)
     };
@@ -1260,11 +1204,7 @@ pub async fn upsert_position(
     map_position_row(&row)
 }
 
-pub async fn archive_position(
-    db: &DatabaseConnection,
-    id: i64,
-    actor_id: Option<i64>,
-) -> AppResult<Position> {
+pub async fn archive_position(db: &DatabaseConnection, id: i64, actor_id: Option<i64>) -> AppResult<Position> {
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let txn = db.begin().await?;
 
@@ -1283,16 +1223,7 @@ pub async fn archive_position(
         });
     }
 
-    emit_position_change_event(
-        &txn,
-        id,
-        "archived",
-        "Position archived",
-        None,
-        actor_id,
-        &now,
-    )
-    .await?;
+    emit_position_change_event(&txn, id, "archived", "Position archived", None, actor_id, &now).await?;
 
     txn.commit().await?;
 
@@ -1316,19 +1247,13 @@ fn map_position_row(row: &sea_orm::QueryResult) -> AppResult<Position> {
         id: row.try_get("", "id").map_err(|e| map_err("id", e))?,
         code: row.try_get("", "code").map_err(|e| map_err("code", e))?,
         name: row.try_get("", "name").map_err(|e| map_err("name", e))?,
-        category: row
-            .try_get("", "category")
-            .map_err(|e| map_err("category", e))?,
+        category: row.try_get("", "category").map_err(|e| map_err("category", e))?,
         requirement_profile_id: row
             .try_get("", "requirement_profile_id")
             .map_err(|e| map_err("requirement_profile_id", e))?,
         is_active: row.try_get("", "is_active").map_err(|e| map_err("is_active", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| map_err("created_at", e))?,
-        updated_at: row
-            .try_get("", "updated_at")
-            .map_err(|e| map_err("updated_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| map_err("created_at", e))?,
+        updated_at: row.try_get("", "updated_at").map_err(|e| map_err("updated_at", e))?,
     })
 }
 
@@ -1379,7 +1304,9 @@ async fn sync_position_requirement_profile(
              required_certification_type_ids_json = ?, row_version = row_version + 1 WHERE id = ?",
             [
                 rp.profile_name.clone().into(),
-                serde_json::to_string(&rp.certification_type_ids).unwrap_or_default().into(),
+                serde_json::to_string(&rp.certification_type_ids)
+                    .unwrap_or_default()
+                    .into(),
                 pid.into(),
             ],
         ))
@@ -1396,7 +1323,9 @@ async fn sync_position_requirement_profile(
             [
                 sync_id.into(),
                 rp.profile_name.clone().into(),
-                serde_json::to_string(&rp.certification_type_ids).unwrap_or_default().into(),
+                serde_json::to_string(&rp.certification_type_ids)
+                    .unwrap_or_default()
+                    .into(),
             ],
         ))
         .await?;
@@ -1458,7 +1387,9 @@ async fn emit_position_change_event(
                 position_id.into(),
                 event_type.to_string().into(),
                 summary.to_string().into(),
-                detail_json.map(|s| sea_orm::Value::from(s.to_string())).unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
+                detail_json
+                    .map(|s| sea_orm::Value::from(s.to_string()))
+                    .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
                 changed_by_id.into(),
                 now.to_string().into(),
             ],
@@ -1467,10 +1398,7 @@ async fn emit_position_change_event(
     Ok(())
 }
 
-async fn load_position_skill_ids(
-    db: &DatabaseConnection,
-    profile_id: Option<i64>,
-) -> AppResult<Vec<i64>> {
+async fn load_position_skill_ids(db: &DatabaseConnection, profile_id: Option<i64>) -> AppResult<Vec<i64>> {
     let Some(pid) = profile_id else { return Ok(vec![]) };
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -1485,10 +1413,7 @@ async fn load_position_skill_ids(
         .collect())
 }
 
-async fn load_position_cert_ids(
-    db: &DatabaseConnection,
-    profile_id: Option<i64>,
-) -> AppResult<Vec<i64>> {
+async fn load_position_cert_ids(db: &DatabaseConnection, profile_id: Option<i64>) -> AppResult<Vec<i64>> {
     let Some(pid) = profile_id else { return Ok(vec![]) };
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -1498,14 +1423,13 @@ async fn load_position_cert_ids(
         ))
         .await?;
     let Some(row) = row else { return Ok(vec![]) };
-    let json: String = row.try_get("", "required_certification_type_ids_json").unwrap_or_default();
+    let json: String = row
+        .try_get("", "required_certification_type_ids_json")
+        .unwrap_or_default();
     Ok(serde_json::from_str::<Vec<i64>>(&json).unwrap_or_default())
 }
 
-async fn load_position_change_events(
-    db: &DatabaseConnection,
-    position_id: i64,
-) -> AppResult<Vec<PositionChangeEvent>> {
+async fn load_position_change_events(db: &DatabaseConnection, position_id: i64) -> AppResult<Vec<PositionChangeEvent>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1606,10 +1530,7 @@ fn map_schedule_class_row(row: &sea_orm::QueryResult) -> AppResult<ScheduleClass
     })
 }
 
-fn parse_schedule_class_metadata(
-    raw: Option<&str>,
-    fallback_code: &str,
-) -> (String, i64, f64) {
+fn parse_schedule_class_metadata(raw: Option<&str>, fallback_code: &str) -> (String, i64, f64) {
     #[derive(serde::Deserialize)]
     struct Meta {
         #[serde(default)]
@@ -1619,13 +1540,11 @@ fn parse_schedule_class_metadata(
         #[serde(default)]
         nominal_hours_per_day: Option<f64>,
     }
-    let parsed = raw
-        .and_then(|s| serde_json::from_str::<Meta>(s).ok())
-        .unwrap_or(Meta {
-            shift_pattern_code: None,
-            is_continuous: None,
-            nominal_hours_per_day: None,
-        });
+    let parsed = raw.and_then(|s| serde_json::from_str::<Meta>(s).ok()).unwrap_or(Meta {
+        shift_pattern_code: None,
+        is_continuous: None,
+        nominal_hours_per_day: None,
+    });
     (
         parsed
             .shift_pattern_code
@@ -1658,18 +1577,10 @@ fn map_schedule_detail_row(row: &sea_orm::QueryResult) -> AppResult<ScheduleDeta
         reference_value_id: row
             .try_get("", "reference_value_id")
             .map_err(|e| map_err("reference_value_id", e))?,
-        day_of_week: row
-            .try_get("", "day_of_week")
-            .map_err(|e| map_err("day_of_week", e))?,
-        shift_start: row
-            .try_get("", "shift_start")
-            .map_err(|e| map_err("shift_start", e))?,
-        shift_end: row
-            .try_get("", "shift_end")
-            .map_err(|e| map_err("shift_end", e))?,
-        is_rest_day: row
-            .try_get("", "is_rest_day")
-            .map_err(|e| map_err("is_rest_day", e))?,
+        day_of_week: row.try_get("", "day_of_week").map_err(|e| map_err("day_of_week", e))?,
+        shift_start: row.try_get("", "shift_start").map_err(|e| map_err("shift_start", e))?,
+        shift_end: row.try_get("", "shift_end").map_err(|e| map_err("shift_end", e))?,
+        is_rest_day: row.try_get("", "is_rest_day").map_err(|e| map_err("is_rest_day", e))?,
     })
 }
 
@@ -1702,28 +1613,19 @@ fn map_rate_card_row(row: &sea_orm::QueryResult) -> AppResult<PersonnelRateCard>
         effective_from: row
             .try_get("", "effective_from")
             .map_err(|e| map_err("effective_from", e))?,
-        labor_rate: row
-            .try_get("", "labor_rate")
-            .map_err(|e| map_err("labor_rate", e))?,
+        labor_rate: row.try_get("", "labor_rate").map_err(|e| map_err("labor_rate", e))?,
         overtime_rate: row
             .try_get("", "overtime_rate")
             .map_err(|e| map_err("overtime_rate", e))?,
         cost_center_id: row
             .try_get("", "cost_center_id")
             .map_err(|e| map_err("cost_center_id", e))?,
-        source_type: row
-            .try_get("", "source_type")
-            .map_err(|e| map_err("source_type", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| map_err("created_at", e))?,
+        source_type: row.try_get("", "source_type").map_err(|e| map_err("source_type", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| map_err("created_at", e))?,
     })
 }
 
-pub async fn get_active_rate_card(
-    db: &DatabaseConnection,
-    personnel_id: i64,
-) -> AppResult<Option<PersonnelRateCard>> {
+pub async fn get_active_rate_card(db: &DatabaseConnection, personnel_id: i64) -> AppResult<Option<PersonnelRateCard>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1785,10 +1687,7 @@ pub async fn create_rate_card(
 // M/N) authorizations
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn list_authorizations(
-    db: &DatabaseConnection,
-    personnel_id: i64,
-) -> AppResult<Vec<PersonnelAuthorization>> {
+pub async fn list_authorizations(db: &DatabaseConnection, personnel_id: i64) -> AppResult<Vec<PersonnelAuthorization>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1814,21 +1713,13 @@ fn map_auth_row(row: &sea_orm::QueryResult) -> AppResult<PersonnelAuthorization>
         authorization_type: row
             .try_get("", "authorization_type")
             .map_err(|e| map_err("authorization_type", e))?,
-        valid_from: row
-            .try_get("", "valid_from")
-            .map_err(|e| map_err("valid_from", e))?,
-        valid_to: row
-            .try_get("", "valid_to")
-            .map_err(|e| map_err("valid_to", e))?,
+        valid_from: row.try_get("", "valid_from").map_err(|e| map_err("valid_from", e))?,
+        valid_to: row.try_get("", "valid_to").map_err(|e| map_err("valid_to", e))?,
         source_certification_type_id: row
             .try_get("", "source_certification_type_id")
             .map_err(|e| map_err("source_certification_type_id", e))?,
-        is_active: row
-            .try_get("", "is_active")
-            .map_err(|e| map_err("is_active", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| map_err("created_at", e))?,
+        is_active: row.try_get("", "is_active").map_err(|e| map_err("is_active", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| map_err("created_at", e))?,
     })
 }
 
@@ -1841,8 +1732,7 @@ pub async fn create_authorization(
     source_certification_type_id: Option<i64>,
     actor_id: i64,
 ) -> AppResult<PersonnelAuthorization> {
-    AuthorizationType::try_from(authorization_type.as_str())
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    AuthorizationType::try_from(authorization_type.as_str()).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     db.execute(Statement::from_sql_and_values(
@@ -1940,12 +1830,8 @@ fn map_external_company_row(row: &sea_orm::QueryResult) -> AppResult<ExternalCom
             .map_err(|e| map_err("insurance_status", e))?,
         notes: row.try_get("", "notes").map_err(|e| map_err("notes", e))?,
         is_active: row.try_get("", "is_active").map_err(|e| map_err("is_active", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| map_err("created_at", e))?,
-        updated_at: row
-            .try_get("", "updated_at")
-            .map_err(|e| map_err("updated_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| map_err("created_at", e))?,
+        updated_at: row.try_get("", "updated_at").map_err(|e| map_err("updated_at", e))?,
     })
 }
 
@@ -1989,10 +1875,7 @@ pub async fn create_external_company(
     map_external_company_row(&row)
 }
 
-pub async fn list_company_contacts(
-    db: &DatabaseConnection,
-    company_id: i64,
-) -> AppResult<Vec<ExternalCompanyContact>> {
+pub async fn list_company_contacts(db: &DatabaseConnection, company_id: i64) -> AppResult<Vec<ExternalCompanyContact>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2012,9 +1895,7 @@ pub async fn list_company_contacts(
 fn map_contact_row(row: &sea_orm::QueryResult) -> AppResult<ExternalCompanyContact> {
     Ok(ExternalCompanyContact {
         id: row.try_get("", "id").map_err(|e| map_err("id", e))?,
-        company_id: row
-            .try_get("", "company_id")
-            .map_err(|e| map_err("company_id", e))?,
+        company_id: row.try_get("", "company_id").map_err(|e| map_err("company_id", e))?,
         contact_name: row
             .try_get("", "contact_name")
             .map_err(|e| map_err("contact_name", e))?,
@@ -2023,12 +1904,8 @@ fn map_contact_row(row: &sea_orm::QueryResult) -> AppResult<ExternalCompanyConta
             .map_err(|e| map_err("contact_role", e))?,
         phone: row.try_get("", "phone").map_err(|e| map_err("phone", e))?,
         email: row.try_get("", "email").map_err(|e| map_err("email", e))?,
-        is_primary: row
-            .try_get("", "is_primary")
-            .map_err(|e| map_err("is_primary", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| map_err("created_at", e))?,
+        is_primary: row.try_get("", "is_primary").map_err(|e| map_err("is_primary", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| map_err("created_at", e))?,
     })
 }
 
@@ -2253,9 +2130,7 @@ pub async fn get_personnel_workload_summary(
 
     Ok(PersonnelWorkloadSummary {
         open_work_orders: row.try_get("", "open_work_orders").unwrap_or_default(),
-        in_progress_work_orders: row
-            .try_get("", "in_progress_work_orders")
-            .unwrap_or_default(),
+        in_progress_work_orders: row.try_get("", "in_progress_work_orders").unwrap_or_default(),
         pending_interventions: row.try_get("", "pending_interventions").unwrap_or_default(),
         interventions_last_30d: row.try_get("", "interventions_last_30d").unwrap_or_default(),
     })
@@ -2315,11 +2190,7 @@ pub async fn scan_succession_risk(
     );
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
     Ok(rows

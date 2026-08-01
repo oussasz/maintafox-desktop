@@ -160,10 +160,8 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_wofd_wo_id ON work_order_failure_details(work_order_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_wofd_wo_id ON work_order_failure_details(work_order_id)")
+            .await?;
 
         db.execute_unprepared("DROP TABLE work_order_failure_details_m081_backup")
             .await?;
@@ -210,14 +208,13 @@ impl MigrationTrait for Migration {
             )",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_wofd_wo_id ON work_order_failure_details(work_order_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_wofd_wo_id ON work_order_failure_details(work_order_id)")
+            .await?;
         db.execute_unprepared("DROP INDEX IF EXISTS uq_failure_codes_hierarchy_code")
             .await?;
         db.execute_unprepared("DROP TABLE IF EXISTS failure_codes").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS failure_hierarchies").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS failure_hierarchies")
+            .await?;
         Ok(())
     }
 }

@@ -37,7 +37,12 @@ async fn linked_personnel_id(state: &State<'_, AppState>, user_id: i32) -> AppRe
 #[tauri::command]
 pub async fn list_certification_types(state: State<'_, AppState>) -> AppResult<Vec<CertificationType>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_certification_types(&state.db).await
 }
 
@@ -47,7 +52,12 @@ pub async fn upsert_certification_type(
     state: State<'_, AppState>,
 ) -> AppResult<CertificationType> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_MANAGE,
+        PermissionScope::Global
+    );
     queries::upsert_certification_type(&state.db, input).await
 }
 
@@ -56,7 +66,12 @@ pub async fn list_qualification_requirement_profiles(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<QualificationRequirementProfile>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_qualification_requirement_profiles(&state.db).await
 }
 
@@ -66,7 +81,12 @@ pub async fn upsert_qualification_requirement_profile(
     state: State<'_, AppState>,
 ) -> AppResult<QualificationRequirementProfile> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_MANAGE,
+        PermissionScope::Global
+    );
     queries::upsert_qualification_requirement_profile(&state.db, input).await
 }
 
@@ -76,7 +96,12 @@ pub async fn list_personnel_certifications(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PersonnelCertification>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_personnel_certifications(&state.db, filter).await
 }
 
@@ -86,14 +111,24 @@ pub async fn upsert_personnel_certification(
     state: State<'_, AppState>,
 ) -> AppResult<PersonnelCertification> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_CERTIFY, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_CERTIFY,
+        PermissionScope::Global
+    );
     queries::upsert_personnel_certification(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn list_training_sessions(state: State<'_, AppState>) -> AppResult<Vec<TrainingSession>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     training::list_training_sessions(&state.db).await
 }
 
@@ -103,7 +138,12 @@ pub async fn upsert_training_session(
     state: State<'_, AppState>,
 ) -> AppResult<TrainingSession> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_MANAGE,
+        PermissionScope::Global
+    );
     training::upsert_training_session(&state.db, input).await
 }
 
@@ -113,7 +153,12 @@ pub async fn list_training_attendance(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<TrainingAttendance>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     training::list_training_attendance(&state.db, filter).await
 }
 
@@ -123,7 +168,12 @@ pub async fn upsert_training_attendance(
     state: State<'_, AppState>,
 ) -> AppResult<TrainingAttendance> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_MANAGE,
+        PermissionScope::Global
+    );
     training::upsert_training_attendance(&state.db, input).await
 }
 
@@ -133,7 +183,12 @@ pub async fn list_document_acknowledgements(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<DocumentAcknowledgement>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     training::list_document_acknowledgements(&state.db, filter).await
 }
 
@@ -143,14 +198,24 @@ pub async fn upsert_document_acknowledgement(
     state: State<'_, AppState>,
 ) -> AppResult<DocumentAcknowledgement> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_MANAGE,
+        PermissionScope::Global
+    );
     training::upsert_document_acknowledgement(&state.db, input).await
 }
 
 #[tauri::command]
 pub async fn list_my_training_sessions(state: State<'_, AppState>) -> AppResult<Vec<TrainingAttendance>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     let Some(pid) = linked_personnel_id(&state, user.user_id).await? else {
         return Ok(vec![]);
     };
@@ -168,7 +233,12 @@ pub async fn list_my_training_sessions(state: State<'_, AppState>) -> AppResult<
 #[tauri::command]
 pub async fn list_my_personnel_certifications(state: State<'_, AppState>) -> AppResult<Vec<PersonnelCertification>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     let Some(pid) = linked_personnel_id(&state, user.user_id).await? else {
         return Ok(vec![]);
     };
@@ -188,7 +258,12 @@ pub async fn list_personnel_readiness(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PersonnelReadinessRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     readiness::list_personnel_readiness(&state.db, filter).await
 }
 
@@ -198,7 +273,12 @@ pub async fn evaluate_crew_permit_skill_gaps(
     state: State<'_, AppState>,
 ) -> AppResult<CrewPermitSkillGapResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     readiness::evaluate_crew_permit_skill_gaps(&state.db, input).await
 }
 
@@ -207,7 +287,12 @@ pub async fn list_personnel_readiness_snapshots(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PersonnelReadinessSnapshot>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     readiness::list_personnel_readiness_snapshots(&state.db).await
 }
 
@@ -217,7 +302,12 @@ pub async fn upsert_personnel_readiness_snapshot(
     state: State<'_, AppState>,
 ) -> AppResult<PersonnelReadinessSnapshot> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_MANAGE,
+        PermissionScope::Global
+    );
     readiness::upsert_personnel_readiness_snapshot(&state.db, input).await
 }
 
@@ -227,7 +317,12 @@ pub async fn refresh_personnel_readiness_snapshot(
     state: State<'_, AppState>,
 ) -> AppResult<PersonnelReadinessSnapshot> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_MANAGE,
+        PermissionScope::Global
+    );
     readiness::refresh_personnel_readiness_snapshot_payload(&state.db, period).await
 }
 
@@ -237,7 +332,12 @@ pub async fn list_training_expiry_alert_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<TrainingExpiryAlertEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     expiry_alerts::list_training_expiry_alert_events(&state.db, filter).await
 }
 
@@ -247,7 +347,12 @@ pub async fn scan_training_expiry_alerts(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<TrainingExpiryAlertEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_MANAGE,
+        PermissionScope::Global
+    );
     expiry_alerts::scan_training_expiry_alerts(&state.db, lookahead_days.unwrap_or(90)).await
 }
 
@@ -258,6 +363,11 @@ pub async fn list_certification_expiry_drilldown(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<CertificationExpiryDrilldownRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::TRN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::TRN_VIEW,
+        PermissionScope::Global
+    );
     expiry_alerts::list_certification_expiry_drilldown(&state.db, entity_id, lookahead_days.unwrap_or(90)).await
 }

@@ -188,11 +188,14 @@ pub(crate) async fn record_admin_event(
 
 /// List all active (non-expired, non-revoked) sessions with device and role info.
 #[tauri::command]
-pub async fn list_active_sessions(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<SessionSummary>> {
+pub async fn list_active_sessions(state: State<'_, AppState>) -> AppResult<Vec<SessionSummary>> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
 
     // Get the caller's current session id for is_current_session flag
     let current_session_id = {
@@ -254,10 +257,7 @@ pub async fn list_active_sessions(
 }
 
 /// Load active role names for a user (by text user_id from app_sessions).
-async fn load_user_role_names(
-    db: &sea_orm::DatabaseConnection,
-    user_id_text: &str,
-) -> AppResult<Vec<String>> {
+async fn load_user_role_names(db: &sea_orm::DatabaseConnection, user_id_text: &str) -> AppResult<Vec<String>> {
     let sql = "\
         SELECT DISTINCT r.name \
         FROM user_scope_assignments usa \
@@ -285,12 +285,14 @@ async fn load_user_role_names(
 
 /// Revoke a session. Cannot revoke your own current session.
 #[tauri::command]
-pub async fn revoke_session(
-    session_id: String,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn revoke_session(session_id: String, state: State<'_, AppState>) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     // Guard: cannot revoke your own current session
@@ -358,11 +360,14 @@ pub async fn revoke_session(
 
 /// List all delegation policies with the admin role name resolved.
 #[tauri::command]
-pub async fn list_delegation_policies(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<DelegationPolicyView>> {
+pub async fn list_delegation_policies(state: State<'_, AppState>) -> AppResult<Vec<DelegationPolicyView>> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
 
     let sql = "\
         SELECT dap.id, dap.admin_role_id, r.name AS admin_role_name, \
@@ -382,8 +387,7 @@ pub async fn list_delegation_policies(
         let domains_json: String = r
             .try_get("", "allowed_domains_json")
             .unwrap_or_else(|_| "[]".to_string());
-        let allowed_domains: Vec<String> =
-            serde_json::from_str(&domains_json).unwrap_or_default();
+        let allowed_domains: Vec<String> = serde_json::from_str(&domains_json).unwrap_or_default();
 
         policies.push(DelegationPolicyView {
             id: r.try_get("", "id")?,
@@ -409,7 +413,12 @@ pub async fn create_delegation_policy(
     state: State<'_, AppState>,
 ) -> AppResult<DelegationPolicyView> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     // ── Validate admin_role_id exists ───────────────────────────────────
@@ -529,12 +538,14 @@ pub async fn create_delegation_policy(
 
 /// Update an existing delegation policy.
 #[tauri::command]
-pub async fn update_delegation_policy(
-    input: UpdateDelegationInput,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn update_delegation_policy(input: UpdateDelegationInput, state: State<'_, AppState>) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     // Fetch current policy
@@ -556,9 +567,7 @@ pub async fn update_delegation_policy(
     let old_domains: String = current
         .try_get("", "allowed_domains_json")
         .unwrap_or_else(|_| "[]".to_string());
-    let old_step_up: i32 = current
-        .try_get("", "requires_step_up_for_publish")
-        .unwrap_or(1);
+    let old_step_up: i32 = current.try_get("", "requires_step_up_for_publish").unwrap_or(1);
 
     // Build diff
     let mut diff = serde_json::Map::new();
@@ -589,10 +598,13 @@ pub async fn update_delegation_policy(
                 [new_json.into(), input.policy_id.into()],
             ))
             .await?;
-        diff.insert("allowed_domains".into(), serde_json::json!({
-            "old": serde_json::from_str::<serde_json::Value>(&old_domains).unwrap_or_default(),
-            "new": domains,
-        }));
+        diff.insert(
+            "allowed_domains".into(),
+            serde_json::json!({
+                "old": serde_json::from_str::<serde_json::Value>(&old_domains).unwrap_or_default(),
+                "new": domains,
+            }),
+        );
     }
 
     if let Some(step_up) = input.requires_step_up_for_publish {
@@ -605,10 +617,13 @@ pub async fn update_delegation_policy(
                 [i32::from(step_up).into(), input.policy_id.into()],
             ))
             .await?;
-        diff.insert("requires_step_up_for_publish".into(), serde_json::json!({
-            "old": old_step_up != 0,
-            "new": step_up,
-        }));
+        diff.insert(
+            "requires_step_up_for_publish".into(),
+            serde_json::json!({
+                "old": old_step_up != 0,
+                "new": step_up,
+            }),
+        );
     }
 
     let diff_json = serde_json::to_string(&diff)?;
@@ -631,12 +646,14 @@ pub async fn update_delegation_policy(
 
 /// Delete a delegation policy.
 #[tauri::command]
-pub async fn delete_delegation_policy(
-    policy_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn delete_delegation_policy(policy_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     let row = state
@@ -680,9 +697,7 @@ pub async fn delete_delegation_policy(
 }
 
 /// Load the set of known permission category names from the permissions table.
-async fn load_known_categories(
-    db: &sea_orm::DatabaseConnection,
-) -> AppResult<HashSet<String>> {
+async fn load_known_categories(db: &sea_orm::DatabaseConnection) -> AppResult<HashSet<String>> {
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
@@ -705,11 +720,14 @@ async fn load_known_categories(
 /// List emergency grants (both active and recently expired).
 /// Grant and revoke commands remain in `admin_users.rs` (already implemented).
 #[tauri::command]
-pub async fn list_emergency_grants(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<EmergencyGrantView>> {
+pub async fn list_emergency_grants(state: State<'_, AppState>) -> AppResult<Vec<EmergencyGrantView>> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_USERS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
 
     let sql = "\
         SELECT usa.id AS assignment_id, usa.user_id, ua.username, \
@@ -736,10 +754,7 @@ pub async fn list_emergency_grants(
     let mut grants = Vec::with_capacity(rows.len());
     for r in &rows {
         let expires_at: Option<String> = r.try_get("", "emergency_expires_at").ok();
-        let is_expired = expires_at
-            .as_deref()
-            .map(|ea| ea < now.as_str())
-            .unwrap_or(false);
+        let is_expired = expires_at.as_deref().map(|ea| ea < now.as_str()).unwrap_or(false);
 
         grants.push(EmergencyGrantView {
             assignment_id: r.try_get("", "assignment_id")?,
@@ -766,12 +781,14 @@ pub async fn list_emergency_grants(
 
 /// Export selected roles as a portable JSON payload.
 #[tauri::command]
-pub async fn export_role_model(
-    role_ids: Vec<i64>,
-    state: State<'_, AppState>,
-) -> AppResult<RoleExportPayload> {
+pub async fn export_role_model(role_ids: Vec<i64>, state: State<'_, AppState>) -> AppResult<RoleExportPayload> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
 
     if role_ids.is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -818,7 +835,10 @@ pub async fn export_role_model(
             name: role_row.try_get("", "name")?,
             description: role_row.try_get("", "description").ok(),
             permissions,
-            is_system: role_row.try_get::<i32>("", "is_system").map(|v| v != 0).unwrap_or(false),
+            is_system: role_row
+                .try_get::<i32>("", "is_system")
+                .map(|v| v != 0)
+                .unwrap_or(false),
         });
     }
 
@@ -855,17 +875,19 @@ pub async fn export_role_model(
 /// are skipped (not the whole import). Successfully validated roles are
 /// inserted as custom, non-system roles.
 #[tauri::command]
-pub async fn import_role_model(
-    input: RoleImportPayload,
-    state: State<'_, AppState>,
-) -> AppResult<ImportResult> {
+pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppState>) -> AppResult<ImportResult> {
     let caller = require_session!(state);
-    require_permission!(state, &caller, crate::rbac::permissions::ADM_ROLES, PermissionScope::Global);
+    require_permission!(
+        state,
+        &caller,
+        crate::rbac::permissions::ADM_ROLES,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     if input.roles.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Import payload contains no roles".into(),
+            "Import payload contains no roles".into()
         ]));
     }
 
@@ -880,9 +902,7 @@ pub async fn import_role_model(
         let mut errors = Vec::new();
         if !names.is_empty() {
             let placeholders: String = names.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            let sql = format!(
-                "SELECT name FROM permissions WHERE name IN ({placeholders})"
-            );
+            let sql = format!("SELECT name FROM permissions WHERE name IN ({placeholders})");
             let values: Vec<sea_orm::Value> = names.iter().map(|n| n.clone().into()).collect();
             let rows = state
                 .db
@@ -994,7 +1014,11 @@ pub async fn import_role_model(
             Some(new_role_id),
             None,
             None,
-            Some(&format!("Role '{}' imported with {} permissions", entry.name, entry.permissions.len())),
+            Some(&format!(
+                "Role '{}' imported with {} permissions",
+                entry.name,
+                entry.permissions.len()
+            )),
             Some(&diff_json),
             true,
         )

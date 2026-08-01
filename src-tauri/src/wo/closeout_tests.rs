@@ -14,8 +14,7 @@ mod tests {
 
     use crate::errors::AppError;
     use crate::wo::closeout::{
-        self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput,
-        WoReopenInput,
+        self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput, WoReopenInput,
     };
     use crate::wo::costs;
     use crate::wo::domain::WoCreateInput;
@@ -311,11 +310,7 @@ mod tests {
     /// Advance a WO from in_progress to completed+verified with all quality gates satisfied.
     /// In Option B, save_verification does NOT change WO status — stays completed.
     /// Returns the updated row_version.
-    async fn advance_to_completed_verified(
-        db: &sea_orm::DatabaseConnection,
-        wo_id: i64,
-        rv: i64,
-    ) -> i64 {
+    async fn advance_to_completed_verified(db: &sea_orm::DatabaseConnection, wo_id: i64, rv: i64) -> i64 {
         let actor = admin_id(db).await;
         let verifier = create_second_user(db).await;
 
@@ -456,9 +451,12 @@ mod tests {
                     "Errors must include parts actuals: {joined}"
                 );
                 assert!(
-                    joined.contains("Failure") || joined.contains("defaillance")
-                        || joined.contains("Root") || joined.contains("cause racine")
-                        || joined.contains("verification") || joined.contains("Verification"),
+                    joined.contains("Failure")
+                        || joined.contains("defaillance")
+                        || joined.contains("Root")
+                        || joined.contains("cause racine")
+                        || joined.contains("verification")
+                        || joined.contains("Verification"),
                     "Errors must include failure/root-cause/verification gate: {joined}"
                 );
             }
@@ -675,9 +673,7 @@ mod tests {
             closed_wo.total_cost
         );
 
-        let summary = costs::get_cost_summary(&db, wo_id)
-            .await
-            .expect("get_cost_summary");
+        let summary = costs::get_cost_summary(&db, wo_id).await.expect("get_cost_summary");
         assert!(
             (summary.total_cost - 370.0).abs() < 0.01,
             "cost summary total expected 370, got {}",

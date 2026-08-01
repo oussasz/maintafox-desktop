@@ -49,11 +49,26 @@ const REQUIRED_FAMILY: &[(&str, &str, i64, &str)] = &[
     ("PUMP_FAMILY", "Famille Pompe", 1, "PUMP"),
     ("MOTOR_FAMILY", "Famille Moteur", 2, "MOTOR"),
     ("VALVE_FAMILY", "Famille Vanne", 3, "VALVE"),
-    ("HEAT_EXCHANGER_FAMILY", "Famille Échangeur de chaleur", 4, "HEAT_EXCHANGER"),
+    (
+        "HEAT_EXCHANGER_FAMILY",
+        "Famille Échangeur de chaleur",
+        4,
+        "HEAT_EXCHANGER",
+    ),
     ("COMPRESSOR_FAMILY", "Famille Compresseur", 5, "COMPRESSOR"),
     ("CONVEYOR_FAMILY", "Famille Convoyeur", 6, "CONVEYOR"),
-    ("INSTRUMENTATION_FAMILY", "Famille Instrumentation", 7, "INSTRUMENTATION"),
-    ("VESSEL_FAMILY", "Famille Réservoir / Appareil sous pression", 8, "VESSEL"),
+    (
+        "INSTRUMENTATION_FAMILY",
+        "Famille Instrumentation",
+        7,
+        "INSTRUMENTATION",
+    ),
+    (
+        "VESSEL_FAMILY",
+        "Famille Réservoir / Appareil sous pression",
+        8,
+        "VESSEL",
+    ),
 ];
 
 /// Canonical subfamily rows linked to family values via `parent_id`.
@@ -61,10 +76,20 @@ const REQUIRED_SUBFAMILY: &[(&str, &str, i64, &str)] = &[
     ("PUMP_STANDARD", "Pompe standard", 1, "PUMP_FAMILY"),
     ("MOTOR_STANDARD", "Moteur standard", 2, "MOTOR_FAMILY"),
     ("VALVE_STANDARD", "Vanne standard", 3, "VALVE_FAMILY"),
-    ("HEAT_EXCHANGER_STANDARD", "Échangeur standard", 4, "HEAT_EXCHANGER_FAMILY"),
+    (
+        "HEAT_EXCHANGER_STANDARD",
+        "Échangeur standard",
+        4,
+        "HEAT_EXCHANGER_FAMILY",
+    ),
     ("COMPRESSOR_STANDARD", "Compresseur standard", 5, "COMPRESSOR_FAMILY"),
     ("CONVEYOR_STANDARD", "Convoyeur standard", 6, "CONVEYOR_FAMILY"),
-    ("INSTRUMENTATION_STANDARD", "Instrumentation standard", 7, "INSTRUMENTATION_FAMILY"),
+    (
+        "INSTRUMENTATION_STANDARD",
+        "Instrumentation standard",
+        7,
+        "INSTRUMENTATION_FAMILY",
+    ),
     ("VESSEL_STANDARD", "Réservoir standard", 8, "VESSEL_FAMILY"),
 ];
 
@@ -108,30 +133,30 @@ async fn published_set_id(db: &DatabaseConnection, domain_code: &str) -> AppResu
 }
 
 fn metadata_implies_system(metadata_json: Option<String>) -> bool {
-    metadata_json.as_ref().map_or(false, |s| s.contains("\"origin\":\"system\""))
+    metadata_json
+        .as_ref()
+        .map_or(false, |s| s.contains("\"origin\":\"system\""))
 }
 
-fn map_option_row(
-    row: &sea_orm::QueryResult,
-) -> AppResult<EquipmentTaxonomyOption> {
-    let id: i64 = row.try_get("", "id").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("taxonomy option id: {e}"))
-    })?;
-    let code: String = row.try_get("", "code").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("taxonomy option code: {e}"))
-    })?;
-    let label: String = row.try_get("", "label").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("taxonomy option label: {e}"))
-    })?;
-    let parent_id: Option<i64> = row.try_get("", "parent_id").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("taxonomy option parent_id: {e}"))
-    })?;
-    let color_hex: Option<String> = row.try_get("", "color_hex").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("taxonomy option color_hex: {e}"))
-    })?;
-    let metadata_json: Option<String> = row.try_get("", "metadata_json").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("taxonomy option metadata_json: {e}"))
-    })?;
+fn map_option_row(row: &sea_orm::QueryResult) -> AppResult<EquipmentTaxonomyOption> {
+    let id: i64 = row
+        .try_get("", "id")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("taxonomy option id: {e}")))?;
+    let code: String = row
+        .try_get("", "code")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("taxonomy option code: {e}")))?;
+    let label: String = row
+        .try_get("", "label")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("taxonomy option label: {e}")))?;
+    let parent_id: Option<i64> = row
+        .try_get("", "parent_id")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("taxonomy option parent_id: {e}")))?;
+    let color_hex: Option<String> = row
+        .try_get("", "color_hex")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("taxonomy option color_hex: {e}")))?;
+    let metadata_json: Option<String> = row
+        .try_get("", "metadata_json")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("taxonomy option metadata_json: {e}")))?;
     Ok(EquipmentTaxonomyOption {
         id,
         code,
@@ -142,10 +167,7 @@ fn map_option_row(
     })
 }
 
-async fn list_domain_options(
-    db: &DatabaseConnection,
-    domain_code: &str,
-) -> AppResult<Vec<EquipmentTaxonomyOption>> {
+async fn list_domain_options(db: &DatabaseConnection, domain_code: &str) -> AppResult<Vec<EquipmentTaxonomyOption>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -192,9 +214,7 @@ pub async fn ensure_required_equipment_status_values(db: &DatabaseConnection) ->
 }
 
 /// Idempotent upsert of A–D criticality rows in the published `EQUIPMENT.CRITICALITY` set.
-pub async fn ensure_required_equipment_criticality_values(
-    db: &DatabaseConnection,
-) -> AppResult<()> {
+pub async fn ensure_required_equipment_criticality_values(db: &DatabaseConnection) -> AppResult<()> {
     let set_id = published_set_id(db, DOMAIN_CRITICALITY).await?;
     for &(code, label, sort, color) in REQUIRED_CRITICALITY {
         db.execute(Statement::from_sql_and_values(
@@ -251,11 +271,7 @@ pub async fn ensure_required_equipment_class_values(db: &DatabaseConnection) -> 
     Ok(())
 }
 
-async fn resolve_published_value_id(
-    db: &DatabaseConnection,
-    domain_code: &str,
-    value_code: &str,
-) -> AppResult<i64> {
+async fn resolve_published_value_id(db: &DatabaseConnection, domain_code: &str, value_code: &str) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -267,11 +283,7 @@ async fn resolve_published_value_id(
             [domain_code.into(), value_code.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "missing published value {domain_code}.{value_code}"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("missing published value {domain_code}.{value_code}")))?;
     row.try_get::<i64>("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("resolve published value id: {e}")))
 }
@@ -336,11 +348,7 @@ pub async fn ensure_required_equipment_subfamily_values(db: &DatabaseConnection)
     Ok(())
 }
 
-async fn verify_required_codes(
-    db: &DatabaseConnection,
-    domain_code: &str,
-    required: &[&str],
-) -> AppResult<()> {
+async fn verify_required_codes(db: &DatabaseConnection, domain_code: &str, required: &[&str]) -> AppResult<()> {
     let mut missing: Vec<String> = Vec::new();
     for code in required {
         let row = db
@@ -389,9 +397,9 @@ pub async fn sync_equipment_classes_from_published_reference(db: &DatabaseConnec
     let now = Utc::now().to_rfc3339();
 
     for row in rows {
-        let code: String = row.try_get("", "code").map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("sync equipment_classes: read code: {e}"))
-        })?;
+        let code: String = row
+            .try_get("", "code")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("sync equipment_classes: read code: {e}")))?;
         let label: String = row.try_get("", "label").unwrap_or_default();
         let name = {
             let t = label.trim();
@@ -444,9 +452,7 @@ pub async fn sync_equipment_classes_from_published_reference(db: &DatabaseConnec
 /// Idempotent recreate of EQUIPMENT.* domains + published v1 sets when missing
 /// (same substrate as migration 103). Required when migration history is present
 /// but catalog rows were wiped.
-async fn ensure_equipment_taxonomy_domains_and_published_sets(
-    db: &DatabaseConnection,
-) -> AppResult<()> {
+async fn ensure_equipment_taxonomy_domains_and_published_sets(db: &DatabaseConnection) -> AppResult<()> {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO reference_domains \
@@ -523,9 +529,7 @@ pub async fn ensure_equipment_taxonomy_reference_integrity(db: &DatabaseConnecti
 }
 
 /// Published values for asset forms and filters (includes user-extendable family/subfamily).
-pub async fn list_equipment_taxonomy_catalog(
-    db: &DatabaseConnection,
-) -> AppResult<EquipmentTaxonomyCatalog> {
+pub async fn list_equipment_taxonomy_catalog(db: &DatabaseConnection) -> AppResult<EquipmentTaxonomyCatalog> {
     ensure_equipment_taxonomy_reference_integrity(db).await?;
     let statuses = list_domain_options(db, DOMAIN_STATUS).await?;
     let criticalities = list_domain_options(db, DOMAIN_CRITICALITY).await?;

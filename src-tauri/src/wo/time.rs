@@ -21,9 +21,5 @@ pub fn parse_utc_timestamp(raw: &str, field: &str) -> AppResult<DateTime<Utc>> {
             NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%SZ")
                 .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
         })
-        .map_err(|_| {
-            AppError::ValidationFailed(vec![format!(
-                "{field} must be a valid RFC3339 UTC timestamp."
-            )])
-        })
+        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 UTC timestamp.")]))
 }

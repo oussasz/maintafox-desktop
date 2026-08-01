@@ -1,4 +1,4 @@
-﻿//! Migration 053 - Planning capacity, windows, and commitments (PRD §6.16).
+//! Migration 053 - Planning capacity, windows, and commitments (PRD §6.16).
 
 use sea_orm::ConnectionTrait;
 use sea_orm_migration::prelude::*;
@@ -126,11 +126,8 @@ impl MigrationTrait for Migration {
             .await?;
         db.execute_unprepared("DROP TABLE IF EXISTS schedule_commitments")
             .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS planning_windows")
-            .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS capacity_rules")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS planning_windows").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS capacity_rules").await?;
         Ok(())
     }
 }
-

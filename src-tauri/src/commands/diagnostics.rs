@@ -1,7 +1,7 @@
 use crate::auth::rbac::PermissionScope;
 use crate::commands::product_license;
-use crate::db::{integrity, rams_presentation_seed, seeder};
 use crate::db::rams_presentation_seed::{RamsPresentationSeedInput, RamsPresentationSeedReport};
+use crate::db::{integrity, rams_presentation_seed, seeder};
 use crate::errors::AppResult;
 use crate::state::AppState;
 use crate::{require_permission, require_session};
@@ -60,12 +60,14 @@ pub async fn seed_demo_data(state: State<'_, AppState>) -> AppResult<String> {
 /// When `equipment_id` is omitted, runs the full explicit demo orchestrator (SQL + presentation).
 /// Never invoked by startup, equipment create, login, onboarding, or migrations.
 #[tauri::command]
-pub async fn seed_rams_sql_demo_data(
-    equipment_id: Option<i64>,
-    state: State<'_, AppState>,
-) -> AppResult<String> {
+pub async fn seed_rams_sql_demo_data(equipment_id: Option<i64>, state: State<'_, AppState>) -> AppResult<String> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
     if let Some(id) = equipment_id {
         crate::db::rams_sql_demo_seed::ensure_equipment_rams_simulation(&state.db, id).await?;
         Ok(format!("RAMS SQL demo seed completed for equipment {id}."))
@@ -84,7 +86,12 @@ pub async fn seed_rams_presentation_data(
     state: State<'_, AppState>,
 ) -> AppResult<RamsPresentationSeedReport> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::ADM_SETTINGS, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
     rams_presentation_seed::seed_rams_presentation_data(&state.db, input).await
 }
 

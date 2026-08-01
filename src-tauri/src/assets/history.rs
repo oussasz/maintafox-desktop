@@ -166,10 +166,7 @@ fn push_event(
     });
 }
 
-pub async fn get_asset_history_summary(
-    db: &DatabaseConnection,
-    asset_id: i64,
-) -> AppResult<AssetHistorySummary> {
+pub async fn get_asset_history_summary(db: &DatabaseConnection, asset_id: i64) -> AppResult<AssetHistorySummary> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -182,9 +179,7 @@ pub async fn get_asset_history_summary(
             id: asset_id.to_string(),
         })?;
 
-    let created_at: Option<String> = row
-        .try_get::<Option<String>>("", "created_at")
-        .unwrap_or(None);
+    let created_at: Option<String> = row.try_get::<Option<String>>("", "created_at").unwrap_or(None);
 
     let age_days = created_at
         .as_deref()
@@ -240,17 +235,12 @@ pub async fn list_asset_history_events(
         .await?;
     for row in lifecycle_rows {
         let id: i64 = row.try_get("", "id").unwrap_or(0);
-        let event_type_raw: String = row
-            .try_get("", "event_type")
-            .unwrap_or_else(|_| "EVENT".into());
+        let event_type_raw: String = row.try_get("", "event_type").unwrap_or_else(|_| "EVENT".into());
         let occurred_at: String = row.try_get("", "occurred_at").unwrap_or_default();
         let notes: Option<String> = row.try_get::<Option<String>>("", "notes").unwrap_or(None);
-        let from_status: Option<String> =
-            row.try_get::<Option<String>>("", "from_status").unwrap_or(None);
-        let to_status: Option<String> =
-            row.try_get::<Option<String>>("", "to_status").unwrap_or(None);
-        let reason_code: Option<String> =
-            row.try_get::<Option<String>>("", "reason_code").unwrap_or(None);
+        let from_status: Option<String> = row.try_get::<Option<String>>("", "from_status").unwrap_or(None);
+        let to_status: Option<String> = row.try_get::<Option<String>>("", "to_status").unwrap_or(None);
+        let reason_code: Option<String> = row.try_get::<Option<String>>("", "reason_code").unwrap_or(None);
         let mut metadata = BTreeMap::new();
         if let Some(v) = from_status.clone() {
             metadata.insert("from_status".into(), JsonValue::String(v));
@@ -298,12 +288,9 @@ pub async fn list_asset_history_events(
         let id: i64 = row.try_get("", "id").unwrap_or(0);
         let occurred_at: String = row.try_get("", "reading_at").unwrap_or_default();
         let reading_value: f64 = row.try_get("", "reading_value").unwrap_or(0.0);
-        let meter_name: String = row
-            .try_get("", "meter_name")
-            .unwrap_or_else(|_| "Meter".into());
+        let meter_name: String = row.try_get("", "meter_name").unwrap_or_else(|_| "Meter".into());
         let unit: Option<String> = row.try_get::<Option<String>>("", "meter_unit").unwrap_or(None);
-        let quality: Option<String> =
-            row.try_get::<Option<String>>("", "quality_flag").unwrap_or(None);
+        let quality: Option<String> = row.try_get::<Option<String>>("", "quality_flag").unwrap_or(None);
         let mut metadata = BTreeMap::new();
         metadata.insert("reading_value".into(), JsonValue::from(reading_value));
         if let Some(u) = unit.clone() {
@@ -342,8 +329,7 @@ pub async fn list_asset_history_events(
         let id: i64 = row.try_get("", "id").unwrap_or(0);
         let occurred_at: String = row.try_get("", "created_at").unwrap_or_default();
         let document_ref: String = row.try_get("", "document_ref").unwrap_or_default();
-        let purpose: Option<String> =
-            row.try_get::<Option<String>>("", "link_purpose").unwrap_or(None);
+        let purpose: Option<String> = row.try_get::<Option<String>>("", "link_purpose").unwrap_or(None);
         push_event(
             &mut events,
             format!("doc:{id}"),
@@ -389,11 +375,7 @@ pub async fn list_asset_history_events(
             "photo_added",
             occurred_at,
             "Photo added",
-            caption.or(if file_name.is_empty() {
-                None
-            } else {
-                Some(file_name)
-            }),
+            caption.or(if file_name.is_empty() { None } else { Some(file_name) }),
             None,
             None,
             None,
@@ -423,22 +405,14 @@ pub async fn list_asset_history_events(
         .await?;
     for row in wo_rows {
         let id: i64 = row.try_get("", "id").unwrap_or(0);
-        let code: String = row
-            .try_get("", "code")
-            .unwrap_or_else(|_| format!("WO-{id}"));
+        let code: String = row.try_get("", "code").unwrap_or_else(|_| format!("WO-{id}"));
         let title: Option<String> = row.try_get::<Option<String>>("", "title").unwrap_or(None);
         let created_at: String = row.try_get("", "created_at").unwrap_or_default();
-        let actual_start: Option<String> =
-            row.try_get::<Option<String>>("", "actual_start").unwrap_or(None);
-        let closed_at: Option<String> =
-            row.try_get::<Option<String>>("", "closed_at").unwrap_or(None);
-        let status_label: Option<String> =
-            row.try_get::<Option<String>>("", "status_label").unwrap_or(None);
-        let actor_label: Option<String> =
-            row.try_get::<Option<String>>("", "actor_label").unwrap_or(None);
-        let duration_hours: Option<f64> = row
-            .try_get::<Option<f64>>("", "actual_duration_hours")
-            .unwrap_or(None);
+        let actual_start: Option<String> = row.try_get::<Option<String>>("", "actual_start").unwrap_or(None);
+        let closed_at: Option<String> = row.try_get::<Option<String>>("", "closed_at").unwrap_or(None);
+        let status_label: Option<String> = row.try_get::<Option<String>>("", "status_label").unwrap_or(None);
+        let actor_label: Option<String> = row.try_get::<Option<String>>("", "actor_label").unwrap_or(None);
+        let duration_hours: Option<f64> = row.try_get::<Option<f64>>("", "actual_duration_hours").unwrap_or(None);
         let duration_minutes = duration_hours.map(|h| (h * 60.0).round() as i64);
         let route = format!("/work-orders?openWo={id}");
 
@@ -518,14 +492,11 @@ pub async fn list_asset_history_events(
         .await?;
     for row in di_rows {
         let id: i64 = row.try_get("", "id").unwrap_or(0);
-        let code: String = row
-            .try_get("", "code")
-            .unwrap_or_else(|_| format!("DI-{id}"));
+        let code: String = row.try_get("", "code").unwrap_or_else(|_| format!("DI-{id}"));
         let title: Option<String> = row.try_get::<Option<String>>("", "title").unwrap_or(None);
         let status: Option<String> = row.try_get::<Option<String>>("", "status").unwrap_or(None);
         let submitted_at: String = row.try_get("", "submitted_at").unwrap_or_default();
-        let closed_at: Option<String> =
-            row.try_get::<Option<String>>("", "closed_at").unwrap_or(None);
+        let closed_at: Option<String> = row.try_get::<Option<String>>("", "closed_at").unwrap_or(None);
         let route = format!("/requests?openDi={id}");
 
         push_event(
@@ -588,11 +559,8 @@ pub async fn list_asset_history_events(
         let plan_id: i64 = row.try_get("", "plan_id").unwrap_or(0);
         let due_at: String = row.try_get("", "due_at").unwrap_or_default();
         let status: Option<String> = row.try_get::<Option<String>>("", "status").unwrap_or(None);
-        let plan_code: String = row
-            .try_get("", "plan_code")
-            .unwrap_or_else(|_| format!("PM-{plan_id}"));
-        let plan_title: Option<String> =
-            row.try_get::<Option<String>>("", "plan_title").unwrap_or(None);
+        let plan_code: String = row.try_get("", "plan_code").unwrap_or_else(|_| format!("PM-{plan_id}"));
+        let plan_title: Option<String> = row.try_get::<Option<String>>("", "plan_title").unwrap_or(None);
         push_event(
             &mut events,
             format!("pm-scheduled:{id}"),
@@ -630,14 +598,9 @@ pub async fn list_asset_history_events(
         let id: i64 = row.try_get("", "id").unwrap_or(0);
         let plan_id: i64 = row.try_get("", "plan_id").unwrap_or(0);
         let executed_at: String = row.try_get("", "executed_at").unwrap_or_default();
-        let result: Option<String> = row
-            .try_get::<Option<String>>("", "execution_result")
-            .unwrap_or(None);
-        let plan_code: String = row
-            .try_get("", "plan_code")
-            .unwrap_or_else(|_| format!("PM-{plan_id}"));
-        let plan_title: Option<String> =
-            row.try_get::<Option<String>>("", "plan_title").unwrap_or(None);
+        let result: Option<String> = row.try_get::<Option<String>>("", "execution_result").unwrap_or(None);
+        let plan_code: String = row.try_get("", "plan_code").unwrap_or_else(|_| format!("PM-{plan_id}"));
+        let plan_title: Option<String> = row.try_get::<Option<String>>("", "plan_title").unwrap_or(None);
         push_event(
             &mut events,
             format!("pm-executed:{id}"),
@@ -675,13 +638,9 @@ pub async fn list_asset_history_events(
         let id: i64 = row.try_get("", "id").unwrap_or(0);
         let round_id: i64 = row.try_get("", "round_id").unwrap_or(0);
         let occurred_at: String = row.try_get("", "recorded_at").unwrap_or_default();
-        let status: Option<String> = row
-            .try_get::<Option<String>>("", "result_status")
-            .unwrap_or(None);
+        let status: Option<String> = row.try_get::<Option<String>>("", "result_status").unwrap_or(None);
         let comment: Option<String> = row.try_get::<Option<String>>("", "comment").unwrap_or(None);
-        let checkpoint: Option<String> = row
-            .try_get::<Option<String>>("", "checkpoint_label")
-            .unwrap_or(None);
+        let checkpoint: Option<String> = row.try_get::<Option<String>>("", "checkpoint_label").unwrap_or(None);
         push_event(
             &mut events,
             format!("inspection:{id}"),
@@ -716,12 +675,9 @@ pub async fn list_asset_history_events(
     for row in failure_rows {
         let id: i64 = row.try_get("", "id").unwrap_or(0);
         let occurred_at: String = row.try_get("", "occurred_at").unwrap_or_default();
-        let source_type: Option<String> =
-            row.try_get::<Option<String>>("", "source_type").unwrap_or(None);
+        let source_type: Option<String> = row.try_get::<Option<String>>("", "source_type").unwrap_or(None);
         let source_id: Option<i64> = row.try_get::<Option<i64>>("", "source_id").unwrap_or(None);
-        let status: Option<String> = row
-            .try_get::<Option<String>>("", "verification_status")
-            .unwrap_or(None);
+        let status: Option<String> = row.try_get::<Option<String>>("", "verification_status").unwrap_or(None);
         let downtime_h: Option<f64> = row
             .try_get::<Option<f64>>("", "downtime_duration_hours")
             .unwrap_or(None);

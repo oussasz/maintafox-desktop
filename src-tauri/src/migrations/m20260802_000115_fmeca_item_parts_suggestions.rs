@@ -138,8 +138,7 @@ impl MigrationTrait for Migration {
             .await?;
         db.execute_unprepared("DROP INDEX IF EXISTS idx_fmeca_item_parts_item")
             .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS fmeca_item_parts")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS fmeca_item_parts").await?;
 
         // Revert FK targets to failure_codes.
         db.execute_unprepared("ALTER TABLE rcm_decisions RENAME TO rcm_decisions__new")

@@ -3,9 +3,9 @@ use crate::repository::lookup_repository::{
     LookupDomainFilter, LookupDomainSummary, LookupValueOption, LookupValueRecord,
 };
 use crate::repository::PageRequest;
+use crate::require_session;
 use crate::services::lookup_service;
 use crate::state::AppState;
-use crate::require_session;
 use tauri::State;
 
 /// Returns a paginated list of all lookup domains.

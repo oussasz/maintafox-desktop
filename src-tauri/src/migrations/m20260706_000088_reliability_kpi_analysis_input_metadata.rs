@@ -27,14 +27,10 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared(
-            "ALTER TABLE reliability_kpi_snapshots DROP COLUMN analysis_dataset_hash_sha256",
-        )
-        .await?;
-        db.execute_unprepared(
-            "ALTER TABLE reliability_kpi_snapshots DROP COLUMN analysis_input_spec_json",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE reliability_kpi_snapshots DROP COLUMN analysis_dataset_hash_sha256")
+            .await?;
+        db.execute_unprepared("ALTER TABLE reliability_kpi_snapshots DROP COLUMN analysis_input_spec_json")
+            .await?;
         Ok(())
     }
 }

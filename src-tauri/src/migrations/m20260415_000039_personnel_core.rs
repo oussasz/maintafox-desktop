@@ -90,10 +90,8 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ecc_company ON external_company_contacts(company_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ecc_company ON external_company_contacts(company_id)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE TABLE IF NOT EXISTS personnel (
@@ -151,10 +149,8 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_prc_personnel ON personnel_rate_cards(personnel_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_prc_personnel ON personnel_rate_cards(personnel_id)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE TABLE IF NOT EXISTS personnel_authorizations (
@@ -170,14 +166,10 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_pa_personnel ON personnel_authorizations(personnel_id)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_pa_type ON personnel_authorizations(authorization_type)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_pa_personnel ON personnel_authorizations(personnel_id)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_pa_type ON personnel_authorizations(authorization_type)")
+            .await?;
 
         // ── Seed: default positions (PRD §6.6 categories) ─────────────────────
         db.execute_unprepared(
@@ -224,8 +216,7 @@ impl MigrationTrait for Migration {
         db.execute_unprepared("DROP TABLE IF EXISTS personnel").await?;
         db.execute_unprepared("DROP TABLE IF EXISTS external_company_contacts")
             .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS external_companies")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS external_companies").await?;
         db.execute_unprepared("DROP TABLE IF EXISTS schedule_details").await?;
         db.execute_unprepared("DROP TABLE IF EXISTS schedule_classes").await?;
         db.execute_unprepared("DROP TABLE IF EXISTS positions").await?;

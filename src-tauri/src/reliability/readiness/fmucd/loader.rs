@@ -64,11 +64,7 @@ pub fn load_fmucd_csv(path: &Path, config: &FmucdMappingConfig) -> Result<LoadPr
         }
 
         if stats.rows_read % PROGRESS_EVERY == 0 {
-            info!(
-                rows = stats.rows_read,
-                assets = assets.len(),
-                "FMUCD load progress"
-            );
+            info!(rows = stats.rows_read, assets = assets.len(), "FMUCD load progress");
         }
     }
 

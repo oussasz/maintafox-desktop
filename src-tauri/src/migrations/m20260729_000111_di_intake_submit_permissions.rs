@@ -31,15 +31,13 @@ impl MigrationTrait for Migration {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "UPDATE permissions SET description = 'Send submitted DIs to the validation queue (any submitter)' \
-             WHERE name = 'di.submit'".to_string(),
+             WHERE name = 'di.submit'"
+                .to_string(),
         ))
         .await?;
 
         // Permission dependencies (INSERT OR IGNORE)
-        let deps: &[(&str, &str, &str)] = &[
-            ("di.submit", "di.view", "hard"),
-            ("di.submit.own", "di.view", "hard"),
-        ];
+        let deps: &[(&str, &str, &str)] = &[("di.submit", "di.view", "hard"), ("di.submit.own", "di.view", "hard")];
         for (perm, req, dep_type) in deps {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,

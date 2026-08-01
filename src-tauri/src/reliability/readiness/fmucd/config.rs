@@ -96,18 +96,14 @@ pub struct EvaluationConfig {
 
 impl FmucdMappingConfig {
     pub fn from_toml_file(path: &std::path::Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("read mapping config {}", path.display()))?;
+        let text = std::fs::read_to_string(path).with_context(|| format!("read mapping config {}", path.display()))?;
         toml::from_str(&text).with_context(|| format!("parse mapping TOML {}", path.display()))
     }
 }
 
 /// Build asset key from row fields per config.
 #[must_use]
-pub fn build_asset_key(
-    config: &AssetKeyConfig,
-    fields: &HashMap<String, String>,
-) -> Option<String> {
+pub fn build_asset_key(config: &AssetKeyConfig, fields: &HashMap<String, String>) -> Option<String> {
     let parts: Vec<String> = config
         .fields
         .iter()

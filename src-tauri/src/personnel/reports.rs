@@ -164,69 +164,66 @@ pub async fn workforce_kpis(db: &DatabaseConnection) -> AppResult<WorkforceKpiRe
 pub async fn export_summary_csv(db: &DatabaseConnection) -> AppResult<String> {
     let report = workforce_summary(db).await?;
     let mut writer = csv::Writer::from_writer(vec![]);
-    writer.write_record(["section", "bucket", "count"]).map_err(map_csv_err)?;
-    writer.write_record([
-        "totals",
-        "total_personnel",
-        report.total_personnel.to_string().as_str(),
-    ])
-    .map_err(map_csv_err)?;
-    writer.write_record([
-        "totals",
-        "active_personnel",
-        report.active_personnel.to_string().as_str(),
-    ])
-    .map_err(map_csv_err)?;
+    writer
+        .write_record(["section", "bucket", "count"])
+        .map_err(map_csv_err)?;
+    writer
+        .write_record(["totals", "total_personnel", report.total_personnel.to_string().as_str()])
+        .map_err(map_csv_err)?;
+    writer
+        .write_record([
+            "totals",
+            "active_personnel",
+            report.active_personnel.to_string().as_str(),
+        ])
+        .map_err(map_csv_err)?;
     for row in &report.employment_breakdown {
         writer
             .write_record(["employment", row.bucket.as_str(), row.count.to_string().as_str()])
             .map_err(map_csv_err)?;
     }
     for row in &report.availability_breakdown {
-        writer.write_record([
-            "availability",
-            row.bucket.as_str(),
-            row.count.to_string().as_str(),
-        ])
-        .map_err(map_csv_err)?;
+        writer
+            .write_record(["availability", row.bucket.as_str(), row.count.to_string().as_str()])
+            .map_err(map_csv_err)?;
     }
     let data = writer
         .into_inner()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("summary csv writer finalize failed: {e}")))?;
-    String::from_utf8(data)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("summary csv utf8 conversion failed: {e}")))
+    String::from_utf8(data).map_err(|e| AppError::Internal(anyhow::anyhow!("summary csv utf8 conversion failed: {e}")))
 }
 
 pub async fn export_skills_gap_csv(db: &DatabaseConnection) -> AppResult<String> {
     let rows = workforce_skills_gap(db, Some(500)).await?;
     let mut writer = csv::Writer::from_writer(vec![]);
-    writer.write_record([
-        "personnel_id",
-        "employee_code",
-        "full_name",
-        "position_name",
-        "team_name",
-        "active_skill_count",
-        "gap_score",
-    ])
-    .map_err(map_csv_err)?;
-    for row in rows {
-        writer.write_record([
-            row.personnel_id.to_string(),
-            row.employee_code,
-            row.full_name,
-            row.position_name.unwrap_or_default(),
-            row.team_name.unwrap_or_default(),
-            row.active_skill_count.to_string(),
-            row.gap_score.to_string(),
+    writer
+        .write_record([
+            "personnel_id",
+            "employee_code",
+            "full_name",
+            "position_name",
+            "team_name",
+            "active_skill_count",
+            "gap_score",
         ])
         .map_err(map_csv_err)?;
+    for row in rows {
+        writer
+            .write_record([
+                row.personnel_id.to_string(),
+                row.employee_code,
+                row.full_name,
+                row.position_name.unwrap_or_default(),
+                row.team_name.unwrap_or_default(),
+                row.active_skill_count.to_string(),
+                row.gap_score.to_string(),
+            ])
+            .map_err(map_csv_err)?;
     }
     let data = writer
         .into_inner()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("skills csv writer finalize failed: {e}")))?;
-    String::from_utf8(data)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("skills csv utf8 conversion failed: {e}")))
+    String::from_utf8(data).map_err(|e| AppError::Internal(anyhow::anyhow!("skills csv utf8 conversion failed: {e}")))
 }
 
 pub async fn export_kpis_csv(db: &DatabaseConnection) -> AppResult<String> {
@@ -248,8 +245,7 @@ pub async fn export_kpis_csv(db: &DatabaseConnection) -> AppResult<String> {
     let data = writer
         .into_inner()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("kpi csv writer finalize failed: {e}")))?;
-    String::from_utf8(data)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("kpi csv utf8 conversion failed: {e}")))
+    String::from_utf8(data).map_err(|e| AppError::Internal(anyhow::anyhow!("kpi csv utf8 conversion failed: {e}")))
 }
 
 async fn breakdown_query(db: &DatabaseConnection, sql: &str) -> AppResult<Vec<WorkforceSummaryRow>> {

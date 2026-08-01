@@ -126,17 +126,20 @@ impl MigrationTrait for Migration {
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_count_lines_posted ON inventory_count_lines(posted_transaction_id)".to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_count_lines_posted ON inventory_count_lines(posted_transaction_id)"
+                .to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_mutation_links_tx ON inventory_mutation_audit_links(transaction_id)".to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_mutation_links_tx ON inventory_mutation_audit_links(transaction_id)"
+                .to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_recon_findings_run ON inventory_reconciliation_findings(run_id)".to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_recon_findings_run ON inventory_reconciliation_findings(run_id)"
+                .to_string(),
         ))
         .await?;
         Ok(())

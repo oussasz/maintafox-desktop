@@ -23,9 +23,7 @@ use crate::wo::queries;
 use crate::wo::sync_stage;
 use crate::wo::time::now_utc_z;
 use chrono::{Duration, Utc};
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use super::domain::{guard_wo_transition, WoStatus, WorkOrder};
@@ -220,9 +218,7 @@ async fn validate_failure_mode_governance(
 
 fn map_failure_detail(row: &sea_orm::QueryResult) -> AppResult<WoFailureDetail> {
     Ok(WoFailureDetail {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         work_order_id: row
             .try_get::<i64>("", "work_order_id")
             .map_err(|e| decode_err("work_order_id", e))?,
@@ -253,12 +249,8 @@ fn map_failure_detail(row: &sea_orm::QueryResult) -> AppResult<WoFailureDetail> 
         notes: row
             .try_get::<Option<String>>("", "notes")
             .map_err(|e| decode_err("notes", e))?,
-        failure_mode_label: row
-            .try_get::<Option<String>>("", "failure_mode_label")
-            .unwrap_or(None),
-        failure_cause_label: row
-            .try_get::<Option<String>>("", "failure_cause_label")
-            .unwrap_or(None),
+        failure_mode_label: row.try_get::<Option<String>>("", "failure_mode_label").unwrap_or(None),
+        failure_cause_label: row.try_get::<Option<String>>("", "failure_cause_label").unwrap_or(None),
         failure_effect_label: row
             .try_get::<Option<String>>("", "failure_effect_label")
             .unwrap_or(None),
@@ -267,9 +259,7 @@ fn map_failure_detail(row: &sea_orm::QueryResult) -> AppResult<WoFailureDetail> 
 
 fn map_verification(row: &sea_orm::QueryResult) -> AppResult<WoVerification> {
     Ok(WoVerification {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         work_order_id: row
             .try_get::<i64>("", "work_order_id")
             .map_err(|e| decode_err("work_order_id", e))?,
@@ -313,10 +303,7 @@ fn check_concurrency(rows_affected: u64) -> AppResult<()> {
 
 /// Load current WO status from the DB and parse it.
 /// Returns `(status_code, parsed_status, row_version)`.
-async fn load_wo_status(
-    txn: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<(String, WoStatus, i64)> {
+async fn load_wo_status(txn: &impl ConnectionTrait, wo_id: i64) -> AppResult<(String, WoStatus, i64)> {
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -353,13 +340,8 @@ async fn resolve_status_id(txn: &impl ConnectionTrait, code: &str) -> AppResult<
             [code.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "work_order_statuses missing row for code '{code}'"
-            ))
-        })?;
-    row.try_get::<i64>("", "id")
-        .map_err(|e| decode_err("status id", e))
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("work_order_statuses missing row for code '{code}'")))?;
+    row.try_get::<i64>("", "id").map_err(|e| decode_err("status id", e))
 }
 
 /// Write an entry to the append-only state transition log.
@@ -430,10 +412,7 @@ struct CloseoutPolicyRow {
     fmeca_parts_override_allowed_roles: Vec<String>,
 }
 
-async fn load_closeout_policy(
-    txn: &impl ConnectionTrait,
-    policy_id: i64,
-) -> AppResult<CloseoutPolicyRow> {
+async fn load_closeout_policy(txn: &impl ConnectionTrait, policy_id: i64) -> AppResult<CloseoutPolicyRow> {
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -446,25 +425,21 @@ async fn load_closeout_policy(
             [policy_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "closeout_validation_policies missing id {policy_id}"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("closeout_validation_policies missing id {policy_id}")))?;
 
     let allowed_roles_json: String = row
         .try_get::<Option<String>>("", "fmeca_parts_override_allowed_roles_json")
         .map_err(|e| decode_err("fmeca_parts_override_allowed_roles_json", e))?
-        .unwrap_or_else(|| {
-            "[\"Supervisor\",\"Maintenance Supervisor\",\"Administrator\",\"Superadmin\"]".into()
-        });
+        .unwrap_or_else(|| "[\"Supervisor\",\"Maintenance Supervisor\",\"Administrator\",\"Superadmin\"]".into());
     let allowed_roles = serde_json::from_str::<Vec<String>>(&allowed_roles_json)
-        .unwrap_or_else(|_| vec![
-            "Supervisor".into(),
-            "Maintenance Supervisor".into(),
-            "Administrator".into(),
-            "Superadmin".into(),
-        ])
+        .unwrap_or_else(|_| {
+            vec![
+                "Supervisor".into(),
+                "Maintenance Supervisor".into(),
+                "Administrator".into(),
+                "Superadmin".into(),
+            ]
+        })
         .into_iter()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
@@ -514,17 +489,11 @@ async fn has_active_user(db: &impl ConnectionTrait, user_id: i64) -> AppResult<b
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("active user count missing")))?;
-    let count: i64 = row
-        .try_get("", "c")
-        .map_err(|e| decode_err("active_user_count", e))?;
+    let count: i64 = row.try_get("", "c").map_err(|e| decode_err("active_user_count", e))?;
     Ok(count > 0)
 }
 
-async fn verify_user_password(
-    db: &impl ConnectionTrait,
-    user_id: i64,
-    password_raw: &str,
-) -> AppResult<bool> {
+async fn verify_user_password(db: &impl ConnectionTrait, user_id: i64, password_raw: &str) -> AppResult<bool> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -576,9 +545,7 @@ async fn has_supervisor_override_role(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("override role count missing")))?;
-    let count: i64 = row
-        .try_get("", "c")
-        .map_err(|e| decode_err("override_role_count", e))?;
+    let count: i64 = row.try_get("", "c").map_err(|e| decode_err("override_role_count", e))?;
     Ok(count > 0)
 }
 
@@ -652,10 +619,7 @@ async fn has_consumed_critical_suggested_part(
 
 /// Upsert a failure detail record for a WO (one row per WO).
 /// WO must not be in closed or cancelled state.
-pub async fn save_failure_detail(
-    db: &DatabaseConnection,
-    input: SaveFailureDetailInput,
-) -> AppResult<WoFailureDetail> {
+pub async fn save_failure_detail(db: &DatabaseConnection, input: SaveFailureDetailInput) -> AppResult<WoFailureDetail> {
     // ── Validate: cannot be both temporary AND permanent ──────────────────
     if input.is_temporary_repair && input.is_permanent_repair {
         return Err(AppError::ValidationFailed(vec![
@@ -687,9 +651,7 @@ pub async fn save_failure_detail(
         .await?;
 
     if let Some(existing_row) = existing {
-        let existing_id: i64 = existing_row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?;
+        let existing_id: i64 = existing_row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?;
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -772,11 +734,7 @@ pub async fn save_failure_detail(
             [input.wo_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "Failed to re-fetch failure detail after upsert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch failure detail after upsert")))?;
 
     map_failure_detail(&row)
 }
@@ -932,11 +890,7 @@ pub async fn save_verification(
             [input.wo_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "Failed to re-fetch verification after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch verification after insert")))?;
     let verification = map_verification(&ver_row)?;
 
     let wo = queries::get_work_order(db, input.wo_id)
@@ -982,10 +936,8 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     // ── Guard: completed → closed ─────────────────────────────────────────
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
     use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
-    assert_action_allowed(&current_status, WoAction::Close)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    guard_wo_transition(&current_status, &WoStatus::Closed)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    assert_action_allowed(&current_status, WoAction::Close).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_wo_transition(&current_status, &WoStatus::Closed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     // ── Load WO type code for type-dependent checks ───────────────────────
     let type_code = load_wo_type_code(&txn, input.wo_id).await?;
@@ -1031,9 +983,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
-    let alh: f64 = labor_row
-        .try_get::<f64>("", "alh")
-        .map_err(|e| decode_err("alh", e))?;
+    let alh: f64 = labor_row.try_get::<f64>("", "alh").map_err(|e| decode_err("alh", e))?;
     let labor_cnt: i64 = labor_row
         .try_get::<i64>("", "labor_cnt")
         .map_err(|e| decode_err("labor_cnt", e))?;
@@ -1056,9 +1006,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
-    let pac: i64 = parts_row
-        .try_get::<i64>("", "pac")
-        .map_err(|e| decode_err("pac", e))?;
+    let pac: i64 = parts_row.try_get::<i64>("", "pac").map_err(|e| decode_err("pac", e))?;
     let parts_cnt: i64 = parts_row
         .try_get::<i64>("", "parts_cnt")
         .map_err(|e| decode_err("parts_cnt", e))?;
@@ -1146,9 +1094,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             .try_get::<Option<String>>("", "root_cause_summary")
             .map_err(|e| decode_err("root_cause_summary", e))?;
         if rcs.as_deref().map_or(true, |s| s.trim().is_empty()) {
-            preflight.add(
-                "Resume de cause racine requis. (Root cause summary required.)",
-            );
+            preflight.add("Resume de cause racine requis. (Root cause summary required.)");
         }
     }
 
@@ -1176,17 +1122,10 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             .map_err(|e| decode_err("failure_mode_id", e))?;
 
         if let (Some(eq_id), Some(mode_id)) = (equipment_id, failure_mode_id) {
-            let has_suggestions =
-                has_critical_fmeca_part_suggestions(&txn, eq_id, mode_id, rpn_critical).await?;
+            let has_suggestions = has_critical_fmeca_part_suggestions(&txn, eq_id, mode_id, rpn_critical).await?;
             if has_suggestions {
-                let has_matched_consumed_parts = has_consumed_critical_suggested_part(
-                    &txn,
-                    input.wo_id,
-                    eq_id,
-                    mode_id,
-                    rpn_critical,
-                )
-                .await?;
+                let has_matched_consumed_parts =
+                    has_consumed_critical_suggested_part(&txn, input.wo_id, eq_id, mode_id, rpn_critical).await?;
                 let reason_min = policy.fmeca_parts_override_reason_min_length.max(1) as usize;
                 let override_reason_ok = input
                     .fmeca_parts_override_reason
@@ -1197,12 +1136,8 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 let signer_id = signer_id_opt.unwrap_or_default();
                 let signer_exists = signer_id > 0 && has_active_user(&txn, signer_id).await?;
                 let signer_has_role = signer_exists
-                    && has_supervisor_override_role(
-                        &txn,
-                        signer_id,
-                        &policy.fmeca_parts_override_allowed_roles,
-                    )
-                    .await?;
+                    && has_supervisor_override_role(&txn, signer_id, &policy.fmeca_parts_override_allowed_roles)
+                        .await?;
                 let signer_is_distinct = !policy.fmeca_parts_override_require_distinct_signer
                     || (signer_id > 0 && signer_id != input.actor_id);
                 let signer_password_ok = if signer_exists {
@@ -1232,7 +1167,12 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 if !has_matched_consumed_parts && signer_exists && !signer_has_role {
                     preflight.add("GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_ROLE_INVALID");
                 }
-                if !has_matched_consumed_parts && signer_exists && signer_has_role && signer_is_distinct && !signer_password_ok {
+                if !has_matched_consumed_parts
+                    && signer_exists
+                    && signer_has_role
+                    && signer_is_distinct
+                    && !signer_password_ok
+                {
                     preflight.add("GATE_CLOSEOUT_FMECA_PARTS_OVERRIDE_SIGNER_AUTH_FAILED");
                 }
             }
@@ -1250,9 +1190,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             ))
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("downtime count")))?;
-        let dt_cnt: i64 = dt_row
-            .try_get::<i64>("", "cnt")
-            .map_err(|e| decode_err("dt_cnt", e))?;
+        let dt_cnt: i64 = dt_row.try_get::<i64>("", "cnt").map_err(|e| decode_err("dt_cnt", e))?;
         let attest = input.no_downtime_attestation == Some(true);
         let reason_ok = input
             .no_downtime_attestation_reason
@@ -1278,9 +1216,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 [input.wo_id.into()],
             ))
             .await?
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!("Verification RTS count returned no row"))
-            })?;
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Verification RTS count returned no row")))?;
         let rts_cnt: i64 = rts_row
             .try_get::<i64>("", "cnt")
             .map_err(|e| decode_err("rts_cnt", e))?;
@@ -1300,16 +1236,12 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 [input.wo_id.into()],
             ))
             .await?
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!("Verification count returned no row"))
-            })?;
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Verification count returned no row")))?;
         let ver_cnt: i64 = ver_row
             .try_get::<i64>("", "cnt")
             .map_err(|e| decode_err("ver_cnt", e))?;
         if ver_cnt == 0 {
-            preflight.add(
-                "Verification technique requise. (Technical verification required.)",
-            );
+            preflight.add("Verification technique requise. (Technical verification required.)");
         }
     }
 
@@ -1353,11 +1285,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 COALESCE(wo.service_cost_input, 0.0) AS service_cost, \
                 wo.actual_start \
              FROM work_orders wo WHERE wo.id = ?",
-            [
-                input.wo_id.into(),
-                input.wo_id.into(),
-                input.wo_id.into(),
-            ],
+            [input.wo_id.into(), input.wo_id.into(), input.wo_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::NotFound {
@@ -1491,9 +1419,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         }
     }
 
-    if let Err(e) =
-        reliability_queries::ingest_failure_event_from_closed_wo(db, input.wo_id, input.actor_id).await
-    {
+    if let Err(e) = reliability_queries::ingest_failure_event_from_closed_wo(db, input.wo_id, input.actor_id).await {
         tracing::warn!(target: "maintafox", "ingest_failure_event_from_closed_wo: {e}");
     }
 
@@ -1509,24 +1435,14 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 min_sample_n: Some(1),
                 repeat_lookback_days: Some(30),
             };
-            if let Err(e) =
-                reliability_queries::refresh_reliability_kpi_snapshot(db, refresh_input).await
-            {
+            if let Err(e) = reliability_queries::refresh_reliability_kpi_snapshot(db, refresh_input).await {
                 tracing::warn!(target: "maintafox", "refresh_reliability_kpi_snapshot after close: {e}");
             }
         }
     }
 
     let wo_id_str = input.wo_id.to_string();
-    let _ = emitter::emit_wo_event(
-        db,
-        input.wo_id,
-        "wo.closed",
-        Some(input.actor_id),
-        None,
-        None,
-    )
-    .await;
+    let _ = emitter::emit_wo_event(db, input.wo_id, "wo.closed", Some(input.actor_id), None, None).await;
 
     let actor_i32 = i32::try_from(input.actor_id).unwrap_or(0);
     audit::emit(
@@ -1576,15 +1492,13 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
     use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
-    assert_action_allowed(&current_status, WoAction::Reopen)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    assert_action_allowed(&current_status, WoAction::Reopen).map_err(|e| AppError::ValidationFailed(vec![e]))?;
     if current_status != WoStatus::Completed {
         return Err(AppError::ValidationFailed(vec![format!(
             "Seuls les OT completed peuvent etre reouverts. Statut actuel : '{from_code}'."
         )]));
     }
-    guard_wo_transition(&current_status, &target)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_wo_transition(&current_status, &target).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let target_status_id = resolve_status_id(&txn, target.as_str()).await?;
     let now = now_utc_z();
@@ -1650,10 +1564,7 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// List all failure detail records for a WO.
-pub async fn get_failure_details(
-    db: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<Vec<WoFailureDetail>> {
+pub async fn get_failure_details(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Vec<WoFailureDetail>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1670,10 +1581,7 @@ pub async fn get_failure_details(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// List all verification records for a WO, ordered by most recent first.
-pub async fn get_verifications(
-    db: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<Vec<WoVerification>> {
+pub async fn get_verifications(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Vec<WoVerification>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1695,10 +1603,7 @@ pub async fn get_verifications(
 /// These are free-text fields required before closure for corrective/emergency
 /// WO types. May be called multiple times; only non-null arguments overwrite
 /// existing values.
-pub async fn update_wo_rca(
-    db: &DatabaseConnection,
-    input: UpdateWoRcaInput,
-) -> AppResult<()> {
+pub async fn update_wo_rca(db: &DatabaseConnection, input: UpdateWoRcaInput) -> AppResult<()> {
     // Guard: WO must not be in closed or cancelled state.
     let (status_code, _status, _rv) = load_wo_status(db, input.wo_id).await?;
     if matches!(status_code.as_str(), "closed" | "cancelled") {

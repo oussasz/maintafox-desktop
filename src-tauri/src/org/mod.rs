@@ -32,6 +32,8 @@ pub mod tree_queries;
 pub mod validation;
 
 #[cfg(test)]
+mod audit_tests;
+#[cfg(test)]
 mod model_scope_tests;
 #[cfg(test)]
 mod node_types_tests;
@@ -44,21 +46,17 @@ mod structure_model_tests;
 #[cfg(test)]
 mod tree_queries_preview_tests;
 #[cfg(test)]
-mod audit_tests;
-#[cfg(test)]
 mod validation_tests;
 
 // Re-export most-used types at module root for clean import in command handlers.
+pub use audit::{OrgAuditEventInput, OrgChangeEvent};
 pub use entity_bindings::{OrgEntityBinding, UpsertOrgEntityBindingPayload};
+pub use equipment_assignment::{AssignEquipmentPayload, OrgNodeEquipmentRow};
+pub use impact_preview::{OrgImpactPreview, OrgPreviewAction, PreviewOrgChangePayload};
 pub use node_types::{CreateNodeTypePayload, OrgNodeType, UpdateNodeTypePayload};
-pub use nodes::{
-    CreateOrgNodePayload, MoveOrgNodePayload, OrgNode, OrgTreeRow, UpdateOrgNodeMetadataPayload,
-};
+pub use nodes::{CreateOrgNodePayload, MoveOrgNodePayload, OrgNode, OrgTreeRow, UpdateOrgNodeMetadataPayload};
 pub use relationship_rules::{CreateRelationshipRulePayload, OrgRelationshipRule};
 pub use responsibilities::{AssignResponsibilityPayload, OrgNodeResponsibility};
 pub use structure_model::{CreateStructureModelPayload, OrgStructureModel};
 pub use tree_queries::{OrgDesignerNodeRow, OrgDesignerSnapshot};
-pub use impact_preview::{OrgImpactPreview, OrgPreviewAction, PreviewOrgChangePayload};
 pub use validation::{NodeTypeRemap, OrgPublishValidationResult, OrgValidationIssue};
-pub use audit::{OrgAuditEventInput, OrgChangeEvent};
-pub use equipment_assignment::{AssignEquipmentPayload, OrgNodeEquipmentRow};

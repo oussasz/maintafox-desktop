@@ -35,9 +35,7 @@ mod tests {
 
     /// Publish a model with one root node; fork a draft copy. Returns
     /// (active_model_id, active_root_id, draft_model_id, draft_root_id).
-    async fn setup_active_with_forked_draft(
-        db: &sea_orm::DatabaseConnection,
-    ) -> (i64, i64, i64, i64) {
+    async fn setup_active_with_forked_draft(db: &sea_orm::DatabaseConnection) -> (i64, i64, i64, i64) {
         let model = structure_model::create_model(
             db,
             CreateStructureModelPayload {
@@ -114,16 +112,9 @@ mod tests {
             .expect("query draft root")
             .expect("draft root should exist");
 
-        let draft_root_id: i64 = draft_root_row
-            .try_get("", "id")
-            .expect("decode draft root id");
+        let draft_root_id: i64 = draft_root_row.try_get("", "id").expect("decode draft root id");
 
-        (
-            model.id as i64,
-            active_root.id,
-            draft.id as i64,
-            draft_root_id,
-        )
+        (model.id as i64, active_root.id, draft.id as i64, draft_root_id)
     }
 
     #[tokio::test]
@@ -132,16 +123,11 @@ mod tests {
         let (_active_model_id, active_root_id, _draft_model_id, draft_root_id) =
             setup_active_with_forked_draft(&db).await;
 
-        let tree = nodes::list_active_org_tree(&db)
-            .await
-            .expect("list active tree");
+        let tree = nodes::list_active_org_tree(&db).await.expect("list active tree");
 
         let ids: Vec<i64> = tree.iter().map(|r| r.node.id).collect();
         assert!(ids.contains(&active_root_id), "active root must appear in ops tree");
-        assert!(
-            !ids.contains(&draft_root_id),
-            "draft clone must not appear in ops tree"
-        );
+        assert!(!ids.contains(&draft_root_id), "draft clone must not appear in ops tree");
     }
 
     #[tokio::test]

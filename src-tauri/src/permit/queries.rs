@@ -4,18 +4,18 @@ use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{
-    LotoCardPrintJobSyncPayload, PermitHandoverLogSyncPayload, PermitIsolationSyncPayload,
-    PermitSuspensionSyncPayload, PermitTypeSyncPayload, StageOutboxItemInput, WorkPermitSyncPayload,
-    SYNC_ENTITY_LOTO_CARD_PRINT_JOBS, SYNC_ENTITY_PERMIT_HANDOVER_LOGS, SYNC_ENTITY_PERMIT_ISOLATIONS,
-    SYNC_ENTITY_PERMIT_SUSPENSIONS, SYNC_ENTITY_PERMIT_TYPES, SYNC_ENTITY_WORK_PERMITS,
+    LotoCardPrintJobSyncPayload, PermitHandoverLogSyncPayload, PermitIsolationSyncPayload, PermitSuspensionSyncPayload,
+    PermitTypeSyncPayload, StageOutboxItemInput, WorkPermitSyncPayload, SYNC_ENTITY_LOTO_CARD_PRINT_JOBS,
+    SYNC_ENTITY_PERMIT_HANDOVER_LOGS, SYNC_ENTITY_PERMIT_ISOLATIONS, SYNC_ENTITY_PERMIT_SUSPENSIONS,
+    SYNC_ENTITY_PERMIT_TYPES, SYNC_ENTITY_WORK_PERMITS,
 };
 use crate::sync::queries::stage_outbox_item;
 
 use super::domain::{
     LotoCardPrintInput, LotoCardPrintJob, LotoCardView, PermitComplianceKpi30d, PermitHandoverLog,
     PermitHandoverLogInput, PermitIsolation, PermitIsolationUpsertInput, PermitSuspendInput, PermitSuspension,
-    PermitType, PermitTypeUpsertInput, WorkPermit, WorkPermitCreateInput, WorkPermitListFilter,
-    WorkPermitStatusInput, WorkPermitUpdateInput,
+    PermitType, PermitTypeUpsertInput, WorkPermit, WorkPermitCreateInput, WorkPermitListFilter, WorkPermitStatusInput,
+    WorkPermitUpdateInput,
 };
 
 const WP_STATUSES: &[&str] = &[
@@ -67,7 +67,9 @@ fn map_permit_type(row: &sea_orm::QueryResult) -> AppResult<PermitType> {
             .map_err(|e| decode_err("entity_sync_id", e))?,
         code: row.try_get("", "code").map_err(|e| decode_err("code", e))?,
         name: row.try_get("", "name").map_err(|e| decode_err("name", e))?,
-        description: row.try_get("", "description").map_err(|e| decode_err("description", e))?,
+        description: row
+            .try_get("", "description")
+            .map_err(|e| decode_err("description", e))?,
         requires_hse_approval: i64_to_bool(
             row.try_get::<i64>("", "requires_hse_approval")
                 .map_err(|e| decode_err("requires_hse_approval", e))?,
@@ -87,7 +89,9 @@ fn map_permit_type(row: &sea_orm::QueryResult) -> AppResult<PermitType> {
         mandatory_control_rules_json: row
             .try_get("", "mandatory_control_rules_json")
             .map_err(|e| decode_err("mandatory_control_rules_json", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -99,7 +103,9 @@ fn map_work_permit(row: &sea_orm::QueryResult) -> AppResult<WorkPermit> {
             .map_err(|e| decode_err("entity_sync_id", e))?,
         code: row.try_get("", "code").map_err(|e| decode_err("code", e))?,
         linked_work_order_id: row.try_get("", "linked_work_order_id").ok(),
-        permit_type_id: row.try_get("", "permit_type_id").map_err(|e| decode_err("permit_type_id", e))?,
+        permit_type_id: row
+            .try_get("", "permit_type_id")
+            .map_err(|e| decode_err("permit_type_id", e))?,
         asset_id: row.try_get("", "asset_id").map_err(|e| decode_err("asset_id", e))?,
         entity_id: row.try_get("", "entity_id").map_err(|e| decode_err("entity_id", e))?,
         status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
@@ -109,7 +115,9 @@ fn map_work_permit(row: &sea_orm::QueryResult) -> AppResult<WorkPermit> {
         expires_at: row.try_get("", "expires_at").ok(),
         closed_at: row.try_get("", "closed_at").ok(),
         handed_back_at: row.try_get("", "handed_back_at").ok(),
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -120,8 +128,12 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
         permit_id: row.try_get("", "permit_id").map_err(|e| decode_err("permit_id", e))?,
-        isolation_point: row.try_get("", "isolation_point").map_err(|e| decode_err("isolation_point", e))?,
-        energy_type: row.try_get("", "energy_type").map_err(|e| decode_err("energy_type", e))?,
+        isolation_point: row
+            .try_get("", "isolation_point")
+            .map_err(|e| decode_err("isolation_point", e))?,
+        energy_type: row
+            .try_get("", "energy_type")
+            .map_err(|e| decode_err("energy_type", e))?,
         isolation_method: row
             .try_get("", "isolation_method")
             .map_err(|e| decode_err("isolation_method", e))?,
@@ -131,7 +143,9 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
         applied_at: row.try_get("", "applied_at").ok(),
         verified_at: row.try_get("", "verified_at").ok(),
         removal_verified_at: row.try_get("", "removal_verified_at").ok(),
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -206,15 +220,8 @@ async fn stage_work_permit(db: &DatabaseConnection, row: &WorkPermit) -> AppResu
     .await
 }
 
-pub async fn stage_work_permit_batched(
-    db: &DatabaseConnection,
-    row: &WorkPermit,
-    batch_id: &str,
-) -> AppResult<()> {
-    let key = format!(
-        "{batch_id}:work_permits:{}:v{}",
-        row.entity_sync_id, row.row_version
-    );
+pub async fn stage_work_permit_batched(db: &DatabaseConnection, row: &WorkPermit, batch_id: &str) -> AppResult<()> {
+    let key = format!("{batch_id}:work_permits:{}:v{}", row.entity_sync_id, row.row_version);
     stage_work_permit_with_idempotency_key(db, row, &key).await
 }
 
@@ -331,14 +338,20 @@ fn map_permit_suspension(row: &sea_orm::QueryResult) -> AppResult<PermitSuspensi
             .map_err(|e| decode_err("entity_sync_id", e))?,
         permit_id: row.try_get("", "permit_id").map_err(|e| decode_err("permit_id", e))?,
         reason: row.try_get("", "reason").map_err(|e| decode_err("reason", e))?,
-        suspended_by_id: row.try_get("", "suspended_by_id").map_err(|e| decode_err("suspended_by_id", e))?,
-        suspended_at: row.try_get("", "suspended_at").map_err(|e| decode_err("suspended_at", e))?,
+        suspended_by_id: row
+            .try_get("", "suspended_by_id")
+            .map_err(|e| decode_err("suspended_by_id", e))?,
+        suspended_at: row
+            .try_get("", "suspended_at")
+            .map_err(|e| decode_err("suspended_at", e))?,
         reinstated_by_id: row.try_get("", "reinstated_by_id").ok(),
         reinstated_at: row.try_get("", "reinstated_at").ok(),
         reactivation_conditions: row
             .try_get("", "reactivation_conditions")
             .map_err(|e| decode_err("reactivation_conditions", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -349,13 +362,19 @@ fn map_permit_handover_log(row: &sea_orm::QueryResult) -> AppResult<PermitHandov
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
         permit_id: row.try_get("", "permit_id").map_err(|e| decode_err("permit_id", e))?,
-        handed_from_role: row.try_get("", "handed_from_role").map_err(|e| decode_err("handed_from_role", e))?,
-        handed_to_role: row.try_get("", "handed_to_role").map_err(|e| decode_err("handed_to_role", e))?,
+        handed_from_role: row
+            .try_get("", "handed_from_role")
+            .map_err(|e| decode_err("handed_from_role", e))?,
+        handed_to_role: row
+            .try_get("", "handed_to_role")
+            .map_err(|e| decode_err("handed_to_role", e))?,
         confirmation_note: row
             .try_get("", "confirmation_note")
             .map_err(|e| decode_err("confirmation_note", e))?,
         signed_at: row.try_get("", "signed_at").map_err(|e| decode_err("signed_at", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
@@ -363,7 +382,9 @@ fn validate_wp_status(s: &str) -> AppResult<()> {
     if WP_STATUSES.contains(&s) {
         Ok(())
     } else {
-        Err(AppError::ValidationFailed(vec![format!("Invalid work permit status '{s}'.")]))
+        Err(AppError::ValidationFailed(vec![format!(
+            "Invalid work permit status '{s}'."
+        )]))
     }
 }
 
@@ -386,7 +407,9 @@ async fn ensure_wo_asset_aligned(
             entity: "WorkOrder".into(),
             id: wo_id.to_string(),
         })?;
-    let equipment_id: Option<i64> = row.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?;
+    let equipment_id: Option<i64> = row
+        .try_get("", "equipment_id")
+        .map_err(|e| decode_err("equipment_id", e))?;
     let Some(eq) = equipment_id else {
         return Err(AppError::ValidationFailed(vec![
             "Work order has no equipment_id; cannot align permit asset.".into(),
@@ -455,11 +478,7 @@ fn draft_fields_complete(wp: &WorkPermit) -> bool {
     !wp.code.trim().is_empty() && wp.asset_id > 0
 }
 
-pub(crate) async fn activation_ready(
-    db: &DatabaseConnection,
-    permit_id: i64,
-    permit_type_id: i64,
-) -> AppResult<()> {
+pub(crate) async fn activation_ready(db: &DatabaseConnection, permit_id: i64, permit_type_id: i64) -> AppResult<()> {
     let code = permit_type_code(db, permit_type_id).await?;
     let n = count_isolations(db, permit_id).await?;
     if code == "loto" && n < 1 {
@@ -491,10 +510,7 @@ fn assert_transition_set_status(from: &str, to: &str) -> AppResult<()> {
         if from == "handed_back" {
             return Ok(());
         }
-        if matches!(
-            from,
-            "closed" | "handed_back" | "cancelled" | "expired"
-        ) {
+        if matches!(from, "closed" | "handed_back" | "cancelled" | "expired") {
             return Err(AppError::ValidationFailed(vec![
                 "Cancellation is not allowed from this status.".into(),
             ]));
@@ -553,17 +569,13 @@ async fn finalize_open_suspension(
             DbBackend::Sqlite,
             "UPDATE permit_suspensions SET reinstated_by_id = ?, reinstated_at = ?, row_version = ? \
              WHERE id = ? AND row_version = ?",
-            [
-                reinstated_by_id.into(),
-                ts.into(),
-                new_rv.into(),
-                sid.into(),
-                rv.into(),
-            ],
+            [reinstated_by_id.into(), ts.into(), new_rv.into(), sid.into(), rv.into()],
         ))
         .await?;
     if affected.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec!["Concurrent update on permit_suspensions.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "Concurrent update on permit_suspensions.".into(),
+        ]));
     }
     let updated = db
         .query_one(Statement::from_sql_and_values(
@@ -628,12 +640,10 @@ pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsert
         if id <= 0 {
             return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
         }
-        let current = get_permit_type(db, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound {
-                entity: "PermitType".into(),
-                id: id.to_string(),
-            })?;
+        let current = get_permit_type(db, id).await?.ok_or_else(|| AppError::NotFound {
+            entity: "PermitType".into(),
+            id: id.to_string(),
+        })?;
         let new_rv = current.row_version + 1;
         let affected = db
             .execute(Statement::from_sql_and_values(
@@ -660,7 +670,9 @@ pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsert
             ))
             .await?;
         if affected.rows_affected() == 0 {
-            return Err(AppError::ValidationFailed(vec!["Concurrent update on permit_types.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "Concurrent update on permit_types.".into()
+            ]));
         }
         let updated = get_permit_type(db, id).await?.expect("row");
         stage_permit_type(db, &updated).await?;
@@ -701,10 +713,7 @@ pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsert
     Ok(created)
 }
 
-pub async fn list_work_permits(
-    db: &DatabaseConnection,
-    filter: WorkPermitListFilter,
-) -> AppResult<Vec<WorkPermit>> {
+pub async fn list_work_permits(db: &DatabaseConnection, filter: WorkPermitListFilter) -> AppResult<Vec<WorkPermit>> {
     let limit = filter.limit.unwrap_or(200).clamp(1, 2000);
     let mut sql = String::from(
         "SELECT id, entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, \
@@ -792,14 +801,14 @@ pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreate
 }
 
 pub async fn update_work_permit(db: &DatabaseConnection, input: WorkPermitUpdateInput) -> AppResult<WorkPermit> {
-    let current = get_work_permit(db, input.id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkPermit".into(),
-            id: input.id.to_string(),
-        })?;
+    let current = get_work_permit(db, input.id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "WorkPermit".into(),
+        id: input.id.to_string(),
+    })?;
     if input.expected_row_version != current.row_version {
-        return Err(AppError::ValidationFailed(vec!["row_version mismatch on work_permits.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "row_version mismatch on work_permits.".into(),
+        ]));
     }
     let asset_id = input.asset_id.unwrap_or(current.asset_id);
     let entity_id = input.entity_id.unwrap_or(current.entity_id);
@@ -826,7 +835,9 @@ pub async fn update_work_permit(db: &DatabaseConnection, input: WorkPermitUpdate
         ))
         .await?;
     if affected.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec!["Concurrent update on work_permits.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "Concurrent update on work_permits.".into()
+        ]));
     }
     let updated = get_work_permit(db, input.id).await?.expect("row");
     stage_work_permit(db, &updated).await?;
@@ -835,14 +846,14 @@ pub async fn update_work_permit(db: &DatabaseConnection, input: WorkPermitUpdate
 
 pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitStatusInput) -> AppResult<WorkPermit> {
     validate_wp_status(&input.status)?;
-    let current = get_work_permit(db, input.id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkPermit".into(),
-            id: input.id.to_string(),
-        })?;
+    let current = get_work_permit(db, input.id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "WorkPermit".into(),
+        id: input.id.to_string(),
+    })?;
     if input.expected_row_version != current.row_version {
-        return Err(AppError::ValidationFailed(vec!["row_version mismatch on work_permits.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "row_version mismatch on work_permits.".into(),
+        ]));
     }
 
     let from = current.status.as_str();
@@ -915,16 +926,23 @@ pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitSt
         ))
         .await?;
     if affected.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec!["Concurrent update on work_permits.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "Concurrent update on work_permits.".into()
+        ]));
     }
     let updated = get_work_permit(db, input.id).await?.expect("row");
     stage_work_permit(db, &updated).await?;
     Ok(updated)
 }
 
-pub async fn suspend_work_permit(db: &DatabaseConnection, input: PermitSuspendInput) -> AppResult<(WorkPermit, PermitSuspension)> {
+pub async fn suspend_work_permit(
+    db: &DatabaseConnection,
+    input: PermitSuspendInput,
+) -> AppResult<(WorkPermit, PermitSuspension)> {
     if input.reason.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["Suspension reason is required.".into()]));
+        return Err(AppError::ValidationFailed(
+            vec!["Suspension reason is required.".into()],
+        ));
     }
     let current = get_work_permit(db, input.permit_id)
         .await?
@@ -938,7 +956,9 @@ pub async fn suspend_work_permit(db: &DatabaseConnection, input: PermitSuspendIn
         ]));
     }
     if input.expected_row_version != current.row_version {
-        return Err(AppError::ValidationFailed(vec!["row_version mismatch on work_permits.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "row_version mismatch on work_permits.".into(),
+        ]));
     }
 
     let sync_id = Uuid::new_v4().to_string();
@@ -977,7 +997,9 @@ pub async fn suspend_work_permit(db: &DatabaseConnection, input: PermitSuspendIn
         ))
         .await?;
     if aff.rows_affected() == 0 {
-        return Err(AppError::ValidationFailed(vec!["Concurrent update on work_permits.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "Concurrent update on work_permits.".into()
+        ]));
     }
     txn.commit().await?;
 
@@ -1162,7 +1184,9 @@ pub async fn upsert_permit_isolation(
             ))
             .await?;
         if affected.rows_affected() == 0 {
-            return Err(AppError::ValidationFailed(vec!["Concurrent update on permit_isolations.".into()]));
+            return Err(AppError::ValidationFailed(vec![
+                "Concurrent update on permit_isolations.".into(),
+            ]));
         }
         let updated = db
             .query_one(Statement::from_sql_and_values(
@@ -1257,21 +1281,23 @@ fn map_loto_card_print_job(row: &sea_orm::QueryResult) -> AppResult<LotoCardPrin
     Ok(LotoCardPrintJob {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
         permit_id: row.try_get("", "permit_id").map_err(|e| decode_err("permit_id", e))?,
-        isolation_id: row.try_get("", "isolation_id").map_err(|e| decode_err("isolation_id", e))?,
+        isolation_id: row
+            .try_get("", "isolation_id")
+            .map_err(|e| decode_err("isolation_id", e))?,
         printed_at: row.try_get("", "printed_at").map_err(|e| decode_err("printed_at", e))?,
-        printed_by_id: row.try_get("", "printed_by_id").map_err(|e| decode_err("printed_by_id", e))?,
+        printed_by_id: row
+            .try_get("", "printed_by_id")
+            .map_err(|e| decode_err("printed_by_id", e))?,
         entity_sync_id: row
             .try_get("", "entity_sync_id")
             .map_err(|e| decode_err("entity_sync_id", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
     })
 }
 
-pub async fn get_loto_card_view(
-    db: &DatabaseConnection,
-    permit_id: i64,
-    isolation_id: i64,
-) -> AppResult<LotoCardView> {
+pub async fn get_loto_card_view(db: &DatabaseConnection, permit_id: i64, isolation_id: i64) -> AppResult<LotoCardView> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1290,7 +1316,9 @@ pub async fn get_loto_card_view(
             entity: "PermitIsolation".into(),
             id: isolation_id.to_string(),
         })?;
-    let permit_code: String = row.try_get("", "permit_code").map_err(|e| decode_err("permit_code", e))?;
+    let permit_code: String = row
+        .try_get("", "permit_code")
+        .map_err(|e| decode_err("permit_code", e))?;
     let asset_code: Option<String> = row.try_get("", "asset_id_code").ok();
     let eq_name: Option<String> = row.try_get("", "equipment_name").ok();
     let equipment_label = match (asset_code, eq_name) {
@@ -1299,18 +1327,20 @@ pub async fn get_loto_card_view(
         (None, Some(n)) => n,
         (None, None) => "—".to_string(),
     };
-    let isolation_point: String = row.try_get("", "isolation_point").map_err(|e| decode_err("isolation_point", e))?;
-    let energy_type: String = row.try_get("", "energy_type").map_err(|e| decode_err("energy_type", e))?;
+    let isolation_point: String = row
+        .try_get("", "isolation_point")
+        .map_err(|e| decode_err("isolation_point", e))?;
+    let energy_type: String = row
+        .try_get("", "energy_type")
+        .map_err(|e| decode_err("energy_type", e))?;
     let lock_number: Option<String> = row.try_get("", "lock_number").ok();
     let expires_at: Option<String> = row.try_get("", "permit_expires").ok();
     let verified_at: Option<String> = row.try_get("", "verified_at").ok().flatten();
     let verifier_username: Option<String> = row.try_get("", "verifier_username").ok().flatten();
-    let verifier_signature = if verified_at.is_some() {
-        verifier_username
-    } else {
-        None
-    };
-    let iso_id: i64 = row.try_get("", "isolation_id").map_err(|e| decode_err("isolation_id", e))?;
+    let verifier_signature = if verified_at.is_some() { verifier_username } else { None };
+    let iso_id: i64 = row
+        .try_get("", "isolation_id")
+        .map_err(|e| decode_err("isolation_id", e))?;
     Ok(LotoCardView {
         permit_code,
         equipment_label,
@@ -1323,10 +1353,7 @@ pub async fn get_loto_card_view(
     })
 }
 
-pub async fn record_loto_card_print(
-    db: &DatabaseConnection,
-    input: LotoCardPrintInput,
-) -> AppResult<LotoCardPrintJob> {
+pub async fn record_loto_card_print(db: &DatabaseConnection, input: LotoCardPrintInput) -> AppResult<LotoCardPrintJob> {
     let iso = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

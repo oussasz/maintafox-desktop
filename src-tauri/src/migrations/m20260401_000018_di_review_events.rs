@@ -39,39 +39,19 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     // -- FK to intervention_requests --
-                    .col(
-                        ColumnDef::new(Alias::new("di_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("di_id")).integer().not_null())
                     // -- Event classification --
                     // submitted | screened | advanced_to_approval |
                     // returned_for_clarification | rejected | approved |
                     // deferred | reactivated | sla_initialized
-                    .col(
-                        ColumnDef::new(Alias::new("event_type"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("event_type")).text().not_null())
                     // -- Actor (nullable for system-generated events) --
                     .col(ColumnDef::new(Alias::new("actor_id")).integer())
                     // -- Timestamp --
-                    .col(
-                        ColumnDef::new(Alias::new("acted_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("acted_at")).text().not_null())
                     // -- Decision data --
-                    .col(
-                        ColumnDef::new(Alias::new("from_status"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("to_status"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("from_status")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("to_status")).text().not_null())
                     .col(ColumnDef::new(Alias::new("reason_code")).text())
                     .col(ColumnDef::new(Alias::new("notes")).text())
                     // -- SLA context (set on screen action) --
@@ -124,11 +104,7 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("di_review_events"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("di_review_events")).to_owned())
             .await?;
         Ok(())
     }

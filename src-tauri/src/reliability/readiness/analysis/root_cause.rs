@@ -48,22 +48,20 @@ pub fn build_root_cause(
         label: format!("All assets ({total})"),
         asset_count: Some(total),
         pct: Some(100.0),
-        children: vec![
-            RootCauseNode {
-                label: format!("MISSING_EXPOSURE ({strict_exposure})"),
-                asset_count: Some(strict_exposure),
-                pct: Some(strict_exposure as f64 / total.max(1) as f64 * 100.0),
-                children: vec![RootCauseNode {
-                    label: format!(
-                        "Strict-ready: {} ({:.1}%)",
-                        strict_summary.strict_ready_count, strict_summary.strict_ready_pct
-                    ),
-                    asset_count: Some(strict_summary.strict_ready_count),
-                    pct: Some(strict_summary.strict_ready_pct),
-                    children: vec![],
-                }],
-            },
-        ],
+        children: vec![RootCauseNode {
+            label: format!("MISSING_EXPOSURE ({strict_exposure})"),
+            asset_count: Some(strict_exposure),
+            pct: Some(strict_exposure as f64 / total.max(1) as f64 * 100.0),
+            children: vec![RootCauseNode {
+                label: format!(
+                    "Strict-ready: {} ({:.1}%)",
+                    strict_summary.strict_ready_count, strict_summary.strict_ready_pct
+                ),
+                asset_count: Some(strict_summary.strict_ready_count),
+                pct: Some(strict_summary.strict_ready_pct),
+                children: vec![],
+            }],
+        }],
     };
 
     let ready_pct = doc_summary.documentary_ready_pct;

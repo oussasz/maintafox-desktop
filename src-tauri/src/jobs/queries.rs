@@ -20,11 +20,7 @@ async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
     Ok(row.try_get("", "id").map_err(|e| dec("id", e))?)
 }
 
-pub async fn insert_computation_job(
-    db: &DatabaseConnection,
-    job_kind: &str,
-    input_json: &str,
-) -> AppResult<i64> {
+pub async fn insert_computation_job(db: &DatabaseConnection, job_kind: &str, input_json: &str) -> AppResult<i64> {
     let eid = format!("computation_job:{}", Uuid::new_v4());
     let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     db.execute(Statement::from_sql_and_values(
@@ -32,12 +28,7 @@ pub async fn insert_computation_job(
         "INSERT INTO computation_jobs (
             entity_sync_id, job_kind, status, progress_pct, input_json, created_at, row_version
         ) VALUES (?, ?, 'pending', 0, ?, ?, 1)",
-        [
-            eid.into(),
-            job_kind.into(),
-            input_json.into(),
-            now.into(),
-        ],
+        [eid.into(), job_kind.into(), input_json.into(), now.into()],
     ))
     .await?;
     last_insert_id(db).await
@@ -105,16 +96,26 @@ pub async fn complete_job_cancelled(db: &DatabaseConnection, id: i64) -> AppResu
 fn map_job(row: &sea_orm::QueryResult) -> AppResult<ComputationJob> {
     Ok(ComputationJob {
         id: row.try_get("", "id").map_err(|e| dec("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| dec("entity_sync_id", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| dec("entity_sync_id", e))?,
         job_kind: row.try_get("", "job_kind").map_err(|e| dec("job_kind", e))?,
         status: row.try_get("", "status").map_err(|e| dec("status", e))?,
         progress_pct: row.try_get("", "progress_pct").map_err(|e| dec("progress_pct", e))?,
         input_json: row.try_get("", "input_json").map_err(|e| dec("input_json", e))?,
-        result_json: row.try_get::<Option<String>>("", "result_json").map_err(|e| dec("result_json", e))?,
-        error_message: row.try_get::<Option<String>>("", "error_message").map_err(|e| dec("error_message", e))?,
+        result_json: row
+            .try_get::<Option<String>>("", "result_json")
+            .map_err(|e| dec("result_json", e))?,
+        error_message: row
+            .try_get::<Option<String>>("", "error_message")
+            .map_err(|e| dec("error_message", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| dec("created_at", e))?,
-        started_at: row.try_get::<Option<String>>("", "started_at").map_err(|e| dec("started_at", e))?,
-        finished_at: row.try_get::<Option<String>>("", "finished_at").map_err(|e| dec("finished_at", e))?,
+        started_at: row
+            .try_get::<Option<String>>("", "started_at")
+            .map_err(|e| dec("started_at", e))?,
+        finished_at: row
+            .try_get::<Option<String>>("", "finished_at")
+            .map_err(|e| dec("finished_at", e))?,
         row_version: row.try_get("", "row_version").map_err(|e| dec("row_version", e))?,
     })
 }

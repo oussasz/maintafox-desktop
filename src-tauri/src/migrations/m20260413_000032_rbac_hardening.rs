@@ -29,10 +29,8 @@ impl MigrationTrait for Migration {
         // SQLite ALTER TABLE ADD COLUMN is supported since 3.2.0.
         // DEFAULT 0 ensures existing rows (lockout_max_attempts, etc.) get
         // the correct value without a backfill step.
-        db.execute_unprepared(
-            "ALTER TABLE rbac_settings ADD COLUMN is_sensitive INTEGER NOT NULL DEFAULT 0",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE rbac_settings ADD COLUMN is_sensitive INTEGER NOT NULL DEFAULT 0")
+            .await?;
 
         // ── 2. Seed RBAC hardening policy knobs ─────────────────────────
         // INSERT OR IGNORE makes this idempotent if re-run.

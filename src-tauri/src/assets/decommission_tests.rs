@@ -142,11 +142,7 @@ mod tests {
         .expect("insert equipment class");
     }
 
-    async fn create_test_asset(
-        db: &sea_orm::DatabaseConnection,
-        code: &str,
-        org_node_id: i64,
-    ) -> identity::Asset {
+    async fn create_test_asset(db: &sea_orm::DatabaseConnection, code: &str, org_node_id: i64) -> identity::Asset {
         identity::create_asset(
             db,
             CreateAssetPayload {

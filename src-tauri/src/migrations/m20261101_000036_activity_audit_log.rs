@@ -3,8 +3,8 @@
 //! Phase 2 - Sub-phase 07 - File 03.
 //! Adds observability backbone tables from PRD §6.17.
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -38,30 +38,18 @@ impl MigrationTrait for Migration {
         )
         .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ae_class ON activity_events(event_class)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ae_code ON activity_events(event_code)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ae_module ON activity_events(source_module)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ae_actor ON activity_events(actor_id)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ae_happened ON activity_events(happened_at DESC)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ae_corr ON activity_events(correlation_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ae_class ON activity_events(event_class)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ae_code ON activity_events(event_code)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ae_module ON activity_events(source_module)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ae_actor ON activity_events(actor_id)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ae_happened ON activity_events(happened_at DESC)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ae_corr ON activity_events(correlation_id)")
+            .await?;
         db.execute_unprepared(
             "CREATE INDEX IF NOT EXISTS idx_ae_scope ON activity_events(entity_scope_id, happened_at DESC)",
         )
@@ -87,19 +75,11 @@ impl MigrationTrait for Migration {
 
         // Compatibility upgrade: migration 001 already created audit_events
         // with legacy columns. Add the new 6.17 columns if missing.
-        add_column_if_missing(
-            db,
-            "audit_events",
-            "action_code",
-            "TEXT NOT NULL DEFAULT ''",
-        )
-        .await?;
+        add_column_if_missing(db, "audit_events", "action_code", "TEXT NOT NULL DEFAULT ''").await?;
         add_column_if_missing(db, "audit_events", "target_type", "TEXT NULL").await?;
         add_column_if_missing(db, "audit_events", "target_id", "TEXT NULL").await?;
-        add_column_if_missing(db, "audit_events", "auth_context", "TEXT NOT NULL DEFAULT 'password'")
-            .await?;
-        add_column_if_missing(db, "audit_events", "result", "TEXT NOT NULL DEFAULT 'success'")
-            .await?;
+        add_column_if_missing(db, "audit_events", "auth_context", "TEXT NOT NULL DEFAULT 'password'").await?;
+        add_column_if_missing(db, "audit_events", "result", "TEXT NOT NULL DEFAULT 'success'").await?;
         add_column_if_missing(db, "audit_events", "before_hash", "TEXT NULL").await?;
         add_column_if_missing(db, "audit_events", "after_hash", "TEXT NULL").await?;
         // SQLite forbids non-constant DEFAULT on ALTER TABLE ADD COLUMN (e.g. strftime).
@@ -129,26 +109,16 @@ impl MigrationTrait for Migration {
         .await?;
         add_column_if_missing(db, "audit_events", "details_json", "TEXT NULL").await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_aud_code ON audit_events(action_code)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_aud_actor ON audit_events(actor_id)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_aud_target ON audit_events(target_type, target_id)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_aud_result ON audit_events(result)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_aud_date ON audit_events(happened_at DESC)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_aud_code ON audit_events(action_code)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_aud_actor ON audit_events(actor_id)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_aud_target ON audit_events(target_type, target_id)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_aud_result ON audit_events(result)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_aud_date ON audit_events(happened_at DESC)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE TABLE IF NOT EXISTS event_links (
@@ -161,14 +131,10 @@ impl MigrationTrait for Migration {
             )",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_el_parent ON event_links(parent_event_id, parent_table)",
-        )
-        .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_el_child ON event_links(child_event_id, child_table)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_el_parent ON event_links(parent_event_id, parent_table)")
+            .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_el_child ON event_links(child_event_id, child_table)")
+            .await?;
 
         db.execute_unprepared(
             "CREATE TABLE IF NOT EXISTS saved_activity_filters (
@@ -222,15 +188,12 @@ impl MigrationTrait for Migration {
         db.execute_unprepared("DROP INDEX IF EXISTS idx_ae_code").await?;
         db.execute_unprepared("DROP INDEX IF EXISTS idx_ae_class").await?;
 
-        db.execute_unprepared("DROP TABLE IF EXISTS event_export_runs")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS event_export_runs").await?;
         db.execute_unprepared("DROP TABLE IF EXISTS saved_activity_filters")
             .await?;
         db.execute_unprepared("DROP TABLE IF EXISTS event_links").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS audit_events")
-            .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS activity_events")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS audit_events").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS activity_events").await?;
 
         Ok(())
     }
@@ -250,15 +213,9 @@ async fn add_column_if_missing<C: ConnectionTrait>(
     Ok(())
 }
 
-async fn has_column<C: ConnectionTrait>(
-    db: &C,
-    table: &str,
-    column: &str,
-) -> Result<bool, DbErr> {
+async fn has_column<C: ConnectionTrait>(db: &C, table: &str, column: &str) -> Result<bool, DbErr> {
     let sql = format!("PRAGMA table_info('{table}')");
-    let rows = db
-        .query_all(Statement::from_string(DbBackend::Sqlite, sql))
-        .await?;
+    let rows = db.query_all(Statement::from_string(DbBackend::Sqlite, sql)).await?;
     for row in rows {
         if row.try_get::<String>("", "name").unwrap_or_default() == column {
             return Ok(true);

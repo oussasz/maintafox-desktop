@@ -1,7 +1,7 @@
 //! Valuation policy engine
+use crate::errors::{AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
-use crate::errors::{AppError, AppResult};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ValuationCostResult {
@@ -79,7 +79,11 @@ pub async fn evaluate_unit_cost(
                     source_ref: None,
                     effective_at: eff,
                     is_provisional: u == 0.0,
-                    confidence: if u > 0.0 { "medium".to_string() } else { "low".to_string() },
+                    confidence: if u > 0.0 {
+                        "medium".to_string()
+                    } else {
+                        "low".to_string()
+                    },
                 })
             }
             "MOVING_AVG" => {
@@ -101,7 +105,11 @@ pub async fn evaluate_unit_cost(
                     source_ref: Some(format!("loc:{location_id}")),
                     effective_at: eff,
                     is_provisional: avg == 0.0,
-                    confidence: if avg > 0.0 { "medium".to_string() } else { "low".to_string() },
+                    confidence: if avg > 0.0 {
+                        "medium".to_string()
+                    } else {
+                        "low".to_string()
+                    },
                 })
             }
             "LAST_RECEIPT" => {
@@ -147,7 +155,9 @@ pub async fn evaluate_unit_cost(
             _ => Err(AppError::ValidationFailed(vec![format!("Bad method {method}")])),
         };
     }
-    Err(AppError::ValidationFailed(vec!["No matching valuation policy.".to_string()]))
+    Err(AppError::ValidationFailed(vec![
+        "No matching valuation policy.".to_string()
+    ]))
 }
 
 pub async fn project_replenishment_cost(

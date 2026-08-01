@@ -99,8 +99,7 @@ impl MigrationTrait for Migration {
         let db = manager.get_connection();
         db.execute_unprepared("DROP VIEW IF EXISTS v_ram_data_quality_issues")
             .await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS user_dismissals")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS user_dismissals").await?;
         Ok(())
     }
 }

@@ -1,9 +1,7 @@
-﻿use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde_json::{json, Value};
 
 use crate::errors::{AppError, AppResult};
@@ -11,13 +9,12 @@ use crate::notifications::emitter::{emit_event, NotificationEventInput};
 use crate::{activity, notifications};
 
 use super::domain::{
-    CapacityRule, CapacityRuleFilter, CreateCapacityRuleInput, CreatePlanningWindowInput,
-    CreateScheduleBreakInInput, CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput,
-    ExportedBinaryDocument, FreezeSchedulePeriodInput, NotifyTeamsInput, NotifyTeamsResult,
-    PlanningAssigneeLane, PlanningGanttFilter, PlanningGanttSnapshot, PlanningWindow,
-    PlanningWindowFilter, RescheduleCommitmentInput, ScheduleBreakIn, ScheduleBreakInFilter,
-    ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, TeamCapacityLoad,
-    UpdateCapacityRuleInput, UpdatePlanningWindowInput,
+    CapacityRule, CapacityRuleFilter, CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput,
+    CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput,
+    NotifyTeamsInput, NotifyTeamsResult, PlanningAssigneeLane, PlanningGanttFilter, PlanningGanttSnapshot,
+    PlanningWindow, PlanningWindowFilter, RescheduleCommitmentInput, ScheduleBreakIn, ScheduleBreakInFilter,
+    ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, TeamCapacityLoad, UpdateCapacityRuleInput,
+    UpdatePlanningWindowInput,
 };
 
 const CAPACITY_COLS: &str = "id,entity_id,team_id,effective_start,effective_end,available_hours_per_day,max_overtime_hours_per_day,row_version,created_at,updated_at";
@@ -34,9 +31,8 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 }
 
 fn parse_rfc3339(value: &str, field: &str) -> AppResult<DateTime<Utc>> {
-    let parsed = DateTime::parse_from_rfc3339(value).map_err(|_| {
-        AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")])
-    })?;
+    let parsed = DateTime::parse_from_rfc3339(value)
+        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be a valid RFC3339 timestamp.")]))?;
     Ok(parsed.with_timezone(&Utc))
 }
 
@@ -60,9 +56,7 @@ fn hours_between(start: &str, end: &str) -> AppResult<f64> {
 fn map_capacity_rule(row: &QueryResult) -> AppResult<CapacityRule> {
     Ok(CapacityRule {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_id: row
-            .try_get("", "entity_id")
-            .map_err(|e| decode_err("entity_id", e))?,
+        entity_id: row.try_get("", "entity_id").map_err(|e| decode_err("entity_id", e))?,
         team_id: row.try_get("", "team_id").map_err(|e| decode_err("team_id", e))?,
         effective_start: row
             .try_get("", "effective_start")
@@ -79,21 +73,15 @@ fn map_capacity_rule(row: &QueryResult) -> AppResult<CapacityRule> {
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
-        updated_at: row
-            .try_get("", "updated_at")
-            .map_err(|e| decode_err("updated_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
+        updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
 
 fn map_planning_window(row: &QueryResult) -> AppResult<PlanningWindow> {
     Ok(PlanningWindow {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_id: row
-            .try_get("", "entity_id")
-            .map_err(|e| decode_err("entity_id", e))?,
+        entity_id: row.try_get("", "entity_id").map_err(|e| decode_err("entity_id", e))?,
         window_type: row
             .try_get("", "window_type")
             .map_err(|e| decode_err("window_type", e))?,
@@ -103,21 +91,15 @@ fn map_planning_window(row: &QueryResult) -> AppResult<PlanningWindow> {
         end_datetime: row
             .try_get("", "end_datetime")
             .map_err(|e| decode_err("end_datetime", e))?,
-        is_locked: row
-            .try_get("", "is_locked")
-            .map_err(|e| decode_err("is_locked", e))?,
+        is_locked: row.try_get("", "is_locked").map_err(|e| decode_err("is_locked", e))?,
         lock_reason: row
             .try_get("", "lock_reason")
             .map_err(|e| decode_err("lock_reason", e))?,
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
-        updated_at: row
-            .try_get("", "updated_at")
-            .map_err(|e| decode_err("updated_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
+        updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
 
@@ -130,9 +112,7 @@ fn map_commitment(row: &QueryResult) -> AppResult<ScheduleCommitment> {
         source_type: row
             .try_get("", "source_type")
             .map_err(|e| decode_err("source_type", e))?,
-        source_id: row
-            .try_get("", "source_id")
-            .map_err(|e| decode_err("source_id", e))?,
+        source_id: row.try_get("", "source_id").map_err(|e| decode_err("source_id", e))?,
         schedule_period_start: row
             .try_get("", "schedule_period_start")
             .map_err(|e| decode_err("schedule_period_start", e))?,
@@ -154,9 +134,7 @@ fn map_commitment(row: &QueryResult) -> AppResult<ScheduleCommitment> {
         committed_by_id: row
             .try_get("", "committed_by_id")
             .map_err(|e| decode_err("committed_by_id", e))?,
-        frozen_at: row
-            .try_get("", "frozen_at")
-            .map_err(|e| decode_err("frozen_at", e))?,
+        frozen_at: row.try_get("", "frozen_at").map_err(|e| decode_err("frozen_at", e))?,
         estimated_labor_cost: row
             .try_get("", "estimated_labor_cost")
             .map_err(|e| decode_err("estimated_labor_cost", e))?,
@@ -175,12 +153,8 @@ fn map_commitment(row: &QueryResult) -> AppResult<ScheduleCommitment> {
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
-        updated_at: row
-            .try_get("", "updated_at")
-            .map_err(|e| decode_err("updated_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
+        updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
 
@@ -193,33 +167,23 @@ fn map_change_log(row: &QueryResult) -> AppResult<ScheduleChangeLogEntry> {
         action_type: row
             .try_get("", "action_type")
             .map_err(|e| decode_err("action_type", e))?,
-        actor_id: row
-            .try_get("", "actor_id")
-            .map_err(|e| decode_err("actor_id", e))?,
+        actor_id: row.try_get("", "actor_id").map_err(|e| decode_err("actor_id", e))?,
         field_changed: row
             .try_get("", "field_changed")
             .map_err(|e| decode_err("field_changed", e))?,
-        old_value: row
-            .try_get("", "old_value")
-            .map_err(|e| decode_err("old_value", e))?,
-        new_value: row
-            .try_get("", "new_value")
-            .map_err(|e| decode_err("new_value", e))?,
+        old_value: row.try_get("", "old_value").map_err(|e| decode_err("old_value", e))?,
+        new_value: row.try_get("", "new_value").map_err(|e| decode_err("new_value", e))?,
         reason_code: row
             .try_get("", "reason_code")
             .map_err(|e| decode_err("reason_code", e))?,
         reason_note: row
             .try_get("", "reason_note")
             .map_err(|e| decode_err("reason_note", e))?,
-        reason: row
-            .try_get("", "reason")
-            .map_err(|e| decode_err("reason", e))?,
+        reason: row.try_get("", "reason").map_err(|e| decode_err("reason", e))?,
         details_json: row
             .try_get("", "details_json")
             .map_err(|e| decode_err("details_json", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
     })
 }
 
@@ -271,16 +235,11 @@ fn map_schedule_break_in(row: &QueryResult) -> AppResult<ScheduleBreakIn> {
         created_by_id: row
             .try_get("", "created_by_id")
             .map_err(|e| decode_err("created_by_id", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
     })
 }
 
-async fn get_commitment(
-    db: &impl ConnectionTrait,
-    commitment_id: i64,
-) -> AppResult<ScheduleCommitment> {
+async fn get_commitment(db: &impl ConnectionTrait, commitment_id: i64) -> AppResult<ScheduleCommitment> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -367,11 +326,7 @@ async fn validate_capacity_overlap(
     Ok(())
 }
 
-async fn find_locked_window(
-    db: &impl ConnectionTrait,
-    start: &str,
-    end: &str,
-) -> AppResult<Option<PlanningWindow>> {
+async fn find_locked_window(db: &impl ConnectionTrait, start: &str, end: &str) -> AppResult<Option<PlanningWindow>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -449,9 +404,7 @@ async fn enforce_candidate_ready(
     let source_type: String = row
         .try_get("", "source_type")
         .map_err(|e| decode_err("source_type", e))?;
-    let source_id: i64 = row
-        .try_get("", "source_id")
-        .map_err(|e| decode_err("source_id", e))?;
+    let source_id: i64 = row.try_get("", "source_id").map_err(|e| decode_err("source_id", e))?;
     Ok((source_type, source_id))
 }
 
@@ -592,10 +545,7 @@ fn is_valid_break_in_reason(reason: &str) -> bool {
     )
 }
 
-async fn resolve_user_personnel_id(
-    db: &impl ConnectionTrait,
-    user_id: i64,
-) -> AppResult<Option<i64>> {
+async fn resolve_user_personnel_id(db: &impl ConnectionTrait, user_id: i64) -> AppResult<Option<i64>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -755,14 +705,8 @@ async fn run_commitment_gates(
     actor_id: i64,
     exclude_commitment_id: Option<i64>,
 ) -> AppResult<CommitmentGateResult> {
-    validate_window(
-        committed_start,
-        committed_end,
-        "committed_start",
-        "committed_end",
-    )?;
-    let (source_type, source_id) =
-        enforce_candidate_ready(tx, candidate_id, expected_candidate_row_version).await?;
+    validate_window(committed_start, committed_end, "committed_start", "committed_end")?;
+    let (source_type, source_id) = enforce_candidate_ready(tx, candidate_id, expected_candidate_row_version).await?;
 
     if let Some(window) = find_locked_window(tx, committed_start, committed_end).await? {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -771,9 +715,14 @@ async fn run_commitment_gates(
         )]));
     }
 
-    let (capacity_ok, nearest_feasible_window) =
-        compute_capacity_gate(tx, assigned_team_id, committed_start, committed_end, exclude_commitment_id)
-            .await?;
+    let (capacity_ok, nearest_feasible_window) = compute_capacity_gate(
+        tx,
+        assigned_team_id,
+        committed_start,
+        committed_end,
+        exclude_commitment_id,
+    )
+    .await?;
     if !capacity_ok {
         return Err(AppError::ValidationFailed(vec![
             "Capacity gate failed: team load exceeds capacity + overtime for selected period.".to_string(),
@@ -781,22 +730,10 @@ async fn run_commitment_gates(
     }
 
     if let Some(personnel_id) = assigned_personnel_id {
-        enforce_assignee_availability(
-            tx,
-            personnel_id,
-            committed_start,
-            committed_end,
-        )
-        .await?;
+        enforce_assignee_availability(tx, personnel_id, committed_start, committed_end).await?;
 
-        let overlaps = check_double_booking(
-            tx,
-            personnel_id,
-            committed_start,
-            committed_end,
-            exclude_commitment_id,
-        )
-        .await?;
+        let overlaps =
+            check_double_booking(tx, personnel_id, committed_start, committed_end, exclude_commitment_id).await?;
         if overlaps > 0 && !allow_double_booking_override {
             return Err(AppError::ValidationFailed(vec![
                 "Double-booking detected. Provide explicit override reason.".to_string(),
@@ -809,8 +746,7 @@ async fn run_commitment_gates(
                 .filter(|v| !v.is_empty())
                 .ok_or_else(|| {
                     AppError::ValidationFailed(vec![
-                        "Override reason is required when bypassing double-booking prevention."
-                            .to_string(),
+                        "Override reason is required when bypassing double-booking prevention.".to_string(),
                     ])
                 })?;
             append_change_log(
@@ -837,11 +773,8 @@ async fn run_commitment_gates(
         }
     }
 
-    let estimated_labor_cost =
-        estimate_labor_cost(tx, assigned_personnel_id, committed_start, committed_end).await?;
-    let cost_variance_warning = if let (Some(cost), Some(threshold)) =
-        (estimated_labor_cost, budget_threshold)
-    {
+    let estimated_labor_cost = estimate_labor_cost(tx, assigned_personnel_id, committed_start, committed_end).await?;
+    let cost_variance_warning = if let (Some(cost), Some(threshold)) = (estimated_labor_cost, budget_threshold) {
         i64::from(cost > threshold)
     } else {
         0
@@ -856,10 +789,7 @@ async fn run_commitment_gates(
     })
 }
 
-pub async fn list_capacity_rules(
-    db: &DatabaseConnection,
-    filter: CapacityRuleFilter,
-) -> AppResult<Vec<CapacityRule>> {
+pub async fn list_capacity_rules(db: &DatabaseConnection, filter: CapacityRuleFilter) -> AppResult<Vec<CapacityRule>> {
     let mut where_sql = vec!["1 = 1".to_string()];
     let mut values: Vec<sea_orm::Value> = Vec::new();
     if let Some(entity_id) = filter.entity_id {
@@ -886,10 +816,7 @@ pub async fn list_capacity_rules(
     rows.iter().map(map_capacity_rule).collect()
 }
 
-pub async fn create_capacity_rule(
-    db: &DatabaseConnection,
-    input: CreateCapacityRuleInput,
-) -> AppResult<CapacityRule> {
+pub async fn create_capacity_rule(db: &DatabaseConnection, input: CreateCapacityRuleInput) -> AppResult<CapacityRule> {
     if input.available_hours_per_day < 0.0 || input.max_overtime_hours_per_day < 0.0 {
         return Err(AppError::ValidationFailed(vec![
             "Capacity rule hours must be non-negative.".to_string(),
@@ -914,25 +841,22 @@ pub async fn create_capacity_rule(
 
     let inserted = db
         .execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO capacity_rules
+            DbBackend::Sqlite,
+            "INSERT INTO capacity_rules
             (entity_id, team_id, effective_start, effective_end, available_hours_per_day, max_overtime_hours_per_day)
          VALUES (?, ?, ?, ?, ?, ?)",
-        [
-            input.entity_id.into(),
-            input.team_id.into(),
-            input.effective_start.into(),
-            input.effective_end.into(),
-            input.available_hours_per_day.into(),
-            input.max_overtime_hours_per_day.into(),
-        ],
-    ))
-        .await?;
-    let id = i64::try_from(inserted.last_insert_id()).map_err(|_| {
-        AppError::Internal(anyhow::anyhow!(
-            "schedule_commitments last_insert_id does not fit i64"
+            [
+                input.entity_id.into(),
+                input.team_id.into(),
+                input.effective_start.into(),
+                input.effective_end.into(),
+                input.available_hours_per_day.into(),
+                input.max_overtime_hours_per_day.into(),
+            ],
         ))
-    })?;
+        .await?;
+    let id = i64::try_from(inserted.last_insert_id())
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_commitments last_insert_id does not fit i64")))?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -970,13 +894,9 @@ pub async fn update_capacity_rule(
             "Capacity rule was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
-    let effective_start = input
-        .effective_start
-        .unwrap_or_else(|| current.effective_start.clone());
+    let effective_start = input.effective_start.unwrap_or_else(|| current.effective_start.clone());
     let effective_end = input.effective_end.or(current.effective_end.clone());
-    let available_hours = input
-        .available_hours_per_day
-        .unwrap_or(current.available_hours_per_day);
+    let available_hours = input.available_hours_per_day.unwrap_or(current.available_hours_per_day);
     let overtime_hours = input
         .max_overtime_hours_per_day
         .unwrap_or(current.max_overtime_hours_per_day);
@@ -1070,25 +990,22 @@ pub async fn create_planning_window(
     )?;
     let inserted = db
         .execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO planning_windows
+            DbBackend::Sqlite,
+            "INSERT INTO planning_windows
             (entity_id, window_type, start_datetime, end_datetime, is_locked, lock_reason)
          VALUES (?, ?, ?, ?, ?, ?)",
-        [
-            input.entity_id.into(),
-            input.window_type.into(),
-            input.start_datetime.into(),
-            input.end_datetime.into(),
-            i64::from(input.is_locked.unwrap_or(false)).into(),
-            input.lock_reason.into(),
-        ],
-    ))
-        .await?;
-    let id = i64::try_from(inserted.last_insert_id()).map_err(|_| {
-        AppError::Internal(anyhow::anyhow!(
-            "schedule_commitments last_insert_id does not fit i64"
+            [
+                input.entity_id.into(),
+                input.window_type.into(),
+                input.start_datetime.into(),
+                input.end_datetime.into(),
+                i64::from(input.is_locked.unwrap_or(false)).into(),
+                input.lock_reason.into(),
+            ],
         ))
-    })?;
+        .await?;
+    let id = i64::try_from(inserted.last_insert_id())
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_commitments last_insert_id does not fit i64")))?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1127,16 +1044,9 @@ pub async fn update_planning_window(
         ]));
     }
     let window_type = input.window_type.unwrap_or(current.window_type.clone());
-    let start_datetime = input
-        .start_datetime
-        .unwrap_or(current.start_datetime.clone());
+    let start_datetime = input.start_datetime.unwrap_or(current.start_datetime.clone());
     let end_datetime = input.end_datetime.unwrap_or(current.end_datetime.clone());
-    validate_window(
-        &start_datetime,
-        &end_datetime,
-        "start_datetime",
-        "end_datetime",
-    )?;
+    validate_window(&start_datetime, &end_datetime, "start_datetime", "end_datetime")?;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -1285,8 +1195,7 @@ pub async fn create_schedule_break_in(
     let reason = input.break_in_reason.trim().to_ascii_lowercase();
     if !is_valid_break_in_reason(&reason) {
         return Err(AppError::ValidationFailed(vec![
-            "break_in_reason must be one of: emergency, safety, production_loss, regulatory, other."
-                .to_string(),
+            "break_in_reason must be one of: emergency, safety, production_loss, regulatory, other.".to_string(),
         ]));
     }
     let dangerous_override_reason = input
@@ -1322,8 +1231,7 @@ pub async fn create_schedule_break_in(
         && dangerous_override_reason.is_none()
     {
         return Err(AppError::ValidationFailed(vec![
-            "Emergency and safety break-ins require approver evidence or dangerous_override_reason."
-                .to_string(),
+            "Emergency and safety break-ins require approver evidence or dangerous_override_reason.".to_string(),
         ]));
     }
     if approved_by_user_id.is_none() && dangerous_override_reason.is_some() {
@@ -1341,24 +1249,17 @@ pub async fn create_schedule_break_in(
         .filter(|v| !v.is_empty());
 
     if let Some(personnel_id) = next_personnel_id {
-        if let Err(err) = enforce_assignee_availability(
-            &tx,
-            personnel_id,
-            &input.new_slot_start,
-            &input.new_slot_end,
-        )
-        .await
+        if let Err(err) =
+            enforce_assignee_availability(&tx, personnel_id, &input.new_slot_start, &input.new_slot_end).await
         {
             if !bypass_availability || override_reason.is_none() {
                 return Err(err);
             }
         }
-        let qualified =
-            assignee_matches_candidate_skills(&tx, current.schedule_candidate_id, personnel_id).await?;
+        let qualified = assignee_matches_candidate_skills(&tx, current.schedule_candidate_id, personnel_id).await?;
         if !qualified && (!bypass_qualification || override_reason.is_none()) {
             return Err(AppError::ValidationFailed(vec![
-                "Break-in assignee does not match required qualifications; override reason is required."
-                    .to_string(),
+                "Break-in assignee does not match required qualifications; override reason is required.".to_string(),
             ]));
         }
         let overlaps = check_double_booking(
@@ -1393,13 +1294,11 @@ pub async fn create_schedule_break_in(
     let locked_window = find_locked_window(&tx, &input.new_slot_start, &input.new_slot_end).await?;
     if locked_window.is_some() && dangerous_override_reason.is_none() {
         return Err(AppError::ValidationFailed(vec![
-            "Break-in intersects a locked window and requires dangerous_override_reason."
-                .to_string(),
+            "Break-in intersects a locked window and requires dangerous_override_reason.".to_string(),
         ]));
     }
 
-    let next_cost =
-        estimate_labor_cost(&tx, next_personnel_id, &input.new_slot_start, &input.new_slot_end).await?;
+    let next_cost = estimate_labor_cost(&tx, next_personnel_id, &input.new_slot_start, &input.new_slot_end).await?;
     let old_cost = current.estimated_labor_cost.unwrap_or(0.0);
     let cost_delta = next_cost.map(|v| (v - old_cost).round() * 100.0 / 100.0);
     let next_period_start = parse_rfc3339(&input.new_slot_start, "new_slot_start")?
@@ -1465,11 +1364,8 @@ pub async fn create_schedule_break_in(
             ],
         ))
         .await?;
-    let break_in_id = i64::try_from(inserted.last_insert_id()).map_err(|_| {
-        AppError::Internal(anyhow::anyhow!(
-            "schedule_break_ins last_insert_id does not fit i64"
-        ))
-    })?;
+    let break_in_id = i64::try_from(inserted.last_insert_id())
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_break_ins last_insert_id does not fit i64")))?;
 
     let reason_note = override_reason
         .clone()
@@ -1529,10 +1425,7 @@ pub async fn create_schedule_break_in(
         format!(
             "Break-in moved commitment #{} (reason: {}).",
             current.id,
-            payload
-                .get("reason_code")
-                .and_then(Value::as_str)
-                .unwrap_or("other")
+            payload.get("reason_code").and_then(Value::as_str).unwrap_or("other")
         ),
     )
     .await;
@@ -1626,11 +1519,8 @@ pub async fn create_schedule_commitment(
         ],
     ))
         .await?;
-    let id = i64::try_from(inserted.last_insert_id()).map_err(|_| {
-        AppError::Internal(anyhow::anyhow!(
-            "schedule_commitments last_insert_id does not fit i64"
-        ))
-    })?;
+    let id = i64::try_from(inserted.last_insert_id())
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_commitments last_insert_id does not fit i64")))?;
     append_change_log(
         &tx,
         Some(id),
@@ -1781,12 +1671,7 @@ pub async fn freeze_schedule_period(
     actor_id: i64,
     input: FreezeSchedulePeriodInput,
 ) -> AppResult<i64> {
-    validate_window(
-        &input.period_start,
-        &input.period_end,
-        "period_start",
-        "period_end",
-    )?;
+    validate_window(&input.period_start, &input.period_end, "period_start", "period_end")?;
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -1808,10 +1693,7 @@ pub async fn freeze_schedule_period(
                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE committed_start < ?
                AND committed_end > ?",
-            [
-                input.period_end.clone().into(),
-                input.period_start.clone().into(),
-            ],
+            [input.period_end.clone().into(), input.period_start.clone().into()],
         ))
         .await?;
     append_change_log(
@@ -1843,12 +1725,7 @@ pub async fn get_planning_gantt_snapshot(
     db: &DatabaseConnection,
     filter: PlanningGanttFilter,
 ) -> AppResult<PlanningGanttSnapshot> {
-    validate_window(
-        &filter.period_start,
-        &filter.period_end,
-        "period_start",
-        "period_end",
-    )?;
+    validate_window(&filter.period_start, &filter.period_end, "period_start", "period_end")?;
     let commitments = list_schedule_commitments(
         db,
         ScheduleCommitmentFilter {
@@ -1887,27 +1764,15 @@ pub async fn get_planning_gantt_snapshot(
                    AND (effective_end IS NULL OR effective_end >= ?)
                  ORDER BY effective_start DESC
                  LIMIT 1",
-                [
-                    (*team_id).into(),
-                    day.clone().into(),
-                    day.clone().into(),
-                ],
+                [(*team_id).into(), day.clone().into(), day.clone().into()],
             ))
             .await?;
         if let Some(cap_row) = cap_row {
-            row.available_hours = cap_row
-                .try_get("", "available_hours_per_day")
-                .unwrap_or(8.0);
-            row.overtime_hours = cap_row
-                .try_get("", "max_overtime_hours_per_day")
-                .unwrap_or(0.0);
+            row.available_hours = cap_row.try_get("", "available_hours_per_day").unwrap_or(8.0);
+            row.overtime_hours = cap_row.try_get("", "max_overtime_hours_per_day").unwrap_or(0.0);
         }
         let denom = row.available_hours + row.overtime_hours;
-        row.utilization_ratio = if denom <= 0.0 {
-            1.0
-        } else {
-            row.committed_hours / denom
-        };
+        row.utilization_ratio = if denom <= 0.0 { 1.0 } else { row.committed_hours / denom };
     }
 
     let mut personnel_ids = BTreeSet::new();
@@ -1989,8 +1854,7 @@ pub async fn get_planning_gantt_snapshot(
             [filter.period_end.clone().into(), filter.period_start.clone().into()],
         ))
         .await?;
-    let locked_windows: Vec<PlanningWindow> =
-        locked_rows.iter().map(map_planning_window).collect::<AppResult<_>>()?;
+    let locked_windows: Vec<PlanningWindow> = locked_rows.iter().map(map_planning_window).collect::<AppResult<_>>()?;
 
     Ok(PlanningGanttSnapshot {
         period_start: filter.period_start,
@@ -2003,10 +1867,7 @@ pub async fn get_planning_gantt_snapshot(
 }
 
 fn pdf_escape(input: &str) -> String {
-    input
-        .replace('\\', "\\\\")
-        .replace('(', "\\(")
-        .replace(')', "\\)")
+    input.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)")
 }
 
 fn build_simple_pdf(lines: &[String], paper_size: &str) -> Vec<u8> {
@@ -2116,10 +1977,7 @@ pub async fn export_planning_gantt_pdf(
     let paper_size = input.paper_size.unwrap_or_else(|| "A4".to_string());
     let bytes = build_simple_pdf(&lines, &paper_size);
     Ok(ExportedBinaryDocument {
-        file_name: format!(
-            "planning-gantt-{}-{}.pdf",
-            snapshot.period_start, snapshot.period_end
-        ),
+        file_name: format!("planning-gantt-{}-{}.pdf", snapshot.period_start, snapshot.period_end),
         mime_type: "application/pdf".to_string(),
         bytes,
     })
@@ -2148,12 +2006,7 @@ pub async fn notify_schedule_teams(
     actor_id: i64,
     input: NotifyTeamsInput,
 ) -> AppResult<NotifyTeamsResult> {
-    validate_window(
-        &input.period_start,
-        &input.period_end,
-        "period_start",
-        "period_end",
-    )?;
+    validate_window(&input.period_start, &input.period_end, "period_start", "period_end")?;
     let commitments = list_schedule_commitments(
         db,
         ScheduleCommitmentFilter {
@@ -2242,4 +2095,3 @@ pub async fn notify_schedule_teams(
         skipped_count: 0,
     })
 }
-

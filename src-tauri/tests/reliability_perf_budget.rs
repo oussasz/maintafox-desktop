@@ -1,7 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
-use maintafox_lib::reliability::compute::{
-    compute_reliability_kpis, KpiFailureEvent, ReliabilityKpiComputeInput,
-};
+use maintafox_lib::reliability::compute::{compute_reliability_kpis, KpiFailureEvent, ReliabilityKpiComputeInput};
 
 fn make_input(n: usize) -> ReliabilityKpiComputeInput {
     let p0: DateTime<Utc> = "2026-01-01T00:00:00Z".parse().unwrap();

@@ -6,8 +6,8 @@ use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
-use crate::state::AppState;
 use crate::require_session;
+use crate::state::AppState;
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct ActivityFilter {
@@ -192,11 +192,7 @@ pub async fn list_activity_events(
 
     let rows = state
         .db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            values,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
     let mut out = Vec::with_capacity(rows.len());
@@ -207,10 +203,7 @@ pub async fn list_activity_events(
 }
 
 #[tauri::command]
-pub async fn get_activity_event(
-    event_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<ActivityEventDetail> {
+pub async fn get_activity_event(event_id: i64, state: State<'_, AppState>) -> AppResult<ActivityEventDetail> {
     let user = require_session!(state);
     let access = resolve_log_view_access(&state, user.user_id).await?;
 
@@ -275,11 +268,7 @@ pub async fn get_activity_event(
 
         state
             .db
-            .query_all(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                corr_sql,
-                corr_values,
-            ))
+            .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, corr_sql, corr_values))
             .await?
     } else {
         Vec::new()
@@ -308,16 +297,13 @@ pub async fn get_activity_event(
 }
 
 #[tauri::command]
-pub async fn save_activity_filter(
-    payload: SaveFilterInput,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn save_activity_filter(payload: SaveFilterInput, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
     let _ = resolve_log_view_access(&state, user.user_id).await?;
 
     if payload.view_name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "view_name must not be empty".to_string(),
+            "view_name must not be empty".to_string()
         ]));
     }
 
@@ -358,9 +344,7 @@ pub async fn save_activity_filter(
 }
 
 #[tauri::command]
-pub async fn list_saved_activity_filters(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<SavedActivityFilter>> {
+pub async fn list_saved_activity_filters(state: State<'_, AppState>) -> AppResult<Vec<SavedActivityFilter>> {
     let user = require_session!(state);
     let _ = resolve_log_view_access(&state, user.user_id).await?;
 
@@ -381,8 +365,7 @@ pub async fn list_saved_activity_filters(
         let raw_filter = row
             .try_get::<String>("", "filter_json")
             .unwrap_or_else(|_| "{}".to_string());
-        let parsed = serde_json::from_str::<serde_json::Value>(&raw_filter)
-            .unwrap_or_else(|_| serde_json::json!({}));
+        let parsed = serde_json::from_str::<serde_json::Value>(&raw_filter).unwrap_or_else(|_| serde_json::json!({}));
         out.push(SavedActivityFilter {
             id: row.try_get::<i64>("", "id").unwrap_or_default(),
             user_id: row.try_get::<i64>("", "user_id").unwrap_or_default(),
@@ -397,10 +380,7 @@ pub async fn list_saved_activity_filters(
 
 /// Build a correlated event chain from [`event_links`] (BFS). Used by [`get_event_chain`]
 /// and by integration tests that need the same graph walk without IPC.
-pub async fn build_event_chain(
-    db: &DatabaseConnection,
-    payload: &EventChainInput,
-) -> AppResult<EventChain> {
+pub async fn build_event_chain(db: &DatabaseConnection, payload: &EventChainInput) -> AppResult<EventChain> {
     let mut queue: VecDeque<(String, i64)> = VecDeque::new();
     let mut visited: HashSet<(String, i64)> = HashSet::new();
     let mut events: Vec<EventChainNode> = Vec::new();
@@ -476,21 +456,16 @@ pub async fn build_event_chain(
 }
 
 #[tauri::command]
-pub async fn get_event_chain(
-    payload: EventChainInput,
-    state: State<'_, AppState>,
-) -> AppResult<EventChain> {
+pub async fn get_event_chain(payload: EventChainInput, state: State<'_, AppState>) -> AppResult<EventChain> {
     let user = require_session!(state);
     let access = resolve_log_view_access(&state, user.user_id).await?;
     if !access.has_global {
         if normalize_event_table(&payload.root_table) != "activity_events" {
             return Err(AppError::PermissionDenied(
-                "Permission denied: entity-scoped log.view can only open activity event chains"
-                    .to_string(),
+                "Permission denied: entity-scoped log.view can only open activity event chains".to_string(),
             ));
         }
-        let entity_scope_id =
-            fetch_activity_entity_scope_id(&state.db, payload.root_event_id).await?;
+        let entity_scope_id = fetch_activity_entity_scope_id(&state.db, payload.root_event_id).await?;
         match entity_scope_id {
             Some(entity_id) if access.accessible_entities.contains(&entity_id) => {}
             _ => {
@@ -515,35 +490,24 @@ fn parse_activity_summary(row: &sea_orm::QueryResult) -> ActivityEventSummary {
         event_class: row.try_get::<String>("", "event_class").unwrap_or_default(),
         event_code: row.try_get::<String>("", "event_code").unwrap_or_default(),
         source_module: row.try_get::<String>("", "source_module").unwrap_or_default(),
-        source_record_type: row
-            .try_get::<Option<String>>("", "source_record_type")
-            .unwrap_or(None),
-        source_record_id: row
-            .try_get::<Option<String>>("", "source_record_id")
-            .unwrap_or(None),
+        source_record_type: row.try_get::<Option<String>>("", "source_record_type").unwrap_or(None),
+        source_record_id: row.try_get::<Option<String>>("", "source_record_id").unwrap_or(None),
         entity_scope_id: row.try_get::<Option<i64>>("", "entity_scope_id").unwrap_or(None),
         actor_id: row.try_get::<Option<i64>>("", "actor_id").unwrap_or(None),
-        actor_username: row
-            .try_get::<Option<String>>("", "actor_username")
-            .unwrap_or(None),
+        actor_username: row.try_get::<Option<String>>("", "actor_username").unwrap_or(None),
         happened_at: row.try_get::<String>("", "happened_at").unwrap_or_default(),
         severity: row
             .try_get::<String>("", "severity")
             .unwrap_or_else(|_| "info".to_string()),
         summary_json,
-        correlation_id: row
-            .try_get::<Option<String>>("", "correlation_id")
-            .unwrap_or(None),
+        correlation_id: row.try_get::<Option<String>>("", "correlation_id").unwrap_or(None),
         visibility_scope: row
             .try_get::<String>("", "visibility_scope")
             .unwrap_or_else(|_| "global".to_string()),
     }
 }
 
-async fn resolve_accessible_entity_scope_ids(
-    state: &State<'_, AppState>,
-    user_id: i32,
-) -> AppResult<Vec<i64>> {
+async fn resolve_accessible_entity_scope_ids(state: &State<'_, AppState>, user_id: i32) -> AppResult<Vec<i64>> {
     let rows = state
         .db
         .query_all(Statement::from_sql_and_values(
@@ -564,10 +528,7 @@ async fn resolve_accessible_entity_scope_ids(
 
     let mut ids = Vec::new();
     for row in rows {
-        if let Some(raw) = row
-            .try_get::<Option<String>>("", "scope_reference")
-            .unwrap_or(None)
-        {
+        if let Some(raw) = row.try_get::<Option<String>>("", "scope_reference").unwrap_or(None) {
             if let Ok(parsed) = raw.parse::<i64>() {
                 ids.push(parsed);
             }
@@ -576,10 +537,7 @@ async fn resolve_accessible_entity_scope_ids(
     Ok(ids)
 }
 
-async fn resolve_log_view_access(
-    state: &State<'_, AppState>,
-    user_id: i32,
-) -> AppResult<LogViewAccess> {
+async fn resolve_log_view_access(state: &State<'_, AppState>, user_id: i32) -> AppResult<LogViewAccess> {
     let has_global = crate::auth::rbac::check_permission_cached(
         &state.db,
         &state.permission_cache,
@@ -608,10 +566,7 @@ async fn resolve_log_view_access(
     })
 }
 
-async fn fetch_activity_entity_scope_id(
-    db: &DatabaseConnection,
-    event_id: i64,
-) -> AppResult<Option<i64>> {
+async fn fetch_activity_entity_scope_id(db: &DatabaseConnection, event_id: i64) -> AppResult<Option<i64>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -623,9 +578,7 @@ async fn fetch_activity_entity_scope_id(
             entity: "activity_event".to_string(),
             id: event_id.to_string(),
         })?;
-    Ok(row
-        .try_get::<Option<i64>>("", "entity_scope_id")
-        .unwrap_or(None))
+    Ok(row.try_get::<Option<i64>>("", "entity_scope_id").unwrap_or(None))
 }
 
 fn normalize_event_table(table: &str) -> String {
@@ -674,9 +627,7 @@ async fn fetch_chain_node_db(
         happened_at: row.try_get::<String>("", "happened_at").unwrap_or_default(),
         event_code: row.try_get::<Option<String>>("", "event_code").unwrap_or(None),
         action_code: row.try_get::<Option<String>>("", "action_code").unwrap_or(None),
-        source_module: row
-            .try_get::<Option<String>>("", "source_module")
-            .unwrap_or(None),
+        source_module: row.try_get::<Option<String>>("", "source_module").unwrap_or(None),
         link_type,
     }))
 }

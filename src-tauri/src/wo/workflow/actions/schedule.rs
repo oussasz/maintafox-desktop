@@ -25,10 +25,7 @@ pub struct WoScheduleSaveInput {
     pub planned_downtime_hours: Option<f64>,
 }
 
-pub async fn save_schedule(
-    db: &DatabaseConnection,
-    input: WoScheduleSaveInput,
-) -> AppResult<WorkOrder> {
+pub async fn save_schedule(db: &DatabaseConnection, input: WoScheduleSaveInput) -> AppResult<WorkOrder> {
     let start = parse_utc_timestamp(&input.planned_start, "planned_start")?;
     let end = parse_utc_timestamp(&input.planned_end, "planned_end")?;
     if end < start {

@@ -51,37 +51,21 @@ fn shift_hours_in_window(
     if shift.is_rest_day {
         return 0.0;
     }
-    let start_dt = Utc.from_utc_datetime(&NaiveDateTime::new(
-        date_midnight_utc.date_naive(),
-        shift.shift_start,
-    ));
-    let mut end_dt = Utc.from_utc_datetime(&NaiveDateTime::new(
-        date_midnight_utc.date_naive(),
-        shift.shift_end,
-    ));
+    let start_dt = Utc.from_utc_datetime(&NaiveDateTime::new(date_midnight_utc.date_naive(), shift.shift_start));
+    let mut end_dt = Utc.from_utc_datetime(&NaiveDateTime::new(date_midnight_utc.date_naive(), shift.shift_end));
     if end_dt <= start_dt {
         end_dt += Duration::days(1);
     }
     overlap_hours(window_start, window_end, start_dt, end_dt)
 }
 
-fn compute_scheduled_hours(
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
-    shifts: &[ScheduleShift],
-) -> f64 {
+fn compute_scheduled_hours(start: DateTime<Utc>, end: DateTime<Utc>, shifts: &[ScheduleShift]) -> f64 {
     if end <= start {
         return 0.0;
     }
     let mut total = 0.0_f64;
-    let mut day = start
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .expect("00:00 is always valid");
-    let end_day = end
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .expect("00:00 is always valid");
+    let mut day = start.date_naive().and_hms_opt(0, 0, 0).expect("00:00 is always valid");
+    let end_day = end.date_naive().and_hms_opt(0, 0, 0).expect("00:00 is always valid");
 
     while day <= end_day {
         let day_dt = Utc.from_utc_datetime(&day);
@@ -155,8 +139,7 @@ pub async fn infer_exposure_hours(
     let p1 = parse_dt_utc(period_end)?;
     let now = Utc::now();
     let window_end = if p1 < now { p1 } else { now };
-    let exclude_injected_sources =
-        crate::commands::product_license::is_product_activation_complete(db).await?;
+    let exclude_injected_sources = crate::commands::product_license::is_product_activation_complete(db).await?;
     if exclude_injected_sources {
         info!(
             target: "maintafox",
@@ -182,9 +165,7 @@ pub async fn infer_exposure_hours(
 
     let schedule_reference_value_id: Option<i64> = eq_row
         .try_get("", "rams_schedule_reference_value_id")
-        .map_err(|e| {
-            AppError::SyncError(format!("decode rams_schedule_reference_value_id failed: {e}"))
-        })?;
+        .map_err(|e| AppError::SyncError(format!("decode rams_schedule_reference_value_id failed: {e}")))?;
     let ku: f64 = eq_row
         .try_get("", "ku")
         .map_err(|e| AppError::SyncError(format!("decode ku failed: {e}")))?;
@@ -204,11 +185,7 @@ pub async fn infer_exposure_hours(
                    ))
              ORDER BY closed_at DESC
              LIMIT 1",
-            [
-                equipment_id.into(),
-                now_s.into(),
-                exclude_injector_wos.into(),
-            ],
+            [equipment_id.into(), now_s.into(), exclude_injector_wos.into()],
         ))
         .await?;
     let last_closed_at: Option<String> = last_wo_row
@@ -218,14 +195,8 @@ pub async fn infer_exposure_hours(
         })
         .transpose()?;
 
-    let fallback_hours = runtime_exposure_sum_hours(
-        db,
-        equipment_id,
-        period_start,
-        period_end,
-        exclude_injected_sources,
-    )
-    .await?;
+    let fallback_hours =
+        runtime_exposure_sum_hours(db, equipment_id, period_start, period_end, exclude_injected_sources).await?;
 
     let Some(last_closed_at_s) = last_closed_at.clone() else {
         let out = ExposureComputation {
@@ -246,11 +217,7 @@ pub async fn infer_exposure_hours(
         return Ok(out);
     };
     let last_closed_at_dt = parse_dt_utc(&last_closed_at_s)?;
-    let window_start = if last_closed_at_dt > p0 {
-        last_closed_at_dt
-    } else {
-        p0
-    };
+    let window_start = if last_closed_at_dt > p0 { last_closed_at_dt } else { p0 };
     if window_end <= window_start {
         let out = ExposureComputation {
             hours: fallback_hours,
@@ -400,22 +367,14 @@ mod tests {
     #[test]
     fn computes_partial_overlap() {
         let shifts = vec![shift(1, "08:00", "16:00", false)];
-        let hours = compute_scheduled_hours(
-            dt("2026-04-06T10:00:00Z"),
-            dt("2026-04-06T12:30:00Z"),
-            &shifts,
-        );
+        let hours = compute_scheduled_hours(dt("2026-04-06T10:00:00Z"), dt("2026-04-06T12:30:00Z"), &shifts);
         assert!((hours - 2.5).abs() < 0.0001, "expected 2.5h, got {hours}");
     }
 
     #[test]
     fn computes_overnight_shift() {
         let shifts = vec![shift(1, "22:00", "06:00", false)];
-        let hours = compute_scheduled_hours(
-            dt("2026-04-06T21:00:00Z"),
-            dt("2026-04-07T04:00:00Z"),
-            &shifts,
-        );
+        let hours = compute_scheduled_hours(dt("2026-04-06T21:00:00Z"), dt("2026-04-07T04:00:00Z"), &shifts);
         assert!((hours - 6.0).abs() < 0.0001, "expected 6h, got {hours}");
     }
 

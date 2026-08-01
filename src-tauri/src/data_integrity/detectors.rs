@@ -86,8 +86,12 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
         .await?;
     for row in &rows {
         let fd_id: i64 = row.try_get("", "fd_id").map_err(|e| map_err("fd_id", e))?;
-        let wo_id: i64 = row.try_get("", "work_order_id").map_err(|e| map_err("work_order_id", e))?;
-        let fmid: i64 = row.try_get("", "failure_mode_id").map_err(|e| map_err("failure_mode_id", e))?;
+        let wo_id: i64 = row
+            .try_get("", "work_order_id")
+            .map_err(|e| map_err("work_order_id", e))?;
+        let fmid: i64 = row
+            .try_get("", "failure_mode_id")
+            .map_err(|e| map_err("failure_mode_id", e))?;
         insert_finding(
             &txn,
             "warning",
@@ -112,7 +116,9 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
         .await?;
     for row in &neg {
         let sid: i64 = row.try_get("", "id").map_err(|e| map_err("id", e))?;
-        let wo_id: i64 = row.try_get("", "work_order_id").map_err(|e| map_err("work_order_id", e))?;
+        let wo_id: i64 = row
+            .try_get("", "work_order_id")
+            .map_err(|e| map_err("work_order_id", e))?;
         insert_finding(
             &txn,
             "error",
@@ -129,13 +135,14 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
     let unclosed = txn
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, work_order_id FROM work_order_downtime_segments WHERE ended_at IS NULL"
-                .to_string(),
+            "SELECT id, work_order_id FROM work_order_downtime_segments WHERE ended_at IS NULL".to_string(),
         ))
         .await?;
     for row in &unclosed {
         let sid: i64 = row.try_get("", "id").map_err(|e| map_err("id", e))?;
-        let wo_id: i64 = row.try_get("", "work_order_id").map_err(|e| map_err("work_order_id", e))?;
+        let wo_id: i64 = row
+            .try_get("", "work_order_id")
+            .map_err(|e| map_err("work_order_id", e))?;
         insert_finding(
             &txn,
             "warning",
@@ -159,7 +166,9 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
         .await?;
     for row in &wo_rows {
         let wo_id: i64 = row.try_get("", "id").map_err(|e| map_err("id", e))?;
-        let a_start: String = row.try_get("", "actual_start").map_err(|e| map_err("actual_start", e))?;
+        let a_start: String = row
+            .try_get("", "actual_start")
+            .map_err(|e| map_err("actual_start", e))?;
         let a_end: String = row.try_get("", "actual_end").map_err(|e| map_err("actual_end", e))?;
         let win_row = txn
             .query_one(Statement::from_sql_and_values(
@@ -169,11 +178,7 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
             ))
             .await?
             .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("win")))?;
-        let window_h: f64 = win_row
-            .try_get::<Option<f64>>("", "w")
-            .ok()
-            .flatten()
-            .unwrap_or(0.0);
+        let window_h: f64 = win_row.try_get::<Option<f64>>("", "w").ok().flatten().unwrap_or(0.0);
 
         let sum_row = txn
             .query_one(Statement::from_sql_and_values(
@@ -185,11 +190,7 @@ pub async fn run_data_integrity_detectors(db: &DatabaseConnection) -> AppResult<
             ))
             .await?
             .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("sum")))?;
-        let seg_sum: f64 = sum_row
-            .try_get::<Option<f64>>("", "s")
-            .ok()
-            .flatten()
-            .unwrap_or(0.0);
+        let seg_sum: f64 = sum_row.try_get::<Option<f64>>("", "s").ok().flatten().unwrap_or(0.0);
 
         if seg_sum > window_h + EPS_HOURS && window_h >= 0.0 {
             insert_finding(

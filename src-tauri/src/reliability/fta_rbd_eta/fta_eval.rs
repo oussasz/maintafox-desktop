@@ -34,10 +34,7 @@ fn eval_node(
         return Err(format!("FTA cycle at '{id}'"));
     }
     visiting.insert(id.to_string());
-    let node = graph
-        .nodes
-        .get(id)
-        .ok_or_else(|| format!("FTA missing node '{id}'"))?;
+    let node = graph.nodes.get(id).ok_or_else(|| format!("FTA missing node '{id}'"))?;
     let r: Result<f64, String> = match node {
         FtaNodeKind::Basic { p } => {
             let v = if failed.contains(id) { 1.0 } else { *p };

@@ -21,8 +21,7 @@ const TIME_COST: u32 = 3;
 const PARALLELISM: u32 = 1;
 
 fn argon2_hasher() -> Argon2<'static> {
-    let params = Params::new(MEMORY_COST_KIB, TIME_COST, PARALLELISM, None)
-        .expect("argon2id(pin): invalid parameters");
+    let params = Params::new(MEMORY_COST_KIB, TIME_COST, PARALLELISM, None).expect("argon2id(pin): invalid parameters");
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
 }
 
@@ -39,12 +38,10 @@ pub fn hash_pin(pin: &str) -> AppResult<String> {
 
 /// Verify a PIN against a stored PHC hash.
 pub fn verify_pin(pin: &str, hash: &str) -> AppResult<bool> {
-    let parsed_hash = PasswordHash::new(hash)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("malformed pin hash in DB: {e}")))?;
+    let parsed_hash =
+        PasswordHash::new(hash).map_err(|e| AppError::Internal(anyhow::anyhow!("malformed pin hash in DB: {e}")))?;
 
-    Ok(argon2_hasher()
-        .verify_password(pin.as_bytes(), &parsed_hash)
-        .is_ok())
+    Ok(argon2_hasher().verify_password(pin.as_bytes(), &parsed_hash).is_ok())
 }
 
 /// Validate PIN format: 4-6 digits.

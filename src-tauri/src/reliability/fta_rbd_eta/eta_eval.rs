@@ -71,9 +71,7 @@ fn walk(
                 walk(graph, &b.target, pp, visiting, out)?;
             }
             if sum > 1.0 + 1e-6 {
-                return Err(format!(
-                    "Event tree branch probabilities sum to {sum} (>1) at '{id}'"
-                ));
+                return Err(format!("Event tree branch probabilities sum to {sum} (>1) at '{id}'"));
             }
         }
     }

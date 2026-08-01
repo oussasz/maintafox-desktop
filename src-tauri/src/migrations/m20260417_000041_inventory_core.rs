@@ -103,10 +103,8 @@ impl MigrationTrait for Migration {
             .await?;
         db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_articles_unit ON articles(unit_value_id)")
             .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_articles_criticality ON articles(criticality_value_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_articles_criticality ON articles(criticality_value_id)")
+            .await?;
         db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_locations_warehouse ON stock_locations(warehouse_id)")
             .await?;
         db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_balances_article ON stock_balances(article_id)")

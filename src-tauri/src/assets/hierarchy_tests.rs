@@ -142,8 +142,7 @@ mod tests {
         let node_type_id: i64 = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM org_node_types WHERE code = 'SITE' LIMIT 1"
-                    .to_string(),
+                "SELECT id FROM org_node_types WHERE code = 'SITE' LIMIT 1".to_string(),
             ))
             .await
             .expect("query node type")
@@ -158,12 +157,7 @@ mod tests {
               created_at, updated_at, row_version, structure_model_id) \
              VALUES (?, 'SITE-002', 'Second Site', ?, NULL, 'active', ?, ?, 1, \
                      (SELECT id FROM org_structure_models WHERE status = 'active' ORDER BY id DESC LIMIT 1))",
-            [
-                sync_id.into(),
-                node_type_id.into(),
-                now.clone().into(),
-                now.into(),
-            ],
+            [sync_id.into(), node_type_id.into(), now.clone().into(), now.into()],
         ))
         .await
         .expect("insert second org node");
@@ -196,11 +190,7 @@ mod tests {
     }
 
     /// Create an asset with a unique code and return its full record.
-    async fn create_test_asset(
-        db: &sea_orm::DatabaseConnection,
-        code: &str,
-        org_node_id: i64,
-    ) -> identity::Asset {
+    async fn create_test_asset(db: &sea_orm::DatabaseConnection, code: &str, org_node_id: i64) -> identity::Asset {
         identity::create_asset(
             db,
             CreateAssetPayload {
@@ -268,10 +258,7 @@ mod tests {
         match err {
             AppError::ValidationFailed(msgs) => {
                 let joined = msgs.join(" ");
-                assert!(
-                    joined.contains("cycle"),
-                    "error should mention cycle, got: {joined}"
-                );
+                assert!(joined.contains("cycle"), "error should mention cycle, got: {joined}");
             }
             other => panic!("expected ValidationFailed, got: {other:?}"),
         }
@@ -365,10 +352,7 @@ mod tests {
         match err {
             AppError::ValidationFailed(msgs) => {
                 let joined = msgs.join(" ");
-                assert!(
-                    joined.contains("cycle"),
-                    "error should mention cycle, got: {joined}"
-                );
+                assert!(joined.contains("cycle"), "error should mention cycle, got: {joined}");
             }
             other => panic!("expected ValidationFailed, got: {other:?}"),
         }
@@ -451,17 +435,15 @@ mod tests {
         .await
         .expect("link A→B");
 
-        assert!(link.effective_to.is_none(), "newly created link should have no effective_to");
+        assert!(
+            link.effective_to.is_none(),
+            "newly created link should have no effective_to"
+        );
 
         // Unlink
-        let unlinked = hierarchy::unlink_asset_hierarchy(
-            &db,
-            link.relation_id,
-            None,
-            1,
-        )
-        .await
-        .expect("unlink should succeed");
+        let unlinked = hierarchy::unlink_asset_hierarchy(&db, link.relation_id, None, 1)
+            .await
+            .expect("unlink should succeed");
 
         assert!(
             unlinked.effective_to.is_some(),
@@ -479,9 +461,7 @@ mod tests {
             .expect("query")
             .expect("row must still exist after unlink");
 
-        let eff_to: Option<String> = row
-            .try_get("", "effective_to")
-            .expect("effective_to column");
+        let eff_to: Option<String> = row.try_get("", "effective_to").expect("effective_to column");
         assert!(eff_to.is_some(), "effective_to must be set in DB");
     }
 
@@ -544,24 +524,14 @@ mod tests {
 
         // Move to second org node
         let moved = hierarchy::move_asset_org_node(
-            &db,
-            asset.id,
-            node_id_2,
-            1, // expected_row_version
+            &db, asset.id, node_id_2, 1, // expected_row_version
             1,
         )
         .await
         .expect("move should succeed");
 
-        assert_eq!(
-            moved.row_version, 2,
-            "row_version must increment by 1 after move"
-        );
-        assert_eq!(
-            moved.org_node_id,
-            Some(node_id_2),
-            "org_node_id must be updated"
-        );
+        assert_eq!(moved.row_version, 2, "row_version must increment by 1 after move");
+        assert_eq!(moved.org_node_id, Some(node_id_2), "org_node_id must be updated");
     }
 
     #[tokio::test]
@@ -582,15 +552,9 @@ mod tests {
         .await
         .expect("decommission");
 
-        let err = hierarchy::move_asset_org_node(
-            &db,
-            asset.id,
-            node_id_2,
-            1,
-            1,
-        )
-        .await
-        .expect_err("move decommissioned should fail");
+        let err = hierarchy::move_asset_org_node(&db, asset.id, node_id_2, 1, 1)
+            .await
+            .expect_err("move decommissioned should fail");
 
         match err {
             AppError::ValidationFailed(msgs) => {
@@ -614,10 +578,7 @@ mod tests {
         let asset = create_test_asset(&db, "VER-A", node_id).await;
 
         let err = hierarchy::move_asset_org_node(
-            &db,
-            asset.id,
-            node_id_2,
-            99, // wrong version
+            &db, asset.id, node_id_2, 99, // wrong version
             1,
         )
         .await

@@ -14,8 +14,8 @@
 //!   - `intervention_requests` (migration 017)
 //!   - `user_accounts` (migration 002)
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -41,33 +41,16 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("di_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("file_name"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("relative_path"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("di_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("file_name")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("relative_path")).text().not_null())
                     .col(
                         ColumnDef::new(Alias::new("mime_type"))
                             .text()
                             .not_null()
                             .default("application/octet-stream"),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("size_bytes"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("size_bytes")).integer().not_null().default(0))
                     .col(
                         ColumnDef::new(Alias::new("attachment_type"))
                             .text()
@@ -75,11 +58,7 @@ impl MigrationTrait for Migration {
                             .default("other"),
                     )
                     .col(ColumnDef::new(Alias::new("uploaded_by_id")).integer())
-                    .col(
-                        ColumnDef::new(Alias::new("uploaded_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("uploaded_at")).text().not_null())
                     .col(ColumnDef::new(Alias::new("notes")).text())
                     .to_owned(),
             )
@@ -121,23 +100,11 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("name"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("urgency_level"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("name")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("urgency_level")).text().not_null())
                     .col(ColumnDef::new(Alias::new("origin_type")).text())
                     .col(ColumnDef::new(Alias::new("asset_criticality_class")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("target_response_hours"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("target_response_hours")).integer().not_null())
                     .col(
                         ColumnDef::new(Alias::new("target_resolution_hours"))
                             .integer()
@@ -148,12 +115,7 @@ impl MigrationTrait for Migration {
                             .integer()
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("is_active"))
-                            .integer()
-                            .not_null()
-                            .default(1),
-                    )
+                    .col(ColumnDef::new(Alias::new("is_active")).integer().not_null().default(1))
                     .to_owned(),
             )
             .await?;
@@ -187,36 +149,14 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("code"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
+                    .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
                     .col(ColumnDef::new(Alias::new("source_di_id")).integer())
                     .col(ColumnDef::new(Alias::new("asset_id")).integer())
                     .col(ColumnDef::new(Alias::new("org_node_id")).integer())
-                    .col(
-                        ColumnDef::new(Alias::new("title"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("urgency"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("status"))
-                            .text()
-                            .not_null()
-                            .default("draft"),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("title")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("urgency")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("status")).text().not_null().default("draft"))
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
                     .to_owned(),
             )
             .await?;

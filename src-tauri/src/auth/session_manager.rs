@@ -359,10 +359,7 @@ pub async fn find_active_user(
 }
 
 /// Return the user's PIN hash if configured.
-pub async fn get_pin_hash_for_user(
-    db: &DatabaseConnection,
-    user_id: i32,
-) -> AppResult<Option<String>> {
+pub async fn get_pin_hash_for_user(db: &DatabaseConnection, user_id: i32) -> AppResult<Option<String>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -429,7 +426,13 @@ pub async fn create_session_record(
         DbBackend::Sqlite,
         r"INSERT INTO app_sessions (id, user_id, created_at, expires_at, last_activity_at, is_revoked)
            VALUES (?, ?, ?, ?, ?, 0)",
-        [session_db_id.into(), user_id.to_string().into(), now.clone().into(), expires_at.into(), now.into()],
+        [
+            session_db_id.into(),
+            user_id.to_string().into(),
+            now.clone().into(),
+            expires_at.into(),
+            now.into(),
+        ],
     ))
     .await?;
     Ok(())

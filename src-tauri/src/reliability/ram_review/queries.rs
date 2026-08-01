@@ -26,19 +26,36 @@ async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
 fn map_row(row: &sea_orm::QueryResult) -> AppResult<RamExpertSignOff> {
     Ok(RamExpertSignOff {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
-        entity_sync_id: row.try_get("", "entity_sync_id").map_err(|e| decode_err("entity_sync_id", e))?,
-        equipment_id: row.try_get("", "equipment_id").map_err(|e| decode_err("equipment_id", e))?,
-        method_category: row.try_get("", "method_category").map_err(|e| decode_err("method_category", e))?,
-        target_ref: row.try_get::<Option<String>>("", "target_ref").map_err(|e| decode_err("target_ref", e))?,
+        entity_sync_id: row
+            .try_get("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
+        equipment_id: row
+            .try_get("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
+        method_category: row
+            .try_get("", "method_category")
+            .map_err(|e| decode_err("method_category", e))?,
+        target_ref: row
+            .try_get::<Option<String>>("", "target_ref")
+            .map_err(|e| decode_err("target_ref", e))?,
         title: row.try_get("", "title").map_err(|e| decode_err("title", e))?,
-        reviewer_name: row.try_get("", "reviewer_name").map_err(|e| decode_err("reviewer_name", e))?,
-        reviewer_role: row.try_get("", "reviewer_role").map_err(|e| decode_err("reviewer_role", e))?,
+        reviewer_name: row
+            .try_get("", "reviewer_name")
+            .map_err(|e| decode_err("reviewer_name", e))?,
+        reviewer_role: row
+            .try_get("", "reviewer_role")
+            .map_err(|e| decode_err("reviewer_role", e))?,
         status: row.try_get("", "status").map_err(|e| decode_err("status", e))?,
-        signed_at: row.try_get::<Option<String>>("", "signed_at").map_err(|e| decode_err("signed_at", e))?,
+        signed_at: row
+            .try_get::<Option<String>>("", "signed_at")
+            .map_err(|e| decode_err("signed_at", e))?,
         notes: row.try_get("", "notes").map_err(|e| decode_err("notes", e))?,
-        row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        row_version: row
+            .try_get("", "row_version")
+            .map_err(|e| decode_err("row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
-        created_by_id: row.try_get::<Option<i64>>("", "created_by_id")
+        created_by_id: row
+            .try_get::<Option<i64>>("", "created_by_id")
             .map_err(|e| decode_err("created_by_id", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -149,7 +166,9 @@ pub async fn update_ram_expert_sign_off(
         .await?
         .rows_affected();
     if n == 0 {
-        return Err(AppError::ValidationFailed(vec!["ram_expert_sign_offs update conflict.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "ram_expert_sign_offs update conflict.".into(),
+        ]));
     }
     load_by_id(db, input.id).await
 }

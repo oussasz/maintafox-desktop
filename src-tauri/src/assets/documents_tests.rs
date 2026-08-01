@@ -132,11 +132,7 @@ mod tests {
     }
 
     /// Create a test asset with a unique code.
-    async fn create_test_asset(
-        db: &sea_orm::DatabaseConnection,
-        code: &str,
-        org_node_id: i64,
-    ) -> identity::Asset {
+    async fn create_test_asset(db: &sea_orm::DatabaseConnection, code: &str, org_node_id: i64) -> identity::Asset {
         identity::create_asset(
             db,
             CreateAssetPayload {
@@ -239,10 +235,7 @@ mod tests {
         assert_eq!(all.len(), 2, "both links must exist in DB");
 
         let old = all.iter().find(|l| l.id == link1.id).expect("old link");
-        assert!(
-            old.valid_to.is_some(),
-            "superseded primary must have valid_to set"
-        );
+        assert!(old.valid_to.is_some(), "superseded primary must have valid_to set");
 
         let new = all.iter().find(|l| l.id == link2.id).expect("new link");
         assert!(new.valid_to.is_none(), "new primary must still be active");
@@ -407,14 +400,9 @@ mod tests {
         .await
         .expect("create link");
 
-        let expired = documents::expire_asset_document_link(
-            &db,
-            link.id,
-            Some("2026-12-31T23:59:59Z".to_string()),
-            1,
-        )
-        .await
-        .expect("expire link");
+        let expired = documents::expire_asset_document_link(&db, link.id, Some("2026-12-31T23:59:59Z".to_string()), 1)
+            .await
+            .expect("expire link");
 
         assert_eq!(expired.valid_to.as_deref(), Some("2026-12-31T23:59:59Z"));
 
@@ -422,10 +410,7 @@ mod tests {
         let active = documents::list_asset_document_links(&db, asset.id, false)
             .await
             .expect("list active");
-        assert!(
-            active.is_empty(),
-            "expired link must not appear in active listing"
-        );
+        assert!(active.is_empty(), "expired link must not appear in active listing");
     }
 
     #[tokio::test]
@@ -496,7 +481,7 @@ mod tests {
     //
     // Tauri commands are registered at compile time in lib.rs via
     // tauri::generate_handler![]. These tests verify that the underlying
-    // service functions called by those commands resolve correctly at runtime. 
+    // service functions called by those commands resolve correctly at runtime.
     // If commands were missing or mistyped, the compilation would fail.
 
     #[tokio::test]

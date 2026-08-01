@@ -209,10 +209,7 @@ mod tests {
         .expect("create child");
 
         assert_eq!(child.depth, 1);
-        assert_eq!(
-            child.ancestor_path,
-            format!("/{}/{}/", root.id, child.id)
-        );
+        assert_eq!(child.ancestor_path, format!("/{}/{}/", root.id, child.id));
         assert_eq!(child.parent_id, Some(root.id));
 
         // Verify tree listing order
@@ -655,10 +652,7 @@ mod tests {
         // Verify moved node path
         assert_eq!(moved.parent_id, Some(root_b.id));
         assert_eq!(moved.depth, 1);
-        assert_eq!(
-            moved.ancestor_path,
-            format!("/{}/{}/", root_b.id, child.id)
-        );
+        assert_eq!(moved.ancestor_path, format!("/{}/{}/", root_b.id, child.id));
 
         // Verify grandchild path was rewritten
         let gc = nodes::get_org_node_by_id(&db, grandchild.id)

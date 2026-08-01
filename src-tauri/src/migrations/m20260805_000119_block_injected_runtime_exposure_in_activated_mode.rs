@@ -33,11 +33,8 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared(
-            "DROP TRIGGER IF EXISTS trg_runtime_exposure_logs_block_injected_on_activated",
-        )
-        .await?;
+        db.execute_unprepared("DROP TRIGGER IF EXISTS trg_runtime_exposure_logs_block_injected_on_activated")
+            .await?;
         Ok(())
     }
 }
-

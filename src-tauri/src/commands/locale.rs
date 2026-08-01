@@ -46,7 +46,9 @@ pub async fn set_locale_preference(
         )
         .await?;
         if !allowed {
-            return Err(crate::errors::AppError::PermissionDenied(crate::rbac::permissions::ADM_SETTINGS.into()));
+            return Err(crate::errors::AppError::PermissionDenied(
+                crate::rbac::permissions::ADM_SETTINGS.into(),
+            ));
         }
         "locale.default_language"
     } else {

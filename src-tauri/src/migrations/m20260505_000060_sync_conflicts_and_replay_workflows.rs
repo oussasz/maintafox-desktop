@@ -86,8 +86,20 @@ impl MigrationTrait for Migration {
 
         let now = chrono::Utc::now().to_rfc3339();
         for (name, description, category, is_dangerous, requires_step_up) in [
-            ("sync.view", "View sync health, conflicts, and replay history", "sync", 0_i64, 0_i64),
-            ("sync.manage", "Apply sync batches and stage sync envelopes", "sync", 1_i64, 0_i64),
+            (
+                "sync.view",
+                "View sync health, conflicts, and replay history",
+                "sync",
+                0_i64,
+                0_i64,
+            ),
+            (
+                "sync.manage",
+                "Apply sync batches and stage sync envelopes",
+                "sync",
+                1_i64,
+                0_i64,
+            ),
             (
                 "sync.resolve",
                 "Resolve sync conflicts and change conflict lifecycle states",

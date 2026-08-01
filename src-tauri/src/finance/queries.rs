@@ -4,7 +4,6 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::finance::sync_stage;
 use crate::finance::domain::{
     AcknowledgeBudgetAlertInput, BudgetActual, BudgetActualFilter, BudgetAlertConfig, BudgetAlertConfigFilter,
     BudgetAlertEvaluationResult, BudgetAlertEvent, BudgetAlertEventFilter, BudgetCommitment, BudgetCommitmentFilter,
@@ -16,11 +15,12 @@ use crate::finance::domain::{
     CreateBudgetVersionInput, CreateCostCenterInput, ErpApprovedReforecastExportItem, ErpCostCenterMasterRecordInput,
     ErpExportBatchResult, ErpMasterImportResult, ErpPostedActualExportItem, EvaluateBudgetAlertsInput,
     ExportBudgetReportPackInput, ForecastRun, GenerateBudgetForecastInput, ImportErpCostCenterMasterInput,
-    IntegrationException, IntegrationExceptionFilter, PostBudgetActualInput, PostedExportBatch, PostedExportBatchFilter,
-    RecordErpExportBatchInput, ReverseBudgetActualInput, TransitionBudgetVarianceReviewInput,
+    IntegrationException, IntegrationExceptionFilter, PostBudgetActualInput, PostedExportBatch,
+    PostedExportBatchFilter, RecordErpExportBatchInput, ReverseBudgetActualInput, TransitionBudgetVarianceReviewInput,
     TransitionBudgetVersionLifecycleInput, UpdateBudgetAlertConfigInput, UpdateBudgetLineInput,
     UpdateBudgetVersionInput, UpdateCostCenterInput, UpdateIntegrationExceptionInput,
 };
+use crate::finance::sync_stage;
 
 fn map_cost_center(row: &QueryResult) -> AppResult<CostCenter> {
     Ok(CostCenter {
@@ -321,7 +321,10 @@ fn map_budget_alert_event(row: &QueryResult) -> AppResult<BudgetAlertEvent> {
 }
 
 fn optional_trimmed(value: &Option<String>) -> Option<String> {
-    value.as_ref().map(|item| item.trim().to_string()).filter(|item| !item.is_empty())
+    value
+        .as_ref()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
 }
 
 fn required_trimmed(field: &str, value: &str) -> AppResult<String> {
@@ -646,8 +649,16 @@ pub async fn update_cost_center(
         ]));
     }
 
-    let code = input.code.as_deref().map(|value| required_trimmed("Cost center code", value)).transpose()?;
-    let name = input.name.as_deref().map(|value| required_trimmed("Cost center name", value)).transpose()?;
+    let code = input
+        .code
+        .as_deref()
+        .map(|value| required_trimmed("Cost center code", value))
+        .transpose()?;
+    let name = input
+        .name
+        .as_deref()
+        .map(|value| required_trimmed("Cost center name", value))
+        .transpose()?;
     let is_active = input.is_active.unwrap_or(current.is_active == 1);
     let parent_cost_center_id = input.parent_cost_center_id.or(current.parent_cost_center_id);
 
@@ -673,7 +684,9 @@ pub async fn update_cost_center(
                 input.entity_id.or(current.entity_id).into(),
                 parent_cost_center_id.into(),
                 input.budget_owner_id.or(current.budget_owner_id).into(),
-                optional_trimmed(&input.erp_external_id).or(current.erp_external_id).into(),
+                optional_trimmed(&input.erp_external_id)
+                    .or(current.erp_external_id)
+                    .into(),
                 i64::from(is_active).into(),
                 cost_center_id.into(),
                 expected_row_version.into(),
@@ -839,7 +852,9 @@ pub async fn create_budget_successor_version(
             source.planning_basis.into(),
             source.source_basis_mix_json.into(),
             source.labor_assumptions_json.into(),
-            optional_trimmed(&input.baseline_reference).or(source.baseline_reference).into(),
+            optional_trimmed(&input.baseline_reference)
+                .or(source.baseline_reference)
+                .into(),
             source.erp_external_ref.into(),
             input.source_version_id.into(),
             actor_user_id.into(),
@@ -858,7 +873,11 @@ pub async fn create_budget_successor_version(
     .await?
     .into_iter()
     .find(|version| version.version_no == version_no)
-    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted successor budget version could not be reloaded.")))?;
+    .ok_or_else(|| {
+        AppError::Internal(anyhow::anyhow!(
+            "Inserted successor budget version could not be reloaded."
+        ))
+    })?;
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -939,15 +958,21 @@ pub async fn update_budget_version(
             [
                 currency_code.into(),
                 optional_trimmed(&input.title).or(version.title).into(),
-                optional_trimmed(&input.planning_basis).or(version.planning_basis).into(),
+                optional_trimmed(&input.planning_basis)
+                    .or(version.planning_basis)
+                    .into(),
                 optional_trimmed(&input.source_basis_mix_json)
                     .or(version.source_basis_mix_json)
                     .into(),
                 optional_trimmed(&input.labor_assumptions_json)
                     .or(version.labor_assumptions_json)
                     .into(),
-                optional_trimmed(&input.baseline_reference).or(version.baseline_reference).into(),
-                optional_trimmed(&input.erp_external_ref).or(version.erp_external_ref).into(),
+                optional_trimmed(&input.baseline_reference)
+                    .or(version.baseline_reference)
+                    .into(),
+                optional_trimmed(&input.erp_external_ref)
+                    .or(version.erp_external_ref)
+                    .into(),
                 version_id.into(),
                 expected_row_version.into(),
             ],
@@ -1029,7 +1054,7 @@ pub async fn transition_budget_version_lifecycle(
 
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Budget lifecycle transition failed.".to_string(),
+            "Budget lifecycle transition failed.".to_string()
         ]));
     }
 
@@ -1288,7 +1313,7 @@ pub async fn create_budget_actual(
     }
     if input.amount_base.abs() < f64::EPSILON {
         return Err(AppError::ValidationFailed(vec![
-            "Actual amount_base cannot be zero.".to_string(),
+            "Actual amount_base cannot be zero.".to_string()
         ]));
     }
     let posting_status = optional_trimmed(&input.posting_status).unwrap_or_else(|| "provisional".to_string());
@@ -1442,7 +1467,11 @@ pub async fn post_budget_actual(
                  row_version = row_version + 1,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE id = ? AND row_version = ?",
-            [actor_user_id.into(), input.actual_id.into(), input.expected_row_version.into()],
+            [
+                actor_user_id.into(),
+                input.actual_id.into(),
+                input.expected_row_version.into(),
+            ],
         ))
         .await?;
     if result.rows_affected() == 0 {
@@ -1510,7 +1539,7 @@ pub async fn reverse_budget_actual(
     }
     if current_posting_status != "posted" {
         return Err(AppError::ValidationFailed(vec![
-            "Only posted actuals can be reversed.".to_string(),
+            "Only posted actuals can be reversed.".to_string()
         ]));
     }
     if current_reversal_of_actual_id.is_some() {
@@ -1588,7 +1617,11 @@ pub async fn reverse_budget_actual(
              row_version = row_version + 1,
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ? AND row_version = ?",
-        [input.reason.into(), input.actual_id.into(), input.expected_row_version.into()],
+        [
+            input.reason.into(),
+            input.actual_id.into(),
+            input.expected_row_version.into(),
+        ],
     ))
     .await?;
 
@@ -1675,8 +1708,7 @@ pub async fn create_budget_commitment(
     let source_id = required_trimmed("Source id", &input.source_id)?;
     let source_currency = required_trimmed("Source currency", &input.source_currency)?;
     let base_currency = required_trimmed("Base currency", &input.base_currency)?;
-    let commitment_status =
-        optional_trimmed(&input.commitment_status).unwrap_or_else(|| "open".to_string());
+    let commitment_status = optional_trimmed(&input.commitment_status).unwrap_or_else(|| "open".to_string());
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -1924,7 +1956,11 @@ pub async fn generate_budget_forecasts(
                 Some(lane) => format!("\"{lane}\""),
                 None => "null".to_string(),
             },
-            if source_basis.contains("planning") { "true" } else { "false" }
+            if source_basis.contains("planning") {
+                "true"
+            } else {
+                "false"
+            }
         );
 
         db.execute(Statement::from_sql_and_values(
@@ -2632,8 +2668,7 @@ pub async fn import_erp_cost_center_master(
                     [local_code.into()],
                 ))
                 .await?;
-            row.map(|record| record.try_get::<i64>("", "id"))
-                .transpose()?
+            row.map(|record| record.try_get::<i64>("", "id")).transpose()?
         } else {
             None
         };
@@ -2883,11 +2918,7 @@ pub async fn record_erp_export_batch(
                 }
                 jsonl_lines.push(serde_json::to_string(&v)?);
                 if !item.reconciliation_flags.is_empty() {
-                    specs.push((
-                        "budget_actual".to_string(),
-                        item.actual_id,
-                        serde_json::to_string(&v)?,
-                    ));
+                    specs.push(("budget_actual".to_string(), item.actual_id, serde_json::to_string(&v)?));
                 }
                 arr.push(v);
             }
@@ -3149,7 +3180,7 @@ pub async fn update_integration_exception(
         .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec![
-            "Integration exception update failed.".to_string(),
+            "Integration exception update failed.".to_string()
         ]));
     }
     let row = db
@@ -3216,7 +3247,7 @@ pub async fn create_budget_alert_config(
     }
     if input.dedupe_window_minutes.unwrap_or(240) <= 0 {
         return Err(AppError::ValidationFailed(vec![
-            "dedupe_window_minutes must be > 0.".to_string(),
+            "dedupe_window_minutes must be > 0.".to_string()
         ]));
     }
 
@@ -3299,7 +3330,7 @@ pub async fn update_budget_alert_config(
         .unwrap_or(current.try_get::<i64>("", "dedupe_window_minutes")?);
     if dedupe_window_minutes <= 0 {
         return Err(AppError::ValidationFailed(vec![
-            "dedupe_window_minutes must be > 0.".to_string(),
+            "dedupe_window_minutes must be > 0.".to_string()
         ]));
     }
     let budget_bucket = if input.budget_bucket.is_some() {
@@ -3327,9 +3358,7 @@ pub async fn update_budget_alert_config(
     let requires_ack = input
         .requires_ack
         .unwrap_or(current.try_get::<i64>("", "requires_ack")? == 1);
-    let is_active = input
-        .is_active
-        .unwrap_or(current.try_get::<i64>("", "is_active")? == 1);
+    let is_active = input.is_active.unwrap_or(current.try_get::<i64>("", "is_active")? == 1);
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -3576,8 +3605,7 @@ pub async fn evaluate_budget_alerts(
                     should_fire = row.labor_lane.as_deref() == Some("overtime")
                         && row.actual_amount > threshold_value.unwrap_or(0.0);
                     title = "Overtime spike".to_string();
-                    message =
-                        "Overtime lane exceeded configured threshold and needs assignment balancing.".to_string();
+                    message = "Overtime lane exceeded configured threshold and needs assignment balancing.".to_string();
                 }
                 "contractor_cost_drift" => {
                     threshold_value = Some((baseline * 1.1).max(1.0));
@@ -3588,7 +3616,8 @@ pub async fn evaluate_budget_alerts(
                 }
                 "emergency_spend_concentration" => {
                     threshold_value = Some(config.threshold_amount.unwrap_or(0.0).max(1.0));
-                    should_fire = row.spend_mix == "corrective" && row.variance_to_plan > threshold_value.unwrap_or(1.0);
+                    should_fire =
+                        row.spend_mix == "corrective" && row.variance_to_plan > threshold_value.unwrap_or(1.0);
                     title = "Emergency spend concentration".to_string();
                     message = "Corrective concentration indicates emergency break-in bias in period spend.".to_string();
                 }
@@ -4053,22 +4082,15 @@ pub async fn export_budget_report_pack(
     let format = required_trimmed("Export format", &input.format)?.to_lowercase();
     if !matches!(format.as_str(), "pdf" | "excel") {
         return Err(AppError::ValidationFailed(vec![
-            "format must be one of: pdf, excel".to_string(),
+            "format must be one of: pdf, excel".to_string()
         ]));
     }
     let report = build_budget_report_pack(db, input.filter).await?;
     let extension = if format == "pdf" { "pdf" } else { "csv" };
-    let mime_type = if format == "pdf" {
-        "application/pdf"
-    } else {
-        "text/csv"
-    };
+    let mime_type = if format == "pdf" { "application/pdf" } else { "text/csv" };
     let file_name = format!(
         "budget-report-{}-{}-{}.{}",
-        report.fiscal_year,
-        report.scenario_type,
-        report.budget_version_id,
-        extension
+        report.fiscal_year, report.scenario_type, report.budget_version_id, extension
     );
     let content = if format == "pdf" {
         format!(

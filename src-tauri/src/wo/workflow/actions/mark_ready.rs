@@ -23,8 +23,7 @@ pub async fn mark_wo_ready(db: &DatabaseConnection, input: WoMarkReadyInput) -> 
 
     let txn = db.begin().await?;
     let (from_code, status, _) = load_wo_status(&txn, input.wo_id).await?;
-    assert_action_allowed(&status, WoAction::MarkReady)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    assert_action_allowed(&status, WoAction::MarkReady).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     apply_status_transition(
         &txn,

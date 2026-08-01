@@ -9,9 +9,7 @@ mod tests {
     use crate::analytics_contract::list_contract_versions;
     use crate::data_integrity::detectors::run_data_integrity_detectors;
     use crate::errors::AppError;
-    use crate::wo::closeout::{
-        self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput,
-    };
+    use crate::wo::closeout::{self, SaveFailureDetailInput, SaveVerificationInput, UpdateWoRcaInput, WoCloseInput};
     use crate::wo::costs;
     use crate::wo::domain::WoCreateInput;
     use crate::wo::execution::{self, WoAssignInput, WoMechCompleteInput, WoPlanInput, WoStartInput};
@@ -284,11 +282,7 @@ mod tests {
     /// Advance from in_progress to completed+verified (all quality gates satisfied).
     /// In Option B: save_verification does NOT change WO status — stays completed.
     /// Returns updated row_version.
-    async fn advance_to_completed_verified(
-        db: &sea_orm::DatabaseConnection,
-        wo_id: i64,
-        rv: i64,
-    ) -> i64 {
+    async fn advance_to_completed_verified(db: &sea_orm::DatabaseConnection, wo_id: i64, rv: i64) -> i64 {
         let actor = admin_id(db).await;
         let verifier = create_second_user(db).await;
 
@@ -398,8 +392,7 @@ mod tests {
                 .expect("ins mode rv");
                 db.query_one(Statement::from_string(
                     DbBackend::Sqlite,
-                    "SELECT id FROM reference_values WHERE code = 'GAP06_M' ORDER BY id DESC LIMIT 1"
-                        .to_string(),
+                    "SELECT id FROM reference_values WHERE code = 'GAP06_M' ORDER BY id DESC LIMIT 1".to_string(),
                 ))
                 .await
                 .expect("mode id q")
@@ -433,8 +426,7 @@ mod tests {
         let cause_id: i64 = match db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT id FROM failure_codes WHERE code_type IN ('cause','mechanism') LIMIT 1"
-                    .to_string(),
+                "SELECT id FROM failure_codes WHERE code_type IN ('cause','mechanism') LIMIT 1".to_string(),
             ))
             .await
             .expect("cause q")
@@ -492,7 +484,10 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err(), "close must fail without failure mode when cause is determined");
+        assert!(
+            result.is_err(),
+            "close must fail without failure mode when cause is determined"
+        );
         let errs = match result.unwrap_err() {
             AppError::ValidationFailed(e) => e,
             o => panic!("expected ValidationFailed, got {o:?}"),

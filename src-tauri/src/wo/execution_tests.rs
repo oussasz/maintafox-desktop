@@ -24,8 +24,7 @@ mod tests {
     use crate::wo::delay::{self, OpenDowntimeInput};
     use crate::wo::domain::WoCreateInput;
     use crate::wo::execution::{
-        self, WoAssignInput, WoMechCompleteInput, WoPauseInput, WoPlanInput, WoResumeInput,
-        WoStartInput,
+        self, WoAssignInput, WoMechCompleteInput, WoPauseInput, WoPlanInput, WoResumeInput, WoStartInput,
     };
     use crate::wo::labor::{self, AddLaborInput};
     use crate::wo::parts;
@@ -346,8 +345,15 @@ mod tests {
 
         assert_eq!(segments.len(), 1, "exactly one delay segment after pause");
         let seg = &segments[0];
-        assert!(seg.ended_at.is_none(), "delay segment ended_at must be NULL (still open)");
-        assert_eq!(seg.delay_reason_id, Some(reason_id), "delay_reason_id must match reference value");
+        assert!(
+            seg.ended_at.is_none(),
+            "delay segment ended_at must be NULL (still open)"
+        );
+        assert_eq!(
+            seg.delay_reason_id,
+            Some(reason_id),
+            "delay_reason_id must match reference value"
+        );
         assert_eq!(seg.work_order_id, wo_id);
     }
 
@@ -399,7 +405,10 @@ mod tests {
             .await
             .expect("list_delay_segments");
         assert_eq!(segments.len(), 1);
-        assert!(segments[0].ended_at.is_some(), "delay segment ended_at must be set after resume");
+        assert!(
+            segments[0].ended_at.is_some(),
+            "delay segment ended_at must be set after resume"
+        );
 
         assert!(
             wo.total_waiting_hours.unwrap_or(0.0) > 0.0,
@@ -828,7 +837,10 @@ mod tests {
             Some("completed"),
             "WO must be in 'completed' after full execute path"
         );
-        assert!(wo.mechanically_completed_at.is_some(), "mechanically_completed_at must be set");
+        assert!(
+            wo.mechanically_completed_at.is_some(),
+            "mechanically_completed_at must be set"
+        );
         assert!(
             wo.active_labor_hours.unwrap_or(0.0) > 0.0,
             "active_labor_hours must be computed from labor entries"
@@ -867,16 +879,9 @@ mod tests {
     fn s2_v3_invoke_handler_has_25_unique_wo_commands() {
         let lib_rs = include_str!("../lib.rs");
 
-        let wo_lines: Vec<&str> = lib_rs
-            .lines()
-            .filter(|l| l.contains("commands::wo::"))
-            .collect();
+        let wo_lines: Vec<&str> = lib_rs.lines().filter(|l| l.contains("commands::wo::")).collect();
 
-        assert_eq!(
-            wo_lines.len(),
-            54,
-            "invoke_handler must contain exactly 54 WO commands"
-        );
+        assert_eq!(wo_lines.len(), 54, "invoke_handler must contain exactly 54 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {
@@ -993,7 +998,11 @@ mod tests {
         .await
         .expect("plan_wo with shift");
 
-        assert_eq!(planned.shift.as_deref(), Some("nuit"), "plan_wo response must carry shift = 'nuit'");
+        assert_eq!(
+            planned.shift.as_deref(),
+            Some("nuit"),
+            "plan_wo response must carry shift = 'nuit'"
+        );
 
         let reloaded = queries::get_work_order(&db, wo.id)
             .await

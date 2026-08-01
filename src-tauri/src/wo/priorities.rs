@@ -31,13 +31,7 @@ pub async fn ensure_required_urgency_levels(db: &DatabaseConnection) -> AppResul
                     WHEN urgency_levels.is_active IS NULL THEN 1 \
                     ELSE urgency_levels.is_active \
                 END",
-            [
-                level.into(),
-                label.into(),
-                label_fr.into(),
-                hex.into(),
-                code.into(),
-            ],
+            [level.into(), label.into(), label_fr.into(), hex.into(), code.into()],
         ))
         .await?;
     }
@@ -120,9 +114,7 @@ fn map_priority_row(row: &sea_orm::QueryResult) -> AppResult<WorkOrderPriorityOp
     let level: i64 = row
         .try_get("", "level")
         .map_err(|e| AppError::ValidationFailed(vec![format!("urgency_levels.level: {e}")]))?;
-    let code: String = row
-        .try_get("", "code")
-        .unwrap_or_else(|_| String::new());
+    let code: String = row.try_get("", "code").unwrap_or_else(|_| String::new());
     let label: String = row
         .try_get("", "label")
         .map_err(|e| AppError::ValidationFailed(vec![format!("urgency_levels.label: {e}")]))?;
@@ -184,12 +176,10 @@ pub async fn update_work_order_priority(
     id: i64,
     input: UpdateWorkOrderPriorityInput,
 ) -> AppResult<WorkOrderPriorityOption> {
-    let current = priority_by_id(db, id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "UrgencyLevel".into(),
-            id: id.to_string(),
-        })?;
+    let current = priority_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "UrgencyLevel".into(),
+        id: id.to_string(),
+    })?;
 
     let mut sets: Vec<&'static str> = Vec::new();
     let mut params: Vec<sea_orm::Value> = Vec::new();
@@ -216,18 +206,13 @@ pub async fn update_work_order_priority(
     }
 
     params.push(id.into());
-    let sql = format!(
-        "UPDATE urgency_levels SET {} WHERE id = ?",
-        sets.join(", ")
-    );
+    let sql = format!("UPDATE urgency_levels SET {} WHERE id = ?", sets.join(", "));
 
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, params))
         .await?;
 
-    priority_by_id(db, id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "UrgencyLevel".into(),
-            id: id.to_string(),
-        })
+    priority_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "UrgencyLevel".into(),
+        id: id.to_string(),
+    })
 }

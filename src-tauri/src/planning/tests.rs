@@ -1,22 +1,17 @@
-﻿use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
 
 use crate::planning::domain::{
-    CreateCapacityRuleInput, CreateScheduleBreakInInput, CreateScheduleCommitmentInput,
-    FreezeSchedulePeriodInput, NotifyTeamsInput, PlanningGanttFilter, RefreshScheduleCandidatesInput,
-    RescheduleCommitmentInput, ScheduleBreakInFilter, ScheduleCandidateFilter,
-    ScheduleCommitmentFilter,
+    CreateCapacityRuleInput, CreateScheduleBreakInInput, CreateScheduleCommitmentInput, FreezeSchedulePeriodInput,
+    NotifyTeamsInput, PlanningGanttFilter, RefreshScheduleCandidatesInput, RescheduleCommitmentInput,
+    ScheduleBreakInFilter, ScheduleCandidateFilter, ScheduleCommitmentFilter,
 };
 use crate::planning::queries;
 use crate::planning::scheduling;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None)
-        .await
-        .expect("migrations");
+    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     crate::db::seeder::seed_system_data(&db)
         .await
         .expect("seed system data");
@@ -132,13 +127,14 @@ async fn insert_approved_di(db: &DatabaseConnection, code: &str) {
 }
 
 async fn get_any_team_id(db: &DatabaseConnection) -> i64 {
-    let existing = db.query_one(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "SELECT id FROM org_nodes ORDER BY id LIMIT 1",
-        [],
-    ))
-    .await
-    .expect("query org node");
+    let existing = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM org_nodes ORDER BY id LIMIT 1",
+            [],
+        ))
+        .await
+        .expect("query org node");
     if let Some(existing) = existing {
         return existing.try_get("", "id").expect("org node id");
     }
@@ -220,13 +216,10 @@ async fn ensure_personnel_with_rate(db: &DatabaseConnection, employee_code: &str
     } else {
         let inserted = db
             .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO personnel (employee_code, full_name, availability_status) VALUES (?, ?, 'available')",
-            [
-                employee_code.to_string().into(),
-                format!("Tech {employee_code}").into(),
-            ],
-        ))
+                DbBackend::Sqlite,
+                "INSERT INTO personnel (employee_code, full_name, availability_status) VALUES (?, ?, 'available')",
+                [employee_code.to_string().into(), format!("Tech {employee_code}").into()],
+            ))
             .await
             .expect("insert personnel");
         i64::try_from(inserted.last_insert_id()).expect("personnel id fits i64")
@@ -891,4 +884,3 @@ async fn gantt_snapshot_and_pdf_export_use_real_commitments() {
     .expect("list commitments");
     assert_eq!(listed.len(), 1);
 }
-

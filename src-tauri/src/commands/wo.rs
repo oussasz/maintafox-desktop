@@ -19,11 +19,11 @@ use tauri::State;
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
-use crate::wo::{
-    analytics, attachments, audit, closeout, costs, delay, execution, labor, parts, priorities, queries,
-    stats, statuses, tasks,
-};
 use crate::wo::types;
+use crate::wo::{
+    analytics, attachments, audit, closeout, costs, delay, execution, labor, parts, priorities, queries, stats,
+    statuses, tasks,
+};
 use crate::{require_permission, require_session};
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
@@ -34,10 +34,7 @@ use tauri::Manager;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_wo(
-    filter: queries::WoListFilter,
-    state: State<'_, AppState>,
-) -> AppResult<queries::WoListPage> {
+pub async fn list_wo(filter: queries::WoListFilter, state: State<'_, AppState>) -> AppResult<queries::WoListPage> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     queries::list_work_orders(&state.db, filter).await
@@ -48,10 +45,7 @@ pub async fn list_wo(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn get_wo(
-    id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<queries::WoGetResponse> {
+pub async fn get_wo(id: i64, state: State<'_, AppState>) -> AppResult<queries::WoGetResponse> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
 
@@ -77,7 +71,12 @@ pub async fn create_wo(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_CREATE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_CREATE,
+        PermissionScope::Global
+    );
 
     // ── Validate required fields ─────────────────────────────────────────
     let mut errors: Vec<String> = Vec::new();
@@ -104,9 +103,7 @@ pub async fn create_wo(
             ))
             .await?;
         if di_exists.is_none() {
-            errors.push(format!(
-                "DI introuvable (source_di_id={di_id})."
-            ));
+            errors.push(format!("DI introuvable (source_di_id={di_id})."));
         }
     }
 
@@ -115,22 +112,24 @@ pub async fn create_wo(
     }
 
     let wo = queries::create_work_order(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "created".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order created".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "created".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order created".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
 #[tauri::command]
-pub async fn list_work_order_types(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<types::WorkOrderTypeOption>> {
+pub async fn list_work_order_types(state: State<'_, AppState>) -> AppResult<Vec<types::WorkOrderTypeOption>> {
     let user = require_session!(state);
     let has_ref_view = crate::auth::rbac::check_permission(
         &state.db,
@@ -147,7 +146,12 @@ pub async fn list_work_order_types(
     )
     .await?;
     if !has_ref_view && !has_ot_view {
-        require_permission!(state, &user, crate::rbac::permissions::OT_CREATE, PermissionScope::Global);
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::OT_CREATE,
+            PermissionScope::Global
+        );
     }
     types::list_work_order_types(&state.db).await
 }
@@ -158,7 +162,12 @@ pub async fn create_work_order_type(
     state: State<'_, AppState>,
 ) -> AppResult<types::WorkOrderTypeOption> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::REF_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
     types::create_work_order_type(&state.db, input).await
 }
 
@@ -169,14 +178,24 @@ pub async fn update_work_order_type(
     state: State<'_, AppState>,
 ) -> AppResult<types::WorkOrderTypeOption> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::REF_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
     types::update_work_order_type(&state.db, id, input).await
 }
 
 #[tauri::command]
 pub async fn delete_work_order_type(id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::REF_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
     types::delete_work_order_type(&state.db, id).await
 }
 
@@ -200,7 +219,12 @@ pub async fn list_work_order_priorities(
     )
     .await?;
     if !has_ref_view && !has_ot_view {
-        require_permission!(state, &user, crate::rbac::permissions::OT_CREATE, PermissionScope::Global);
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::OT_CREATE,
+            PermissionScope::Global
+        );
     }
     priorities::list_work_order_priorities(&state.db).await
 }
@@ -212,14 +236,17 @@ pub async fn update_work_order_priority(
     state: State<'_, AppState>,
 ) -> AppResult<priorities::WorkOrderPriorityOption> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::REF_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
     priorities::update_work_order_priority(&state.db, id, input).await
 }
 
 #[tauri::command]
-pub async fn list_work_order_statuses(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<statuses::WorkOrderStatusOption>> {
+pub async fn list_work_order_statuses(state: State<'_, AppState>) -> AppResult<Vec<statuses::WorkOrderStatusOption>> {
     let user = require_session!(state);
     let has_ref_view = crate::auth::rbac::check_permission(
         &state.db,
@@ -236,7 +263,12 @@ pub async fn list_work_order_statuses(
     )
     .await?;
     if !has_ref_view && !has_ot_view {
-        require_permission!(state, &user, crate::rbac::permissions::OT_CREATE, PermissionScope::Global);
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::OT_CREATE,
+            PermissionScope::Global
+        );
     }
     statuses::list_work_order_statuses(&state.db).await
 }
@@ -248,7 +280,12 @@ pub async fn update_work_order_status(
     state: State<'_, AppState>,
 ) -> AppResult<statuses::WorkOrderStatusOption> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::REF_MANAGE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REF_MANAGE,
+        PermissionScope::Global
+    );
     statuses::update_work_order_status(&state.db, id, input).await
 }
 
@@ -287,37 +324,44 @@ pub async fn cancel_wo(
         })?;
 
     let status_code = current.status_code.as_deref().unwrap_or("unknown");
-    let status = crate::wo::domain::WoStatus::try_from_str(status_code).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("Stored WO has invalid status: {e}"))
-    })?;
+    let status = crate::wo::domain::WoStatus::try_from_str(status_code)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Stored WO has invalid status: {e}")))?;
 
     // Step-up required for executing or completed states
     if status.is_executing() || matches!(status, crate::wo::domain::WoStatus::Completed) {
         let guard = state.session.read().await;
         if !guard.is_step_up_valid() {
-            audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-                wo_id: Some(input.id),
-                action: "cancelled".into(),
-                actor_id: Some(i64::from(user.user_id)),
-                summary: Some("Cancellation blocked: step-up verification failed".into()),
-                details_json: None,
-                requires_step_up: true,
-                apply_result: "blocked".into(),
-            }).await;
+            audit::record_wo_change_event(
+                &state.db,
+                audit::WoAuditInput {
+                    wo_id: Some(input.id),
+                    action: "cancelled".into(),
+                    actor_id: Some(i64::from(user.user_id)),
+                    summary: Some("Cancellation blocked: step-up verification failed".into()),
+                    details_json: None,
+                    requires_step_up: true,
+                    apply_result: "blocked".into(),
+                },
+            )
+            .await;
             return Err(AppError::StepUpRequired);
         }
     }
 
     let wo = queries::cancel_work_order(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "cancelled".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order cancelled".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "cancelled".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order cancelled".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -333,15 +377,19 @@ pub async fn plan_wo(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo = execution::plan_wo(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "planned".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order planned".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "planned".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order planned".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -357,15 +405,19 @@ pub async fn submit_wo(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo = crate::wo::workflow::actions::submit_wo(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "submitted".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order submitted to planning".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "submitted".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order submitted to planning".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -387,15 +439,19 @@ pub async fn mark_wo_ready(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo = crate::wo::workflow::actions::mark_wo_ready(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "marked_ready".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order marked ready".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "marked_ready".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order marked ready".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -407,15 +463,19 @@ pub async fn return_to_planning(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo = crate::wo::workflow::actions::return_to_planning(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "returned_to_planning".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order returned to planning".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "returned_to_planning".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order returned to planning".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -425,17 +485,26 @@ pub async fn approve_planning(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_APPROVE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_APPROVE,
+        PermissionScope::Global
+    );
     let wo = crate::wo::workflow::actions::approve_planning(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "planning_approved".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order planning approved".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "planning_approved".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order planning approved".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -451,15 +520,19 @@ pub async fn assign_wo(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo = execution::assign_wo(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "assigned".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order assigned".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "assigned".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order assigned".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -475,15 +548,19 @@ pub async fn start_wo(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo = execution::start_wo(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "started".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order started".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "started".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order started".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -499,15 +576,19 @@ pub async fn pause_wo(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo = execution::pause_wo(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "paused".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order paused".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "paused".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order paused".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -523,15 +604,19 @@ pub async fn resume_wo(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo = execution::resume_wo(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "resumed".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order resumed".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "resumed".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order resumed".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -547,15 +632,19 @@ pub async fn hold_wo(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo = execution::set_waiting_for_prerequisite(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "held".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order put on hold".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "held".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order put on hold".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -571,15 +660,19 @@ pub async fn complete_wo_mechanically(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo = execution::complete_wo_mechanically(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "mechanically_completed".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order mechanically completed".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "mechanically_completed".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order mechanically completed".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -598,10 +691,7 @@ pub async fn evaluate_wo_completion_gates(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn add_labor(
-    input: labor::AddLaborInput,
-    state: State<'_, AppState>,
-) -> AppResult<labor::WoIntervener> {
+pub async fn add_labor(input: labor::AddLaborInput, state: State<'_, AppState>) -> AppResult<labor::WoIntervener> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     labor::add_labor_entry(&state.db, input).await
@@ -628,10 +718,7 @@ pub async fn close_labor(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_labor(
-    wo_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<labor::WoIntervener>> {
+pub async fn list_labor(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<labor::WoIntervener>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     labor::list_labor_entries(&state.db, wo_id).await
@@ -642,10 +729,7 @@ pub async fn list_labor(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn add_part(
-    input: parts::AddPartInput,
-    state: State<'_, AppState>,
-) -> AppResult<parts::WoPart> {
+pub async fn add_part(input: parts::AddPartInput, state: State<'_, AppState>) -> AppResult<parts::WoPart> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     parts::add_planned_part(&state.db, input).await
@@ -686,20 +770,14 @@ pub async fn mark_part_not_used(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn confirm_no_parts(
-    wo_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn confirm_no_parts(wo_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     parts::confirm_no_parts_used(&state.db, wo_id, user.user_id.into()).await
 }
 
 #[tauri::command]
-pub async fn unconfirm_no_parts(
-    wo_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn unconfirm_no_parts(wo_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     parts::unconfirm_no_parts_used(&state.db, wo_id, user.user_id.into()).await
@@ -710,10 +788,7 @@ pub async fn unconfirm_no_parts(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_wo_parts(
-    wo_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<parts::WoPart>> {
+pub async fn list_wo_parts(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<parts::WoPart>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     parts::list_wo_parts(&state.db, wo_id).await
@@ -724,10 +799,7 @@ pub async fn list_wo_parts(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn add_task(
-    input: tasks::AddTaskInput,
-    state: State<'_, AppState>,
-) -> AppResult<tasks::WoTask> {
+pub async fn add_task(input: tasks::AddTaskInput, state: State<'_, AppState>) -> AppResult<tasks::WoTask> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     tasks::add_task(&state.db, input).await
@@ -755,10 +827,7 @@ pub async fn complete_task(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_tasks(
-    wo_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<tasks::WoTask>> {
+pub async fn list_tasks(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<tasks::WoTask>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     tasks::list_tasks(&state.db, wo_id).await
@@ -785,10 +854,7 @@ pub async fn list_wo_execution_events(
 }
 
 #[tauri::command]
-pub async fn list_wo_tools(
-    wo_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<crate::wo::tools::WoTool>> {
+pub async fn list_wo_tools(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<crate::wo::tools::WoTool>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     crate::wo::tools::list_tools(&state.db, wo_id).await
@@ -805,20 +871,14 @@ pub async fn add_wo_tool(
 }
 
 #[tauri::command]
-pub async fn mark_wo_tool_used(
-    tool_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<crate::wo::tools::WoTool> {
+pub async fn mark_wo_tool_used(tool_id: i64, state: State<'_, AppState>) -> AppResult<crate::wo::tools::WoTool> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     crate::wo::tools::mark_tool_used(&state.db, tool_id).await
 }
 
 #[tauri::command]
-pub async fn mark_wo_tool_not_used(
-    tool_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<crate::wo::tools::WoTool> {
+pub async fn mark_wo_tool_not_used(tool_id: i64, state: State<'_, AppState>) -> AppResult<crate::wo::tools::WoTool> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     crate::wo::tools::mark_tool_not_used(&state.db, tool_id).await
@@ -872,10 +932,7 @@ pub async fn close_downtime(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_delay_segments(
-    wo_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<delay::WoDelaySegment>> {
+pub async fn list_delay_segments(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<delay::WoDelaySegment>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     delay::list_delay_segments(&state.db, wo_id).await
@@ -912,15 +969,19 @@ pub async fn save_failure_detail(
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo_id = input.wo_id;
     let detail = closeout::save_failure_detail(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo_id),
-        action: "failure_detail_saved".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Failure detail recorded".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "failure_detail_saved".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Failure detail recorded".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(detail)
 }
 
@@ -940,29 +1001,37 @@ pub async fn save_verification(
     {
         let guard = state.session.read().await;
         if !guard.is_step_up_valid() {
-            audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-                wo_id: Some(input.wo_id),
-                action: "verification_saved".into(),
-                actor_id: Some(i64::from(user.user_id)),
-                summary: Some("Verification blocked: step-up verification failed".into()),
-                details_json: None,
-                requires_step_up: true,
-                apply_result: "blocked".into(),
-            }).await;
+            audit::record_wo_change_event(
+                &state.db,
+                audit::WoAuditInput {
+                    wo_id: Some(input.wo_id),
+                    action: "verification_saved".into(),
+                    actor_id: Some(i64::from(user.user_id)),
+                    summary: Some("Verification blocked: step-up verification failed".into()),
+                    details_json: None,
+                    requires_step_up: true,
+                    apply_result: "blocked".into(),
+                },
+            )
+            .await;
             return Err(AppError::StepUpRequired);
         }
     }
 
     let result = closeout::save_verification(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(result.1.id),
-        action: "verification_saved".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Technical verification recorded".into()),
-        details_json: None,
-        requires_step_up: true,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(result.1.id),
+            action: "verification_saved".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Technical verification recorded".into()),
+            details_json: None,
+            requires_step_up: true,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(result)
 }
 
@@ -976,49 +1045,66 @@ pub async fn close_wo(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_CLOSE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_CLOSE,
+        PermissionScope::Global
+    );
 
     // Manual step-up check to record blocked event
     {
         let guard = state.session.read().await;
         if !guard.is_step_up_valid() {
-            audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-                wo_id: Some(input.wo_id),
-                action: "closed".into(),
-                actor_id: Some(i64::from(user.user_id)),
-                summary: Some("Close blocked: step-up verification failed".into()),
-                details_json: None,
-                requires_step_up: true,
-                apply_result: "blocked".into(),
-            }).await;
+            audit::record_wo_change_event(
+                &state.db,
+                audit::WoAuditInput {
+                    wo_id: Some(input.wo_id),
+                    action: "closed".into(),
+                    actor_id: Some(i64::from(user.user_id)),
+                    summary: Some("Close blocked: step-up verification failed".into()),
+                    details_json: None,
+                    requires_step_up: true,
+                    apply_result: "blocked".into(),
+                },
+            )
+            .await;
             return Err(AppError::StepUpRequired);
         }
     }
 
     match closeout::close_wo(&state.db, input).await {
         Ok(wo) => {
-            audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-                wo_id: Some(wo.id),
-                action: "closed".into(),
-                actor_id: Some(i64::from(user.user_id)),
-                summary: Some("Work order closed".into()),
-                details_json: None,
-                requires_step_up: true,
-                apply_result: "applied".into(),
-            }).await;
+            audit::record_wo_change_event(
+                &state.db,
+                audit::WoAuditInput {
+                    wo_id: Some(wo.id),
+                    action: "closed".into(),
+                    actor_id: Some(i64::from(user.user_id)),
+                    summary: Some("Work order closed".into()),
+                    details_json: None,
+                    requires_step_up: true,
+                    apply_result: "applied".into(),
+                },
+            )
+            .await;
             Ok(wo)
         }
         Err(AppError::ValidationFailed(ref errs)) => {
             let details = serde_json::json!({ "quality_gate_errors": errs }).to_string();
-            audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-                wo_id: None,
-                action: "closed".into(),
-                actor_id: Some(i64::from(user.user_id)),
-                summary: Some("Close blocked: quality gate failed".into()),
-                details_json: Some(details),
-                requires_step_up: true,
-                apply_result: "blocked".into(),
-            }).await;
+            audit::record_wo_change_event(
+                &state.db,
+                audit::WoAuditInput {
+                    wo_id: None,
+                    action: "closed".into(),
+                    actor_id: Some(i64::from(user.user_id)),
+                    summary: Some("Close blocked: quality gate failed".into()),
+                    details_json: Some(details),
+                    requires_step_up: true,
+                    apply_result: "blocked".into(),
+                },
+            )
+            .await;
             Err(AppError::ValidationFailed(errs.clone()))
         }
         Err(other) => Err(other),
@@ -1035,35 +1121,48 @@ pub async fn reopen_wo(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_REOPEN, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_REOPEN,
+        PermissionScope::Global
+    );
 
     // Manual step-up check to record blocked event
     {
         let guard = state.session.read().await;
         if !guard.is_step_up_valid() {
-            audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-                wo_id: Some(input.wo_id),
-                action: "reopened".into(),
-                actor_id: Some(i64::from(user.user_id)),
-                summary: Some("Reopen blocked: step-up verification failed".into()),
-                details_json: None,
-                requires_step_up: true,
-                apply_result: "blocked".into(),
-            }).await;
+            audit::record_wo_change_event(
+                &state.db,
+                audit::WoAuditInput {
+                    wo_id: Some(input.wo_id),
+                    action: "reopened".into(),
+                    actor_id: Some(i64::from(user.user_id)),
+                    summary: Some("Reopen blocked: step-up verification failed".into()),
+                    details_json: None,
+                    requires_step_up: true,
+                    apply_result: "blocked".into(),
+                },
+            )
+            .await;
             return Err(AppError::StepUpRequired);
         }
     }
 
     let wo = closeout::reopen_wo(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo.id),
-        action: "reopened".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Work order reopened".into()),
-        details_json: None,
-        requires_step_up: true,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "reopened".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order reopened".into()),
+            details_json: None,
+            requires_step_up: true,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(wo)
 }
 
@@ -1072,23 +1171,24 @@ pub async fn reopen_wo(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn update_wo_rca(
-    input: closeout::UpdateWoRcaInput,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn update_wo_rca(input: closeout::UpdateWoRcaInput, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     let wo_id = input.wo_id;
     closeout::update_wo_rca(&state.db, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo_id),
-        action: "rca_updated".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Root cause analysis updated".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "rca_updated".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Root cause analysis updated".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(())
 }
 
@@ -1126,15 +1226,19 @@ pub async fn upload_wo_attachment(
     };
 
     let attachment = attachments::save_wo_attachment(&state.db, &app_data_dir, input).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo_id),
-        action: "attachment_uploaded".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Attachment uploaded".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "attachment_uploaded".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Attachment uploaded".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(attachment)
 }
 
@@ -1143,10 +1247,7 @@ pub async fn upload_wo_attachment(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_wo_attachments(
-    wo_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<attachments::WoAttachment>> {
+pub async fn list_wo_attachments(wo_id: i64, state: State<'_, AppState>) -> AppResult<Vec<attachments::WoAttachment>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     attachments::list_wo_attachments(&state.db, wo_id).await
@@ -1157,12 +1258,14 @@ pub async fn list_wo_attachments(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn delete_wo_attachment(
-    attachment_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn delete_wo_attachment(attachment_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_ADMIN, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_ADMIN,
+        PermissionScope::Global
+    );
     attachments::delete_wo_attachment_record(&state.db, attachment_id).await
 }
 
@@ -1171,10 +1274,7 @@ pub async fn delete_wo_attachment(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn get_cost_summary(
-    wo_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<costs::WoCostSummary> {
+pub async fn get_cost_summary(wo_id: i64, state: State<'_, AppState>) -> AppResult<costs::WoCostSummary> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     costs::get_cost_summary(&state.db, wo_id).await
@@ -1185,23 +1285,23 @@ pub async fn get_cost_summary(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn update_service_cost(
-    wo_id: i64,
-    service_cost: f64,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn update_service_cost(wo_id: i64, service_cost: f64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
     costs::update_service_cost(&state.db, wo_id, service_cost, i64::from(user.user_id)).await?;
-    audit::record_wo_change_event(&state.db, audit::WoAuditInput {
-        wo_id: Some(wo_id),
-        action: "service_cost_updated".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some(format!("Service cost updated to {service_cost}")),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo_id),
+            action: "service_cost_updated".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some(format!("Service cost updated to {service_cost}")),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(())
 }
 
@@ -1210,10 +1310,7 @@ pub async fn update_service_cost(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn get_cost_posting_hook(
-    wo_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<costs::CostPostingHook> {
+pub async fn get_cost_posting_hook(wo_id: i64, state: State<'_, AppState>) -> AppResult<costs::CostPostingHook> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     costs::get_cost_posting_hook(&state.db, wo_id).await
@@ -1238,9 +1335,7 @@ pub async fn get_wo_analytics_snapshot(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn get_wo_stats(
-    state: State<'_, AppState>,
-) -> AppResult<stats::WoStatsPayload> {
+pub async fn get_wo_stats(state: State<'_, AppState>) -> AppResult<stats::WoStatsPayload> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::OT_VIEW, PermissionScope::Global);
     stats::get_wo_stats(&state.db).await
@@ -1271,6 +1366,11 @@ pub async fn list_all_wo_change_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<audit::WoChangeEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_ADMIN, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_ADMIN,
+        PermissionScope::Global
+    );
     audit::list_all_wo_change_events(&state.db, filter).await
 }

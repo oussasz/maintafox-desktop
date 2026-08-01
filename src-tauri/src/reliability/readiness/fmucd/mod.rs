@@ -7,8 +7,8 @@ pub mod mapper;
 pub mod schema;
 
 pub use aggregator::{
-    aggregate_by_asset, dataset_summary, evaluate_dataset_documentary, evaluate_dataset_dual,
-    evaluate_dataset_strict, summarize_by_university, AggregatedDataset,
+    aggregate_by_asset, dataset_summary, evaluate_dataset_documentary, evaluate_dataset_dual, evaluate_dataset_strict,
+    summarize_by_university, AggregatedDataset,
 };
 pub use config::FmucdMappingConfig;
 pub use loader::{load_fmucd_csv, LoadProgress};

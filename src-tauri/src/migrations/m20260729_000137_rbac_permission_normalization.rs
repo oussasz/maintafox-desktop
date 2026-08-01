@@ -11,8 +11,8 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use sea_orm_migration::prelude::*;
 
 use crate::rbac::permissions::{
-    ALIAS_MAP, CATALOG, DEPENDENCIES, INTEGRITY_REPAIR, PM_CREATE, PM_DELETE, PM_EDIT,
-    SYNC_MANAGE, SYNC_REPAIR, SYNC_REPLAY, SYNC_RESOLVE, SYNC_VIEW,
+    ALIAS_MAP, CATALOG, DEPENDENCIES, INTEGRITY_REPAIR, PM_CREATE, PM_DELETE, PM_EDIT, SYNC_MANAGE, SYNC_REPAIR,
+    SYNC_REPLAY, SYNC_RESOLVE, SYNC_VIEW,
 };
 
 pub struct Migration;
@@ -105,10 +105,7 @@ impl MigrationTrait for Migration {
         for (source, targets) in [
             (
                 crate::rbac::permissions::OT_EDIT,
-                &[
-                    crate::rbac::permissions::OT_CLOSE,
-                    crate::rbac::permissions::OT_APPROVE,
-                ][..],
+                &[crate::rbac::permissions::OT_CLOSE, crate::rbac::permissions::OT_APPROVE][..],
             ),
             (
                 crate::rbac::permissions::OT_ADMIN,

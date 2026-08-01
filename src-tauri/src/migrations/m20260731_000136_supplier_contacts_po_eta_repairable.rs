@@ -69,8 +69,7 @@ impl MigrationTrait for Migration {
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "ALTER TABLE repairable_orders ADD COLUMN warranty_active INTEGER NOT NULL DEFAULT 0"
-                .to_string(),
+            "ALTER TABLE repairable_orders ADD COLUMN warranty_active INTEGER NOT NULL DEFAULT 0".to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(

@@ -2,12 +2,10 @@
 //!
 //! Statuses represent lifecycle. Actions represent work. Readiness is a rule engine.
 
-pub mod state_machine;
-pub mod transition;
+pub mod actions;
 pub mod events;
 pub mod readiness;
-pub mod actions;
+pub mod state_machine;
+pub mod transition;
 
-pub use state_machine::{
-    assert_action_allowed, guard_wo_transition, WoAction, WoStatus,
-};
+pub use state_machine::{assert_action_allowed, guard_wo_transition, WoAction, WoStatus};

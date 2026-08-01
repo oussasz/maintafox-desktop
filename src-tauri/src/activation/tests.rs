@@ -6,9 +6,7 @@ use crate::activation::queries;
 
 async fn setup_db() -> DatabaseConnection {
     let db = Database::connect("sqlite::memory:").await.expect("sqlite");
-    crate::migrations::Migrator::up(&db, None)
-        .await
-        .expect("migrations");
+    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     seed_user_and_permissions(&db).await;
     db
 }
@@ -82,9 +80,13 @@ async fn drift_policy_rejects_when_expected_hashes_do_not_match() {
 #[tokio::test]
 async fn slot_conflict_detected_for_different_machine() {
     let db = setup_db().await;
-    queries::apply_machine_activation(&db, activation_input("act-slot-1", "nonce-slot-1", "slot-collision"), Some(1))
-        .await
-        .expect("apply 1");
+    queries::apply_machine_activation(
+        &db,
+        activation_input("act-slot-1", "nonce-slot-1", "slot-collision"),
+        Some(1),
+    )
+    .await
+    .expect("apply 1");
     let mut second = activation_input("act-slot-2", "nonce-slot-2", "slot-collision");
     second.machine_id = "machine-beta".to_string();
     let err = queries::apply_machine_activation(&db, second, Some(1))
@@ -106,9 +108,13 @@ async fn offline_policy_denies_without_bootstrap_and_with_revocation() {
     crate::auth::device::register_device_trust(&db, 1, &fingerprint, None)
         .await
         .expect("register trust");
-    queries::apply_machine_activation(&db, activation_input("act-offline", "nonce-offline", "slot-offline"), Some(1))
-        .await
-        .expect("activation");
+    queries::apply_machine_activation(
+        &db,
+        activation_input("act-offline", "nonce-offline", "slot-offline"),
+        Some(1),
+    )
+    .await
+    .expect("activation");
     let trusted_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -151,9 +157,13 @@ async fn reconnect_applies_pending_revocation_immediately() {
 #[tokio::test]
 async fn rebind_request_clears_active_contract_and_sets_rebind_gate() {
     let db = setup_db().await;
-    queries::apply_machine_activation(&db, activation_input("act-rebind", "nonce-rebind", "slot-rebind"), Some(1))
-        .await
-        .expect("activation");
+    queries::apply_machine_activation(
+        &db,
+        activation_input("act-rebind", "nonce-rebind", "slot-rebind"),
+        Some(1),
+    )
+    .await
+    .expect("activation");
 
     let result = queries::request_machine_rebind(
         &db,

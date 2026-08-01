@@ -350,12 +350,8 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 /// Map a sea-orm `QueryResult` row to an `InterventionRequest`.
 pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequest> {
     Ok(InterventionRequest {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
-        code: row
-            .try_get::<String>("", "code")
-            .map_err(|e| decode_err("code", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
         asset_id: row
             .try_get::<i64>("", "asset_id")
             .map_err(|e| decode_err("asset_id", e))?,
@@ -368,9 +364,7 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         status: row
             .try_get::<String>("", "status")
             .map_err(|e| decode_err("status", e))?,
-        title: row
-            .try_get::<String>("", "title")
-            .map_err(|e| decode_err("title", e))?,
+        title: row.try_get::<String>("", "title").map_err(|e| decode_err("title", e))?,
         description: row
             .try_get::<String>("", "description")
             .map_err(|e| decode_err("description", e))?,
@@ -485,26 +479,11 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
             .try_get::<Option<i64>>("", "source_inspection_anomaly_id")
             .map_err(|e| decode_err("source_inspection_anomaly_id", e))?,
         // New fields added by migration 139 — use .ok().flatten() for backward compat
-        disposition_code: row
-            .try_get::<Option<String>>("", "disposition_code")
-            .ok()
-            .flatten(),
-        disposition_notes: row
-            .try_get::<Option<String>>("", "disposition_notes")
-            .ok()
-            .flatten(),
-        related_di_id: row
-            .try_get::<Option<i64>>("", "related_di_id")
-            .ok()
-            .flatten(),
-        closed_by_id: row
-            .try_get::<Option<i64>>("", "closed_by_id")
-            .ok()
-            .flatten(),
-        deferred_from_status: row
-            .try_get::<Option<String>>("", "deferred_from_status")
-            .ok()
-            .flatten(),
+        disposition_code: row.try_get::<Option<String>>("", "disposition_code").ok().flatten(),
+        disposition_notes: row.try_get::<Option<String>>("", "disposition_notes").ok().flatten(),
+        related_di_id: row.try_get::<Option<i64>>("", "related_di_id").ok().flatten(),
+        closed_by_id: row.try_get::<Option<i64>>("", "closed_by_id").ok().flatten(),
+        deferred_from_status: row.try_get::<Option<String>>("", "deferred_from_status").ok().flatten(),
         row_version: row
             .try_get::<i64>("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -541,10 +520,7 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         converted_to_wo_title: row
             .try_get::<Option<String>>("", "converted_to_wo_title")
             .map_err(|e| decode_err("converted_to_wo_title", e))?,
-        related_di_code: row
-            .try_get::<Option<String>>("", "related_di_code")
-            .ok()
-            .flatten(),
+        related_di_code: row.try_get::<Option<String>>("", "related_di_code").ok().flatten(),
     })
 }
 
@@ -582,11 +558,7 @@ pub async fn generate_di_code(db: &DatabaseConnection) -> AppResult<String> {
                 .to_string(),
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "DI code sequence query returned no rows"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("DI code sequence query returned no rows")))?;
 
     let next_seq: i64 = row
         .try_get::<i64>("", "next_seq")
@@ -743,12 +715,7 @@ mod tests {
 
     #[test]
     fn test_urgency_round_trip() {
-        let all = [
-            DiUrgency::Low,
-            DiUrgency::Medium,
-            DiUrgency::High,
-            DiUrgency::Critical,
-        ];
+        let all = [DiUrgency::Low, DiUrgency::Medium, DiUrgency::High, DiUrgency::Critical];
         for u in &all {
             let s = u.as_str();
             let parsed = DiUrgency::try_from_str(s).unwrap();

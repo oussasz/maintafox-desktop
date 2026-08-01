@@ -1,4 +1,4 @@
-﻿//! Migration 050 - PM occurrence governance and idempotency.
+//! Migration 050 - PM occurrence governance and idempotency.
 
 use sea_orm::ConnectionTrait;
 use sea_orm_migration::prelude::*;
@@ -62,4 +62,3 @@ impl MigrationTrait for Migration {
         Ok(())
     }
 }
-

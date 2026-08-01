@@ -20,11 +20,8 @@ pub struct NotificationEventInput {
 
 pub async fn emit_event(pool: &SqlitePool, input: NotificationEventInput) -> Result<()> {
     // Keep "disconnected pool" behavior visible to callers.
-    pool.query_one(Statement::from_string(
-        DbBackend::Sqlite,
-        "SELECT 1".to_string(),
-    ))
-    .await?;
+    pool.query_one(Statement::from_string(DbBackend::Sqlite, "SELECT 1".to_string()))
+        .await?;
 
     if let Err(err) = emit_event_inner(pool, input).await {
         tracing::error!(error = %err, "notifications::emit_event fire-and-log failure");

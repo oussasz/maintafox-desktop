@@ -4,9 +4,8 @@ use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
 use crate::data_integrity::{
-    apply_data_integrity_repair, list_open_findings, run_data_integrity_detectors,
-    waive_data_integrity_finding, ApplyDataIntegrityRepairInput, DataIntegrityFindingRow,
-    WaiveDataIntegrityFindingInput,
+    apply_data_integrity_repair, list_open_findings, run_data_integrity_detectors, waive_data_integrity_finding,
+    ApplyDataIntegrityRepairInput, DataIntegrityFindingRow, WaiveDataIntegrityFindingInput,
 };
 use crate::errors::AppResult;
 use crate::state::AppState;
@@ -18,16 +17,36 @@ pub async fn list_data_integrity_findings(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<DataIntegrityFindingRow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::SYNC_MANAGE, PermissionScope::Global);
-    require_permission!(state, &user, crate::rbac::permissions::INTEGRITY_REPAIR, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_MANAGE,
+        PermissionScope::Global
+    );
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INTEGRITY_REPAIR,
+        PermissionScope::Global
+    );
     list_open_findings(&state.db, limit.unwrap_or(100)).await
 }
 
 #[tauri::command]
 pub async fn run_data_integrity_detectors_cmd(state: State<'_, AppState>) -> AppResult<i64> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::SYNC_MANAGE, PermissionScope::Global);
-    require_permission!(state, &user, crate::rbac::permissions::INTEGRITY_REPAIR, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_MANAGE,
+        PermissionScope::Global
+    );
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INTEGRITY_REPAIR,
+        PermissionScope::Global
+    );
     require_step_up!(state);
     run_data_integrity_detectors(&state.db).await
 }
@@ -38,8 +57,18 @@ pub async fn waive_data_integrity_finding_cmd(
     state: State<'_, AppState>,
 ) -> AppResult<DataIntegrityFindingRow> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::SYNC_MANAGE, PermissionScope::Global);
-    require_permission!(state, &user, crate::rbac::permissions::INTEGRITY_REPAIR, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_MANAGE,
+        PermissionScope::Global
+    );
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INTEGRITY_REPAIR,
+        PermissionScope::Global
+    );
     require_step_up!(state);
     waive_data_integrity_finding(&state.db, input, i64::from(user.user_id)).await
 }
@@ -50,8 +79,18 @@ pub async fn apply_data_integrity_repair_cmd(
     state: State<'_, AppState>,
 ) -> AppResult<DataIntegrityFindingRow> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::SYNC_MANAGE, PermissionScope::Global);
-    require_permission!(state, &user, crate::rbac::permissions::INTEGRITY_REPAIR, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_MANAGE,
+        PermissionScope::Global
+    );
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::INTEGRITY_REPAIR,
+        PermissionScope::Global
+    );
     require_step_up!(state);
     apply_data_integrity_repair(&state.db, input, i64::from(user.user_id)).await
 }

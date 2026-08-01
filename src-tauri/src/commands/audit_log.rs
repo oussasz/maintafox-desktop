@@ -89,26 +89,18 @@ pub async fn list_audit_events(
     let (sql, values) = build_audit_filter_query(&filter, true);
     let rows = state
         .db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            values,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         out.push(AuditEventSummary {
             id: row.try_get::<i64>("", "id").unwrap_or_default(),
-            action_code: row
-                .try_get::<String>("", "action_code")
-                .unwrap_or_default(),
+            action_code: row.try_get::<String>("", "action_code").unwrap_or_default(),
             target_type: row.try_get::<Option<String>>("", "target_type").unwrap_or(None),
             target_id: row.try_get::<Option<String>>("", "target_id").unwrap_or(None),
             actor_id: row.try_get::<Option<i64>>("", "actor_id").unwrap_or(None),
-            actor_username: row
-                .try_get::<Option<String>>("", "actor_username")
-                .unwrap_or(None),
+            actor_username: row.try_get::<Option<String>>("", "actor_username").unwrap_or(None),
             auth_context: row
                 .try_get::<String>("", "auth_context")
                 .unwrap_or_else(|_| "password".to_string()),
@@ -174,9 +166,7 @@ pub async fn get_audit_event(event_id: i64, state: State<'_, AppState>) -> AppRe
         target_type: row.try_get::<Option<String>>("", "target_type").unwrap_or(None),
         target_id: row.try_get::<Option<String>>("", "target_id").unwrap_or(None),
         actor_id,
-        actor_username: row
-            .try_get::<Option<String>>("", "actor_username")
-            .unwrap_or(None),
+        actor_username: row.try_get::<Option<String>>("", "actor_username").unwrap_or(None),
         auth_context: row
             .try_get::<String>("", "auth_context")
             .unwrap_or_else(|_| "password".to_string()),
@@ -194,17 +184,19 @@ pub async fn get_audit_event(event_id: i64, state: State<'_, AppState>) -> AppRe
 }
 
 #[tauri::command]
-pub async fn export_audit_log(
-    payload: ExportAuditInput,
-    state: State<'_, AppState>,
-) -> AppResult<ExportResult> {
+pub async fn export_audit_log(payload: ExportAuditInput, state: State<'_, AppState>) -> AppResult<ExportResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::LOG_EXPORT, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::LOG_EXPORT,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     if payload.export_reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "export_reason must not be empty".to_string(),
+            "export_reason must not be empty".to_string()
         ]));
     }
 
@@ -257,11 +249,7 @@ pub async fn export_audit_log(
     let (sql, values) = build_audit_filter_query(&enforced_filter, false);
     let rows = state
         .db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            values,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
     let mut serialized_rows = Vec::with_capacity(rows.len());
@@ -392,9 +380,7 @@ async fn ensure_log_view_access(state: &State<'_, AppState>, user_id: i32) -> Ap
             [i64::from(user_id).into(), crate::rbac::permissions::LOG_VIEW.into()],
         ))
         .await?;
-    let scoped_count = row
-        .and_then(|r| r.try_get::<i64>("", "cnt").ok())
-        .unwrap_or(0);
+    let scoped_count = row.and_then(|r| r.try_get::<i64>("", "cnt").ok()).unwrap_or(0);
     if scoped_count > 0 {
         Ok(())
     } else {

@@ -28,24 +28,26 @@ fn thesis_20_events() -> Vec<ReadinessEvent> {
     specs
         .into_iter()
         .enumerate()
-        .map(|(i, (interval_complete, failure_mode_coded, corrective_documented, equipment_identified))| {
-            let id = (i + 1) as i64;
-            ReadinessEvent {
-                id,
-                asset_key: "a".into(),
-                university_id: None,
-                event_ts: chrono::Utc::now(),
-                eligible: true,
-                equipment_identified,
-                interval_complete,
-                failure_mode_coded,
-                corrective_documented,
-                eligible_flags_json: ReadinessEvent::eligible_flags_json(true),
-                failure_mode_id: if failure_mode_coded { Some(id) } else { None },
-                downtime_duration_hours: 0.0,
-                active_repair_hours: 0.0,
-            }
-        })
+        .map(
+            |(i, (interval_complete, failure_mode_coded, corrective_documented, equipment_identified))| {
+                let id = (i + 1) as i64;
+                ReadinessEvent {
+                    id,
+                    asset_key: "a".into(),
+                    university_id: None,
+                    event_ts: chrono::Utc::now(),
+                    eligible: true,
+                    equipment_identified,
+                    interval_complete,
+                    failure_mode_coded,
+                    corrective_documented,
+                    eligible_flags_json: ReadinessEvent::eligible_flags_json(true),
+                    failure_mode_id: if failure_mode_coded { Some(id) } else { None },
+                    downtime_duration_hours: 0.0,
+                    active_repair_hours: 0.0,
+                }
+            },
+        )
         .collect()
 }
 

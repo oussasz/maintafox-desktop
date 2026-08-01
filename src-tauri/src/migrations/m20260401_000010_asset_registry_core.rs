@@ -30,10 +30,8 @@ impl MigrationTrait for Migration {
         let db = manager.get_connection();
 
         // ── 1. Extend equipment with governed identity columns ────────────
-        db.execute_unprepared(
-            "ALTER TABLE equipment ADD COLUMN maintainable_boundary INTEGER NOT NULL DEFAULT 1",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE equipment ADD COLUMN maintainable_boundary INTEGER NOT NULL DEFAULT 1")
+            .await?;
 
         db.execute_unprepared("ALTER TABLE equipment ADD COLUMN decommissioned_at TEXT")
             .await?;
@@ -54,12 +52,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Alias::new("asset_id")).integer().not_null())
                     .col(ColumnDef::new(Alias::new("system_code")).text().not_null())
                     .col(ColumnDef::new(Alias::new("external_id")).text().not_null())
-                    .col(
-                        ColumnDef::new(Alias::new("is_primary"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("is_primary")).integer().not_null().default(0))
                     .col(ColumnDef::new(Alias::new("valid_from")).text())
                     .col(ColumnDef::new(Alias::new("valid_to")).text())
                     .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
@@ -78,15 +71,11 @@ impl MigrationTrait for Migration {
             .await?;
 
         // ── 3. Extend equipment_hierarchy with effective dating ───────────
-        db.execute_unprepared(
-            "ALTER TABLE equipment_hierarchy ADD COLUMN effective_from TEXT",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE equipment_hierarchy ADD COLUMN effective_from TEXT")
+            .await?;
 
-        db.execute_unprepared(
-            "ALTER TABLE equipment_hierarchy ADD COLUMN effective_to TEXT",
-        )
-        .await?;
+        db.execute_unprepared("ALTER TABLE equipment_hierarchy ADD COLUMN effective_to TEXT")
+            .await?;
 
         // ── 4. Add missing indexes ────────────────────────────────────────
         // idx_equipment_node_id already exists from migration 005.
@@ -142,11 +131,7 @@ impl MigrationTrait for Migration {
         // For the down path we only drop the new table and indexes;
         // the ALTER-added columns remain (acceptable in a development context).
         manager
-            .drop_table(
-                Table::drop()
-                    .table(Alias::new("asset_external_ids"))
-                    .to_owned(),
-            )
+            .drop_table(Table::drop().table(Alias::new("asset_external_ids")).to_owned())
             .await?;
 
         // Drop indexes added in this migration
@@ -156,8 +141,7 @@ impl MigrationTrait for Migration {
             "idx_equipment_hierarchy_child",
             "idx_equipment_maintainable",
         ] {
-            db.execute_unprepared(&format!("DROP INDEX IF EXISTS {idx}"))
-                .await?;
+            db.execute_unprepared(&format!("DROP INDEX IF EXISTS {idx}")).await?;
         }
 
         Ok(())

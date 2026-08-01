@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleCandidate {
@@ -360,4 +360,3 @@ pub struct ExportedBinaryDocument {
     pub mime_type: String,
     pub bytes: Vec<u8>,
 }
-

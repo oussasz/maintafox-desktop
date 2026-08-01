@@ -9,8 +9,7 @@ use crate::vps::domain::{VpsContractFamily, VpsTypedError};
 /// Console RBAC names (re-export canonical registry constants).
 pub mod permissions {
     pub use crate::rbac::permissions::{
-        AUDIT_VIEW, CONSOLE_VIEW, CUSTOMER_MANAGE, ENTITLEMENT_MANAGE, PLATFORM_OBSERVE,
-        ROLLOUT_MANAGE, SYNC_OPERATE,
+        AUDIT_VIEW, CONSOLE_VIEW, CUSTOMER_MANAGE, ENTITLEMENT_MANAGE, PLATFORM_OBSERVE, ROLLOUT_MANAGE, SYNC_OPERATE,
     };
 }
 
@@ -75,13 +74,34 @@ impl StepUpActionKind {
 pub fn required_permissions_for_console_route(route_key: &str) -> &'static [&'static str] {
     match route_key {
         "vcn.home" | "vcn.overview" => &[crate::rbac::permissions::CONSOLE_VIEW],
-        "vcn.customers" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::CUSTOMER_MANAGE],
-        "vcn.entitlements" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::ENTITLEMENT_MANAGE],
-        "vcn.machines" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::ENTITLEMENT_MANAGE],
-        "vcn.sync" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::SYNC_OPERATE],
-        "vcn.rollouts" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::ROLLOUT_MANAGE],
-        "vcn.health" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::PLATFORM_OBSERVE],
-        "vcn.audit" => &[crate::rbac::permissions::CONSOLE_VIEW, crate::rbac::permissions::AUDIT_VIEW],
+        "vcn.customers" => &[
+            crate::rbac::permissions::CONSOLE_VIEW,
+            crate::rbac::permissions::CUSTOMER_MANAGE,
+        ],
+        "vcn.entitlements" => &[
+            crate::rbac::permissions::CONSOLE_VIEW,
+            crate::rbac::permissions::ENTITLEMENT_MANAGE,
+        ],
+        "vcn.machines" => &[
+            crate::rbac::permissions::CONSOLE_VIEW,
+            crate::rbac::permissions::ENTITLEMENT_MANAGE,
+        ],
+        "vcn.sync" => &[
+            crate::rbac::permissions::CONSOLE_VIEW,
+            crate::rbac::permissions::SYNC_OPERATE,
+        ],
+        "vcn.rollouts" => &[
+            crate::rbac::permissions::CONSOLE_VIEW,
+            crate::rbac::permissions::ROLLOUT_MANAGE,
+        ],
+        "vcn.health" => &[
+            crate::rbac::permissions::CONSOLE_VIEW,
+            crate::rbac::permissions::PLATFORM_OBSERVE,
+        ],
+        "vcn.audit" => &[
+            crate::rbac::permissions::CONSOLE_VIEW,
+            crate::rbac::permissions::AUDIT_VIEW,
+        ],
         _ => &[crate::rbac::permissions::CONSOLE_VIEW],
     }
 }
@@ -90,10 +110,7 @@ pub fn caller_has_all_permissions(caller: &[String], required: &[&str]) -> bool 
     required.iter().all(|p| caller.iter().any(|c| c == *p))
 }
 
-pub fn enforce_console_route(
-    route_key: &str,
-    caller_permissions: &[String],
-) -> Result<(), VpsTypedError> {
+pub fn enforce_console_route(route_key: &str, caller_permissions: &[String]) -> Result<(), VpsTypedError> {
     let req = required_permissions_for_console_route(route_key);
     if caller_has_all_permissions(caller_permissions, req) {
         return Ok(());

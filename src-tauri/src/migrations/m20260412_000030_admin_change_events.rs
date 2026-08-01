@@ -45,25 +45,17 @@ impl MigrationTrait for Migration {
         .await?;
 
         // ── 2. Indexes for common query patterns ─────────────────────────
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ace_action ON admin_change_events(action)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ace_action ON admin_change_events(action)")
+            .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ace_actor ON admin_change_events(actor_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ace_actor ON admin_change_events(actor_id)")
+            .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ace_target ON admin_change_events(target_user_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ace_target ON admin_change_events(target_user_id)")
+            .await?;
 
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_ace_acted ON admin_change_events(acted_at)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ace_acted ON admin_change_events(acted_at)")
+            .await?;
 
         tracing::info!("migration_030::admin_change_events table created");
         Ok(())
@@ -76,7 +68,8 @@ impl MigrationTrait for Migration {
         db.execute_unprepared("DROP INDEX IF EXISTS idx_ace_target").await?;
         db.execute_unprepared("DROP INDEX IF EXISTS idx_ace_actor").await?;
         db.execute_unprepared("DROP INDEX IF EXISTS idx_ace_action").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS admin_change_events").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS admin_change_events")
+            .await?;
 
         Ok(())
     }

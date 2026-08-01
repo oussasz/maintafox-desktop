@@ -85,9 +85,7 @@ mod tests {
         .await
         .expect("create value");
 
-        sets::validate_set(db, set.id, 1)
-            .await
-            .expect("validate set");
+        sets::validate_set(db, set.id, 1).await.expect("validate set");
 
         (domain.id, set.id)
     }
@@ -134,9 +132,7 @@ mod tests {
         .await
         .expect("create value");
 
-        sets::validate_set(db, set.id, 1)
-            .await
-            .expect("validate set");
+        sets::validate_set(db, set.id, 1).await.expect("validate set");
 
         (domain.id, set.id)
     }
@@ -232,14 +228,10 @@ mod tests {
         .expect("create value");
 
         // Deactivate the value (no migration map).
-        values::deactivate_value(&db, val.id, 1)
-            .await
-            .expect("deactivate");
+        values::deactivate_value(&db, val.id, 1).await.expect("deactivate");
 
         // Validate the set (deactivated values don't block validation).
-        sets::validate_set(&db, set.id, 1)
-            .await
-            .expect("validate");
+        sets::validate_set(&db, set.id, 1).await.expect("validate");
 
         let readiness = publish::compute_publish_readiness(&db, set.id)
             .await
@@ -313,7 +305,10 @@ mod tests {
         assert!(readiness.is_protected);
         assert!(readiness.impact_preview_required);
         assert!(!readiness.impact_preview_available);
-        assert!(!readiness.is_ready, "protected domain without preview should not be ready");
+        assert!(
+            !readiness.is_ready,
+            "protected domain without preview should not be ready"
+        );
         assert!(
             readiness.issues.iter().any(|i| i.check == "impact_preview_required"),
             "should have impact_preview_required blocker"
@@ -355,9 +350,7 @@ mod tests {
         let db = setup().await;
         let (_domain_id, set_id) = setup_validated_protected_set(&db).await;
 
-        let impact = publish::preview_publish_impact(&db, set_id)
-            .await
-            .expect("impact");
+        let impact = publish::preview_publish_impact(&db, set_id).await.expect("impact");
 
         assert_eq!(impact.dimensions.len(), 6);
 
@@ -380,8 +373,7 @@ mod tests {
                     dim.status
                 );
             } else {
-                assert_eq!(dim.status, "unavailable",
-                    "module {} should be unavailable", dim.module);
+                assert_eq!(dim.status, "unavailable", "module {} should be unavailable", dim.module);
             }
         }
     }
@@ -405,13 +397,9 @@ mod tests {
         assert!(result_v1.superseded_set_id.is_none(), "no prior set to supersede");
 
         // Create V2 (cloned from published VAL_A), add VAL_B, validate, and publish.
-        let set_v2 = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create V2");
+        let set_v2 = sets::create_draft_set(&db, domain_id, 1).await.expect("create V2");
 
-        let cloned = values::list_values(&db, set_v2.id)
-            .await
-            .expect("list V2");
+        let cloned = values::list_values(&db, set_v2.id).await.expect("list V2");
         assert!(
             cloned.iter().any(|v| v.code == "VAL_A"),
             "V2 draft must clone VAL_A from published"
@@ -437,25 +425,17 @@ mod tests {
         .await
         .expect("create value v2");
 
-        sets::validate_set(&db, set_v2.id, 1)
-            .await
-            .expect("validate V2");
+        sets::validate_set(&db, set_v2.id, 1).await.expect("validate V2");
 
         let result_v2 = publish::publish_reference_set(&db, set_v2.id, 1)
             .await
             .expect("publish V2");
 
         assert_eq!(result_v2.set.status, "published");
-        assert_eq!(
-            result_v2.superseded_set_id,
-            Some(set_id_v1),
-            "V1 should be superseded"
-        );
+        assert_eq!(result_v2.superseded_set_id, Some(set_id_v1), "V1 should be superseded");
 
         // Verify V1 is now superseded.
-        let v1_after = sets::get_reference_set(&db, set_id_v1)
-            .await
-            .expect("get V1 after");
+        let v1_after = sets::get_reference_set(&db, set_id_v1).await.expect("get V1 after");
         assert_eq!(v1_after.status, "superseded");
     }
 
@@ -464,9 +444,7 @@ mod tests {
         let db = setup().await;
         let (_domain_id, set_id) = setup_validated_tenant_set(&db).await;
 
-        let result = publish::publish_reference_set(&db, set_id, 1)
-            .await
-            .expect("publish");
+        let result = publish::publish_reference_set(&db, set_id, 1).await.expect("publish");
 
         assert!(result.set.effective_from.is_some(), "effective_from should be set");
         assert!(result.set.published_at.is_some(), "published_at should be set");

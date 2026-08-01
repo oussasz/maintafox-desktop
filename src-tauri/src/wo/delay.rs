@@ -58,9 +58,7 @@ pub struct OpenDowntimeInput {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn decode_err(field: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "Delay/Downtime row decode error for '{field}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("Delay/Downtime row decode error for '{field}': {e}"))
 }
 
 fn map_delay_segment(row: &sea_orm::QueryResult) -> AppResult<WoDelaySegment> {
@@ -133,11 +131,9 @@ async fn load_wo_status_code(db: &DatabaseConnection, wo_id: i64) -> AppResult<S
 
 const VALID_DOWNTIME_TYPES: &[&str] = &["full", "partial", "standby", "quality_loss"];
 
-const DELAY_COLS: &str =
-    "id, work_order_id, started_at, ended_at, delay_reason_id, comment, entered_by_id";
+const DELAY_COLS: &str = "id, work_order_id, started_at, ended_at, delay_reason_id, comment, entered_by_id";
 
-const DOWNTIME_COLS: &str =
-    "id, work_order_id, started_at, ended_at, downtime_type, comment, classification_code";
+const DOWNTIME_COLS: &str = "id, work_order_id, started_at, ended_at, downtime_type, comment, classification_code";
 
 const VALID_CLASSIFICATION_CODES: &[&str] = &[
     "mechanical",
@@ -153,10 +149,7 @@ const VALID_CLASSIFICATION_CODES: &[&str] = &[
 
 /// Manually open a downtime segment (OEE input).
 /// WO must be in [in_progress, on_hold].
-pub async fn open_downtime_segment(
-    db: &DatabaseConnection,
-    input: OpenDowntimeInput,
-) -> AppResult<WoDowntimeSegment> {
+pub async fn open_downtime_segment(db: &DatabaseConnection, input: OpenDowntimeInput) -> AppResult<WoDowntimeSegment> {
     if !VALID_DOWNTIME_TYPES.contains(&input.downtime_type.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
             "downtime_type invalide : '{}'. Valeurs autorisées : full, partial, standby, quality_loss.",
@@ -174,10 +167,7 @@ pub async fn open_downtime_segment(
     }
 
     let status_code = load_wo_status_code(db, input.wo_id).await?;
-    if !matches!(
-        status_code.as_str(),
-        "in_progress" | "on_hold"
-    ) {
+    if !matches!(status_code.as_str(), "in_progress" | "on_hold") {
         return Err(AppError::ValidationFailed(vec![format!(
             "Un segment de temps d'arrêt ne peut être ouvert qu'aux statuts \
              in_progress ou on_hold. Statut actuel : '{status_code}'."
@@ -217,11 +207,7 @@ pub async fn open_downtime_segment(
             [],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "Failed to re-read downtime segment after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read downtime segment after insert")))?;
     let segment = map_downtime_segment(&row)?;
     let _ = emit_execution_event(
         db,
@@ -247,8 +233,7 @@ pub async fn close_downtime_segment(
     segment_id: i64,
     ended_at: Option<String>,
 ) -> AppResult<WoDowntimeSegment> {
-    let close_ts = ended_at
-        .unwrap_or_else(now_utc_z);
+    let close_ts = ended_at.unwrap_or_else(now_utc_z);
 
     let result = db
         .execute(Statement::from_sql_and_values(
@@ -309,10 +294,7 @@ pub async fn close_downtime_segment(
 // C) list_delay_segments
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn list_delay_segments(
-    db: &DatabaseConnection,
-    wo_id: i64,
-) -> AppResult<Vec<WoDelaySegment>> {
+pub async fn list_delay_segments(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<WoDelaySegment>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -330,10 +312,7 @@ pub async fn list_delay_segments(
 // D) list_downtime_segments
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn list_downtime_segments(
-    db: &DatabaseConnection,
-    wo_id: i64,
-) -> AppResult<Vec<WoDowntimeSegment>> {
+pub async fn list_downtime_segments(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<WoDowntimeSegment>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,

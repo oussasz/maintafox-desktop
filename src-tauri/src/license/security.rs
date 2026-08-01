@@ -21,7 +21,9 @@ pub struct LicenseTraceInput {
 }
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
-    AppError::ValidationFailed(vec![format!("Failed to decode licensing security field '{field}': {err}")])
+    AppError::ValidationFailed(vec![format!(
+        "Failed to decode licensing security field '{field}': {err}"
+    )])
 }
 
 fn parse_rfc3339(value: &str, field: &str) -> AppResult<chrono::DateTime<Utc>> {
@@ -49,12 +51,7 @@ pub fn validate_signed_timestamp_window(signed_at: &str, now: chrono::DateTime<U
     Ok(())
 }
 
-pub async fn verify_trust_key(
-    db: &impl ConnectionTrait,
-    issuer: &str,
-    key_id: &str,
-    purpose: &str,
-) -> AppResult<()> {
+pub async fn verify_trust_key(db: &impl ConnectionTrait, issuer: &str, key_id: &str, purpose: &str) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -233,7 +230,7 @@ pub async fn mark_key_compromised(
 ) -> AppResult<()> {
     if reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "compromise reason is required.".to_string(),
+            "compromise reason is required.".to_string()
         ]));
     }
     db.execute(Statement::from_sql_and_values(

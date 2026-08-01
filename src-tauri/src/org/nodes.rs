@@ -20,10 +20,7 @@ use crate::errors::{AppError, AppResult};
 use crate::org::fail::{fail, fail_params};
 use crate::org::model_scope;
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement,
-    TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -139,12 +136,8 @@ fn map_node(row: &QueryResult) -> AppResult<OrgNode> {
         sync_id: row
             .try_get::<String>("", "sync_id")
             .map_err(|e| decode_err("sync_id", e))?,
-        code: row
-            .try_get::<String>("", "code")
-            .map_err(|e| decode_err("code", e))?,
-        name: row
-            .try_get::<String>("", "name")
-            .map_err(|e| decode_err("name", e))?,
+        code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
+        name: row.try_get::<String>("", "name").map_err(|e| decode_err("name", e))?,
         node_type_id: row
             .try_get::<i64>("", "node_type_id")
             .map_err(|e| decode_err("node_type_id", e))?,
@@ -154,9 +147,7 @@ fn map_node(row: &QueryResult) -> AppResult<OrgNode> {
         ancestor_path: row
             .try_get::<String>("", "ancestor_path")
             .map_err(|e| decode_err("ancestor_path", e))?,
-        depth: row
-            .try_get::<i64>("", "depth")
-            .map_err(|e| decode_err("depth", e))?,
+        depth: row.try_get::<i64>("", "depth").map_err(|e| decode_err("depth", e))?,
         description: row
             .try_get::<Option<String>>("", "description")
             .map_err(|e| decode_err("description", e))?,
@@ -238,15 +229,9 @@ async fn assert_parent_child_allowed(
 
 /// Fetch a node by id within a transaction context.
 async fn fetch_node(db: &impl ConnectionTrait, node_id: i64) -> AppResult<OrgNode> {
-    let sql = format!(
-        "SELECT {NODE_SELECT_COLS} FROM org_nodes n WHERE n.id = ? AND n.deleted_at IS NULL"
-    );
+    let sql = format!("SELECT {NODE_SELECT_COLS} FROM org_nodes n WHERE n.id = ? AND n.deleted_at IS NULL");
     let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            [node_id.into()],
-        ))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [node_id.into()]))
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "org_node".to_string(),
@@ -318,9 +303,7 @@ pub async fn list_active_org_tree(db: &DatabaseConnection) -> AppResult<Vec<OrgT
            )
          ORDER BY n.ancestor_path ASC, n.name ASC"
     );
-    let rows = db
-        .query_all(Statement::from_string(DbBackend::Sqlite, sql))
-        .await?;
+    let rows = db.query_all(Statement::from_string(DbBackend::Sqlite, sql)).await?;
 
     rows.iter()
         .map(|row| {
@@ -381,10 +364,7 @@ pub async fn create_org_node(
 ) -> AppResult<OrgNode> {
     let code = payload.code.trim().to_string();
     if code.is_empty() {
-        return Err(fail(
-            "ORG_NODE_CODE_EMPTY",
-            "Node code must not be empty.",
-        ));
+        return Err(fail("ORG_NODE_CODE_EMPTY", "Node code must not be empty."));
     }
 
     model_scope::assert_structural_edit_allowed_for_model(db, payload.structure_model_id).await?;
@@ -428,42 +408,41 @@ pub async fn create_org_node(
     }
 
     // Compute depth and ancestor_path based on parent
-    let (depth, parent_path, parent_id_val): (i64, String, Option<i64>) =
-        if let Some(pid) = payload.parent_id {
-            // Child node
-            if flags.is_root_type {
-                return Err(fail(
-                    "ORG_ROOT_TYPE_AS_CHILD",
-                    "A root node type cannot be created as a child node.",
-                ));
-            }
-            let parent = fetch_node(&txn, pid).await?;
-            // Parent must be in the same structure model
-            if parent.structure_model_id != payload.structure_model_id {
-                return Err(fail(
-                    "ORG_NODE_WRONG_MODEL",
-                    "The parent node belongs to a different structure model than this node.",
-                ));
-            }
-            // Validate parent-child type pair
-            assert_parent_child_allowed(
-                &txn,
-                payload.structure_model_id,
-                parent.node_type_id,
-                payload.node_type_id,
-            )
-            .await?;
-            (parent.depth + 1, parent.ancestor_path.clone(), Some(pid))
-        } else {
-            // Root node — type must be is_root_type
-            if !flags.is_root_type {
-                return Err(fail(
-                    "ORG_ROOT_ONLY_WITHOUT_PARENT",
-                    "Only root node types can be created without a parent.",
-                ));
-            }
-            (0, String::new(), None)
-        };
+    let (depth, parent_path, parent_id_val): (i64, String, Option<i64>) = if let Some(pid) = payload.parent_id {
+        // Child node
+        if flags.is_root_type {
+            return Err(fail(
+                "ORG_ROOT_TYPE_AS_CHILD",
+                "A root node type cannot be created as a child node.",
+            ));
+        }
+        let parent = fetch_node(&txn, pid).await?;
+        // Parent must be in the same structure model
+        if parent.structure_model_id != payload.structure_model_id {
+            return Err(fail(
+                "ORG_NODE_WRONG_MODEL",
+                "The parent node belongs to a different structure model than this node.",
+            ));
+        }
+        // Validate parent-child type pair
+        assert_parent_child_allowed(
+            &txn,
+            payload.structure_model_id,
+            parent.node_type_id,
+            payload.node_type_id,
+        )
+        .await?;
+        (parent.depth + 1, parent.ancestor_path.clone(), Some(pid))
+    } else {
+        // Root node — type must be is_root_type
+        if !flags.is_root_type {
+            return Err(fail(
+                "ORG_ROOT_ONLY_WITHOUT_PARENT",
+                "Only root node types can be created without a parent.",
+            ));
+        }
+        (0, String::new(), None)
+    };
 
     let now = Utc::now().to_rfc3339();
     let sync_id = Uuid::new_v4().to_string();
@@ -506,12 +485,8 @@ pub async fn create_org_node(
             [sync_id.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("node created but not found after insert"))
-        })?;
-    let node_id: i64 = id_row
-        .try_get("", "id")
-        .map_err(|e| decode_err("id", e))?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("node created but not found after insert")))?;
+    let node_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
 
     // Compute final ancestor_path: root = /{id}/, child = {parent_path}{id}/
     let ancestor_path = if parent_id_val.is_some() {
@@ -681,10 +656,7 @@ pub async fn move_org_node(
 
             // Reject moving under self
             if new_pid == payload.node_id {
-                return Err(fail(
-                    "ORG_MOVE_CYCLE",
-                    "Cannot move a node under itself.",
-                ));
+                return Err(fail("ORG_MOVE_CYCLE", "Cannot move a node under itself."));
             }
 
             let new_parent = fetch_node(&txn, new_pid).await?;
@@ -708,19 +680,9 @@ pub async fn move_org_node(
             }
 
             // Validate parent-child type pair against node's model
-            assert_parent_child_allowed(
-                &txn,
-                model_id,
-                new_parent.node_type_id,
-                node.node_type_id,
-            )
-            .await?;
+            assert_parent_child_allowed(&txn, model_id, new_parent.node_type_id, node.node_type_id).await?;
 
-            (
-                new_parent.depth + 1,
-                new_parent.ancestor_path.clone(),
-                Some(new_pid),
-            )
+            (new_parent.depth + 1, new_parent.ancestor_path.clone(), Some(new_pid))
         } else {
             // Moving to root
             if !flags.is_root_type {
@@ -767,24 +729,16 @@ pub async fn move_org_node(
             "SELECT id, ancestor_path, depth FROM org_nodes \
              WHERE ancestor_path LIKE ? AND id != ? AND deleted_at IS NULL \
                AND structure_model_id = ?",
-            [
-                format!("{old_path}%").into(),
-                payload.node_id.into(),
-                model_id.into(),
-            ],
+            [format!("{old_path}%").into(), payload.node_id.into(), model_id.into()],
         ))
         .await?;
 
     for desc_row in &descendants {
-        let desc_id: i64 = desc_row
-            .try_get("", "id")
-            .map_err(|e| decode_err("id", e))?;
+        let desc_id: i64 = desc_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
         let desc_path: String = desc_row
             .try_get("", "ancestor_path")
             .map_err(|e| decode_err("ancestor_path", e))?;
-        let desc_depth: i64 = desc_row
-            .try_get("", "depth")
-            .map_err(|e| decode_err("depth", e))?;
+        let desc_depth: i64 = desc_row.try_get("", "depth").map_err(|e| decode_err("depth", e))?;
 
         let updated_path = desc_path.replacen(&old_path, &new_ancestor_path, 1);
         let updated_depth = desc_depth + depth_delta;
@@ -859,9 +813,7 @@ pub async fn deactivate_org_node(
     if active_children > 0 {
         return Err(fail_params(
             "ORG_HAS_ACTIVE_CHILDREN",
-            format!(
-                "Cannot deactivate a node that has {active_children} active child node(s)."
-            ),
+            format!("Cannot deactivate a node that has {active_children} active child node(s)."),
             &[("count", active_children.to_string())],
         ));
     }

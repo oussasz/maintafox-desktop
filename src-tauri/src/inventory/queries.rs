@@ -2,8 +2,8 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Transac
 
 use crate::errors::{AppError, AppResult};
 use crate::inventory::domain::{
-    ArticleFamily, CreateArticleFamilyInput, InventoryArticle, InventoryArticleFilter, InventoryArticleInput,
-    CreateStockLocationInput, CreateWarehouseInput, InventoryIssueInput, InventoryReleaseReservationInput,
+    ArticleFamily, CreateArticleFamilyInput, CreateStockLocationInput, CreateWarehouseInput, InventoryArticle,
+    InventoryArticleFilter, InventoryArticleInput, InventoryIssueInput, InventoryReleaseReservationInput,
     InventoryReorderRecommendation, InventoryReserveInput, InventoryReturnInput, InventoryStockAdjustInput,
     InventoryStockBalance, InventoryStockFilter, InventoryTaxCategory, InventoryTaxCategoryInput, InventoryTransaction,
     InventoryTransactionFilter, InventoryTransferInput, StockImpactProjection, StockLocation, StockReservation,
@@ -38,13 +38,13 @@ async fn get_lookup_domain_id(db: &DatabaseConnection, domain_key: &str) -> AppR
 fn validate_article_stock_contract(input: &InventoryArticleInput) -> AppResult<()> {
     if input.min_stock < 0.0 || input.reorder_point < 0.0 || input.safety_stock < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "Stock thresholds cannot be negative.".to_string(),
+            "Stock thresholds cannot be negative.".to_string()
         ]));
     }
     if let Some(max_stock) = input.max_stock {
         if max_stock < 0.0 {
             return Err(AppError::ValidationFailed(vec![
-                "max_stock cannot be negative.".to_string(),
+                "max_stock cannot be negative.".to_string()
             ]));
         }
         if max_stock < input.min_stock {
@@ -86,7 +86,9 @@ async fn ensure_lookup_value_in_domain(
         .await?;
 
     let Some(row) = row else {
-        return Err(AppError::ValidationFailed(vec![format!("{field_name} does not exist.")]));
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{field_name} does not exist."
+        )]));
     };
 
     let domain_key: String = row.try_get("", "domain_key")?;
@@ -108,7 +110,9 @@ async fn ensure_article_family_active(db: &DatabaseConnection, family_id: i64) -
         ))
         .await?;
     let Some(row) = row else {
-        return Err(AppError::ValidationFailed(vec!["family_id does not exist.".to_string()]));
+        return Err(AppError::ValidationFailed(
+            vec!["family_id does not exist.".to_string()],
+        ));
     };
     let is_active: i64 = row.try_get("", "is_active")?;
     if is_active == 0 {
@@ -214,7 +218,7 @@ pub async fn create_article_family(
     let name = input.name.trim().to_string();
     if code.is_empty() || name.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Family code and name are required.".to_string(),
+            "Family code and name are required.".to_string()
         ]));
     }
 
@@ -257,7 +261,7 @@ pub async fn update_article_family(
     let name = input.name.trim().to_string();
     if code.is_empty() || name.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Family code and name are required.".to_string(),
+            "Family code and name are required.".to_string()
         ]));
     }
     let is_active = parse_bool_to_i64(input.is_active, true);
@@ -307,10 +311,7 @@ pub async fn update_article_family(
     })
 }
 
-pub async fn deactivate_article_family(
-    db: &DatabaseConnection,
-    family_id: i64,
-) -> AppResult<ArticleFamily> {
+pub async fn deactivate_article_family(db: &DatabaseConnection, family_id: i64) -> AppResult<ArticleFamily> {
     let current_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -411,10 +412,7 @@ pub async fn create_inventory_tax_category(
             [domain_id.into()],
         ))
         .await?;
-    let next_sort_order: i64 = row
-        .as_ref()
-        .and_then(|r| r.try_get("", "next_sort").ok())
-        .unwrap_or(1);
+    let next_sort_order: i64 = row.as_ref().and_then(|r| r.try_get("", "next_sort").ok()).unwrap_or(1);
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -498,7 +496,7 @@ pub async fn update_inventory_tax_category(
         .await?;
     if conflicting.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Tax category code already exists.".to_string(),
+            "Tax category code already exists.".to_string()
         ]));
     }
 
@@ -588,11 +586,7 @@ pub async fn deactivate_inventory_tax_category(
                  row_version = row_version + 1,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE id = ? AND domain_id = ? AND deleted_at IS NULL AND row_version = ?",
-            [
-                tax_category_id.into(),
-                domain_id.into(),
-                expected_row_version.into(),
-            ],
+            [tax_category_id.into(), domain_id.into(), expected_row_version.into()],
         ))
         .await?;
     if result.rows_affected() == 0 {
@@ -653,10 +647,7 @@ pub async fn list_warehouses(db: &DatabaseConnection) -> AppResult<Vec<Warehouse
         .collect()
 }
 
-pub async fn list_locations(
-    db: &DatabaseConnection,
-    warehouse_id: Option<i64>,
-) -> AppResult<Vec<StockLocation>> {
+pub async fn list_locations(db: &DatabaseConnection, warehouse_id: Option<i64>) -> AppResult<Vec<StockLocation>> {
     let rows = if let Some(warehouse_id) = warehouse_id {
         db.query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -700,10 +691,7 @@ pub async fn list_locations(
         .collect()
 }
 
-pub async fn create_warehouse(
-    db: &DatabaseConnection,
-    input: CreateWarehouseInput,
-) -> AppResult<Warehouse> {
+pub async fn create_warehouse(db: &DatabaseConnection, input: CreateWarehouseInput) -> AppResult<Warehouse> {
     let code = input.code.trim().to_string();
     let name = input.name.trim().to_string();
     if code.is_empty() || name.is_empty() {
@@ -732,8 +720,7 @@ pub async fn create_warehouse(
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id, code, name, is_active, created_at FROM warehouses WHERE id = last_insert_rowid()"
-                .to_string(),
+            "SELECT id, code, name, is_active, created_at FROM warehouses WHERE id = last_insert_rowid()".to_string(),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("warehouse insert")))?;
@@ -757,7 +744,7 @@ pub async fn update_warehouse(
         let n = name.trim();
         if n.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "Warehouse name cannot be empty.".to_string(),
+                "Warehouse name cannot be empty.".to_string()
             ]));
         }
         sets.push("name = ?");
@@ -769,7 +756,7 @@ pub async fn update_warehouse(
     }
     if sets.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "No warehouse fields to update.".to_string(),
+            "No warehouse fields to update.".to_string()
         ]));
     }
     vals.push(warehouse_id.into());
@@ -811,7 +798,7 @@ pub async fn create_stock_location(
     let name = input.name.trim().to_string();
     if code.is_empty() || name.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Location code and name are required.".to_string(),
+            "Location code and name are required.".to_string()
         ]));
     }
     let wh = db
@@ -915,7 +902,7 @@ pub async fn update_stock_location(
         let code = c.trim().to_string();
         if code.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "Location code cannot be empty.".to_string(),
+                "Location code cannot be empty.".to_string()
             ]));
         }
         let dup = db
@@ -937,7 +924,7 @@ pub async fn update_stock_location(
         let name = n.trim().to_string();
         if name.is_empty() {
             return Err(AppError::ValidationFailed(vec![
-                "Location name cannot be empty.".to_string(),
+                "Location name cannot be empty.".to_string()
             ]));
         }
         sets.push("name = ?".to_string());
@@ -953,7 +940,7 @@ pub async fn update_stock_location(
     }
     if sets.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "No location fields to update.".to_string(),
+            "No location fields to update.".to_string()
         ]));
     }
     sets.push("row_version = row_version + 1".to_string());
@@ -1142,13 +1129,7 @@ pub async fn list_articles(
 pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInput) -> AppResult<InventoryArticle> {
     ensure_lookup_value_in_domain(db, input.unit_value_id, "inventory.unit_of_measure", "unit_value_id").await?;
     if let Some(criticality_id) = input.criticality_value_id {
-        ensure_lookup_value_in_domain(
-            db,
-            criticality_id,
-            "equipment.criticality",
-            "criticality_value_id",
-        )
-        .await?;
+        ensure_lookup_value_in_domain(db, criticality_id, "equipment.criticality", "criticality_value_id").await?;
     }
     ensure_lookup_value_in_domain(
         db,
@@ -1176,16 +1157,11 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
     if let Some(family_id) = input.family_id {
         ensure_article_family_active(db, family_id).await?;
     }
-    ensure_preferred_location_hint(
-        db,
-        input.preferred_warehouse_id,
-        input.preferred_location_id,
-    )
-    .await?;
+    ensure_preferred_location_hint(db, input.preferred_warehouse_id, input.preferred_location_id).await?;
 
     if input.article_code.trim().is_empty() || input.article_name.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Article code and name are required.".to_string(),
+            "Article code and name are required.".to_string()
         ]));
     }
     validate_article_stock_contract(&input)?;
@@ -1203,7 +1179,7 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
         .await?;
     if existing.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Article code already exists.".to_string(),
+            "Article code already exists.".to_string()
         ]));
     }
 
@@ -1230,7 +1206,9 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
             input.criticality_value_id.map_or(Value::BigInt(None), Value::from),
             input.stocking_type_value_id.into(),
             input.tax_category_value_id.into(),
-            input.procurement_category_value_id.map_or(Value::BigInt(None), Value::from),
+            input
+                .procurement_category_value_id
+                .map_or(Value::BigInt(None), Value::from),
             input.preferred_warehouse_id.map_or(Value::BigInt(None), Value::from),
             input.preferred_location_id.map_or(Value::BigInt(None), Value::from),
             input.min_stock.into(),
@@ -1238,9 +1216,15 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
             input.reorder_point.into(),
             input.safety_stock.into(),
             input.manufacturer_name.clone().map_or(Value::String(None), Value::from),
-            input.manufacturer_part_number.clone().map_or(Value::String(None), Value::from),
+            input
+                .manufacturer_part_number
+                .clone()
+                .map_or(Value::String(None), Value::from),
             input.oem_part_number.clone().map_or(Value::String(None), Value::from),
-            input.replenishment_policy_code.clone().map_or(Value::String(None), Value::from),
+            input
+                .replenishment_policy_code
+                .clone()
+                .map_or(Value::String(None), Value::from),
             input.economic_order_qty.map_or(Value::Double(None), Value::from),
             input.minimum_order_qty.map_or(Value::Double(None), Value::from),
             input.maximum_order_qty.map_or(Value::Double(None), Value::from),
@@ -1303,13 +1287,7 @@ pub async fn update_article(
 ) -> AppResult<InventoryArticle> {
     ensure_lookup_value_in_domain(db, input.unit_value_id, "inventory.unit_of_measure", "unit_value_id").await?;
     if let Some(criticality_id) = input.criticality_value_id {
-        ensure_lookup_value_in_domain(
-            db,
-            criticality_id,
-            "equipment.criticality",
-            "criticality_value_id",
-        )
-        .await?;
+        ensure_lookup_value_in_domain(db, criticality_id, "equipment.criticality", "criticality_value_id").await?;
     }
     ensure_lookup_value_in_domain(
         db,
@@ -1337,19 +1315,14 @@ pub async fn update_article(
     if let Some(family_id) = input.family_id {
         ensure_article_family_active(db, family_id).await?;
     }
-    ensure_preferred_location_hint(
-        db,
-        input.preferred_warehouse_id,
-        input.preferred_location_id,
-    )
-    .await?;
+    ensure_preferred_location_hint(db, input.preferred_warehouse_id, input.preferred_location_id).await?;
     validate_article_stock_contract(&input)?;
 
     let code = input.article_code.trim().to_uppercase();
     let name = input.article_name.trim().to_string();
     if code.is_empty() || name.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Article code and name are required.".to_string(),
+            "Article code and name are required.".to_string()
         ]));
     }
     let is_active = parse_bool_to_i64(input.is_active, true);
@@ -1389,7 +1362,7 @@ pub async fn update_article(
         .await?;
     if conflicting.is_some() {
         return Err(AppError::ValidationFailed(vec![
-            "Article code already exists.".to_string(),
+            "Article code already exists.".to_string()
         ]));
     }
 
@@ -1440,7 +1413,9 @@ pub async fn update_article(
                 input.criticality_value_id.map_or(Value::BigInt(None), Value::from),
                 input.stocking_type_value_id.into(),
                 input.tax_category_value_id.into(),
-                input.procurement_category_value_id.map_or(Value::BigInt(None), Value::from),
+                input
+                    .procurement_category_value_id
+                    .map_or(Value::BigInt(None), Value::from),
                 input.preferred_warehouse_id.map_or(Value::BigInt(None), Value::from),
                 input.preferred_location_id.map_or(Value::BigInt(None), Value::from),
                 input.min_stock.into(),
@@ -1448,9 +1423,15 @@ pub async fn update_article(
                 input.reorder_point.into(),
                 input.safety_stock.into(),
                 input.manufacturer_name.clone().map_or(Value::String(None), Value::from),
-                input.manufacturer_part_number.clone().map_or(Value::String(None), Value::from),
+                input
+                    .manufacturer_part_number
+                    .clone()
+                    .map_or(Value::String(None), Value::from),
                 input.oem_part_number.clone().map_or(Value::String(None), Value::from),
-                input.replenishment_policy_code.clone().map_or(Value::String(None), Value::from),
+                input
+                    .replenishment_policy_code
+                    .clone()
+                    .map_or(Value::String(None), Value::from),
                 input.economic_order_qty.map_or(Value::Double(None), Value::from),
                 input.minimum_order_qty.map_or(Value::Double(None), Value::from),
                 input.maximum_order_qty.map_or(Value::Double(None), Value::from),
@@ -1505,16 +1486,10 @@ async fn record_article_field_changes<C: ConnectionTrait>(
     let mut changes: Vec<(&str, String)> = Vec::new();
 
     if before.article_code != new_code {
-        changes.push((
-            "field.article_code",
-            format!("{} → {}", before.article_code, new_code),
-        ));
+        changes.push(("field.article_code", format!("{} → {}", before.article_code, new_code)));
     }
     if before.article_name != new_name {
-        changes.push((
-            "field.article_name",
-            format!("{} → {}", before.article_name, new_name),
-        ));
+        changes.push(("field.article_name", format!("{} → {}", before.article_name, new_name)));
     }
     if before.family_id != input.family_id {
         let from = before
@@ -1525,10 +1500,7 @@ async fn record_article_field_changes<C: ConnectionTrait>(
         changes.push(("field.family", format!("{from} → updated")));
     }
     if before.unit_value_id != input.unit_value_id {
-        changes.push((
-            "field.unit",
-            format!("{} → updated", before.unit_label),
-        ));
+        changes.push(("field.unit", format!("{} → updated", before.unit_label)));
     }
     if before.criticality_value_id != input.criticality_value_id {
         let from = before
@@ -1545,10 +1517,7 @@ async fn record_article_field_changes<C: ConnectionTrait>(
         ));
     }
     if before.tax_category_value_id != input.tax_category_value_id {
-        changes.push((
-            "field.tax_category",
-            format!("{} → updated", before.tax_category_label),
-        ));
+        changes.push(("field.tax_category", format!("{} → updated", before.tax_category_label)));
     }
     if before.procurement_category_value_id != input.procurement_category_value_id {
         let from = before
@@ -1573,19 +1542,12 @@ async fn record_article_field_changes<C: ConnectionTrait>(
         changes.push(("field.preferred_location", format!("{from} → updated")));
     }
     if (before.min_stock - input.min_stock).abs() > f64::EPSILON {
-        changes.push((
-            "field.min_stock",
-            format!("{} → {}", before.min_stock, input.min_stock),
-        ));
+        changes.push(("field.min_stock", format!("{} → {}", before.min_stock, input.min_stock)));
     }
     if before.max_stock != input.max_stock {
         changes.push((
             "field.max_stock",
-            format!(
-                "{} → {}",
-                opt_f64(before.max_stock),
-                opt_f64(input.max_stock)
-            ),
+            format!("{} → {}", opt_f64(before.max_stock), opt_f64(input.max_stock)),
         ));
     }
     if (before.reorder_point - input.reorder_point).abs() > f64::EPSILON {
@@ -1601,10 +1563,7 @@ async fn record_article_field_changes<C: ConnectionTrait>(
         ));
     }
     if before.is_active != new_is_active {
-        changes.push((
-            "field.is_active",
-            format!("{} → {}", before.is_active, new_is_active),
-        ));
+        changes.push(("field.is_active", format!("{} → {}", before.is_active, new_is_active)));
     }
 
     if changes.is_empty() {
@@ -1795,7 +1754,7 @@ pub async fn adjust_stock(
 ) -> AppResult<InventoryStockBalance> {
     if input.delta_qty == 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "delta_qty must be different from 0.".to_string(),
+            "delta_qty must be different from 0.".to_string()
         ]));
     }
     let source_type = "MANUAL_ADJUSTMENT".to_string();
@@ -1932,11 +1891,7 @@ fn ensure_reservation_invariants(reservation: &StockReservation) -> AppResult<()
     Ok(())
 }
 
-async fn get_balance_snapshot<C: ConnectionTrait>(
-    db: &C,
-    article_id: i64,
-    location_id: i64,
-) -> AppResult<(f64, f64)> {
+async fn get_balance_snapshot<C: ConnectionTrait>(db: &C, article_id: i64, location_id: i64) -> AppResult<(f64, f64)> {
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1963,13 +1918,13 @@ async fn upsert_balance<C: ConnectionTrait>(
 ) -> AppResult<()> {
     if on_hand_qty < 0.0 || reserved_qty < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "Stock balances cannot be negative.".to_string(),
+            "Stock balances cannot be negative.".to_string()
         ]));
     }
     let available_qty = on_hand_qty - reserved_qty;
     if available_qty < 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "available_qty cannot be negative.".to_string(),
+            "available_qty cannot be negative.".to_string()
         ]));
     }
 
@@ -2036,11 +1991,7 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
     Ok(())
 }
 
-async fn load_balance(
-    db: &DatabaseConnection,
-    article_id: i64,
-    location_id: i64,
-) -> AppResult<InventoryStockBalance> {
+async fn load_balance(db: &DatabaseConnection, article_id: i64, location_id: i64) -> AppResult<InventoryStockBalance> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2126,19 +2077,14 @@ async fn load_reservation_by_id<C: ConnectionTrait>(db: &C, reservation_id: i64)
     })
 }
 
-pub async fn reserve_stock(
-    db: &DatabaseConnection,
-    input: InventoryReserveInput,
-) -> AppResult<StockReservation> {
+pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput) -> AppResult<StockReservation> {
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "quantity must be greater than 0.".to_string(),
+            "quantity must be greater than 0.".to_string()
         ]));
     }
     if input.source_type.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "source_type is required.".to_string(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["source_type is required.".to_string()]));
     }
     let tx = db.begin().await?;
     let warehouse_id = ensure_active_mutation_context(&tx, input.article_id, input.location_id).await?;
@@ -2208,13 +2154,10 @@ pub async fn reserve_stock(
     load_reservation_by_id(db, reservation_id).await
 }
 
-pub async fn issue_reserved_stock(
-    db: &DatabaseConnection,
-    input: InventoryIssueInput,
-) -> AppResult<StockReservation> {
+pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssueInput) -> AppResult<StockReservation> {
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "quantity must be greater than 0.".to_string(),
+            "quantity must be greater than 0.".to_string()
         ]));
     }
     let tx = db.begin().await?;
@@ -2223,7 +2166,7 @@ pub async fn issue_reserved_stock(
     ensure_active_mutation_context(&tx, reservation.article_id, reservation.location_id).await?;
     if reservation.status == "released" {
         return Err(AppError::ValidationFailed(vec![
-            "Reservation already released.".to_string(),
+            "Reservation already released.".to_string()
         ]));
     }
     let remaining_reserved = reservation.quantity_reserved - reservation.quantity_issued;
@@ -2262,7 +2205,11 @@ pub async fn issue_reserved_stock(
         "UPDATE stock_reservations
          SET quantity_issued = ?, status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ?",
-        [next_issued.into(), next_status.to_string().into(), reservation.id.into()],
+        [
+            next_issued.into(),
+            next_status.to_string().into(),
+            reservation.id.into(),
+        ],
     ))
     .await?;
 
@@ -2296,7 +2243,7 @@ pub async fn return_reserved_stock(
 ) -> AppResult<StockReservation> {
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "quantity must be greater than 0.".to_string(),
+            "quantity must be greater than 0.".to_string()
         ]));
     }
     let tx = db.begin().await?;
@@ -2338,7 +2285,11 @@ pub async fn return_reserved_stock(
         "UPDATE stock_reservations
          SET quantity_issued = ?, status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ?",
-        [next_issued.into(), next_status.to_string().into(), reservation.id.into()],
+        [
+            next_issued.into(),
+            next_status.to_string().into(),
+            reservation.id.into(),
+        ],
     ))
     .await?;
     insert_inventory_transaction(
@@ -2424,8 +2375,7 @@ pub async fn release_stock_reservation(
     input: InventoryReleaseReservationInput,
 ) -> AppResult<StockReservation> {
     let tx = db.begin().await?;
-    let released =
-        release_stock_reservation_with_connection(&tx, input.reservation_id, input.notes.as_deref()).await?;
+    let released = release_stock_reservation_with_connection(&tx, input.reservation_id, input.notes.as_deref()).await?;
     tx.commit().await?;
     Ok(released)
 }
@@ -2436,7 +2386,7 @@ pub async fn transfer_stock(
 ) -> AppResult<Vec<InventoryStockBalance>> {
     if input.quantity <= 0.0 {
         return Err(AppError::ValidationFailed(vec![
-            "quantity must be greater than 0.".to_string(),
+            "quantity must be greater than 0.".to_string()
         ]));
     }
     if input.from_location_id == input.to_location_id {
@@ -2450,8 +2400,7 @@ pub async fn transfer_stock(
     let from_warehouse = ensure_location_exists(&tx, input.from_location_id).await?;
     let to_warehouse = ensure_location_exists(&tx, input.to_location_id).await?;
 
-    let (from_on_hand, from_reserved) =
-        get_balance_snapshot(&tx, input.article_id, input.from_location_id).await?;
+    let (from_on_hand, from_reserved) = get_balance_snapshot(&tx, input.article_id, input.from_location_id).await?;
     let from_available = from_on_hand - from_reserved;
     if from_available < input.quantity {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -2770,15 +2719,14 @@ pub async fn evaluate_replenishment(
         };
 
         let transfer_balances = suggest_internal_transfer(db, r.article_id, r.warehouse_id).await?;
-        let transfer_options: Vec<crate::inventory::domain::ReplenishmentTransferOption> =
-            transfer_balances
-                .into_iter()
-                .map(|b| crate::inventory::domain::ReplenishmentTransferOption {
-                    warehouse_id: b.warehouse_id,
-                    warehouse_code: b.warehouse_code,
-                    available_qty: b.available_qty,
-                })
-                .collect();
+        let transfer_options: Vec<crate::inventory::domain::ReplenishmentTransferOption> = transfer_balances
+            .into_iter()
+            .map(|b| crate::inventory::domain::ReplenishmentTransferOption {
+                warehouse_id: b.warehouse_id,
+                warehouse_code: b.warehouse_code,
+                available_qty: b.available_qty,
+            })
+            .collect();
         let suggestion_type = if transfer_options.is_empty() {
             "PURCHASE".to_string()
         } else {
@@ -2879,7 +2827,10 @@ pub async fn calculate_abc_classification(db: &DatabaseConnection) -> AppResult<
         .await
         .unwrap_or_default();
 
-    let total: f64 = rows.iter().map(|r| r.try_get::<f64>("", "total_issued").unwrap_or(0.0)).sum();
+    let total: f64 = rows
+        .iter()
+        .map(|r| r.try_get::<f64>("", "total_issued").unwrap_or(0.0))
+        .sum();
     if total == 0.0 {
         return Ok(0);
     }
@@ -2891,7 +2842,13 @@ pub async fn calculate_abc_classification(db: &DatabaseConnection) -> AppResult<
         let qty: f64 = row.try_get("", "total_issued").unwrap_or(0.0);
         cumulative += qty;
         let pct = cumulative / total * 100.0;
-        let class = if pct <= a_pct { "A" } else if pct <= b_pct { "B" } else { "C" };
+        let class = if pct <= a_pct {
+            "A"
+        } else if pct <= b_pct {
+            "B"
+        } else {
+            "C"
+        };
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE articles SET abc_class_code = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
@@ -2958,7 +2915,13 @@ pub async fn calculate_xyz_classification(db: &DatabaseConnection) -> AppResult<
         let variance = if n > 1.0 { (sum_sq / n) - (mean * mean) } else { 0.0 };
         let stddev = variance.max(0.0).sqrt();
         let cv = if mean > 0.0 { stddev / mean } else { 0.0 };
-        let class = if cv <= x_cv_max { "X" } else if cv <= y_cv_max { "Y" } else { "Z" };
+        let class = if cv <= x_cv_max {
+            "X"
+        } else if cv <= y_cv_max {
+            "Y"
+        } else {
+            "Z"
+        };
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE articles SET xyz_class_code = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
@@ -3050,10 +3013,7 @@ pub async fn upsert_article_equivalent(
         .ok_or_else(|| AppError::ValidationFailed(vec!["Failed to retrieve equivalent.".to_string()]))
 }
 
-pub async fn delete_article_equivalent(
-    db: &DatabaseConnection,
-    equivalent_id: i64,
-) -> AppResult<()> {
+pub async fn delete_article_equivalent(db: &DatabaseConnection, equivalent_id: i64) -> AppResult<()> {
     let exists = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -3319,9 +3279,7 @@ pub async fn get_procurement_alerts(
             None
         };
         let promised: Option<i64> = row.try_get("", "default_lead_time_days").ok().flatten();
-        let risk = crate::inventory::suppliers::compute_supplier_risk_level(
-            otif, rejected, avg_lt, promised,
-        );
+        let risk = crate::inventory::suppliers::compute_supplier_risk_level(otif, rejected, avg_lt, promised);
         if risk.as_deref() == Some("HIGH") {
             let code: String = row.try_get("", "code").unwrap_or_default();
             let name: String = row.try_get("", "name").unwrap_or_default();
@@ -3359,10 +3317,7 @@ pub async fn get_article_consumption_monthly(
                AND t.performed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)
              GROUP BY year_month
              ORDER BY year_month ASC",
-            [
-                article_id.into(),
-                format!("-{} months", months).into(),
-            ],
+            [article_id.into(), format!("-{} months", months).into()],
         ))
         .await?;
     rows.into_iter()
@@ -3452,15 +3407,20 @@ pub async fn upsert_inventory_document_link(
         )]));
     }
     if input.document_ref.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["document_ref is required.".to_string()]));
+        return Err(AppError::ValidationFailed(
+            vec!["document_ref is required.".to_string()],
+        ));
     }
     if input.link_purpose.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec!["link_purpose is required.".to_string()]));
+        return Err(AppError::ValidationFailed(
+            vec!["link_purpose is required.".to_string()],
+        ));
     }
     let is_primary = input.is_primary.unwrap_or(false) as i64;
-    let valid_from = input.valid_from.clone().unwrap_or_else(|| {
-        chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
-    });
+    let valid_from = input
+        .valid_from
+        .clone()
+        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_document_links
@@ -3527,7 +3487,9 @@ pub async fn project_stock_impact(
     include_open_po_qty: bool,
 ) -> AppResult<StockImpactProjection> {
     if !delta_qty.is_finite() {
-        return Err(AppError::ValidationFailed(vec!["delta_qty must be a finite number.".to_string()]));
+        return Err(AppError::ValidationFailed(vec![
+            "delta_qty must be a finite number.".to_string()
+        ]));
     }
 
     let mut balance_sql = String::from(
@@ -3547,7 +3509,11 @@ pub async fn project_stock_impact(
     balance_values.push(article_id.into());
 
     let balance_row = db
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, balance_sql, balance_values))
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            balance_sql,
+            balance_values,
+        ))
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "articles".to_string(),

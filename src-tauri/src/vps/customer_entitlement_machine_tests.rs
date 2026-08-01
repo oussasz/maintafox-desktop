@@ -1,10 +1,10 @@
 #![cfg(test)]
 
 use crate::vps::customer_entitlement_machine::{
-    bulk_concurrency_ok, channel_policy_consistent, entitlement_transition_allowed,
-    validate_entitlement_transition, validate_slot_limits, BulkEntitlementOperationRequestV1,
-    DestructiveEntitlementAction, EntitlementLifecycleAction, EntitlementLifecycleState,
-    OfflinePolicyControlsV1, OptimisticConcurrencyV1, TrustedDeviceOperatorAction, UpdateChannel,
+    bulk_concurrency_ok, channel_policy_consistent, entitlement_transition_allowed, validate_entitlement_transition,
+    validate_slot_limits, BulkEntitlementOperationRequestV1, DestructiveEntitlementAction, EntitlementLifecycleAction,
+    EntitlementLifecycleState, OfflinePolicyControlsV1, OptimisticConcurrencyV1, TrustedDeviceOperatorAction,
+    UpdateChannel,
 };
 
 #[test]
@@ -21,7 +21,9 @@ fn transition_active_issue_rejected() {
         EntitlementLifecycleState::Active,
         EntitlementLifecycleAction::Issue
     ));
-    assert!(validate_entitlement_transition(EntitlementLifecycleState::Active, EntitlementLifecycleAction::Issue).is_err());
+    assert!(
+        validate_entitlement_transition(EntitlementLifecycleState::Active, EntitlementLifecycleAction::Issue).is_err()
+    );
 }
 
 #[test]

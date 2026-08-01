@@ -37,11 +37,7 @@ impl LockoutPolicy {
 
 /// Read a single value from `rbac_settings`. Returns `default` on any error
 /// (table missing, key missing, DB error).
-async fn load_setting(
-    db: &sea_orm::DatabaseConnection,
-    key: &str,
-    default: &str,
-) -> String {
+async fn load_setting(db: &sea_orm::DatabaseConnection, key: &str, default: &str) -> String {
     let result = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -65,10 +61,7 @@ async fn load_setting(
 /// - If `locked_until` is in the future → `Err(AccountLocked { until })`.
 /// - If `locked_until` is in the past → auto-unlock (reset counter) and return `Ok`.
 /// - If `locked_until` is NULL → `Ok`.
-pub async fn check_lockout(
-    db: &sea_orm::DatabaseConnection,
-    user_id: i32,
-) -> AppResult<()> {
+pub async fn check_lockout(db: &sea_orm::DatabaseConnection, user_id: i32) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -87,9 +80,7 @@ pub async fn check_lockout(
     };
 
     // Compare with current UTC time
-    let now = chrono::Utc::now()
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     if until > now {
         // Still locked
@@ -168,8 +159,7 @@ pub async fn record_failed_attempt(
             base
         };
 
-        let lock_until = chrono::Utc::now()
-            + chrono::Duration::minutes(duration_minutes);
+        let lock_until = chrono::Utc::now() + chrono::Duration::minutes(duration_minutes);
         let lock_until_str = lock_until.format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let lock_ts = chrono::Utc::now().to_rfc3339();
         db.execute(Statement::from_sql_and_values(

@@ -31,34 +31,27 @@ pub struct AssignEquipmentPayload {
 
 fn map_equipment_row(row: QueryResult) -> AppResult<OrgNodeEquipmentRow> {
     Ok(OrgNodeEquipmentRow {
-        id: row.try_get::<i32>("", "id").map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("equipment row decode: {e}"))
-        })?,
-        asset_id_code: row.try_get::<String>("", "asset_id_code").map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("equipment row decode: {e}"))
-        })?,
-        name: row.try_get::<String>("", "name").map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("equipment row decode: {e}"))
-        })?,
-        lifecycle_status: row.try_get::<String>("", "lifecycle_status").map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("equipment row decode: {e}"))
-        })?,
-        installed_at_node_id: row
-            .try_get::<Option<i32>>("", "installed_at_node_id")
-            .unwrap_or(None),
-        current_node_name: row
-            .try_get::<Option<String>>("", "current_node_name")
-            .unwrap_or(None),
+        id: row
+            .try_get::<i32>("", "id")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment row decode: {e}")))?,
+        asset_id_code: row
+            .try_get::<String>("", "asset_id_code")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment row decode: {e}")))?,
+        name: row
+            .try_get::<String>("", "name")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment row decode: {e}")))?,
+        lifecycle_status: row
+            .try_get::<String>("", "lifecycle_status")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("equipment row decode: {e}")))?,
+        installed_at_node_id: row.try_get::<Option<i32>>("", "installed_at_node_id").unwrap_or(None),
+        current_node_name: row.try_get::<Option<String>>("", "current_node_name").unwrap_or(None),
     })
 }
 
 // ─── Service functions ────────────────────────────────────────────────────────
 
 /// List equipment currently installed at the given org node.
-pub async fn list_equipment_by_node(
-    db: &DatabaseConnection,
-    node_id: i64,
-) -> AppResult<Vec<OrgNodeEquipmentRow>> {
+pub async fn list_equipment_by_node(db: &DatabaseConnection, node_id: i64) -> AppResult<Vec<OrgNodeEquipmentRow>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -100,10 +93,7 @@ pub async fn search_unassigned_equipment(
 }
 
 /// Set `installed_at_node_id` on the equipment row.
-pub async fn assign_equipment_to_node(
-    db: &DatabaseConnection,
-    payload: AssignEquipmentPayload,
-) -> AppResult<()> {
+pub async fn assign_equipment_to_node(db: &DatabaseConnection, payload: AssignEquipmentPayload) -> AppResult<()> {
     crate::org::model_scope::assert_org_node_active(db, payload.node_id).await?;
 
     let affected = db
@@ -128,10 +118,7 @@ pub async fn assign_equipment_to_node(
 }
 
 /// Clear `installed_at_node_id` on the equipment row.
-pub async fn unassign_equipment_from_node(
-    db: &DatabaseConnection,
-    equipment_id: i32,
-) -> AppResult<()> {
+pub async fn unassign_equipment_from_node(db: &DatabaseConnection, equipment_id: i32) -> AppResult<()> {
     let affected = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

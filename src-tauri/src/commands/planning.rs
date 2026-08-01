@@ -5,14 +5,13 @@ use tauri::State;
 use crate::auth::rbac::{check_permission, PermissionScope};
 use crate::errors::{AppError, AppResult};
 use crate::planning::domain::{
-    CapacityRule, CapacityRuleFilter, CreateCapacityRuleInput, CreatePlanningWindowInput,
-    CreateScheduleBreakInInput, CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput,
-    ExportedBinaryDocument, FreezeSchedulePeriodInput, NotifyTeamsInput, NotifyTeamsResult,
-    PlanningGanttFilter, PlanningGanttSnapshot, PlanningWindow, PlanningWindowFilter,
-    RefreshScheduleCandidatesInput, RefreshScheduleCandidatesResult, RescheduleCommitmentInput,
-    ScheduleBacklogSnapshot, ScheduleBreakIn, ScheduleBreakInFilter, ScheduleCandidate,
-    ScheduleCandidateFilter, ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter,
-    SchedulingConflict, TeamCapacityLoad, UpdateCapacityRuleInput, UpdatePlanningWindowInput,
+    CapacityRule, CapacityRuleFilter, CreateCapacityRuleInput, CreatePlanningWindowInput, CreateScheduleBreakInInput,
+    CreateScheduleCommitmentInput, ExportPlanningGanttPdfInput, ExportedBinaryDocument, FreezeSchedulePeriodInput,
+    NotifyTeamsInput, NotifyTeamsResult, PlanningGanttFilter, PlanningGanttSnapshot, PlanningWindow,
+    PlanningWindowFilter, RefreshScheduleCandidatesInput, RefreshScheduleCandidatesResult, RescheduleCommitmentInput,
+    ScheduleBacklogSnapshot, ScheduleBreakIn, ScheduleBreakInFilter, ScheduleCandidate, ScheduleCandidateFilter,
+    ScheduleChangeLogEntry, ScheduleCommitment, ScheduleCommitmentFilter, SchedulingConflict, TeamCapacityLoad,
+    UpdateCapacityRuleInput, UpdatePlanningWindowInput,
 };
 use crate::planning::queries;
 use crate::planning::scheduling;
@@ -20,21 +19,18 @@ use crate::state::AppState;
 use crate::{require_permission, require_session};
 
 async fn require_plan_edit_or_legacy_manage(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
-    let has_plan_edit =
-        check_permission(&state.db, user_id, crate::rbac::permissions::PLAN_EDIT, &PermissionScope::Global)
-            .await?;
+    let has_plan_edit = check_permission(
+        &state.db,
+        user_id,
+        crate::rbac::permissions::PLAN_EDIT,
+        &PermissionScope::Global,
+    )
+    .await?;
     if has_plan_edit {
-        crate::entitlements::queries::enforce_capability_for_permission(
-            &state.db,
-            crate::rbac::permissions::PLAN_EDIT,
-        )
-        .await?;
-        crate::license::queries::enforce_permission_matrix(
-            &state.db,
-            user_id,
-            crate::rbac::permissions::PLAN_EDIT,
-        )
-        .await?;
+        crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::PLAN_EDIT)
+            .await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::PLAN_EDIT)
+            .await?;
         return Ok(());
     }
 
@@ -45,10 +41,21 @@ async fn require_plan_edit_or_legacy_manage(state: &State<'_, AppState>, user_id
 }
 
 async fn require_plan_windows(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
-    let has = check_permission(&state.db, user_id, crate::rbac::permissions::PLAN_WINDOWS, &PermissionScope::Global).await?;
+    let has = check_permission(
+        &state.db,
+        user_id,
+        crate::rbac::permissions::PLAN_WINDOWS,
+        &PermissionScope::Global,
+    )
+    .await?;
     if has {
-        crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::PLAN_WINDOWS).await?;
-        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::PLAN_WINDOWS).await?;
+        crate::entitlements::queries::enforce_capability_for_permission(
+            &state.db,
+            crate::rbac::permissions::PLAN_WINDOWS,
+        )
+        .await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::PLAN_WINDOWS)
+            .await?;
         return Ok(());
     }
     Err(AppError::PermissionDenied(
@@ -57,10 +64,21 @@ async fn require_plan_windows(state: &State<'_, AppState>, user_id: i32) -> AppR
 }
 
 async fn require_plan_confirm(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
-    let has = check_permission(&state.db, user_id, crate::rbac::permissions::PLAN_CONFIRM, &PermissionScope::Global).await?;
+    let has = check_permission(
+        &state.db,
+        user_id,
+        crate::rbac::permissions::PLAN_CONFIRM,
+        &PermissionScope::Global,
+    )
+    .await?;
     if has {
-        crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::PLAN_CONFIRM).await?;
-        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::PLAN_CONFIRM).await?;
+        crate::entitlements::queries::enforce_capability_for_permission(
+            &state.db,
+            crate::rbac::permissions::PLAN_CONFIRM,
+        )
+        .await?;
+        crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::PLAN_CONFIRM)
+            .await?;
         return Ok(());
     }
     Err(AppError::PermissionDenied(
@@ -74,7 +92,12 @@ pub async fn list_schedule_candidates(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ScheduleCandidate>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PLAN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_schedule_candidates(&state.db, filter).await
 }
 
@@ -85,7 +108,12 @@ pub async fn list_scheduling_conflicts(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SchedulingConflict>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PLAN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
     queries::list_scheduling_conflicts(&state.db, candidate_id, include_resolved).await
 }
 
@@ -105,7 +133,12 @@ pub async fn get_schedule_backlog_snapshot(
     state: State<'_, AppState>,
 ) -> AppResult<ScheduleBacklogSnapshot> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PLAN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
     queries::get_schedule_backlog_snapshot(&state.db, filter).await
 }
 
@@ -115,7 +148,12 @@ pub async fn list_capacity_rules(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<CapacityRule>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PLAN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
     scheduling::list_capacity_rules(&state.db, filter).await
 }
 
@@ -147,7 +185,12 @@ pub async fn list_planning_windows(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PlanningWindow>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PLAN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
     scheduling::list_planning_windows(&state.db, filter).await
 }
 
@@ -179,7 +222,12 @@ pub async fn list_schedule_commitments(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ScheduleCommitment>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PLAN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
     scheduling::list_schedule_commitments(&state.db, filter).await
 }
 
@@ -189,7 +237,12 @@ pub async fn list_schedule_change_log(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ScheduleChangeLogEntry>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PLAN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
     scheduling::list_schedule_change_log(&state.db, commitment_id).await
 }
 
@@ -199,7 +252,12 @@ pub async fn list_schedule_break_ins(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ScheduleBreakIn>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PLAN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
     scheduling::list_schedule_break_ins(&state.db, filter).await
 }
 
@@ -234,10 +292,7 @@ pub async fn create_schedule_break_in(
 }
 
 #[tauri::command]
-pub async fn freeze_schedule_period(
-    input: FreezeSchedulePeriodInput,
-    state: State<'_, AppState>,
-) -> AppResult<i64> {
+pub async fn freeze_schedule_period(input: FreezeSchedulePeriodInput, state: State<'_, AppState>) -> AppResult<i64> {
     let user = require_session!(state);
     require_plan_confirm(&state, user.user_id).await?;
     scheduling::freeze_schedule_period(&state.db, i64::from(user.user_id), input).await
@@ -249,7 +304,12 @@ pub async fn get_planning_gantt_snapshot(
     state: State<'_, AppState>,
 ) -> AppResult<PlanningGanttSnapshot> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PLAN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
     scheduling::get_planning_gantt_snapshot(&state.db, filter).await
 }
 
@@ -261,7 +321,12 @@ pub async fn list_team_capacity_load(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<TeamCapacityLoad>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PLAN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
     scheduling::list_team_capacity_load(&state.db, period_start, period_end, team_id).await
 }
 
@@ -281,7 +346,11 @@ pub async fn export_planning_gantt_pdf(
     state: State<'_, AppState>,
 ) -> AppResult<ExportedBinaryDocument> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::PLAN_VIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::PLAN_VIEW,
+        PermissionScope::Global
+    );
     scheduling::export_planning_gantt_pdf(&state.db, input).await
 }
-

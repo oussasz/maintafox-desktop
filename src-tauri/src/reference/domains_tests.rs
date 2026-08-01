@@ -11,8 +11,7 @@ mod tests {
 
     use crate::errors::AppError;
     use crate::reference::domains::{
-        self, CreateReferenceDomainPayload, UpdateReferenceDomainPayload,
-        GOVERNANCE_LEVELS, STRUCTURE_TYPES,
+        self, CreateReferenceDomainPayload, UpdateReferenceDomainPayload, GOVERNANCE_LEVELS, STRUCTURE_TYPES,
     };
 
     /// In-memory SQLite with all migrations + seed data.
@@ -117,9 +116,7 @@ mod tests {
             .await
             .expect("create second domain");
 
-        let list = domains::list_reference_domains(&db)
-            .await
-            .expect("list domains");
+        let list = domains::list_reference_domains(&db).await.expect("list domains");
 
         assert!(
             list.len() >= 2,
@@ -179,10 +176,7 @@ mod tests {
         match err {
             AppError::ValidationFailed(msgs) => {
                 let joined = msgs.join(" ");
-                assert!(
-                    joined.contains("tree"),
-                    "error should name the bad type, got: {joined}"
-                );
+                assert!(joined.contains("tree"), "error should name the bad type, got: {joined}");
             }
             other => panic!("expected ValidationFailed, got: {other:?}"),
         }
@@ -441,10 +435,7 @@ mod tests {
                 ))
                 .await;
 
-            assert!(
-                result.is_ok(),
-                "table '{table}' should exist after migration 013"
-            );
+            assert!(result.is_ok(), "table '{table}' should exist after migration 013");
         }
     }
 
@@ -478,7 +469,10 @@ mod tests {
             ))
             .await;
 
-        assert!(err.is_err(), "duplicate (domain_id, version_no) should be rejected by unique index");
+        assert!(
+            err.is_err(),
+            "duplicate (domain_id, version_no) should be rejected by unique index"
+        );
     }
 
     #[tokio::test]
@@ -528,6 +522,9 @@ mod tests {
             ))
             .await;
 
-        assert!(err.is_err(), "duplicate (set_id, code) should be rejected by unique index");
+        assert!(
+            err.is_err(),
+            "duplicate (set_id, code) should be rejected by unique index"
+        );
     }
 }

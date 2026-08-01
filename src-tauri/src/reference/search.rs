@@ -108,17 +108,12 @@ pub async fn search_reference_values(
              WHERE v.set_id = ? AND v.is_active = 1 \
                AND (LOWER(a.alias_label) = ? \
                     OR a.alias_label LIKE ? COLLATE NOCASE)",
-            [
-                set_id.into(),
-                query_lower.clone().into(),
-                query_like.clone().into(),
-            ],
+            [set_id.into(), query_lower.clone().into(), query_like.clone().into()],
         ))
         .await?;
 
     // ── Rank and deduplicate ──────────────────────────────────────────────
-    let mut best: std::collections::HashMap<i64, ReferenceSearchHit> =
-        std::collections::HashMap::new();
+    let mut best: std::collections::HashMap<i64, ReferenceSearchHit> = std::collections::HashMap::new();
 
     // Score canonical hits.
     for row in &canonical_hits {
@@ -128,16 +123,52 @@ pub async fn search_reference_values(
 
         // Code match?
         if code.eq_ignore_ascii_case(query_trimmed) {
-            maybe_insert(&mut best, id, &code, &label, &code, "canonical_code", None, RANK_EXACT_CODE);
+            maybe_insert(
+                &mut best,
+                id,
+                &code,
+                &label,
+                &code,
+                "canonical_code",
+                None,
+                RANK_EXACT_CODE,
+            );
         } else if code.to_ascii_uppercase().starts_with(&query_upper) {
-            maybe_insert(&mut best, id, &code, &label, &code, "canonical_code", None, RANK_PREFIX_CODE);
+            maybe_insert(
+                &mut best,
+                id,
+                &code,
+                &label,
+                &code,
+                "canonical_code",
+                None,
+                RANK_PREFIX_CODE,
+            );
         }
 
         // Label match?
         if label.eq_ignore_ascii_case(query_trimmed) {
-            maybe_insert(&mut best, id, &code, &label, &label, "canonical_label", None, RANK_EXACT_LABEL);
+            maybe_insert(
+                &mut best,
+                id,
+                &code,
+                &label,
+                &label,
+                "canonical_label",
+                None,
+                RANK_EXACT_LABEL,
+            );
         } else if label.to_lowercase().starts_with(&query_lower) {
-            maybe_insert(&mut best, id, &code, &label, &label, "canonical_label", None, RANK_PREFIX_LABEL);
+            maybe_insert(
+                &mut best,
+                id,
+                &code,
+                &label,
+                &label,
+                "canonical_label",
+                None,
+                RANK_PREFIX_LABEL,
+            );
         }
     }
 
@@ -147,10 +178,7 @@ pub async fn search_reference_values(
         let alias_label: String = row.try_get("", "alias_label").unwrap_or_default();
         let alias_locale: String = row.try_get("", "locale").unwrap_or_default();
         let alias_type: String = row.try_get("", "alias_type").unwrap_or_default();
-        let is_preferred: bool = row
-            .try_get::<i32>("", "is_preferred")
-            .map(|v| v != 0)
-            .unwrap_or(false);
+        let is_preferred: bool = row.try_get::<i32>("", "is_preferred").map(|v| v != 0).unwrap_or(false);
         let code: String = row.try_get("", "code").unwrap_or_default();
         let label: String = row.try_get("", "label").unwrap_or_default();
 
@@ -229,10 +257,7 @@ fn maybe_insert(
 
 /// Resolve domain code to the best set id for searching.
 /// Prefers the latest published set; falls back to the latest draft.
-async fn resolve_search_set(
-    db: &impl ConnectionTrait,
-    domain_code: &str,
-) -> AppResult<i64> {
+async fn resolve_search_set(db: &impl ConnectionTrait, domain_code: &str) -> AppResult<i64> {
     // Resolve domain id from code.
     let domain_row = db
         .query_one(Statement::from_sql_and_values(

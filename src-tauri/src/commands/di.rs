@@ -46,10 +46,7 @@ pub struct DiGetResponse {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_di(
-    filter: queries::DiListFilter,
-    state: State<'_, AppState>,
-) -> AppResult<queries::DiListPage> {
+pub async fn list_di(filter: queries::DiListFilter, state: State<'_, AppState>) -> AppResult<queries::DiListPage> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
     queries::list_intervention_requests(&state.db, filter).await
@@ -60,10 +57,7 @@ pub async fn list_di(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn get_di(
-    id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<DiGetResponse> {
+pub async fn get_di(id: i64, state: State<'_, AppState>) -> AppResult<DiGetResponse> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
 
@@ -75,13 +69,7 @@ pub async fn get_di(
         })?;
 
     let transitions = queries::get_di_transition_log(&state.db, id).await?;
-    let similar = queries::get_recent_similar_dis(
-        &state.db,
-        di.asset_id,
-        di.symptom_code_id,
-        30,
-    )
-    .await?;
+    let similar = queries::get_recent_similar_dis(&state.db, di.asset_id, di.symptom_code_id, 30).await?;
 
     Ok(DiGetResponse {
         di,
@@ -110,7 +98,12 @@ pub async fn create_di(
     .await?;
 
     if !has_global {
-        require_permission!(state, &user, crate::rbac::permissions::DI_CREATE_OWN, PermissionScope::Global);
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::DI_CREATE_OWN,
+            PermissionScope::Global
+        );
     }
 
     let mut errors: Vec<String> = Vec::new();
@@ -140,10 +133,7 @@ pub async fn create_di(
         ))
         .await?;
     if asset_exists.is_none() {
-        errors.push(format!(
-            "Équipement introuvable (asset_id={}).",
-            input.asset_id
-        ));
+        errors.push(format!("Équipement introuvable (asset_id={}).", input.asset_id));
     }
 
     let node_exists = state
@@ -162,16 +152,12 @@ pub async fn create_di(
     }
 
     if errors.is_empty() {
-        match crate::di::reference_catalog::validate_di_origin_code(&state.db, &input.origin_type)
-            .await
-        {
+        match crate::di::reference_catalog::validate_di_origin_code(&state.db, &input.origin_type).await {
             Ok(_) => {}
             Err(AppError::ValidationFailed(mut catalog_errors)) => errors.append(&mut catalog_errors),
             Err(other) => return Err(other),
         }
-        match crate::di::reference_catalog::validate_di_request_type(&state.db, &input.request_type)
-            .await
-        {
+        match crate::di::reference_catalog::validate_di_request_type(&state.db, &input.request_type).await {
             Ok(_) => {}
             Err(AppError::ValidationFailed(mut catalog_errors)) => errors.append(&mut catalog_errors),
             Err(other) => return Err(other),
@@ -179,9 +165,7 @@ pub async fn create_di(
         if let Some(sid) = input.symptom_code_id {
             match crate::di::reference_catalog::validate_di_symptom_id(&state.db, sid).await {
                 Ok(()) => {}
-                Err(AppError::ValidationFailed(mut catalog_errors)) => {
-                    errors.append(&mut catalog_errors)
-                }
+                Err(AppError::ValidationFailed(mut catalog_errors)) => errors.append(&mut catalog_errors),
                 Err(other) => return Err(other),
             }
         }
@@ -274,10 +258,20 @@ pub async fn update_di_draft(
         )
         .await?;
         if !has_own {
-            require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
+            require_permission!(
+                state,
+                &user,
+                crate::rbac::permissions::DI_REVIEW,
+                PermissionScope::Global
+            );
         }
     } else {
-        require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::DI_REVIEW,
+            PermissionScope::Global
+        );
     }
 
     queries::update_di_draft_fields(&state.db, input).await
@@ -315,15 +309,19 @@ pub async fn screen_di(
     }
     input.actor_id = i64::from(user.user_id);
     let di = review::screen_di(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(di.id),
-        action: "screened".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI screened and advanced to awaiting_approval".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "screened".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("DI screened and advanced to awaiting_approval".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(di)
 }
 
@@ -338,18 +336,27 @@ pub async fn return_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_REVIEW,
+        PermissionScope::Global
+    );
     input.actor_id = i64::from(user.user_id);
     let di = review::return_di_for_clarification(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(di.id),
-        action: "returned".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI returned for clarification".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "returned".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("DI returned for clarification".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(di)
 }
 
@@ -376,10 +383,20 @@ pub async fn close_di(
 
     match current_di.status.as_str() {
         "in_review" => {
-            require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
+            require_permission!(
+                state,
+                &user,
+                crate::rbac::permissions::DI_REVIEW,
+                PermissionScope::Global
+            );
         }
         "awaiting_approval" | "approved" => {
-            require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
+            require_permission!(
+                state,
+                &user,
+                crate::rbac::permissions::DI_APPROVE,
+                PermissionScope::Global
+            );
         }
         other => {
             return Err(AppError::ValidationFailed(vec![format!(
@@ -392,18 +409,22 @@ pub async fn close_di(
 
     input.actor_id = i64::from(user.user_id);
     let di = review::close_di(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(di.id),
-        action: "closed".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some(format!(
-            "DI fermée avec disposition '{}'.",
-            di.disposition_code.as_deref().unwrap_or("?")
-        )),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "closed".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some(format!(
+                "DI fermée avec disposition '{}'.",
+                di.disposition_code.as_deref().unwrap_or("?")
+            )),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(di)
 }
 
@@ -418,18 +439,27 @@ pub async fn cancel_own_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_CREATE_OWN, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_CREATE_OWN,
+        PermissionScope::Global
+    );
     input.actor_id = i64::from(user.user_id);
     let di = review::cancel_own_di(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(di.id),
-        action: "cancelled_own".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI annulée par le demandeur.".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "cancelled_own".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("DI annulée par le demandeur.".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(di)
 }
 
@@ -443,21 +473,30 @@ pub async fn reject_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_REVIEW,
+        PermissionScope::Global
+    );
     input.actor_id = i64::from(user.user_id);
     let di = review::reject_di(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(di.id),
-        action: "rejected".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some(format!(
-            "DI rejected (disposition '{}').",
-            di.disposition_code.as_deref().unwrap_or("rejected_invalid")
-        )),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "rejected".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some(format!(
+                "DI rejected (disposition '{}').",
+                di.disposition_code.as_deref().unwrap_or("rejected_invalid")
+            )),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(di)
 }
 
@@ -471,18 +510,27 @@ pub async fn close_di_as_non_executable(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_APPROVE,
+        PermissionScope::Global
+    );
     input.actor_id = i64::from(user.user_id);
     let di = review::close_di_as_non_executable(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(di.id),
-        action: "closed_non_executable".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI closed as non-executable (disposition no_work_required).".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "closed_non_executable".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("DI closed as non-executable (disposition no_work_required).".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(di)
 }
 
@@ -497,35 +545,48 @@ pub async fn approve_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_APPROVE,
+        PermissionScope::Global
+    );
 
     {
         let guard = state.session.read().await;
         if !guard.is_step_up_valid() {
-            audit::record_di_change_event(&state.db, audit::DiAuditInput {
-                di_id: Some(input.di_id),
-                action: "approved".into(),
-                actor_id: Some(i64::from(user.user_id)),
-                summary: Some("Approval blocked: step-up verification failed".into()),
-                details_json: None,
-                requires_step_up: true,
-                apply_result: "blocked".into(),
-            }).await;
+            audit::record_di_change_event(
+                &state.db,
+                audit::DiAuditInput {
+                    di_id: Some(input.di_id),
+                    action: "approved".into(),
+                    actor_id: Some(i64::from(user.user_id)),
+                    summary: Some("Approval blocked: step-up verification failed".into()),
+                    details_json: None,
+                    requires_step_up: true,
+                    apply_result: "blocked".into(),
+                },
+            )
+            .await;
             return Err(AppError::StepUpRequired);
         }
     }
 
     input.actor_id = i64::from(user.user_id);
     let di = review::approve_di(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(di.id),
-        action: "approved".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI approuvée.".into()),
-        details_json: None,
-        requires_step_up: true,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "approved".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("DI approuvée.".into()),
+            details_json: None,
+            requires_step_up: true,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(di)
 }
 
@@ -539,18 +600,27 @@ pub async fn defer_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_APPROVE,
+        PermissionScope::Global
+    );
     input.actor_id = i64::from(user.user_id);
     let di = review::defer_di(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(di.id),
-        action: "deferred".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI reportée.".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "deferred".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("DI reportée.".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(di)
 }
 
@@ -564,18 +634,27 @@ pub async fn reactivate_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_APPROVE,
+        PermissionScope::Global
+    );
     input.actor_id = i64::from(user.user_id);
     let di = review::reactivate_deferred_di(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(di.id),
-        action: "reactivated".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI réactivée depuis le report.".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "reactivated".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("DI réactivée depuis le report.".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(di)
 }
 
@@ -589,18 +668,27 @@ pub async fn archive_di(
     state: State<'_, AppState>,
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_APPROVE,
+        PermissionScope::Global
+    );
     input.actor_id = i64::from(user.user_id);
     let di = review::archive_di(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(di.id),
-        action: "archived".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI archivée.".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(di.id),
+            action: "archived".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("DI archivée.".into()),
+            details_json: None,
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(di)
 }
 
@@ -609,10 +697,7 @@ pub async fn archive_di(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn get_di_review_events(
-    di_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<review::DiReviewEvent>> {
+pub async fn get_di_review_events(di_id: i64, state: State<'_, AppState>) -> AppResult<Vec<review::DiReviewEvent>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
     review::get_review_events(&state.db, di_id).await
@@ -653,10 +738,20 @@ pub async fn upload_di_attachment(
         )
         .await?;
         if !has_own {
-            require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
+            require_permission!(
+                state,
+                &user,
+                crate::rbac::permissions::DI_REVIEW,
+                PermissionScope::Global
+            );
         }
     } else {
-        require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::DI_REVIEW,
+            PermissionScope::Global
+        );
     }
 
     let app_data_dir = app
@@ -705,10 +800,20 @@ pub async fn upload_di_attachment_from_path(
         )
         .await?;
         if !has_own {
-            require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
+            require_permission!(
+                state,
+                &user,
+                crate::rbac::permissions::DI_REVIEW,
+                PermissionScope::Global
+            );
         }
     } else {
-        require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
+        require_permission!(
+            state,
+            &user,
+            crate::rbac::permissions::DI_REVIEW,
+            PermissionScope::Global
+        );
     }
 
     let app_data_dir = app
@@ -750,10 +855,7 @@ pub async fn read_di_attachment_preview(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_di_attachments(
-    di_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<attachments::DiAttachment>> {
+pub async fn list_di_attachments(di_id: i64, state: State<'_, AppState>) -> AppResult<Vec<attachments::DiAttachment>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
     attachments::list_di_attachments(&state.db, di_id).await
@@ -764,12 +866,14 @@ pub async fn list_di_attachments(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn delete_di_attachment(
-    attachment_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn delete_di_attachment(attachment_id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_ADMIN, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_ADMIN,
+        PermissionScope::Global
+    );
     attachments::delete_di_attachment_record(&state.db, attachment_id).await
 }
 
@@ -784,38 +888,54 @@ pub async fn convert_di_to_wo(
     state: State<'_, AppState>,
 ) -> AppResult<conversion::WoConversionResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_CONVERT, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_CONVERT,
+        PermissionScope::Global
+    );
 
     {
         let guard = state.session.read().await;
         if !guard.is_step_up_valid() {
-            audit::record_di_change_event(&state.db, audit::DiAuditInput {
-                di_id: Some(input.di_id),
-                action: "converted".into(),
-                actor_id: Some(i64::from(user.user_id)),
-                summary: Some("Conversion blocked: step-up verification failed".into()),
-                details_json: None,
-                requires_step_up: true,
-                apply_result: "blocked".into(),
-            }).await;
+            audit::record_di_change_event(
+                &state.db,
+                audit::DiAuditInput {
+                    di_id: Some(input.di_id),
+                    action: "converted".into(),
+                    actor_id: Some(i64::from(user.user_id)),
+                    summary: Some("Conversion blocked: step-up verification failed".into()),
+                    details_json: None,
+                    requires_step_up: true,
+                    apply_result: "blocked".into(),
+                },
+            )
+            .await;
             return Err(AppError::StepUpRequired);
         }
     }
 
     input.actor_id = i64::from(user.user_id);
     let result = conversion::convert_di_to_work_order(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(result.di.id),
-        action: "converted".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some(format!("DI convertie en OT {}", result.wo_code)),
-        details_json: Some(serde_json::json!({
-            "wo_id": result.wo_id,
-            "wo_code": result.wo_code
-        }).to_string()),
-        requires_step_up: true,
-        apply_result: "applied".into(),
-    }).await;
+    audit::record_di_change_event(
+        &state.db,
+        audit::DiAuditInput {
+            di_id: Some(result.di.id),
+            action: "converted".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some(format!("DI convertie en OT {}", result.wo_code)),
+            details_json: Some(
+                serde_json::json!({
+                    "wo_id": result.wo_id,
+                    "wo_code": result.wo_code
+                })
+                .to_string(),
+            ),
+            requires_step_up: true,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
     Ok(result)
 }
 
@@ -824,10 +944,7 @@ pub async fn convert_di_to_wo(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn get_sla_status(
-    di_id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<sla::DiSlaStatus> {
+pub async fn get_sla_status(di_id: i64, state: State<'_, AppState>) -> AppResult<sla::DiSlaStatus> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
 
@@ -846,9 +963,7 @@ pub async fn get_sla_status(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn list_sla_rules(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<sla::DiSlaRule>> {
+pub async fn list_sla_rules(state: State<'_, AppState>) -> AppResult<Vec<sla::DiSlaRule>> {
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::DI_VIEW, PermissionScope::Global);
     sla::list_sla_rules(&state.db).await
@@ -859,12 +974,14 @@ pub async fn list_sla_rules(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
-pub async fn update_sla_rule(
-    input: sla::SlaRuleUpdateInput,
-    state: State<'_, AppState>,
-) -> AppResult<sla::DiSlaRule> {
+pub async fn update_sla_rule(input: sla::SlaRuleUpdateInput, state: State<'_, AppState>) -> AppResult<sla::DiSlaRule> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_ADMIN, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_ADMIN,
+        PermissionScope::Global
+    );
     sla::update_sla_rule(&state.db, input).await
 }
 
@@ -893,7 +1010,12 @@ pub async fn list_all_di_change_events(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<audit::DiChangeEvent>> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_ADMIN, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::DI_ADMIN,
+        PermissionScope::Global
+    );
     audit::list_all_change_events(&state.db, filter).await
 }
 
@@ -932,12 +1054,8 @@ mod tests {
         ))
         .await
         .expect("PRAGMA");
-        crate::migrations::Migrator::up(&db, None)
-            .await
-            .expect("migrations");
-        crate::db::seeder::seed_system_data(&db)
-            .await
-            .expect("seeder");
+        crate::migrations::Migrator::up(&db, None).await.expect("migrations");
+        crate::db::seeder::seed_system_data(&db).await.expect("seeder");
         db
     }
 
@@ -1112,9 +1230,15 @@ mod tests {
 
         seed_fk_data(&db).await;
         let user_id: i64 = db
-            .query_one(Statement::from_string(DbBackend::Sqlite,
-                "SELECT id FROM user_accounts LIMIT 1".to_string()))
-            .await.expect("q").expect("user").try_get::<i64>("", "id").expect("id");
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM user_accounts LIMIT 1".to_string(),
+            ))
+            .await
+            .expect("q")
+            .expect("user")
+            .try_get::<i64>("", "id")
+            .expect("id");
 
         let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(&db, "vibration")
             .await
@@ -1145,11 +1269,14 @@ mod tests {
         .expect("create DI");
 
         // Advance to in_review
-        db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
             "UPDATE intervention_requests SET status = 'in_review', \
              row_version = row_version + 1, updated_at = datetime('now') WHERE id = ?",
             [di.id.into()],
-        )).await.expect("advance");
+        ))
+        .await
+        .expect("advance");
 
         let result = crate::di::review::screen_di(
             &db,
@@ -1205,7 +1332,11 @@ mod tests {
         ];
         let unique: std::collections::HashSet<&str> = fns.iter().copied().collect();
         assert_eq!(fns.len(), unique.len(), "All DI command names must be unique");
-        assert_eq!(fns.len(), 28, "Expected exactly 28 DI commands (incl. close/reject compat paths)");
+        assert_eq!(
+            fns.len(),
+            28,
+            "Expected exactly 28 DI commands (incl. close/reject compat paths)"
+        );
     }
 
     // ─── Lifecycle V1 — Permission seed ─────────────────────────────────
@@ -1217,8 +1348,7 @@ mod tests {
         let rows = db
             .query_all(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT name FROM permissions WHERE name LIKE 'di.%' ORDER BY name"
-                    .to_string(),
+                "SELECT name FROM permissions WHERE name LIKE 'di.%' ORDER BY name".to_string(),
             ))
             .await
             .expect("query permissions");
@@ -1346,10 +1476,7 @@ mod tests {
             .await
             .expect("list events");
 
-        let blocked: Vec<_> = events
-            .iter()
-            .filter(|e| e.apply_result == "blocked")
-            .collect();
+        let blocked: Vec<_> = events.iter().filter(|e| e.apply_result == "blocked").collect();
 
         assert_eq!(blocked.len(), 1, "One blocked audit event must exist");
         assert_eq!(blocked[0].action, "approved");
@@ -1383,10 +1510,7 @@ mod tests {
             .await
             .expect("list events");
 
-        let converted: Vec<_> = events
-            .iter()
-            .filter(|e| e.action == "converted")
-            .collect();
+        let converted: Vec<_> = events.iter().filter(|e| e.action == "converted").collect();
 
         assert_eq!(converted.len(), 1, "One converted audit event");
         assert_eq!(converted[0].requires_step_up, 1, "Conversion must require step-up");
@@ -1400,10 +1524,14 @@ mod tests {
             "INSERT OR IGNORE INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
              VALUES (1, 'eq-001', 'EQ-001', 'Test Equip', 'active_in_service', datetime('now'), datetime('now'))".to_string()
         )).await.expect("equipment");
-        db.execute(Statement::from_string(DbBackend::Sqlite,
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
             "INSERT OR IGNORE INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
-             VALUES (1, 'mdl-001', 1, 'active', datetime('now'), datetime('now'))".to_string()
-        )).await.expect("model");
+             VALUES (1, 'mdl-001', 1, 'active', datetime('now'), datetime('now'))"
+                .to_string(),
+        ))
+        .await
+        .expect("model");
         db.execute(Statement::from_string(DbBackend::Sqlite,
             "INSERT OR IGNORE INTO org_node_types (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
              VALUES (1, 'nt-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'))".to_string()
@@ -1416,14 +1544,22 @@ mod tests {
             "INSERT OR IGNORE INTO reference_domains (id, code, name, structure_type, governance_level, is_extendable, created_at, updated_at) \
              VALUES (900001, 'DI_CLASS', 'DI Classification', 'flat', 'tenant_managed', 1, datetime('now'), datetime('now'))".to_string()
         )).await.expect("ref_domain");
-        db.execute(Statement::from_string(DbBackend::Sqlite,
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
             "INSERT OR IGNORE INTO reference_sets (id, domain_id, version_no, status, created_at) \
-             VALUES (900001, 900001, 1, 'published', datetime('now'))".to_string()
-        )).await.expect("ref_set");
-        db.execute(Statement::from_string(DbBackend::Sqlite,
+             VALUES (900001, 900001, 1, 'published', datetime('now'))"
+                .to_string(),
+        ))
+        .await
+        .expect("ref_set");
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
             "INSERT OR IGNORE INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (900001, 900001, 'MECH', 'Mécanique', 1)".to_string()
-        )).await.expect("ref_value");
+             VALUES (900001, 900001, 'MECH', 'Mécanique', 1)"
+                .to_string(),
+        ))
+        .await
+        .expect("ref_value");
     }
 
     async fn create_test_di(db: &sea_orm::DatabaseConnection) -> crate::di::domain::InterventionRequest {

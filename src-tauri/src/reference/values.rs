@@ -90,27 +90,18 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
     ))
 }
 
-const SELECT_COLS: &str =
-    "id, set_id, parent_id, code, label, description, sort_order, \
+const SELECT_COLS: &str = "id, set_id, parent_id, code, label, description, sort_order, \
      color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json";
 
 fn map_value(row: &QueryResult) -> AppResult<ReferenceValue> {
     Ok(ReferenceValue {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
-        set_id: row
-            .try_get::<i64>("", "set_id")
-            .map_err(|e| decode_err("set_id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        set_id: row.try_get::<i64>("", "set_id").map_err(|e| decode_err("set_id", e))?,
         parent_id: row
             .try_get::<Option<i64>>("", "parent_id")
             .map_err(|e| decode_err("parent_id", e))?,
-        code: row
-            .try_get::<String>("", "code")
-            .map_err(|e| decode_err("code", e))?,
-        label: row
-            .try_get::<String>("", "label")
-            .map_err(|e| decode_err("label", e))?,
+        code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
+        label: row.try_get::<String>("", "label").map_err(|e| decode_err("label", e))?,
         description: row
             .try_get::<Option<String>>("", "description")
             .map_err(|e| decode_err("description", e))?,
@@ -240,8 +231,7 @@ pub fn code_from_label(label: &str) -> AppResult<String> {
     }
     if out.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Impossible de générer un code à partir du libellé. Utilisez des lettres ou chiffres."
-                .into(),
+            "Impossible de générer un code à partir du libellé. Utilisez des lettres ou chiffres.".into(),
         ]));
     }
     if !out.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
@@ -260,17 +250,12 @@ pub fn code_from_label(label: &str) -> AppResult<String> {
 fn allows_cross_domain_parent(child_domain_code: &str, parent_domain_code: &str) -> bool {
     matches!(
         (child_domain_code, parent_domain_code),
-        ("EQUIPMENT.FAMILY", "EQUIPMENT.CLASS")
-            | ("EQUIPMENT.SUBFAMILY", "EQUIPMENT.FAMILY")
+        ("EQUIPMENT.FAMILY", "EQUIPMENT.CLASS") | ("EQUIPMENT.SUBFAMILY", "EQUIPMENT.FAMILY")
     )
 }
 
 /// Validates that a parent_id exists and is valid for the target set/domain.
-async fn validate_parent(
-    db: &DatabaseConnection,
-    set_id: i64,
-    parent_id: i64,
-) -> AppResult<()> {
+async fn validate_parent(db: &DatabaseConnection, set_id: i64, parent_id: i64) -> AppResult<()> {
     let child_set = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -306,15 +291,11 @@ async fn validate_parent(
             "La valeur parente (id={parent_id}) n'existe pas."
         )])),
         Some(r) => {
-            let parent_set_id: i64 = r
-                .try_get("", "set_id")
-                .map_err(|e| decode_err("set_id", e))?;
+            let parent_set_id: i64 = r.try_get("", "set_id").map_err(|e| decode_err("set_id", e))?;
             let parent_domain_code: String = r
                 .try_get("", "domain_code")
                 .map_err(|e| decode_err("parent.domain_code", e))?;
-            if parent_set_id != set_id
-                && !allows_cross_domain_parent(&child_domain_code, &parent_domain_code)
-            {
+            if parent_set_id != set_id && !allows_cross_domain_parent(&child_domain_code, &parent_domain_code) {
                 return Err(AppError::ValidationFailed(vec![
                     "La valeur parente n'est pas autorisée pour ce domaine.".into(),
                 ]));
@@ -326,21 +307,15 @@ async fn validate_parent(
 
 /// Detects hierarchy cycles: walks up the parent chain from `start_parent_id`
 /// and returns an error if `target_value_id` is encountered (would create a cycle).
-async fn detect_cycle(
-    db: &DatabaseConnection,
-    target_value_id: i64,
-    start_parent_id: i64,
-) -> AppResult<()> {
+async fn detect_cycle(db: &DatabaseConnection, target_value_id: i64, start_parent_id: i64) -> AppResult<()> {
     let mut current_id = Some(start_parent_id);
     let mut visited = std::collections::HashSet::new();
 
     while let Some(cid) = current_id {
         if cid == target_value_id {
-            return Err(AppError::ValidationFailed(vec![
-                "Cycle détecté dans la hiérarchie. \
+            return Err(AppError::ValidationFailed(vec!["Cycle détecté dans la hiérarchie. \
                  Impossible de déplacer une valeur sous l'un de ses descendants."
-                    .into(),
-            ]));
+                .into()]));
         }
         if !visited.insert(cid) {
             // Already visited — corrupt hierarchy, but not our target cycle
@@ -367,10 +342,7 @@ async fn detect_cycle(
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /// Returns all values for a set, ordered by sort_order then code.
-pub async fn list_values(
-    db: &DatabaseConnection,
-    set_id: i64,
-) -> AppResult<Vec<ReferenceValue>> {
+pub async fn list_values(db: &DatabaseConnection, set_id: i64) -> AppResult<Vec<ReferenceValue>> {
     // Verify set exists
     sets::get_reference_set(db, set_id).await?;
 
@@ -389,10 +361,7 @@ pub async fn list_values(
 }
 
 /// Returns a single value by id.
-pub async fn get_value(
-    db: &DatabaseConnection,
-    value_id: i64,
-) -> AppResult<ReferenceValue> {
+pub async fn get_value(db: &DatabaseConnection, value_id: i64) -> AppResult<ReferenceValue> {
     get_value_by_id(db, value_id).await
 }
 
@@ -442,9 +411,7 @@ pub async fn create_value(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::ValidationFailed(vec![format!(
-                "Le code '{code}' existe déjà dans ce jeu de référence."
-            )])
+            AppError::ValidationFailed(vec![format!("Le code '{code}' existe déjà dans ce jeu de référence.")])
         } else {
             AppError::Database(e)
         }
@@ -454,21 +421,14 @@ pub async fn create_value(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
-                "SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"
-            ),
+            &format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
             [payload.set_id.into(), code.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "reference_values row missing after insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_values row missing after insert")))?;
 
     let created = map_value(&row)?;
-    crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created)
-        .await?;
+    crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created).await?;
     Ok(created)
 }
 
@@ -489,7 +449,7 @@ pub async fn create_operational_value(
     let domain_code = normalize_code(&payload.domain_code);
     if domain_code.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de domaine est obligatoire.".into(),
+            "Le code de domaine est obligatoire.".into()
         ]));
     }
 
@@ -505,9 +465,7 @@ pub async fn create_operational_value(
             id: domain_code.clone(),
         })?;
 
-    let domain_id: i64 = domain_row
-        .try_get("", "id")
-        .map_err(|e| decode_err("domain.id", e))?;
+    let domain_id: i64 = domain_row.try_get("", "id").map_err(|e| decode_err("domain.id", e))?;
     let domain = domains::get_reference_domain(db, domain_id).await?;
     crate::reference::governance::assert_allows_operational_create(&domain)?;
 
@@ -526,9 +484,7 @@ pub async fn create_operational_value(
                  Publiez un jeu dans Données de référence avant d'ajouter des valeurs."
             )])
         })?;
-    let set_id: i64 = published
-        .try_get("", "id")
-        .map_err(|e| decode_err("set.id", e))?;
+    let set_id: i64 = published.try_get("", "id").map_err(|e| decode_err("set.id", e))?;
 
     validate_label(&payload.label)?;
     let code = if let Some(ref raw) = payload.code {
@@ -584,21 +540,14 @@ pub async fn create_operational_value(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
-                "SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"
-            ),
+            &format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
             [set_id.into(), code.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "reference_values row missing after operational insert"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_values row missing after operational insert")))?;
 
     let created = map_value(&row)?;
-    crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created)
-        .await?;
+    crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created).await?;
     Ok(created)
 }
 
@@ -658,17 +607,10 @@ pub async fn update_value(
 
     values.push(value_id.into());
 
-    let sql = format!(
-        "UPDATE reference_values SET {} WHERE id = ?",
-        sets_clause.join(", ")
-    );
+    let sql = format!("UPDATE reference_values SET {} WHERE id = ?", sets_clause.join(", "));
 
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        &sql,
-        values,
-    ))
-    .await?;
+    db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+        .await?;
 
     get_value_by_id(db, value_id).await
 }
@@ -678,11 +620,7 @@ pub async fn update_value(
 /// Mutation permission is decided by `governance` policy.
 /// Protected analytical domains block hard deletion; deactivation is the
 /// governed alternative. Full usage-check enforcement is in File 04.
-pub async fn deactivate_value(
-    db: &DatabaseConnection,
-    value_id: i64,
-    _actor_id: i64,
-) -> AppResult<ReferenceValue> {
+pub async fn deactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id: i64) -> AppResult<ReferenceValue> {
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
@@ -690,7 +628,7 @@ pub async fn deactivate_value(
 
     if !existing.is_active {
         return Err(AppError::ValidationFailed(vec![
-            "Cette valeur est déjà désactivée.".into(),
+            "Cette valeur est déjà désactivée.".into()
         ]));
     }
 
@@ -707,20 +645,14 @@ pub async fn deactivate_value(
 /// Reactivates a previously deactivated reference value.
 ///
 /// Same mutation gate as `deactivate_value`.
-pub async fn reactivate_value(
-    db: &DatabaseConnection,
-    value_id: i64,
-    _actor_id: i64,
-) -> AppResult<ReferenceValue> {
+pub async fn reactivate_value(db: &DatabaseConnection, value_id: i64, _actor_id: i64) -> AppResult<ReferenceValue> {
     let existing = get_value_by_id(db, value_id).await?;
     let set = sets::get_reference_set(db, existing.set_id).await?;
     let domain = domains::get_reference_domain(db, set.domain_id).await?;
     crate::reference::governance::assert_allows_value_mutation(&domain, &set)?;
 
     if existing.is_active {
-        return Err(AppError::ValidationFailed(vec![
-            "Cette valeur est déjà active.".into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["Cette valeur est déjà active.".into()]));
     }
 
     db.execute(Statement::from_sql_and_values(

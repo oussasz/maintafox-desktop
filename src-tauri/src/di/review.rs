@@ -16,14 +16,10 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
-use super::domain::{
-    guard_transition, map_intervention_request, DiStatus, DiUrgency, InterventionRequest,
-};
+use super::domain::{guard_transition, map_intervention_request, DiStatus, DiUrgency, InterventionRequest};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Input structs
@@ -191,12 +187,8 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_review_event(row: &QueryResult) -> AppResult<DiReviewEvent> {
     Ok(DiReviewEvent {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
-        di_id: row
-            .try_get::<i64>("", "di_id")
-            .map_err(|e| decode_err("di_id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        di_id: row.try_get::<i64>("", "di_id").map_err(|e| decode_err("di_id", e))?,
         event_type: row
             .try_get::<String>("", "event_type")
             .map_err(|e| decode_err("event_type", e))?,
@@ -244,10 +236,7 @@ fn map_review_event(row: &QueryResult) -> AppResult<DiReviewEvent> {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Load a DI and parse its current status. Returns `(InterventionRequest, DiStatus)`.
-async fn load_di_with_status(
-    txn: &impl ConnectionTrait,
-    di_id: i64,
-) -> AppResult<(InterventionRequest, DiStatus)> {
+async fn load_di_with_status(txn: &impl ConnectionTrait, di_id: i64) -> AppResult<(InterventionRequest, DiStatus)> {
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -266,9 +255,8 @@ async fn load_di_with_status(
         })?;
 
     let di = map_intervention_request(&row)?;
-    let status = DiStatus::try_from_str(&di.status).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("Stored DI has invalid status: {e}"))
-    })?;
+    let status = DiStatus::try_from_str(&di.status)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Stored DI has invalid status: {e}")))?;
 
     Ok((di, status))
 }
@@ -381,10 +369,7 @@ fn check_concurrency(rows_affected: u64) -> AppResult<()> {
 }
 
 /// Re-fetch the updated DI after a successful write.
-async fn refetch_di(
-    txn: &impl ConnectionTrait,
-    di_id: i64,
-) -> AppResult<InterventionRequest> {
+async fn refetch_di(txn: &impl ConnectionTrait, di_id: i64) -> AppResult<InterventionRequest> {
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -409,10 +394,7 @@ async fn refetch_di(
 // A) screen_di — PendingReview → Screened → AwaitingApproval (atomic)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn screen_di(
-    db: &DatabaseConnection,
-    input: DiScreenInput,
-) -> AppResult<InterventionRequest> {
+pub async fn screen_di(db: &DatabaseConnection, input: DiScreenInput) -> AppResult<InterventionRequest> {
     let txn = db.begin().await?;
 
     // 1. Load and validate both transitions upfront
@@ -420,14 +402,10 @@ pub async fn screen_di(
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
 
-    guard_transition(&current_status, &DiStatus::AwaitingApproval).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
+    guard_transition(&current_status, &DiStatus::AwaitingApproval).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     // 2. Validate urgency
-    DiUrgency::try_from_str(&input.validated_urgency).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
+    DiUrgency::try_from_str(&input.validated_urgency).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     // 3. Validate classification_code_id resolves in reference_values (if provided)
     if let Some(cid) = input.classification_code_id {
@@ -549,9 +527,8 @@ pub async fn return_di_for_clarification(
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
 
-    guard_transition(&current_status, &DiStatus::ReturnedForClarification).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
+    guard_transition(&current_status, &DiStatus::ReturnedForClarification)
+        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
@@ -620,10 +597,7 @@ pub async fn return_di_for_clarification(
 // C) close_di — InReview|AwaitingApproval|Approved → Closed (+ disposition)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn close_di(
-    db: &DatabaseConnection,
-    input: DiCloseInput,
-) -> AppResult<InterventionRequest> {
+pub async fn close_di(db: &DatabaseConnection, input: DiCloseInput) -> AppResult<InterventionRequest> {
     super::disposition::validate_close_disposition(
         db,
         &input.disposition_code,
@@ -649,8 +623,7 @@ pub async fn close_di(
         }
     }
 
-    guard_transition(&current_status, &DiStatus::Closed)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_transition(&current_status, &DiStatus::Closed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let disposition = input.disposition_code.trim().to_string();
@@ -753,10 +726,7 @@ pub async fn close_di(
 // C2) cancel_own_di — Submitted|ReturnedForClarification → Closed
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn cancel_own_di(
-    db: &DatabaseConnection,
-    input: DiCancelOwnInput,
-) -> AppResult<InterventionRequest> {
+pub async fn cancel_own_di(db: &DatabaseConnection, input: DiCancelOwnInput) -> AppResult<InterventionRequest> {
     let txn = db.begin().await?;
     let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
 
@@ -777,8 +747,7 @@ pub async fn cancel_own_di(
         }
     }
 
-    guard_transition(&current_status, &DiStatus::Closed)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_transition(&current_status, &DiStatus::Closed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let disposition = super::disposition::DISPOSITION_CANCELLED_BY_REQUESTER.to_string();
@@ -855,10 +824,7 @@ pub async fn cancel_own_di(
 }
 
 // Compat: reject_di → close with rejected_invalid (or duplicate if reason says so)
-pub async fn reject_di(
-    db: &DatabaseConnection,
-    input: DiRejectInput,
-) -> AppResult<InterventionRequest> {
+pub async fn reject_di(db: &DatabaseConnection, input: DiRejectInput) -> AppResult<InterventionRequest> {
     let reason = input.reason_code.trim().to_lowercase();
     let disposition = if reason.contains("duplicate") || reason == "doublon" {
         super::disposition::DISPOSITION_DUPLICATE.to_string()
@@ -902,18 +868,13 @@ pub async fn close_di_as_non_executable(
 // D) approve_di — AwaitingApproval → Approved (step-up at IPC)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn approve_di(
-    db: &DatabaseConnection,
-    input: DiApproveInput,
-) -> AppResult<InterventionRequest> {
+pub async fn approve_di(db: &DatabaseConnection, input: DiApproveInput) -> AppResult<InterventionRequest> {
     let txn = db.begin().await?;
     let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
 
-    guard_transition(&current_status, &DiStatus::Approved).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
+    guard_transition(&current_status, &DiStatus::Approved).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
@@ -986,13 +947,10 @@ pub async fn approve_di(
 // E) defer_di — InReview|AwaitingApproval|Approved → Deferred
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn defer_di(
-    db: &DatabaseConnection,
-    input: DiDeferInput,
-) -> AppResult<InterventionRequest> {
+pub async fn defer_di(db: &DatabaseConnection, input: DiDeferInput) -> AppResult<InterventionRequest> {
     if input.reason_code.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le motif de report est obligatoire.".into(),
+            "Le motif de report est obligatoire.".into()
         ]));
     }
 
@@ -1006,9 +964,7 @@ pub async fn defer_di(
     let today = Utc::now().date_naive();
     let date_part = until.get(..10).unwrap_or(until);
     let until_date = chrono::NaiveDate::parse_from_str(date_part, "%Y-%m-%d").map_err(|_| {
-        AppError::ValidationFailed(vec![
-            "Format de date de report invalide (attendu YYYY-MM-DD).".into(),
-        ])
+        AppError::ValidationFailed(vec!["Format de date de report invalide (attendu YYYY-MM-DD).".into()])
     })?;
     if until_date <= today {
         return Err(AppError::ValidationFailed(vec![
@@ -1032,8 +988,7 @@ pub async fn defer_di(
         }
     }
 
-    guard_transition(&current_status, &DiStatus::Deferred)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_transition(&current_status, &DiStatus::Deferred).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let from_saved = current_status.as_str().to_string();
@@ -1131,8 +1086,7 @@ pub async fn reactivate_deferred_di(
         .and_then(|s| DiStatus::try_from_str(s).ok())
         .unwrap_or(DiStatus::AwaitingApproval);
 
-    guard_transition(&current_status, &target)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    guard_transition(&current_status, &target).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let target_str = target.as_str().to_string();
@@ -1199,10 +1153,7 @@ pub async fn reactivate_deferred_di(
 // H) archive_di — Closed only: set archived_at (no status change)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn archive_di(
-    db: &DatabaseConnection,
-    input: DiArchiveInput,
-) -> AppResult<InterventionRequest> {
+pub async fn archive_di(db: &DatabaseConnection, input: DiArchiveInput) -> AppResult<InterventionRequest> {
     let txn = db.begin().await?;
     let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
@@ -1215,9 +1166,7 @@ pub async fn archive_di(
         )]));
     }
     if di.archived_at.is_some() {
-        return Err(AppError::ValidationFailed(vec![
-            "Cette DI est déjà archivée.".into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["Cette DI est déjà archivée.".into()]));
     }
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -1279,11 +1228,7 @@ pub async fn archive_di(
     Ok(updated)
 }
 
-
-pub async fn get_review_events(
-    db: &DatabaseConnection,
-    di_id: i64,
-) -> AppResult<Vec<DiReviewEvent>> {
+pub async fn get_review_events(db: &DatabaseConnection, di_id: i64) -> AppResult<Vec<DiReviewEvent>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,

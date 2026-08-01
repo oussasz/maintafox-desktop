@@ -8,11 +8,11 @@
 //! Populates schedule class, governed WO anchor, failure events, and runtime exposure logs
 //! so `infer_exposure_hours` and Weibull/R(t) dashboards work without manual input.
 
-use chrono::{Duration, Utc};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use crate::errors::{AppError, AppResult};
 use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 use crate::reliability::queries as reliability_queries;
+use chrono::{Duration, Utc};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 const DEMO_EXPOSURE_SOURCE: &str = "rams_demo_seed";
 const DEMO_FE_PREFIX: &str = "RAMS-DEMO-FE-";
@@ -47,10 +47,7 @@ pub async fn ensure_all_equipment_rams_simulation(db: &DatabaseConnection) -> Ap
 
 /// DEMO ONLY — idempotent SQL backfill for one equipment, then refresh KPI + analytics pipeline.
 /// Explicit developer entry only; never part of the production app flow.
-pub async fn ensure_equipment_rams_simulation(
-    db: &DatabaseConnection,
-    equipment_id: i64,
-) -> AppResult<()> {
+pub async fn ensure_equipment_rams_simulation(db: &DatabaseConnection, equipment_id: i64) -> AppResult<()> {
     if !equipment_needs_simulation(db, equipment_id).await? {
         return Ok(());
     }
@@ -81,13 +78,7 @@ pub async fn ensure_equipment_rams_simulation(
     )
     .await?;
 
-    crate::db::rams_presentation_seed::refresh_rams_analytics_for_equipment(
-        db,
-        equipment_id,
-        actor_id,
-        12,
-    )
-    .await?;
+    crate::db::rams_presentation_seed::refresh_rams_analytics_for_equipment(db, equipment_id, actor_id, 12).await?;
 
     let ev = reliability_queries::evaluate_reliability_analysis_input(
         db,
@@ -146,9 +137,7 @@ async fn equipment_needs_simulation(db: &DatabaseConnection, equipment_id: i64) 
     let Some(row) = row else {
         return Ok(false);
     };
-    let schedule: Option<i64> = row
-        .try_get("", "rams_schedule_reference_value_id")
-        .map_err(decode)?;
+    let schedule: Option<i64> = row.try_get("", "rams_schedule_reference_value_id").map_err(decode)?;
 
     let closed_row = db
         .query_one(Statement::from_sql_and_values(
@@ -193,10 +182,7 @@ async fn equipment_needs_simulation(db: &DatabaseConnection, equipment_id: i64) 
         .ok_or_else(|| AppError::SyncError("exposure sum missing".into()))?;
     let demo_exp: f64 = exp_row.try_get("", "t").map_err(decode)?;
 
-    Ok(schedule.is_none()
-        || closed_cnt == 0
-        || fe_cnt < 6
-        || demo_exp < 500.0)
+    Ok(schedule.is_none() || closed_cnt == 0 || fe_cnt < 6 || demo_exp < 500.0)
 }
 
 async fn sql_ensure_beta_benchmarks(db: &DatabaseConnection) -> AppResult<()> {
@@ -209,7 +195,8 @@ async fn sql_ensure_beta_benchmarks(db: &DatabaseConnection) -> AppResult<()> {
             'RAMS_CLASS', 'IEC-60300', 3.0,
             'OREDA / IEC 60300-3-1 wear-out phase reference', 'demo',
             1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
-         )".to_string(),
+         )"
+        .to_string(),
     ))
     .await?;
     Ok(())
@@ -266,7 +253,7 @@ async fn sql_ensure_default_schedule_class(db: &DatabaseConnection) -> AppResult
         .await?
         .ok_or_else(|| {
             AppError::ValidationFailed(vec![
-                "Failed to create ORG.SCHEDULE_CLASS DAY_SHIFT reference value.".into(),
+                "Failed to create ORG.SCHEDULE_CLASS DAY_SHIFT reference value.".into()
             ])
         })?;
     let sc_id: i64 = sc_row.try_get("", "id").map_err(decode)?;
@@ -323,9 +310,8 @@ async fn sql_ensure_anchor_work_order(db: &DatabaseConnection, equipment_id: i64
             id: equipment_id.to_string(),
         })?;
     let node_id: Option<i64> = meta.try_get("", "installed_at_node_id").map_err(decode)?;
-    let node_id = node_id.ok_or_else(|| {
-        AppError::ValidationFailed(vec!["equipment missing installed_at_node_id".into()])
-    })?;
+    let node_id =
+        node_id.ok_or_else(|| AppError::ValidationFailed(vec!["equipment missing installed_at_node_id".into()]))?;
 
     let actor_id = resolve_actor_id(db).await?;
     let closed_status_id = resolve_wo_status_id(db, "closed").await?;
@@ -415,21 +401,14 @@ async fn count_kpi_eligible_failure_events(
                AND CAST(json_extract(eligible_flags_json, '$.eligible_unplanned_mtbf') AS INTEGER) = 1
                AND COALESCE(failed_at, detected_at, created_at) >= ?
                AND COALESCE(failed_at, detected_at, created_at) <= ?",
-            [
-                equipment_id.into(),
-                period_start.into(),
-                period_end.into(),
-            ],
+            [equipment_id.into(), period_start.into(), period_end.into()],
         ))
         .await?
         .ok_or_else(|| AppError::SyncError("eligible fe count missing".into()))?;
     row.try_get("", "c").map_err(decode)
 }
 
-async fn sql_promote_failure_event_eligibility(
-    db: &DatabaseConnection,
-    equipment_id: i64,
-) -> AppResult<()> {
+async fn sql_promote_failure_event_eligibility(db: &DatabaseConnection, equipment_id: i64) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE failure_events
@@ -548,8 +527,7 @@ async fn resolve_actor_id(db: &DatabaseConnection) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id FROM user_accounts WHERE is_active = 1 ORDER BY is_admin DESC, id ASC LIMIT 1"
-                .to_string(),
+            "SELECT id FROM user_accounts WHERE is_active = 1 ORDER BY is_admin DESC, id ASC LIMIT 1".to_string(),
         ))
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["No active user account.".into()]))?;

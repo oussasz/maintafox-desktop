@@ -113,12 +113,8 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_sla_rule(row: &QueryResult) -> AppResult<DiSlaRule> {
     Ok(DiSlaRule {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
-        name: row
-            .try_get::<String>("", "name")
-            .map_err(|e| decode_err("name", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        name: row.try_get::<String>("", "name").map_err(|e| decode_err("name", e))?,
         urgency_level: row
             .try_get::<String>("", "urgency_level")
             .map_err(|e| decode_err("urgency_level", e))?,
@@ -167,9 +163,8 @@ fn empty_status() -> DiSlaStatus {
 
 /// Parse an ISO 8601 datetime string (`YYYY-MM-DDTHH:MM:SSZ`) into a `NaiveDateTime`.
 fn parse_iso(s: &str) -> AppResult<NaiveDateTime> {
-    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%SZ").map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("Failed to parse datetime '{s}': {e}"))
-    })
+    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%SZ")
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to parse datetime '{s}': {e}")))
 }
 
 /// Hours elapsed between two datetimes as f64.
@@ -179,20 +174,14 @@ fn hours_between(from: &NaiveDateTime, to: &NaiveDateTime) -> f64 {
 }
 
 fn criticality_codes_match(rule_class: &str, asset_class: &str) -> bool {
-    let rule_n = normalize_criticality_to_canon(rule_class).unwrap_or_else(|_| {
-        rule_class.trim().to_ascii_uppercase()
-    });
-    let asset_n = normalize_criticality_to_canon(asset_class).unwrap_or_else(|_| {
-        asset_class.trim().to_ascii_uppercase()
-    });
+    let rule_n = normalize_criticality_to_canon(rule_class).unwrap_or_else(|_| rule_class.trim().to_ascii_uppercase());
+    let asset_n =
+        normalize_criticality_to_canon(asset_class).unwrap_or_else(|_| asset_class.trim().to_ascii_uppercase());
     rule_n == asset_n
 }
 
 /// Resolve asset criticality from production `equipment` + reference/lookup JOINs.
-pub async fn lookup_asset_criticality(
-    db: &impl ConnectionTrait,
-    asset_id: i64,
-) -> AppResult<Option<String>> {
+pub async fn lookup_asset_criticality(db: &impl ConnectionTrait, asset_id: i64) -> AppResult<Option<String>> {
     let raw: Option<String> = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -204,16 +193,10 @@ pub async fn lookup_asset_criticality(
             [asset_id.into()],
         ))
         .await?
-        .and_then(|row| {
-            row.try_get::<Option<String>>("", "criticality_code")
-                .ok()
-                .flatten()
-        });
+        .and_then(|row| row.try_get::<Option<String>>("", "criticality_code").ok().flatten());
 
     Ok(match raw {
-        Some(code) => Some(
-            normalize_criticality_to_canon(&code).unwrap_or_else(|_| code.trim().to_ascii_uppercase()),
-        ),
+        Some(code) => Some(normalize_criticality_to_canon(&code).unwrap_or_else(|_| code.trim().to_ascii_uppercase())),
         None => None,
     })
 }
@@ -222,10 +205,7 @@ fn is_sla_terminal(di: &InterventionRequest) -> bool {
     if di.converted_at.is_some() {
         return true;
     }
-    matches!(
-        di.status.as_str(),
-        "closed"
-    )
+    matches!(di.status.as_str(), "closed")
 }
 
 fn derive_lifecycle_status(
@@ -268,9 +248,7 @@ fn di_has_frozen_sla(di: &InterventionRequest) -> bool {
 
 fn status_from_frozen(di: &InterventionRequest) -> AppResult<DiSlaStatus> {
     let target_response = di.sla_target_response_hours.unwrap();
-    let target_resolution = di
-        .sla_target_resolution_hours
-        .unwrap_or(target_response);
+    let target_resolution = di.sla_target_resolution_hours.unwrap_or(target_response);
     let escalation = di.sla_escalation_threshold_hours.unwrap_or(target_response);
     let sla_deadline = di.sla_response_deadline.clone().unwrap();
     let resolution_deadline = di
@@ -293,10 +271,8 @@ fn status_from_frozen(di: &InterventionRequest) -> AppResult<DiSlaStatus> {
     };
     let resolution_elapsed = hours_between(&submitted_at, &resolution_end);
 
-    let is_response_breached =
-        di.screened_at.is_none() && response_elapsed > target_response as f64;
-    let is_resolution_breached =
-        di.converted_at.is_none() && resolution_elapsed > target_resolution as f64;
+    let is_response_breached = di.screened_at.is_none() && response_elapsed > target_response as f64;
+    let is_resolution_breached = di.converted_at.is_none() && resolution_elapsed > target_resolution as f64;
 
     let response_remaining_hours = if di.screened_at.is_none() {
         Some((target_response as f64 - response_elapsed).max(0.0))
@@ -341,9 +317,7 @@ fn status_from_rule(di: &InterventionRequest, rule: &DiSlaRule) -> AppResult<DiS
     let response_deadline_dt = submitted_at + Duration::hours(rule.target_response_hours);
     let resolution_deadline_dt = submitted_at + Duration::hours(rule.target_resolution_hours);
     let sla_deadline = response_deadline_dt.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let resolution_deadline = resolution_deadline_dt
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
+    let resolution_deadline = resolution_deadline_dt.format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let response_end = match &di.screened_at {
         Some(s) => parse_iso(s)?,
@@ -357,10 +331,8 @@ fn status_from_rule(di: &InterventionRequest, rule: &DiSlaRule) -> AppResult<DiS
     };
     let resolution_elapsed = hours_between(&submitted_at, &resolution_end);
 
-    let is_response_breached =
-        di.screened_at.is_none() && response_elapsed > rule.target_response_hours as f64;
-    let is_resolution_breached =
-        di.converted_at.is_none() && resolution_elapsed > rule.target_resolution_hours as f64;
+    let is_response_breached = di.screened_at.is_none() && response_elapsed > rule.target_response_hours as f64;
+    let is_resolution_breached = di.converted_at.is_none() && resolution_elapsed > rule.target_resolution_hours as f64;
 
     let response_remaining_hours = if di.screened_at.is_none() {
         Some((rule.target_response_hours as f64 - response_elapsed).max(0.0))
@@ -423,16 +395,12 @@ pub async fn resolve_sla_rule(
         ))
         .await?;
 
-    let rules: Vec<DiSlaRule> = rows
-        .iter()
-        .map(map_sla_rule)
-        .collect::<AppResult<Vec<_>>>()?;
+    let rules: Vec<DiSlaRule> = rows.iter().map(map_sla_rule).collect::<AppResult<Vec<_>>>()?;
 
     if let Some(crit) = criticality_class {
         if let Some(rule) = rules.iter().find(|r| {
             r.origin_type.as_deref() == Some(origin_type)
-                && r
-                    .asset_criticality_class
+                && r.asset_criticality_class
                     .as_ref()
                     .is_some_and(|rc| criticality_codes_match(rc, crit))
         }) {
@@ -440,9 +408,10 @@ pub async fn resolve_sla_rule(
         }
     }
 
-    if let Some(rule) = rules.iter().find(|r| {
-        r.origin_type.as_deref() == Some(origin_type) && r.asset_criticality_class.is_none()
-    }) {
+    if let Some(rule) = rules
+        .iter()
+        .find(|r| r.origin_type.as_deref() == Some(origin_type) && r.asset_criticality_class.is_none())
+    {
         return Ok(Some(rule.clone()));
     }
 
@@ -457,22 +426,13 @@ pub async fn resolve_sla_rule(
 }
 
 /// Freeze SLA targets/deadlines on a DI once. Idempotent (`sla_response_deadline IS NULL`).
-pub async fn freeze_sla_on_di(
-    db: &impl ConnectionTrait,
-    di: &InterventionRequest,
-) -> AppResult<InterventionRequest> {
+pub async fn freeze_sla_on_di(db: &impl ConnectionTrait, di: &InterventionRequest) -> AppResult<InterventionRequest> {
     if di_has_frozen_sla(di) {
         return Ok(di.clone());
     }
 
     let criticality_class = lookup_asset_criticality(db, di.asset_id).await?;
-    let rule = resolve_sla_rule(
-        db,
-        &di.reported_urgency,
-        &di.origin_type,
-        criticality_class.as_deref(),
-    )
-    .await?;
+    let rule = resolve_sla_rule(db, &di.reported_urgency, &di.origin_type, criticality_class.as_deref()).await?;
 
     let Some(rule) = rule else {
         return Ok(di.clone());
@@ -533,22 +493,13 @@ pub async fn freeze_sla_on_di(
 
 /// Compute the SLA status for an intervention request.
 /// Prefers immutable DI snapshot columns; falls back to live rules only when unset.
-pub async fn compute_sla_status(
-    db: &impl ConnectionTrait,
-    di: &InterventionRequest,
-) -> AppResult<DiSlaStatus> {
+pub async fn compute_sla_status(db: &impl ConnectionTrait, di: &InterventionRequest) -> AppResult<DiSlaStatus> {
     if di_has_frozen_sla(di) {
         return status_from_frozen(di);
     }
 
     let criticality_class = lookup_asset_criticality(db, di.asset_id).await?;
-    let rule = resolve_sla_rule(
-        db,
-        &di.reported_urgency,
-        &di.origin_type,
-        criticality_class.as_deref(),
-    )
-    .await?;
+    let rule = resolve_sla_rule(db, &di.reported_urgency, &di.origin_type, criticality_class.as_deref()).await?;
 
     let Some(rule) = rule else {
         return Ok(empty_status());
@@ -573,10 +524,7 @@ pub async fn snapshot_sla_for_di(
     di: &InterventionRequest,
 ) -> AppResult<(Option<i64>, Option<String>)> {
     if di_has_frozen_sla(di) {
-        return Ok((
-            di.sla_target_response_hours,
-            di.sla_response_deadline.clone(),
-        ));
+        return Ok((di.sla_target_response_hours, di.sla_response_deadline.clone()));
     }
     let status = compute_sla_status(db, di).await?;
     Ok((status.target_response_hours, status.sla_deadline))
@@ -628,10 +576,7 @@ pub async fn evaluate_historical_outcome(
 }
 
 /// Mark response breach as notified (idempotent).
-pub async fn mark_response_breach_notified(
-    db: &impl ConnectionTrait,
-    di_id: i64,
-) -> AppResult<()> {
+pub async fn mark_response_breach_notified(db: &impl ConnectionTrait, di_id: i64) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE intervention_requests \
@@ -644,10 +589,7 @@ pub async fn mark_response_breach_notified(
 }
 
 /// Mark resolution breach as notified (idempotent).
-pub async fn mark_resolution_breach_notified(
-    db: &impl ConnectionTrait,
-    di_id: i64,
-) -> AppResult<()> {
+pub async fn mark_resolution_breach_notified(db: &impl ConnectionTrait, di_id: i64) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE intervention_requests \
@@ -680,10 +622,7 @@ pub async fn list_sla_rules(db: &impl ConnectionTrait) -> AppResult<Vec<DiSlaRul
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Update an existing SLA rule. Permission check (di.admin) is in the command layer.
-pub async fn update_sla_rule(
-    db: &impl ConnectionTrait,
-    input: SlaRuleUpdateInput,
-) -> AppResult<DiSlaRule> {
+pub async fn update_sla_rule(db: &impl ConnectionTrait, input: SlaRuleUpdateInput) -> AppResult<DiSlaRule> {
     let valid_urgencies = ["low", "medium", "high", "critical"];
     if !valid_urgencies.contains(&input.urgency_level.as_str()) {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -692,10 +631,7 @@ pub async fn update_sla_rule(
         )]));
     }
 
-    if input.target_response_hours <= 0
-        || input.target_resolution_hours <= 0
-        || input.escalation_threshold_hours <= 0
-    {
+    if input.target_response_hours <= 0 || input.target_resolution_hours <= 0 || input.escalation_threshold_hours <= 0 {
         return Err(AppError::ValidationFailed(vec![
             "Les heures cibles doivent être supérieures à zéro.".into(),
         ]));

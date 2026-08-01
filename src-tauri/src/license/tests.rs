@@ -9,9 +9,7 @@ use crate::license::queries;
 
 async fn setup_db() -> DatabaseConnection {
     let db = Database::connect("sqlite::memory:").await.expect("sqlite");
-    crate::migrations::Migrator::up(&db, None)
-        .await
-        .expect("migrations");
+    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO user_accounts
@@ -72,9 +70,8 @@ async fn seed_entitlement_and_activation(db: &DatabaseConnection) {
         channel: "stable".to_string(),
         machine_slots: 4,
         feature_flags_json: r#"{}"#.to_string(),
-        capabilities_json:
-            r#"{"equipment":true,"inventory":true,"finance":true,"planning":true,"sync":true}"#
-                .to_string(),
+        capabilities_json: r#"{"equipment":true,"inventory":true,"finance":true,"planning":true,"sync":true}"#
+            .to_string(),
         policy_json: r#"{"grace_allowed_modules":["sync","equipment"]}"#.to_string(),
         issued_at: "2026-07-26T00:00:00Z".to_string(),
         valid_from: "2026-07-26T00:00:00Z".to_string(),

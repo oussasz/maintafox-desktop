@@ -17,8 +17,8 @@
 //!     org_node_id → location_id, title → title, urgency → urgency_id (label-matched),
 //!     status → always 'draft', type → always 'corrective'.
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -46,29 +46,10 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("code"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("label"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("is_system"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("is_active"))
-                            .integer()
-                            .not_null()
-                            .default(1),
-                    )
+                    .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
+                    .col(ColumnDef::new(Alias::new("label")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("is_system")).integer().not_null().default(0))
+                    .col(ColumnDef::new(Alias::new("is_active")).integer().not_null().default(1))
                     .to_owned(),
             )
             .await?;
@@ -100,46 +81,18 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("code"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("label"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("color"))
-                            .text()
-                            .not_null()
-                            .default("#808080"),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("macro_state"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
+                    .col(ColumnDef::new(Alias::new("label")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("color")).text().not_null().default("#808080"))
+                    .col(ColumnDef::new(Alias::new("macro_state")).text().not_null())
                     .col(
                         ColumnDef::new(Alias::new("is_terminal"))
                             .integer()
                             .not_null()
                             .default(0),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("is_system"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("sequence"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("is_system")).integer().not_null().default(0))
+                    .col(ColumnDef::new(Alias::new("sequence")).integer().not_null().default(0))
                     .to_owned(),
             )
             .await?;
@@ -176,27 +129,10 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("level"))
-                            .integer()
-                            .not_null()
-                            .unique_key(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("label"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("label_fr"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("hex_color"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("level")).integer().not_null().unique_key())
+                    .col(ColumnDef::new(Alias::new("label")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("label_fr")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("hex_color")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -226,28 +162,10 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("code"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("label"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("category"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("is_active"))
-                            .integer()
-                            .not_null()
-                            .default(1),
-                    )
+                    .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
+                    .col(ColumnDef::new(Alias::new("label")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("category")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("is_active")).integer().not_null().default(1))
                     .to_owned(),
             )
             .await?;
@@ -283,23 +201,10 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("code"))
-                            .text()
-                            .not_null()
-                            .unique_key(),
-                    )
+                    .col(ColumnDef::new(Alias::new("code")).text().not_null().unique_key())
                     // Classification
-                    .col(
-                        ColumnDef::new(Alias::new("type_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("status_id"))
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("type_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("status_id")).integer().not_null())
                     // Asset context
                     .col(ColumnDef::new(Alias::new("equipment_id")).integer())
                     .col(ColumnDef::new(Alias::new("component_id")).integer())
@@ -315,11 +220,7 @@ impl MigrationTrait for Migration {
                     // Urgency
                     .col(ColumnDef::new(Alias::new("urgency_id")).integer())
                     // Core description
-                    .col(
-                        ColumnDef::new(Alias::new("title"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("title")).text().not_null())
                     .col(ColumnDef::new(Alias::new("description")).text())
                     // Timing
                     .col(ColumnDef::new(Alias::new("planned_start")).text())
@@ -334,42 +235,14 @@ impl MigrationTrait for Migration {
                     // Duration accumulators
                     .col(ColumnDef::new(Alias::new("expected_duration_hours")).double())
                     .col(ColumnDef::new(Alias::new("actual_duration_hours")).double())
-                    .col(
-                        ColumnDef::new(Alias::new("active_labor_hours"))
-                            .double()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("total_waiting_hours"))
-                            .double()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("downtime_hours"))
-                            .double()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("active_labor_hours")).double().default(0))
+                    .col(ColumnDef::new(Alias::new("total_waiting_hours")).double().default(0))
+                    .col(ColumnDef::new(Alias::new("downtime_hours")).double().default(0))
                     // Cost accumulators
-                    .col(
-                        ColumnDef::new(Alias::new("labor_cost"))
-                            .double()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("parts_cost"))
-                            .double()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("service_cost"))
-                            .double()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("total_cost"))
-                            .double()
-                            .default(0),
-                    )
+                    .col(ColumnDef::new(Alias::new("labor_cost")).double().default(0))
+                    .col(ColumnDef::new(Alias::new("parts_cost")).double().default(0))
+                    .col(ColumnDef::new(Alias::new("service_cost")).double().default(0))
+                    .col(ColumnDef::new(Alias::new("total_cost")).double().default(0))
                     // Close-out evidence
                     .col(ColumnDef::new(Alias::new("recurrence_risk_level")).text())
                     .col(ColumnDef::new(Alias::new("production_impact_id")).integer())
@@ -385,16 +258,8 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(1),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("created_at"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("updated_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("created_at")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("updated_at")).text().not_null())
                     .to_owned(),
             )
             .await?;
@@ -425,8 +290,7 @@ impl MigrationTrait for Migration {
         let has_stubs = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='work_order_stubs'"
-                    .to_string(),
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='work_order_stubs'".to_string(),
             ))
             .await?;
 
@@ -473,34 +337,14 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("wo_id"))
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("from_status"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("to_status"))
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("action"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("wo_id")).integer().not_null())
+                    .col(ColumnDef::new(Alias::new("from_status")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("to_status")).text().not_null())
+                    .col(ColumnDef::new(Alias::new("action")).text().not_null())
                     .col(ColumnDef::new(Alias::new("actor_id")).integer())
                     .col(ColumnDef::new(Alias::new("reason_code")).text())
                     .col(ColumnDef::new(Alias::new("notes")).text())
-                    .col(
-                        ColumnDef::new(Alias::new("acted_at"))
-                            .text()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Alias::new("acted_at")).text().not_null())
                     .to_owned(),
             )
             .await?;

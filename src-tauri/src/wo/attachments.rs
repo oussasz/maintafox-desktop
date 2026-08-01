@@ -70,9 +70,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_attachment(row: &QueryResult) -> AppResult<WoAttachment> {
     Ok(WoAttachment {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         work_order_id: row
             .try_get::<i64>("", "work_order_id")
             .map_err(|e| decode_err("work_order_id", e))?,
@@ -97,9 +95,7 @@ fn map_attachment(row: &QueryResult) -> AppResult<WoAttachment> {
         notes: row
             .try_get::<Option<String>>("", "notes")
             .map_err(|e| decode_err("notes", e))?,
-        phase: row
-            .try_get::<Option<String>>("", "phase")
-            .unwrap_or(None),
+        phase: row.try_get::<Option<String>>("", "phase").unwrap_or(None),
     })
 }
 
@@ -144,9 +140,7 @@ pub async fn save_wo_attachment(
         .and_then(|n| n.to_str())
         .unwrap_or("attachment");
     if sanitized_name.is_empty() || sanitized_name.contains("..") {
-        return Err(AppError::ValidationFailed(vec![
-            "Nom de fichier invalide.".into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["Nom de fichier invalide.".into()]));
     }
 
     // ── Verify WO exists and is mutable ───────────────────────────────────
@@ -177,10 +171,7 @@ pub async fn save_wo_attachment(
 
     // ── Generate unique relative path ─────────────────────────────────────
     let uuid = Uuid::new_v4();
-    let relative_path = format!(
-        "wo_attachments/{}/{}-{}",
-        input.wo_id, uuid, sanitized_name
-    );
+    let relative_path = format!("wo_attachments/{}/{}-{}", input.wo_id, uuid, sanitized_name);
 
     // ── Write to disk ─────────────────────────────────────────────────────
     let absolute_path = app_data_dir.join(&relative_path);
@@ -229,11 +220,7 @@ pub async fn save_wo_attachment(
             [relative_path.into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "Failed to re-fetch inserted wo_attachment"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch inserted wo_attachment")))?;
 
     map_attachment(&row)
 }
@@ -243,10 +230,7 @@ pub async fn save_wo_attachment(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// List all attachments for a given WO, ordered by upload date descending.
-pub async fn list_wo_attachments(
-    db: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<Vec<WoAttachment>> {
+pub async fn list_wo_attachments(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Vec<WoAttachment>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -267,10 +251,7 @@ pub async fn list_wo_attachments(
 
 /// Delete the attachment DB record. Does NOT delete the file from disk.
 /// The caller (command layer) must hold `ot.admin` to invoke this.
-pub async fn delete_wo_attachment_record(
-    db: &impl ConnectionTrait,
-    attachment_id: i64,
-) -> AppResult<()> {
+pub async fn delete_wo_attachment_record(db: &impl ConnectionTrait, attachment_id: i64) -> AppResult<()> {
     let state_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

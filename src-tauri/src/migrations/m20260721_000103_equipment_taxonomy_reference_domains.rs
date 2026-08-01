@@ -99,8 +99,7 @@ impl MigrationTrait for Migration {
                JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published'",
             sys_meta = sys_meta
         );
-        db.execute(Statement::from_string(DbBackend::Sqlite, crit_sql))
-            .await?;
+        db.execute(Statement::from_string(DbBackend::Sqlite, crit_sql)).await?;
 
         // CLASS — includes PUMP (tests / common seed); industrial breadth
         let class_sql = format!(
@@ -121,8 +120,7 @@ impl MigrationTrait for Migration {
                JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published'",
             sys_meta = sys_meta
         );
-        db.execute(Statement::from_string(DbBackend::Sqlite, class_sql))
-            .await?;
+        db.execute(Statement::from_string(DbBackend::Sqlite, class_sql)).await?;
 
         // FAMILY — user-extendable; seed baseline system rows
         let fam_sql = format!(
@@ -138,8 +136,7 @@ impl MigrationTrait for Migration {
                JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published'",
             sys_meta = sys_meta
         );
-        db.execute(Statement::from_string(DbBackend::Sqlite, fam_sql))
-            .await?;
+        db.execute(Statement::from_string(DbBackend::Sqlite, fam_sql)).await?;
 
         // SUBFAMILY — metadata links to family code (JSON literals; not format-interpolated)
         db.execute_unprepared(

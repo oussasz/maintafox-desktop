@@ -20,9 +20,7 @@ pub struct WoExecutionEvent {
 }
 
 fn decode_err(field: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "WoExecutionEvent decode error for '{field}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("WoExecutionEvent decode error for '{field}': {e}"))
 }
 
 pub async fn emit_execution_event(
@@ -64,10 +62,7 @@ pub async fn emit_execution_event(
     Ok(())
 }
 
-pub async fn list_execution_events(
-    db: &DatabaseConnection,
-    wo_id: i64,
-) -> AppResult<Vec<WoExecutionEvent>> {
+pub async fn list_execution_events(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<WoExecutionEvent>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -90,9 +85,7 @@ pub async fn list_execution_events(
                 occurred_at: row
                     .try_get("", "occurred_at")
                     .map_err(|e| decode_err("occurred_at", e))?,
-                event_type: row
-                    .try_get("", "event_type")
-                    .map_err(|e| decode_err("event_type", e))?,
+                event_type: row.try_get("", "event_type").map_err(|e| decode_err("event_type", e))?,
                 summary_key: row
                     .try_get("", "summary_key")
                     .map_err(|e| decode_err("summary_key", e))?,
@@ -102,12 +95,8 @@ pub async fn list_execution_events(
                 entity_kind: row
                     .try_get("", "entity_kind")
                     .map_err(|e| decode_err("entity_kind", e))?,
-                entity_id: row
-                    .try_get("", "entity_id")
-                    .map_err(|e| decode_err("entity_id", e))?,
-                actor_id: row
-                    .try_get("", "actor_id")
-                    .map_err(|e| decode_err("actor_id", e))?,
+                entity_id: row.try_get("", "entity_id").map_err(|e| decode_err("entity_id", e))?,
+                actor_id: row.try_get("", "actor_id").map_err(|e| decode_err("actor_id", e))?,
             })
         })
         .collect()

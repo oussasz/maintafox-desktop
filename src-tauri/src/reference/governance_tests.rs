@@ -5,17 +5,11 @@ use crate::reference::governance::{
     allows_create_draft_set, allows_operational_create, allows_publish, allows_value_mutation,
     assert_allows_operational_create, assert_allows_value_mutation, capabilities_for, category_of,
     default_is_extendable, derive_category_for_persist, requires_analytical_protection,
-    requires_publish_impact_preview, resolve_category, EnforcementPhase, GovernanceCategory,
-    ACTIVE_ENFORCEMENT_PHASE,
+    requires_publish_impact_preview, resolve_category, EnforcementPhase, GovernanceCategory, ACTIVE_ENFORCEMENT_PHASE,
 };
 use crate::reference::sets::ReferenceSet;
 
-fn domain(
-    code: &str,
-    governance_level: &str,
-    governance_category: &str,
-    is_extendable: bool,
-) -> ReferenceDomain {
+fn domain(code: &str, governance_level: &str, governance_category: &str, is_extendable: bool) -> ReferenceDomain {
     ReferenceDomain {
         id: 1,
         code: code.into(),
@@ -63,12 +57,8 @@ fn known_codes_map_to_philosophy_categories() {
 fn target_operational_create_only_for_b() {
     assert_eq!(ACTIVE_ENFORCEMENT_PHASE, EnforcementPhase::Target);
     assert!(!allows_operational_create(GovernanceCategory::SystemCatalog));
-    assert!(allows_operational_create(
-        GovernanceCategory::OperationalDictionary
-    ));
-    assert!(!allows_operational_create(
-        GovernanceCategory::ControlledCatalog
-    ));
+    assert!(allows_operational_create(GovernanceCategory::OperationalDictionary));
+    assert!(!allows_operational_create(GovernanceCategory::ControlledCatalog));
 }
 
 #[test]
@@ -106,12 +96,7 @@ fn target_c_draft_mutate_published_blocked() {
 
 #[test]
 fn capabilities_snapshot_for_family_published() {
-    let family = domain(
-        "EQUIPMENT.FAMILY",
-        "tenant_managed",
-        "operational_dictionary",
-        true,
-    );
+    let family = domain("EQUIPMENT.FAMILY", "tenant_managed", "operational_dictionary", true);
     let published = set_with_status("published");
     let caps = capabilities_for(&family, Some(&published));
     assert_eq!(caps.category, "operational_dictionary");
@@ -142,12 +127,7 @@ fn capabilities_snapshot_for_class_is_read_only() {
 
 #[test]
 fn capabilities_without_set_blocks_value_mutation() {
-    let family = domain(
-        "EQUIPMENT.FAMILY",
-        "tenant_managed",
-        "operational_dictionary",
-        true,
-    );
+    let family = domain("EQUIPMENT.FAMILY", "tenant_managed", "operational_dictionary", true);
     let caps = capabilities_for(&family, None);
     assert!(!caps.can_create_value);
     assert!(!caps.can_create_draft_set);
@@ -157,12 +137,7 @@ fn capabilities_without_set_blocks_value_mutation() {
 
 #[test]
 fn capabilities_c_draft_allows_discard() {
-    let failure = domain(
-        "WORK.FAILURE_MODES",
-        "system_seeded",
-        "controlled_catalog",
-        false,
-    );
+    let failure = domain("WORK.FAILURE_MODES", "system_seeded", "controlled_catalog", false);
     let draft = set_with_status("draft");
     let published = set_with_status("published");
     let caps_draft = capabilities_for(&failure, Some(&draft));
@@ -187,12 +162,7 @@ fn analytical_protection_matches_legacy_protected_analytical() {
 
 #[test]
 fn assert_operational_create_family_ok_class_rejected() {
-    let family = domain(
-        "EQUIPMENT.FAMILY",
-        "tenant_managed",
-        "operational_dictionary",
-        true,
-    );
+    let family = domain("EQUIPMENT.FAMILY", "tenant_managed", "operational_dictionary", true);
     assert!(assert_allows_operational_create(&family).is_ok());
 
     let class = domain("EQUIPMENT.CLASS", "system_seeded", "system_catalog", false);
@@ -216,9 +186,7 @@ fn assert_value_mutation_class_rejected_even_on_draft() {
 #[test]
 fn default_extendable_mirrors_category() {
     assert!(!default_is_extendable(GovernanceCategory::SystemCatalog));
-    assert!(default_is_extendable(
-        GovernanceCategory::OperationalDictionary
-    ));
+    assert!(default_is_extendable(GovernanceCategory::OperationalDictionary));
 }
 
 #[test]

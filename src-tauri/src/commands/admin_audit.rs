@@ -16,8 +16,8 @@ use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
+use crate::require_session;
 use crate::state::AppState;
-use crate::{require_session};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ACTION DOMAIN SETS
@@ -143,38 +143,17 @@ fn parse_event_row(r: &sea_orm::QueryResult) -> AppResult<AdminChangeEventDetail
         id: r.try_get("", "id")?,
         action: r.try_get("", "action")?,
         actor_id: r.try_get::<Option<i64>>("", "actor_id").unwrap_or(None),
-        actor_username: r
-            .try_get::<Option<String>>("", "actor_username")
-            .unwrap_or(None),
-        target_user_id: r
-            .try_get::<Option<i64>>("", "target_user_id")
-            .unwrap_or(None),
-        target_username: r
-            .try_get::<Option<String>>("", "target_username")
-            .unwrap_or(None),
-        target_role_id: r
-            .try_get::<Option<i64>>("", "target_role_id")
-            .unwrap_or(None),
-        target_role_name: r
-            .try_get::<Option<String>>("", "target_role_name")
-            .unwrap_or(None),
+        actor_username: r.try_get::<Option<String>>("", "actor_username").unwrap_or(None),
+        target_user_id: r.try_get::<Option<i64>>("", "target_user_id").unwrap_or(None),
+        target_username: r.try_get::<Option<String>>("", "target_username").unwrap_or(None),
+        target_role_id: r.try_get::<Option<i64>>("", "target_role_id").unwrap_or(None),
+        target_role_name: r.try_get::<Option<String>>("", "target_role_name").unwrap_or(None),
         acted_at: r.try_get("", "acted_at")?,
-        scope_type: r
-            .try_get::<Option<String>>("", "scope_type")
-            .unwrap_or(None),
-        scope_reference: r
-            .try_get::<Option<String>>("", "scope_reference")
-            .unwrap_or(None),
-        summary: r
-            .try_get::<Option<String>>("", "summary")
-            .unwrap_or(None),
-        diff_json: r
-            .try_get::<Option<String>>("", "diff_json")
-            .unwrap_or(None),
-        step_up_used: r
-            .try_get::<i32>("", "step_up_used")
-            .unwrap_or(0)
-            != 0,
+        scope_type: r.try_get::<Option<String>>("", "scope_type").unwrap_or(None),
+        scope_reference: r.try_get::<Option<String>>("", "scope_reference").unwrap_or(None),
+        summary: r.try_get::<Option<String>>("", "summary").unwrap_or(None),
+        diff_json: r.try_get::<Option<String>>("", "diff_json").unwrap_or(None),
+        step_up_used: r.try_get::<i32>("", "step_up_used").unwrap_or(0) != 0,
         apply_result: r
             .try_get::<String>("", "apply_result")
             .unwrap_or_else(|_| "applied".to_string()),
@@ -300,19 +279,13 @@ pub async fn list_admin_events(
     let limit = filter.limit.unwrap_or(100).min(500);
     let offset = filter.offset.unwrap_or(0).max(0);
 
-    let sql = format!(
-        "{base}{where_clause} ORDER BY ace.acted_at DESC LIMIT ? OFFSET ?"
-    );
+    let sql = format!("{base}{where_clause} ORDER BY ace.acted_at DESC LIMIT ? OFFSET ?");
     values.push(limit.into());
     values.push(offset.into());
 
     let rows = state
         .db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            values,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
     let mut events = Vec::with_capacity(rows.len());
@@ -329,10 +302,7 @@ pub async fn list_admin_events(
 /// the caller's allowed domain, it returns NotFound (not PermissionDenied)
 /// to avoid information leakage.
 #[tauri::command]
-pub async fn get_admin_event(
-    state: State<'_, AppState>,
-    event_id: i64,
-) -> AppResult<AdminChangeEventDetail> {
+pub async fn get_admin_event(state: State<'_, AppState>, event_id: i64) -> AppResult<AdminChangeEventDetail> {
     let caller = require_session!(state);
 
     // Gate: at least one admin permission required

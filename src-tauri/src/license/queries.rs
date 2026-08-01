@@ -160,11 +160,7 @@ pub async fn evaluate_permission_matrix(
     Ok(decision)
 }
 
-pub async fn enforce_permission_matrix(
-    db: &DatabaseConnection,
-    user_id: i32,
-    permission: &str,
-) -> AppResult<()> {
+pub async fn enforce_permission_matrix(db: &DatabaseConnection, user_id: i32, permission: &str) -> AppResult<()> {
     let decision = evaluate_permission_matrix(db, user_id, permission).await?;
     if !decision.allowed {
         let reason = decision.reason.unwrap_or(LicenseRejectionReason {
@@ -225,16 +221,11 @@ pub async fn get_license_status_view(db: &DatabaseConnection, user_id: i32) -> A
         "License is suspended. Read-only mode is active until admin reactivation.".to_string()
     } else if matches!(
         product_activation_state.as_str(),
-        "denied_revoked"
-            | "denied_expired"
-            | "denied_slot_limit"
-            | "denied_force_update_required"
-            | "denied_invalid"
+        "denied_revoked" | "denied_expired" | "denied_slot_limit" | "denied_force_update_required" | "denied_invalid"
     ) {
         format!("Product activation is '{product_activation_state}'. Re-activate or contact support.")
     } else if product_activation_state == "degraded_api_unavailable" {
-        "Product activation is degraded (control plane unavailable). Retry policy refresh when online."
-            .to_string()
+        "Product activation is degraded (control plane unavailable). Retry policy refresh when online.".to_string()
     } else if product_activation_state == "pending_online_validation" {
         "Product activation is pending online validation.".to_string()
     } else if machine_activation.revocation_state == "pending_revocation" {
@@ -503,16 +494,12 @@ pub async fn list_license_trace_events(
                 correlation_id: row
                     .try_get("", "correlation_id")
                     .map_err(|e| decode_err("correlation_id", e))?,
-                event_type: row
-                    .try_get("", "event_type")
-                    .map_err(|e| decode_err("event_type", e))?,
+                event_type: row.try_get("", "event_type").map_err(|e| decode_err("event_type", e))?,
                 source: row.try_get("", "source").map_err(|e| decode_err("source", e))?,
                 subject_type: row
                     .try_get("", "subject_type")
                     .map_err(|e| decode_err("subject_type", e))?,
-                subject_id: row
-                    .try_get("", "subject_id")
-                    .map_err(|e| decode_err("subject_id", e))?,
+                subject_id: row.try_get("", "subject_id").map_err(|e| decode_err("subject_id", e))?,
                 reason_code: row
                     .try_get("", "reason_code")
                     .map_err(|e| decode_err("reason_code", e))?,
@@ -526,9 +513,7 @@ pub async fn list_license_trace_events(
                 previous_hash: row
                     .try_get("", "previous_hash")
                     .map_err(|e| decode_err("previous_hash", e))?,
-                event_hash: row
-                    .try_get("", "event_hash")
-                    .map_err(|e| decode_err("event_hash", e))?,
+                event_hash: row.try_get("", "event_hash").map_err(|e| decode_err("event_hash", e))?,
             })
         })
         .collect()

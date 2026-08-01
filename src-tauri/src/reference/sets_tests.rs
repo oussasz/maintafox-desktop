@@ -11,7 +11,9 @@ mod tests {
 
     use crate::errors::AppError;
     use crate::reference::domains::{self, CreateReferenceDomainPayload};
-    use crate::reference::sets::{self, SET_STATUS_DRAFT, SET_STATUS_PUBLISHED, SET_STATUS_SUPERSEDED, SET_STATUS_VALIDATED};
+    use crate::reference::sets::{
+        self, SET_STATUS_DRAFT, SET_STATUS_PUBLISHED, SET_STATUS_SUPERSEDED, SET_STATUS_VALIDATED,
+    };
 
     /// In-memory SQLite with all migrations + seed data.
     async fn setup() -> sea_orm::DatabaseConnection {
@@ -61,7 +63,7 @@ mod tests {
             name: "Familles d'Ã©quipements".to_string(),
             structure_type: "hierarchical".to_string(),
             governance_level: "tenant_managed".to_string(),
-                governance_category: Some("controlled_catalog".to_string()),
+            governance_category: Some("controlled_catalog".to_string()),
             is_extendable: Some(true),
             validation_rules_json: None,
         };
@@ -78,9 +80,7 @@ mod tests {
         let db = setup().await;
         let domain_id = setup_domain(&db).await;
 
-        let draft = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create draft");
+        let draft = sets::create_draft_set(&db, domain_id, 1).await.expect("create draft");
         assert_eq!(draft.status, SET_STATUS_DRAFT);
 
         // Attempt to publish a draft directly â€” must fail
@@ -91,10 +91,7 @@ mod tests {
         match err {
             AppError::ValidationFailed(msgs) => {
                 let joined = msgs.join(" ");
-                assert!(
-                    joined.contains("draft"),
-                    "error should mention 'draft', got: {joined}"
-                );
+                assert!(joined.contains("draft"), "error should mention 'draft', got: {joined}");
             }
             other => panic!("expected ValidationFailed, got: {other:?}"),
         }
@@ -109,29 +106,19 @@ mod tests {
         let v1 = sets::create_draft_set(&db, domain_id, 1)
             .await
             .expect("create v1 draft");
-        let v1 = sets::validate_set(&db, v1.id, 1)
-            .await
-            .expect("validate v1");
-        let v1 = sets::publish_set(&db, v1.id, 1)
-            .await
-            .expect("publish v1");
+        let v1 = sets::validate_set(&db, v1.id, 1).await.expect("validate v1");
+        let v1 = sets::publish_set(&db, v1.id, 1).await.expect("publish v1");
         assert_eq!(v1.status, SET_STATUS_PUBLISHED);
 
         // Create, validate, publish v2 â†’ v1 becomes superseded
         let v2 = sets::create_draft_set(&db, domain_id, 1)
             .await
             .expect("create v2 draft");
-        let v2 = sets::validate_set(&db, v2.id, 1)
-            .await
-            .expect("validate v2");
-        let _v2 = sets::publish_set(&db, v2.id, 1)
-            .await
-            .expect("publish v2");
+        let v2 = sets::validate_set(&db, v2.id, 1).await.expect("validate v2");
+        let _v2 = sets::publish_set(&db, v2.id, 1).await.expect("publish v2");
 
         // Confirm v1 is superseded
-        let v1_after = sets::get_reference_set(&db, v1.id)
-            .await
-            .expect("get v1");
+        let v1_after = sets::get_reference_set(&db, v1.id).await.expect("get v1");
         assert_eq!(v1_after.status, SET_STATUS_SUPERSEDED);
 
         // Try to validate superseded v1 â€” must fail
@@ -147,12 +134,8 @@ mod tests {
         let db = setup().await;
         let domain_id = setup_domain(&db).await;
 
-        let draft = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create draft");
-        let validated = sets::validate_set(&db, draft.id, 1)
-            .await
-            .expect("validate");
+        let draft = sets::create_draft_set(&db, domain_id, 1).await.expect("create draft");
+        let validated = sets::validate_set(&db, draft.id, 1).await.expect("validate");
         assert_eq!(validated.status, SET_STATUS_VALIDATED);
 
         // Try to validate again â€” must fail (already validated, not draft)
@@ -168,21 +151,15 @@ mod tests {
         let db = setup().await;
         let domain_id = setup_domain(&db).await;
 
-        let draft = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create draft");
+        let draft = sets::create_draft_set(&db, domain_id, 1).await.expect("create draft");
         assert_eq!(draft.status, SET_STATUS_DRAFT);
         assert_eq!(draft.version_no, 1);
         assert!(draft.published_at.is_none());
 
-        let validated = sets::validate_set(&db, draft.id, 1)
-            .await
-            .expect("validate");
+        let validated = sets::validate_set(&db, draft.id, 1).await.expect("validate");
         assert_eq!(validated.status, SET_STATUS_VALIDATED);
 
-        let published = sets::publish_set(&db, validated.id, 1)
-            .await
-            .expect("publish");
+        let published = sets::publish_set(&db, validated.id, 1).await.expect("publish");
         assert_eq!(published.status, SET_STATUS_PUBLISHED);
         assert!(published.published_at.is_some());
     }
@@ -192,15 +169,9 @@ mod tests {
         let db = setup().await;
         let domain_id = setup_domain(&db).await;
 
-        let draft = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create draft");
-        let validated = sets::validate_set(&db, draft.id, 1)
-            .await
-            .expect("validate");
-        let published = sets::publish_set(&db, validated.id, 1)
-            .await
-            .expect("publish");
+        let draft = sets::create_draft_set(&db, domain_id, 1).await.expect("create draft");
+        let validated = sets::validate_set(&db, draft.id, 1).await.expect("validate");
+        let published = sets::publish_set(&db, validated.id, 1).await.expect("publish");
 
         let err = sets::validate_set(&db, published.id, 1)
             .await
@@ -235,26 +206,16 @@ mod tests {
         assert_eq!(v2.status, SET_STATUS_PUBLISHED);
 
         // v1 must now be superseded
-        let v1_after = sets::get_reference_set(&db, v1.id)
-            .await
-            .expect("get v1");
+        let v1_after = sets::get_reference_set(&db, v1.id).await.expect("get v1");
         assert_eq!(
             v1_after.status, SET_STATUS_SUPERSEDED,
             "v1 should be superseded after v2 publish"
         );
 
         // Only one published set for this domain
-        let all = sets::list_sets_for_domain(&db, domain_id)
-            .await
-            .expect("list sets");
-        let published_count = all
-            .iter()
-            .filter(|s| s.status == SET_STATUS_PUBLISHED)
-            .count();
-        assert_eq!(
-            published_count, 1,
-            "exactly one published set per domain"
-        );
+        let all = sets::list_sets_for_domain(&db, domain_id).await.expect("list sets");
+        let published_count = all.iter().filter(|s| s.status == SET_STATUS_PUBLISHED).count();
+        assert_eq!(published_count, 1, "exactly one published set per domain");
     }
 
     #[tokio::test]
@@ -264,16 +225,12 @@ mod tests {
         let domain_b = setup_domain_2(&db).await;
 
         // Publish v1 in domain A
-        let a1 = sets::create_draft_set(&db, domain_a, 1)
-            .await
-            .expect("create A1");
+        let a1 = sets::create_draft_set(&db, domain_a, 1).await.expect("create A1");
         let a1 = sets::validate_set(&db, a1.id, 1).await.expect("validate A1");
         let a1 = sets::publish_set(&db, a1.id, 1).await.expect("publish A1");
 
         // Publish v1 in domain B
-        let b1 = sets::create_draft_set(&db, domain_b, 1)
-            .await
-            .expect("create B1");
+        let b1 = sets::create_draft_set(&db, domain_b, 1).await.expect("create B1");
         let b1 = sets::validate_set(&db, b1.id, 1).await.expect("validate B1");
         let b1 = sets::publish_set(&db, b1.id, 1).await.expect("publish B1");
 
@@ -284,9 +241,7 @@ mod tests {
         assert_eq!(b1_r.status, SET_STATUS_PUBLISHED);
 
         // Publish v2 in domain A â€” should NOT affect domain B
-        let a2 = sets::create_draft_set(&db, domain_a, 1)
-            .await
-            .expect("create A2");
+        let a2 = sets::create_draft_set(&db, domain_a, 1).await.expect("create A2");
         let a2 = sets::validate_set(&db, a2.id, 1).await.expect("validate A2");
         let _a2 = sets::publish_set(&db, a2.id, 1).await.expect("publish A2");
 
@@ -303,25 +258,19 @@ mod tests {
         let domain_id = setup_domain(&db).await;
 
         // v1
-        let v1 = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create v1");
+        let v1 = sets::create_draft_set(&db, domain_id, 1).await.expect("create v1");
         assert_eq!(v1.version_no, 1);
         let v1 = sets::validate_set(&db, v1.id, 1).await.expect("validate v1");
         let _v1 = sets::publish_set(&db, v1.id, 1).await.expect("publish v1");
 
         // v2
-        let v2 = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create v2");
+        let v2 = sets::create_draft_set(&db, domain_id, 1).await.expect("create v2");
         assert_eq!(v2.version_no, 2);
         let v2 = sets::validate_set(&db, v2.id, 1).await.expect("validate v2");
         let _v2 = sets::publish_set(&db, v2.id, 1).await.expect("publish v2");
 
         // v3
-        let v3 = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create v3");
+        let v3 = sets::create_draft_set(&db, domain_id, 1).await.expect("create v3");
         assert_eq!(v3.version_no, 3);
     }
 
@@ -332,15 +281,9 @@ mod tests {
         let db = setup().await;
         let domain_id = setup_domain(&db).await;
 
-        let draft = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create draft");
-        let validated = sets::validate_set(&db, draft.id, 1)
-            .await
-            .expect("validate");
-        let published = sets::publish_set(&db, validated.id, 1)
-            .await
-            .expect("publish");
+        let draft = sets::create_draft_set(&db, domain_id, 1).await.expect("create draft");
+        let validated = sets::validate_set(&db, draft.id, 1).await.expect("validate");
+        let published = sets::publish_set(&db, validated.id, 1).await.expect("publish");
 
         // The guard function used by value operations must block edits
         let err = sets::assert_set_is_draft(&published);
@@ -356,21 +299,15 @@ mod tests {
         let domain_id = setup_domain(&db).await;
 
         // Publish v1 then v2 to supersede v1
-        let v1 = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create v1");
+        let v1 = sets::create_draft_set(&db, domain_id, 1).await.expect("create v1");
         let v1 = sets::validate_set(&db, v1.id, 1).await.expect("validate v1");
         let v1 = sets::publish_set(&db, v1.id, 1).await.expect("publish v1");
 
-        let v2 = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create v2");
+        let v2 = sets::create_draft_set(&db, domain_id, 1).await.expect("create v2");
         let v2 = sets::validate_set(&db, v2.id, 1).await.expect("validate v2");
         let _v2 = sets::publish_set(&db, v2.id, 1).await.expect("publish v2");
 
-        let v1_superseded = sets::get_reference_set(&db, v1.id)
-            .await
-            .expect("get v1");
+        let v1_superseded = sets::get_reference_set(&db, v1.id).await.expect("get v1");
 
         let err = sets::assert_set_is_draft(&v1_superseded);
         assert!(err.is_err(), "superseded set must not pass draft guard");
@@ -384,15 +321,9 @@ mod tests {
         let db = setup().await;
         let domain_id = setup_domain(&db).await;
 
-        let draft = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("create draft");
-        let validated = sets::validate_set(&db, draft.id, 1)
-            .await
-            .expect("validate");
-        let published = sets::publish_set(&db, validated.id, 1)
-            .await
-            .expect("publish");
+        let draft = sets::create_draft_set(&db, domain_id, 1).await.expect("create draft");
+        let validated = sets::validate_set(&db, draft.id, 1).await.expect("validate");
+        let published = sets::publish_set(&db, validated.id, 1).await.expect("publish");
 
         // Attempt to publish again â€” must fail
         let err = sets::publish_set(&db, published.id, 1)
@@ -438,20 +369,14 @@ mod tests {
         let domain_id = setup_domain(&db).await;
 
         // Create and publish v1
-        let v1 = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("v1");
+        let v1 = sets::create_draft_set(&db, domain_id, 1).await.expect("v1");
         let v1 = sets::validate_set(&db, v1.id, 1).await.expect("v1");
         let _v1 = sets::publish_set(&db, v1.id, 1).await.expect("v1");
 
         // Create v2 as draft
-        let _v2 = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("v2");
+        let _v2 = sets::create_draft_set(&db, domain_id, 1).await.expect("v2");
 
-        let list = sets::list_sets_for_domain(&db, domain_id)
-            .await
-            .expect("list");
+        let list = sets::list_sets_for_domain(&db, domain_id).await.expect("list");
 
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].version_no, 2, "first item should be newest");
@@ -496,9 +421,7 @@ mod tests {
         let db = setup().await;
         let domain_id = setup_domain(&db).await;
 
-        let draft = sets::create_draft_set(&db, domain_id, 42)
-            .await
-            .expect("create draft");
+        let draft = sets::create_draft_set(&db, domain_id, 42).await.expect("create draft");
 
         assert_eq!(draft.created_by_id, Some(42));
     }
@@ -527,24 +450,22 @@ mod tests {
         let db = setup().await;
         let domain_id = setup_domain(&db).await;
 
-        let draft = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("v1 draft");
+        let draft = sets::create_draft_set(&db, domain_id, 1).await.expect("v1 draft");
 
         let root = values::create_value(
             &db,
             CreateReferenceValuePayload {
-            set_id: draft.id,
-            parent_id: None,
-            code: "ROOT".into(),
-            label: "Root".into(),
-            description: Some("root desc".into()),
-            sort_order: Some(10),
-            color_hex: Some("#112233".into()),
-            icon_name: None,
-            semantic_tag: None,
-            external_code: Some("EXT-R".into()),
-            metadata_json: Some(r#"{"k":"v"}"#.into()),
+                set_id: draft.id,
+                parent_id: None,
+                code: "ROOT".into(),
+                label: "Root".into(),
+                description: Some("root desc".into()),
+                sort_order: Some(10),
+                color_hex: Some("#112233".into()),
+                icon_name: None,
+                semantic_tag: None,
+                external_code: Some("EXT-R".into()),
+                metadata_json: Some(r#"{"k":"v"}"#.into()),
             },
             1,
         )
@@ -591,9 +512,7 @@ mod tests {
         )
         .await
         .expect("inactive");
-        values::deactivate_value(&db, inactive.id, 1)
-            .await
-            .expect("deactivate");
+        values::deactivate_value(&db, inactive.id, 1).await.expect("deactivate");
 
         aliases::create_alias(
             &db,
@@ -609,16 +528,10 @@ mod tests {
         .await
         .expect("alias");
 
-        sets::validate_set(&db, draft.id, 1)
-            .await
-            .expect("validate");
-        let published = sets::publish_set(&db, draft.id, 1)
-            .await
-            .expect("publish");
+        sets::validate_set(&db, draft.id, 1).await.expect("validate");
+        let published = sets::publish_set(&db, draft.id, 1).await.expect("publish");
 
-        let v2 = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("clone draft");
+        let v2 = sets::create_draft_set(&db, domain_id, 1).await.expect("clone draft");
 
         let cloned = values::list_values(&db, v2.id).await.expect("list clone");
         assert_eq!(cloned.len(), 3);
@@ -637,17 +550,13 @@ mod tests {
         assert_eq!(c_root.metadata_json.as_deref(), Some(r#"{"k":"v"}"#));
         assert!(!c_old.is_active, "inactive preserved");
 
-        let aliases = aliases::list_aliases(&db, c_root.id)
-            .await
-            .expect("aliases");
+        let aliases = aliases::list_aliases(&db, c_root.id).await.expect("aliases");
         assert_eq!(aliases.len(), 1);
         assert_eq!(aliases[0].alias_label, "Racine");
         assert!(aliases[0].is_preferred);
 
         // Published untouched
-        let pub_vals = values::list_values(&db, published.id)
-            .await
-            .expect("pub vals");
+        let pub_vals = values::list_values(&db, published.id).await.expect("pub vals");
         assert_eq!(pub_vals.len(), 3);
         assert_eq!(pub_vals.iter().find(|v| v.code == "ROOT").unwrap().id, root.id);
     }
@@ -682,18 +591,12 @@ mod tests {
         sets::validate_set(&db, v1.id, 1).await.expect("validate");
         let published = sets::publish_set(&db, v1.id, 1).await.expect("publish");
 
-        let draft = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("draft");
+        let draft = sets::create_draft_set(&db, domain_id, 1).await.expect("draft");
         assert!(!values::list_values(&db, draft.id).await.unwrap().is_empty());
 
-        sets::discard_draft_set(&db, draft.id)
-            .await
-            .expect("discard");
+        sets::discard_draft_set(&db, draft.id).await.expect("discard");
 
-        let err = sets::get_reference_set(&db, draft.id)
-            .await
-            .expect_err("draft gone");
+        let err = sets::get_reference_set(&db, draft.id).await.expect_err("draft gone");
         assert!(matches!(err, AppError::NotFound { .. }));
 
         let still = sets::get_reference_set(&db, published.id)
@@ -752,9 +655,7 @@ mod tests {
         sets::validate_set(&db, v1.id, 1).await.expect("validate");
         sets::publish_set(&db, v1.id, 1).await.expect("publish v1");
 
-        let v2 = sets::create_draft_set(&db, domain_id, 1)
-            .await
-            .expect("clone");
+        let v2 = sets::create_draft_set(&db, domain_id, 1).await.expect("clone");
         sets::validate_set(&db, v2.id, 1).await.expect("validate v2");
         let published = sets::publish_set(&db, v2.id, 1).await.expect("publish v2");
         assert_eq!(published.status, SET_STATUS_PUBLISHED);
@@ -811,9 +712,7 @@ mod tests {
             .expect_err("clone must fail on orphan");
         assert!(matches!(err, AppError::ValidationFailed(_)));
 
-        let sets = sets::list_sets_for_domain(&db, domain_id)
-            .await
-            .expect("list");
+        let sets = sets::list_sets_for_domain(&db, domain_id).await.expect("list");
         assert!(
             !sets.iter().any(|s| s.status == SET_STATUS_DRAFT),
             "failed clone must leave no draft"

@@ -101,10 +101,8 @@ impl MigrationTrait for Migration {
             "CREATE INDEX IF NOT EXISTS idx_inspection_rounds_template_id ON inspection_rounds(template_id)",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_inspection_rounds_status ON inspection_rounds(status)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_inspection_rounds_status ON inspection_rounds(status)")
+            .await?;
 
         Ok(())
     }
@@ -112,9 +110,12 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
         db.execute_unprepared("DROP TABLE IF EXISTS inspection_rounds").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS inspection_checkpoints").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS inspection_template_versions").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS inspection_templates").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS inspection_checkpoints")
+            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS inspection_template_versions")
+            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS inspection_templates")
+            .await?;
         Ok(())
     }
 }

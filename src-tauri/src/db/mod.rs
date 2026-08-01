@@ -1,10 +1,10 @@
 pub mod demo_seeder;
-/// DEMO-ONLY RAMS seed modules — never call from production app flow.
-pub mod rams_presentation_seed;
-pub mod rams_sql_demo_seed;
 pub mod integrity;
 pub mod migration_integrity;
 pub mod org_schema;
+/// DEMO-ONLY RAMS seed modules — never call from production app flow.
+pub mod rams_presentation_seed;
+pub mod rams_sql_demo_seed;
 pub mod reference_domains;
 pub mod schema_integration_test;
 pub mod seeder;

@@ -1,4 +1,4 @@
-﻿//! Migration 052 - Planning backlog and conflict core tables (PRD §6.16).
+//! Migration 052 - Planning backlog and conflict core tables (PRD §6.16).
 
 use sea_orm::ConnectionTrait;
 use sea_orm_migration::prelude::*;
@@ -103,9 +103,10 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared("DROP TABLE IF EXISTS scheduling_conflicts").await?;
-        db.execute_unprepared("DROP TABLE IF EXISTS schedule_candidates").await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS scheduling_conflicts")
+            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS schedule_candidates")
+            .await?;
         Ok(())
     }
 }
-

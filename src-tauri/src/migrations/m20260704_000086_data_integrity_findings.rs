@@ -42,14 +42,14 @@ impl MigrationTrait for Migration {
             DbBackend::Sqlite,
             "CREATE INDEX IF NOT EXISTS idx_di_findings_status_domain
              ON data_integrity_findings(status, domain, detected_at DESC)"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "CREATE INDEX IF NOT EXISTS idx_di_findings_record
              ON data_integrity_findings(record_class, record_id)"
-            .to_string(),
+                .to_string(),
         ))
         .await?;
 
@@ -73,8 +73,7 @@ impl MigrationTrait for Migration {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_di_repair_finding ON data_integrity_repair_actions(finding_id)"
-            .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_di_repair_finding ON data_integrity_repair_actions(finding_id)".to_string(),
         ))
         .await?;
 
@@ -116,11 +115,9 @@ impl MigrationTrait for Migration {
             .await?;
         db.execute_unprepared("DROP TABLE IF EXISTS data_integrity_findings")
             .await?;
-        db.execute_unprepared(
-            "DELETE FROM permission_dependencies WHERE permission_name = 'integrity.repair'",
-        )
-        .await
-        .ok();
+        db.execute_unprepared("DELETE FROM permission_dependencies WHERE permission_name = 'integrity.repair'")
+            .await
+            .ok();
         db.execute_unprepared("DELETE FROM permissions WHERE name = 'integrity.repair'")
             .await
             .ok();

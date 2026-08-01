@@ -58,9 +58,7 @@ pub struct AddLaborInput {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn decode_err(field: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "WoIntervener row decode error for '{field}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("WoIntervener row decode error for '{field}': {e}"))
 }
 
 fn map_intervener(row: &sea_orm::QueryResult) -> AppResult<WoIntervener> {
@@ -93,9 +91,7 @@ fn map_intervener(row: &sea_orm::QueryResult) -> AppResult<WoIntervener> {
         intervener_display_name: row
             .try_get::<Option<String>>("", "intervener_display_name")
             .unwrap_or(None),
-        skill_label: row
-            .try_get::<Option<String>>("", "skill_label")
-            .unwrap_or(None),
+        skill_label: row.try_get::<Option<String>>("", "skill_label").unwrap_or(None),
     })
 }
 
@@ -109,10 +105,7 @@ const LABOR_SELECT: &str = "\
  LEFT JOIN reference_values rv ON rv.id = woi.skill_id";
 
 /// Load the WO status code for a guard check.
-async fn load_wo_status_code(
-    db: &DatabaseConnection,
-    wo_id: i64,
-) -> AppResult<String> {
+async fn load_wo_status_code(db: &DatabaseConnection, wo_id: i64) -> AppResult<String> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -135,13 +128,11 @@ async fn load_wo_status_code(
 /// Returns `None` if either string is not parseable.
 fn elapsed_hours(start: &str, end: &str) -> Option<f64> {
     let parse = |s: &str| -> Option<chrono::DateTime<chrono::FixedOffset>> {
-        chrono::DateTime::parse_from_rfc3339(s)
-            .ok()
-            .or_else(|| {
-                chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%SZ")
-                    .ok()
-                    .map(|dt| dt.and_utc().fixed_offset())
-            })
+        chrono::DateTime::parse_from_rfc3339(s).ok().or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%SZ")
+                .ok()
+                .map(|dt| dt.and_utc().fixed_offset())
+        })
     };
     let s = parse(start)?;
     let e = parse(end)?;
@@ -156,13 +147,9 @@ fn elapsed_hours(start: &str, end: &str) -> Option<f64> {
 // A) add_labor_entry
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn add_labor_entry(
-    db: &DatabaseConnection,
-    input: AddLaborInput,
-) -> AppResult<WoIntervener> {
+pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> AppResult<WoIntervener> {
     let status_code = load_wo_status_code(db, input.wo_id).await?;
-    let status = WoStatus::try_from_str(&status_code)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+    let status = WoStatus::try_from_str(&status_code).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
     if status.is_terminal() {
         return Err(AppError::ValidationFailed(vec![format!(
             "Impossible d'ajouter une entrée de main-d'œuvre à un OT {status_code}."
@@ -221,9 +208,7 @@ pub async fn add_labor_entry(
             [],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("Failed to re-read labor entry after insert"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read labor entry after insert")))?;
     map_intervener(&row)
 }
 
@@ -297,16 +282,11 @@ pub async fn close_labor_entry(
 // C) list_labor_entries
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn list_labor_entries(
-    db: &DatabaseConnection,
-    wo_id: i64,
-) -> AppResult<Vec<WoIntervener>> {
+pub async fn list_labor_entries(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<WoIntervener>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
-                "{LABOR_SELECT} WHERE woi.work_order_id = ? ORDER BY woi.id ASC"
-            ),
+            &format!("{LABOR_SELECT} WHERE woi.work_order_id = ? ORDER BY woi.id ASC"),
             [wo_id.into()],
         ))
         .await?;
@@ -317,11 +297,7 @@ pub async fn list_labor_entries(
 // D) remove_labor_entry
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn remove_labor_entry(
-    db: &DatabaseConnection,
-    intervener_id: i64,
-    _actor_id: i64,
-) -> AppResult<()> {
+pub async fn remove_labor_entry(db: &DatabaseConnection, intervener_id: i64, _actor_id: i64) -> AppResult<()> {
     // Load the entry to get wo_id
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -340,10 +316,7 @@ pub async fn remove_labor_entry(
 
     // Guard: only allowed in draft / planning / ready
     let status_code = load_wo_status_code(db, wo_id).await?;
-    let allowed = matches!(
-        status_code.as_str(),
-        "draft" | "planning" | "ready"
-    );
+    let allowed = matches!(status_code.as_str(), "draft" | "planning" | "ready");
     if !allowed {
         return Err(AppError::ValidationFailed(vec![format!(
             "La suppression d'une entrée de main-d'œuvre n'est pas autorisée au statut '{status_code}'."

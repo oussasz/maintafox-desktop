@@ -1,4 +1,4 @@
-﻿//! Team capacity summary computations.
+//! Team capacity summary computations.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
@@ -32,7 +32,7 @@ pub async fn list_team_capacity_summary(
 ) -> AppResult<Vec<TeamCapacitySummaryRow>> {
     if filter.date_from > filter.date_to {
         return Err(AppError::ValidationFailed(vec![
-            "date_from must be <= date_to.".to_string(),
+            "date_from must be <= date_to.".to_string()
         ]));
     }
 
@@ -130,11 +130,7 @@ pub async fn list_team_capacity_summary(
     );
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            sql,
-            values,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await?;
 
     let mapped = rows
@@ -154,5 +150,3 @@ pub async fn list_team_capacity_summary(
 
     Ok(mapped)
 }
-
-

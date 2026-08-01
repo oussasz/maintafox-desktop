@@ -4,8 +4,8 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Transac
 use serde::Deserialize;
 
 use crate::errors::{AppError, AppResult};
-use crate::wo::queries;
 use crate::wo::domain::WorkOrder;
+use crate::wo::queries;
 use crate::wo::workflow::events::emit_action_event;
 use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction, WoStatus};
 use crate::wo::workflow::transition::{apply_status_transition, load_wo_status};
@@ -20,8 +20,7 @@ pub struct WoSubmitInput {
 pub async fn submit_wo(db: &DatabaseConnection, input: WoSubmitInput) -> AppResult<WorkOrder> {
     let txn = db.begin().await?;
     let (from_code, status, _) = load_wo_status(&txn, input.wo_id).await?;
-    assert_action_allowed(&status, WoAction::Submit)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    assert_action_allowed(&status, WoAction::Submit).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     // Minimum identification for Submit
     let row = txn

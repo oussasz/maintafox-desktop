@@ -1,4 +1,4 @@
-﻿use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde_json::{json, Value};
@@ -26,9 +26,7 @@ struct EvaluatedConflict {
 }
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
-    AppError::Internal(anyhow::anyhow!(
-        "planning row decode failed for column '{column}': {e}"
-    ))
+    AppError::Internal(anyhow::anyhow!("planning row decode failed for column '{column}': {e}"))
 }
 
 fn map_candidate(row: &QueryResult) -> AppResult<ScheduleCandidate> {
@@ -77,9 +75,7 @@ fn map_candidate(row: &QueryResult) -> AppResult<ScheduleCandidate> {
         window_start: row
             .try_get("", "window_start")
             .map_err(|e| decode_err("window_start", e))?,
-        window_end: row
-            .try_get("", "window_end")
-            .map_err(|e| decode_err("window_end", e))?,
+        window_end: row.try_get("", "window_end").map_err(|e| decode_err("window_end", e))?,
         suggested_assignees_json: row
             .try_get("", "suggested_assignees_json")
             .map_err(|e| decode_err("suggested_assignees_json", e))?,
@@ -110,12 +106,8 @@ fn map_candidate(row: &QueryResult) -> AppResult<ScheduleCandidate> {
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
-        updated_at: row
-            .try_get("", "updated_at")
-            .map_err(|e| decode_err("updated_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
+        updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
 
@@ -137,18 +129,14 @@ fn map_conflict(row: &QueryResult) -> AppResult<SchedulingConflict> {
         reason_code: row
             .try_get("", "reason_code")
             .map_err(|e| decode_err("reason_code", e))?,
-        severity: row
-            .try_get("", "severity")
-            .map_err(|e| decode_err("severity", e))?,
+        severity: row.try_get("", "severity").map_err(|e| decode_err("severity", e))?,
         details_json: row
             .try_get("", "details_json")
             .map_err(|e| decode_err("details_json", e))?,
         resolved_at: row
             .try_get("", "resolved_at")
             .map_err(|e| decode_err("resolved_at", e))?,
-        created_at: row
-            .try_get("", "created_at")
-            .map_err(|e| decode_err("created_at", e))?,
+        created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
     })
 }
 
@@ -304,10 +292,10 @@ async fn refresh_from_work_orders(db: &DatabaseConnection, limit: i64) -> AppRes
         let source_di_id: Option<i64> = row
             .try_get("", "source_di_id")
             .map_err(|e| decode_err("source_di_id", e))?;
-        let window_start: Option<String> =
-            row.try_get("", "window_start").map_err(|e| decode_err("window_start", e))?;
-        let window_end: Option<String> =
-            row.try_get("", "window_end").map_err(|e| decode_err("window_end", e))?;
+        let window_start: Option<String> = row
+            .try_get("", "window_start")
+            .map_err(|e| decode_err("window_start", e))?;
+        let window_end: Option<String> = row.try_get("", "window_end").map_err(|e| decode_err("window_end", e))?;
         let estimated_duration_hours: Option<f64> = row
             .try_get("", "expected_duration_hours")
             .map_err(|e| decode_err("expected_duration_hours", e))?;
@@ -400,10 +388,10 @@ async fn refresh_from_pm_occurrences(db: &DatabaseConnection, limit: i64) -> App
         let assigned_team_id: Option<i64> = row
             .try_get("", "assigned_team_id")
             .map_err(|e| decode_err("assigned_team_id", e))?;
-        let window_start: Option<String> =
-            row.try_get("", "window_start").map_err(|e| decode_err("window_start", e))?;
-        let window_end: Option<String> =
-            row.try_get("", "window_end").map_err(|e| decode_err("window_end", e))?;
+        let window_start: Option<String> = row
+            .try_get("", "window_start")
+            .map_err(|e| decode_err("window_start", e))?;
+        let window_end: Option<String> = row.try_get("", "window_end").map_err(|e| decode_err("window_end", e))?;
         let estimated_duration_hours: Option<f64> = row
             .try_get("", "estimated_duration_hours")
             .map_err(|e| decode_err("estimated_duration_hours", e))?;
@@ -503,21 +491,17 @@ async fn refresh_from_approved_di(db: &DatabaseConnection, limit: i64) -> AppRes
     let mut updated = 0_i64;
     for row in rows {
         let source_id: i64 = row.try_get("", "source_id").map_err(|e| decode_err("source_id", e))?;
-        let window_start: Option<String> =
-            row.try_get("", "window_start").map_err(|e| decode_err("window_start", e))?;
-        let window_end: Option<String> =
-            row.try_get("", "window_end").map_err(|e| decode_err("window_end", e))?;
+        let window_start: Option<String> = row
+            .try_get("", "window_start")
+            .map_err(|e| decode_err("window_start", e))?;
+        let window_end: Option<String> = row.try_get("", "window_end").map_err(|e| decode_err("window_end", e))?;
         let estimated_duration_hours: Option<f64> = row
             .try_get("", "estimated_duration_hours")
             .map_err(|e| decode_err("estimated_duration_hours", e))?;
         let deferred_until: Option<String> = row
             .try_get("", "deferred_until")
             .map_err(|e| decode_err("deferred_until", e))?;
-        let prerequisite_status = if deferred_until.is_some() {
-            "blocked"
-        } else {
-            "ready"
-        };
+        let prerequisite_status = if deferred_until.is_some() { "blocked" } else { "ready" };
 
         let effect = db
             .execute(Statement::from_sql_and_values(
@@ -583,7 +567,9 @@ async fn evaluate_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppRe
             ))
             .await?;
         if let Some(row) = row {
-            let status_code: String = row.try_get("", "status_code").map_err(|e| decode_err("status_code", e))?;
+            let status_code: String = row
+                .try_get("", "status_code")
+                .map_err(|e| decode_err("status_code", e))?;
             let uncovered_parts: i64 = row
                 .try_get("", "uncovered_parts")
                 .map_err(|e| decode_err("uncovered_parts", e))?;
@@ -1007,7 +993,12 @@ async fn evaluate_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppRe
             json!(blocker_codes).to_string().into(),
             open_work_count.into(),
             next_available_window.into(),
-            (if conflicts.is_empty() { 0.0 } else { 0.35 + (conflicts.len() as f64 * 0.1) }).into(),
+            (if conflicts.is_empty() {
+                0.0
+            } else {
+                0.35 + (conflicts.len() as f64 * 0.1)
+            })
+            .into(),
             json!(risk_reasons).to_string().into(),
             candidate_id.into(),
         ],
@@ -1135,4 +1126,3 @@ pub async fn get_schedule_backlog_snapshot(
         ],
     })
 }
-

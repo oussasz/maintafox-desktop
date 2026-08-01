@@ -14,14 +14,10 @@
 //!     via `require_step_up!`).
 
 use crate::errors::{AppError, AppResult};
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
-use super::domain::{
-    guard_transition, map_intervention_request, DiStatus, InterventionRequest,
-};
+use super::domain::{guard_transition, map_intervention_request, DiStatus, InterventionRequest};
 use crate::wo::domain::generate_wo_code;
 use crate::wo::time::now_utc_z;
 
@@ -144,9 +140,8 @@ pub async fn convert_di_to_work_order(
         })?;
 
     let di = map_intervention_request(&di_row)?;
-    let current_status = DiStatus::try_from_str(&di.status).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("Stored DI has invalid status: {e}"))
-    })?;
+    let current_status = DiStatus::try_from_str(&di.status)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Stored DI has invalid status: {e}")))?;
 
     if current_status != DiStatus::Approved {
         return Err(AppError::ValidationFailed(vec![format!(
@@ -155,9 +150,7 @@ pub async fn convert_di_to_work_order(
         )]));
     }
 
-    guard_transition(&current_status, &DiStatus::Closed).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
+    guard_transition(&current_status, &DiStatus::Closed).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     // ── 2. Validate conversion prerequisites ──────────────────────────────
     let mut errors: Vec<String> = Vec::new();
@@ -194,9 +187,7 @@ pub async fn convert_di_to_work_order(
         .await?;
     if let Some(row) = duplicate_row {
         let existing_id: i64 = row.try_get("", "id").unwrap_or_default();
-        let existing_code: String = row
-            .try_get("", "code")
-            .unwrap_or_else(|_| "N/A".to_string());
+        let existing_code: String = row.try_get("", "code").unwrap_or_else(|_| "N/A".to_string());
         return Err(AppError::ValidationFailed(vec![format!(
             "Une OT active existe déjà pour cette DI (id={existing_id}, code={existing_code})."
         )]));
@@ -209,11 +200,7 @@ pub async fn convert_di_to_work_order(
             "SELECT id FROM work_order_statuses WHERE code = 'planning'".to_string(),
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "work_order_statuses missing 'planning' row"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("work_order_statuses missing 'planning' row")))?;
     let planning_status_id: i64 = planning_row
         .try_get("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("planning status_id decode: {e}")))?;
@@ -226,11 +213,7 @@ pub async fn convert_di_to_work_order(
             [],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "work_order_types missing 'corrective' row"
-            ))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("work_order_types missing 'corrective' row")))?;
     let type_id: i64 = type_row
         .try_get("", "id")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("corrective type_id decode: {e}")))?;
@@ -249,9 +232,17 @@ pub async fn convert_di_to_work_order(
             wo_code.clone().into(),
             type_id.into(),
             planning_status_id.into(),
-            if di.asset_id == 0 { sea_orm::Value::from(None::<i64>) } else { di.asset_id.into() },
+            if di.asset_id == 0 {
+                sea_orm::Value::from(None::<i64>)
+            } else {
+                di.asset_id.into()
+            },
             input.di_id.into(),
-            if di.org_node_id == 0 { sea_orm::Value::from(None::<i64>) } else { di.org_node_id.into() },
+            if di.org_node_id == 0 {
+                sea_orm::Value::from(None::<i64>)
+            } else {
+                di.org_node_id.into()
+            },
             input.actor_id.into(),
             di.title.clone().into(),
             di.description.clone().into(),
@@ -276,9 +267,7 @@ pub async fn convert_di_to_work_order(
             [wo_code.clone().into()],
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("Failed to retrieve WO id after insert"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to retrieve WO id after insert")))?;
 
     let wo_id: i64 = wo_id_row
         .try_get("", "id")
@@ -328,7 +317,11 @@ pub async fn convert_di_to_work_order(
         [
             wo_id.into(),
             input.actor_id.into(),
-            input.conversion_notes.clone().map(sea_orm::Value::from).unwrap_or(sea_orm::Value::from(None::<String>)),
+            input
+                .conversion_notes
+                .clone()
+                .map(sea_orm::Value::from)
+                .unwrap_or(sea_orm::Value::from(None::<String>)),
             now.clone().into(),
         ],
     ))

@@ -3,8 +3,8 @@
 //! PRD 6.8: enforce stock traceability through transaction ledger rows and
 //! explicit reservations instead of silent balance mutations.
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 
@@ -66,8 +66,7 @@ impl MigrationTrait for Migration {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_stock_reservations_article ON stock_reservations(article_id)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_stock_reservations_article ON stock_reservations(article_id)".to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
@@ -78,8 +77,7 @@ impl MigrationTrait for Migration {
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_stock_reservations_status ON stock_reservations(status)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_stock_reservations_status ON stock_reservations(status)".to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
@@ -109,21 +107,18 @@ impl MigrationTrait for Migration {
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "ALTER TABLE work_order_parts ADD COLUMN quantity_reserved REAL NOT NULL DEFAULT 0"
-                .to_string(),
+            "ALTER TABLE work_order_parts ADD COLUMN quantity_reserved REAL NOT NULL DEFAULT 0".to_string(),
         ))
         .await?;
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "ALTER TABLE work_order_parts ADD COLUMN quantity_issued REAL NOT NULL DEFAULT 0"
-                .to_string(),
+            "ALTER TABLE work_order_parts ADD COLUMN quantity_issued REAL NOT NULL DEFAULT 0".to_string(),
         ))
         .await?;
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "CREATE INDEX IF NOT EXISTS idx_wop_reservation_id ON work_order_parts(reservation_id)"
-                .to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_wop_reservation_id ON work_order_parts(reservation_id)".to_string(),
         ))
         .await?;
 

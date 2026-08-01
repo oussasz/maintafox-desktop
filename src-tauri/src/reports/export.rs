@@ -10,10 +10,7 @@ fn xlsx_e(e: rust_xlsxwriter::XlsxError) -> AppError {
 }
 
 fn pdf_escape(input: &str) -> String {
-    input
-        .replace('\\', "\\\\")
-        .replace('(', "\\(")
-        .replace(')', "\\)")
+    input.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)")
 }
 
 fn build_simple_pdf(lines: &[String], paper_size: &str) -> Vec<u8> {
@@ -94,13 +91,17 @@ pub async fn export_report_document(
 ) -> AppResult<ExportedBinaryDocument> {
     let fmt = export_format.to_ascii_lowercase();
     if fmt != "pdf" && fmt != "xlsx" {
-        return Err(AppError::ValidationFailed(vec!["export_format must be pdf or xlsx.".into()]));
+        return Err(AppError::ValidationFailed(vec![
+            "export_format must be pdf or xlsx.".into()
+        ]));
     }
 
     match template_code {
         "dashboard_summary" => export_dashboard_summary(db, &fmt).await,
         "open_work_orders" => export_open_work_orders(db, &fmt).await,
-        _ => Err(AppError::ValidationFailed(vec![format!("Unknown template: {template_code}")]))
+        _ => Err(AppError::ValidationFailed(vec![format!(
+            "Unknown template: {template_code}"
+        )])),
     }
 }
 
