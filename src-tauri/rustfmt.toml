@@ -3,3 +3,6 @@ tab_spaces = 4
 max_width = 120
 newline_style = "Unix"
 use_small_heuristics = "Default"
+
+# Generator output is the RBAC freshness SSOT (pnpm rbac:check rewrites + diffs).
+ignore = ["src/rbac/permissions_generated.rs"]
