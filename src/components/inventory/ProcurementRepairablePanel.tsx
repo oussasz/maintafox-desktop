@@ -8,6 +8,7 @@ import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
 import { ProcurementAlertCards } from "@/components/inventory/ProcurementAlertCards";
+import { ProcurementArchivePanel } from "@/components/inventory/ProcurementArchivePanel";
 import { ProcurementContextMenu } from "@/components/inventory/ProcurementContextMenu";
 import type { ProcurementContextMenuAction } from "@/components/inventory/ProcurementContextMenu";
 import { ProcurementRecommendationsPanel } from "@/components/inventory/ProcurementRecommendationsPanel";
@@ -3181,6 +3182,23 @@ export const ProcurementRepairablePanel = forwardRef<
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ProcurementArchivePanel
+        requisitions={requisitions}
+        purchaseOrders={purchaseOrders}
+        repairables={repairables}
+        onRequisitionClick={(req) => {
+          setSelectedReqId(req.id);
+          setActiveTab("requisitions");
+        }}
+        onPurchaseOrderClick={(po) => {
+          setSelectedPoId(po.id);
+          setActiveTab("purchase-orders");
+        }}
+        onRepairableClick={() => {
+          setActiveTab("repairables");
+        }}
+      />
 
       {/* Document link form dialog */}
       <Dialog open={docLinkFormOpen} onOpenChange={setDocLinkFormOpen}>

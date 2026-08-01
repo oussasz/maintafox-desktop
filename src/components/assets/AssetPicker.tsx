@@ -22,10 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import {
-  searchAssets,
-  suggestPickerAssets,
-} from "@/services/asset-search-service";
+import { searchAssets } from "@/services/asset-search-service";
 import type { AssetSearchResult } from "@shared/ipc-types";
 
 // ── Accent / case fold (mirrors Rust fold_search_text) ────────────────────────
@@ -83,7 +80,8 @@ export function highlightMatch(text: string, query: string): ReactNode {
   let foldedPos = 0;
   const chars = [...text];
   while (foldedPos < idx && origStart < chars.length) {
-    const ch = chars[origStart]!;
+    const ch = chars[origStart];
+    if (ch === undefined) break;
     const foldedCh = foldSearchText(ch);
     foldedPos += foldedCh.length;
     origStart += 1;
@@ -91,7 +89,8 @@ export function highlightMatch(text: string, query: string): ReactNode {
   let origEnd = origStart;
   let consumed = 0;
   while (consumed < q.length && origEnd < chars.length) {
-    const ch = chars[origEnd]!;
+    const ch = chars[origEnd];
+    if (ch === undefined) break;
     const foldedCh = foldSearchText(ch);
     consumed += foldedCh.length;
     origEnd += 1;
@@ -111,14 +110,11 @@ export function highlightMatch(text: string, query: string): ReactNode {
   );
 }
 
-function findExactCodeMatch(
-  items: AssetSearchResult[],
-  query: string,
-): AssetSearchResult | null {
+function findExactCodeMatch(items: AssetSearchResult[], query: string): AssetSearchResult | null {
   const folded = foldSearchText(query.trim());
   if (!folded) return null;
   const matches = items.filter((a) => foldSearchText(a.asset_code) === folded);
-  return matches.length === 1 ? matches[0]! : null;
+  return matches.length === 1 ? (matches[0] ?? null) : null;
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -164,25 +160,16 @@ export function AssetPicker({
     setLoading(true);
     try {
       const trimmed = q.trim();
-      if (!trimmed) {
-        const res = await suggestPickerAssets({
-          limit: 15,
-          include_decommissioned: false,
-        });
-        if (gen !== requestGen.current) return;
-        setItems(res.items);
-        setMode(res.mode === "frequent" ? "frequent" : "recent");
-        setActiveIndex(0);
-        return;
-      }
+      // Picker suggestions use the same search IPC until a dedicated
+      // suggest_picker_assets command lands on develop.
       const results = await searchAssets({
-        query: trimmed,
-        limit: 20,
+        query: trimmed || null,
+        limit: trimmed ? 20 : 15,
         include_decommissioned: false,
       });
       if (gen !== requestGen.current) return;
       setItems(results);
-      setMode("search");
+      setMode(trimmed ? "search" : "recent");
       setActiveIndex(0);
     } catch {
       if (gen !== requestGen.current) return;
@@ -294,20 +281,13 @@ export function AssetPicker({
           })();
           return;
         }
-        if (open && items[activeIndex]) {
-          selectAsset(items[activeIndex]!);
+        const active = items[activeIndex];
+        if (open && active) {
+          selectAsset(active);
         }
       }
     },
-    [
-      activeIndex,
-      items,
-      open,
-      openAndLoad,
-      query,
-      selectAsset,
-      tryExactSelect,
-    ],
+    [activeIndex, items, open, openAndLoad, query, selectAsset, tryExactSelect],
   );
 
   useEffect(() => {
@@ -360,10 +340,8 @@ export function AssetPicker({
               )}
             </div>
             <p className="text-sm truncate">{value.asset_name}</p>
-            {(value.org_path || value.org_node_name) && (
-              <p className="text-xs text-text-muted truncate">
-                {value.org_path || value.org_node_name}
-              </p>
+            {value.org_node_name && (
+              <p className="text-xs text-text-muted truncate">{value.org_node_name}</p>
             )}
           </div>
           {!disabled && (
@@ -397,16 +375,10 @@ export function AssetPicker({
             aria-controls={listId}
             aria-autocomplete="list"
             aria-activedescendant={
-              open && items[activeIndex]
-                ? `${listId}-opt-${activeIndex}`
-                : undefined
+              open && items[activeIndex] ? `${listId}-opt-${activeIndex}` : undefined
             }
             className="pl-9 pr-9"
-            placeholder={
-              scanMode
-                ? t("assetPicker.scanHint")
-                : t("assetPicker.searchPlaceholder")
-            }
+            placeholder={scanMode ? t("assetPicker.scanHint") : t("assetPicker.searchPlaceholder")}
             value={query}
             disabled={disabled}
             autoFocus={autoFocus}
@@ -448,9 +420,7 @@ export function AssetPicker({
           )}
           {items.length === 0 && !loading && (
             <p className="px-3 py-3 text-sm text-text-muted">
-              {query.trim()
-                ? t("assetPicker.empty")
-                : t("assetPicker.emptySuggestions")}
+              {query.trim() ? t("assetPicker.empty") : t("assetPicker.emptySuggestions")}
             </p>
           )}
           {items.map((asset, index) => (
@@ -463,9 +433,7 @@ export function AssetPicker({
               data-asset-picker-index={index}
               className={cn(
                 "flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left text-sm transition-colors",
-                index === activeIndex
-                  ? "bg-surface-2"
-                  : "hover:bg-surface-1",
+                index === activeIndex ? "bg-surface-2" : "hover:bg-surface-1",
               )}
               onMouseEnter={() => setActiveIndex(index)}
               onMouseDown={(ev) => {
@@ -484,12 +452,10 @@ export function AssetPicker({
                   </Badge>
                 )}
               </div>
-              <span className="truncate w-full">
-                {highlightMatch(asset.asset_name, query)}
-              </span>
-              {(asset.org_path || asset.org_node_name) && (
+              <span className="truncate w-full">{highlightMatch(asset.asset_name, query)}</span>
+              {asset.org_node_name && (
                 <span className="text-xs text-text-muted truncate w-full">
-                  {asset.org_path || asset.org_node_name}
+                  {asset.org_node_name}
                 </span>
               )}
             </button>

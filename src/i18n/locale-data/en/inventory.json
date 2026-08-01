@@ -719,6 +719,12 @@
         "scrap": "Scrap",
         "cancel": "Cancel order"
       }
+    },
+    "archive": {
+      "title": "Procurement archive",
+      "requisitions": "Requisitions",
+      "purchaseOrders": "Purchase orders",
+      "repairables": "Repairables"
     }
   },
   "stockImpact": {

@@ -719,6 +719,12 @@
         "scrap": "Mettre au rebut",
         "cancel": "Annuler l'ordre"
       }
+    },
+    "archive": {
+      "title": "Archives approvisionnement",
+      "requisitions": "Demandes",
+      "purchaseOrders": "Bons de commande",
+      "repairables": "Reparables"
     }
   },
   "stockImpact": {
