@@ -94,10 +94,8 @@ export const mfModal = {
  * See docs/UX_ENTITY_FORM_DIALOG_PATTERN.md. Prefer `EntityFormDialog` over one-off shells.
  */
 export const mfEntityForm = {
-  dialog:
-    "flex max-h-[90vh] w-full max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl",
-  dialogWide:
-    "flex max-h-[90vh] w-full max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl",
+  dialog: "flex max-h-[90vh] w-full max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl",
+  dialogWide: "flex max-h-[90vh] w-full max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl",
   header: "shrink-0 space-y-1.5 px-6 pb-3 pt-6 text-left",
   title: "text-lg font-semibold tracking-tight text-text-primary",
   description: "text-sm text-text-muted",
@@ -111,7 +109,8 @@ export const mfEntityForm = {
   fieldGroupTitle: "text-xs font-semibold uppercase tracking-wide text-text-secondary",
   divider: "border-t border-surface-border",
   hint: "rounded-md border border-status-warning/30 bg-status-warning/10 px-3 py-2 text-sm text-status-warning",
-  hintInfo: "rounded-md border border-primary/20 bg-primary-bg/80 px-3 py-2 text-sm text-text-primary",
+  hintInfo:
+    "rounded-md border border-primary/20 bg-primary-bg/80 px-3 py-2 text-sm text-text-primary",
   collapsibleTrigger:
     "flex w-full items-center justify-between rounded-md border border-surface-border bg-surface-2/50 px-3 py-2 text-left text-sm font-semibold text-text-primary hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
   mediaDropzone:
@@ -151,8 +150,7 @@ export const mfIdentification = {
  * @see docs/UX_EXPORT_SYSTEM.md
  */
 export const mfExport = {
-  actions:
-    "flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2 sm:space-x-0",
+  actions: "flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2 sm:space-x-0",
 } as const;
 
 /** Table / list rows — prefer with DataTable; fallback for plain lists */
@@ -215,6 +213,69 @@ export const mfPermissionDomainChip: Record<string, string> = {
   adm: "border border-red-500/40 bg-red-500/12 text-red-200",
   cst: "border border-surface-border bg-surface-3/70 text-text-secondary",
 };
+
+/**
+ * Shared Kanban board — used by `components/kanban/KanbanBoard.tsx` only.
+ * One design language for every status-lane board in the app.
+ */
+export const mfKanban = {
+  root: "relative flex h-full flex-col",
+  scroller: "flex flex-1 gap-3 overflow-x-auto p-1 pb-2",
+  column:
+    "flex min-w-[220px] max-w-[260px] flex-1 flex-col rounded-lg border border-surface-border bg-muted/30",
+  columnDragOver: "ring-2 ring-primary ring-offset-1",
+  columnHeader: "flex items-center justify-between gap-2 rounded-t-lg border-b px-3 py-2",
+  columnHeaderLabel: "flex min-w-0 items-center gap-2",
+  columnTitle: "truncate text-xs font-semibold",
+  countBadge: "shrink-0 border-0 bg-white/60 px-1.5 py-0 text-[10px]",
+  columnBody: "min-h-[120px] flex-1 space-y-2 overflow-y-auto p-2",
+  columnEmpty: "py-4 text-center text-[11px] text-muted-foreground",
+  loadMore: "border-t p-2",
+  loadMoreButton: "w-full gap-1 text-xs",
+  card: "group cursor-pointer overflow-hidden rounded-md border border-surface-border bg-background shadow-sm transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+  cardSelected: "ring-2 ring-primary",
+  cardDisabled: "pointer-events-none opacity-50",
+  cardDraggable: "cursor-grab active:cursor-grabbing",
+  accentBar: "h-1 w-full",
+  cardBody: "space-y-1.5 px-3 pb-3 pt-2",
+  cardHeader: "flex items-center gap-1",
+  cardCode: "truncate font-mono text-[11px] text-muted-foreground",
+  cardTitle: "text-xs font-medium leading-tight line-clamp-2",
+  cardSubtitle: "truncate text-[11px] text-muted-foreground",
+  cardDescription: "text-[11px] leading-snug text-muted-foreground line-clamp-2",
+  cardMeta: "flex items-center justify-between gap-2 pt-0.5 text-[10px] text-muted-foreground",
+  metaItem: "flex min-w-0 items-center gap-0.5",
+  metaIcon: "h-2.5 w-2.5 shrink-0",
+  metaLabel: "truncate",
+  badgeRow: "flex flex-wrap items-center gap-1",
+  badge: "h-5 gap-0.5 border-0 px-1.5 py-0 text-[10px] font-normal",
+  badgeIcon: "h-2.5 w-2.5 shrink-0",
+  linkBadge: "h-5 px-1.5 py-0 text-[10px]",
+  cardActions: "flex flex-wrap items-center gap-1 pt-1",
+  cardActionButton: "h-6 gap-1 px-1.5 text-[10px]",
+  cardActionIcon: "h-3 w-3 shrink-0",
+  boardEmpty: "py-8 text-center text-sm text-muted-foreground",
+} as const;
+
+/**
+ * Shared vertical timeline — used by `components/timeline/Timeline.tsx` only.
+ * One design language for every chronological rail in the app.
+ */
+export const mfTimeline = {
+  root: "space-y-4",
+  list: "relative space-y-0",
+  item: "relative flex gap-3 last:pb-0",
+  connector: "absolute left-4 top-8 h-full w-px bg-surface-border",
+  marker: "z-10 flex shrink-0 items-center justify-center rounded-full border-2 transition-colors",
+  icon: "[&_svg]:h-4 [&_svg]:w-4",
+  content: "rounded-md transition-colors hover:bg-surface-2/40",
+  title: "text-sm font-medium text-text-primary",
+  subtitle: "text-sm text-text-secondary",
+  description: "text-sm text-muted-foreground",
+  meta: "mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground",
+  badge: "h-5 px-1.5 text-[10px] font-normal",
+  groupHeader: "text-xs font-semibold uppercase tracking-wide text-text-muted",
+} as const;
 
 /** Recharts / export — use CSS vars in SVG where supported; PNG needs resolved hex */
 export const mfChart = {
