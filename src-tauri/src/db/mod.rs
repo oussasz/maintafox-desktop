@@ -1,9 +1,14 @@
+pub mod demo_seeder;
 pub mod integrity;
 pub mod migration_integrity;
 pub mod org_schema;
+/// DEMO-ONLY RAMS seed modules — never call from production app flow.
+pub mod rams_presentation_seed;
+pub mod rams_sql_demo_seed;
 pub mod reference_domains;
 pub mod schema_integration_test;
 pub mod seeder;
+pub mod tenant_bootstrap;
 
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::time::Duration;
@@ -21,15 +26,14 @@ pub async fn init_db(db_path: &str) -> AppResult<DatabaseConnection> {
     let url = format!("sqlite://{db_path}?mode=rwc");
 
     let mut opts = ConnectOptions::new(url);
-    opts.max_connections(5)
+    // SQLite: use a single connection so PRAGMA settings (e.g. foreign_keys off during tenant reset)
+    // apply to the same connection that runs transactions. Multi-connection pools can otherwise
+    // leave FK enforcement enabled during DELETE and trigger error 787.
+    opts.max_connections(1)
         .min_connections(1)
         .connect_timeout(Duration::from_secs(10))
         .idle_timeout(Duration::from_secs(120))
-        .sqlx_logging(
-            std::env::var("MAINTAFOX_SQL_LOG")
-                .map(|v| v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false),
-        );
+        .sqlx_logging(std::env::var("MAINTAFOX_SQL_LOG").is_ok_and(|v| v.eq_ignore_ascii_case("true")));
 
     let db = Database::connect(opts).await?;
 

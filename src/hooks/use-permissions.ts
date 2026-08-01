@@ -1,51 +1,19 @@
-import { useState, useEffect, useCallback } from "react";
+import { useContext } from "react";
 
-import { getMyPermissions } from "@/services/rbac-service";
-import type { PermissionRecord } from "@shared/ipc-types";
-
-interface UsePermissionsReturn {
-  /** Full list of permissions the user holds */
-  permissions: PermissionRecord[];
-  /** True while loading */
-  isLoading: boolean;
-  /** Returns true if the user holds the given permission name */
-  can: (permissionName: string) => boolean;
-  /** Reload permissions from the backend (call after role change) */
-  refresh: () => Promise<void>;
-}
+import { PermissionContext, type PermissionContextValue } from "@/contexts/PermissionContext";
 
 /**
- * Preloads the current user's effective permissions after login.
- * Provides a `can(name)` helper for inline checks and feeds
- * `<PermissionGate>` for declarative rendering.
+ * Hook that returns the centralized permission state from `<PermissionProvider>`.
  *
- * Phase 1: each hook instance fires its own IPC call.
- * Phase 2 will introduce a PermissionProvider context to deduplicate.
+ * Phase 2 rewrite: delegates to PermissionContext instead of calling IPC independently.
+ * All consumers share one permission set loaded once after authentication.
+ *
+ * Must be used within a `<PermissionProvider>` (placed inside `<AuthGuard>`).
  */
-export function usePermissions(): UsePermissionsReturn {
-  const [permissions, setPermissions] = useState<PermissionRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const perms = await getMyPermissions();
-      setPermissions(perms);
-    } catch {
-      setPermissions([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const can = useCallback(
-    (permissionName: string) => permissions.some((p) => p.name === permissionName),
-    [permissions],
-  );
-
-  return { permissions, isLoading, can, refresh: load };
+export function usePermissions(): PermissionContextValue {
+  const context = useContext(PermissionContext);
+  if (!context) {
+    throw new Error("usePermissions must be used within <PermissionProvider>");
+  }
+  return context;
 }

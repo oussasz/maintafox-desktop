@@ -1,0 +1,70 @@
+{
+  "page": {
+    "title": "Dashboard",
+    "welcome": "Welcome, {{name}}"
+  },
+  "kpi": {
+    "openDis": "Open DIs",
+    "openWos": "Open WOs",
+    "totalAssets": "Assets",
+    "overdueItems": "Overdue",
+    "noChange": "no change",
+    "vsPrevious": "vs previous period",
+    "notAvailableYet": "Data not available (module coming soon)",
+    "comingSoon": "Coming soon",
+    "openEvidence": "View source records",
+    "qualityBadge": {
+      "insufficient_baseline": "Trend compares to an empty prior window — interpret with care.",
+      "sparse_workload": "No DI/WO/PM activity in this range — data may be incomplete."
+    }
+  },
+  "chart": {
+    "title": "Workload — Last {{days}} Days",
+    "diCreated": "DI Created",
+    "woCompleted": "WO Completed",
+    "pmDue": "PM Due",
+    "loading": "Loading…",
+    "empty": "Not enough data yet",
+    "ariaLabel": "Workload chart",
+    "openRamEvidence": "Open RAM data quality (evidence)"
+  },
+  "quickActions": {
+    "title": "Quick Actions",
+    "newDi": "+ New DI",
+    "newWo": "+ New WO",
+    "newAsset": "+ New Asset"
+  },
+  "layout": {
+    "customize": "Customize",
+    "customizeTitle": "Dashboard layout",
+    "save": "Save",
+    "reset": "Reset default",
+    "labels": {
+      "kpis": "KPI cards",
+      "workload": "Workload chart",
+      "diStatus": "DI status distribution",
+      "reliability": "Reliability KPI snapshots (365d)"
+    }
+  },
+  "dev": {
+    "kpiValidation": "KPI validation (SQL samples)",
+    "kpiValidationHint": "Cross-check counts and sample row ids against the local database (development only)."
+  },
+  "widgets": {
+    "diStatus": {
+      "title": "DIs by status",
+      "empty": "No intervention requests yet.",
+      "openList": "Open requests",
+      "aria": "DI status bar chart"
+    },
+    "reliability": {
+      "title": "Reliability snapshots",
+      "subtitle": "Aggregates from stored reliability_kpi_snapshots (last 365 days).",
+      "openEvidence": "RAM data quality",
+      "snapshots": "Snapshots",
+      "dqScore": "Avg data quality",
+      "mtbf": "Avg MTBF (h)",
+      "events": "Failure events"
+    }
+  }
+}

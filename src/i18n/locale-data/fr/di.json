@@ -3,7 +3,12 @@
     "title": "Demandes d'intervention",
     "titleDetail": "Détail de la demande",
     "titleNew": "Nouvelle demande",
-    "titleEdit": "Modifier la demande"
+    "titleEdit": "Modifier la demande",
+    "viewList": "Liste",
+    "viewKanban": "Kanban",
+    "viewCalendar": "Calendrier",
+    "viewDashboard": "Tableau de bord",
+    "filterSettings": "Paramètres des filtres"
   },
   "list": {
     "columns": {
@@ -19,12 +24,17 @@
     },
     "filters": {
       "status": "Statut",
+      "reviewQueue": "File de validation",
+      "triageInbox": "DIs à trier / flux d'entrée",
       "priority": "Priorité",
+      "disposition": "Disposition",
       "assignedTo": "Assigné à",
       "dateRange": "Période"
     }
   },
   "detail": {
+    "close": "Fermer",
+    "safety": "Sécurité",
     "sections": {
       "request": "Demande",
       "analysis": "Analyse",
@@ -43,10 +53,37 @@
       "assignedTo": "Assigné à",
       "dueDate": "Échéance",
       "closedAt": "Date de clôture",
-      "conclusion": "Conclusion"
+      "conclusion": "Conclusion",
+      "origin": "Origine",
+      "requestType": "Type de demande",
+      "symptom": "Symptôme",
+      "asset": "Équipement",
+      "orgNode": "Nœud org.",
+      "impact": "Impact",
+      "production": "Production",
+      "slaStatus": "Statut SLA",
+      "slaResponseDeadline": "Échéance réponse SLA",
+      "slaResolutionDeadline": "Échéance résolution SLA",
+      "slaResponseElapsed": "Temps réponse écoulé",
+      "slaResolutionElapsed": "Temps résolution écoulé",
+      "slaResponseRemaining": "Temps réponse restant",
+      "slaResolutionRemaining": "Temps résolution restant",
+      "hoursValue": "{{hours}} h"
+    },
+    "tabs": {
+      "attachments": "Pièces jointes",
+      "stateLog": "Historique des statuts",
+      "review": "Revue",
+      "activity": "Journal d'activité"
     }
   },
   "form": {
+    "section": {
+      "requester": "Déclarant",
+      "equipment": "Équipement",
+      "general": "Informations générales",
+      "media": "Photos et pièces jointes"
+    },
     "subject": {
       "label": "Objet",
       "placeholder": "Décrivez brièvement le problème"
@@ -59,14 +96,101 @@
       "label": "Équipement concerné",
       "placeholder": "Sélectionnez un équipement"
     },
+    "equipmentSearch": "Rechercher un équipement...",
     "priority": {
-      "label": "Priorité"
-    }
+      "label": "Priorité",
+      "placeholder": "Sélectionnez une priorité"
+    },
+    "observedAt": {
+      "label": "Date de constatation"
+    },
+    "originType": {
+      "label": "Origine",
+      "placeholder": "Sélectionnez une origine"
+    },
+    "requestType": {
+      "label": "Type de demande",
+      "placeholder": "Sélectionnez un type de demande"
+    },
+    "symptom": {
+      "label": "Symptôme",
+      "placeholder": "Sélectionnez un symptôme",
+      "searchPlaceholder": "Rechercher un symptôme..."
+    },
+    "impactLevel": {
+      "label": "Niveau d'impact",
+      "placeholder": "Sélectionnez un niveau d'impact"
+    },
+    "pictures": {
+      "label": "Photos",
+      "empty": "Aucune photo",
+      "hint": "Ajoutez des photos de l'équipement ou du problème. Même sélecteur que la galerie équipement.",
+      "primary": "Principale",
+      "remove": "Retirer",
+      "add": "Ajouter des photos"
+    },
+    "attachments": {
+      "label": "Fichiers joints",
+      "empty": "Aucun fichier",
+      "add": "Ajouter un fichier",
+      "remove": "Retirer"
+    },
+    "media": {
+      "partialUploadFailed": "{{failed}} fichier(s) sur {{total}} n'ont pas pu être téléversé(s). Vous pouvez réessayer depuis le détail de la demande."
+    },
+    "safetyFlag": {
+      "label": "Enjeu sécurité"
+    },
+    "environmentalFlag": {
+      "label": "Enjeu environnemental"
+    },
+    "qualityFlag": {
+      "label": "Enjeu qualité"
+    },
+    "productionImpact": {
+      "label": "Impact production"
+    },
+    "origin": {
+      "operator": "Opérateur",
+      "technician": "Technicien",
+      "inspection": "Inspection",
+      "pm": "Maintenance préventive",
+      "iot": "IoT / Capteur",
+      "quality": "Qualité",
+      "hse": "HSE",
+      "production": "Production",
+      "external": "Externe"
+    },
+    "impact": {
+      "unknown": "Inconnu",
+      "none": "Aucun",
+      "minor": "Mineur",
+      "major": "Majeur",
+      "critical": "Critique"
+    },
+    "validation": {
+      "titleRequired": "Le titre est requis",
+      "descriptionRequired": "La description est requise",
+      "equipmentRequired": "L'équipement est requis",
+      "originRequired": "L'origine est requise",
+      "requestTypeRequired": "Le type de demande est requis",
+      "symptomRequired": "Le symptôme est requis",
+      "urgencyRequired": "La priorité est requise",
+      "impactRequired": "Le niveau d'impact est requis",
+      "assetMissingOrgNode": "L'équipement sélectionné n'a pas d'unité organisationnelle. Veuillez en attribuer une d'abord."
+    },
+    "cancel": "Annuler",
+    "submit": "Créer la demande",
+    "update": "Enregistrer les modifications"
   },
   "status": {
     "new": "Nouvelle",
+    "pendingReview": "En attente de tri",
+    "awaitingApproval": "En attente d'approbation",
+    "needsClarification": "Besoin de précisions",
     "inReview": "En examen",
     "approved": "Approuvée",
+    "deferred": "Différée",
     "rejected": "Rejetée",
     "inProgress": "En cours",
     "resolved": "Résolue",
@@ -80,16 +204,350 @@
     "critical": "Critique"
   },
   "action": {
+    "create": "Nouvelle DI",
     "approve": "Approuver",
     "reject": "Rejeter",
     "assignTo": "Assigner à",
     "convertToWO": "Convertir en OT",
     "close": "Clôturer",
-    "addComment": "Ajouter un commentaire"
+    "addComment": "Ajouter un commentaire",
+    "print": "Imprimer",
+    "resubmit": "Soumettre à nouveau",
+    "closeRequest": "Clôturer la demande",
+    "cancelOwn": "Annuler ma demande",
+    "defer": "Reporter",
+    "archive": "Archiver"
   },
   "empty": {
     "list": "Aucune demande d'intervention.",
     "listHint": "Créez une nouvelle demande ou ajustez les filtres.",
     "noComments": "Aucun commentaire pour cette demande."
+  },
+  "lookup": {
+    "existingValues": "Valeurs existantes",
+    "loading": "Chargement…",
+    "empty": "Aucune valeur. Créez-en une à droite.",
+    "editTitle": "Modifier la valeur",
+    "createTitle": "Nouvelle valeur",
+    "newEntry": "Nouveau",
+    "name": "Nom",
+    "namePlaceholder": "Nom de la valeur",
+    "description": "Description",
+    "descriptionPlaceholder": "Description optionnelle…",
+    "suggestions": "Suggestions",
+    "create": "Créer",
+    "update": "Mettre à jour",
+    "saving": "Enregistrement…",
+    "cancel": "Annuler",
+    "close": "Fermer",
+    "manage": "Gérer"
+  },
+  "sla": {
+    "title": "Règles SLA",
+    "description": "Configurez les délais de réponse et de résolution pour chaque niveau d'urgence.",
+    "loading": "Chargement des règles…",
+    "empty": "Aucune règle SLA configurée.",
+    "columns": {
+      "name": "Règle",
+      "urgency": "Urgence",
+      "response": "Réponse (h)",
+      "resolution": "Résolution (h)",
+      "escalation": "Escalade (h)",
+      "active": "Actif"
+    },
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "close": "Fermer",
+    "status": {
+      "on_track": "On Track",
+      "at_risk": "At Risk",
+      "breached": "Breached",
+      "completed": "Completed",
+      "none": "—"
+    }
+  },
+  "reviewTimeline": {
+    "empty": "Aucun événement de revue enregistré.",
+    "slaTarget": "Cible SLA",
+    "slaDeadline": "Échéance SLA",
+    "slaResolutionTarget": "Cible résolution SLA",
+    "slaResolutionDeadline": "Échéance résolution SLA",
+    "hours": "{{hours}} h",
+    "breachHint": "Échéance SLA dépassée au moment de l'événement",
+    "actor": "Par",
+    "systemActor": "Système",
+    "eventType": {
+      "sla_initialized": "SLA initialized",
+      "screened": "Trié",
+      "advanced_to_approval": "Transmis pour approbation",
+      "returned_for_clarification": "Renvoyé pour clarification",
+      "rejected": "Rejeté",
+      "approved": "Approuvé",
+      "deferred": "Différé",
+      "reactivated": "Réactivé",
+      "converted": "Converti",
+      "closed_non_executable": "Clôturé non exécutable",
+      "closed": "Clôturé",
+      "archived": "Archivé"
+    }
+  },
+  "stateLog": {
+    "empty": "Aucun changement d'état enregistré.",
+    "from": "De",
+    "to": "Vers",
+    "action": "Événement",
+    "at": "Date / heure",
+    "actor": "Par",
+    "actionLabel": {
+      "intake_submitted": "Soumission d'entrée (déclarant)",
+      "submit": "Soumission d'entrée (déclarant)",
+      "triage_accept": "Tri d'entrée : admis en file de revue",
+      "screen": "Tri technique",
+      "advance_to_approval": "Transmis pour approbation",
+      "return_for_clarification": "Renvoyé pour clarification",
+      "reject": "Rejet",
+      "approve": "Approbation",
+      "defer": "Report",
+      "reactivate": "Réactivation",
+      "convert": "Conversion en ordre de travail",
+      "screened": "Tri validé",
+      "returned": "Renvoyé",
+      "rejected": "Rejeté",
+      "approved": "Approuvé",
+      "deferred": "Reporté",
+      "re_submitted": "Re-soumission",
+      "close_non_executable": "Clôturée non exécutable",
+      "archive": "Archivage",
+      "none": "—"
+    },
+    "unknownAction": "Événement : {{action}}"
+  },
+  "auditTimeline": {
+    "loadError": "Impossible de charger le journal d'activité.",
+    "empty": "Aucun événement d'activité pour cette demande.",
+    "rawAction": "Code événement",
+    "resultApplied": "Appliqué",
+    "resultBlocked": "Bloqué",
+    "resultPartial": "Partiel",
+    "stepUp": "Rehaussement",
+    "actorUser": "{{name}}",
+    "actorSystem": "Système",
+    "actionLabel": {
+      "submit": "Prise en compte (déclarant)",
+      "intake_submitted": "Prise en compte (déclarant)",
+      "triage_submitted": "Tri d'entrée : admis en file de revue",
+      "triage_accept": "Tri d'entrée : admis en file de revue",
+      "screened": "Tri effectué",
+      "returned": "Renvoyé pour clarification",
+      "rejected": "Rejeté",
+      "approved": "Approuvé",
+      "converted": "Conversion",
+      "re_submitted": "Re-soumise",
+      "closed_non_executable": "Clôturée non exécutable",
+      "archived": "Archivée",
+      "blocked": "Bloqué"
+    }
+  },
+  "attachments": {
+    "heading": "Pièces jointes",
+    "uploading": "Téléversement en cours…",
+    "dropHint": "Glisser-déposer ou cliquer pour ajouter un fichier",
+    "maxSize": "Max {{mb}} Mo",
+    "fileTooBig": "Le fichier « {{name}} » dépasse la taille maximale de {{mb}} Mo.",
+    "empty": "Aucune pièce jointe.",
+    "confirmDelete": "Confirmer",
+    "cancelDelete": "Annuler",
+    "deleteTitle": "Supprimer la pièce jointe"
+  },
+  "kanban": {
+    "colSubmitted": "Soumises / entrée",
+    "colPendingReview": "En examen",
+    "colAwaitingApproval": "En attente d'approbation",
+    "colNeedsClarification": "Besoin de précisions",
+    "colApproved": "Approuvées",
+    "colDeferred": "Différées",
+    "colWork": "En travaux",
+    "colClosed": "Clôturées"
+  },
+  "woConversion": {
+    "checkAsset": "Actif confirmé",
+    "checkClassif": "Classification définie",
+    "checkUrgency": "Urgence validée"
+  },
+  "print": {
+    "htmlLang": "fr",
+    "docTitle": "Fiche DI — {{code}}",
+    "ficheTitle": "Fiche de Demande d'Intervention",
+    "headerSubtitle": "Document confidentiel",
+    "refStrip": "Réf. : {{code}} | Date d'émission : {{date}}",
+    "identification": "IDENTIFICATION",
+    "equipment": "ÉQUIPEMENT CONCERNÉ",
+    "flags": "DRAPEAUX",
+    "description": "DESCRIPTION",
+    "reviewNotes": "NOTES DE REVUE",
+    "conversion": "CONVERSION",
+    "signatures": "Signatures",
+    "codeDi": "Code DI",
+    "title": "Titre",
+    "status": "Statut",
+    "urgencyReported": "Urgence déclarée",
+    "urgencyValidated": "Urgence validée",
+    "origin": "Origine",
+    "symptom": "Symptôme",
+    "impactLevel": "Niveau d'impact",
+    "createdAt": "Créée le",
+    "submittedAt": "Soumise le",
+    "asset": "Équipement",
+    "subAsset": "Sous-ensemble",
+    "orgNode": "Nœud organisationnel",
+    "observedOn": "Observée le",
+    "declarant": "Déclarant",
+    "convertedToWo": "Convertie en OT",
+    "convertedToWoTitle": "Titre de l\u2019OT",
+    "convertedAt": "Date de conversion",
+    "flagSafety": "Sécurité",
+    "flagEnv": "Environnement",
+    "flagQuality": "Qualité",
+    "flagProd": "Impact production",
+    "sigReporter": "Déclarant",
+    "sigChecker": "Vérificateur",
+    "sigMaint": "Resp. Maintenance",
+    "signatureLine": "Signature : _______________",
+    "dateLine": "Date : __/__/____",
+    "footer": "Réf. : {{code}} | {{product}} | {{date}} — Document confidentiel"
+  },
+  "approvalPrint": {
+    "title": "Fiche de validation — Demande d'intervention",
+    "subtitle": "Réf. : {{code}} — Date d'émission : {{date}}",
+    "thCode": "Code DI",
+    "thTitle": "Titre",
+    "thStatus": "Statut",
+    "thPriority": "Priorité",
+    "thOrigin": "Origine",
+    "thImpact": "Niveau d'impact",
+    "thAsset": "Équipement",
+    "thOrg": "Nœud org.",
+    "thSubmitted": "Date soumission",
+    "thDescription": "Description",
+    "thReviewerNote": "Note de revue",
+    "thApprovalNote": "Note d'approbation",
+    "conversion": "Transfert vers OT — code attribué à la conversion (depuis {{from}})",
+    "sigDeclarant": "Déclarant",
+    "sigApprover": "Approbateur",
+    "sigResp": "Responsable maintenance",
+    "footer": "Document : {{code}}-APPROBATION — Confidentiel"
+  },
+  "triage": {
+    "panelTitle": "DIs à trier / Flux d'entrée",
+    "loading": "Chargement…",
+    "seeAllInList": "Voir la liste complète ({{more}} de plus)",
+    "acceptForReview": "Accepter pour revue"
+  },
+  "permissions": {
+    "diScreen": "Trier les demandes d'intervention en entrée (soumission → file de revue)"
+  },
+  "review": {
+    "panelTitle": "DI en attente de validation",
+    "seeAllInList": "Voir la liste complète ({{more}} de plus)",
+    "modified": "Modifiée",
+    "view": "Voir le détail",
+    "returnAction": "Renvoyer",
+    "approvalTitle": "Approuver & Convertir en OT",
+    "woCodeAssignedOnConvert": "Le code OT sera attribué à la conversion",
+    "approvalNote": "Note d'approbation",
+    "approvalNotePlaceholder": "Note optionnelle pour le dossier d'approbation…",
+    "approver": "Approbateur",
+    "print": "Imprimer",
+    "approveAndConvert": "Approuver & Convertir",
+    "convertToWo": "Convertir en OT",
+    "reviewerNote": "Note du valideur",
+    "rejectionTitle": "Rejeter la demande d'intervention",
+    "reasonCode": "Motif de rejet",
+    "reasonCodePlaceholder": "Saisissez le motif du rejet",
+    "reasonCodeRequired": "Le motif de rejet est requis",
+    "rejectionNotes": "Notes complémentaires",
+    "rejectionNotesPlaceholder": "Contexte additionnel optionnel…",
+    "irreversibleWarning": "Cette action est irréversible.",
+    "rejectAndConfirm": "Rejeter & Confirmer",
+    "returnTitle": "Renvoyer pour clarification",
+    "clarificationNote": "Note de clarification",
+    "clarificationNotePlaceholder": "Décrivez les informations nécessaires…",
+    "clarificationRequired": "La note de clarification est requise",
+    "returnInfo": "La DI sera renvoyée au déclarant.",
+    "screenAction": "Valider le tri",
+    "retryConversion": "Réessayer la conversion"
+  },
+  "dashboard": {
+    "total": "Total",
+    "pending": "En attente",
+    "inProgress": "En cours",
+    "slaCompliance": "SLA respecté",
+    "slaBreached": "SLA dépassé",
+    "slaMet": "SLA respectés",
+    "closedThisMonth": "Clôturées (mois)",
+    "overdue": "En retard",
+    "safetyIssues": "Enjeux sécurité",
+    "avgAge": "Âge moyen",
+    "statusDistribution": "Répartition par statut",
+    "priorityDistribution": "Répartition par priorité",
+    "trend": "Tendance",
+    "allTime": "Tout",
+    "created": "Créées",
+    "closed": "Clôturées",
+    "topEquipment": "Top 10 Équipements",
+    "overdueDis": "DI en retard",
+    "daysOverdue": "Jours de retard"
+  },
+  "calendar": {
+    "today": "Aujourd'hui",
+    "mode": {
+      "month": "Mois",
+      "week": "Semaine",
+      "day": "Jour"
+    }
+  },
+  "archive": {
+    "title": "Archive",
+    "archivedColumn": "Rétention",
+    "archivedBadge": "Archivé"
+  },
+  "search": {
+    "placeholder": "Rechercher par code, objet, description…"
+  },
+  "contextMenu": {
+    "viewDetail": "Voir le détail",
+    "edit": "Modifier",
+    "delete": "Supprimer",
+    "approve": "Approuver",
+    "reject": "Rejeter",
+    "closeRequest": "Clôturer la demande",
+    "return": "Renvoyer pour clarification"
+  },
+  "close": {
+    "title": "Clôturer la demande",
+    "disposition": "Disposition",
+    "notes": "Notes",
+    "relatedDi": "Demande liée",
+    "relatedDiPlaceholder": "Rechercher par code (ex. DI-0042)",
+    "relatedDiSearching": "Recherche…",
+    "relatedDiNoResults": "Aucune demande correspondante.",
+    "relatedDiResolved": "Liée à {{code}}",
+    "relatedDiUseMatch": "Utiliser {{code}}",
+    "notesRequired": "Les notes sont obligatoires pour la disposition « Autre ».",
+    "relatedRequired": "Sélectionnez la demande liée pour une disposition « Doublon ».",
+    "submit": "Clôturer la demande",
+    "saving": "Clôture…",
+    "warning": "La clôture enregistre la disposition finale de cette demande."
+  },
+  "disposition": {
+    "rejected_invalid": "Rejetée — non valide",
+    "duplicate": "Doublon",
+    "cancelled_by_requester": "Annulée par le demandeur",
+    "cancelled_by_planner": "Annulée par le planificateur",
+    "no_work_required": "Aucun travail requis",
+    "solved_immediately": "Résolue immédiatement",
+    "information_only": "Information seulement",
+    "converted_to_wo": "Convertie en OT",
+    "other": "Autre"
   }
 }

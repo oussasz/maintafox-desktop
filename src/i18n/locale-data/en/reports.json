@@ -1,1 +1,48 @@
-{}
+{
+  "page": {
+    "title": "Reports & analytics",
+    "subtitle": "Template library, scheduled exports (local), and run history.",
+    "noAccess": "You do not have permission to view reports."
+  },
+  "templates": {
+    "title": "Report templates",
+    "code": "Code",
+    "name": "Title",
+    "defaultFormat": "Default format",
+    "actions": "Export now"
+  },
+  "schedule": {
+    "title": "Schedules",
+    "cronHint": "Cron (UTC, seconds first): e.g. 0 0 8 * * * daily at 08:00.",
+    "template": "Template",
+    "cron": "Cron",
+    "format": "Format",
+    "enabled": "Enabled",
+    "save": "Add schedule",
+    "delete": "Remove",
+    "next": "Next run"
+  },
+  "runs": {
+    "title": "Recent runs",
+    "status": "Status",
+    "format": "Format",
+    "started": "Started",
+    "path": "Artifact / error",
+    "statusValues": {
+      "pending": "Pending",
+      "running": "Running",
+      "success": "Success",
+      "failed": "Failed"
+    }
+  },
+  "format": {
+    "pdf": "PDF",
+    "xlsx": "XLSX"
+  },
+  "common": {
+    "empty": "—"
+  },
+  "table": {
+    "id": "ID"
+  }
+}

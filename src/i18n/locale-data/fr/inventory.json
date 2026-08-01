@@ -1,1 +1,893 @@
-{}
+{
+  "filters": {
+    "searchArticle": "Rechercher code ou nom d'article",
+    "searchWarehouse": "Rechercher code ou nom de magasin",
+    "family": "Famille",
+    "status": "Statut",
+    "statusActive": "Actif",
+    "statusInactive": "Inactif"
+  },
+  "adjustStock": {
+    "title": "Ajuster le stock",
+    "description": "Enregistrer une entrée, une sortie ou un ajustement pour cet article.",
+    "fields": {
+      "article": "Article",
+      "warehouse": "Magasin",
+      "location": "Emplacement",
+      "type": "Type",
+      "quantity": "Quantité",
+      "motif": "Motif",
+      "comment": "Commentaire"
+    },
+    "types": {
+      "entry": "Entrée",
+      "exit": "Sortie",
+      "adjustment": "Ajustement"
+    },
+    "placeholders": {
+      "warehouse": "Sélectionner un magasin",
+      "location": "Sélectionner un emplacement",
+      "loadingLocations": "Chargement des emplacements…",
+      "quantity": "Quantité",
+      "quantitySigned": "Quantité (+/-)",
+      "motif": "Sélectionner un motif",
+      "comment": "Commentaire optionnel"
+    },
+    "actions": {
+      "validate": "Valider"
+    },
+    "preview": {
+      "current": "Stock actuel",
+      "adjustment": "Ajustement",
+      "after": "Après ajustement"
+    },
+    "errors": {
+      "articleNotFound": "Article introuvable."
+    }
+  },
+  "detail": {
+    "tabs": {
+      "details": "Détails",
+      "activity": "Historique / Activité",
+      "stockPositions": "Positions de stock",
+      "reservations": "Réservations"
+    },
+    "actions": {
+      "adjustStock": "Ajuster le stock",
+      "createRequisition": "Créer une demande",
+      "deactivate": "Désactiver",
+      "more": "Plus d'actions"
+    },
+    "kpis": {
+      "title": "Synthèse stock",
+      "onHand": "En stock",
+      "reserved": "Réservé",
+      "available": "Disponible",
+      "locations": "Emplacements",
+      "movements30d": "Mouvements (30j)"
+    },
+    "sections": {
+      "classification": "Classification",
+      "identification": "Identification",
+      "inventory": "Paramètres stock",
+      "warehouse": "Préférences magasin",
+      "lifecycle": "Cycle de vie",
+      "documents": "Documents",
+      "suppliers": "Fournisseurs",
+      "compatibleAssets": "Équipements compatibles",
+      "purchaseHistory": "Historique d'achat"
+    },
+    "fields": {
+      "family": "Famille",
+      "stockingType": "Type de stockage",
+      "procurementCategory": "Catégorie d'achat",
+      "criticality": "Criticité",
+      "code": "Code",
+      "name": "Nom",
+      "unit": "Unité",
+      "taxCategory": "Catégorie fiscale",
+      "minStock": "Stock min",
+      "maxStock": "Stock max",
+      "reorderPoint": "Point de commande",
+      "safetyStock": "Stock de sécurité",
+      "preferredWarehouse": "Magasin préféré",
+      "preferredLocation": "Emplacement préféré"
+    },
+    "placeholders": {
+      "documents": "Documents non configurés.",
+      "suppliers": "Liens fournisseurs non configurés.",
+      "compatibleAssets": "Équipements compatibles non configurés.",
+      "purchaseHistory": "Historique d'achat non disponible."
+    },
+    "qr": {
+      "dialogTitle": "QR code article",
+      "scanHint": "Scanner pour ouvrir cet article"
+    },
+    "activity": {
+      "empty": "Aucune activité.",
+      "today": "Aujourd'hui",
+      "search": "Rechercher l'activité",
+      "kindAll": "Tous les types",
+      "periodAll": "Toutes les périodes",
+      "kinds": {
+        "created": "Créé",
+        "edited": "Modifié"
+      }
+    },
+    "stockPositions": {
+      "empty": "Aucune position de stock."
+    },
+    "reservations": {
+      "empty": "Aucune réservation."
+    }
+  },
+  "procurement": {
+    "dashboard": {
+      "title": "Vue d'ensemble achats",
+      "openRequisitions": "Demandes ouvertes",
+      "openPos": "BCs ouverts",
+      "latePos": "BCs en retard",
+      "receivingToday": "Réceptions du jour",
+      "pendingApprovals": "En attente d'approbation",
+      "pendingReceipts": "Réceptions en attente",
+      "stockouts": "Stocks bas",
+      "criticalStockouts": "Stocks critiques bas",
+      "activeSuppliers": "Fournisseurs actifs",
+      "repairablesInRepair": "Réparables en réparation"
+    },
+    "alerts": {
+      "title": "Alertes",
+      "kinds": {
+        "CRITICAL_STOCK": "Stock critique",
+        "LATE_PO": "BC en retard",
+        "SUPPLIER_DELAY": "Risque fournisseur",
+        "REPAIRABLE_OVERDUE": "Réparation en retard"
+      }
+    },
+    "recommendations": {
+      "title": "Recommandations de réapprovisionnement",
+      "refresh": "Actualiser",
+      "loading": "Chargement…",
+      "transfer": "Transfert",
+      "purchase": "Achat",
+      "suggestedQty": "Qté suggérée",
+      "available": "Disponible",
+      "supplier": "Fournisseur préféré",
+      "lead": "ETA",
+      "cost": "Coût estimé",
+      "surplusFrom": "Surplus depuis",
+      "transferHint": "Préférer un transfert interne",
+      "createRequisition": "Créer une demande",
+      "creating": "Création…"
+    },
+    "statuses": {
+      "DRAFT": "Brouillon",
+      "SUBMITTED": "Soumise",
+      "APPROVED": "Approuvée",
+      "PARTIALLY_RECEIVED": "Partiellement réceptionnée",
+      "RECEIVED_CLOSED": "Réception terminée",
+      "CLOSED": "Clôturée",
+      "CANCELLED": "Annulée",
+      "REJECTED": "Rejetée"
+    },
+    "repairableStatuses": {
+      "REQUESTED": "Demandée",
+      "RELEASED": "Sortie magasin",
+      "SENT_FOR_REPAIR": "Envoyée en réparation",
+      "RETURNED_FROM_REPAIR": "Reçue de réparation",
+      "CLOSED": "Clôturée",
+      "SCRAPPED": "Rebut",
+      "CANCELLED": "Annulée"
+    },
+    "postingStates": {
+      "PENDING_POSTING": "À publier",
+      "POSTED": "Publié",
+      "POSTING_FAILED": "Publication en erreur",
+      "RECONCILED": "Rapproché"
+    },
+    "requisitions": {
+      "searchPlaceholder": "Rechercher un numéro de demande ou une origine",
+      "empty": "Aucune demande d'achat.",
+      "emptyDescription": "Créez une demande pour démarrer le flux d'achat.",
+      "kanbanEmpty": "Aucune demande",
+      "columns": {
+        "number": "Demande",
+        "status": "Statut",
+        "source": "Origine",
+        "updated": "Mise à jour",
+        "actions": "Actions"
+      },
+      "filters": {
+        "status": "Statut"
+      },
+      "actions": {
+        "open": "Ouvrir",
+        "submit": "Soumettre",
+        "approve": "Approuver",
+        "reject": "Rejeter",
+        "cancel": "Annuler",
+        "close": "Clôturer",
+        "menu": "Actions de la ligne"
+      },
+      "reject": {
+        "title": "Rejeter la demande",
+        "hint": "Le rejet est définitif et reste distinct de l'annulation pour l'audit.",
+        "reason": "Motif du rejet",
+        "reasonPlaceholder": "Expliquez le motif du rejet",
+        "confirm": "Rejeter la demande"
+      },
+      "history": {
+        "title": "Historique d'approbation",
+        "empty": "Aucune transition enregistrée.",
+        "loading": "Chargement de l'historique…"
+      }
+    },
+    "purchaseOrders": {
+      "create": "Créer un bon de commande",
+      "searchPlaceholder": "Rechercher un numéro de BC ou un fournisseur",
+      "empty": "Aucun bon de commande.",
+      "emptyDescription": "Créez un bon de commande depuis une demande approuvée.",
+      "kanbanEmpty": "Aucun bon de commande",
+      "columns": {
+        "number": "BC",
+        "status": "Statut",
+        "supplier": "Fournisseur",
+        "updated": "Mise à jour",
+        "actions": "Actions"
+      },
+      "filters": {
+        "status": "Statut",
+        "supplier": "Fournisseur"
+      },
+      "actions": {
+        "open": "Ouvrir",
+        "submit": "Soumettre",
+        "approve": "Approuver",
+        "receive": "Réceptionner",
+        "cancel": "Annuler",
+        "menu": "Actions de la ligne"
+      }
+    },
+    "repairables": {
+      "title": "Réparables",
+      "searchPlaceholder": "Rechercher un ordre, un article ou un numéro de série",
+      "empty": "Aucun ordre de réparation.",
+      "emptyDescription": "Envoyez une pièce réparable chez un prestataire pour suivre son cycle de réparation.",
+      "create": "Nouvel ordre de réparation",
+      "columns": {
+        "order": "Ordre",
+        "article": "Article",
+        "source": "Source",
+        "vendor": "Prestataire",
+        "status": "Statut",
+        "updated": "Mise à jour",
+        "actions": "Actions"
+      },
+      "filters": {
+        "status": "Statut",
+        "vendor": "Prestataire"
+      },
+      "actions": {
+        "open": "Ouvrir",
+        "release": "Sortir du magasin",
+        "send": "Envoyer en réparation",
+        "receiveBack": "Réceptionner",
+        "close": "Clôturer l'ordre",
+        "scrap": "Mettre au rebut",
+        "cancel": "Annuler",
+        "menu": "Actions de la ligne"
+      },
+      "form": {
+        "title": "Nouvel ordre de réparation",
+        "article": "Article",
+        "selectArticle": "Sélectionner un article",
+        "sourceLocation": "Emplacement source",
+        "selectSource": "Sélectionner la source",
+        "returnLocation": "Emplacement de retour",
+        "noReturnLocation": "Aucun emplacement de retour",
+        "quantity": "Quantité",
+        "reason": "Motif",
+        "serial": "Numéro de série",
+        "vendor": "Prestataire",
+        "noVendor": "Aucun prestataire",
+        "balancesTitle": "Stocks de l'article sélectionné",
+        "balancesEmpty": "Aucun stock disponible pour cet article.",
+        "balanceRow": "en stock {{onHand}}, réservé {{reserved}}, disponible {{available}}",
+        "cancel": "Annuler",
+        "submit": "Créer l'ordre de réparation"
+      }
+    },
+    "repairableAction": {
+      "dispatch": {
+        "title": "Envoyer en réparation",
+        "hint": "Renseignez le numéro de série et le prestataire pour assurer la traçabilité.",
+        "confirm": "Envoyer en réparation"
+      },
+      "scrap": {
+        "title": "Mettre au rebut",
+        "hint": "La mise au rebut est définitive et sort la quantité du stock si la pièce est revenue en magasin.",
+        "confirm": "Mettre au rebut"
+      },
+      "cancel": {
+        "title": "Annuler l'ordre de réparation",
+        "hint": "L'annulation restitue la quantité sortie à l'emplacement source.",
+        "confirm": "Annuler l'ordre"
+      },
+      "receive": {
+        "title": "Réceptionner la pièce réparée",
+        "hint": "Choisissez l'emplacement de rangement de la pièce réparée.",
+        "confirm": "Réceptionner"
+      },
+      "fields": {
+        "serial": "Numéro de série",
+        "vendor": "Prestataire",
+        "noVendor": "Aucun prestataire",
+        "reason": "Motif",
+        "reasonPlaceholder": "Expliquez la décision",
+        "returnLocation": "Emplacement de retour",
+        "selectLocation": "Sélectionner un emplacement"
+      },
+      "close": "Fermer"
+    },
+    "goodsReceipts": {
+      "title": "Réceptions",
+      "searchPlaceholder": "Rechercher une réception ou un numéro de BC",
+      "empty": "Aucune réception.",
+      "emptyDescription": "Enregistrez une réception depuis un bon de commande approuvé.",
+      "columns": {
+        "number": "Réception",
+        "po": "Bon de commande",
+        "status": "Statut",
+        "posting": "Publication",
+        "receivedAt": "Réceptionné"
+      },
+      "actions": {
+        "openPo": "Ouvrir le bon de commande",
+        "viewLines": "Voir les lignes",
+        "menu": "Actions de la ligne"
+      },
+      "lines": {
+        "title": "Lignes de réception",
+        "empty": "Aucune ligne sur cette réception.",
+        "loading": "Chargement des lignes…",
+        "columns": {
+          "article": "Article",
+          "location": "Emplacement",
+          "received": "Réceptionné",
+          "accepted": "Accepté",
+          "rejected": "Refusé",
+          "reason": "Motif du refus"
+        }
+      }
+    },
+    "posting": {
+      "title": "Publication ERP",
+      "state": "Statut de publication",
+      "error": "Erreur de publication",
+      "errorPlaceholder": "Détail de l'erreur (optionnel)",
+      "apply": "Mettre à jour la publication",
+      "hint": "Rapprochez le statut de publication ERP après un rejeu de l'intégration sortante."
+    },
+    "suppliers": {
+      "title": "Fournisseurs",
+      "new": "Nouveau fournisseur",
+      "edit": "Modifier le fournisseur",
+      "empty": "Aucun fournisseur.",
+      "search": "Rechercher code ou nom fournisseur",
+      "columns": {
+        "code": "Code",
+        "name": "Nom",
+        "status": "Statut",
+        "leadTime": "Délai (j)",
+        "active": "Actif"
+      },
+      "fields": {
+        "code": "Code",
+        "name": "Nom",
+        "status": "Statut",
+        "paymentTerms": "Conditions de paiement",
+        "leadTime": "Délai par défaut (jours)",
+        "active": "Actif"
+      },
+      "status": {
+        "PREFERRED": "Préféré",
+        "APPROVED": "Approuvé",
+        "BLOCKED": "Bloqué",
+        "UNDER_EVALUATION": "En évaluation"
+      },
+      "risk": {
+        "LOW": "Risque faible",
+        "MEDIUM": "Risque moyen",
+        "HIGH": "Risque élevé"
+      },
+      "scorecard": {
+        "title": "Fiche de performance",
+        "otif": "Livraison à temps",
+        "avgLeadTime": "Délai moyen (j)",
+        "deliveryAccuracy": "Précision livraison",
+        "avgPrice": "Prix moyen",
+        "openPos": "BCs ouverts",
+        "completedPos": "BCs clôturés",
+        "lastPurchase": "Dernier achat",
+        "rejectedPct": "Quantité rejetée",
+        "risk": "Niveau de risque",
+        "lastDeliveries": "Livraisons récentes",
+        "lastDeliveriesEmpty": "Aucune livraison réceptionnée.",
+        "deliveryColumns": {
+          "receivedAt": "Réception",
+          "po": "Bon de commande",
+          "article": "Article",
+          "orderedQty": "Commandé",
+          "acceptedQty": "Accepté",
+          "rejectedQty": "Rejeté",
+          "leadTime": "Délai (j)"
+        }
+      },
+      "sources": {
+        "title": "Sources d'approvisionnement",
+        "add": "Ajouter une source",
+        "edit": "Modifier la source",
+        "empty": "Aucune source configurée.",
+        "resultCount_one": "{{count}} source",
+        "resultCount_other": "{{count}} sources",
+        "preferred": "Préférée",
+        "setPreferred": "Définir comme préférée",
+        "deactivate": "Désactiver",
+        "columns": {
+          "supplier": "Fournisseur",
+          "article": "Article",
+          "priceHint": "Prix indicatif",
+          "lastPrice": "Dernier prix",
+          "avgPrice": "Prix moyen",
+          "currency": "Devise",
+          "lastPurchase": "Dernier achat",
+          "moq": "Qté min",
+          "leadTime": "Délai (j)",
+          "actions": "Actions"
+        },
+        "fields": {
+          "priority": "Priorité",
+          "leadTime": "Délai (jours)",
+          "priceHint": "Prix unitaire indicatif",
+          "moq": "Qté min de commande",
+          "supplierArticleCode": "Référence fournisseur",
+          "preferred": "Source préférée"
+        }
+      },
+      "contacts": {
+        "title": "Contacts",
+        "add": "Ajouter un contact",
+        "edit": "Modifier le contact",
+        "empty": "Aucun contact enregistré.",
+        "resultCount_one": "{{count}} contact",
+        "resultCount_other": "{{count}} contacts",
+        "primary": "Principal",
+        "roles": {
+          "PURCHASING": "Achats",
+          "SALES": "Ventes",
+          "TECHNICAL": "Technique"
+        },
+        "fields": {
+          "name": "Nom du contact",
+          "role": "Rôle",
+          "phone": "Téléphone",
+          "email": "E-mail",
+          "primary": "Contact principal"
+        }
+      },
+      "purchaseHistory": {
+        "title": "Historique d'achat",
+        "empty": "Aucun historique d'achat pour ce fournisseur.",
+        "columns": {
+          "orderedAt": "Date",
+          "po": "Bon de commande",
+          "article": "Article",
+          "orderedQty": "Quantité",
+          "unitPrice": "Prix unitaire",
+          "status": "Statut"
+        }
+      },
+      "comparison": {
+        "title": "Comparaison fournisseurs",
+        "hint": "La note composite combine prix, délai et risque fournisseur.",
+        "ratingValue": "{{stars}} sur {{max}}",
+        "columns": {
+          "supplier": "Fournisseur",
+          "leadTime": "Délai (j)",
+          "lastPrice": "Dernier prix",
+          "risk": "Risque",
+          "rating": "Note",
+          "actions": "Actions"
+        }
+      },
+      "prices": {
+        "title": "Tarifs",
+        "new": "Ajouter un prix",
+        "empty": "Aucun tarif configuré.",
+        "fields": {
+          "article": "Article",
+          "unitPrice": "Prix unitaire",
+          "minQty": "Qté min",
+          "validFrom": "Valide du",
+          "validTo": "Valide au"
+        }
+      },
+      "documents": {
+        "title": "Documents",
+        "new": "Ajouter un lien documentaire",
+        "empty": "Aucun lien documentaire.",
+        "fields": {
+          "ref": "Référence document",
+          "purpose": "Objet",
+          "primary": "Principal",
+          "validFrom": "Valide du",
+          "validTo": "Valide au"
+        }
+      }
+    },
+    "requisition": {
+      "priority": "Priorité d'achat",
+      "priorityValues": {
+        "EMERGENCY": "Urgence",
+        "HIGH": "Haute",
+        "NORMAL": "Normale",
+        "LOW": "Basse"
+      }
+    },
+    "receive": {
+      "title": "Enregistrer une réception",
+      "hint": "Saisissez les quantités reçues par ligne ouverte, puis validez la réception en une seule opération.",
+      "purchaseOrder": "Bon de commande",
+      "selectPo": "Sélectionner un bon de commande",
+      "noPo": "Aucun bon de commande sélectionné.",
+      "loadingLines": "Chargement des lignes du bon de commande…",
+      "linesEmpty": "Ce bon de commande n'a aucune ligne ouverte à réceptionner.",
+      "columns": {
+        "article": "Article",
+        "remaining": "Restant",
+        "location": "Emplacement",
+        "receivedQty": "Reçu",
+        "rejectedQty": "Refusé",
+        "accepted": "Accepté",
+        "rejectionReason": "Motif du refus"
+      },
+      "selectLocation": "Sélectionner un emplacement",
+      "cancel": "Annuler",
+      "post": "Valider la réception",
+      "errors": {
+        "noLines": "Saisissez une quantité reçue sur au moins une ligne.",
+        "location": "Sélectionnez un emplacement pour chaque ligne réceptionnée.",
+        "overRemaining": "La quantité reçue ne peut pas dépasser la quantité restante.",
+        "rejectedExceeds": "La quantité refusée ne peut pas dépasser la quantité reçue."
+      },
+      "fulfillmentAction": "Action d'affectation",
+      "fulfillmentValues": {
+        "STOCK_ONLY": "Stock uniquement",
+        "RESERVE_FOR_DEMAND": "Réserver pour la demande",
+        "ISSUE_TO_DEMAND": "Sortir pour la demande"
+      }
+    },
+    "poWorkspace": {
+      "title": "Bon de commande",
+      "loading": "Chargement du bon de commande…",
+      "noSelection": "Aucun bon de commande sélectionné.",
+      "noSupplier": "Aucun fournisseur",
+      "lateByDays_one": "En retard de {{count}} jour",
+      "lateByDays_other": "En retard de {{count}} jours",
+      "grandTotal": "Total général",
+      "grandTotalPartial": "partiel",
+      "tabs": {
+        "general": "Général",
+        "lines": "Lignes",
+        "timeline": "Chronologie",
+        "receipts": "Réceptions",
+        "documents": "Documents"
+      },
+      "fields": {
+        "poNumber": "N° BC",
+        "supplier": "Fournisseur",
+        "status": "Statut",
+        "posting": "Comptabilisation",
+        "requisition": "Demande d'origine",
+        "createdAt": "Créé le",
+        "updatedAt": "Mis à jour",
+        "orderedAt": "Commandé le",
+        "approvedAt": "Approuvé le",
+        "expectedDelivery": "Livraison prévue"
+      },
+      "lines": {
+        "empty": "Aucune ligne sur ce bon de commande.",
+        "article": "Article",
+        "ordered": "Commandé",
+        "received": "Reçu",
+        "remaining": "Restant",
+        "unitPrice": "Prix unitaire",
+        "lineTotal": "Total ligne"
+      },
+      "timeline": {
+        "CREATED": "Créé",
+        "SUBMITTED": "Soumis",
+        "APPROVED": "Approuvé",
+        "RECEIVED": "Reçu",
+        "CLOSED": "Clôturé",
+        "CANCELLED": "Annulé",
+        "reached": "Atteint",
+        "pending": "En attente"
+      },
+      "receipts": {
+        "empty": "Aucune réception pour l'instant.",
+        "receivedAt": "Reçu le",
+        "open": "Ouvrir le détail de la réception"
+      },
+      "documents": {
+        "empty": "Aucun lien documentaire.",
+        "add": "Ajouter",
+        "refPlaceholder": "Référence ou URL",
+        "fields": {
+          "ref": "Référence document",
+          "purpose": "Objet"
+        }
+      },
+      "actions": {
+        "close": "Fermer",
+        "submit": "Soumettre",
+        "approve": "Approuver",
+        "cancel": "Annuler",
+        "receive": "Réceptionner",
+        "print": "Imprimer"
+      },
+      "print": {
+        "pageTitle": "Bon de commande",
+        "heading": "Bon de commande",
+        "confidential": "Confidentiel",
+        "reference": "Référence",
+        "issueDate": "Date d'émission",
+        "header": "En-tête",
+        "lines": "Lignes",
+        "buyer": "Acheteur",
+        "approver": "Approbateur",
+        "supplierSig": "Fournisseur",
+        "signature": "Signature",
+        "date": "Date"
+      }
+    },
+    "repairableDetail": {
+      "title": "Ordre réparable",
+      "loading": "Chargement de l'ordre réparable…",
+      "noSelection": "Aucun ordre réparable sélectionné.",
+      "warrantyActive": "Sous garantie",
+      "sections": {
+        "summary": "Résumé",
+        "timeline": "Chronologie",
+        "history": "Historique de réparation",
+        "documents": "Documents",
+        "closeFields": "Détails de clôture"
+      },
+      "fields": {
+        "article": "Article",
+        "serial": "N° de série",
+        "reason": "Motif",
+        "vendor": "Réparateur",
+        "sentAt": "Envoyé",
+        "returnedAt": "Retourné",
+        "repairCost": "Coût de réparation",
+        "warrantyUntil": "Garantie jusqu'au",
+        "warrantyActive": "Garantie active",
+        "workOrder": "Ordre de travail"
+      },
+      "timeline": {
+        "REQUESTED": "Demandé",
+        "RELEASED": "Libéré",
+        "SENT": "Envoyé",
+        "RETURNED": "Retourné",
+        "CLOSED": "Clôturé",
+        "reached": "Atteint",
+        "pending": "En attente"
+      },
+      "repairVsReplace": {
+        "title": "Réparer ou remplacer",
+        "repairCost": "Coût réparation",
+        "replacementCost": "Coût remplacement",
+        "recommendation": "Recommandation",
+        "REPAIR": "Réparer",
+        "REPLACE": "Remplacer",
+        "REVIEW": "À revoir",
+        "INSUFFICIENT_DATA": "Données insuffisantes",
+        "insufficientData": "Historique de coûts insuffisant pour recommander réparation ou remplacement.",
+        "reasons": {}
+      },
+      "history": {
+        "repairCount": "Réparations antérieures",
+        "avgCost": "Coût moyen",
+        "avgTurnaround": "Délai moyen",
+        "days": "{{days}} jours"
+      },
+      "documents": {
+        "empty": "Aucun lien documentaire.",
+        "add": "Ajouter",
+        "fields": {
+          "ref": "Référence document",
+          "purpose": "Objet"
+        }
+      },
+      "actions": {
+        "close": "Fermer",
+        "release": "Libérer",
+        "send": "Envoyer",
+        "receiveBack": "Réceptionner",
+        "closeOrder": "Clôturer",
+        "scrap": "Mettre au rebut",
+        "cancel": "Annuler l'ordre"
+      }
+    },
+    "archive": {
+      "title": "Archives approvisionnement",
+      "requisitions": "Demandes",
+      "purchaseOrders": "Bons de commande",
+      "repairables": "Reparables"
+    }
+  },
+  "stockImpact": {
+    "title": "Impact stock",
+    "loading": "Projection de l'impact stock…",
+    "empty": "Aucune projection disponible.",
+    "current": "Stock actuel",
+    "currentOnHand": "En stock",
+    "available": "Disponible",
+    "incoming": "BC en cours",
+    "delta": "Cet écart",
+    "projected": "Projeté"
+  },
+  "documents": {
+    "purposes": {
+      "INVOICE": "Facture",
+      "CERTIFICATE": "Certificat",
+      "QUOTATION": "Devis",
+      "PHOTO": "Photo",
+      "OTHER": "Autre",
+      "CONTRACT": "Contrat",
+      "DATASHEET": "Fiche technique"
+    }
+  },
+  "article": {
+    "sections": {
+      "identity": "Identification",
+      "sourcing": "Sourcing",
+      "replenishment": "Réapprovisionnement",
+      "criticalSpare": "Pièce critique",
+      "shelfLife": "Durée de vie",
+      "equivalents": "Équivalents",
+      "repairableHistory": "Historique réparable",
+      "purchaseHistory": "Historique d'achat",
+      "documents": "Documents"
+    },
+    "consumption": {
+      "title": "Consommation mensuelle",
+      "loading": "Chargement…",
+      "empty": "Aucune consommation sur la période."
+    },
+    "reservations": {
+      "ungrouped": "Autres réservations",
+      "lineCount_one": "{{count}} ligne",
+      "lineCount_other": "{{count}} lignes"
+    },
+    "fields": {
+      "manufacturerName": "Fabricant",
+      "manufacturerPartNumber": "Référence fabricant",
+      "oemPartNumber": "Référence OEM",
+      "replenishmentPolicy": "Politique de réapprovisionnement",
+      "eoq": "QEC",
+      "moq": "Qté min commande",
+      "maxOrder": "Qté max commande",
+      "orderMultiple": "Multiple de commande",
+      "leadTimeDays": "Délai (jours)",
+      "reviewPeriodDays": "Période de révision (jours)",
+      "abcClass": "Classe ABC",
+      "xyzClass": "Classe XYZ",
+      "isCriticalSpare": "Pièce de rechange critique",
+      "requiresExpiration": "Suivi de péremption requis",
+      "shelfLifeDays": "Durée de vie (jours)",
+      "requiresBatchTracking": "Suivi par lot requis"
+    },
+    "actions": {
+      "calculateAbc": "Calculer ABC",
+      "calculateXyz": "Calculer XYZ",
+      "addEquivalent": "Ajouter un équivalent",
+      "addDocumentLink": "Ajouter un lien documentaire",
+      "createRequisitionForShortage": "Créer une demande d'achat"
+    },
+    "equivalents": {
+      "empty": "Aucun équivalent configuré.",
+      "columns": {
+        "equivalent": "Article équivalent",
+        "type": "Type d'équivalence",
+        "bidirectional": "Bidirectionnel",
+        "notes": "Notes"
+      },
+      "fields": {
+        "equivalentArticle": "Article équivalent",
+        "type": "Type d'équivalence",
+        "bidirectional": "Bidirectionnel",
+        "notes": "Notes"
+      }
+    },
+    "purchaseHistory": {
+      "empty": "Aucun historique d'achat.",
+      "columns": {
+        "po": "BC",
+        "orderedAt": "Date commande",
+        "supplier": "Fournisseur",
+        "unitPrice": "Prix unitaire",
+        "orderedQty": "Qté commandée",
+        "receivedQty": "Qté reçue",
+        "status": "Statut"
+      }
+    },
+    "repairableHistory": {
+      "empty": "Aucun historique réparable.",
+      "columns": {
+        "order": "Ordre",
+        "qty": "Qté",
+        "status": "Statut",
+        "reason": "Motif",
+        "cost": "Coût réparation",
+        "date": "Date"
+      }
+    },
+    "documents": {
+      "empty": "Aucun lien documentaire.",
+      "columns": {
+        "ref": "Référence",
+        "purpose": "Objet",
+        "primary": "Principal",
+        "validFrom": "Valide du"
+      }
+    },
+    "sourcing": {
+      "note": "Les fournisseurs préférés sont gérés via le répertoire Fournisseurs en liant les articles aux sources fournisseur."
+    }
+  },
+  "wo": {
+    "shortage": {
+      "title": "Rupture de pièces",
+      "description": "Certaines pièces planifiées ne sont pas entièrement disponibles en stock.",
+      "createRequisition": "Créer une demande",
+      "requisitionCreated": "Demande d'achat créée",
+      "columns": {
+        "article": "Article",
+        "requested": "Demandé",
+        "available": "Disponible",
+        "shortage": "Manque"
+      }
+    }
+  },
+  "topology": {
+    "noSelection": "Sélectionnez un magasin pour afficher le détail",
+    "createTitle": "Nouveau magasin",
+    "emptyLocations": "Aucun emplacement dans ce magasin.",
+    "columns": {
+      "code": "Code",
+      "name": "Nom",
+      "status": "Statut",
+      "default": "Défaut",
+      "active": "Actif"
+    },
+    "sections": {
+      "warehouse": "Magasin",
+      "locations": "Emplacements"
+    },
+    "fields": {
+      "code": "Code",
+      "name": "Nom",
+      "active": "Magasin actif",
+      "locationCode": "Code emplacement",
+      "locationName": "Nom emplacement",
+      "defaultBin": "Emplacement par défaut"
+    },
+    "actions": {
+      "saveWarehouse": "Enregistrer le magasin",
+      "addLocation": "Ajouter un emplacement",
+      "saveLocation": "Enregistrer l'emplacement"
+    }
+  }
+}

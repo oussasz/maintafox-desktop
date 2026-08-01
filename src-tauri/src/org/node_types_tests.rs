@@ -10,7 +10,7 @@ mod tests {
     use sea_orm_migration::MigratorTrait;
 
     use crate::errors::AppError;
-    use crate::org::node_types::{self, CreateNodeTypePayload};
+    use crate::org::node_types::{self, CreateNodeTypePayload, UpdateNodeTypePayload};
     use crate::org::relationship_rules::{self, CreateRelationshipRulePayload};
     use crate::org::structure_model::{self, CreateStructureModelPayload};
 
@@ -58,6 +58,7 @@ mod tests {
             code: "SITE".to_string(),
             label: "Site".to_string(),
             icon_key: Some("building".to_string()),
+            color: None,
             depth_hint: Some(0),
             can_host_assets: true,
             can_own_work: true,
@@ -74,6 +75,7 @@ mod tests {
             code: "ZONE".to_string(),
             label: "Zone".to_string(),
             icon_key: None,
+            color: None,
             depth_hint: Some(1),
             can_host_assets: true,
             can_own_work: false,
@@ -108,6 +110,7 @@ mod tests {
             code: "ALL_TRUE".to_string(),
             label: "All True".to_string(),
             icon_key: None,
+            color: None,
             depth_hint: None,
             can_host_assets: true,
             can_own_work: true,
@@ -138,6 +141,7 @@ mod tests {
             code: "ALL_FALSE".to_string(),
             label: "All False".to_string(),
             icon_key: None,
+            color: None,
             depth_hint: None,
             can_host_assets: false,
             can_own_work: false,
@@ -194,7 +198,40 @@ mod tests {
         let err = node_types::create_node_type(&db, site_payload(model_id))
             .await
             .expect_err("should reject on published model");
-        assert!(matches!(err, AppError::ValidationFailed(_)));
+        assert!(matches!(err, AppError::OrgValidationFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn v4_cannot_update_node_type_on_published_model() {
+        let db = setup().await;
+        let model_id = create_draft_model(&db).await;
+        let nt = node_types::create_node_type(&db, site_payload(model_id))
+            .await
+            .expect("create type in draft");
+        structure_model::publish_model(&db, model_id, 1)
+            .await
+            .expect("publish should work");
+
+        let err = node_types::update_node_type(
+            &db,
+            UpdateNodeTypePayload {
+                id: nt.id,
+                label: Some("Renamed".to_string()),
+                icon_key: None,
+                color: None,
+                depth_hint: None,
+                can_host_assets: None,
+                can_own_work: None,
+                can_carry_cost_center: None,
+                can_aggregate_kpis: None,
+                can_receive_permits: None,
+            },
+        )
+        .await
+        .expect_err("should reject update on published model");
+        assert!(matches!(err, AppError::OrgValidationFailed(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("draft"), "error should mention draft, got: {msg}");
     }
 
     #[tokio::test]
@@ -206,7 +243,7 @@ mod tests {
         let err = node_types::create_node_type(&db, site_payload(model_id))
             .await
             .expect_err("duplicate code should be rejected");
-        assert!(matches!(err, AppError::ValidationFailed(_)));
+        assert!(matches!(err, AppError::OrgValidationFailed(_)));
     }
 
     // ── V5 — Root type uniqueness ─────────────────────────────────────────
@@ -225,6 +262,7 @@ mod tests {
             code: "CAMPUS".to_string(),
             label: "Campus".to_string(),
             icon_key: None,
+            color: None,
             depth_hint: Some(0),
             can_host_assets: false,
             can_own_work: false,
@@ -237,10 +275,10 @@ mod tests {
             .await
             .expect_err("second root should be rejected");
         match &err {
-            AppError::ValidationFailed(msgs) => {
-                assert!(msgs[0].contains("root"), "message should mention root: {}", msgs[0]);
+            AppError::OrgValidationFailed(issues) => {
+                assert_eq!(issues[0].code, "ORG_TYPE_ROOT_EXISTS");
             }
-            other => panic!("expected ValidationFailed, got {:?}", other),
+            other => panic!("expected OrgValidationFailed, got {:?}", other),
         }
     }
 
@@ -259,6 +297,7 @@ mod tests {
             code: "UNIT".to_string(),
             label: "Unit".to_string(),
             icon_key: None,
+            color: None,
             depth_hint: Some(2),
             can_host_assets: false,
             can_own_work: true,
@@ -342,7 +381,7 @@ mod tests {
         let err = relationship_rules::create_rule(&db, dup)
             .await
             .expect_err("duplicate should be rejected");
-        assert!(matches!(err, AppError::ValidationFailed(_)));
+        assert!(matches!(err, AppError::OrgValidationFailed(_)));
     }
 
     #[tokio::test]
@@ -366,10 +405,10 @@ mod tests {
         .await
         .expect_err("should reject on published model");
         match &err {
-            AppError::ValidationFailed(msgs) => {
-                assert!(msgs[0].contains("draft"), "message should mention draft: {}", msgs[0]);
+            AppError::OrgValidationFailed(issues) => {
+                assert_eq!(issues[0].code, "ORG_RULE_DRAFT_ONLY");
             }
-            other => panic!("expected ValidationFailed, got {:?}", other),
+            other => panic!("expected OrgValidationFailed, got {:?}", other),
         }
     }
 
@@ -429,7 +468,7 @@ mod tests {
         let err = relationship_rules::delete_rule(&db, rule.id)
             .await
             .expect_err("delete should fail on published model");
-        assert!(matches!(err, AppError::ValidationFailed(_)));
+        assert!(matches!(err, AppError::OrgValidationFailed(_)));
     }
 
     #[tokio::test]

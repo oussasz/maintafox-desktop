@@ -1,0 +1,33 @@
+/**
+ * RAMS Visual Lab — CAD-style canvas chrome (IEC 61025-inspired).
+ * Pin highlight while dragging connections (AntV-style port feedback).
+ */
+
+.rams-lab-flow .react-flow__edge-path {
+  shape-rendering: crispEdges;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Valid drop target while dragging a connection */
+.rams-lab-flow .react-flow__handle.connecting,
+.rams-lab-flow .react-flow__handle.valid {
+  opacity: 1 !important;
+  width: 6px !important;
+  height: 6px !important;
+  border-radius: 1px !important;
+  background: rgb(59 130 246 / 0.95) !important;
+  box-shadow: 0 0 0 1px rgb(15 23 42 / 0.9);
+}
+
+.rams-lab-flow .react-flow__handle.connecting {
+  background: rgb(148 163 184 / 0.85) !important;
+}
+
+.rams-lab-annotation {
+  font-feature-settings: "tnum" 1;
+}
+
+.rams-lab-flow.rams-lab-flow-dark .react-flow__handle.connecting,
+.rams-lab-flow.rams-lab-flow-dark .react-flow__handle.valid {
+  box-shadow: 0 0 0 1px rgb(226 232 240 / 0.35);
+}

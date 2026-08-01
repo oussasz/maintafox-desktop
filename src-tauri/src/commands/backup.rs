@@ -26,7 +26,12 @@ pub async fn run_manual_backup(
     payload: RunManualBackupPayload,
 ) -> AppResult<BackupRunResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     // Basic path sanitization: reject empty paths
@@ -45,7 +50,12 @@ pub async fn run_manual_backup(
 #[tauri::command]
 pub async fn list_backup_runs(state: State<'_, AppState>, limit: Option<i64>) -> AppResult<Vec<BackupRunRecord>> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
     backup::list_backup_runs(&state.db, limit.unwrap_or(20)).await
 }
 
@@ -54,7 +64,12 @@ pub async fn list_backup_runs(state: State<'_, AppState>, limit: Option<i64>) ->
 #[tauri::command]
 pub async fn validate_backup_file(state: State<'_, AppState>, backup_path: String) -> AppResult<RestoreTestResult> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
     backup::validate_backup_file(&state.db, &backup_path).await
 }
 
@@ -76,7 +91,12 @@ pub struct FactoryResetPayload {
 #[tauri::command]
 pub async fn factory_reset_stub(state: State<'_, AppState>, payload: FactoryResetPayload) -> AppResult<()> {
     let user = require_session!(state);
-    require_permission!(state, &user, "adm.settings", PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
     require_step_up!(state);
 
     // Validate confirmation phrase (accept both FR and EN)

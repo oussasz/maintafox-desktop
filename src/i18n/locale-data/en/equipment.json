@@ -38,6 +38,7 @@
       "name": "Name",
       "class": "Class",
       "family": "Family",
+      "subfamily": "Subfamily",
       "parentEquipment": "Parent equipment",
       "criticality": "Criticality",
       "status": "Status",
@@ -73,7 +74,9 @@
     "maintenance": "Under maintenance",
     "decommissioned": "Decommissioned",
     "standby": "Standby",
-    "scrapped": "Scrapped"
+    "scrapped": "Scrapped",
+    "inStock": "In stock",
+    "outOfService": "Out of service"
   },
   "action": {
     "addMeter": "Add meter",
@@ -82,10 +85,365 @@
     "reportFault": "Report fault",
     "createDI": "Create intervention request"
   },
+  "actions": {
+    "createWo": "Create Work Order",
+    "createDi": "Create DI",
+    "history": "History",
+    "more": "More actions"
+  },
+  "history": {
+    "tabs": {
+      "details": "Details",
+      "history": "History"
+    },
+    "summary": {
+      "title": "Equipment life",
+      "created": "Created",
+      "age": "Age",
+      "wo": "WO",
+      "pm": "PM",
+      "failures": "Failures",
+      "availability": "Availability",
+      "ageYm": "{{years}}y {{months}}m",
+      "ageM": "{{months}}m",
+      "ageD": "{{days}}d"
+    },
+    "today": "Today",
+    "empty": "No history events for this period.",
+    "searchPlaceholder": "Search history...",
+    "loading": "Loading history...",
+    "open": "Open",
+    "eventTypes": {
+      "asset_created": "Created",
+      "asset_updated": "Updated",
+      "decommissioned": "Decommissioned",
+      "assignment_changed": "Assignment",
+      "location_changed": "Location",
+      "org_changed": "Organization",
+      "parent_changed": "Parent",
+      "child_changed": "Child",
+      "wo_created": "WO created",
+      "wo_started": "WO started",
+      "wo_closed": "WO closed",
+      "di_created": "DI created",
+      "di_closed": "DI closed",
+      "pm_scheduled": "PM scheduled",
+      "pm_executed": "PM executed",
+      "inspection_recorded": "Inspection",
+      "failure_recorded": "Failure",
+      "meter_reading": "Meter",
+      "document_linked": "Document",
+      "photo_added": "Photo"
+    },
+    "filters": {
+      "types": {
+        "all": "All",
+        "ot": "WO",
+        "di": "DI",
+        "pm": "PM",
+        "inspection": "Inspection",
+        "documents": "Documents",
+        "failures": "Failures"
+      },
+      "periods": {
+        "today": "Today",
+        "last_7_days": "7 days",
+        "last_30_days": "30 days",
+        "this_year": "This year",
+        "all": "All"
+      }
+    }
+  },
   "empty": {
     "list": "No equipment found.",
     "listHint": "Create your first equipment record or adjust the filters.",
     "noMeters": "No meters recorded.",
     "noDocuments": "No documents attached."
+  },
+  "registry": {
+    "title": "Asset Registry",
+    "refresh": "Refresh",
+    "resultCount": "{{count}} result(s)",
+    "viewTable": "Table",
+    "viewTree": "Tree",
+    "search": {
+      "placeholder": "Search by code, name, serial number…",
+      "apply": "Search",
+      "clear": "Clear"
+    },
+    "filters": {
+      "all": "All"
+    },
+    "detail": {
+      "noSelection": "Select an asset to view its details.",
+      "loadError": "Failed to load asset details.",
+      "hierarchy": "Hierarchy",
+      "noParent": "No parent equipment linked.",
+      "childAssets": "Child equipment",
+      "noChildren": "No child assets linked.",
+      "noEvents": "No lifecycle events recorded.",
+      "primary": "Primary",
+      "documentCount": "{{count}} document(s) linked"
+    }
+  },
+  "createForm": {
+    "button": "Create asset",
+    "title": "Create asset",
+    "description": "Create a new asset and assign it to an organization node.",
+    "catalogLoadFailed": "Could not load reference catalog or organization tree. Check your connection and try again.",
+    "orgTreeLoadFailed": "Could not load the organization tree.",
+    "referenceCatalogLoadFailed": "Could not load reference data.",
+    "validation": {
+      "referenceRequired": "Select class, criticality, and status from the catalog.",
+      "orgRequired": "Select an organization node."
+    },
+    "sections": {
+      "identification": "Identification",
+      "classification": "Classification",
+      "organization": "Organization",
+      "technical": "Technical / Manufacturer",
+      "lifecycle": "Lifecycle",
+      "images": "Images",
+      "attachments": "Attachments",
+      "rams": "RAMS (advanced)",
+      "ramsDescription": "Optional schedule-based exposure settings for reliability."
+    },
+    "images": {
+      "add": "Add images",
+      "empty": "No images staged yet",
+      "hint": "Pick images from disk. Drag-and-drop may fall back to the file dialog on desktop.",
+      "primary": "Primary",
+      "remove": "Remove",
+      "partialUploadFailed": "Asset created, but some photos failed to upload. You can retry from the asset gallery.",
+      "uploadFailedCount": "{{failed}} of {{total}} photo(s) failed to upload."
+    },
+    "attachments": {
+      "deferred": "Attachments will be available after the asset is created.",
+      "empty": "No attachments",
+      "add": "Add file",
+      "remove": "Remove"
+    },
+    "selectCriticality": "Select criticality",
+    "selectClass": "Select equipment class",
+    "selectFamilyOptional": "Family (optional)",
+    "selectSubfamilyOptional": "Subfamily (optional)",
+    "selectScheduleClass": "Select schedule class",
+    "fields": {
+      "ramsScheduleClass": "Operating schedule (schedule class)"
+    },
+    "selectStatus": "Select lifecycle status",
+    "selectOrg": "Select organization node",
+    "familyNone": "— None —",
+    "parentAsset": "Parent asset",
+    "parentPlaceholder": "Search parent equipment…",
+    "parentSearching": "Searching…",
+    "parentMinChars": "Type at least 2 characters to search.",
+    "parentNoResults": "No matching equipment.",
+    "parentTreeSuggestions": "Current branch",
+    "searchParent": "Search parent asset",
+    "clearParent": "Clear parent",
+    "descriptionLabel": "Description",
+    "maintainableBoundary": "Maintainable boundary",
+    "submit": "Create asset"
+  },
+  "editForm": {
+    "button": "Edit",
+    "title": "Edit asset",
+    "description": "Update identity and lifecycle data for this asset.",
+    "lastModified": "Last modified: {{date}}",
+    "submit": "Save changes",
+    "unsavedTitle": "Unsaved changes",
+    "unsavedDescription": "You have unsaved changes. Do you want to keep editing or discard them?",
+    "keepEditing": "Keep editing",
+    "discardChanges": "Discard changes",
+    "imagesEmpty": "No photos yet",
+    "imagesHint": "Upload photos for this asset. Drag-and-drop may fall back to the file dialog on desktop."
+  },
+  "validation": {
+    "fieldRequired": "This field is required."
+  },
+  "tree": {
+    "search": "Search in tree",
+    "empty": "No matching assets in tree.",
+    "ariaLabel": "Asset tree",
+    "expandAll": "Expand all",
+    "collapseAll": "Collapse all",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "childCount": "{{count}} child assets"
+  },
+  "contextMenu": {
+    "addChild": "Add child asset",
+    "edit": "Edit",
+    "copyCode": "Copy code",
+    "move": "Move",
+    "decommission": "Decommission"
+  },
+  "qr": {
+    "button": "QR code",
+    "download": "Download",
+    "print": "Print",
+    "dialogTitle": "Asset QR code",
+    "scanHint": "Scan to open this asset in Maintafox.",
+    "scanId": "Asset ID",
+    "expand": "Expand QR code",
+    "collapse": "Collapse QR code",
+    "classLabel": "Class",
+    "siteLabel": "Site",
+    "companyLabel": "Company",
+    "downloadPng": "Download PNG",
+    "printLabel": "Print",
+    "close": "Close",
+    "export": {
+      "savedTitle": "QR downloaded successfully.",
+      "failedTitle": "Export failed",
+      "openFolder": "Open folder",
+      "printStartedTitle": "Print dialog opened",
+      "printStartedDescription": "Use the system print dialog in the temporary window. The main app stays open."
+    }
+  },
+  "binding": {
+    "title": "Cross-Module Bindings",
+    "notImplemented": "Not yet available",
+    "domains": {
+      "di": "Intervention Requests",
+      "wo": "Work Orders",
+      "pm": "PM Plans",
+      "failure": "Failure Events",
+      "document": "Documents",
+      "iot": "IoT Signals",
+      "erp": "ERP Mappings"
+    }
+  },
+  "import": {
+    "page": {
+      "title": "Equipment Import"
+    },
+    "steps": {
+      "upload": "Upload",
+      "validate": "Validate",
+      "preview": "Preview",
+      "apply": "Apply",
+      "done": "Done"
+    },
+    "status": {
+      "valid": "Valid",
+      "warning": "Warning",
+      "error": "Error"
+    },
+    "upload": {
+      "title": "Upload a CSV File",
+      "description": "Select a CSV file containing the equipment records to import.",
+      "hint": "Drag a CSV file here or click to browse.",
+      "selectFile": "Choose File"
+    },
+    "validate": {
+      "title": "Data Validation",
+      "description": "File: {{filename}} — {{rows}} row(s) loaded.",
+      "file": "File",
+      "rows": "Rows",
+      "run": "Run Validation"
+    },
+    "preview": {
+      "title": "Preview and Inspect",
+      "description": "Review each row before proceeding with the import. Conflicts are clearly identified.",
+      "total": "Total",
+      "columns": {
+        "code": "Code",
+        "externalKey": "External Key",
+        "status": "Status",
+        "action": "Action",
+        "messages": "Messages"
+      },
+      "includeWarnings": "Include rows with warnings"
+    },
+    "apply": {
+      "run": "Apply Import"
+    },
+    "done": {
+      "title": "Import Complete",
+      "description": "The import has been successfully applied to the asset registry.",
+      "created": "Created",
+      "updated": "Updated",
+      "skipped": "Skipped",
+      "errored": "Errored",
+      "newImport": "New Import"
+    },
+    "warnings": {
+      "reclassification": "Reclassification of an existing asset requires manual review.",
+      "decommission": "Decommissioning via import is forbidden. Use the lifecycle workflow."
+    }
+  },
+  "decommission": {
+    "title": "Decommission Asset",
+    "description": "Review dependencies before decommissioning this asset.",
+    "action": "Decommission",
+    "confirm": "Confirm Decommission",
+    "cancel": "Cancel",
+    "success": "Asset decommissioned successfully.",
+    "targetStatus": "Target status",
+    "reasonLabel": "Reason",
+    "reasonPlaceholder": "Explain the reason for decommissioning…",
+    "blockerBanner": "Cannot decommission — {{count}} open work item(s). Close them first.",
+    "blockerDetail": "blocks decommission",
+    "pmWarning": "will be suspended",
+    "iotWarning": "will be unlinked",
+    "docInfo": "remain archived",
+    "statuses": {
+      "decommissioned": "Decommissioned",
+      "scrapped": "Scrapped"
+    }
+  },
+  "health": {
+    "title": "Health",
+    "good": "Good",
+    "fair": "Fair",
+    "poor": "Poor",
+    "noData": "No health score",
+    "unavailable": "Health data unavailable"
+  },
+  "photos": {
+    "title": "Photos",
+    "upload": "Upload",
+    "uploadFirst": "Upload a photo",
+    "uploaded": "Photo uploaded.",
+    "delete": "Delete",
+    "deleted": "Photo deleted.",
+    "empty": "No photos",
+    "lightboxLabel": "Photo viewer",
+    "deleteConfirmTitle": "Delete Photo",
+    "deleteConfirmDescription": "This photo will be permanently deleted. This action cannot be undone."
+  },
+  "asset": {
+    "qr_code": "QR Code",
+    "download_png": "Download PNG",
+    "print": "Print",
+    "qr_code_label": "Scan to view asset",
+    "criticality": "Criticality",
+    "criticality_A": "Critical (A)",
+    "criticality_B": "Important (B)",
+    "criticality_C": "Standard (C)",
+    "criticality_D": "Low (D)",
+    "criticality_none": "—",
+    "create_asset": "Create Asset",
+    "edit_asset": "Edit Asset",
+    "asset_code": "Asset Code",
+    "asset_name": "Asset Name",
+    "asset_class": "Class",
+    "asset_family": "Family",
+    "asset_status": "Status",
+    "asset_parent": "Parent Asset",
+    "asset_organization": "Organization",
+    "asset_location": "Location",
+    "asset_description": "Description",
+    "asset_last_modified": "Last modified",
+    "asset_tree": "Asset Tree",
+    "tree_search_placeholder": "Search assets...",
+    "tree_toggle": "Tree / Table",
+    "context_add_child": "Add child asset",
+    "context_edit": "Edit",
+    "context_copy_code": "Copy code",
+    "context_move_to": "Move to...",
+    "context_decommission": "Decommission..."
   }
 }

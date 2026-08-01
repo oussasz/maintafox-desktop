@@ -125,6 +125,28 @@
     "searchPlaceholder": "Search...",
     "loading": "Loading data..."
   },
+  "smartFilter": {
+    "reset": "Reset filters",
+    "all": "All",
+    "activeCount": "{{count}} active",
+    "resultCount": "{{count}} result(s)",
+    "clearSearch": "Clear search",
+    "removeFilter": "Remove {{label}} filter",
+    "searchChip": "Search: {{query}}",
+    "addFilter": "Add…",
+    "noMoreOptions": "No more options"
+  },
+  "kanban": {
+    "emptyColumn": "—"
+  },
+  "linkedEntity": {
+    "work_order": "{{code}}",
+    "di": "{{code}}",
+    "open": {
+      "work_order": "Open work order {{code}}",
+      "di": "Open request {{code}}"
+    }
+  },
   "time": {
     "just_now": "Just now",
     "minutes_ago_one": "1 minute ago",
@@ -133,5 +155,18 @@
     "hours_ago_other": "{{count}} hours ago",
     "days_ago_one": "1 day ago",
     "days_ago_other": "{{count}} days ago"
+  },
+  "detailWorkspace": {
+    "qr": {
+      "scanId": "Scan ID",
+      "expand": "Expand QR",
+      "printLabel": "Print",
+      "downloadPng": "Download",
+      "openFolder": "Open folder",
+      "exportSavedTitle": "QR saved",
+      "exportFailedTitle": "Export failed",
+      "printStartedTitle": "Print started",
+      "printStartedDescription": "The label was sent to the printer."
+    }
   }
 }

@@ -1,0 +1,51 @@
+---
+description: Fields backed by Données de référence must use ReferenceCombobox; follow A/B/C governance
+alwaysApply: true
+---
+
+# ReferenceCombobox for Données de référence
+
+Any form field whose options come from **Données de référence** MUST use `ReferenceCombobox` — never a raw `Select`, `EquipmentSearchSelect`, or ad-hoc lookup.
+
+Governance philosophy: `docs/engineering/REFERENCE_GOVERNANCE.md`  
+Backend SSOT: `src-tauri/src/reference/governance.rs` (`ACTIVE_ENFORCEMENT_PHASE = Target`)  
+Combobox guide: `docs/engineering/REFERENCE_COMBOBOX.md`  
+Implementation plan: `docs/engineering/REFERENCE_GOVERNANCE_IMPLEMENTATION_PLAN.md`
+
+## Categories (exactly one per domain)
+
+| Category | Meaning | Combobox create |
+|----------|---------|-----------------|
+| **A** System Catalog | Product-owned, read-only | Never |
+| **B** Operational Dictionary | Tenant live CRUD | Yes when `can_operational_create` + `ref.manage` |
+| **C** Controlled Business Catalog | Draft → publish | Never (no silent live write) |
+
+## Required path
+
+1. Assign domain to A, B, or C per `REFERENCE_GOVERNANCE.md`
+2. Register `referenceType` in `src/components/reference/reference-types.ts` (labels only — **no** create flags)
+3. Drop in `<ReferenceCombobox referenceType="…" value={…} onChange={…} />`
+4. Create-from-dropdown only when governance capabilities allow it (Category B)
+
+```tsx
+// ❌ BAD
+<Select value={familyCode} onValueChange={setFamilyCode}>…</Select>
+
+// ✅ GOOD (B domain)
+<ReferenceCombobox
+  referenceType="equipment.family"
+  value={familyCode}
+  onChange={setFamilyCode}
+  parentCode={classCode}
+/>
+```
+
+## Hard rules
+
+- Never offer a mutate action the backend will reject for that category.
+- Manager and Combobox must follow the same capability snapshot.
+- Labels: **label only**; form value may be **code** or **id** (`valueMode`).
+- Do not reintroduce `allowOperationalCreate` or registry permission booleans.
+- Do not grow `lookup_*` for new reference fields.
+- Create CTA gated by capabilities + `ref.manage`.
+- Export is view-only (`ref.view`); do not invent export capability flags.

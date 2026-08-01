@@ -11,6 +11,24 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.4.0-dev] — 2026-04-17
+
+Phase 4 pre-release after repository history unification: the advanced Phase 4 control-plane
+and desktop baseline is merged with the official `main` line, release-control compliance
+artifacts are retained, and CI/changelog alignment is restored from `origin/main`.
+
+### Added
+
+- Unified baseline combining Phase 4 advanced core (`a0a3785` lineage) with official
+  repository structure and PR history (including release control documentation).
+- `docs/RELEASE_CONTROL_COMPLIANCE_REPORT.md` and related compliance workflow alignment.
+
+### Changed
+
+- Version bump to `0.4.0-dev` per `docs/VERSIONING_POLICY.md` (Phase 4 — `0.4.x` range).
+
+---
+
 ## [Unreleased]
 
 ### Added

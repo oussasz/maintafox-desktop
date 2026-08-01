@@ -1,0 +1,58 @@
+---
+description: Canonical RBAC permission registry — no permission-name string literals
+globs:
+  - src/**/*.{ts,tsx}
+  - shared/**/*.{ts,tsx}
+  - src-tauri/src/**/*.rs
+  - scripts/**/*.{ts,mjs,js}
+alwaysApply: true
+---
+
+# RBAC permissions (canonical registry)
+
+**SSOT:** [`shared/rbac/permission-registry.json`](shared/rbac/permission-registry.json) 
+**Per-feature workflow:** [`.cursor/rules/rbac-definition-of-done.mdc`](.cursor/rules/rbac-definition-of-done.mdc)
+
+Generated artifacts (checked in, never hand-edited):
+
+- Rust: [`src-tauri/src/rbac/permissions_generated.rs`](src-tauri/src/rbac/permissions_generated.rs) via `crate::rbac::permissions::*`
+- TypeScript: [`shared/rbac/permissions.generated.ts`](shared/rbac/permissions.generated.ts) via `P.*` / `PermissionName`
+
+## Hard rules
+
+1. **Never** write permission names as string literals (`"inv.procure"`, `'ot.edit'`, etc.) in app code, tests, seeders, or docs-as-code that gates behavior.
+2. Backend enforcement must use `crate::rbac::permissions::CONST` (or re-exports of those constants).
+3. Frontend gates must use `P.CONST` / `PermissionName` from the generated module.
+4. Every registry entry must declare intentional `usage`: `backend` | `frontend` | `both` | `catalog-only` (catalog-only requires `usage_justification`).
+5. After changing the registry, run `pnpm rbac:generate` then `pnpm rbac:check`.
+6. CI must fail when: generated files are stale, an enforced permission is missing from the registry, a registry entry lacks intentional usage / has no matching references when usage requires them, or a forbidden permission literal appears outside the allowlist.
+
+## Workflow
+
+```text
+1. Edit shared/rbac/permission-registry.json only
+2. pnpm rbac:generate
+3. Use new P.* / permissions::* constants at call sites
+4. pnpm rbac:check
+```
+
+```tsx
+// ❌ BAD
+<PermissionGate permission="inv.procure">…</PermissionGate>
+can("ot.close")
+
+// ✅ GOOD
+import { P } from "@shared/rbac/permissions.generated";
+<PermissionGate permission={P.INV_PROCURE}>…</PermissionGate>
+can(P.OT_CLOSE)
+```
+
+```rust
+// ❌ BAD
+require_permission!(state, &user, "eq.manage", PermissionScope::Global);
+
+// ✅ GOOD
+require_permission!(state, &user, crate::rbac::permissions::EQ_MANAGE, PermissionScope::Global);
+```
+
+VPS/control-plane policy strings (`license.runtime`, `sync.runtime`, `platform.health`) are **not** desktop RBAC and must stay out of this registry.

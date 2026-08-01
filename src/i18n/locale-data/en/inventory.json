@@ -1,1 +1,893 @@
-{}
+{
+  "filters": {
+    "searchArticle": "Search article code or name",
+    "searchWarehouse": "Search warehouse code or name",
+    "family": "Family",
+    "status": "Status",
+    "statusActive": "Active",
+    "statusInactive": "Inactive"
+  },
+  "adjustStock": {
+    "title": "Adjust the stock",
+    "description": "Post an entry, exit, or adjustment for this article.",
+    "fields": {
+      "article": "Article",
+      "warehouse": "Warehouse",
+      "location": "Location",
+      "type": "Type",
+      "quantity": "Quantity",
+      "motif": "Reason",
+      "comment": "Comment"
+    },
+    "types": {
+      "entry": "Entry",
+      "exit": "Exit",
+      "adjustment": "Adjustment"
+    },
+    "placeholders": {
+      "warehouse": "Select warehouse",
+      "location": "Select location",
+      "loadingLocations": "Loading locations…",
+      "quantity": "Quantity",
+      "quantitySigned": "Quantity (+/-)",
+      "motif": "Select reason",
+      "comment": "Optional comment"
+    },
+    "actions": {
+      "validate": "Validate"
+    },
+    "preview": {
+      "current": "Current stock",
+      "adjustment": "Adjustment",
+      "after": "After adjustment"
+    },
+    "errors": {
+      "articleNotFound": "Article not found."
+    }
+  },
+  "detail": {
+    "tabs": {
+      "details": "Details",
+      "activity": "History / Activity",
+      "stockPositions": "Stock Positions",
+      "reservations": "Reservations"
+    },
+    "actions": {
+      "adjustStock": "Adjust stock",
+      "createRequisition": "Create requisition",
+      "deactivate": "Deactivate",
+      "more": "More actions"
+    },
+    "kpis": {
+      "title": "Stock summary",
+      "onHand": "On hand",
+      "reserved": "Reserved",
+      "available": "Available",
+      "locations": "Locations",
+      "movements30d": "Movements (30d)"
+    },
+    "sections": {
+      "classification": "Classification",
+      "identification": "Identification",
+      "inventory": "Inventory parameters",
+      "warehouse": "Warehouse preferences",
+      "lifecycle": "Lifecycle",
+      "documents": "Documents",
+      "suppliers": "Suppliers",
+      "compatibleAssets": "Compatible assets",
+      "purchaseHistory": "Purchase history"
+    },
+    "fields": {
+      "family": "Family",
+      "stockingType": "Stocking type",
+      "procurementCategory": "Procurement category",
+      "criticality": "Criticality",
+      "code": "Code",
+      "name": "Name",
+      "unit": "Unit",
+      "taxCategory": "Tax category",
+      "minStock": "Min stock",
+      "maxStock": "Max stock",
+      "reorderPoint": "Reorder point",
+      "safetyStock": "Safety stock",
+      "preferredWarehouse": "Preferred warehouse",
+      "preferredLocation": "Preferred location"
+    },
+    "placeholders": {
+      "documents": "Documents are not configured yet.",
+      "suppliers": "Supplier links are not configured yet.",
+      "compatibleAssets": "Compatible assets are not configured yet.",
+      "purchaseHistory": "Purchase history is not available yet."
+    },
+    "qr": {
+      "dialogTitle": "Article QR code",
+      "scanHint": "Scan to open this article"
+    },
+    "activity": {
+      "empty": "No activity yet.",
+      "today": "Today",
+      "search": "Search activity",
+      "kindAll": "All kinds",
+      "periodAll": "All periods",
+      "kinds": {
+        "created": "Created",
+        "edited": "Edited"
+      }
+    },
+    "stockPositions": {
+      "empty": "No stock positions."
+    },
+    "reservations": {
+      "empty": "No reservations."
+    }
+  },
+  "procurement": {
+    "dashboard": {
+      "title": "Procurement overview",
+      "openRequisitions": "Open requisitions",
+      "openPos": "Open POs",
+      "latePos": "Late POs",
+      "receivingToday": "Receiving today",
+      "pendingApprovals": "Pending approvals",
+      "pendingReceipts": "Pending receipts",
+      "stockouts": "Low stock",
+      "criticalStockouts": "Critical low stock",
+      "activeSuppliers": "Active suppliers",
+      "repairablesInRepair": "Repairables in repair"
+    },
+    "alerts": {
+      "title": "Alerts",
+      "kinds": {
+        "CRITICAL_STOCK": "Critical stock",
+        "LATE_PO": "Late PO",
+        "SUPPLIER_DELAY": "Supplier risk",
+        "REPAIRABLE_OVERDUE": "Repair overdue"
+      }
+    },
+    "recommendations": {
+      "title": "Replenishment recommendations",
+      "refresh": "Refresh",
+      "loading": "Loading…",
+      "transfer": "Transfer",
+      "purchase": "Purchase",
+      "suggestedQty": "Suggested qty",
+      "available": "Available",
+      "supplier": "Preferred supplier",
+      "lead": "ETA",
+      "cost": "Est. cost",
+      "surplusFrom": "Surplus from",
+      "transferHint": "Prefer internal transfer",
+      "createRequisition": "Create requisition",
+      "creating": "Creating…"
+    },
+    "statuses": {
+      "DRAFT": "Draft",
+      "SUBMITTED": "Submitted",
+      "APPROVED": "Approved",
+      "PARTIALLY_RECEIVED": "Partially received",
+      "RECEIVED_CLOSED": "Received & closed",
+      "CLOSED": "Closed",
+      "CANCELLED": "Cancelled",
+      "REJECTED": "Rejected"
+    },
+    "repairableStatuses": {
+      "REQUESTED": "Requested",
+      "RELEASED": "Released",
+      "SENT_FOR_REPAIR": "Sent for repair",
+      "RETURNED_FROM_REPAIR": "Returned from repair",
+      "CLOSED": "Closed",
+      "SCRAPPED": "Scrapped",
+      "CANCELLED": "Cancelled"
+    },
+    "postingStates": {
+      "PENDING_POSTING": "Pending posting",
+      "POSTED": "Posted",
+      "POSTING_FAILED": "Posting failed",
+      "RECONCILED": "Reconciled"
+    },
+    "requisitions": {
+      "searchPlaceholder": "Search requisition number or source",
+      "empty": "No requisitions yet.",
+      "emptyDescription": "Create a requisition to start the purchase flow.",
+      "kanbanEmpty": "No requests",
+      "columns": {
+        "number": "Requisition",
+        "status": "Status",
+        "source": "Source",
+        "updated": "Updated",
+        "actions": "Actions"
+      },
+      "filters": {
+        "status": "Status"
+      },
+      "actions": {
+        "open": "Open",
+        "submit": "Submit",
+        "approve": "Approve",
+        "reject": "Reject",
+        "cancel": "Cancel",
+        "close": "Close",
+        "menu": "Row actions"
+      },
+      "reject": {
+        "title": "Reject requisition",
+        "hint": "Rejection is final and kept separate from cancellation for audit purposes.",
+        "reason": "Rejection reason",
+        "reasonPlaceholder": "Explain why this requisition is rejected",
+        "confirm": "Reject requisition"
+      },
+      "history": {
+        "title": "Approval history",
+        "empty": "No transitions recorded yet.",
+        "loading": "Loading history…"
+      }
+    },
+    "purchaseOrders": {
+      "create": "Create purchase order",
+      "searchPlaceholder": "Search PO number or supplier",
+      "empty": "No purchase orders yet.",
+      "emptyDescription": "Create a purchase order from an approved requisition.",
+      "kanbanEmpty": "No purchase orders",
+      "columns": {
+        "number": "PO",
+        "status": "Status",
+        "supplier": "Supplier",
+        "updated": "Updated",
+        "actions": "Actions"
+      },
+      "filters": {
+        "status": "Status",
+        "supplier": "Supplier"
+      },
+      "actions": {
+        "open": "Open",
+        "submit": "Submit",
+        "approve": "Approve",
+        "receive": "Receive goods",
+        "cancel": "Cancel",
+        "menu": "Row actions"
+      }
+    },
+    "repairables": {
+      "title": "Repairables",
+      "searchPlaceholder": "Search order, article or serial number",
+      "empty": "No repairable orders yet.",
+      "emptyDescription": "Send a repairable part to a vendor to start tracking its repair cycle.",
+      "create": "New repairable order",
+      "columns": {
+        "order": "Order",
+        "article": "Article",
+        "source": "Source",
+        "vendor": "Vendor",
+        "status": "Status",
+        "updated": "Updated",
+        "actions": "Actions"
+      },
+      "filters": {
+        "status": "Status",
+        "vendor": "Vendor"
+      },
+      "actions": {
+        "open": "Open",
+        "release": "Release",
+        "send": "Send for repair",
+        "receiveBack": "Receive back",
+        "close": "Close order",
+        "scrap": "Scrap",
+        "cancel": "Cancel",
+        "menu": "Row actions"
+      },
+      "form": {
+        "title": "New repairable order",
+        "article": "Article",
+        "selectArticle": "Select article",
+        "sourceLocation": "Source location",
+        "selectSource": "Select source",
+        "returnLocation": "Return location",
+        "noReturnLocation": "No return location",
+        "quantity": "Quantity",
+        "reason": "Reason",
+        "serial": "Serial number",
+        "vendor": "Vendor",
+        "noVendor": "No vendor",
+        "balancesTitle": "Stock balances for selected article",
+        "balancesEmpty": "No balance rows (or zero stock) for this article.",
+        "balanceRow": "on hand {{onHand}}, reserved {{reserved}}, available {{available}}",
+        "cancel": "Cancel",
+        "submit": "Create repairable order"
+      }
+    },
+    "repairableAction": {
+      "dispatch": {
+        "title": "Send for repair",
+        "hint": "Record the serial number and vendor so the repair can be traced.",
+        "confirm": "Send for repair"
+      },
+      "scrap": {
+        "title": "Scrap repairable",
+        "hint": "Scrapping is final and writes the quantity off stock when the part is back in store.",
+        "confirm": "Scrap order"
+      },
+      "cancel": {
+        "title": "Cancel repairable",
+        "hint": "Cancelling returns released quantity to the source location.",
+        "confirm": "Cancel order"
+      },
+      "receive": {
+        "title": "Receive back from repair",
+        "hint": "Choose the location where the repaired part is stored.",
+        "confirm": "Receive back"
+      },
+      "fields": {
+        "serial": "Serial number",
+        "vendor": "Vendor",
+        "noVendor": "No vendor",
+        "reason": "Reason",
+        "reasonPlaceholder": "Explain the decision",
+        "returnLocation": "Return location",
+        "selectLocation": "Select location"
+      },
+      "close": "Close"
+    },
+    "goodsReceipts": {
+      "title": "Goods receipts",
+      "searchPlaceholder": "Search receipt or PO number",
+      "empty": "No goods receipts yet.",
+      "emptyDescription": "Post a goods receipt from an approved purchase order.",
+      "columns": {
+        "number": "Receipt",
+        "po": "Purchase order",
+        "status": "Status",
+        "posting": "Posting",
+        "receivedAt": "Received"
+      },
+      "actions": {
+        "openPo": "Open purchase order",
+        "viewLines": "View lines",
+        "menu": "Row actions"
+      },
+      "lines": {
+        "title": "Receipt lines",
+        "empty": "No lines on this receipt.",
+        "loading": "Loading lines…",
+        "columns": {
+          "article": "Article",
+          "location": "Location",
+          "received": "Received",
+          "accepted": "Accepted",
+          "rejected": "Rejected",
+          "reason": "Rejection reason"
+        }
+      }
+    },
+    "posting": {
+      "title": "ERP posting",
+      "state": "Posting state",
+      "error": "Posting error",
+      "errorPlaceholder": "Error detail (optional)",
+      "apply": "Update posting state",
+      "hint": "Reconcile the ERP posting state after the outbound integration was replayed."
+    },
+    "suppliers": {
+      "title": "Suppliers",
+      "new": "New supplier",
+      "edit": "Edit supplier",
+      "empty": "No suppliers yet.",
+      "search": "Search supplier code or name",
+      "columns": {
+        "code": "Code",
+        "name": "Name",
+        "status": "Status",
+        "leadTime": "Lead time (d)",
+        "active": "Active"
+      },
+      "fields": {
+        "code": "Code",
+        "name": "Name",
+        "status": "Status",
+        "paymentTerms": "Payment terms",
+        "leadTime": "Default lead time (days)",
+        "active": "Active"
+      },
+      "status": {
+        "PREFERRED": "Preferred",
+        "APPROVED": "Approved",
+        "BLOCKED": "Blocked",
+        "UNDER_EVALUATION": "Under evaluation"
+      },
+      "risk": {
+        "LOW": "Low risk",
+        "MEDIUM": "Medium risk",
+        "HIGH": "High risk"
+      },
+      "scorecard": {
+        "title": "Scorecard",
+        "otif": "On-time delivery",
+        "avgLeadTime": "Avg lead time (d)",
+        "deliveryAccuracy": "Delivery accuracy",
+        "avgPrice": "Avg price",
+        "openPos": "Open POs",
+        "completedPos": "Completed POs",
+        "lastPurchase": "Last purchase",
+        "rejectedPct": "Rejected quantity",
+        "risk": "Risk level",
+        "lastDeliveries": "Recent deliveries",
+        "lastDeliveriesEmpty": "No deliveries received yet.",
+        "deliveryColumns": {
+          "receivedAt": "Received",
+          "po": "Purchase order",
+          "article": "Article",
+          "orderedQty": "Ordered",
+          "acceptedQty": "Accepted",
+          "rejectedQty": "Rejected",
+          "leadTime": "Lead time (d)"
+        }
+      },
+      "sources": {
+        "title": "Article sourcing",
+        "add": "Add source",
+        "edit": "Edit source",
+        "empty": "No article sources configured.",
+        "resultCount_one": "{{count}} source",
+        "resultCount_other": "{{count}} sources",
+        "preferred": "Preferred",
+        "setPreferred": "Set preferred",
+        "deactivate": "Deactivate",
+        "columns": {
+          "supplier": "Supplier",
+          "article": "Article",
+          "priceHint": "Price hint",
+          "lastPrice": "Last price",
+          "avgPrice": "Avg price",
+          "currency": "Currency",
+          "lastPurchase": "Last purchase",
+          "moq": "MOQ",
+          "leadTime": "Lead time (d)",
+          "actions": "Actions"
+        },
+        "fields": {
+          "priority": "Priority",
+          "leadTime": "Lead time (days)",
+          "priceHint": "Unit price hint",
+          "moq": "Min order qty",
+          "supplierArticleCode": "Supplier article code",
+          "preferred": "Preferred source"
+        }
+      },
+      "contacts": {
+        "title": "Contacts",
+        "add": "Add contact",
+        "edit": "Edit contact",
+        "empty": "No contacts recorded.",
+        "resultCount_one": "{{count}} contact",
+        "resultCount_other": "{{count}} contacts",
+        "primary": "Primary",
+        "roles": {
+          "PURCHASING": "Purchasing",
+          "SALES": "Sales",
+          "TECHNICAL": "Technical"
+        },
+        "fields": {
+          "name": "Contact name",
+          "role": "Role",
+          "phone": "Phone",
+          "email": "Email",
+          "primary": "Primary contact"
+        }
+      },
+      "purchaseHistory": {
+        "title": "Purchase history",
+        "empty": "No purchase history for this supplier.",
+        "columns": {
+          "orderedAt": "Date",
+          "po": "Purchase order",
+          "article": "Article",
+          "orderedQty": "Quantity",
+          "unitPrice": "Unit price",
+          "status": "Status"
+        }
+      },
+      "comparison": {
+        "title": "Supplier comparison",
+        "hint": "Composite rating combines price, lead time and supplier risk.",
+        "ratingValue": "{{stars}} out of {{max}}",
+        "columns": {
+          "supplier": "Supplier",
+          "leadTime": "Lead time (d)",
+          "lastPrice": "Last price",
+          "risk": "Risk",
+          "rating": "Rating",
+          "actions": "Actions"
+        }
+      },
+      "prices": {
+        "title": "Price list",
+        "new": "Add price",
+        "empty": "No prices configured.",
+        "fields": {
+          "article": "Article",
+          "unitPrice": "Unit price",
+          "minQty": "Min qty",
+          "validFrom": "Valid from",
+          "validTo": "Valid to"
+        }
+      },
+      "documents": {
+        "title": "Documents",
+        "new": "Add document link",
+        "empty": "No document links.",
+        "fields": {
+          "ref": "Document reference",
+          "purpose": "Purpose",
+          "primary": "Primary",
+          "validFrom": "Valid from",
+          "validTo": "Valid to"
+        }
+      }
+    },
+    "requisition": {
+      "priority": "Purchase priority",
+      "priorityValues": {
+        "EMERGENCY": "Emergency",
+        "HIGH": "High",
+        "NORMAL": "Normal",
+        "LOW": "Low"
+      }
+    },
+    "receive": {
+      "title": "Post goods receipt",
+      "hint": "Enter received quantities per open line, then post the whole receipt in one operation.",
+      "purchaseOrder": "Purchase order",
+      "selectPo": "Select purchase order",
+      "noPo": "No purchase order selected.",
+      "loadingLines": "Loading purchase order lines…",
+      "linesEmpty": "This purchase order has no open lines to receive.",
+      "columns": {
+        "article": "Article",
+        "remaining": "Remaining",
+        "location": "Location",
+        "receivedQty": "Received",
+        "rejectedQty": "Rejected",
+        "accepted": "Accepted",
+        "rejectionReason": "Rejection reason"
+      },
+      "selectLocation": "Select location",
+      "cancel": "Cancel",
+      "post": "Post receipt",
+      "errors": {
+        "noLines": "Enter a received quantity on at least one line.",
+        "location": "Select a receipt location for every line with a received quantity.",
+        "overRemaining": "Received quantity cannot exceed the remaining quantity.",
+        "rejectedExceeds": "Rejected quantity cannot exceed the received quantity."
+      },
+      "fulfillmentAction": "Fulfillment action",
+      "fulfillmentValues": {
+        "STOCK_ONLY": "Stock only",
+        "RESERVE_FOR_DEMAND": "Reserve for demand",
+        "ISSUE_TO_DEMAND": "Issue to demand"
+      }
+    },
+    "poWorkspace": {
+      "title": "Purchase order",
+      "loading": "Loading purchase order…",
+      "noSelection": "No purchase order selected.",
+      "noSupplier": "No supplier",
+      "lateByDays_one": "Late by {{count}} day",
+      "lateByDays_other": "Late by {{count}} days",
+      "grandTotal": "Grand total",
+      "grandTotalPartial": "partial",
+      "tabs": {
+        "general": "General",
+        "lines": "Lines",
+        "timeline": "Timeline",
+        "receipts": "Receipts",
+        "documents": "Documents"
+      },
+      "fields": {
+        "poNumber": "PO number",
+        "supplier": "Supplier",
+        "status": "Status",
+        "posting": "Posting",
+        "requisition": "Source requisition",
+        "createdAt": "Created",
+        "updatedAt": "Updated",
+        "orderedAt": "Ordered",
+        "approvedAt": "Approved",
+        "expectedDelivery": "Expected delivery"
+      },
+      "lines": {
+        "empty": "No lines on this purchase order.",
+        "article": "Article",
+        "ordered": "Ordered",
+        "received": "Received",
+        "remaining": "Remaining",
+        "unitPrice": "Unit price",
+        "lineTotal": "Line total"
+      },
+      "timeline": {
+        "CREATED": "Created",
+        "SUBMITTED": "Submitted",
+        "APPROVED": "Approved",
+        "RECEIVED": "Received",
+        "CLOSED": "Closed",
+        "CANCELLED": "Cancelled",
+        "reached": "Completed",
+        "pending": "Pending"
+      },
+      "receipts": {
+        "empty": "No goods receipts yet.",
+        "receivedAt": "Received at",
+        "open": "Open receipt details"
+      },
+      "documents": {
+        "empty": "No document links.",
+        "add": "Add",
+        "refPlaceholder": "Reference or URL",
+        "fields": {
+          "ref": "Document reference",
+          "purpose": "Purpose"
+        }
+      },
+      "actions": {
+        "close": "Close",
+        "submit": "Submit",
+        "approve": "Approve",
+        "cancel": "Cancel",
+        "receive": "Receive goods",
+        "print": "Print"
+      },
+      "print": {
+        "pageTitle": "Purchase order",
+        "heading": "Purchase order",
+        "confidential": "Confidential",
+        "reference": "Reference",
+        "issueDate": "Issue date",
+        "header": "Header",
+        "lines": "Lines",
+        "buyer": "Buyer",
+        "approver": "Approver",
+        "supplierSig": "Supplier",
+        "signature": "Signature",
+        "date": "Date"
+      }
+    },
+    "repairableDetail": {
+      "title": "Repairable order",
+      "loading": "Loading repairable order…",
+      "noSelection": "No repairable order selected.",
+      "warrantyActive": "Under warranty",
+      "sections": {
+        "summary": "Summary",
+        "timeline": "Timeline",
+        "history": "Repair history",
+        "documents": "Documents",
+        "closeFields": "Close-out details"
+      },
+      "fields": {
+        "article": "Article",
+        "serial": "Serial number",
+        "reason": "Reason",
+        "vendor": "Vendor",
+        "sentAt": "Sent",
+        "returnedAt": "Returned",
+        "repairCost": "Repair cost",
+        "warrantyUntil": "Warranty until",
+        "warrantyActive": "Warranty active",
+        "workOrder": "Work order"
+      },
+      "timeline": {
+        "REQUESTED": "Requested",
+        "RELEASED": "Released",
+        "SENT": "Sent",
+        "RETURNED": "Returned",
+        "CLOSED": "Closed",
+        "reached": "Completed",
+        "pending": "Pending"
+      },
+      "repairVsReplace": {
+        "title": "Repair vs replace",
+        "repairCost": "Repair cost",
+        "replacementCost": "Replacement cost",
+        "recommendation": "Recommendation",
+        "REPAIR": "Repair",
+        "REPLACE": "Replace",
+        "REVIEW": "Review",
+        "INSUFFICIENT_DATA": "Insufficient data",
+        "insufficientData": "Not enough cost history to recommend repair or replace.",
+        "reasons": {}
+      },
+      "history": {
+        "repairCount": "Prior repairs",
+        "avgCost": "Average cost",
+        "avgTurnaround": "Avg turnaround",
+        "days": "{{days}} days"
+      },
+      "documents": {
+        "empty": "No document links.",
+        "add": "Add",
+        "fields": {
+          "ref": "Document reference",
+          "purpose": "Purpose"
+        }
+      },
+      "actions": {
+        "close": "Close",
+        "release": "Release",
+        "send": "Send",
+        "receiveBack": "Receive back",
+        "closeOrder": "Close order",
+        "scrap": "Scrap",
+        "cancel": "Cancel order"
+      }
+    },
+    "archive": {
+      "title": "Procurement archive",
+      "requisitions": "Requisitions",
+      "purchaseOrders": "Purchase orders",
+      "repairables": "Repairables"
+    }
+  },
+  "stockImpact": {
+    "title": "Stock impact",
+    "loading": "Projecting stock impact…",
+    "empty": "No projection available.",
+    "current": "Current stock",
+    "currentOnHand": "On hand",
+    "available": "Available",
+    "incoming": "Incoming PO",
+    "delta": "This delta",
+    "projected": "Projected"
+  },
+  "documents": {
+    "purposes": {
+      "INVOICE": "Invoice",
+      "CERTIFICATE": "Certificate",
+      "QUOTATION": "Quotation",
+      "PHOTO": "Photo",
+      "OTHER": "Other",
+      "CONTRACT": "Contract",
+      "DATASHEET": "Datasheet"
+    }
+  },
+  "article": {
+    "sections": {
+      "identity": "Identity",
+      "sourcing": "Sourcing",
+      "replenishment": "Replenishment",
+      "criticalSpare": "Critical spare",
+      "shelfLife": "Shelf life",
+      "equivalents": "Equivalents",
+      "repairableHistory": "Repairable history",
+      "purchaseHistory": "Purchase history",
+      "documents": "Documents"
+    },
+    "consumption": {
+      "title": "Monthly consumption",
+      "loading": "Loading…",
+      "empty": "No consumption in period."
+    },
+    "reservations": {
+      "ungrouped": "Other reservations",
+      "lineCount_one": "{{count}} line",
+      "lineCount_other": "{{count}} lines"
+    },
+    "fields": {
+      "manufacturerName": "Manufacturer",
+      "manufacturerPartNumber": "Manufacturer part no.",
+      "oemPartNumber": "OEM part no.",
+      "replenishmentPolicy": "Replenishment policy",
+      "eoq": "EOQ",
+      "moq": "MOQ",
+      "maxOrder": "Max order qty",
+      "orderMultiple": "Order multiple",
+      "leadTimeDays": "Lead time (days)",
+      "reviewPeriodDays": "Review period (days)",
+      "abcClass": "ABC class",
+      "xyzClass": "XYZ class",
+      "isCriticalSpare": "Critical spare",
+      "requiresExpiration": "Requires expiration tracking",
+      "shelfLifeDays": "Shelf life (days)",
+      "requiresBatchTracking": "Requires batch tracking"
+    },
+    "actions": {
+      "calculateAbc": "Calculate ABC",
+      "calculateXyz": "Calculate XYZ",
+      "addEquivalent": "Add equivalent",
+      "addDocumentLink": "Add document link",
+      "createRequisitionForShortage": "Create purchase requisition"
+    },
+    "equivalents": {
+      "empty": "No equivalents configured.",
+      "columns": {
+        "equivalent": "Equivalent article",
+        "type": "Equivalence type",
+        "bidirectional": "Bidirectional",
+        "notes": "Notes"
+      },
+      "fields": {
+        "equivalentArticle": "Equivalent article",
+        "type": "Equivalence type",
+        "bidirectional": "Bidirectional",
+        "notes": "Notes"
+      }
+    },
+    "purchaseHistory": {
+      "empty": "No purchase history.",
+      "columns": {
+        "po": "PO",
+        "orderedAt": "Ordered at",
+        "supplier": "Supplier",
+        "unitPrice": "Unit price",
+        "orderedQty": "Ordered qty",
+        "receivedQty": "Received qty",
+        "status": "Status"
+      }
+    },
+    "repairableHistory": {
+      "empty": "No repairable history.",
+      "columns": {
+        "order": "Order",
+        "qty": "Qty",
+        "status": "Status",
+        "reason": "Reason",
+        "cost": "Repair cost",
+        "date": "Date"
+      }
+    },
+    "documents": {
+      "empty": "No document links.",
+      "columns": {
+        "ref": "Reference",
+        "purpose": "Purpose",
+        "primary": "Primary",
+        "validFrom": "Valid from"
+      }
+    },
+    "sourcing": {
+      "note": "Preferred suppliers are managed via the Suppliers directory by linking articles to supplier sources."
+    }
+  },
+  "wo": {
+    "shortage": {
+      "title": "Parts shortage",
+      "description": "Some planned parts are not fully available in stock.",
+      "createRequisition": "Create requisition",
+      "requisitionCreated": "Purchase requisition created",
+      "columns": {
+        "article": "Article",
+        "requested": "Requested",
+        "available": "Available",
+        "shortage": "Shortage"
+      }
+    }
+  },
+  "topology": {
+    "noSelection": "Select a warehouse to show details",
+    "createTitle": "New warehouse",
+    "emptyLocations": "No locations in this warehouse.",
+    "columns": {
+      "code": "Code",
+      "name": "Name",
+      "status": "Status",
+      "default": "Default",
+      "active": "Active"
+    },
+    "sections": {
+      "warehouse": "Warehouse",
+      "locations": "Locations"
+    },
+    "fields": {
+      "code": "Code",
+      "name": "Name",
+      "active": "Warehouse active",
+      "locationCode": "Location code",
+      "locationName": "Location name",
+      "defaultBin": "Default location"
+    },
+    "actions": {
+      "saveWarehouse": "Save warehouse",
+      "addLocation": "Add location",
+      "saveLocation": "Save location"
+    }
+  }
+}

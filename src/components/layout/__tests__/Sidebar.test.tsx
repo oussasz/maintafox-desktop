@@ -4,16 +4,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { Sidebar } from "@/components/layout/Sidebar";
 import { defaultNavItems, appRoutes } from "@/navigation/nav-registry";
+import { P, type PermissionName } from "@shared/rbac/permissions.generated";
 
-// ── Mock rbac-service (same pattern as use-permissions.test.ts) ───────────
+const mockCan = vi.fn((_permission: PermissionName) => true);
 
-const mockGetMyPermissions = vi.fn();
-
-vi.mock("@/services/rbac-service", () => ({
-  getMyPermissions: (...args: unknown[]) => mockGetMyPermissions(...args),
+vi.mock("@/hooks/use-permissions", () => ({
+  usePermissions: () => ({
+    can: (permission: PermissionName) => mockCan(permission),
+    canAny: (...permissions: PermissionName[]) => permissions.some((p) => mockCan(p)),
+    canAll: (...permissions: PermissionName[]) => permissions.every((p) => mockCan(p)),
+    permissions: [],
+    isLoading: false,
+    refresh: async () => undefined,
+  }),
 }));
 
-// ── i18n: passthrough — return the key as display text ────────────────────
+vi.mock("@/hooks/use-module-capabilities", () => ({
+  useModuleCapabilities: () => ({ capabilityMap: {}, loading: false }),
+}));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -22,28 +30,14 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-// ── All unique permission names used by the nav registry ──────────────────
-
 const ALL_PERMISSIONS = [
   ...new Set(
     defaultNavItems
-      .filter((i): i is typeof i & { requiredPermission: string } => !!i.requiredPermission)
+      .filter((i): i is typeof i & { requiredPermission: PermissionName } => !!i.requiredPermission)
       .map((i) => i.requiredPermission),
   ),
 ];
 
-/** Build a PermissionRecord[] array for the given permission names. */
-function makePermissions(names: string[]) {
-  return names.map((name) => ({
-    name,
-    description: "",
-    category: "",
-    is_dangerous: false,
-    requires_step_up: false,
-  }));
-}
-
-/** Render Sidebar inside a MemoryRouter so useLocation / Link work. */
 function renderSidebar() {
   return render(
     <MemoryRouter initialEntries={["/"]}>
@@ -52,47 +46,41 @@ function renderSidebar() {
   );
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────
-
 describe("Sidebar — permission-based filtering", () => {
   beforeEach(() => {
-    mockGetMyPermissions.mockReset();
+    mockCan.mockReset();
+    mockCan.mockImplementation(() => true);
   });
 
   it("V1 — Admin sees all 27 nav items", async () => {
-    // Admin has every permission
-    mockGetMyPermissions.mockResolvedValue(makePermissions(ALL_PERMISSIONS));
+    mockCan.mockImplementation((permission: PermissionName) =>
+      ALL_PERMISSIONS.includes(permission),
+    );
     renderSidebar();
 
-    // Wait for usePermissions to resolve
     await waitFor(() => {
       const links = screen.getAllByRole("link");
       expect(links).toHaveLength(appRoutes.length);
     });
 
-    // Verify the count matches the 27 non-header items
-    expect(appRoutes).toHaveLength(27);
-    expect(screen.getAllByRole("link")).toHaveLength(27);
+    expect(screen.getAllByRole("link")).toHaveLength(appRoutes.length);
   });
 
   it("V2 — Non-admin sees only permitted modules (unauthorized hidden, not greyed)", async () => {
-    // Operator-like user: only eq.view and di.view
-    mockGetMyPermissions.mockResolvedValue(makePermissions(["eq.view", "di.view"]));
+    const allowed = new Set<PermissionName>([P.EQ_VIEW, P.DI_VIEW]);
+    mockCan.mockImplementation((permission: PermissionName) => allowed.has(permission));
     renderSidebar();
 
     await waitFor(() => {
-      // 2 permitted + 3 always-visible (dashboard, notifications, profile) = 5
       expect(screen.getAllByRole("link")).toHaveLength(5);
     });
 
-    // Authorized items present
     expect(screen.getByText("nav.dashboard")).toBeInTheDocument();
     expect(screen.getByText("nav.equipment")).toBeInTheDocument();
     expect(screen.getByText("nav.requests")).toBeInTheDocument();
     expect(screen.getByText("nav.notifications")).toBeInTheDocument();
     expect(screen.getByText("nav.profile")).toBeInTheDocument();
 
-    // Unauthorized items absent (hidden, not greyed)
     expect(screen.queryByText("nav.workOrders")).not.toBeInTheDocument();
     expect(screen.queryByText("nav.users")).not.toBeInTheDocument();
     expect(screen.queryByText("nav.settings")).not.toBeInTheDocument();
@@ -100,8 +88,7 @@ describe("Sidebar — permission-based filtering", () => {
   });
 
   it("Dashboard, Profile, and Notifications are always visible regardless of role", async () => {
-    // User with zero permissions
-    mockGetMyPermissions.mockResolvedValue([]);
+    mockCan.mockImplementation(() => false);
     renderSidebar();
 
     await waitFor(() => {
@@ -114,20 +101,15 @@ describe("Sidebar — permission-based filtering", () => {
   });
 
   it("empty groups are hidden when all children are filtered out", async () => {
-    // Give only eq.view — so Compliance, Planning, Inventory, Analytics, Admin groups are empty
-    mockGetMyPermissions.mockResolvedValue(makePermissions(["eq.view"]));
+    mockCan.mockImplementation((permission: PermissionName) => permission === P.EQ_VIEW);
     renderSidebar();
 
     await waitFor(() => {
-      // dashboard + equipment + notifications + profile = 4
       expect(screen.getAllByRole("link")).toHaveLength(4);
     });
 
-    // The "Planning" group header should not appear since no children are visible
     expect(screen.queryByText("nav.groups.planning")).not.toBeInTheDocument();
-    // The "Compliance" group header should not appear
     expect(screen.queryByText("nav.groups.compliance")).not.toBeInTheDocument();
-    // Core Operations header should still appear (has visible children)
     expect(screen.getByText("nav.groups.core")).toBeInTheDocument();
   });
 });

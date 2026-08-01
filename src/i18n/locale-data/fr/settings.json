@@ -1,1 +1,162 @@
-{}
+{
+  "page": {
+    "title": "Paramètres",
+    "description": "Gérer les paramètres de l'application",
+    "noSettings": "Aucun paramètre dans cette catégorie",
+    "loading": "Chargement des paramètres…",
+    "loadError": "Impossible de charger les paramètres"
+  },
+  "categories": {
+    "localization": "Localisation",
+    "appearance": "Apparence",
+    "system": "Système",
+    "backup": "Sauvegarde"
+  },
+  "table": {
+    "key": "Clé",
+    "value": "Valeur",
+    "scope": "Portée",
+    "risk": "Risque",
+    "status": "Statut",
+    "lastModified": "Dernière modification",
+    "actions": "Actions"
+  },
+  "editor": {
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "edit": "Modifier",
+    "saving": "Enregistrement…",
+    "saveSuccess": "Paramètre enregistré avec succès",
+    "saveError": "Erreur lors de l'enregistrement",
+    "invalidJson": "Valeur JSON invalide"
+  },
+  "risk": {
+    "low": "Faible",
+    "high": "Élevé"
+  },
+  "validation": {
+    "valid": "Valide",
+    "draft": "Brouillon",
+    "error": "Erreur",
+    "untested": "Non testé"
+  },
+  "scope": {
+    "tenant": "Tenant",
+    "device": "Appareil"
+  },
+  "keys": {
+    "locale.primary_language": "Langue principale",
+    "locale.fallback_language": "Langue de secours",
+    "locale.date_format": "Format de date",
+    "locale.number_format": "Format des nombres",
+    "locale.week_start_day": "Premier jour de la semaine",
+    "appearance.color_mode": "Mode de couleur",
+    "appearance.density": "Densité d'affichage",
+    "appearance.text_scale": "Échelle du texte",
+    "updater.release_channel": "Canal de mise à jour",
+    "updater.auto_check": "Vérification automatique",
+    "backup.retention_daily": "Rétention quotidienne (jours)",
+    "backup.retention_weekly": "Rétention hebdomadaire (sem.)",
+    "backup.retention_monthly": "Rétention mensuelle (mois)",
+    "diagnostics.log_retention_days": "Rétention des logs (jours)"
+  },
+  "auditLog": {
+    "title": "Journal des modifications",
+    "empty": "Aucune modification enregistrée",
+    "summary": "Résumé",
+    "changedAt": "Date",
+    "changedBy": "Par",
+    "stepUp": "Élévation"
+  },
+  "sidebar": {
+    "search": "Rechercher…"
+  },
+  "policy": {
+    "governedTitle": "Paramètre réglementé",
+    "governedDescription": "Ce paramètre utilise le workflow Brouillon → Test → Activation.",
+    "active": "Actif",
+    "activeConfig": "Configuration active",
+    "draftConfig": "Configuration brouillon",
+    "noSnapshot": "Aucun snapshot de politique activé.",
+    "noDraft": "Aucun brouillon. Cliquez sur \"Modifier le brouillon\" pour en créer un.",
+    "version": "Version {{version}}",
+    "activatedAt": "Activé le {{date}}",
+    "currentValues": "Valeurs actuelles",
+    "draftPending": "Brouillon en attente",
+    "requiresStepUp": "Élévation requise",
+    "editDraft": "Modifier le brouillon",
+    "testDraft": "Tester le brouillon",
+    "activate": "Activer",
+    "discard": "Supprimer",
+    "draftSaved": "Brouillon enregistré",
+    "draftSaveError": "Échec de l'enregistrement du brouillon",
+    "testPassed": "Toutes les règles de validation sont passées",
+    "testFailed": "Certaines règles de validation ont échoué",
+    "testError": "Échec de l'exécution de la validation",
+    "testResults": "Résultats des tests",
+    "activated": "Politique activée avec succès",
+    "activateError": "Échec de l'activation de la politique",
+    "stepUpRequired": "Authentification renforcée requise pour activer cette politique",
+    "discarded": "Brouillon supprimé",
+    "discardError": "Échec de la suppression du brouillon",
+    "discardConfirmTitle": "Supprimer le brouillon ?",
+    "discardConfirmDescription": "Le brouillon actuel sera définitivement supprimé. Cette action est irréversible.",
+    "changeHistory": "Historique des modifications",
+    "historyActive": "Actif",
+    "historySuperseded": "Remplacé",
+    "historyDraft": "Brouillon",
+    "fields": {
+      "max_session_hours": "Session max (heures)",
+      "idle_timeout_minutes": "Délai d'inactivité (minutes)",
+      "step_up_window_seconds": "Fenêtre d'élévation (secondes)",
+      "min_length": "Longueur minimale",
+      "require_uppercase": "Majuscule requise",
+      "require_number": "Chiffre requis",
+      "max_age_days": "Âge maximum (jours)",
+      "history_count": "Historique des mots de passe",
+      "schedule_cron": "Planification (cron)",
+      "retention_days": "Rétention (jours)",
+      "include_photos": "Inclure les photos",
+      "compression_level": "Niveau de compression"
+    }
+  },
+  "permissionDenied": "Vous n'avez pas la permission d'accéder aux paramètres",
+  "options": {
+    "language": {
+      "fr": "Français",
+      "en": "English"
+    },
+    "dateFormat": {
+      "dmy": "JJ/MM/AAAA",
+      "mdy": "MM/JJ/AAAA",
+      "iso": "AAAA-MM-JJ (ISO)"
+    },
+    "numberFormat": {
+      "fr": "Français (1 234,56)",
+      "en": "Anglais (1,234.56)"
+    },
+    "weekStart": {
+      "monday": "Lundi",
+      "sunday": "Dimanche"
+    },
+    "colorMode": {
+      "light": "Clair",
+      "dark": "Sombre"
+    },
+    "density": {
+      "compact": "Compact",
+      "standard": "Standard",
+      "comfortable": "Confortable"
+    },
+    "textScale": {
+      "small": "Petit (85%)",
+      "default": "Normal (100%)",
+      "large": "Grand (115%)",
+      "extraLarge": "Très grand (130%)"
+    },
+    "channel": {
+      "stable": "Stable",
+      "beta": "Bêta"
+    }
+  }
+}

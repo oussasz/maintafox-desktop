@@ -2,12 +2,18 @@
 // Components and hooks MUST NOT import from @tauri-apps/api/core directly
 // for diagnostics operations.
 
-import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
-import type { DiagnosticsAppInfo, IntegrityReport, SupportBundle } from "@shared/ipc-types";
+import { invoke } from "@/lib/ipc-invoke";
+import type {
+  DiagnosticsAppInfo,
+  IntegrityReport,
+  RamsPresentationSeedInput,
+  RamsPresentationSeedReport,
+  SupportBundle,
+} from "@shared/ipc-types";
 
-// ── Zod schemas for runtime shape validation ──────────────────────────────
+// â”€â”€ Zod schemas for runtime shape validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const IntegrityIssueSchema = z.object({
   code: z.string(),
@@ -25,7 +31,7 @@ export const IntegrityReportSchema = z.object({
   value_count: z.number().int(),
 });
 
-// ── SP06-F03 Zod schemas ─────────────────────────────────────────────────
+// â”€â”€ SP06-F03 Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const DiagnosticsAppInfoSchema = z.object({
   app_version: z.string(),
@@ -43,9 +49,10 @@ const SupportBundleSchema = z.object({
   app_info: DiagnosticsAppInfoSchema,
   log_lines: z.array(z.string()),
   collection_warnings: z.array(z.string()),
+  runbook_links: z.array(z.string()).optional(),
 });
 
-// ── Service functions — Integrity ─────────────────────────────────────────
+// â”€â”€ Service functions â€” Integrity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function runIntegrityCheck(): Promise<IntegrityReport> {
   const raw = await invoke<unknown>("run_integrity_check");
@@ -57,11 +64,33 @@ export async function repairSeedData(): Promise<IntegrityReport> {
   return IntegrityReportSchema.parse(raw) as IntegrityReport;
 }
 
-// ── Service functions — SP06-F03 Diagnostics & Support Bundle ─────────────
+const RamsPresentationSeedReportSchema = z.object({
+  equipment_id: z.number(),
+  skipped: z.boolean(),
+  work_orders_created: z.number(),
+  failure_events_count: z.number(),
+  exposure_hours: z.number().nullable(),
+  weibull_beta: z.number().nullable(),
+  weibull_eta: z.number().nullable(),
+  weibull_adequate: z.boolean(),
+  markov_model_id: z.number().nullable(),
+  warnings: z.array(z.string()),
+  errors: z.array(z.string()),
+});
+
+export async function seedRamsPresentationData(
+  input: RamsPresentationSeedInput = {},
+): Promise<RamsPresentationSeedReport> {
+  // DEMO ONLY — must be user-triggered; never call from page load / equipment create.
+  const raw = await invoke<unknown>("seed_rams_presentation_data", { input });
+  return RamsPresentationSeedReportSchema.parse(raw) as RamsPresentationSeedReport;
+}
+
+// â”€â”€ Service functions â€” SP06-F03 Diagnostics & Support Bundle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Return rich application metadata (session-gated).
- * Richer than the pre-auth `get_app_info` — includes DB schema version,
+ * Richer than the pre-auth `get_app_info` â€” includes DB schema version,
  * locale from settings, and process uptime.
  */
 export async function getDiagnosticsInfo(): Promise<DiagnosticsAppInfo> {

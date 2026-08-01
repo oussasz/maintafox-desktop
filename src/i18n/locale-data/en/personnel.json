@@ -1,1 +1,391 @@
-{}
+{
+  "page": {
+    "title": "Personnel",
+    "titleNew": "New Personnel",
+    "titleEdit": "Edit Personnel"
+  },
+  "action": {
+    "create": "New",
+    "deactivate": "Deactivate",
+    "refresh": "Refresh",
+    "viewDetails": "View details",
+    "view": "View"
+  },
+  "view": {
+    "list": "List",
+    "cards": "Cards"
+  },
+  "tabs": {
+    "directory": "Directory",
+    "skillsMatrix": "Skills Matrix",
+    "availabilityCalendar": "Availability Calendar",
+    "teamCapacity": "Team Capacity",
+    "training": "Training & certs",
+    "positions": "Positions"
+  },
+  "training": {
+    "heading": "Training & qualifications",
+    "selfService": "Self-service (your profile)",
+    "myCerts": "Your certifications",
+    "mySessions": "Your session attendance",
+    "sessions": "Scheduled sessions",
+    "attendance": "Attendance (tenant)",
+    "registryCerts": "Certification registry",
+    "expiryGovernance": "Expiry alerts & drilldown",
+    "expiryAlerts": "Fired alerts",
+    "expiryDrilldown": "Certifications expiring within horizon",
+    "lookaheadDays": "Lookahead (days)",
+    "entityFilterOptional": "Entity id (optional)",
+    "alertSeverity": "Alert severity filter",
+    "runScan": "Run expiry scan",
+    "permitGaps": "Permit vs crew (planning)",
+    "woId": "Work order id",
+    "crewIds": "Personnel ids",
+    "checkGaps": "Evaluate gaps",
+    "permitType": "Permit type",
+    "qualified": "Qualified",
+    "blocked": "Blocked",
+    "missingTypes": "Missing cert. types",
+    "noPermitRequired": "No permit required for this work order.",
+    "sessionId": "Session",
+    "col": {
+      "course": "Course",
+      "start": "Start",
+      "end": "End",
+      "minPass": "Min pass",
+      "session": "Session",
+      "personnel": "Personnel",
+      "status": "Status",
+      "score": "Score",
+      "type": "Type",
+      "expires": "Expires",
+      "readiness": "Readiness",
+      "severity": "Severity",
+      "firedAt": "Fired",
+      "certId": "Cert.",
+      "dedupe": "Dedupe key",
+      "empCode": "Code",
+      "name": "Name",
+      "entity": "Entity"
+    }
+  },
+  "list": {
+    "columns": {
+      "code": "Code",
+      "fullName": "Full name",
+      "position": "Position",
+      "entity": "Entity",
+      "team": "Team",
+      "status": "Status",
+      "employmentType": "Employment type",
+      "schedule": "Schedule",
+      "actions": "Actions"
+    }
+  },
+  "filters": {
+    "searchPlaceholder": "Search code, name, email, phone…",
+    "entity": "Entity",
+    "position": "Position",
+    "status": "Availability",
+    "employmentType": "Employment type",
+    "employmentOrigin": "Origin",
+    "employmentStatus": "Status",
+    "all": "All",
+    "clearAll": "Clear all"
+  },
+  "totalBadge": "{{count}} people",
+  "card": {
+    "statusLabel": "Status",
+    "teamLabel": "Team",
+    "scheduleLabel": "Schedule",
+    "companyLabel": "External company",
+    "phoneLabel": "Phone",
+    "viewDetails": "View details"
+  },
+  "detail": {
+    "title": "Personnel details",
+    "placeholder": "Full detail panel will be available in a later release.",
+    "contractorBanner": "External profile linked to {{company}}.",
+    "available": "available",
+    "blocked": "blocked",
+    "tabs": {
+      "identity": "Identity",
+      "skills": "Skills",
+      "availability": "Availability",
+      "teams": "Teams",
+      "rates": "Rate cards",
+      "authorizations": "Authorizations",
+      "assignment": "Assignments",
+      "history": "Work history",
+      "workload": "Workload"
+    },
+    "workload": {
+      "openWo": "Open WO",
+      "inProgressWo": "In progress WO",
+      "pendingDi": "Pending DI",
+      "di30d": "DI last 30 days"
+    },
+    "assignment": {
+      "unknown": "Unknown assignment",
+      "reason": "Reason",
+      "to": "Until",
+      "current": "Current"
+    }
+  },
+  "create": {
+    "title": "New personnel",
+    "submit": "Create",
+    "cancel": "Cancel",
+    "section": {
+      "identity": "Identity",
+      "origin": "Origin & contract",
+      "organization": "Organization",
+      "photo": "Photo",
+      "skills": "Skills",
+      "certifications": "Certifications",
+      "contact": "Contact",
+      "account": "MaintaFox account",
+      "notes": "Notes"
+    },
+    "photo": {
+      "label": "Profile photo",
+      "hint": "Pick a photo (JPEG/PNG, max 5 MB)",
+      "error": "Photo upload failed"
+    },
+    "skill": {
+      "add": "Add skill",
+      "remove": "Remove",
+      "proficiency": "Proficiency",
+      "fromPosition": "Pre-filled from position requirements"
+    },
+    "cert": {
+      "add": "Add certification",
+      "remove": "Remove",
+      "issuedAt": "Issued",
+      "expiresAt": "Expires",
+      "issuingBody": "Issuing body",
+      "ref": "Certificate ref.",
+      "fromPosition": "Pre-filled from position requirements"
+    },
+    "account": {
+      "checkbox": "Create a MaintaFox user account for this person",
+      "locked": "This person's account will be linked to the record you just created"
+    },
+    "validation": {
+      "fullNameRequired": "Full name is required",
+      "employeeCodeRequired": "Employee code is required",
+      "employmentTypeRequired": "Employment type is required",
+      "positionRequired": "Position is required",
+      "companyRequired": "External company is required when origin is External",
+      "entityRequired": "Entity is required",
+      "scheduleRequired": "Schedule is required"
+    },
+    "error": {
+      "createFailed": "Failed to create personnel",
+      "photoFailed": "Personnel created, but photo upload failed"
+    }
+  },
+  "field": {
+    "employeeCode": "Employee code",
+    "fullName": "Full name",
+    "employmentType": "Employment type",
+    "employmentOrigin": "Origin",
+    "employmentStatus": "Status",
+    "position": "Position",
+    "entity": "Entity",
+    "team": "Team",
+    "supervisor": "Supervisor",
+    "schedule": "Schedule",
+    "status": "Availability",
+    "hireDate": "Hire date",
+    "email": "Email",
+    "phone": "Phone",
+    "company": "External company",
+    "contractNumber": "Contract number",
+    "contractStart": "Contract start",
+    "contractEnd": "Contract end",
+    "notes": "Notes",
+    "photo": "Photo"
+  },
+  "status": {
+    "available": "Available",
+    "assigned": "Assigned",
+    "in_training": "In training",
+    "on_leave": "On leave",
+    "blocked": "Blocked",
+    "inactive": "Inactive"
+  },
+  "employmentType": {
+    "employee": "Employee",
+    "contractor": "Contractor",
+    "temp": "Temporary",
+    "vendor": "Vendor"
+  },
+  "employmentOrigin": {
+    "internal": "Internal",
+    "external": "External"
+  },
+  "employmentStatus": {
+    "active": "Active",
+    "inactive": "Inactive",
+    "suspended": "Suspended",
+    "terminated": "Terminated"
+  },
+  "validation": {
+    "nameRequired": "Name is required",
+    "employmentTypeRequired": "Employment type is required"
+  },
+  "position": {
+    "panel": {
+      "title": "Positions",
+      "searchPlaceholder": "Search code or name…",
+      "noData": "No positions found."
+    },
+    "action": {
+      "create": "New position",
+      "archive": "Archive",
+      "archived": "Archived"
+    },
+    "create": {
+      "title": "New position",
+      "code": "Code",
+      "name": "Name",
+      "category": "Category",
+      "active": "Active",
+      "skills": "Required skills",
+      "certs": "Required certifications",
+      "addSkill": "Add skill",
+      "addCert": "Add certification",
+      "submit": "Create",
+      "cancel": "Cancel",
+      "error": "Failed to create position"
+    },
+    "category": {
+      "technician": "Technician",
+      "engineer": "Engineer",
+      "supervisor": "Supervisor",
+      "planner": "Planner",
+      "inspector": "Inspector",
+      "operator": "Operator",
+      "other": "Other"
+    },
+    "columns": {
+      "code": "Code",
+      "name": "Name",
+      "category": "Category",
+      "status": "Status"
+    }
+  },
+  "archive": {
+    "title": "Inactive personnel"
+  },
+  "common": {
+    "loading": "Loading...",
+    "noData": "No data available.",
+    "today": "Today"
+  },
+  "skills": {
+    "searchPlaceholder": "Search personnel or skill...",
+    "columns": {
+      "personnel": "Personnel",
+      "team": "Team",
+      "skill": "Skill",
+      "level": "Level",
+      "coverage": "Coverage"
+    },
+    "coverage": {
+      "active": "Active",
+      "expired": "Expired",
+      "missing": "Missing"
+    }
+  },
+  "availability": {
+    "from": "From",
+    "to": "To",
+    "form": {
+      "title": "Create availability block",
+      "personnel": "Personnel",
+      "blockType": "Block type",
+      "startAt": "Start",
+      "endAt": "End",
+      "reason": "Reason",
+      "isCritical": "Critical (triggers notification)",
+      "submit": "Create block",
+      "types": {
+        "medical": "Medical",
+        "restriction": "Restriction",
+        "leave": "Leave",
+        "training": "Training"
+      },
+      "errors": {
+        "personnelRequired": "Select personnel.",
+        "timeRequired": "Start and end are required.",
+        "invalidRange": "End must be after start."
+      }
+    }
+  },
+  "capacity": {
+    "memberCount": "Members: {{count}}",
+    "leadCount": "Leads: {{count}}",
+    "availableMinutes": "Available minutes: {{count}}",
+    "blockedMinutes": "Blocked minutes: {{count}}",
+    "ratio": "Availability ratio: {{value}}",
+    "successionRisk": "Succession risk"
+  },
+  "import": {
+    "title": "Personnel import wizard",
+    "description": "Upload a personnel CSV/XLSX, review row validations, then apply in a controlled batch.",
+    "action": {
+      "openWizard": "Import",
+      "close": "Close",
+      "apply": "Apply batch"
+    },
+    "mode": {
+      "label": "Import mode",
+      "createAndUpdate": "Create and update",
+      "createOnly": "Create only"
+    },
+    "badges": {
+      "total": "Total: {{count}}",
+      "valid": "Valid: {{count}}",
+      "warning": "Warnings: {{count}}",
+      "error": "Errors: {{count}}"
+    },
+    "table": {
+      "employeeCode": "Employee code",
+      "externalId": "External ID",
+      "status": "Validation status",
+      "action": "Proposed action",
+      "messages": "Messages"
+    },
+    "applyResult": {
+      "title": "Batch applied",
+      "values": "Created: {{created}} · Updated: {{updated}} · Skipped: {{skipped}} · Protected ignored: {{protected}}"
+    }
+  },
+  "reports": {
+    "action": {
+      "export": "Export reports"
+    },
+    "export": {
+      "summary": "Export summary CSV",
+      "skillsGap": "Export skills gap CSV",
+      "kpi": "Export KPI CSV"
+    },
+    "panel": {
+      "title": "Workforce reports",
+      "description": "Operational summary, skill gaps, and readiness KPIs.",
+      "refresh": "Refresh reports"
+    },
+    "kpis": {
+      "totalPersonnel": "Total personnel: {{count}}",
+      "avgSkills": "Avg skills/person: {{value}}",
+      "blockedRatio": "Blocked ratio: {{value}}"
+    },
+    "skillsGap": {
+      "title": "Top skills gap",
+      "empty": "No skills gap data available.",
+      "score": "Gap score: {{score}}"
+    }
+  }
+}

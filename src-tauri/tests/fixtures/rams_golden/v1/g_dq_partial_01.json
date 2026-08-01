@@ -1,0 +1,25 @@
+{
+  "name": "G-DQ-01",
+  "period": {
+    "start": "2026-01-01T00:00:00Z",
+    "end": "2026-02-01T00:00:00Z"
+  },
+  "repeat_lookback_days": 30,
+  "min_sample_n": 5,
+  "t_exp_hours": 1000.0,
+  "events": [
+    {
+      "id": 1,
+      "failed_at": "2026-01-15T12:00:00Z",
+      "eligible_flags_json": "{\"eligible_unplanned_mtbf\":true}",
+      "downtime_duration_hours": 0.0,
+      "active_repair_hours": 1.0,
+      "failure_mode_id": 10
+    }
+  ],
+  "expected": {
+    "data_quality_score": 0.098,
+    "event_count": 1
+  },
+  "tolerance": { "rel": 1e-9 }
+}

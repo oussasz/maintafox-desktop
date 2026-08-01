@@ -1,0 +1,63 @@
+---
+description: Before schema/workflow/UI work, detect KPIs and update KPI_CATALOG.md (analytics platform design)
+alwaysApply: true
+---
+
+# KPI Catalog governance
+
+You are not only implementing features — you are designing the future analytics platform.
+
+**SSOT:** `docs/engineering/KPI_CATALOG.md`
+
+## Mandatory gate (before implementation)
+
+Before finalizing any **schema**, **table**, **workflow**, or **UI** that introduces or changes a business entity:
+
+1. Open `KPI_CATALOG.md` and check existing KPIs for the module.
+2. Detect: new/improved KPIs, derived metrics, future dashboards, reports, audit needs, AI opportunities.
+3. If the feature enables a new KPI or improves an existing one → **update the catalog first** (or in the same change set before claiming done).
+4. Ensure required fields for those KPIs exist in the schema (do not ship UI that cannot feed the formula).
+
+## Entry template (every KPI uses this exact shape)
+
+```markdown
+# KPI-NNN
+
+Nom:
+…
+
+Module:
+…
+
+Description:
+…
+
+Formula:
+…
+
+Inputs:
+- …
+
+Required fields:
+- …
+
+Displayed:
+- …
+
+Status:
+Planned | Partial | Implemented
+```
+
+Also document under each KPI or a linked section when relevant: **derived metrics**, **future dashboards**, **reports**, **audit**, **AI opportunities**.
+
+## Hard rules
+
+- Do not invent one-off KPI docs outside `KPI_CATALOG.md`.
+- Do not skip derived metrics (e.g. efficiency %, variance hours, cost variance %).
+- Prefer durable fields (`origin`, `consumption_status`, coded reference FKs) over free text for reportable KPIs.
+- Status must stay honest: `Implemented` only when formula inputs are persisted and queryable.
+
+```text
+❌ BAD — ship plan-vs-actual columns with no catalog entry
+✅ GOOD — add KPI-00x Plan Adherence % (+ derived efficiency/cost variance), list fields, then implement
+```

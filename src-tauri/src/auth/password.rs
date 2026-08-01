@@ -10,9 +10,10 @@
 
 use crate::errors::{AppError, AppResult};
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Algorithm, Argon2, Params, Version,
 };
+use rand_core::OsRng;
 
 /// Argon2id memory cost in KiB (64 MiB).
 const MEMORY_COST_KIB: u32 = 64 * 1024;

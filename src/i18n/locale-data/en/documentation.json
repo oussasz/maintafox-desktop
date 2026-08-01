@@ -1,1 +1,67 @@
-{}
+{
+  "module": {
+    "title": "Document library",
+    "subtitle": "Technical manuals, SOPs, safety protocols, and compliance certificates",
+    "navAria": "Document categories"
+  },
+  "categories": {
+    "technical-manuals": {
+      "label": "Technical manuals",
+      "heading": "Technical manuals",
+      "description": "Equipment manuals, drawings, and OEM documentation."
+    },
+    "sops": {
+      "label": "SOPs",
+      "heading": "Standard operating procedures",
+      "description": "Step-by-step procedures for operations and maintenance."
+    },
+    "safety-protocols": {
+      "label": "Safety protocols",
+      "heading": "Safety protocols",
+      "description": "LOTO, confined space, hot work, and related safety documents."
+    },
+    "compliance-certificates": {
+      "label": "Compliance certificates",
+      "heading": "Compliance certificates",
+      "description": "Inspection certificates, calibrations, and regulatory records."
+    }
+  },
+  "upload": {
+    "title": "Upload a document",
+    "uploading": "Uploading…",
+    "maxSize": "Maximum file size: {{mb}} MB.",
+    "fields": {
+      "title": "Title",
+      "titlePlaceholder": "Display name (defaults to file name)",
+      "equipment": "Linked equipment",
+      "equipmentPlaceholder": "Select equipment",
+      "noEquipment": "Not linked",
+      "notes": "Notes",
+      "notesPlaceholder": "Optional description"
+    }
+  },
+  "list": {
+    "empty": "No documents in this category yet.",
+    "columns": {
+      "title": "Title",
+      "file": "File",
+      "equipment": "Equipment",
+      "uploaded": "Uploaded",
+      "actions": "Actions"
+    },
+    "download": "Download",
+    "edit": "Edit link",
+    "delete": "Delete"
+  },
+  "edit": {
+    "title": "Edit document",
+    "save": "Save",
+    "cancel": "Cancel"
+  },
+  "confirm": {
+    "delete": "Delete this document record? The file remains on disk for audit purposes."
+  },
+  "errors": {
+    "fileTooLarge": "File exceeds {{mb}} MB."
+  }
+}

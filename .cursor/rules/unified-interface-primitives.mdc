@@ -1,0 +1,51 @@
+---
+description: Enforces one shared Design System renderer for unified interface patterns
+alwaysApply: true
+---
+
+# Unified Interface Primitives
+
+Business modules own data, state, permissions, actions, and domain semantics.
+The Design System owns rendering. Modules may only provide typed presentation adapters.
+
+## Timeline
+
+- Timeline is a Design System primitive.
+- All timeline-like, chronological, audit-rail, history, activity, and process-step interfaces must use `src/components/timeline/Timeline.tsx`.
+- Modules may map domain data to `TimelineEntry`; they must not render their own rails, connectors, markers, cards, grouping, or timeline empty states.
+- Reject any change that introduces a second timeline renderer.
+
+## Kanban
+
+- Kanban is a Design System primitive.
+- All status-lane and workflow-board interfaces must use `src/components/kanban/KanbanBoard.tsx`.
+- Modules may provide columns, cards, permissions, actions, and transition callbacks; they must not render their own board, columns, headers, counters, cards, or Kanban empty states.
+- Reject any change that introduces a second Kanban renderer.
+
+### Forbidden in adapters
+
+- Column icons
+- Per-column empty copy (`column.empty`) — use board `emptyColumnLabel` from `common.kanban.emptyColumn`
+- `headerBadge` or any trailing badge on the code row
+- JSX, `className`, or Tailwind in card/column data
+
+### Required slot semantics
+
+Fixed card anatomy (board-owned): accent → code → title → subtitle → description → badges → meta → actions.
+
+| Data | Slot |
+|------|------|
+| Priority / urgency / status / origin / safety | `badges` |
+| Dates / people | `meta` (with Lucide icon references) |
+| Entity links (DI↔WO, …) | `link` |
+| Asset / supplier / source line | `subtitle` |
+| Longer body text | `description` |
+
+Missing optional fields omit the node; they must never invent an alternate layout.
+
+## Extending the registry
+
+- Before building a reusable interface pattern, search for an existing shared primitive and extend it.
+- When a new application-wide interface primitive is established, add it to this rule with its canonical renderer path and adapter boundary.
+- Keep shared visual behavior, accessibility, responsive layout, and interaction chrome inside the primitive.
+- Do not move business fetching, workflow rules, IPC, or domain mutations into Design System primitives.

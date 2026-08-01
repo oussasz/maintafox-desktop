@@ -74,6 +74,8 @@ pub struct SupportBundle {
     pub log_lines: Vec<String>,
     /// Non-fatal warnings encountered while collecting bundle data (e.g. missing log file)
     pub collection_warnings: Vec<String>,
+    /// Runbook links used by support to triage sync reliability incidents.
+    pub runbook_links: Vec<String>,
 }
 
 // ─── Log file path ────────────────────────────────────────────────────────────
@@ -171,6 +173,11 @@ pub async fn collect_diagnostics_app_info(
         .and_then(|row| row.try_get::<String>("", "setting_value_json").ok())
         .map_or_else(|| "fr-CA".to_string(), |v| v.trim_matches('"').to_string());
 
+    let sync_status = crate::entitlements::queries::get_entitlement_summary(db)
+        .await
+        .map(|summary| summary.effective_state)
+        .unwrap_or_else(|_| "not_configured".to_string());
+
     DiagnosticsAppInfo {
         app_version: app_handle.package_info().version.to_string(),
         os_name,
@@ -178,7 +185,7 @@ pub async fn collect_diagnostics_app_info(
         arch,
         db_schema_version,
         active_locale,
-        sync_status: "not_configured".to_string(),
+        sync_status,
         uptime_seconds: uptime_seconds(),
     }
 }
@@ -234,6 +241,11 @@ pub async fn generate_support_bundle(app_handle: &tauri::AppHandle, db: &Databas
         app_info,
         log_lines,
         collection_warnings,
+        runbook_links: vec![
+            "https://docs.maintafox.com/runbooks/sync/overview".to_string(),
+            "https://docs.maintafox.com/runbooks/sync/conflict-review".to_string(),
+            "https://docs.maintafox.com/runbooks/sync/operator-repair".to_string(),
+        ],
     }
 }
 

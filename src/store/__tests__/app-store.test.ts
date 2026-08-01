@@ -15,6 +15,8 @@ describe("useAppStore", () => {
         pendingCount: 0,
         lastSyncAt: null,
         errorMessage: null,
+        blockerReason: null,
+        retryAttempt: 0,
       },
       unreadNotificationCount: 0,
       hasActiveSession: false,
@@ -31,6 +33,7 @@ describe("useAppStore", () => {
     expect(state.appVersion).toBe("");
     expect(state.isOnline).toBe(true);
     expect(state.syncStatus.state).toBe("idle");
+    expect(state.syncStatus.retryAttempt).toBe(0);
     expect(state.unreadNotificationCount).toBe(0);
     expect(state.hasActiveSession).toBe(false);
     expect(state.currentUserDisplayName).toBeNull();
@@ -63,9 +66,9 @@ describe("useAppStore", () => {
   });
 
   it("setSyncStatus merges partial sync status", () => {
-    useAppStore.getState().setSyncStatus({ state: "syncing", pendingCount: 5 });
+    useAppStore.getState().setSyncStatus({ state: "running", pendingCount: 5 });
     const { syncStatus } = useAppStore.getState();
-    expect(syncStatus.state).toBe("syncing");
+    expect(syncStatus.state).toBe("running");
     expect(syncStatus.pendingCount).toBe(5);
     expect(syncStatus.lastSyncAt).toBeNull();
   });

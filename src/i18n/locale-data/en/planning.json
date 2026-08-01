@@ -1,1 +1,62 @@
-{}
+{
+  "filters": {
+    "periodStart": "Period start",
+    "periodEnd": "Period end",
+    "team": "Team"
+  },
+  "actions": {
+    "refreshBacklog": "Refresh backlog",
+    "freezePeriod": "Freeze period",
+    "exportPdf": "Export Gantt PDF",
+    "commit": "Create commitment",
+    "notifyTeams": "Notify teams"
+  },
+  "state": {
+    "loading": "Loading planning data..."
+  },
+  "backlog": {
+    "readyColumn": "Ready backlog",
+    "blockedColumn": "Blocked backlog",
+    "readinessScore": "Readiness score",
+    "emptyReady": "No ready candidates.",
+    "emptyBlocked": "No blocked candidates."
+  },
+  "commitment": {
+    "formTitle": "Commitment form",
+    "selectedCandidate": "Selected candidate",
+    "start": "Committed start",
+    "end": "Committed end",
+    "assignee": "Assignee",
+    "unassigned": "Unassigned",
+    "budgetThreshold": "Budget threshold"
+  },
+  "gantt": {
+    "capacityTitle": "Team capacity indicators",
+    "capacityLine": "{{committed}}h committed / {{available}}h available",
+    "emptyCapacity": "No capacity data in selected period.",
+    "assignmentLaneTitle": "Assignment calendar lanes",
+    "laneHeader": "Assignee",
+    "overrideReasonPrompt": "Double-booking override reason:",
+    "defaultReason": "Schedule frozen by planner.",
+    "freezeOverlayTitle": "Frozen windows"
+  },
+  "windows": {
+    "title": "Production window manager",
+    "type": "Window type",
+    "start": "Start",
+    "end": "End",
+    "reason": "Lock reason",
+    "add": "Add locked window",
+    "locked": "Locked"
+  },
+  "breakIns": {
+    "title": "Supervisor break-in tracking",
+    "commitment": "Commitment",
+    "selectCommitment": "Select commitment",
+    "reason": "Reason code",
+    "approver": "Approver user id",
+    "overrideReason": "Override reason",
+    "create": "Register break-in",
+    "empty": "No break-ins for selected period."
+  }
+}

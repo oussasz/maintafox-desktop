@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 
 import { runIntegrityCheck, repairSeedData } from "@/services/diagnostics-service";
+import { toErrorMessage } from "@/utils/errors";
 import type { IntegrityReport } from "@shared/ipc-types";
 
 export type IntegrityStatus = "idle" | "checking" | "repairing" | "done" | "error";
@@ -26,7 +27,7 @@ export function useIntegrityCheck(): UseIntegrityCheckReturn {
       setReport(result);
       setStatus("done");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(toErrorMessage(err));
       setStatus("error");
     }
   }, []);
@@ -39,7 +40,7 @@ export function useIntegrityCheck(): UseIntegrityCheckReturn {
       setReport(result);
       setStatus("done");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(toErrorMessage(err));
       setStatus("error");
     }
   }, []);

@@ -1,1 +1,48 @@
-{}
+{
+  "page": {
+    "title": "Rapports et analytique",
+    "subtitle": "Bibliothèque de modèles, exports planifiés (local) et historique d’exécutions.",
+    "noAccess": "Permission insuffisante pour les rapports."
+  },
+  "templates": {
+    "title": "Modèles de rapport",
+    "code": "Code",
+    "name": "Titre",
+    "defaultFormat": "Format par défaut",
+    "actions": "Exporter"
+  },
+  "schedule": {
+    "title": "Planifications",
+    "cronHint": "Cron (UTC, secondes en premier) : ex. 0 0 8 * * * chaque jour à 08:00.",
+    "template": "Modèle",
+    "cron": "Cron",
+    "format": "Format",
+    "enabled": "Actif",
+    "save": "Ajouter",
+    "delete": "Supprimer",
+    "next": "Prochaine exécution"
+  },
+  "runs": {
+    "title": "Exécutions récentes",
+    "status": "Statut",
+    "format": "Format",
+    "started": "Début",
+    "path": "Fichier / erreur",
+    "statusValues": {
+      "pending": "En attente",
+      "running": "En cours",
+      "success": "Réussi",
+      "failed": "Échec"
+    }
+  },
+  "format": {
+    "pdf": "PDF",
+    "xlsx": "XLSX"
+  },
+  "common": {
+    "empty": "—"
+  },
+  "table": {
+    "id": "ID"
+  }
+}

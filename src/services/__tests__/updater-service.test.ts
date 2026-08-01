@@ -28,6 +28,8 @@ function resetStore(): void {
     isChecking: false,
     isInstalling: false,
     installComplete: false,
+    forceRequired: false,
+    forceReason: null,
     error: null,
   });
 }
@@ -90,7 +92,13 @@ describe("useUpdaterStore", () => {
   });
 
   it("isChecking transitions to false after a successful check", async () => {
-    mockInvoke.mockResolvedValueOnce(fixtures.updateCheckNoUpdate);
+    mockInvoke.mockImplementation(async (command) => {
+      if (command === "check_for_update") return fixtures.updateCheckNoUpdate;
+      if (command === "get_product_license_onboarding_state") {
+        return { complete: true, status: "active", pending_online_validation: false };
+      }
+      return null;
+    });
 
     const { result } = renderHook(() => useUpdaterStore());
 
@@ -100,11 +108,18 @@ describe("useUpdaterStore", () => {
 
     expect(result.current.isChecking).toBe(false);
     expect(result.current.lastCheckResult?.available).toBe(false);
+    expect(result.current.forceRequired).toBe(false);
     expect(result.current.error).toBeNull();
   });
 
   it("lastCheckResult reflects available=true when update found", async () => {
-    mockInvoke.mockResolvedValueOnce(fixtures.updateCheckAvailable);
+    mockInvoke.mockImplementation(async (command) => {
+      if (command === "check_for_update") return fixtures.updateCheckAvailable;
+      if (command === "get_product_license_onboarding_state") {
+        return { complete: true, status: "active", pending_online_validation: false };
+      }
+      return null;
+    });
 
     const { result } = renderHook(() => useUpdaterStore());
 
@@ -130,11 +145,35 @@ describe("useUpdaterStore", () => {
     expect(result.current.lastCheckResult).toBeNull();
   });
 
+  it("sets forceRequired when activation policy denies outdated app", async () => {
+    mockInvoke.mockImplementation(async (command) => {
+      if (command === "check_for_update") return fixtures.updateCheckAvailable;
+      if (command === "get_product_license_onboarding_state") {
+        return {
+          complete: false,
+          status: "denied_force_update_required",
+          pending_online_validation: false,
+          deny_message: "Update to 1.8.0+ required by vendor policy.",
+        };
+      }
+      return null;
+    });
+
+    const { result } = renderHook(() => useUpdaterStore());
+    await act(async () => {
+      await result.current.checkForUpdate();
+    });
+    expect(result.current.forceRequired).toBe(true);
+    expect(result.current.forceReason).toContain("1.8.0");
+  });
+
   it("dismissNotification resets lastCheckResult, error, and installComplete", async () => {
     useUpdaterStore.setState({
       lastCheckResult: { available: true, version: "1.2.0", notes: null, pub_date: null },
       error: "some previous error",
       installComplete: true,
+      forceRequired: true,
+      forceReason: "forced update",
     });
 
     const { result } = renderHook(() => useUpdaterStore());
@@ -146,5 +185,7 @@ describe("useUpdaterStore", () => {
     expect(result.current.lastCheckResult).toBeNull();
     expect(result.current.error).toBeNull();
     expect(result.current.installComplete).toBe(false);
+    expect(result.current.forceRequired).toBe(false);
+    expect(result.current.forceReason).toBeNull();
   });
 });

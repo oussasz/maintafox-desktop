@@ -1,15 +1,16 @@
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 use uuid::Uuid;
 
 /// Current version of the system seed data set.
 /// Increment this when adding new system domains or values in a release.
-pub const SEED_SCHEMA_VERSION: i32 = 1;
+pub const SEED_SCHEMA_VERSION: i32 = 2;
 
 /// Baseline settings seeded on first startup after settings migration is applied.
 /// Tuple format: (`setting_key`, category, `setting_scope`, `setting_value_json`)
 const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
+    ("ram.fmeca_rpn_critical_threshold", "reliability", "tenant", r"150"),
     ("locale.primary_language", "localization", "tenant", r#""fr""#),
     ("locale.fallback_language", "localization", "tenant", r#""en""#),
     ("locale.date_format", "localization", "tenant", r#""DD/MM/YYYY""#),
@@ -59,6 +60,42 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         "system",
         false,
         false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "equipment.lifecycle_event_type",
+        "Type d'evenement cycle de vie equipement",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "equipment.meter_type",
+        "Type de compteur equipement",
+        "system",
+        false,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "equipment.reading_source_type",
+        "Source de releve compteur",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "equipment.document_link_purpose",
+        "Objet du lien documentaire equipement",
+        "system",
+        false,
+        true,
     )
     .await?;
     seed_domain(
@@ -146,6 +183,143 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         false,
     )
     .await?;
+    seed_domain(
+        db,
+        "inventory.stocking_type",
+        "Type de stockage article",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.tax_category",
+        "Catégorie fiscale article",
+        "tenant",
+        true,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.procurement_category",
+        "Catégorie approvisionnement article",
+        "tenant",
+        true,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.procurement_status",
+        "Statut processus approvisionnement",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.erp_posting_state",
+        "Statut de publication ERP",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.repairable_status",
+        "Statut cycle pièce réparable",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.variance_reason",
+        "Code motif écart inventaire",
+        "tenant",
+        true,
+        true,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.currency",
+        "Devise valorisation stock",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.erp_reconcile_state",
+        "Etat rapprochement ERP piece / mouvement",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.supplier_status",
+        "Statut fournisseur",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.replenishment_policy",
+        "Politique de réapprovisionnement",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.demand_source_type",
+        "Type de source de demande",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.purchase_priority",
+        "Priorité achat",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.equivalence_type",
+        "Type d'équivalence article",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(
+        db,
+        "inventory.document_link_purpose",
+        "Objet lien document inventaire",
+        "system",
+        false,
+        false,
+    )
+    .await?;
+    seed_domain(db, "inventory.abc_class", "Classe ABC article", "system", false, false).await?;
+    seed_domain(db, "inventory.xyz_class", "Classe XYZ article", "system", false, false).await?;
     seed_domain(
         db,
         "org.responsibility_type",
@@ -329,6 +503,178 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         )
         .await?;
         seed_value(db, d, "FEEDS", "Alimente", "Alimente", "Feeds", None, 4, true).await?;
+    }
+
+    // equipment.lifecycle_event_type
+    {
+        let d = get_domain_id(db, "equipment.lifecycle_event_type").await?;
+        seed_value(
+            db,
+            d,
+            "INSTALLED",
+            "Install\u{00e9}",
+            "Install\u{00e9}",
+            "Installed",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "MOVED",
+            "D\u{00e9}plac\u{00e9}",
+            "D\u{00e9}plac\u{00e9}",
+            "Moved",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REPLACED",
+            "Remplac\u{00e9}",
+            "Remplac\u{00e9}",
+            "Replaced",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RECLASSIFIED",
+            "Reclass\u{00e9}",
+            "Reclass\u{00e9}",
+            "Reclassified",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PRESERVED",
+            "Pr\u{00e9}serv\u{00e9}",
+            "Pr\u{00e9}serv\u{00e9}",
+            "Preserved",
+            None,
+            5,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "DECOMMISSIONED",
+            "Mis hors service",
+            "Mis hors service",
+            "Decommissioned",
+            None,
+            6,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RECOMMISSIONED",
+            "Remis en service",
+            "Remis en service",
+            "Recommissioned",
+            None,
+            7,
+            true,
+        )
+        .await?;
+    }
+
+    // equipment.meter_type
+    {
+        let d = get_domain_id(db, "equipment.meter_type").await?;
+        seed_value(db, d, "HOURS", "Heures", "Heures", "Hours", None, 1, true).await?;
+        seed_value(db, d, "CYCLES", "Cycles", "Cycles", "Cycles", None, 2, true).await?;
+        seed_value(db, d, "DISTANCE", "Distance", "Distance", "Distance", None, 3, true).await?;
+        seed_value(db, d, "VOLUME", "Volume", "Volume", "Volume", None, 4, true).await?;
+        seed_value(
+            db,
+            d,
+            "CUSTOM",
+            "Personnalis\u{00e9}",
+            "Personnalis\u{00e9}",
+            "Custom",
+            None,
+            5,
+            true,
+        )
+        .await?;
+    }
+
+    // equipment.reading_source_type
+    {
+        let d = get_domain_id(db, "equipment.reading_source_type").await?;
+        seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 1, true).await?;
+        seed_value(
+            db,
+            d,
+            "IOT",
+            "IoT / Capteur",
+            "IoT / Capteur",
+            "IoT / Sensor",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "IMPORT", "Import", "Import", "Import", None, 3, true).await?;
+    }
+
+    // equipment.document_link_purpose
+    {
+        let d = get_domain_id(db, "equipment.document_link_purpose").await?;
+        seed_value(
+            db,
+            d,
+            "TECHNICAL_DOSSIER",
+            "Dossier technique",
+            "Dossier technique",
+            "Technical Dossier",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 2, true).await?;
+        seed_value(db, d, "WARRANTY", "Garantie", "Garantie", "Warranty", None, 3, true).await?;
+        seed_value(
+            db,
+            d,
+            "CERTIFICATE",
+            "Certificat",
+            "Certificat",
+            "Certificate",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "INSPECTION_PACK",
+            "Dossier d'inspection",
+            "Dossier d'inspection",
+            "Inspection Pack",
+            None,
+            5,
+            true,
+        )
+        .await?;
     }
 
     // intervention_request.type (tenant-extensible examples)
@@ -1072,6 +1418,708 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         .await?;
     }
 
+    // inventory.stocking_type
+    {
+        let d = get_domain_id(db, "inventory.stocking_type").await?;
+        seed_value(
+            db,
+            d,
+            "STOCKED",
+            "Article stocké",
+            "Article stocké",
+            "Stocked item",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "NON_STOCK",
+            "Article non stocké",
+            "Article non stocké",
+            "Non-stock item",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REPAIRABLE",
+            "Pièce réparable",
+            "Pièce réparable",
+            "Repairable spare",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "CONSUMABLE",
+            "Consommable",
+            "Consommable",
+            "Consumable",
+            None,
+            4,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.tax_category
+    {
+        let d = get_domain_id(db, "inventory.tax_category").await?;
+        seed_value(db, d, "TVA_0", "TVA 0%", "TVA 0%", "VAT 0%", None, 1, true).await?;
+        seed_value(db, d, "TVA_7", "TVA 7%", "TVA 7%", "VAT 7%", None, 2, true).await?;
+        seed_value(db, d, "TVA_10", "TVA 10%", "TVA 10%", "VAT 10%", None, 3, true).await?;
+        seed_value(db, d, "TVA_20", "TVA 20%", "TVA 20%", "VAT 20%", None, 4, true).await?;
+    }
+
+    // inventory.procurement_category
+    {
+        let d = get_domain_id(db, "inventory.procurement_category").await?;
+        seed_value(
+            db,
+            d,
+            "BUY",
+            "Achat externe",
+            "Achat externe",
+            "External purchase",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REPAIR",
+            "Réparation externe",
+            "Réparation externe",
+            "External repair",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "INTERNAL",
+            "Appro interne",
+            "Appro interne",
+            "Internal supply",
+            None,
+            3,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.procurement_status
+    {
+        let d = get_domain_id(db, "inventory.procurement_status").await?;
+        seed_value(db, d, "DRAFT", "Brouillon", "Brouillon", "Draft", None, 1, true).await?;
+        seed_value(db, d, "SUBMITTED", "Soumise", "Soumise", "Submitted", None, 2, true).await?;
+        seed_value(db, d, "APPROVED", "Approuvée", "Approuvée", "Approved", None, 3, true).await?;
+        seed_value(
+            db,
+            d,
+            "PARTIALLY_RECEIVED",
+            "Partiellement réceptionnée",
+            "Partiellement réceptionnée",
+            "Partially received",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RECEIVED_CLOSED",
+            "Réception terminée",
+            "Réception terminée",
+            "Received & closed",
+            None,
+            5,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "CANCELLED", "Annulée", "Annulée", "Cancelled", None, 6, true).await?;
+        seed_value(db, d, "CLOSED", "Clôturée", "Clôturée", "Closed", None, 7, true).await?;
+        // First-class approval rejection — distinct from CANCELLED for audit and future KPIs.
+        seed_value(
+            db,
+            d,
+            "REJECTED",
+            "Rejetée",
+            "Rejetée",
+            "Rejected",
+            Some("#dc3545"),
+            8,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.erp_posting_state
+    {
+        let d = get_domain_id(db, "inventory.erp_posting_state").await?;
+        seed_value(
+            db,
+            d,
+            "PENDING_POSTING",
+            "À publier",
+            "À publier",
+            "Pending posting",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "POSTED", "Publié", "Publié", "Posted", None, 2, true).await?;
+        seed_value(
+            db,
+            d,
+            "POSTING_FAILED",
+            "Publication en erreur",
+            "Publication en erreur",
+            "Posting failed",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RECONCILED",
+            "Rapproché",
+            "Rapproché",
+            "Reconciled",
+            None,
+            4,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.repairable_status
+    {
+        let d = get_domain_id(db, "inventory.repairable_status").await?;
+        seed_value(db, d, "REQUESTED", "Demandée", "Demandée", "Requested", None, 1, true).await?;
+        seed_value(
+            db,
+            d,
+            "RELEASED",
+            "Sortie magasin",
+            "Sortie magasin",
+            "Released",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "SENT_FOR_REPAIR",
+            "Envoyée en réparation",
+            "Envoyée en réparation",
+            "Sent for repair",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RETURNED_FROM_REPAIR",
+            "Reçue de réparation",
+            "Reçue de réparation",
+            "Returned from repair",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "CLOSED", "Clôturée", "Clôturée", "Closed", None, 5, true).await?;
+        seed_value(db, d, "SCRAPPED", "Rebut", "Rebut", "Scrapped", None, 6, true).await?;
+        seed_value(db, d, "CANCELLED", "Annulée", "Annulée", "Cancelled", None, 7, true).await?;
+    }
+
+    // inventory.variance_reason
+    {
+        let d = get_domain_id(db, "inventory.variance_reason").await?;
+        seed_value(
+            db,
+            d,
+            "COUNT_ERROR",
+            "Erreur de comptage",
+            "Erreur de comptage",
+            "Count error",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "DAMAGE",
+            "Dommage / casse",
+            "Dommage / casse",
+            "Damage / breakage",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "THEFT_LOSS",
+            "Perte / vol",
+            "Perte / vol",
+            "Loss / theft",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "UNRECORDED_RECEIPT",
+            "Réception non enregistrée",
+            "Réception non enregistrée",
+            "Unrecorded receipt",
+            None,
+            4,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.currency
+    {
+        let d = get_domain_id(db, "inventory.currency").await?;
+        seed_value(db, d, "EUR", "EUR", "EUR", "EUR", None, 1, true).await?;
+        seed_value(db, d, "USD", "USD", "USD", "USD", None, 2, true).await?;
+    }
+
+    // inventory.erp_reconcile_state
+    {
+        let d = get_domain_id(db, "inventory.erp_reconcile_state").await?;
+        seed_value(db, d, "POSTED", "Comptabilise", "Comptabilise", "Posted", None, 1, true).await?;
+        seed_value(
+            db,
+            d,
+            "PENDING_RECONCILE",
+            "En attente rapprochement",
+            "En attente rapprochement",
+            "Pending reconcile",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "RECONCILED",
+            "Rapproche",
+            "Rapproche",
+            "Reconciled",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "CONFLICT", "Conflit", "Conflit", "Conflict", None, 4, true).await?;
+    }
+
+    // inventory.supplier_status
+    {
+        let d = get_domain_id(db, "inventory.supplier_status").await?;
+        seed_value(
+            db,
+            d,
+            "PREFERRED",
+            "Préféré",
+            "Préféré",
+            "Preferred",
+            Some("#198754"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "APPROVED",
+            "Approuvé",
+            "Approuvé",
+            "Approved",
+            Some("#0d6efd"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "UNDER_EVALUATION",
+            "En évaluation",
+            "En évaluation",
+            "Under evaluation",
+            Some("#ffc107"),
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "BLOCKED",
+            "Bloqué",
+            "Bloqué",
+            "Blocked",
+            Some("#dc3545"),
+            4,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.replenishment_policy
+    {
+        let d = get_domain_id(db, "inventory.replenishment_policy").await?;
+        seed_value(db, d, "MIN_MAX", "Min/Max", "Min/Max", "Min/Max", None, 1, true).await?;
+        seed_value(
+            db,
+            d,
+            "FIXED_QTY",
+            "Quantité fixe",
+            "Quantité fixe",
+            "Fixed quantity",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "ORDER_UP_TO",
+            "Commande jusqu'à",
+            "Commande jusqu'à",
+            "Order up to",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 4, true).await?;
+        seed_value(db, d, "KANBAN", "Kanban", "Kanban", "Kanban", None, 5, true).await?;
+        seed_value(
+            db,
+            d,
+            "EMERGENCY_ONLY",
+            "Urgence uniquement",
+            "Urgence uniquement",
+            "Emergency only",
+            None,
+            6,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REPAIR_ONLY",
+            "Réparation uniquement",
+            "Réparation uniquement",
+            "Repair only",
+            None,
+            7,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "VENDOR_MANAGED",
+            "Géré fournisseur",
+            "Géré fournisseur",
+            "Vendor managed",
+            None,
+            8,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.demand_source_type
+    {
+        let d = get_domain_id(db, "inventory.demand_source_type").await?;
+        seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 1, true).await?;
+        seed_value(
+            db,
+            d,
+            "REORDER",
+            "Réapprovisionnement",
+            "Réapprovisionnement",
+            "Reorder",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "WORK_ORDER",
+            "Ordre de travail",
+            "Ordre de travail",
+            "Work order",
+            None,
+            3,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "WORK_ORDER_PART",
+            "Pièce OT",
+            "Pièce OT",
+            "WO part",
+            None,
+            4,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "REPAIRABLE",
+            "Réparable",
+            "Réparable",
+            "Repairable",
+            None,
+            5,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "STOCK_COUNT",
+            "Inventaire",
+            "Inventaire",
+            "Stock count",
+            None,
+            6,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "PM",
+            "Maintenance préventive",
+            "Maintenance préventive",
+            "Preventive maintenance",
+            None,
+            7,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.purchase_priority
+    {
+        let d = get_domain_id(db, "inventory.purchase_priority").await?;
+        seed_value(
+            db,
+            d,
+            "EMERGENCY",
+            "Urgence",
+            "Urgence",
+            "Emergency",
+            Some("#dc3545"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "HIGH", "Haute", "Haute", "High", Some("#fd7e14"), 2, true).await?;
+        seed_value(db, d, "NORMAL", "Normale", "Normale", "Normal", None, 3, true).await?;
+        seed_value(db, d, "LOW", "Basse", "Basse", "Low", Some("#6c757d"), 4, true).await?;
+    }
+
+    // inventory.equivalence_type
+    {
+        let d = get_domain_id(db, "inventory.equivalence_type").await?;
+        seed_value(
+            db,
+            d,
+            "DIRECT",
+            "Remplacement direct",
+            "Remplacement direct",
+            "Direct replacement",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "FUNCTIONAL",
+            "Équivalent fonctionnel",
+            "Équivalent fonctionnel",
+            "Functional equivalent",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "UPGRADE",
+            "Amélioration",
+            "Amélioration",
+            "Upgrade",
+            None,
+            3,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.document_link_purpose
+    {
+        let d = get_domain_id(db, "inventory.document_link_purpose").await?;
+        seed_value(
+            db,
+            d,
+            "DATASHEET",
+            "Fiche technique",
+            "Fiche technique",
+            "Datasheet",
+            None,
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "CERTIFICATE",
+            "Certificat",
+            "Certificat",
+            "Certificate",
+            None,
+            2,
+            true,
+        )
+        .await?;
+        seed_value(db, d, "INVOICE", "Facture", "Facture", "Invoice", None, 3, true).await?;
+        seed_value(db, d, "MANUAL", "Manuel", "Manuel", "Manual", None, 4, true).await?;
+        seed_value(db, d, "PHOTO", "Photo", "Photo", "Photo", None, 5, true).await?;
+    }
+
+    // inventory.abc_class
+    {
+        let d = get_domain_id(db, "inventory.abc_class").await?;
+        seed_value(
+            db,
+            d,
+            "A",
+            "A – Critique (80%)",
+            "A – Critique (80%)",
+            "A – Critical (80%)",
+            Some("#dc3545"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "B",
+            "B – Important (95%)",
+            "B – Important (95%)",
+            "B – Important (95%)",
+            Some("#ffc107"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "C",
+            "C – Courant",
+            "C – Courant",
+            "C – Standard",
+            Some("#198754"),
+            3,
+            true,
+        )
+        .await?;
+    }
+
+    // inventory.xyz_class
+    {
+        let d = get_domain_id(db, "inventory.xyz_class").await?;
+        seed_value(
+            db,
+            d,
+            "X",
+            "X – Régulier",
+            "X – Régulier",
+            "X – Regular",
+            Some("#0d6efd"),
+            1,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "Y",
+            "Y – Variable",
+            "Y – Variable",
+            "Y – Variable",
+            Some("#ffc107"),
+            2,
+            true,
+        )
+        .await?;
+        seed_value(
+            db,
+            d,
+            "Z",
+            "Z – Irrégulier",
+            "Z – Irrégulier",
+            "Z – Irregular",
+            Some("#dc3545"),
+            3,
+            true,
+        )
+        .await?;
+    }
+
     // org.responsibility_type
     {
         let d = get_domain_id(db, "org.responsibility_type").await?;
@@ -1202,6 +2250,8 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
         .await?;
     }
 
+    seed_inventory_valuation_policies(db).await?;
+
     // ── 3. Seed RBAC: permissions and system roles ───────────────────────
     seed_permissions(db).await?;
     seed_system_roles(db).await?;
@@ -1217,33 +2267,27 @@ pub async fn seed_system_data(db: &DatabaseConnection) -> AppResult<()> {
     ))
     .await?;
 
-    // ── 5. Seed bootstrap admin account ───────────────────────────────────
+    // ── 5. Ensure admin roles grant RAM analyze permissions (RBAC drift backfill) ─
+    ensure_admin_ram_permissions(db).await?;
+
+    // ── 6. Seed bootstrap admin account ───────────────────────────────────
     seed_admin_account(db).await?;
+
+    // ── 7. Seed default application settings ──────────────────────────────
+    seed_default_settings(db).await?;
 
     tracing::info!("seeder::complete — system seed version {} applied", SEED_SCHEMA_VERSION);
     Ok(())
 }
 
-/// Seeds baseline rows in `app_settings` if the table is still empty.
+/// Ensures baseline rows exist in `app_settings` (idempotent).
+///
+/// Uses `INSERT OR IGNORE` per `(setting_key, setting_scope)` so missing defaults are
+/// restored after partial wipes — e.g. tenant-scoped rows removed while device-scoped
+/// rows remain, which previously caused the seeder to skip entirely and left Settings
+/// without localization / appearance / backup categories.
 /// Safe to call on every startup after migrations.
 pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
-    let count_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM app_settings;".to_string(),
-        ))
-        .await?;
-
-    let count = count_row.and_then(|r| r.try_get::<i64>("", "cnt").ok()).unwrap_or(0);
-
-    if count > 0 {
-        tracing::debug!(
-            count,
-            "seed_default_settings: existing settings detected, skipping defaults"
-        );
-        return Ok(());
-    }
-
     let now = Utc::now().to_rfc3339();
 
     for (setting_key, category, setting_scope, setting_value_json) in DEFAULT_SETTINGS {
@@ -1266,13 +2310,64 @@ pub async fn seed_default_settings(db: &DatabaseConnection) -> AppResult<()> {
 
     tracing::info!(
         count = DEFAULT_SETTINGS.len(),
-        "seed_default_settings: baseline settings inserted"
+        "seed_default_settings: baseline settings ensured (idempotent)"
     );
 
     Ok(())
 }
 
 // ── Helper: insert domain if not exists ───────────────────────────────────
+async fn seed_inventory_valuation_policies(db: &DatabaseConnection) -> AppResult<()> {
+    let row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT lv.id AS id FROM lookup_values lv
+             INNER JOIN lookup_domains ld ON ld.id = lv.domain_id
+             WHERE ld.domain_key = 'inventory.currency' AND lv.code = 'EUR' AND lv.is_active = 1
+             LIMIT 1"
+                .to_string(),
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(());
+    };
+    let eur_id: i64 = row.try_get("", "id")?;
+    let policies: [(&str, &str, &str, i32, Option<f64>); 3] = [
+        ("DEFAULT-LAST-RECEIPT", "Default last receipt", "LAST_RECEIPT", 10, None),
+        ("DEFAULT-MOVING", "Default moving average", "MOVING_AVG", 20, None),
+        (
+            "DEFAULT-STANDARD",
+            "Default standard fallback",
+            "STANDARD",
+            100,
+            Some(0.0),
+        ),
+    ];
+    for (code, name, method, sort, std) in policies {
+        let std_v: Value = match std {
+            Some(v) => v.into(),
+            None => Value::Float(None),
+        };
+        let _ = db
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT OR IGNORE INTO inventory_valuation_policies
+                 (code, name, scope_level, warehouse_id, family_id, article_id, valuation_method, currency_value_id, standard_unit_cost, contract_ref, sort_order, is_active, created_at, updated_at)
+                 VALUES (?, ?, 0, NULL, NULL, NULL, ?, ?, ?, NULL, ?, 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+                [
+                    (*code).into(),
+                    (*name).into(),
+                    (*method).into(),
+                    eur_id.into(),
+                    std_v,
+                    sort.into(),
+                ],
+            ))
+            .await;
+    }
+    Ok(())
+}
+
 async fn seed_domain(
     db: &DatabaseConnection,
     domain_key: &str,
@@ -1371,326 +2466,88 @@ async fn seed_value(
 /// Permissions are ordered by domain prefix then action suffix.
 /// All seeded permissions have `is_system` = 1 and cannot be deleted.
 async fn seed_permissions(db: &DatabaseConnection) -> AppResult<()> {
-    // Permission rows: (name, description, category, is_dangerous, requires_step_up)
-    // Format: dot-notation `domain.action`
-    let permissions: &[(&str, &str, &str, bool, bool)] = &[
-        // ── Equipment (eq) ──────────────────────────────────────────────────
-        ("eq.view", "View equipment registry", "equipment", false, false),
-        ("eq.manage", "Create/edit equipment records", "equipment", false, false),
-        (
-            "eq.import",
-            "Import equipment from CSV / ERP",
-            "equipment",
-            false,
-            false,
-        ),
-        ("eq.delete", "Soft-delete equipment records", "equipment", true, true),
-        // ── Intervention Requests (di) ────────────────────────────────────
-        ("di.view", "View intervention requests", "intervention", false, false),
-        (
-            "di.create",
-            "Create intervention requests",
-            "intervention",
-            false,
-            false,
-        ),
-        ("di.edit", "Edit intervention requests", "intervention", false, false),
-        ("di.delete", "Delete intervention requests", "intervention", true, true),
-        (
-            "di.close",
-            "Close/resolve intervention requests",
-            "intervention",
-            false,
-            false,
-        ),
-        // ── Work Orders (ot) ──────────────────────────────────────────────
-        ("ot.view", "View work orders", "work_order", false, false),
-        ("ot.create", "Create work orders", "work_order", false, false),
-        ("ot.edit", "Edit work orders", "work_order", false, false),
-        ("ot.delete", "Delete work orders", "work_order", true, true),
-        ("ot.close", "Close work orders", "work_order", false, false),
-        ("ot.approve", "Approve work order execution", "work_order", false, false),
-        // ── Organization (org) ───────────────────────────────────────────
-        (
-            "org.view",
-            "View organizational structure",
-            "organization",
-            false,
-            false,
-        ),
-        (
-            "org.manage",
-            "Create/edit org nodes and entities",
-            "organization",
-            false,
-            false,
-        ),
-        (
-            "org.admin",
-            "Manage org structure model and types",
-            "organization",
-            true,
-            true,
-        ),
-        // ── Personnel (per) ──────────────────────────────────────────────
-        ("per.view", "View personnel records", "personnel", false, false),
-        ("per.manage", "Create/edit personnel records", "personnel", false, false),
-        (
-            "per.sensitiveview",
-            "View sensitive personnel fields",
-            "personnel",
-            false,
-            false,
-        ),
-        // ── Reference Data (ref) ─────────────────────────────────────────
-        ("ref.view", "View reference/lookup values", "reference", false, false),
-        (
-            "ref.manage",
-            "Create/edit governed reference values",
-            "reference",
-            false,
-            false,
-        ),
-        ("ref.publish", "Publish reference changes", "reference", true, true),
-        // ── Inventory (inv) ──────────────────────────────────────────────
-        ("inv.view", "View inventory and stock levels", "inventory", false, false),
-        ("inv.manage", "Create/edit inventory records", "inventory", false, false),
-        ("inv.adjust", "Post inventory adjustments", "inventory", true, true),
-        (
-            "inv.order",
-            "Create purchase / replenishment orders",
-            "inventory",
-            false,
-            false,
-        ),
-        // ── Preventive Maintenance (pm) ──────────────────────────────────
-        ("pm.view", "View PM plans and schedules", "maintenance", false, false),
-        ("pm.manage", "Create/edit PM plans", "maintenance", false, false),
-        ("pm.approve", "Approve PM plan changes", "maintenance", false, false),
-        // ── RAMS / Reliability (ram) ─────────────────────────────────────
-        ("ram.view", "View RAMS / reliability data", "reliability", false, false),
-        (
-            "ram.manage",
-            "Edit RAMS records and failure modes",
-            "reliability",
-            false,
-            false,
-        ),
-        // ── Reports & Analytics (rep) ─────────────────────────────────────
-        ("rep.view", "View standard reports", "reporting", false, false),
-        ("rep.export", "Export report data", "reporting", false, false),
-        ("rep.manage", "Create/edit custom reports", "reporting", false, false),
-        // ── Archive Explorer (arc) ────────────────────────────────────────
-        ("arc.view", "Browse archive entries", "archive", false, false),
-        ("arc.export", "Export archived data", "archive", false, false),
-        // ── Documentation (doc) ──────────────────────────────────────────
-        (
-            "doc.view",
-            "View documentation and help content",
-            "documentation",
-            false,
-            false,
-        ),
-        (
-            "doc.manage",
-            "Create/edit documentation articles",
-            "documentation",
-            false,
-            false,
-        ),
-        // ── Administration (adm) ─────────────────────────────────────────
-        ("adm.users", "Manage user accounts", "administration", true, true),
-        (
-            "adm.roles",
-            "Manage roles and permissions",
-            "administration",
-            true,
-            true,
-        ),
-        (
-            "adm.permissions",
-            "Assign permissions to roles",
-            "administration",
-            true,
-            true,
-        ),
-        (
-            "adm.settings",
-            "Manage application settings",
-            "administration",
-            false,
-            false,
-        ),
-        ("adm.audit", "View the full audit log", "administration", false, false),
-        // ── Planning (plan) ──────────────────────────────────────────────
-        (
-            "plan.view",
-            "View planning and scheduling data",
-            "planning",
-            false,
-            false,
-        ),
-        ("plan.manage", "Manage planning schedules", "planning", false, false),
-        // ── Audit Log (log) ──────────────────────────────────────────────
-        ("log.view", "View activity feed", "audit", false, false),
-        ("log.export", "Export audit log data", "audit", true, true),
-        // ── Training (trn) ───────────────────────────────────────────────
-        (
-            "trn.view",
-            "View training and certification records",
-            "training",
-            false,
-            false,
-        ),
-        (
-            "trn.manage",
-            "Manage training records and plans",
-            "training",
-            false,
-            false,
-        ),
-        ("trn.certify", "Issue or revoke certifications", "training", true, true),
-        // ── IoT Integration (iot) ────────────────────────────────────────
-        (
-            "iot.view",
-            "View IoT device data and readings",
-            "integration",
-            false,
-            false,
-        ),
-        (
-            "iot.manage",
-            "Configure IoT gateways and devices",
-            "integration",
-            false,
-            false,
-        ),
-        // ── ERP Connector (erp) ──────────────────────────────────────────
-        (
-            "erp.view",
-            "View ERP sync status and mappings",
-            "integration",
-            false,
-            false,
-        ),
-        (
-            "erp.manage",
-            "Configure ERP integration settings",
-            "integration",
-            true,
-            true,
-        ),
-        (
-            "erp.sync",
-            "Trigger manual ERP synchronization",
-            "integration",
-            true,
-            true,
-        ),
-        // ── Work Permits (ptw) ───────────────────────────────────────────
-        ("ptw.view", "View work permits", "safety", false, false),
-        ("ptw.create", "Create work permits", "safety", false, false),
-        ("ptw.approve", "Approve or reject work permits", "safety", true, true),
-        ("ptw.cancel", "Cancel active work permits", "safety", true, true),
-        // ── Budget / Finance (fin) ───────────────────────────────────────
-        ("fin.view", "View budgets and cost data", "finance", false, false),
-        ("fin.manage", "Manage budgets and cost centers", "finance", false, false),
-        ("fin.approve", "Approve budget changes", "finance", true, true),
-        // ── Inspection (ins) ─────────────────────────────────────────────
-        (
-            "ins.view",
-            "View inspection rounds and checklists",
-            "inspection",
-            false,
-            false,
-        ),
-        (
-            "ins.manage",
-            "Create/edit inspection rounds",
-            "inspection",
-            false,
-            false,
-        ),
-        (
-            "ins.complete",
-            "Complete inspection round executions",
-            "inspection",
-            false,
-            false,
-        ),
-        // ── Configuration Engine (cfg) ───────────────────────────────────
-        ("cfg.view", "View tenant configuration", "configuration", false, false),
-        (
-            "cfg.manage",
-            "Manage tenant configuration rules",
-            "configuration",
-            true,
-            true,
-        ),
-        (
-            "cfg.publish",
-            "Publish configuration changes",
-            "configuration",
-            true,
-            true,
-        ),
-    ];
-
+    // Canonical catalog is the sole permission SSOT (shared/rbac/permission-registry.json).
     let now = Utc::now().to_rfc3339();
-
-    for (name, desc, category, is_dangerous, requires_step_up) in permissions {
+    for meta in crate::rbac::permissions::CATALOG {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT OR IGNORE INTO permissions
                    (name, description, category, is_dangerous, requires_step_up, is_system, created_at)
                VALUES (?, ?, ?, ?, ?, 1, ?)",
             [
-                (*name).into(),
-                (*desc).into(),
-                (*category).into(),
-                i32::from(*is_dangerous).into(),
-                i32::from(*requires_step_up).into(),
+                meta.name.into(),
+                meta.description.into(),
+                meta.category.into(),
+                i32::from(meta.is_dangerous).into(),
+                i32::from(meta.requires_step_up).into(),
                 now.clone().into(),
             ],
         ))
         .await?;
     }
 
-    tracing::info!(count = permissions.len(), "seeder::permissions_seeded");
+    // Keep metadata aligned for rows that already existed under older descriptions.
+    for meta in crate::rbac::permissions::CATALOG {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"UPDATE permissions
+               SET description = ?, category = ?, is_dangerous = ?, requires_step_up = ?
+             WHERE name = ? AND is_system = 1",
+            [
+                meta.description.into(),
+                meta.category.into(),
+                i32::from(meta.is_dangerous).into(),
+                i32::from(meta.requires_step_up).into(),
+                meta.name.into(),
+            ],
+        ))
+        .await?;
+    }
+
+    tracing::info!(
+        count = crate::rbac::permissions::CATALOG.len(),
+        "seeder::permissions_seeded"
+    );
     Ok(())
 }
 
-/// Seeds the 4 system roles and assigns their initial permissions.
-/// System roles are non-deletable and are the baseline for role templates.
+/// Seeds baseline roles and assigns their initial permissions.
+///
+/// Protection policy:
+/// - Locked/system: Administrator, Readonly
+/// - Editable/custom baseline: Supervisor, Operator
 async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
 
-    let system_roles: &[(&str, &str, &str)] = &[
-        ("Administrator", "Full system access. Cannot be deleted.", "system"),
+    let baseline_roles: &[(&str, &str, i64, &str)] = &[
+        ("Administrator", "Full system access. Cannot be deleted.", 1, "system"),
         (
             "Supervisor",
             "Full operational access. Can manage work, personnel, inventory.",
-            "system",
+            0,
+            "custom",
         ),
         (
             "Operator",
             "Day-to-day CMMS use: view all, create and edit operational records.",
-            "system",
+            0,
+            "custom",
         ),
-        ("Readonly", "Read-only access to all operational modules.", "system"),
+        ("Readonly", "Read-only access to all operational modules.", 1, "system"),
     ];
 
-    for (name, desc, role_type) in system_roles {
+    for (name, desc, is_system, role_type) in baseline_roles {
         let sync_id = Uuid::new_v4().to_string();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT OR IGNORE INTO roles
                    (sync_id, name, description, is_system, role_type, status, created_at, updated_at, row_version)
-               VALUES (?, ?, ?, 1, ?, 'active', ?, ?, 1)",
+               VALUES (?, ?, ?, ?, ?, 'active', ?, ?, 1)",
             [
                 sync_id.into(),
                 (*name).into(),
                 (*desc).into(),
+                (*is_system).into(),
                 (*role_type).into(),
                 now.clone().into(),
                 now.clone().into(),
@@ -1706,63 +2563,63 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
         assign_all_permissions_to_role(db, rid, &now).await?;
     }
 
-    // Supervisor -> all operational permissions (excludes admin-only and config-only)
-    let excluded_for_supervisor = [
-        "adm.users",
-        "adm.roles",
-        "adm.permissions",
-        "cfg.manage",
-        "cfg.publish",
-        "erp.manage",
-        "erp.sync",
-        "log.export",
-    ];
+    // Supervisor -> all operational permissions (excludes admin-only and control-plane)
+    let excluded_for_supervisor = crate::rbac::permissions::SUPERVISOR_EXCLUSIONS;
     if let Some(rid) = get_role_id_by_name(db, "Supervisor").await? {
-        assign_permissions_excluding(db, rid, &excluded_for_supervisor, &now).await?;
+        assign_permissions_excluding(db, rid, excluded_for_supervisor, &now).await?;
     }
 
     // Operator -> view + create/edit operational modules, no delete/approve/dangerous
-    let operator_permissions = [
-        "eq.view",
-        "eq.manage",
-        "di.view",
-        "di.create",
-        "di.edit",
-        "di.close",
-        "ot.view",
-        "ot.create",
-        "ot.edit",
-        "org.view",
-        "per.view",
-        "ref.view",
-        "inv.view",
-        "inv.manage",
-        "pm.view",
-        "ram.view",
-        "rep.view",
-        "arc.view",
-        "doc.view",
-        "plan.view",
-        "log.view",
-        "trn.view",
-        "iot.view",
-        "erp.view",
-        "ptw.view",
-        "ptw.create",
-        "fin.view",
-        "ins.view",
-        "ins.complete",
-        "cfg.view",
-        "adm.settings",
-    ];
+    let operator_permissions = crate::rbac::permissions::OPERATOR_PERMISSIONS;
     if let Some(rid) = get_role_id_by_name(db, "Operator").await? {
-        for perm_name in &operator_permissions {
+        for perm_name in operator_permissions {
             assign_permission_by_name(db, rid, perm_name, &now).await?;
         }
     }
 
     // Readonly -> only *.view permissions (subset of operator's list)
     if let Some(rid) = get_role_id_by_name(db, "Readonly").await? {
+        #[allow(clippy::case_sensitive_file_extension_comparisons)]
+        let view_perms: Vec<&str> = operator_permissions
+            .iter()
+            .copied()
+            .filter(|p| p.ends_with(".view"))
+            .collect();
+        for perm_name in view_perms {
+            assign_permission_by_name(db, rid, perm_name, &now).await?;
+        }
+    }
+
+    // ── Migration-028 system roles (INSERT OR IGNORE'd by the migration) ─
+    // These mirror the 4 seeder roles above but with spec-defined names.
+
+    // Superadmin -> all permissions (mirrors Administrator)
+    if let Some(rid) = get_role_id_by_name(db, "Superadmin").await? {
+        assign_all_permissions_to_role(db, rid, &now).await?;
+    }
+
+    // Maintenance Supervisor -> same exclusions as Supervisor
+    if let Some(rid) = get_role_id_by_name(db, "Maintenance Supervisor").await? {
+        assign_permissions_excluding(db, rid, excluded_for_supervisor, &now).await?;
+    }
+
+    // Maintenance Technician -> same permissions as Operator
+    if let Some(rid) = get_role_id_by_name(db, "Maintenance Technician").await? {
+        for perm_name in operator_permissions {
+            assign_permission_by_name(db, rid, perm_name, &now).await?;
+        }
+    }
+
+    // Planner/Scheduler -> planning & scheduling focus
+    let planner_permissions = crate::rbac::permissions::PLANNER_PERMISSIONS;
+    if let Some(rid) = get_role_id_by_name(db, "Planner/Scheduler").await? {
+        for perm_name in planner_permissions {
+            assign_permission_by_name(db, rid, perm_name, &now).await?;
+        }
+    }
+
+    // Read Only Observer -> same view-only permissions as Readonly
+    if let Some(rid) = get_role_id_by_name(db, "Read Only Observer").await? {
         #[allow(clippy::case_sensitive_file_extension_comparisons)]
         let view_perms: Vec<&str> = operator_permissions
             .iter()
@@ -1850,6 +2707,29 @@ async fn assign_permission_by_name(
 ///
 /// Safety: checks for existing admin and skips if present — will not
 /// overwrite an existing admin account or its password.
+/// Idempotent backfill: Administrator/Superadmin must hold ram.analyze (added post-seed in some DBs).
+async fn ensure_admin_ram_permissions(db: &DatabaseConnection) -> AppResult<()> {
+    for perm in [
+        crate::rbac::permissions::RAM_ANALYZE,
+        crate::rbac::permissions::RAM_MANAGE,
+        crate::rbac::permissions::RAM_EXPORT,
+    ] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at)
+             SELECT r.id, p.id, strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             FROM roles r
+             CROSS JOIN permissions p
+             WHERE r.deleted_at IS NULL
+               AND r.name IN ('Administrator', 'Superadmin')
+               AND p.name = ?",
+            [perm.into()],
+        ))
+        .await?;
+    }
+    Ok(())
+}
+
 async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
     use crate::auth::password::hash_password;
 
@@ -1862,7 +2742,15 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
         .await?;
 
     if existing.is_some() {
-        tracing::debug!("seeder::admin_account already exists, skipping");
+        tracing::debug!("seeder::admin_account already exists, ensuring role assignment");
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET is_admin = 1 WHERE username = 'admin' AND is_active = 1",
+            [],
+        ))
+        .await?;
+        // Even if the admin exists, ensure the Administrator role is assigned
+        ensure_admin_role_assignment(db).await?;
         return Ok(());
     }
 
@@ -1891,6 +2779,59 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
     .await?;
 
     tracing::info!("seeder::admin_account created (force_password_change=1)");
+
+    // Assign the Administrator role to the newly created admin account
+    ensure_admin_role_assignment(db).await?;
+
+    Ok(())
+}
+
+/// Ensures the admin user has the Administrator role assigned via user_scope_assignments.
+/// Idempotent — uses INSERT OR IGNORE.
+async fn ensure_admin_role_assignment(db: &DatabaseConnection) -> AppResult<()> {
+    let now = Utc::now().to_rfc3339();
+    let sync_id = Uuid::new_v4().to_string();
+
+    // Resolve user_id for 'admin' and role_id for 'Administrator'
+    let result = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"SELECT u.id AS user_id, r.id AS role_id
+               FROM user_accounts u, roles r
+               WHERE u.username = 'admin'
+                 AND r.name = 'Administrator'
+                 AND r.deleted_at IS NULL",
+            [],
+        ))
+        .await?;
+
+    if let Some(row) = result {
+        let user_id: i32 = row.try_get("", "user_id").unwrap_or(0);
+        let role_id: i32 = row.try_get("", "role_id").unwrap_or(0);
+        if user_id > 0 && role_id > 0 {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                r"INSERT OR IGNORE INTO user_scope_assignments
+                       (sync_id, user_id, role_id, scope_type, scope_reference,
+                        valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version)
+                   VALUES (?, ?, ?, 'tenant', NULL, NULL, NULL, NULL, 'System seeder', ?, ?, 1)",
+                [
+                    sync_id.into(),
+                    user_id.into(),
+                    role_id.into(),
+                    now.clone().into(),
+                    now.into(),
+                ],
+            ))
+            .await?;
+            tracing::info!(
+                "seeder::admin_role_assignment ensured (user_id={}, role_id={})",
+                user_id,
+                role_id
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -1910,7 +2851,7 @@ mod tests {
     fn default_settings_count_is_expected() {
         assert_eq!(
             DEFAULT_SETTINGS.len(),
-            14,
+            15,
             "Default settings count changed; update migration and verification checks"
         );
     }

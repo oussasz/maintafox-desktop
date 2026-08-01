@@ -1,1 +1,62 @@
-{}
+{
+  "filters": {
+    "periodStart": "Debut periode",
+    "periodEnd": "Fin periode",
+    "team": "Equipe"
+  },
+  "actions": {
+    "refreshBacklog": "Rafraichir backlog",
+    "freezePeriod": "Geler la periode",
+    "exportPdf": "Exporter Gantt PDF",
+    "commit": "Creer engagement",
+    "notifyTeams": "Notifier les equipes"
+  },
+  "state": {
+    "loading": "Chargement des donnees planning..."
+  },
+  "backlog": {
+    "readyColumn": "Backlog pret",
+    "blockedColumn": "Backlog bloque",
+    "readinessScore": "Score de disponibilite",
+    "emptyReady": "Aucun candidat pret.",
+    "emptyBlocked": "Aucun candidat bloque."
+  },
+  "commitment": {
+    "formTitle": "Formulaire d'engagement",
+    "selectedCandidate": "Candidat selectionne",
+    "start": "Debut engage",
+    "end": "Fin engagee",
+    "assignee": "Affecte",
+    "unassigned": "Non assigne",
+    "budgetThreshold": "Seuil budgetaire"
+  },
+  "gantt": {
+    "capacityTitle": "Indicateurs de capacite equipe",
+    "capacityLine": "{{committed}}h engagees / {{available}}h disponibles",
+    "emptyCapacity": "Aucune donnee de capacite sur la periode.",
+    "assignmentLaneTitle": "Lignes calendrier d'affectation",
+    "laneHeader": "Affecte",
+    "overrideReasonPrompt": "Motif de derrogation double-affectation :",
+    "defaultReason": "Planning gele par le planificateur.",
+    "freezeOverlayTitle": "Fenetres gelees"
+  },
+  "windows": {
+    "title": "Gestionnaire de fenetres de production",
+    "type": "Type de fenetre",
+    "start": "Debut",
+    "end": "Fin",
+    "reason": "Motif de verrouillage",
+    "add": "Ajouter fenetre verrouillee",
+    "locked": "Verrouillee"
+  },
+  "breakIns": {
+    "title": "Suivi superviseur des break-ins",
+    "commitment": "Engagement",
+    "selectCommitment": "Selectionner engagement",
+    "reason": "Code motif",
+    "approver": "ID utilisateur approbateur",
+    "overrideReason": "Motif de derrogation",
+    "create": "Enregistrer break-in",
+    "empty": "Aucun break-in sur la periode."
+  }
+}

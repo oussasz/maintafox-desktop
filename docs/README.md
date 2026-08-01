@@ -1,0 +1,246 @@
+# Maintafox Roadmap Tree
+
+## Phase 1 - Secure Foundation
+- phase-1-secure-foundation/
+  - 01-engineering-baseline-and-repo-standards/
+    - 01-solution-structure-and-coding-standards.md
+    - 02-branching-review-and-quality-gates.md
+    - 03-dev-environment-ci-and-tooling-baseline.md
+    - 04-documentation-governance-and-working-agreements.md
+  - 02-tauri-shell-rust-core-react-workspace-shell/
+    - 01-desktop-shell-bootstrap-and-window-model.md
+    - 02-rust-core-app-lifecycle-and-command-boundary.md
+    - 03-react-workspace-layout-and-navigation-foundation.md
+    - 04-shell-integration-testing-and-runtime-hardening.md
+  - 03-local-data-plane-schema-migrations-and-persistence-contracts/
+    - 01-domain-schema-and-entity-identity.md
+    - 02-migration-framework-and-versioning-strategy.md
+    - 03-repository-services-and-persistence-contracts.md
+    - 04-seed-data-integrity-and-recovery-validation.md
+  - 04-authentication-session-trusted-device-and-rbac-plumbing/
+    - 01-identity-model-and-user-session-contracts.md
+    - 02-trusted-device-and-offline-access-controls.md
+    - 03-rbac-foundation-and-dangerous-action-guards.md
+    - 04-auth-security-testing-and-audit-validation.md
+    - 05-auth-ui-screens-and-route-protection.md          ← GAP FIX (bridge file)
+  - 05-multilingual-foundation-french-and-english-locale-architecture/
+    - 01-i18n-architecture-and-locale-resource-model.md
+    - 02-french-and-english-foundation-pack.md
+    - 03-locale-aware-formatting-and-fallback-behavior.md
+    - 04-translation-governance-and-multilingual-qa-baseline.md
+  - 06-settings-updater-diagnostics-backup-and-restore-preflight/
+    - 01-settings-core-and-policy-loading.md
+    - 02-updater-skeleton-and-release-channel-contracts.md
+    - 03-diagnostics-logging-and-support-bundle-foundation.md
+    - 04-backup-restore-preflight-and-operational-validation.md
+
+## Phase 2 - Core Execution Backbone
+- phase-2-core-execution-backbone/
+  - 00-shared-ui-component-foundation/                    ← GAP FIX (new sub-phase)
+    - 01-component-library-and-form-infrastructure.md
+    - 02-data-table-and-chart-primitives.md
+    - 03-shell-refinements-and-cross-cutting-ui-contracts.md
+    - 04-ui-foundation-validation-and-pattern-documentation.md
+  - 01-organization-and-site-operating-model/
+    - 01-structure-model-node-types-and-rules.md
+    - 02-node-management-responsibility-bindings-and-versioning.md
+    - 03-org-designer-ui-and-impact-preview.md
+    - 04-organization-validation-permissions-and-audit.md
+  - 02-equipment-and-asset-registry-backbone/
+    - 01-asset-identity-classification-and-hierarchy.md
+    - 02-lifecycle-history-meters-and-document-links.md
+    - 03-asset-ui-search-and-cross-module-bindings.md
+    - 04-asset-import-validation-and-governance.md
+  - 03-lookup-and-reference-data-governance/
+    - 01-reference-domain-model-and-versioning.md
+    - 02-lookup-management-workflows-and-protected-domains.md
+    - 03-aliases-imports-and-search-behavior.md
+    - 04-reference-validation-publish-controls-and-audit.md
+  - 04-intervention-requests-di/
+    - 01-di-domain-model-and-state-machine.md
+    - 02-di-intake-review-and-approval-flows.md
+    - 03-di-sla-attachments-and-wo-conversion.md
+    - 04-di-permissions-tests-and-audit-coverage.md
+  - 05-work-orders-ot/
+    - 01-wo-domain-model-and-execution-states.md
+    - 02-wo-planning-labor-parts-and-delay-capture.md
+    - 03-wo-closeout-verification-and-cost-posting-hooks.md
+    - 04-wo-permissions-tests-and-analytics-readiness.md
+  - 06-users-roles-permissions-and-admin-governance/
+    - 01-user-admin-model-and-role-structure.md
+    - 02-permission-domains-and-scope-enforcement.md
+    - 03-admin-flows-session-visibility-and-delegation.md
+    - 04-governance-testing-and-security-audit-controls.md
+  - 07-notifications-archive-and-audit-visibility/
+    - 01-notification-routing-and-delivery-model.md
+    - 02-archive-rules-retention-and-restore-controls.md
+    - 03-activity-feed-and-immutable-audit-journal.md
+    - 04-observability-permissions-and-cross-module-validation.md
+
+## Phase 3 - Planning, Compliance, And Material Control
+- phase-3-planning-compliance-and-material-control/
+  - 01-personnel-and-workforce-readiness/
+    - 01-personnel-master-data-and-readiness-model.md
+    - 02-skills-availability-and-team-capacity.md
+    - 03-self-service-links-and-operational-visibility.md
+    - 04-personnel-governance-imports-and-validation.md
+  - 02-spare-parts-and-inventory-control/
+    - 01-item-master-stock-locations-and-units.md
+    - 02-movements-reservations-and-reorder-logic.md
+    - 03-procurement-repairables-and-store-operations.md
+    - 04-inventory-controls-audit-and-reporting-validation.md
+    - 05-spare-parts-cost-valuation-and-wo-auto-pricing.md
+  - 03-preventive-maintenance-engine/
+    - 01-pm-strategy-models-and-trigger-logic.md
+    - 02-occurrence-generation-calendars-and-counters.md
+    - 03-pm-execution-feedback-and-follow-up-routing.md
+    - 04-pm-governance-testing-and-planning-integration.md
+  - 04-planning-and-scheduling-engine/
+    - 01-ready-backlog-and-blocked-work-model.md
+    - 02-capacity-calendars-commitment-and-gantt-logic.md
+    - 03-break-ins-freeze-windows-and-team-notifications.md
+    - 04-planning-kpis-validation-and-operational-controls.md
+  - 05-work-permit-loto-permit-to-work/
+    - 01-permit-types-hazard-model-and-control-rules.md
+    - 02-issuance-activation-suspension-and-handback-flows.md
+    - 03-isolation-checkpoints-tests-and-wo-gating.md
+    - 04-permit-compliance-reporting-and-audit-validation.md
+  - 06-training-certification-and-habilitation/
+    - 01-qualification-profiles-and-certification-model.md
+    - 02-validity-renewal-and-expiry-control-flows.md
+    - 03-document-acknowledgement-and-work-eligibility-links.md
+    - 04-training-governance-alerting-and-audit-validation.md
+  - 07-inspection-rounds-and-checklist-execution/
+    - 01-template-versioning-and-checkpoint-model.md
+    - 02-mobile-execution-results-and-evidence-capture.md
+    - 03-anomaly-routing-and-follow-up-generation.md
+    - 04-inspection-compliance-trends-and-validation.md
+  - 08-budget-and-cost-center-management/
+    - 01-cost-center-structure-and-budget-versioning.md
+    - 02-actuals-commitments-and-forecasting-model.md
+    - 03-variance-review-dashboards-and-erp-alignment.md
+    - 04-budget-controls-alerting-and-report-validation.md
+
+## Phase 4 - Control Plane And Integrations
+- phase-4-control-plane-and-integrations/ — **[Phase 4 index and implementation vs deployment notes](roadmap/phase-4-control-plane-and-integrations/README.md)**
+- phase-4-control-plane-and-integrations/
+  - 01-sync-layer-checkpointing-and-conflict-handling/
+    - 01-outbox-inbox-and-checkpoint-contracts.md
+    - 02-conflict-resolution-replay-and-recovery-flows.md
+    - 03-client-sync-orchestration-and-operator-feedback.md
+    - 04-sync-testing-observability-and-repair-tooling.md
+  - 02-licensing-entitlements-and-machine-activation/
+    - 01-entitlement-model-feature-flags-and-states.md
+    - 02-machine-activation-binding-and-offline-policy.md
+    - 03-license-enforcement-flows-and-admin-actions.md
+    - 04-licensing-security-validation-and-auditability.md
+  - 03-vps-backend-and-tenant-mirror-architecture/
+    - 01-service-boundaries-api-contracts-and-tenancy.md
+    - 02-postgresql-mirror-schemas-workers-and-queues.md
+    - 03-object-storage-backups-and-operations-baseline.md
+    - 04-vps-deployment-observability-and-recovery-validation.md
+  - 04-vendor-admin-console/
+    - 01-admin-auth-access-control-and-console-shell.md
+    - 02-customer-license-and-machine-management-flows.md
+    - 03-sync-monitoring-rollout-control-and-platform-health.md
+    - 04-console-audit-ops-hardening-and-support-workflows.md
+  - 05-signed-updates-rollout-and-release-orchestration/
+    - 01-release-artifact-signing-and-manifest-pipeline.md
+    - 02-channel-rollout-policy-and-recall-controls.md
+    - 03-client-update-installation-and-migration-safety.md
+    - 04-release-validation-rollback-and-support-readiness.md
+  - 06-iot-gateway/
+    - 01-signal-model-device-binding-and-protocol-adapters.md
+    - 02-ingestion-buffering-and-rule-evaluation-pipeline.md
+    - 03-condition-events-alerts-and-maintenance-routing.md
+    - 04-iot-security-simulation-and-ops-validation.md
+  - 07-erp-and-external-system-connectors/
+    - 01-system-of-record-contracts-and-mapping-model.md
+    - 02-import-export-jobs-and-idempotent-processing.md
+    - 03-reconciliation-operator-workflows-and-failure-handling.md
+    - 04-connector-security-testing-and-enterprise-readiness.md
+
+## Phase 5 - Advanced Reliability And Launch Hardening
+- phase-5-advanced-reliability-and-launch-hardening/
+  - gaps/ — **[Gaps integration program index](roadmap/phase-5-advanced-reliability-and-launch-hardening/gaps/README.md)** (deferred modules + RAMS foundation; copy-paste **Oussama Protocol** prompts)
+  - gaps/
+    - 01-loto-work-permit-system/
+      - 01-permit-domain-schema-types-and-isolation-points.md
+      - 02-permit-lifecycle-issuance-activation-suspension-handback.md
+      - 03-isolation-verification-and-work-order-gating.md
+      - 04-loto-card-generation-compliance-reporting-and-audit.md
+    - 02-training-certification-habilitation/
+      - 01-qualification-schema-certificates-and-renewal-rules.md
+      - 02-training-sessions-acknowledgements-and-self-service-visibility.md
+      - 03-planning-integration-permit-eligibility-and-skill-gaps.md
+      - 04-governance-alerts-audit-and-expiry-drilldowns.md
+    - 03-inspection-rounds-and-checklists/
+      - 01-templates-rounds-checkpoints-and-versioning.md
+      - 02-field-execution-results-evidence-and-offline-queue.md
+      - 03-anomaly-routing-follow-up-di-and-wo-generation.md
+      - 04-compliance-trends-coverage-and-reliability-handoff.md
+    - 04-budget-cost-center-closure/
+      - 01-prd-gap-review-and-ux-residuals-on-budget-surfaces.md
+      - 02-erp-export-reconciliation-and-posting-integrity.md
+      - 03-multi-machine-consistency-and-budget-aware-reliability-cost-views.md
+    - 05-reliability-data-foundation-iso-14224/
+      - 01-failure-taxonomy-hierarchies-and-stable-reference-binding.md
+      - 02-governed-failure-events-eligibility-and-wo-ingestion.md
+      - 03-runtime-exposure-denominators-and-reliability-kpi-snapshots.md
+      - 04-data-quality-workspace-badges-and-drill-through.md
+    - 06-work-order-closeout-and-data-integrity/
+      - 01-closeout-completeness-rules-and-validation-gates.md
+      - 02-data-integrity-detectors-repair-jobs-and-operator-workbench.md
+      - 03-regression-tests-and-analytics-contract-freeze.md
+    - 07-scientific-output-validation-and-research-benchmarks/
+      - 01-scientific-output-validation-golden-benchmarks-and-regression-harness.md
+  - 01-reliability-engine-core-and-reproducible-snapshots/
+    - 01-analysis-input-qualification-and-dataset-hashing.md
+    - 02-rust-computation-runtime-and-job-orchestration.md
+    - 03-snapshot-storage-plot-payloads-and-reproducibility.md
+    - 04-reliability-core-validation-and-performance-benchmarks.md
+  - 02-advanced-rams-methods/
+    - 01-weibull-fmeca-and-rcm-implementation.md
+    - 02-fta-rbd-and-event-tree-implementation.md
+    - 03-markov-monte-carlo-and-advanced-model-controls.md
+    - 04-method-validation-expert-review-and-guardrails.md
+  - 03-analytics-dashboards-exports-and-reporting-finalization/
+    - 01-kpi-definitions-and-data-quality-badges.md
+    - 02-dashboard-widgets-charts-and-drill-throughs.md
+    - 03-report-library-scheduling-and-export-surfaces.md
+    - 04-analytics-validation-performance-and-bilingual-polish.md
+  - 04-performance-resilience-migration-and-recovery-hardening/
+    - 01-performance-profiling-and-bottleneck-remediation.md
+    - 02-migration-failure-scenarios-and-safe-recovery.md
+    - 03-chaos-resilience-offline-and-restart-testing.md
+    - 04-operational-hardening-checklists-and-exit-validation.md
+  - 05-security-review-code-signing-packaging-and-installer-quality/
+    - 01-threat-model-penetration-review-and-remediation.md
+    - 02-code-signing-notarization-and-supply-chain-controls.md
+    - 03-installer-upgrade-uninstall-and-repair-quality.md
+    - 04-final-security-acceptance-and-release-approval.md
+  - 06-localization-completion-bilingual-qa-and-future-locale-readiness/
+    - 01-french-polish-and-english-production-qa.md
+    - 02-terminology-consistency-and-domain-glossary-review.md
+    - 03-future-locale-extensibility-and-rtl-readiness.md
+    - 04-localization-signoff-and-release-quality-gates.md
+  - 07-pilot-rollout-support-runbooks-and-go-live-readiness/
+    - 01-pilot-environment-preparation-and-customer-onboarding.md
+    - 02-support-runbooks-training-and-escalation-model.md
+    - 03-go-live-checklists-feedback-loops-and-hotfix-path.md
+    - 04-launch-readiness-signoff-and-post-launch-observability.md
+
+---
+
+## Roadmap execution
+
+Roadmap files under `docs/roadmap/` are **task lists** for Solo Lead implementation in `maintafox-desktop/`, not long AI prompt documents.
+
+- **Exception:** `phase-5-advanced-reliability-and-launch-hardening/gaps/**` ends each sprint with **Oussama Protocol — Surgical — Dual-channel**: **Stage 1** 🌐 VPS dispatch (do not copy to codebase agent); **Stage 2** 🖥️ codebase execution (`[STATUS]`, **Read Only**, **Agent Rules**, **Actions**, **Sync JSON**) — see [gaps/README.md](roadmap/phase-5-advanced-reliability-and-launch-hardening/gaps/README.md) for execution order, **universal sync integration**, inspection→RAMS gates, and **scientific output validation** (track `07`).
+- **Exception (Phase 5 core):** Folders `01-reliability-engine-core…` through `07-pilot-rollout…` (excluding `gaps/`) use the same **dual-channel** layout; Stage 2 never references server DBs or Nginx.
+- **No prompt blocks** in roadmap files outside Phase 5 exceptions; do not spend tokens generating future detailed prompts there.
+- **Format:** each file has a **PRD** line, an **Execution** link to this section, and **Tasks** as a bullet list: **Task name** — one sentence naming affected code areas (e.g. `src-tauri/src/migrations/`, `src-tauri/src/commands/`, `src/pages/`, `shared/ipc-types.ts`).
+- **Workflow:** after you approve a task list, execution runs in Composer/Agent; prioritize code, tests, and validation over documentation volume.
+- **Quality gate:** `cargo check`, `pnpm typecheck`, and targeted tests implied by the task; add a one-line completion note in the file footer when done.
+
+**Link from a roadmap file:** use `[Roadmap execution](../../../README.md#roadmap-execution)` from phase folders (three levels below `docs/roadmap/`).
