@@ -14,7 +14,9 @@
 pub mod attachments;
 pub mod audit;
 pub mod conversion;
+pub mod disposition;
 pub mod domain;
+pub mod notifications;
 pub mod permissions;
 pub mod queries;
 pub mod reference_catalog;

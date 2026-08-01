@@ -139,6 +139,11 @@ mod tests {
             "is_recurrence_flag",
             "recurrence_di_id",
             "source_inspection_anomaly_id",
+            "disposition_code",
+            "disposition_notes",
+            "related_di_id",
+            "closed_by_id",
+            "deferred_from_status",
             "row_version",
             "submitter_id",
             "created_at",
@@ -270,26 +275,29 @@ mod tests {
     #[test]
     fn v2_all_valid_transitions_accepted() {
         let valid_pairs: &[(DiStatus, DiStatus)] = &[
-            (DiStatus::Submitted, DiStatus::PendingReview),
-            (DiStatus::PendingReview, DiStatus::Screened),
-            (DiStatus::PendingReview, DiStatus::ReturnedForClarification),
-            (DiStatus::PendingReview, DiStatus::Rejected),
-            (DiStatus::ReturnedForClarification, DiStatus::PendingReview),
-            (DiStatus::Screened, DiStatus::AwaitingApproval),
-            (DiStatus::Screened, DiStatus::Rejected),
-            (DiStatus::AwaitingApproval, DiStatus::ApprovedForPlanning),
+            (DiStatus::Submitted, DiStatus::InReview),
+            (DiStatus::Submitted, DiStatus::Closed),
+            (DiStatus::InReview, DiStatus::ReturnedForClarification),
+            (DiStatus::InReview, DiStatus::AwaitingApproval),
+            (DiStatus::InReview, DiStatus::Closed),
+            (DiStatus::InReview, DiStatus::Deferred),
+            (DiStatus::ReturnedForClarification, DiStatus::InReview),
+            (DiStatus::ReturnedForClarification, DiStatus::Closed),
+            (DiStatus::AwaitingApproval, DiStatus::Approved),
+            (DiStatus::AwaitingApproval, DiStatus::Closed),
             (DiStatus::AwaitingApproval, DiStatus::Deferred),
-            (DiStatus::AwaitingApproval, DiStatus::Rejected),
-            (DiStatus::ApprovedForPlanning, DiStatus::ConvertedToWorkOrder),
-            (DiStatus::ApprovedForPlanning, DiStatus::Deferred),
-            (DiStatus::ApprovedForPlanning, DiStatus::ClosedAsNonExecutable),
+            (DiStatus::Approved, DiStatus::Closed),
+            (DiStatus::Approved, DiStatus::Deferred),
+            (DiStatus::Deferred, DiStatus::InReview),
             (DiStatus::Deferred, DiStatus::AwaitingApproval),
-            (DiStatus::ConvertedToWorkOrder, DiStatus::Archived),
-            (DiStatus::ClosedAsNonExecutable, DiStatus::Archived),
-            (DiStatus::Rejected, DiStatus::Archived),
+            (DiStatus::Deferred, DiStatus::Approved),
         ];
 
-        assert_eq!(valid_pairs.len(), 17, "PRD §6.4 defines exactly 17 forward transitions");
+        assert_eq!(
+            valid_pairs.len(),
+            16,
+            "lifecycle redesign defines 16 forward transitions"
+        );
 
         for (from, to) in valid_pairs {
             assert!(
@@ -305,14 +313,14 @@ mod tests {
     #[test]
     fn v2_invalid_transitions_rejected() {
         let invalid_pairs: &[(DiStatus, DiStatus)] = &[
-            (DiStatus::Submitted, DiStatus::ApprovedForPlanning),
-            (DiStatus::Submitted, DiStatus::Archived),
-            (DiStatus::Archived, DiStatus::Submitted),
-            (DiStatus::Rejected, DiStatus::Submitted),
-            (DiStatus::ConvertedToWorkOrder, DiStatus::Submitted),
-            (DiStatus::Screened, DiStatus::Submitted),
-            (DiStatus::Deferred, DiStatus::ApprovedForPlanning),
-            (DiStatus::ClosedAsNonExecutable, DiStatus::Submitted),
+            (DiStatus::Submitted, DiStatus::Approved),
+            (DiStatus::Submitted, DiStatus::AwaitingApproval),
+            (DiStatus::Closed, DiStatus::Submitted),
+            (DiStatus::Closed, DiStatus::InReview),
+            (DiStatus::Approved, DiStatus::InReview),
+            (DiStatus::AwaitingApproval, DiStatus::InReview),
+            (DiStatus::ReturnedForClarification, DiStatus::Approved),
+            (DiStatus::Deferred, DiStatus::Closed),
         ];
 
         for (from, to) in invalid_pairs {
@@ -404,18 +412,9 @@ mod tests {
 
     #[test]
     fn v4_immutable_states_correct() {
-        let immutable = [
-            DiStatus::ConvertedToWorkOrder,
-            DiStatus::ClosedAsNonExecutable,
-            DiStatus::Rejected,
-            DiStatus::Archived,
-        ];
+        let immutable = [DiStatus::Closed];
         for s in &immutable {
-            assert!(
-                s.is_immutable_after_conversion(),
-                "{} must be immutable",
-                s.as_str()
-            );
+            assert!(s.is_immutable(), "{} must be immutable", s.as_str());
         }
     }
 
@@ -423,16 +422,15 @@ mod tests {
     fn v4_mutable_states_correct() {
         let mutable = [
             DiStatus::Submitted,
-            DiStatus::PendingReview,
+            DiStatus::InReview,
             DiStatus::ReturnedForClarification,
-            DiStatus::Screened,
             DiStatus::AwaitingApproval,
-            DiStatus::ApprovedForPlanning,
+            DiStatus::Approved,
             DiStatus::Deferred,
         ];
         for s in &mutable {
             assert!(
-                !s.is_immutable_after_conversion(),
+                !s.is_immutable(),
                 "{} must be mutable (not immutable)",
                 s.as_str()
             );

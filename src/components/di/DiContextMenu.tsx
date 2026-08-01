@@ -23,12 +23,7 @@ import { P } from "@shared/rbac/permissions.generated";
 
 // ── Statuses for review actions ───────────────────────────────────────────────
 
-const REVIEW_STATES = new Set([
-  "pending_review",
-  "returned_for_clarification",
-  "screened",
-  "awaiting_approval",
-]);
+const REVIEW_STATES = new Set(["in_review", "returned_for_clarification", "awaiting_approval"]);
 
 const EDITABLE_STATES = new Set(["submitted", "returned_for_clarification"]);
 
@@ -43,7 +38,7 @@ interface DiContextMenuProps {
   onEdit?: (di: InterventionRequest) => void;
   onDelete?: (di: InterventionRequest) => void;
   onApprove?: (di: InterventionRequest) => void;
-  onReject?: (di: InterventionRequest) => void;
+  onClose?: (di: InterventionRequest) => void;
   onReturn?: (di: InterventionRequest) => void;
 }
 
@@ -56,7 +51,7 @@ export function DiContextMenu({
   onEdit,
   onDelete,
   onApprove,
-  onReject,
+  onClose,
   onReturn,
 }: DiContextMenuProps) {
   const { t } = useTranslation("di");
@@ -65,8 +60,8 @@ export function DiContextMenu({
   const canEdit = can(P.DI_CREATE) && EDITABLE_STATES.has(di.status);
   const canDelete = can(P.DI_ADMIN) && di.status === "submitted";
   const canApprove = can(P.DI_APPROVE) && di.status === "awaiting_approval";
-  const canReject = can(P.DI_REVIEW) && REVIEW_STATES.has(di.status);
-  const canReturn = can(P.DI_REVIEW) && di.status === "pending_review";
+  const canClose = can(P.DI_REVIEW) && REVIEW_STATES.has(di.status);
+  const canReturn = can(P.DI_REVIEW) && di.status === "in_review";
 
   return (
     <DropdownMenu>
@@ -86,7 +81,7 @@ export function DiContextMenu({
           </DropdownMenuItem>
         )}
 
-        {(canApprove || canReject || canReturn) && <DropdownMenuSeparator />}
+        {(canApprove || canClose || canReturn) && <DropdownMenuSeparator />}
 
         {/* Approve */}
         {canApprove && onApprove && (
@@ -96,11 +91,11 @@ export function DiContextMenu({
           </DropdownMenuItem>
         )}
 
-        {/* Reject */}
-        {canReject && onReject && (
-          <DropdownMenuItem onClick={() => onReject(di)} className="gap-2">
+        {/* Close request */}
+        {canClose && onClose && (
+          <DropdownMenuItem onClick={() => onClose(di)} className="gap-2">
             <XCircle className="h-3.5 w-3.5 text-red-600" />
-            {t("contextMenu.reject")}
+            {t("contextMenu.closeRequest")}
           </DropdownMenuItem>
         )}
 

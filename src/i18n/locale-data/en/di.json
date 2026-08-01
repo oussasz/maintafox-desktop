@@ -27,6 +27,7 @@
       "reviewQueue": "Validation queue",
       "triageInbox": "DIs to triage / entry queue",
       "priority": "Priority",
+      "disposition": "Disposition",
       "assignedTo": "Assigned to",
       "dateRange": "Date range"
     }
@@ -189,6 +190,7 @@
     "needsClarification": "Information required",
     "inReview": "In review",
     "approved": "Approved",
+    "deferred": "Deferred",
     "rejected": "Rejected",
     "inProgress": "In progress",
     "resolved": "Resolved",
@@ -211,7 +213,9 @@
     "addComment": "Add comment",
     "print": "Print",
     "resubmit": "Resubmit",
-    "cancelNeed": "Cancel need",
+    "closeRequest": "Close request",
+    "cancelOwn": "Cancel my request",
+    "defer": "Defer",
     "archive": "Archive"
   },
   "empty": {
@@ -283,6 +287,7 @@
       "reactivated": "Reactivated",
       "converted": "Converted",
       "closed_non_executable": "Closed as non-executable",
+      "closed": "Closed",
       "archived": "Archived"
     }
   },
@@ -356,10 +361,11 @@
   },
   "kanban": {
     "colSubmitted": "Submitted / intake",
-    "colPendingReview": "Pending review",
+    "colPendingReview": "In review",
     "colAwaitingApproval": "Awaiting approval",
     "colNeedsClarification": "Needs clarification",
-    "colApproved": "Approved / planned",
+    "colApproved": "Approved",
+    "colDeferred": "Deferred",
     "colWork": "In progress",
     "colClosed": "Closed"
   },
@@ -453,6 +459,7 @@
     "approver": "Approver",
     "print": "Print",
     "approveAndConvert": "Approve & Convert",
+    "convertToWo": "Convert to Work Order",
     "reviewerNote": "Reviewer note",
     "rejectionTitle": "Reject Intervention Request",
     "reasonCode": "Rejection reason",
@@ -500,7 +507,9 @@
     }
   },
   "archive": {
-    "title": "Archive"
+    "title": "Archive",
+    "archivedColumn": "Retention",
+    "archivedBadge": "Archived"
   },
   "search": {
     "placeholder": "Search by code, subject, description…"
@@ -511,6 +520,34 @@
     "delete": "Delete",
     "approve": "Approve",
     "reject": "Reject",
+    "closeRequest": "Close request",
     "return": "Return for clarification"
+  },
+  "close": {
+    "title": "Close request",
+    "disposition": "Disposition",
+    "notes": "Notes",
+    "relatedDi": "Related request",
+    "relatedDiPlaceholder": "Search by request code (e.g. DI-0042)",
+    "relatedDiSearching": "Searching…",
+    "relatedDiNoResults": "No matching requests.",
+    "relatedDiResolved": "Linked to {{code}}",
+    "relatedDiUseMatch": "Use {{code}}",
+    "notesRequired": "Notes are required for disposition “Other”.",
+    "relatedRequired": "Select the related request for duplicate disposition.",
+    "submit": "Close request",
+    "saving": "Closing…",
+    "warning": "Closing records the final disposition for this request."
+  },
+  "disposition": {
+    "rejected_invalid": "Rejected — invalid",
+    "duplicate": "Duplicate",
+    "cancelled_by_requester": "Cancelled by requester",
+    "cancelled_by_planner": "Cancelled by planner",
+    "no_work_required": "No work required",
+    "solved_immediately": "Solved immediately",
+    "information_only": "Information only",
+    "converted_to_wo": "Converted to work order",
+    "other": "Other"
   }
 }

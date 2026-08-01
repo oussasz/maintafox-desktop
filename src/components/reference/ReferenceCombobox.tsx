@@ -59,6 +59,8 @@ export interface ReferenceComboboxProps {
    * stores reference_values.id (e.g. DI symptom_code_id).
    */
   valueMode?: ReferenceValueMode;
+  /** Domain codes to hide from the dropdown (e.g. convert-only dispositions). */
+  excludeCodes?: readonly string[];
   className?: string;
   "aria-invalid"?: boolean;
   id?: string;
@@ -80,6 +82,7 @@ export function ReferenceCombobox({
   allowCreate = true,
   allowClear = true,
   valueMode = "code",
+  excludeCodes,
   className,
   "aria-invalid": ariaInvalid,
   id,
@@ -198,13 +201,15 @@ export function ReferenceCombobox({
   );
 
   const filtered = useMemo(() => {
+    const excluded = new Set(excludeCodes ?? []);
+    const visible = excluded.size > 0 ? items.filter((o) => !excluded.has(o.code)) : items;
     const q = query.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((o) => {
+    if (!q) return visible;
+    return visible.filter((o) => {
       const hay = `${o.label} ${o.code}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [items, query]);
+  }, [items, query, excludeCodes]);
 
   const handlePick = useCallback(
     (next: string | null) => {

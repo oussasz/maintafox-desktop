@@ -7,15 +7,15 @@
 
 import { create } from "zustand";
 
-import { convertDiToWo } from "@/services/di-conversion-service";
 import {
   archiveDi,
   approveDi,
+  cancelOwnDi,
+  closeDi,
   closeDiAsNonExecutable,
   deferDi,
   getDiReviewEvents,
   reactivateDi,
-  rejectDi,
   returnDi,
   screenDi,
 } from "@/services/di-review-service";
@@ -23,6 +23,8 @@ import { getDi, listDis } from "@/services/di-service";
 import { toErrorMessage } from "@/utils/errors";
 import type {
   DiApproveInput,
+  DiCancelOwnInput,
+  DiCloseInput,
   DiDeferInput,
   DiReactivateInput,
   DiRejectInput,
@@ -68,10 +70,16 @@ interface DiReviewStoreState {
   screen: (input: DiScreenInput) => Promise<InterventionRequest>;
   returnForClarification: (input: DiReturnInput) => Promise<void>;
   reject: (input: DiRejectInput) => Promise<void>;
+  closeWithDisposition: (input: DiCloseInput) => Promise<void>;
+  cancelOwn: (input: DiCancelOwnInput) => Promise<void>;
   approve: (input: DiApproveInput) => Promise<ApproveResult>;
   defer: (input: DiDeferInput) => Promise<void>;
   reactivate: (input: DiReactivateInput) => Promise<void>;
-  closeAsNonExecutable: (diId: number, expectedRowVersion: number, notes?: string | null) => Promise<void>;
+  closeAsNonExecutable: (
+    diId: number,
+    expectedRowVersion: number,
+    notes?: string | null,
+  ) => Promise<void>;
   archive: (diId: number, expectedRowVersion: number, notes?: string | null) => Promise<void>;
 }
 
@@ -90,7 +98,7 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
     set({ error: null });
     try {
       const page = await listDis({
-        status: ["pending_review", "returned_for_clarification", "awaiting_approval"],
+        status: ["in_review", "returned_for_clarification", "awaiting_approval"],
         limit: 200,
         offset: 0,
       });
@@ -151,9 +159,35 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
   },
 
   reject: async (input) => {
+    const notes = [input.reason_code.trim(), input.notes?.trim()].filter(Boolean).join(": ");
+    await get().closeWithDisposition({
+      di_id: input.di_id,
+      actor_id: input.actor_id,
+      expected_row_version: input.expected_row_version,
+      disposition_code: "rejected_invalid",
+      notes: notes || null,
+      related_di_id: null,
+    });
+  },
+
+  closeWithDisposition: async (input) => {
     set({ saving: true, error: null });
     try {
-      const updated = await rejectDi(input);
+      const updated = await closeDi(input);
+      set({ activeReviewDi: updated });
+      await get().loadReviewQueue();
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  cancelOwn: async (input) => {
+    set({ saving: true, error: null });
+    try {
+      const updated = await cancelOwnDi(input);
       set({ activeReviewDi: updated });
       await get().loadReviewQueue();
     } catch (err) {
@@ -168,39 +202,17 @@ export const useDiReviewStore = create<DiReviewStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const updated = await approveDi(input);
-      // Chain conversion: create WO from the approved DI
-      let converted = false;
-      let woId: number | null = null;
-      let woCode: string | null = null;
-      let conversionError: string | null = null;
-      try {
-        const result = await convertDiToWo({
-          diId: input.di_id,
-          expectedRowVersion: updated.row_version,
-          conversionNotes: input.notes ?? "",
-        });
-        converted = true;
-        woId = result.wo_id;
-        woCode = result.wo_code;
-        // Re-fetch the DI to get the post-conversion state
-        try {
-          const fresh = await getDi(input.di_id);
-          set({ activeReviewDi: fresh.di });
-        } catch {
-          set({ activeReviewDi: updated });
-        }
-      } catch (err) {
-        // Conversion failed — approval still succeeded
-        conversionError = toErrorMessage(err);
-        set({ activeReviewDi: updated });
-      }
+      set((s) => ({
+        activeReviewDi: updated,
+        approvalDi: s.approvalDi?.id === updated.id ? updated : s.approvalDi,
+      }));
       await get().loadReviewQueue();
       return {
         approved: true,
-        converted,
-        woId,
-        woCode,
-        conversionError,
+        converted: false,
+        woId: null,
+        woCode: null,
+        conversionError: null,
         approvedRowVersion: updated.row_version,
       };
     } catch (err) {

@@ -11,6 +11,8 @@ import { invoke } from "@/lib/ipc-invoke";
 import type {
   DiArchiveInput,
   DiApproveInput,
+  DiCancelOwnInput,
+  DiCloseInput,
   DiCloseNonExecutableInput,
   DiDeferInput,
   DiReactivateInput,
@@ -79,6 +81,12 @@ const InterventionRequestSchema = z.object({
   reviewer_display_name: z.string().nullable().optional(),
   converted_to_wo_code: z.string().nullable().optional(),
   converted_to_wo_title: z.string().nullable().optional(),
+  disposition_code: z.string().nullable().optional(),
+  disposition_notes: z.string().nullable().optional(),
+  related_di_id: z.number().nullable().optional(),
+  closed_by_id: z.number().nullable().optional(),
+  deferred_from_status: z.string().nullable().optional(),
+  related_di_code: z.string().nullable().optional(),
 });
 
 const DiReviewEventSchema = z.object({
@@ -179,15 +187,36 @@ export async function reactivateDi(input: DiReactivateInput): Promise<Interventi
   }
 }
 
-export async function closeDiAsNonExecutable(
-  input: DiCloseNonExecutableInput,
-): Promise<InterventionRequest> {
+export async function closeDi(input: DiCloseInput): Promise<InterventionRequest> {
   try {
-    const raw = await invoke<unknown>("close_di_as_non_executable", { input });
+    const raw = await invoke<unknown>("close_di", { input });
     return InterventionRequestSchema.parse(raw) as InterventionRequest;
   } catch (err) {
     rethrowIfVersionConflict(err);
   }
+}
+
+export async function cancelOwnDi(input: DiCancelOwnInput): Promise<InterventionRequest> {
+  try {
+    const raw = await invoke<unknown>("cancel_own_di", { input });
+    return InterventionRequestSchema.parse(raw) as InterventionRequest;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+export async function closeDiAsNonExecutable(
+  input: DiCloseNonExecutableInput,
+): Promise<InterventionRequest> {
+  // Compat path → unified close with no_work_required
+  return closeDi({
+    di_id: input.di_id,
+    actor_id: input.actor_id,
+    expected_row_version: input.expected_row_version,
+    disposition_code: "no_work_required",
+    notes: input.notes ?? null,
+    related_di_id: null,
+  });
 }
 
 export async function archiveDi(input: DiArchiveInput): Promise<InterventionRequest> {

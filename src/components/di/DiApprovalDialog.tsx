@@ -35,18 +35,16 @@ import {
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useSession } from "@/hooks/use-session";
 import { i18n } from "@/i18n";
-import {
-  formatAssetLabel,
-  formatOrgNodeLabel,
-  formatPersonLabel,
-} from "@/lib/display";
+import { formatAssetLabel, formatOrgNodeLabel, formatPersonLabel } from "@/lib/display";
 import { convertDiToWo } from "@/services/di-conversion-service";
 import { useDiReviewStore } from "@/stores/di-review-store";
 import { useDiStore } from "@/stores/di-store";
 import { intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
+import { P } from "@shared/rbac/permissions.generated";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -183,16 +181,17 @@ export function DiApprovalDialog() {
   const { originLabel, symptomLabel } = useDiReferenceLabels({ includeSymptoms: true });
   const di = useDiReviewStore((s) => s.approvalDi);
   const closeApproval = useDiReviewStore((s) => s.closeApproval);
+  const openRejection = useDiReviewStore((s) => s.openRejection);
   const approve = useDiReviewStore((s) => s.approve);
-  const closeAsNonExecutable = useDiReviewStore((s) => s.closeAsNonExecutable);
   const saving = useDiReviewStore((s) => s.saving);
   const storeError = useDiReviewStore((s) => s.error);
+  const { can } = usePermissions();
   const { info } = useSession();
 
   const [note, setNote] = useState("");
   const [showStepUp, setShowStepUp] = useState(false);
+  const [stepUpMode, setStepUpMode] = useState<"approve" | "convert">("approve");
   const [conversionResult, setConversionResult] = useState<{
-    converted: boolean;
     woId: number | null;
     woCode: string | null;
     conversionError: string | null;
@@ -216,53 +215,70 @@ export function DiApprovalDialog() {
     [closeApproval, navigate],
   );
 
-  // Step 1: user clicks "Approve" → show step-up dialog
   const handleApproveClick = useCallback(() => {
+    setStepUpMode("approve");
     setShowStepUp(true);
   }, []);
 
-  // Step 2: step-up verified → actually run the approve action
+  const handleConvertClick = useCallback(() => {
+    setStepUpMode("convert");
+    setShowStepUp(true);
+  }, []);
+
+  const handleCloseRequest = useCallback(() => {
+    if (!di) return;
+    closeApproval();
+    openRejection(di);
+  }, [closeApproval, di, openRejection]);
+
   const handleStepUpVerified = useCallback(async () => {
     setShowStepUp(false);
     if (!di) return;
-    try {
-      const result = await approve({
-        di_id: di.id,
-        actor_id: info?.user_id ?? 0,
-        expected_row_version: di.row_version,
-        notes: note || null,
-      });
-      // Refresh DI list so Kanban updates
-      void loadDis();
-      if (result.converted && result.woId != null && result.woId > 0) {
-        handoffToWorkOrder(result.woId);
-        return;
-      }
-      if (result.converted) {
-        setConversionResult({
-          converted: false,
-          woId: null,
-          woCode: result.woCode,
-          conversionError: t(
-            "review.conversionMissingWoId",
-            "Conversion réussie mais identifiant OT manquant — ouvrez le module Ordres de travail manuellement.",
-          ),
+    if (stepUpMode === "approve") {
+      try {
+        const result = await approve({
+          di_id: di.id,
+          actor_id: info?.user_id ?? 0,
+          expected_row_version: di.row_version,
+          notes: note || null,
         });
+        void loadDis();
         setRetryRowVersion(result.approvedRowVersion);
+        setConversionResult(null);
+      } catch {
+        // error is set in store; dialog stays open so user can retry
+      }
+      return;
+    }
+
+    try {
+      const result = await convertDiToWo({
+        diId: di.id,
+        expectedRowVersion: retryRowVersion ?? di.row_version,
+        ...(note ? { conversionNotes: note } : {}),
+      });
+      void loadDis();
+      if (result.wo_id > 0) {
+        handoffToWorkOrder(result.wo_id);
         return;
       }
-      // Approval succeeded but conversion failed — show warning, keep dialog open
       setConversionResult({
-        converted: false,
-        woId: result.woId,
-        woCode: result.woCode,
-        conversionError: result.conversionError,
+        woId: result.wo_id,
+        woCode: result.wo_code,
+        conversionError: t(
+          "review.conversionMissingWoId",
+          "Conversion succeeded but work order id is missing — open Work Orders manually.",
+        ),
       });
-      setRetryRowVersion(result.approvedRowVersion);
-    } catch {
-      // error is set in store; dialog stays open so user can retry
+      setRetryRowVersion(result.di.row_version);
+    } catch (err) {
+      setConversionResult({
+        woId: null,
+        woCode: null,
+        conversionError: err instanceof Error ? err.message : String(err),
+      });
     }
-  }, [di, approve, info, note, handoffToWorkOrder, loadDis, t]);
+  }, [di, approve, info, note, handoffToWorkOrder, loadDis, stepUpMode, retryRowVersion, t]);
 
   const handleRetryConversion = useCallback(async () => {
     if (!di || retryRowVersion == null) return;
@@ -278,7 +294,6 @@ export function DiApprovalDialog() {
         return;
       }
       setConversionResult({
-        converted: true,
         woId: result.wo_id,
         woCode: result.wo_code,
         conversionError: null,
@@ -286,28 +301,12 @@ export function DiApprovalDialog() {
       setRetryRowVersion(result.di.row_version);
     } catch (err) {
       setConversionResult({
-        converted: false,
         woId: null,
         woCode: null,
         conversionError: err instanceof Error ? err.message : String(err),
       });
     }
   }, [di, handoffToWorkOrder, loadDis, note, retryRowVersion]);
-
-  const handleCloseNeed = useCallback(async () => {
-    if (!di) return;
-    try {
-      await closeAsNonExecutable(di.id, di.row_version, note || null);
-      void loadDis();
-      setNote("");
-      setShowStepUp(false);
-      setConversionResult(null);
-      setRetryRowVersion(null);
-      closeApproval();
-    } catch {
-      // storeError already set by review store
-    }
-  }, [closeAsNonExecutable, closeApproval, di, loadDis, note]);
 
   const handleStepUpCancel = useCallback(() => {
     setShowStepUp(false);
@@ -493,20 +492,19 @@ export function DiApprovalDialog() {
               </div>
             )}
 
-            {/* Conversion result feedback */}
-            {conversionResult?.converted && (
+            {conversionResult?.woCode && !conversionResult.conversionError && (
               <div
                 role="status"
                 className="rounded-md bg-green-100 border border-green-300 px-4 py-3 text-sm text-green-800 flex items-center gap-2"
               >
                 <CheckCircle2 className="h-4 w-4 shrink-0" />
                 <span>
-                  {t("review.conversionSuccess", "DI approuvée et convertie en OT avec succès.")}{" "}
+                  {t("review.conversionSuccess", "Request converted to work order successfully.")}{" "}
                   <strong className="font-mono">{conversionResult.woCode}</strong>
                 </span>
               </div>
             )}
-            {conversionResult && !conversionResult.converted && (
+            {conversionResult?.conversionError && (
               <div
                 role="alert"
                 className="rounded-md bg-amber-100 border border-amber-300 px-4 py-3 text-sm text-amber-800 flex items-start gap-2"
@@ -514,10 +512,7 @@ export function DiApprovalDialog() {
                 <TriangleAlert className="h-4 w-4 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-medium">
-                    {t(
-                      "review.conversionFailed",
-                      "DI approuvée mais la conversion en OT a échoué.",
-                    )}
+                    {t("review.conversionFailed", "Conversion to work order failed.")}
                   </p>
                   <p className="text-xs mt-1">{conversionResult.conversionError}</p>
                   {retryRowVersion != null && (
@@ -556,12 +551,23 @@ export function DiApprovalDialog() {
                   className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
                 >
                   {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {t("review.approveAndConvert")}
+                  {t("action.approve")}
                 </Button>
               )}
-              {di.status === "approved_for_planning" && (
-                <Button size="sm" variant="outline" onClick={() => void handleCloseNeed()}>
-                  {t("action.cancelNeed")}
+              {di.status === "approved" && can(P.DI_CONVERT) && di.converted_to_wo_id == null && (
+                <Button
+                  size="sm"
+                  onClick={handleConvertClick}
+                  disabled={saving}
+                  className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+                >
+                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {t("review.convertToWo")}
+                </Button>
+              )}
+              {(di.status === "awaiting_approval" || di.status === "approved") && (
+                <Button size="sm" variant="outline" onClick={handleCloseRequest}>
+                  {t("action.closeRequest")}
                 </Button>
               )}
             </div>

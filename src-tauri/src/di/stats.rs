@@ -57,6 +57,12 @@ pub struct DiOverdueDi {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct DiDispositionCount {
+    pub disposition_code: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DiStatsPayload {
     pub total: i64,
     pub pending: i64,
@@ -69,6 +75,7 @@ pub struct DiStatsPayload {
     pub sla_total: i64,
     pub safety_issues: i64,
     pub status_distribution: Vec<DiStatusCount>,
+    pub disposition_distribution: Vec<DiDispositionCount>,
     pub priority_distribution: Vec<DiPriorityCount>,
     pub type_distribution: Vec<DiTypeCount>,
     pub monthly_trend: Vec<DiTrendPoint>,
@@ -120,7 +127,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
         &format!(
             "SELECT COUNT(*) AS value
              FROM intervention_requests ir
-             WHERE {base_where} AND ir.status = 'pending_review'"
+             WHERE {base_where} AND ir.status = 'in_review'"
         ),
         binds.to_vec(),
     )
@@ -134,10 +141,10 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
              WHERE {base_where}
              AND ir.status IN (
                'submitted',
-               'pending_review',
-               'screened',
+               'in_review',
+               'in_review',
                'awaiting_approval',
-               'approved_for_planning',
+               'approved',
                'deferred'
              )"
         ),
@@ -151,7 +158,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
             "SELECT COUNT(*) AS value
              FROM intervention_requests ir
              WHERE {base_where}
-             AND ir.status IN ('closed_as_non_executable', 'archived')"
+             AND ir.status IN ('closed')"
         ),
         binds.to_vec(),
     )
@@ -187,7 +194,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
             "SELECT COUNT(*) AS value
              FROM intervention_requests ir
              WHERE {base_where}
-             AND ir.status IN ('submitted', 'pending_review', 'screened', 'awaiting_approval')
+             AND ir.status IN ('submitted', 'in_review', 'awaiting_approval', 'approved', 'deferred', 'returned_for_clarification')
              AND (julianday('now') - julianday(ir.submitted_at)) > 7"
         ),
         binds.to_vec(),
@@ -212,6 +219,31 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
             .map(|row| {
                 Ok(DiStatusCount {
                     status: row.try_get("", "status")?,
+                    count: row_i64(&row, "count")?,
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?
+    };
+
+    let disposition_distribution = {
+        let rows = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT COALESCE(ir.disposition_code, 'unknown') AS disposition_code, COUNT(*) AS count
+                     FROM intervention_requests ir
+                     WHERE {base_where}
+                       AND ir.status = 'closed'
+                     GROUP BY COALESCE(ir.disposition_code, 'unknown')
+                     ORDER BY count DESC"
+                ),
+                binds.to_vec(),
+            ))
+            .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(DiDispositionCount {
+                    disposition_code: row.try_get("", "disposition_code")?,
                     count: row_i64(&row, "count")?,
                 })
             })
@@ -353,10 +385,10 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                      WHERE {base_where}
                      AND ir.status IN (
                        'submitted',
-                       'pending_review',
-                       'screened',
+                       'in_review',
+                       'in_review',
                        'awaiting_approval',
-                       'approved_for_planning',
+                       'approved',
                        'deferred'
                      )"
                 ),
@@ -420,7 +452,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                        CAST(julianday('now') - julianday(ir.submitted_at) AS INTEGER) AS days_overdue
                      FROM intervention_requests ir
                      WHERE {base_where}
-                     AND ir.status IN ('submitted', 'pending_review', 'screened', 'awaiting_approval')
+                     AND ir.status IN ('submitted', 'in_review', 'awaiting_approval', 'approved', 'deferred', 'returned_for_clarification')
                      AND (julianday('now') - julianday(ir.submitted_at)) > 7
                      ORDER BY days_overdue DESC, ir.id DESC
                      LIMIT 10"
@@ -454,7 +486,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                      (ir.screened_at IS NULL AND julianday('now') > julianday(ir.sla_response_deadline))
                      OR (ir.screened_at IS NOT NULL AND julianday(ir.screened_at) > julianday(ir.sla_response_deadline))
                      OR (
-                       ir.status NOT IN ('rejected', 'closed_as_non_executable', 'archived')
+                       ir.status NOT IN ('closed', 'closed')
                        AND ir.sla_resolution_deadline IS NOT NULL
                        AND (
                          (ir.converted_at IS NULL AND julianday('now') > julianday(ir.sla_resolution_deadline))
@@ -462,7 +494,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                        )
                      )
                      OR (
-                       ir.status IN ('rejected', 'closed_as_non_executable', 'archived')
+                       ir.status IN ('closed', 'closed')
                        AND ir.sla_resolution_deadline IS NOT NULL
                        AND ir.converted_at IS NOT NULL
                        AND julianday(ir.converted_at) > julianday(ir.sla_resolution_deadline)
@@ -483,7 +515,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
                    AND ir.sla_response_deadline IS NOT NULL
                    AND (
                      ir.converted_at IS NOT NULL
-                     OR ir.status IN ('rejected', 'closed_as_non_executable', 'archived')
+                     OR ir.status IN ('closed', 'closed')
                    )
                    AND NOT (
                      (ir.screened_at IS NULL AND julianday('now') > julianday(ir.sla_response_deadline))
@@ -518,6 +550,7 @@ pub async fn get_di_stats(db: &DatabaseConnection, filter: DiStatsFilter) -> App
         sla_total,
         safety_issues,
         status_distribution,
+        disposition_distribution,
         priority_distribution,
         type_distribution,
         monthly_trend,

@@ -142,6 +142,22 @@ pub async fn resolve_recipients(
                 }
             }
         }
+        "submitter" => {
+            if let Some((source_module, source_id)) = extract_source(payload) {
+                if source_module == "intervention_requests" || source_module == "di" {
+                    if let Some(user_id) = query_optional_i64(
+                        pool,
+                        "SELECT submitter_id FROM intervention_requests WHERE id = ?",
+                        [source_id.into()],
+                        "submitter_id",
+                    )
+                    .await?
+                    {
+                        user_ids.insert(user_id);
+                    }
+                }
+            }
+        }
         "role" => {
             if let Some(role_name) = payload
                 .get("routing_role_name")

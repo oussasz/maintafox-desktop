@@ -2,7 +2,7 @@
 //!
 //! Phase 2 - Sub-phase 04 - File 03 - Sprint S2.
 //!
-//! A DI in `approved_for_planning` can be converted into a work order shell.
+//! A DI in `approved` can be converted into a work order shell.
 //! After conversion the DI is locked as an immutable origin record.
 //!
 //! Architecture rules:
@@ -66,6 +66,7 @@ const IR_COLS: &str = "\
     ir.reviewer_note, ir.classification_code_id, \
     ir.is_recurrence_flag, ir.recurrence_di_id, \
     ir.source_inspection_anomaly_id, \
+    ir.disposition_code, ir.disposition_notes, ir.related_di_id, ir.closed_by_id, ir.deferred_from_status, \
     ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
 
 /// Display enrichment columns (must be paired with `IR_JOINS`).
@@ -74,14 +75,16 @@ const IR_JOIN_COLS: &str = "\
     org.code AS org_node_code, org.name AS org_node_label, \
     COALESCE(us.display_name, us.username) AS submitter_display_name, \
     COALESCE(urv.display_name, urv.username) AS reviewer_display_name, \
-    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title";
+    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title, \
+    related_di.code AS related_di_code";
 
 const IR_JOINS: &str = "\
     LEFT JOIN equipment eq ON eq.id = ir.asset_id \
     LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
     LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
     LEFT JOIN user_accounts urv ON urv.id = ir.reviewer_id \
-    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id";
+    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id \
+    LEFT JOIN intervention_requests related_di ON related_di.id = ir.related_di_id";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -103,13 +106,13 @@ fn check_concurrency(rows_affected: u64) -> AppResult<()> {
 // convert_di_to_work_order — single atomic transaction
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Convert a DI in `approved_for_planning` to a work order shell.
+/// Convert a DI in `approved` to a work order shell.
 ///
 /// The entire operation executes inside a single transaction:
 ///   1. Load DI + guard state transition
 ///   2. Validate prerequisites (asset_id, classification_code_id)
 ///   3. Generate WO code and insert WO stub
-///   4. Update DI status to `converted_to_work_order`
+///   4. Update DI status to `closed` with disposition `converted_to_wo`
 ///   5. Insert state transition log
 ///   6. Insert review event
 ///
@@ -145,7 +148,14 @@ pub async fn convert_di_to_work_order(
         AppError::Internal(anyhow::anyhow!("Stored DI has invalid status: {e}"))
     })?;
 
-    guard_transition(&current_status, &DiStatus::ConvertedToWorkOrder).map_err(|e| {
+    if current_status != DiStatus::Approved {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "La conversion n'est possible qu'au statut 'approved'. Statut actuel : '{}'.",
+            current_status.as_str()
+        )]));
+    }
+
+    guard_transition(&current_status, &DiStatus::Closed).map_err(|e| {
         AppError::ValidationFailed(vec![e])
     })?;
 
@@ -329,15 +339,20 @@ pub async fn convert_di_to_work_order(
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
-                status = 'converted_to_work_order', \
+                status = 'closed', \
+                disposition_code = 'converted_to_wo', \
                 converted_to_wo_id = ?, \
                 converted_at = ?, \
+                closed_at = ?, \
+                closed_by_id = ?, \
                 row_version = row_version + 1, \
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
             [
                 wo_id.into(),
                 now.clone().into(),
+                now.clone().into(),
+                input.actor_id.into(),
                 now.clone().into(),
                 input.di_id.into(),
                 input.expected_row_version.into(),
@@ -347,7 +362,7 @@ pub async fn convert_di_to_work_order(
     check_concurrency(result.rows_affected())?;
 
     let from_str = current_status.as_str();
-    let to_str = DiStatus::ConvertedToWorkOrder.as_str();
+    let to_str = DiStatus::Closed.as_str();
 
     // ── 6. Insert state transition log ────────────────────────────────────
     txn.execute(Statement::from_sql_and_values(
@@ -379,7 +394,7 @@ pub async fn convert_di_to_work_order(
             (di_id, event_type, actor_id, acted_at, from_status, to_status, \
              reason_code, notes, sla_target_hours, sla_deadline, \
              sla_resolution_target_hours, sla_resolution_deadline, step_up_used) \
-         VALUES (?, 'converted', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 1)",
+         VALUES (?, 'converted', ?, ?, ?, ?, 'converted_to_wo', ?, ?, ?, ?, ?, 1)",
         [
             input.di_id.into(),
             input.actor_id.into(),
@@ -427,6 +442,9 @@ pub async fn convert_di_to_work_order(
 
     let updated_di = map_intervention_request(&updated_row)?;
     txn.commit().await?;
+
+    super::notifications::notify_converted(db, &updated_di).await;
+    super::notifications::notify_closed(db, &updated_di).await;
 
     Ok(WoConversionResult {
         di: updated_di,

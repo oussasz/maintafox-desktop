@@ -181,7 +181,7 @@ export function DiReviewPanel() {
                 canScreen={can(P.DI_SCREEN) || can(P.DI_REVIEW)}
                 onScreen={() => handleQuickScreen(di)}
                 onApprove={() => openApproval(di)}
-                onReject={() => openRejection(di)}
+                onClose={() => openRejection(di)}
                 onReturn={() => openReturn(di)}
                 onView={() => handleView(di)}
               />
@@ -214,7 +214,7 @@ function ReviewRow({
   canScreen,
   onScreen,
   onApprove,
-  onReject,
+  onClose,
   onReturn,
   onView,
 }: {
@@ -224,7 +224,7 @@ function ReviewRow({
   canScreen: boolean;
   onScreen: () => void;
   onApprove: () => void;
-  onReject: () => void;
+  onClose: () => void;
   onReturn: () => void;
   onView: () => void;
 }) {
@@ -296,7 +296,7 @@ function ReviewRow({
             <Check className="h-3.5 w-3.5" />
           </Button>
         )}
-        {canScreen && di.status === "pending_review" && (
+        {canScreen && di.status === "in_review" && (
           <Button
             variant="ghost"
             size="sm"
@@ -307,21 +307,18 @@ function ReviewRow({
             <ClipboardCheck className="h-3.5 w-3.5" />
           </Button>
         )}
-        {canReview &&
-          (di.status === "pending_review" ||
-            di.status === "screened" ||
-            di.status === "awaiting_approval") && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-              onClick={onReject}
-              title={t("action.reject")}
-            >
-              <X className="h-3.5 w-3.5" />
-            </Button>
-          )}
-        {canReview && di.status === "pending_review" && (
+        {canReview && (di.status === "in_review" || di.status === "awaiting_approval") && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+            onClick={onClose}
+            title={t("action.closeRequest")}
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        )}
+        {canReview && di.status === "in_review" && (
           <Button
             variant="ghost"
             size="sm"

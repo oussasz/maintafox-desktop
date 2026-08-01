@@ -28,6 +28,7 @@ pub struct DiListFilter {
     pub reviewer_id: Option<i64>,
     pub origin_type: Option<String>,
     pub urgency: Option<String>,
+    pub disposition_code: Option<String>,
     pub search: Option<String>,
     pub limit: i64,
     pub offset: i64,
@@ -92,7 +93,7 @@ fn default_request_type() -> String {
     crate::di::reference_catalog::DEFAULT_DI_REQUEST_TYPE.to_string()
 }
 
-/// Supervisor triage/resubmission: move a DI into the review queue (`pending_review`).
+/// Supervisor triage/resubmission: move a DI into the review queue (`in_review`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct DiTriageSubmittedInput {
     pub di_id: i64,
@@ -137,6 +138,7 @@ const IR_COLS: &str = "\
     ir.reviewer_note, ir.classification_code_id, \
     ir.is_recurrence_flag, ir.recurrence_di_id, \
     ir.source_inspection_anomaly_id, \
+    ir.disposition_code, ir.disposition_notes, ir.related_di_id, ir.closed_by_id, ir.deferred_from_status, \
     ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
 
 /// Display enrichment columns (must be paired with `IR_JOINS`).
@@ -145,14 +147,16 @@ const IR_JOIN_COLS: &str = "\
     org.code AS org_node_code, org.name AS org_node_label, \
     COALESCE(us.display_name, us.username) AS submitter_display_name, \
     COALESCE(ur.display_name, ur.username) AS reviewer_display_name, \
-    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title";
+    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title, \
+    related_di.code AS related_di_code";
 
 const IR_JOINS: &str = "\
     LEFT JOIN equipment eq ON eq.id = ir.asset_id \
     LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
     LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
     LEFT JOIN user_accounts ur ON ur.id = ir.reviewer_id \
-    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id";
+    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id \
+    LEFT JOIN intervention_requests related_di ON related_di.id = ir.related_di_id";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Row mappers
@@ -267,6 +271,12 @@ pub async fn list_intervention_requests(
         if !urgency.is_empty() {
             where_clauses.push("ir.reported_urgency = ?".to_string());
             binds.push(urgency.clone().into());
+        }
+    }
+    if let Some(ref disposition_code) = filter.disposition_code {
+        if !disposition_code.is_empty() {
+            where_clauses.push("ir.disposition_code = ?".to_string());
+            binds.push(disposition_code.clone().into());
         }
     }
 
@@ -714,10 +724,10 @@ pub async fn update_di_draft_fields(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// G) triage_submitted_di — Submitted → PendingReview (supervisor / planner triage)
+// G) triage_submitted_di — Submitted → InReview (supervisor / planner triage)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Move a DI from `submitted` or `returned_for_clarification` to `pending_review`.
+/// Move a DI from `submitted` or `returned_for_clarification` to `in_review`.
 pub async fn triage_submitted_di(
     db: &DatabaseConnection,
     input: DiTriageSubmittedInput,
@@ -746,7 +756,7 @@ pub async fn triage_submitted_di(
         )]));
     }
 
-    guard_transition(&status, &DiStatus::PendingReview).map_err(|e| {
+    guard_transition(&status, &DiStatus::InReview).map_err(|e| {
         AppError::ValidationFailed(vec![e])
     })?;
 
@@ -756,7 +766,7 @@ pub async fn triage_submitted_di(
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
-                status = 'pending_review', \
+                status = 'in_review', \
                 row_version = row_version + 1, \
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
@@ -784,7 +794,7 @@ pub async fn triage_submitted_di(
         [
             input.di_id.into(),
             status.as_str().into(),
-            DiStatus::PendingReview.as_str().into(),
+            DiStatus::InReview.as_str().into(),
             if status == DiStatus::ReturnedForClarification {
                 "re_submitted".into()
             } else {
@@ -798,10 +808,12 @@ pub async fn triage_submitted_di(
     ))
     .await?;
 
-    get_intervention_request(db, input.di_id)
+    let updated = get_intervention_request(db, input.di_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InterventionRequest".into(),
             id: input.di_id.to_string(),
-        })
+        })?;
+    super::notifications::notify_entered_in_review(db, &updated).await;
+    Ok(updated)
 }

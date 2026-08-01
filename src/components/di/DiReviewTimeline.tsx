@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { dispositionLabelKey } from "@/components/di/disposition-meta";
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry } from "@/components/timeline";
 import { formatOrDash } from "@/lib/display";
@@ -61,10 +62,17 @@ export function DiReviewTimeline({ diId }: DiReviewTimelineProps) {
           ev.sla_resolution_target_hours != null ||
           ev.sla_resolution_deadline != null;
 
+        const dispositionKey =
+          ev.event_type === "closed" ? dispositionLabelKey(ev.reason_code) : null;
+        const dispositionText = dispositionKey ? t(dispositionKey as "disposition.other") : null;
+
         return {
           id: String(ev.id),
           title: eventLabel,
-          subtitle: `${ev.from_status} → ${ev.to_status}`,
+          subtitle:
+            dispositionText != null
+              ? `${ev.from_status} → ${ev.to_status} · ${dispositionText}`
+              : `${ev.from_status} → ${ev.to_status}`,
           description: ev.notes ?? undefined,
           timestamp: ev.acted_at,
           actor: `${t("reviewTimeline.actor")}: ${t("reviewTimeline.systemActor")}`,

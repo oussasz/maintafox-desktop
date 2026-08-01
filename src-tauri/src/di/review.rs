@@ -58,6 +58,24 @@ pub struct DiRejectInput {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct DiCloseInput {
+    pub di_id: i64,
+    pub actor_id: i64,
+    pub expected_row_version: i64,
+    pub disposition_code: String,
+    pub notes: Option<String>,
+    pub related_di_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DiCancelOwnInput {
+    pub di_id: i64,
+    pub actor_id: i64,
+    pub expected_row_version: i64,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct DiApproveInput {
     pub di_id: i64,
     pub actor_id: i64,
@@ -141,6 +159,7 @@ const IR_COLS: &str = "\
     ir.reviewer_note, ir.classification_code_id, \
     ir.is_recurrence_flag, ir.recurrence_di_id, \
     ir.source_inspection_anomaly_id, \
+    ir.disposition_code, ir.disposition_notes, ir.related_di_id, ir.closed_by_id, ir.deferred_from_status, \
     ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
 
 /// Display enrichment columns (must be paired with `IR_JOINS`).
@@ -149,14 +168,16 @@ const IR_JOIN_COLS: &str = "\
     org.code AS org_node_code, org.name AS org_node_label, \
     COALESCE(us.display_name, us.username) AS submitter_display_name, \
     COALESCE(urv.display_name, urv.username) AS reviewer_display_name, \
-    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title";
+    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title, \
+    related_di.code AS related_di_code";
 
 const IR_JOINS: &str = "\
     LEFT JOIN equipment eq ON eq.id = ir.asset_id \
     LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
     LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
     LEFT JOIN user_accounts urv ON urv.id = ir.reviewer_id \
-    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id";
+    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id \
+    LEFT JOIN intervention_requests related_di ON related_di.id = ir.related_di_id";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Row mapping
@@ -399,10 +420,7 @@ pub async fn screen_di(
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
 
-    guard_transition(&current_status, &DiStatus::Screened).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
-    guard_transition(&DiStatus::Screened, &DiStatus::AwaitingApproval).map_err(|e| {
+    guard_transition(&current_status, &DiStatus::AwaitingApproval).map_err(|e| {
         AppError::ValidationFailed(vec![e])
     })?;
 
@@ -471,8 +489,8 @@ pub async fn screen_di(
     check_concurrency(result.rows_affected())?;
 
     let from_str = current_status.as_str();
+    let to_str = DiStatus::AwaitingApproval.as_str();
 
-    // 5. Event row 1: screened
     insert_review_event(
         &txn,
         input.di_id,
@@ -480,7 +498,7 @@ pub async fn screen_di(
         input.actor_id,
         &now,
         from_str,
-        DiStatus::Screened.as_str(),
+        to_str,
         None,
         input.reviewer_note.as_deref(),
         snap.response_target_hours,
@@ -491,49 +509,16 @@ pub async fn screen_di(
     )
     .await?;
 
-    // 6. Event row 2: advanced_to_approval
-    insert_review_event(
-        &txn,
-        input.di_id,
-        "advanced_to_approval",
-        input.actor_id,
-        &now,
-        DiStatus::Screened.as_str(),
-        DiStatus::AwaitingApproval.as_str(),
-        None,
-        None,
-        snap.response_target_hours,
-        snap.response_deadline.as_deref(),
-        snap.resolution_target_hours,
-        snap.resolution_deadline.as_deref(),
-        false,
-    )
-    .await?;
-
-    // 7. Legacy transition log entries
     insert_transition_log(
         &txn,
         input.di_id,
         from_str,
-        DiStatus::Screened.as_str(),
+        to_str,
         "screen",
         input.actor_id,
         &now,
         None,
         input.reviewer_note.as_deref(),
-    )
-    .await?;
-
-    insert_transition_log(
-        &txn,
-        input.di_id,
-        DiStatus::Screened.as_str(),
-        DiStatus::AwaitingApproval.as_str(),
-        "advance_to_approval",
-        input.actor_id,
-        &now,
-        None,
-        None,
     )
     .await?;
 
@@ -627,49 +612,77 @@ pub async fn return_di_for_clarification(
 
     let updated = refetch_di(&txn, input.di_id).await?;
     txn.commit().await?;
-
+    super::notifications::notify_returned(db, &updated).await;
     Ok(updated)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// C) reject_di — PendingReview|Screened|AwaitingApproval → Rejected
+// C) close_di — InReview|AwaitingApproval|Approved → Closed (+ disposition)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn reject_di(
+pub async fn close_di(
     db: &DatabaseConnection,
-    input: DiRejectInput,
+    input: DiCloseInput,
 ) -> AppResult<InterventionRequest> {
-    // Validate required field
-    if input.reason_code.trim().is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "Le code de motif est obligatoire pour rejeter une DI.".into(),
-        ]));
-    }
+    super::disposition::validate_close_disposition(
+        db,
+        &input.disposition_code,
+        input.notes.as_deref(),
+        input.related_di_id,
+        input.di_id,
+    )
+    .await?;
 
     let txn = db.begin().await?;
     let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
 
-    guard_transition(&current_status, &DiStatus::Rejected).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
+    match current_status {
+        DiStatus::InReview | DiStatus::AwaitingApproval | DiStatus::Approved => {}
+        other => {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "La fermeture n'est possible qu'au statut 'in_review', 'awaiting_approval' ou 'approved'. \
+                 Statut actuel : '{}'.",
+                other.as_str()
+            )]));
+        }
+    }
+
+    guard_transition(&current_status, &DiStatus::Closed)
+        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let disposition = input.disposition_code.trim().to_string();
 
     let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
-                status = 'rejected', \
-                declined_at = ?, \
+                status = 'closed', \
+                disposition_code = ?, \
+                disposition_notes = ?, \
+                related_di_id = ?, \
+                closed_at = ?, \
+                closed_by_id = ?, \
                 reviewer_id = ?, \
                 reviewer_note = COALESCE(?, reviewer_note), \
                 row_version = row_version + 1, \
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
             [
+                disposition.clone().into(),
+                input
+                    .notes
+                    .clone()
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                input
+                    .related_di_id
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<i64>)),
                 now.clone().into(),
+                input.actor_id.into(),
                 input.actor_id.into(),
                 input
                     .notes
@@ -685,17 +698,134 @@ pub async fn reject_di(
     check_concurrency(result.rows_affected())?;
 
     let from_str = current_status.as_str();
-    let to_str = DiStatus::Rejected.as_str();
+    let to_str = DiStatus::Closed.as_str();
 
     insert_review_event(
         &txn,
         input.di_id,
-        "rejected",
+        "closed",
         input.actor_id,
         &now,
         from_str,
         to_str,
-        Some(&input.reason_code),
+        Some(&disposition),
+        input.notes.as_deref(),
+        snap.response_target_hours,
+        snap.response_deadline.as_deref(),
+        snap.resolution_target_hours,
+        snap.resolution_deadline.as_deref(),
+        false,
+    )
+    .await?;
+
+    // Persist related_di_id on event when present
+    if let Some(related_id) = input.related_di_id {
+        let _ = txn
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE di_review_events SET related_di_id = ? \
+                 WHERE id = (SELECT MAX(id) FROM di_review_events WHERE di_id = ?)",
+                [related_id.into(), input.di_id.into()],
+            ))
+            .await;
+    }
+
+    insert_transition_log(
+        &txn,
+        input.di_id,
+        from_str,
+        to_str,
+        "close",
+        input.actor_id,
+        &now,
+        Some(&disposition),
+        input.notes.as_deref(),
+    )
+    .await?;
+
+    let updated = refetch_di(&txn, input.di_id).await?;
+    txn.commit().await?;
+    super::notifications::notify_closed(db, &updated).await;
+    Ok(updated)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// C2) cancel_own_di — Submitted|ReturnedForClarification → Closed
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub async fn cancel_own_di(
+    db: &DatabaseConnection,
+    input: DiCancelOwnInput,
+) -> AppResult<InterventionRequest> {
+    let txn = db.begin().await?;
+    let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
+
+    if di.submitter_id != input.actor_id {
+        return Err(AppError::ValidationFailed(vec![
+            "Seul le demandeur peut annuler sa propre DI.".into(),
+        ]));
+    }
+
+    match current_status {
+        DiStatus::Submitted | DiStatus::ReturnedForClarification => {}
+        other => {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "L'annulation demandeur n'est possible qu'aux statuts 'submitted' ou \
+                 'returned_for_clarification'. Statut actuel : '{}'.",
+                other.as_str()
+            )]));
+        }
+    }
+
+    guard_transition(&current_status, &DiStatus::Closed)
+        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let disposition = super::disposition::DISPOSITION_CANCELLED_BY_REQUESTER.to_string();
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
+    let snap = super::sla::snapshot_sla_for_review_event(&di);
+
+    let result = txn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE intervention_requests SET \
+                status = 'closed', \
+                disposition_code = ?, \
+                disposition_notes = ?, \
+                closed_at = ?, \
+                closed_by_id = ?, \
+                row_version = row_version + 1, \
+                updated_at = ? \
+             WHERE id = ? AND row_version = ?",
+            [
+                disposition.clone().into(),
+                input
+                    .notes
+                    .clone()
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                now.clone().into(),
+                input.actor_id.into(),
+                now.clone().into(),
+                input.di_id.into(),
+                input.expected_row_version.into(),
+            ],
+        ))
+        .await?;
+    check_concurrency(result.rows_affected())?;
+
+    let from_str = current_status.as_str();
+    let to_str = DiStatus::Closed.as_str();
+
+    insert_review_event(
+        &txn,
+        input.di_id,
+        "closed",
+        input.actor_id,
+        &now,
+        from_str,
+        to_str,
+        Some(&disposition),
         input.notes.as_deref(),
         snap.response_target_hours,
         snap.response_deadline.as_deref(),
@@ -710,26 +840,69 @@ pub async fn reject_di(
         input.di_id,
         from_str,
         to_str,
-        "reject",
+        "cancel_own",
         input.actor_id,
         &now,
-        Some(&input.reason_code),
+        Some(&disposition),
         input.notes.as_deref(),
     )
     .await?;
 
     let updated = refetch_di(&txn, input.di_id).await?;
     txn.commit().await?;
-
+    super::notifications::notify_closed(db, &updated).await;
     Ok(updated)
 }
 
+// Compat: reject_di → close with rejected_invalid (or duplicate if reason says so)
+pub async fn reject_di(
+    db: &DatabaseConnection,
+    input: DiRejectInput,
+) -> AppResult<InterventionRequest> {
+    let reason = input.reason_code.trim().to_lowercase();
+    let disposition = if reason.contains("duplicate") || reason == "doublon" {
+        super::disposition::DISPOSITION_DUPLICATE.to_string()
+    } else {
+        super::disposition::DISPOSITION_REJECTED_INVALID.to_string()
+    };
+    close_di(
+        db,
+        DiCloseInput {
+            di_id: input.di_id,
+            actor_id: input.actor_id,
+            expected_row_version: input.expected_row_version,
+            disposition_code: disposition,
+            notes: Some(input.reason_code).filter(|s| !s.trim().is_empty()).or(input.notes),
+            related_di_id: None,
+        },
+    )
+    .await
+}
+
+// Compat: close_di_as_non_executable → close with no_work_required
+pub async fn close_di_as_non_executable(
+    db: &DatabaseConnection,
+    input: DiCloseNonExecutableInput,
+) -> AppResult<InterventionRequest> {
+    close_di(
+        db,
+        DiCloseInput {
+            di_id: input.di_id,
+            actor_id: input.actor_id,
+            expected_row_version: input.expected_row_version,
+            disposition_code: super::disposition::DISPOSITION_NO_WORK_REQUIRED.to_string(),
+            notes: input.notes,
+            related_di_id: None,
+        },
+    )
+    .await
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// D) approve_di_for_planning — AwaitingApproval → ApprovedForPlanning
-//    Step-up is enforced at the IPC command layer (require_step_up!).
+// D) approve_di — AwaitingApproval → Approved (step-up at IPC)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn approve_di_for_planning(
+pub async fn approve_di(
     db: &DatabaseConnection,
     input: DiApproveInput,
 ) -> AppResult<InterventionRequest> {
@@ -738,7 +911,7 @@ pub async fn approve_di_for_planning(
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
 
-    guard_transition(&current_status, &DiStatus::ApprovedForPlanning).map_err(|e| {
+    guard_transition(&current_status, &DiStatus::Approved).map_err(|e| {
         AppError::ValidationFailed(vec![e])
     })?;
 
@@ -748,7 +921,7 @@ pub async fn approve_di_for_planning(
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
-                status = 'approved_for_planning', \
+                status = 'approved', \
                 approved_at = ?, \
                 reviewer_note = COALESCE(?, reviewer_note), \
                 row_version = row_version + 1, \
@@ -770,7 +943,7 @@ pub async fn approve_di_for_planning(
     check_concurrency(result.rows_affected())?;
 
     let from_str = current_status.as_str();
-    let to_str = DiStatus::ApprovedForPlanning.as_str();
+    let to_str = DiStatus::Approved.as_str();
 
     insert_review_event(
         &txn,
@@ -786,7 +959,7 @@ pub async fn approve_di_for_planning(
         snap.response_deadline.as_deref(),
         snap.resolution_target_hours,
         snap.resolution_deadline.as_deref(),
-        true, // step_up_used — enforced at IPC layer
+        true,
     )
     .await?;
 
@@ -805,38 +978,41 @@ pub async fn approve_di_for_planning(
 
     let updated = refetch_di(&txn, input.di_id).await?;
     txn.commit().await?;
-
+    super::notifications::notify_approved(db, &updated).await;
     Ok(updated)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// E) defer_di — ApprovedForPlanning|AwaitingApproval → Deferred
+// E) defer_di — InReview|AwaitingApproval|Approved → Deferred
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn defer_di(
     db: &DatabaseConnection,
     input: DiDeferInput,
 ) -> AppResult<InterventionRequest> {
-    // Validate required field
     if input.reason_code.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "Le code de motif est obligatoire pour reporter une DI.".into(),
+            "Le motif de report est obligatoire.".into(),
         ]));
     }
 
-    // Validate deferred_until is a future date
-    let deferred_date = chrono::NaiveDate::parse_from_str(&input.deferred_until, "%Y-%m-%d")
-        .map_err(|_| {
-            AppError::ValidationFailed(vec![format!(
-                "Format de date invalide pour deferred_until : '{}'. Format attendu : YYYY-MM-DD.",
-                input.deferred_until
-            )])
-        })?;
-
-    let today = Utc::now().date_naive();
-    if deferred_date <= today {
+    // deferred_until must be a calendar date strictly after today (UTC).
+    let until = input.deferred_until.trim();
+    if until.is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "La date de report (deferred_until) doit être dans le futur.".into(),
+            "La date de report (deferred_until) est obligatoire.".into(),
+        ]));
+    }
+    let today = Utc::now().date_naive();
+    let date_part = until.get(..10).unwrap_or(until);
+    let until_date = chrono::NaiveDate::parse_from_str(date_part, "%Y-%m-%d").map_err(|_| {
+        AppError::ValidationFailed(vec![
+            "Format de date de report invalide (attendu YYYY-MM-DD).".into(),
+        ])
+    })?;
+    if until_date <= today {
+        return Err(AppError::ValidationFailed(vec![
+            "La date de report doit être une date future (strictement après aujourd'hui).".into(),
         ]));
     }
 
@@ -845,23 +1021,42 @@ pub async fn defer_di(
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
 
-    guard_transition(&current_status, &DiStatus::Deferred).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
+    match current_status {
+        DiStatus::InReview | DiStatus::AwaitingApproval | DiStatus::Approved => {}
+        other => {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Le report n'est possible qu'au statut 'in_review', 'awaiting_approval' ou 'approved'. \
+                 Statut actuel : '{}'.",
+                other.as_str()
+            )]));
+        }
+    }
+
+    guard_transition(&current_status, &DiStatus::Deferred)
+        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let from_saved = current_status.as_str().to_string();
 
     let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
                 status = 'deferred', \
+                deferred_from_status = ?, \
                 deferred_until = ?, \
+                reviewer_note = COALESCE(?, reviewer_note), \
                 row_version = row_version + 1, \
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
             [
+                from_saved.clone().into(),
                 input.deferred_until.clone().into(),
+                input
+                    .notes
+                    .clone()
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
                 now.clone().into(),
                 input.di_id.into(),
                 input.expected_row_version.into(),
@@ -906,12 +1101,12 @@ pub async fn defer_di(
 
     let updated = refetch_di(&txn, input.di_id).await?;
     txn.commit().await?;
-
+    super::notifications::notify_deferred(db, &updated).await;
     Ok(updated)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// F) reactivate_deferred_di — Deferred → AwaitingApproval
+// F) reactivate_deferred_di — Deferred → deferred_from_status
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn reactivate_deferred_di(
@@ -923,22 +1118,37 @@ pub async fn reactivate_deferred_di(
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
 
-    guard_transition(&current_status, &DiStatus::AwaitingApproval).map_err(|e| {
-        AppError::ValidationFailed(vec![e])
-    })?;
+    if current_status != DiStatus::Deferred {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Seule une DI reportée peut être réactivée. Statut actuel : '{}'.",
+            current_status.as_str()
+        )]));
+    }
+
+    let target = di
+        .deferred_from_status
+        .as_deref()
+        .and_then(|s| DiStatus::try_from_str(s).ok())
+        .unwrap_or(DiStatus::AwaitingApproval);
+
+    guard_transition(&current_status, &target)
+        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let target_str = target.as_str().to_string();
 
     let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
-                status = 'awaiting_approval', \
+                status = ?, \
                 deferred_until = NULL, \
+                deferred_from_status = NULL, \
                 row_version = row_version + 1, \
                 updated_at = ? \
              WHERE id = ? AND row_version = ?",
             [
+                target_str.clone().into(),
                 now.clone().into(),
                 input.di_id.into(),
                 input.expected_row_version.into(),
@@ -948,7 +1158,6 @@ pub async fn reactivate_deferred_di(
     check_concurrency(result.rows_affected())?;
 
     let from_str = current_status.as_str();
-    let to_str = DiStatus::AwaitingApproval.as_str();
 
     insert_review_event(
         &txn,
@@ -957,7 +1166,7 @@ pub async fn reactivate_deferred_di(
         input.actor_id,
         &now,
         from_str,
-        to_str,
+        &target_str,
         None,
         input.notes.as_deref(),
         snap.response_target_hours,
@@ -972,7 +1181,7 @@ pub async fn reactivate_deferred_di(
         &txn,
         input.di_id,
         from_str,
-        to_str,
+        &target_str,
         "reactivate",
         input.actor_id,
         &now,
@@ -983,96 +1192,11 @@ pub async fn reactivate_deferred_di(
 
     let updated = refetch_di(&txn, input.di_id).await?;
     txn.commit().await?;
-
     Ok(updated)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// G) close_di_as_non_executable — ApprovedForPlanning → ClosedAsNonExecutable
-// ═══════════════════════════════════════════════════════════════════════════════
-
-pub async fn close_di_as_non_executable(
-    db: &DatabaseConnection,
-    input: DiCloseNonExecutableInput,
-) -> AppResult<InterventionRequest> {
-    let txn = db.begin().await?;
-    let (di, current_status) = load_di_with_status(&txn, input.di_id).await?;
-    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
-    let snap = super::sla::snapshot_sla_for_review_event(&di);
-
-    guard_transition(&current_status, &DiStatus::ClosedAsNonExecutable)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
-
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-
-    let result = txn
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "UPDATE intervention_requests SET \
-                status = 'closed_as_non_executable', \
-                closed_at = ?, \
-                reviewer_id = ?, \
-                reviewer_note = COALESCE(?, reviewer_note), \
-                row_version = row_version + 1, \
-                updated_at = ? \
-             WHERE id = ? AND row_version = ?",
-            [
-                now.clone().into(),
-                input.actor_id.into(),
-                input
-                    .notes
-                    .clone()
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::from(None::<String>)),
-                now.clone().into(),
-                input.di_id.into(),
-                input.expected_row_version.into(),
-            ],
-        ))
-        .await?;
-    check_concurrency(result.rows_affected())?;
-
-    let from_str = current_status.as_str();
-    let to_str = DiStatus::ClosedAsNonExecutable.as_str();
-
-    insert_review_event(
-        &txn,
-        input.di_id,
-        "closed_non_executable",
-        input.actor_id,
-        &now,
-        from_str,
-        to_str,
-        None,
-        input.notes.as_deref(),
-        snap.response_target_hours,
-        snap.response_deadline.as_deref(),
-        snap.resolution_target_hours,
-        snap.resolution_deadline.as_deref(),
-        false,
-    )
-    .await?;
-
-    insert_transition_log(
-        &txn,
-        input.di_id,
-        from_str,
-        to_str,
-        "close_non_executable",
-        input.actor_id,
-        &now,
-        None,
-        input.notes.as_deref(),
-    )
-    .await?;
-
-    let updated = refetch_di(&txn, input.di_id).await?;
-    txn.commit().await?;
-    Ok(updated)
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// H) archive_di — terminal states → Archived
+// H) archive_di — Closed only: set archived_at (no status change)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn archive_di(
@@ -1084,8 +1208,17 @@ pub async fn archive_di(
     let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
 
-    guard_transition(&current_status, &DiStatus::Archived)
-        .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+    if current_status != DiStatus::Closed {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Seules les DI clôturées peuvent être archivées. Statut actuel : '{}'.",
+            current_status.as_str()
+        )]));
+    }
+    if di.archived_at.is_some() {
+        return Err(AppError::ValidationFailed(vec![
+            "Cette DI est déjà archivée.".into(),
+        ]));
+    }
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
@@ -1093,7 +1226,6 @@ pub async fn archive_di(
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
-                status = 'archived', \
                 archived_at = ?, \
                 row_version = row_version + 1, \
                 updated_at = ? \
@@ -1109,7 +1241,7 @@ pub async fn archive_di(
     check_concurrency(result.rows_affected())?;
 
     let from_str = current_status.as_str();
-    let to_str = DiStatus::Archived.as_str();
+    let to_str = current_status.as_str();
 
     insert_review_event(
         &txn,
@@ -1147,9 +1279,6 @@ pub async fn archive_di(
     Ok(updated)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// G) get_review_events — read-only query
-// ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn get_review_events(
     db: &DatabaseConnection,

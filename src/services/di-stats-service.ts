@@ -48,6 +48,11 @@ const DiOverdueDiSchema = z.object({
   days_overdue: z.number(),
 });
 
+const DiDispositionCountSchema = z.object({
+  disposition_code: z.string(),
+  count: z.number(),
+});
+
 const DiStatsPayloadSchema = z.object({
   total: z.number(),
   pending: z.number(),
@@ -62,6 +67,7 @@ const DiStatsPayloadSchema = z.object({
   status_distribution: z.array(DiStatusCountSchema),
   priority_distribution: z.array(DiPriorityCountSchema),
   type_distribution: z.array(DiTypeCountSchema),
+  disposition_distribution: z.array(DiDispositionCountSchema),
   monthly_trend: z.array(DiTrendPointSchema),
   available_years: z.array(z.number()),
   avg_age_days: z.number(),

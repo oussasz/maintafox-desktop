@@ -27,6 +27,7 @@
       "reviewQueue": "File de validation",
       "triageInbox": "DIs à trier / flux d'entrée",
       "priority": "Priorité",
+      "disposition": "Disposition",
       "assignedTo": "Assigné à",
       "dateRange": "Période"
     }
@@ -189,6 +190,7 @@
     "needsClarification": "Besoin de précisions",
     "inReview": "En examen",
     "approved": "Approuvée",
+    "deferred": "Différée",
     "rejected": "Rejetée",
     "inProgress": "En cours",
     "resolved": "Résolue",
@@ -211,7 +213,9 @@
     "addComment": "Ajouter un commentaire",
     "print": "Imprimer",
     "resubmit": "Soumettre à nouveau",
-    "cancelNeed": "Annuler le besoin",
+    "closeRequest": "Clôturer la demande",
+    "cancelOwn": "Annuler ma demande",
+    "defer": "Reporter",
     "archive": "Archiver"
   },
   "empty": {
@@ -283,6 +287,7 @@
       "reactivated": "Réactivé",
       "converted": "Converti",
       "closed_non_executable": "Clôturé non exécutable",
+      "closed": "Clôturé",
       "archived": "Archivé"
     }
   },
@@ -356,10 +361,11 @@
   },
   "kanban": {
     "colSubmitted": "Soumises / entrée",
-    "colPendingReview": "En attente de tri",
+    "colPendingReview": "En examen",
     "colAwaitingApproval": "En attente d'approbation",
     "colNeedsClarification": "Besoin de précisions",
-    "colApproved": "Approuvées / planifiées",
+    "colApproved": "Approuvées",
+    "colDeferred": "Différées",
     "colWork": "En travaux",
     "colClosed": "Clôturées"
   },
@@ -453,6 +459,7 @@
     "approver": "Approbateur",
     "print": "Imprimer",
     "approveAndConvert": "Approuver & Convertir",
+    "convertToWo": "Convertir en OT",
     "reviewerNote": "Note du valideur",
     "rejectionTitle": "Rejeter la demande d'intervention",
     "reasonCode": "Motif de rejet",
@@ -500,7 +507,9 @@
     }
   },
   "archive": {
-    "title": "Archive"
+    "title": "Archive",
+    "archivedColumn": "Rétention",
+    "archivedBadge": "Archivé"
   },
   "search": {
     "placeholder": "Rechercher par code, objet, description…"
@@ -511,6 +520,34 @@
     "delete": "Supprimer",
     "approve": "Approuver",
     "reject": "Rejeter",
+    "closeRequest": "Clôturer la demande",
     "return": "Renvoyer pour clarification"
+  },
+  "close": {
+    "title": "Clôturer la demande",
+    "disposition": "Disposition",
+    "notes": "Notes",
+    "relatedDi": "Demande liée",
+    "relatedDiPlaceholder": "Rechercher par code (ex. DI-0042)",
+    "relatedDiSearching": "Recherche…",
+    "relatedDiNoResults": "Aucune demande correspondante.",
+    "relatedDiResolved": "Liée à {{code}}",
+    "relatedDiUseMatch": "Utiliser {{code}}",
+    "notesRequired": "Les notes sont obligatoires pour la disposition « Autre ».",
+    "relatedRequired": "Sélectionnez la demande liée pour une disposition « Doublon ».",
+    "submit": "Clôturer la demande",
+    "saving": "Clôture…",
+    "warning": "La clôture enregistre la disposition finale de cette demande."
+  },
+  "disposition": {
+    "rejected_invalid": "Rejetée — non valide",
+    "duplicate": "Doublon",
+    "cancelled_by_requester": "Annulée par le demandeur",
+    "cancelled_by_planner": "Annulée par le planificateur",
+    "no_work_required": "Aucun travail requis",
+    "solved_immediately": "Résolue immédiatement",
+    "information_only": "Information seulement",
+    "converted_to_wo": "Convertie en OT",
+    "other": "Autre"
   }
 }

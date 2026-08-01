@@ -17,10 +17,11 @@ const DEFAULT_POLL_INTERVAL_SECS: u64 = 300;
 
 const OPEN_STATUSES: &str = "(\
     'submitted', \
-    'pending_review', \
-    'screened', \
+    'in_review', \
+    'returned_for_clarification', \
     'awaiting_approval', \
-    'approved_for_planning'\
+    'approved', \
+    'deferred'\
 )";
 
 const IR_COLS: &str = "\
@@ -37,6 +38,7 @@ const IR_COLS: &str = "\
     ir.sla_response_breach_notified_at, ir.sla_resolution_breach_notified_at, \
     ir.reviewer_note, ir.classification_code_id, \
     ir.is_recurrence_flag, ir.recurrence_di_id, ir.source_inspection_anomaly_id, \
+    ir.disposition_code, ir.disposition_notes, ir.related_di_id, ir.closed_by_id, ir.deferred_from_status, \
     ir.row_version, ir.submitter_id, ir.created_at, ir.updated_at";
 
 const IR_JOIN_COLS: &str = "\
@@ -44,14 +46,16 @@ const IR_JOIN_COLS: &str = "\
     org.code AS org_node_code, org.name AS org_node_label, \
     COALESCE(us.display_name, us.username) AS submitter_display_name, \
     COALESCE(ur.display_name, ur.username) AS reviewer_display_name, \
-    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title";
+    wo.code AS converted_to_wo_code, wo.title AS converted_to_wo_title, \
+    related_di.code AS related_di_code";
 
 const IR_JOINS: &str = "\
     LEFT JOIN equipment eq ON eq.id = ir.asset_id \
     LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
     LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
     LEFT JOIN user_accounts ur ON ur.id = ir.reviewer_id \
-    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id";
+    LEFT JOIN work_orders wo ON wo.id = ir.converted_to_wo_id \
+    LEFT JOIN intervention_requests related_di ON related_di.id = ir.related_di_id";
 
 pub async fn start_di_sla_poller(db: DatabaseConnection) {
     let mut secs = read_poll_interval_secs(&db).await;

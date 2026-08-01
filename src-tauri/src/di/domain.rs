@@ -1,11 +1,8 @@
 //! DI domain types, state machine, and code generation.
 //!
-//! Phase 2 - Sub-phase 04 - File 01 - Sprint S1.
-//!
-//! Implements the full 11-state PRD §6.4 workflow:
-//!   Submitted → Pending Review → Returned for Clarification → Rejected →
-//!   Screened → Awaiting Approval → Approved for Planning → Deferred →
-//!   Converted to Work Order → Closed as Non-Executable → Archived
+//! Lifecycle redesign — 7-state model (migration 139):
+//!   Submitted → InReview → AwaitingApproval → Approved → Closed (terminal)
+//!   Plus: ReturnedForClarification, Deferred as side paths.
 //!
 //! The state machine is enforced in Rust — the frontend never decides validity
 //! of a transition. `guard_transition` is the single authority.
@@ -15,23 +12,19 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, State
 use serde::{Deserialize, Serialize};
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DiStatus — PRD §6.4 exact 11-state enum
+// DiStatus — 7-state lifecycle (migration 139)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// All legal states for an intervention request, per PRD §6.4.
+/// All legal states for an intervention request (7-state redesign).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DiStatus {
     Submitted,
-    PendingReview,
+    InReview,
     ReturnedForClarification,
-    Rejected,
-    Screened,
     AwaitingApproval,
-    ApprovedForPlanning,
+    Approved,
     Deferred,
-    ConvertedToWorkOrder,
-    ClosedAsNonExecutable,
-    Archived,
+    Closed,
 }
 
 impl DiStatus {
@@ -39,16 +32,12 @@ impl DiStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Submitted => "submitted",
-            Self::PendingReview => "pending_review",
+            Self::InReview => "in_review",
             Self::ReturnedForClarification => "returned_for_clarification",
-            Self::Rejected => "rejected",
-            Self::Screened => "screened",
             Self::AwaitingApproval => "awaiting_approval",
-            Self::ApprovedForPlanning => "approved_for_planning",
+            Self::Approved => "approved",
             Self::Deferred => "deferred",
-            Self::ConvertedToWorkOrder => "converted_to_work_order",
-            Self::ClosedAsNonExecutable => "closed_as_non_executable",
-            Self::Archived => "archived",
+            Self::Closed => "closed",
         }
     }
 
@@ -56,67 +45,44 @@ impl DiStatus {
     pub fn try_from_str(s: &str) -> Result<Self, String> {
         match s {
             "submitted" => Ok(Self::Submitted),
-            "pending_review" => Ok(Self::PendingReview),
+            "in_review" => Ok(Self::InReview),
             "returned_for_clarification" => Ok(Self::ReturnedForClarification),
-            "rejected" => Ok(Self::Rejected),
-            "screened" => Ok(Self::Screened),
             "awaiting_approval" => Ok(Self::AwaitingApproval),
-            "approved_for_planning" => Ok(Self::ApprovedForPlanning),
+            "approved" => Ok(Self::Approved),
             "deferred" => Ok(Self::Deferred),
-            "converted_to_work_order" => Ok(Self::ConvertedToWorkOrder),
-            "closed_as_non_executable" => Ok(Self::ClosedAsNonExecutable),
-            "archived" => Ok(Self::Archived),
+            "closed" => Ok(Self::Closed),
             other => Err(format!("Unknown DI status: '{other}'")),
         }
     }
 
-    /// Exact PRD §6.4 transition table. No additions, no omissions.
+    /// Transition table for the 7-state lifecycle.
     pub fn allowed_transitions(&self) -> &'static [DiStatus] {
         match self {
-            Self::Submitted => &[Self::PendingReview],
-            Self::PendingReview => &[
-                Self::Screened,
+            Self::Submitted => &[Self::InReview, Self::Closed],
+            Self::InReview => &[
                 Self::ReturnedForClarification,
-                Self::Rejected,
-            ],
-            Self::ReturnedForClarification => &[Self::PendingReview],
-            Self::Screened => &[Self::AwaitingApproval, Self::Rejected],
-            Self::AwaitingApproval => &[
-                Self::ApprovedForPlanning,
+                Self::AwaitingApproval,
+                Self::Closed,
                 Self::Deferred,
-                Self::Rejected,
             ],
-            Self::ApprovedForPlanning => &[
-                Self::ConvertedToWorkOrder,
-                Self::Deferred,
-                Self::ClosedAsNonExecutable,
-            ],
-            Self::Deferred => &[Self::AwaitingApproval],
-            Self::ConvertedToWorkOrder => &[Self::Archived],
-            Self::ClosedAsNonExecutable => &[Self::Archived],
-            Self::Rejected => &[Self::Archived],
-            Self::Archived => &[],
+            Self::ReturnedForClarification => &[Self::InReview, Self::Closed],
+            Self::AwaitingApproval => &[Self::Approved, Self::Closed, Self::Deferred],
+            Self::Approved => &[Self::Closed, Self::Deferred],
+            // Deferred restores to the saved deferred_from_status — all three are allowed.
+            Self::Deferred => &[Self::InReview, Self::AwaitingApproval, Self::Approved],
+            Self::Closed => &[],
         }
     }
 
-    /// Terminal evidence states that lock the DI from field edits.
-    /// Only commentary and attachments are allowed after these states.
-    pub fn is_immutable_after_conversion(&self) -> bool {
-        matches!(
-            self,
-            Self::ConvertedToWorkOrder
-                | Self::ClosedAsNonExecutable
-                | Self::Rejected
-                | Self::Archived
-        )
+    /// `Closed` is the sole immutable (terminal) state.
+    pub fn is_immutable(&self) -> bool {
+        matches!(self, Self::Closed)
     }
 
-    /// States whose transition actions require step-up reauthentication.
-    pub fn requires_step_up(&self) -> bool {
-        matches!(
-            self,
-            Self::ApprovedForPlanning | Self::ConvertedToWorkOrder
-        )
+    /// States whose entry requires step-up reauthentication.
+    /// `Approved` (approve action) and `Closed` when converting (handled in convert command).
+    pub fn requires_step_up_to_enter(&self) -> bool {
+        matches!(self, Self::Approved)
     }
 }
 
@@ -329,6 +295,12 @@ pub struct InterventionRequest {
     pub is_recurrence_flag: bool,
     pub recurrence_di_id: Option<i64>,
     pub source_inspection_anomaly_id: Option<i64>,
+    // Disposition / lifecycle (migration 139)
+    pub disposition_code: Option<String>,
+    pub disposition_notes: Option<String>,
+    pub related_di_id: Option<i64>,
+    pub closed_by_id: Option<i64>,
+    pub deferred_from_status: Option<String>,
     // Concurrency
     pub row_version: i64,
     // Metadata
@@ -344,6 +316,7 @@ pub struct InterventionRequest {
     pub reviewer_display_name: Option<String>,
     pub converted_to_wo_code: Option<String>,
     pub converted_to_wo_title: Option<String>,
+    pub related_di_code: Option<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -511,6 +484,27 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         source_inspection_anomaly_id: row
             .try_get::<Option<i64>>("", "source_inspection_anomaly_id")
             .map_err(|e| decode_err("source_inspection_anomaly_id", e))?,
+        // New fields added by migration 139 — use .ok().flatten() for backward compat
+        disposition_code: row
+            .try_get::<Option<String>>("", "disposition_code")
+            .ok()
+            .flatten(),
+        disposition_notes: row
+            .try_get::<Option<String>>("", "disposition_notes")
+            .ok()
+            .flatten(),
+        related_di_id: row
+            .try_get::<Option<i64>>("", "related_di_id")
+            .ok()
+            .flatten(),
+        closed_by_id: row
+            .try_get::<Option<i64>>("", "closed_by_id")
+            .ok()
+            .flatten(),
+        deferred_from_status: row
+            .try_get::<Option<String>>("", "deferred_from_status")
+            .ok()
+            .flatten(),
         row_version: row
             .try_get::<i64>("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
@@ -547,6 +541,10 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         converted_to_wo_title: row
             .try_get::<Option<String>>("", "converted_to_wo_title")
             .map_err(|e| decode_err("converted_to_wo_title", e))?,
+        related_di_code: row
+            .try_get::<Option<String>>("", "related_di_code")
+            .ok()
+            .flatten(),
     })
 }
 
@@ -605,24 +603,18 @@ pub async fn generate_di_code(db: &DatabaseConnection) -> AppResult<String> {
 mod tests {
     use super::*;
 
-    // ── Status string round-trip ──────────────────────────────────────────
-
     #[test]
     fn test_all_status_round_trip() {
         let all = [
             DiStatus::Submitted,
-            DiStatus::PendingReview,
+            DiStatus::InReview,
             DiStatus::ReturnedForClarification,
-            DiStatus::Rejected,
-            DiStatus::Screened,
             DiStatus::AwaitingApproval,
-            DiStatus::ApprovedForPlanning,
+            DiStatus::Approved,
             DiStatus::Deferred,
-            DiStatus::ConvertedToWorkOrder,
-            DiStatus::ClosedAsNonExecutable,
-            DiStatus::Archived,
+            DiStatus::Closed,
         ];
-        assert_eq!(all.len(), 11, "PRD §6.4 requires exactly 11 states");
+        assert_eq!(all.len(), 7);
 
         for status in &all {
             let s = status.as_str();
@@ -634,33 +626,30 @@ mod tests {
     #[test]
     fn test_invalid_status_rejected() {
         assert!(DiStatus::try_from_str("invalid").is_err());
+        assert!(DiStatus::try_from_str("pending_review").is_err());
+        assert!(DiStatus::try_from_str("rejected").is_err());
         assert!(DiStatus::try_from_str("").is_err());
-        assert!(DiStatus::try_from_str("SUBMITTED").is_err()); // case-sensitive
     }
-
-    // ── Transition table coverage ─────────────────────────────────────────
 
     #[test]
     fn test_all_valid_forward_transitions() {
-        // Every listed transition must pass guard_transition.
         let cases = [
-            (DiStatus::Submitted, DiStatus::PendingReview),
-            (DiStatus::PendingReview, DiStatus::Screened),
-            (DiStatus::PendingReview, DiStatus::ReturnedForClarification),
-            (DiStatus::PendingReview, DiStatus::Rejected),
-            (DiStatus::ReturnedForClarification, DiStatus::PendingReview),
-            (DiStatus::Screened, DiStatus::AwaitingApproval),
-            (DiStatus::Screened, DiStatus::Rejected),
-            (DiStatus::AwaitingApproval, DiStatus::ApprovedForPlanning),
+            (DiStatus::Submitted, DiStatus::InReview),
+            (DiStatus::Submitted, DiStatus::Closed),
+            (DiStatus::InReview, DiStatus::ReturnedForClarification),
+            (DiStatus::InReview, DiStatus::AwaitingApproval),
+            (DiStatus::InReview, DiStatus::Closed),
+            (DiStatus::InReview, DiStatus::Deferred),
+            (DiStatus::ReturnedForClarification, DiStatus::InReview),
+            (DiStatus::ReturnedForClarification, DiStatus::Closed),
+            (DiStatus::AwaitingApproval, DiStatus::Approved),
+            (DiStatus::AwaitingApproval, DiStatus::Closed),
             (DiStatus::AwaitingApproval, DiStatus::Deferred),
-            (DiStatus::AwaitingApproval, DiStatus::Rejected),
-            (DiStatus::ApprovedForPlanning, DiStatus::ConvertedToWorkOrder),
-            (DiStatus::ApprovedForPlanning, DiStatus::Deferred),
-            (DiStatus::ApprovedForPlanning, DiStatus::ClosedAsNonExecutable),
+            (DiStatus::Approved, DiStatus::Closed),
+            (DiStatus::Approved, DiStatus::Deferred),
+            (DiStatus::Deferred, DiStatus::InReview),
             (DiStatus::Deferred, DiStatus::AwaitingApproval),
-            (DiStatus::ConvertedToWorkOrder, DiStatus::Archived),
-            (DiStatus::ClosedAsNonExecutable, DiStatus::Archived),
-            (DiStatus::Rejected, DiStatus::Archived),
+            (DiStatus::Deferred, DiStatus::Approved),
         ];
 
         for (from, to) in &cases {
@@ -676,14 +665,11 @@ mod tests {
     #[test]
     fn test_invalid_transitions_rejected() {
         let invalid_cases = [
-            (DiStatus::Submitted, DiStatus::ApprovedForPlanning),
-            (DiStatus::Submitted, DiStatus::Archived),
-            (DiStatus::Archived, DiStatus::Submitted),
-            (DiStatus::Rejected, DiStatus::Submitted),
-            (DiStatus::ConvertedToWorkOrder, DiStatus::Submitted),
-            (DiStatus::Screened, DiStatus::Submitted),
-            (DiStatus::Deferred, DiStatus::ApprovedForPlanning),
-            (DiStatus::ClosedAsNonExecutable, DiStatus::Submitted),
+            (DiStatus::Submitted, DiStatus::Approved),
+            (DiStatus::Closed, DiStatus::Submitted),
+            (DiStatus::Closed, DiStatus::InReview),
+            (DiStatus::Approved, DiStatus::InReview),
+            (DiStatus::AwaitingApproval, DiStatus::InReview),
         ];
 
         for (from, to) in &invalid_cases {
@@ -697,82 +683,43 @@ mod tests {
     }
 
     #[test]
-    fn test_archived_has_no_outbound_transitions() {
-        assert!(DiStatus::Archived.allowed_transitions().is_empty());
+    fn test_closed_has_no_outbound_transitions() {
+        assert!(DiStatus::Closed.allowed_transitions().is_empty());
     }
-
-    #[test]
-    fn test_converted_to_wo_only_goes_to_archived() {
-        let allowed = DiStatus::ConvertedToWorkOrder.allowed_transitions();
-        assert_eq!(allowed.len(), 1);
-        assert_eq!(allowed[0], DiStatus::Archived);
-    }
-
-    // ── Immutability flag ─────────────────────────────────────────────────
 
     #[test]
     fn test_immutable_states() {
-        let immutable = [
-            DiStatus::ConvertedToWorkOrder,
-            DiStatus::ClosedAsNonExecutable,
-            DiStatus::Rejected,
-            DiStatus::Archived,
-        ];
-        for s in &immutable {
-            assert!(
-                s.is_immutable_after_conversion(),
-                "{} should be immutable",
-                s.as_str()
-            );
-        }
-
-        let mutable = [
+        assert!(DiStatus::Closed.is_immutable());
+        for s in [
             DiStatus::Submitted,
-            DiStatus::PendingReview,
+            DiStatus::InReview,
             DiStatus::ReturnedForClarification,
-            DiStatus::Screened,
             DiStatus::AwaitingApproval,
-            DiStatus::ApprovedForPlanning,
+            DiStatus::Approved,
             DiStatus::Deferred,
-        ];
-        for s in &mutable {
-            assert!(
-                !s.is_immutable_after_conversion(),
-                "{} should be mutable",
-                s.as_str()
-            );
+        ] {
+            assert!(!s.is_immutable(), "{} should be mutable", s.as_str());
         }
     }
-
-    // ── Step-up requirement ───────────────────────────────────────────────
 
     #[test]
     fn test_step_up_states() {
-        assert!(DiStatus::ApprovedForPlanning.requires_step_up());
-        assert!(DiStatus::ConvertedToWorkOrder.requires_step_up());
-
-        // All others should not require step-up
-        let no_step_up = [
+        assert!(DiStatus::Approved.requires_step_up_to_enter());
+        for s in [
             DiStatus::Submitted,
-            DiStatus::PendingReview,
+            DiStatus::InReview,
             DiStatus::ReturnedForClarification,
-            DiStatus::Rejected,
-            DiStatus::Screened,
             DiStatus::AwaitingApproval,
             DiStatus::Deferred,
-            DiStatus::ClosedAsNonExecutable,
-            DiStatus::Archived,
-        ];
-        for s in &no_step_up {
+            DiStatus::Closed,
+        ] {
             assert!(
-                !s.requires_step_up(),
-                "{} should not require step-up",
+                !s.requires_step_up_to_enter(),
+                "{} should not require step-up to enter",
                 s.as_str()
             );
         }
     }
-
-    // ── Origin type round-trip ────────────────────────────────────────────
 
     #[test]
     fn test_origin_type_round_trip() {
@@ -794,8 +741,6 @@ mod tests {
         }
     }
 
-    // ── Urgency round-trip ────────────────────────────────────────────────
-
     #[test]
     fn test_urgency_round_trip() {
         let all = [
@@ -810,8 +755,6 @@ mod tests {
             assert_eq!(*u, parsed);
         }
     }
-
-    // ── Impact level round-trip ───────────────────────────────────────────
 
     #[test]
     fn test_impact_level_round_trip() {

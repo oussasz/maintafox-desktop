@@ -22,6 +22,7 @@ export type ReferenceTypeId =
   | "di.priority"
   | "di.impact"
   | "di.request_type"
+  | "di.disposition"
   | "personnel.skills"
   | "org.schedule_class"
   | "work.symptom"
@@ -157,6 +158,15 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
     gender: "m",
     emptyMessageFr: "Aucun type de demande disponible",
     emptyMessageEn: "No request type available",
+  },
+  "di.disposition": {
+    id: "di.disposition",
+    domainCode: "DI.DISPOSITION",
+    entityLabelFr: "disposition",
+    entityLabelEn: "disposition",
+    gender: "f",
+    emptyMessageFr: "Aucune disposition disponible",
+    emptyMessageEn: "No disposition available",
   },
   "personnel.skills": {
     id: "personnel.skills",
@@ -306,9 +316,7 @@ export const REFERENCE_TYPE_REGISTRY: Record<ReferenceTypeId, ReferenceTypeConfi
 };
 
 /** Look up a registry entry by canonical domain code (case-insensitive). */
-export function findReferenceTypeByDomainCode(
-  domainCode: string,
-): ReferenceTypeConfig | undefined {
+export function findReferenceTypeByDomainCode(domainCode: string): ReferenceTypeConfig | undefined {
   const needle = domainCode.trim().toUpperCase();
   return Object.values(REFERENCE_TYPE_REGISTRY).find(
     (cfg) => cfg.domainCode.toUpperCase() === needle,

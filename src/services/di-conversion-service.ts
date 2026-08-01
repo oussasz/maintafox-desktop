@@ -73,6 +73,12 @@ const InterventionRequestSchema = z.object({
   reviewer_display_name: z.string().nullable().optional(),
   converted_to_wo_code: z.string().nullable().optional(),
   converted_to_wo_title: z.string().nullable().optional(),
+  disposition_code: z.string().nullable().optional(),
+  disposition_notes: z.string().nullable().optional(),
+  related_di_id: z.number().nullable().optional(),
+  closed_by_id: z.number().nullable().optional(),
+  deferred_from_status: z.string().nullable().optional(),
+  related_di_code: z.string().nullable().optional(),
 });
 
 const WoConversionResultSchema = z.object({
@@ -93,9 +99,7 @@ const DiSlaStatusSchema = z.object({
   resolution_remaining_hours: z.number().nullable(),
   is_response_breached: z.boolean(),
   is_resolution_breached: z.boolean(),
-  status: z
-    .enum(["on_track", "at_risk", "breached", "completed"])
-    .nullable(),
+  status: z.enum(["on_track", "at_risk", "breached", "completed"]).nullable(),
 });
 
 const DiSlaRuleSchema = z.object({
@@ -138,7 +142,7 @@ function rethrowIfVersionConflict(err: unknown): never {
 // â”€â”€ Conversion commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
- * Convert a DI in `approved_for_planning` to a work order shell.
+ * Convert a DI in `approved` to a work order shell.
  *
  * Step-up reauthentication is validated at the backend command layer via
  * `require_step_up!`. The frontend must ensure step-up has been performed

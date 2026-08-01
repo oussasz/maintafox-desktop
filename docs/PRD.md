@@ -317,32 +317,36 @@ This module is not a flat equipment list. It preserves the maintainable boundary
 - HSE, quality, or production escalations
 - IoT or external-system triggered alerts that require human review
 
-**Required state model:**
+**Required state model (process stages):**
 
 1. Submitted
-2. Pending Review
+2. In Review
 3. Returned for Clarification
-4. Rejected
-5. Screened
-6. Awaiting Approval
-7. Approved for Planning
-8. Deferred
-9. Converted to Work Order
-10. Closed as Non-Executable
-11. Archived
+4. Awaiting Approval
+5. Approved
+6. Deferred
+7. Closed (sole terminal operational status)
+
+**Disposition model (governed outcomes on close):**
+
+Terminal business meaning is carried by `disposition_code` (reference domain `DI.DISPOSITION`), not by extra statuses. Seed codes include: `converted_to_wo`, `rejected_invalid`, `duplicate` (requires `related_di_id`), `cancelled_by_requester`, `cancelled_by_planner`, `no_work_required`, `solved_immediately`, `information_only`, `other` (notes required).
+
+Work Order creation is optional: only disposition `converted_to_wo` creates a WO and sets `converted_to_wo_id`. Archive is a retention flag (`archived_at`) on closed DIs, not a lifecycle status.
 
 **Stage-gated data capture:**
 
 - submission requires the minimum valid intake context
 - review requires validated priority, queue ownership, and triage decision
+- approval authorizes demand but does not auto-create a work order
 - conversion requires confirmed asset or location context, request classification, and approved execution path
+- close without WO requires a governed disposition (and related DI when duplicate)
 
 **Data-quality rules:**
 
-- the request remains the immutable origin record once converted
+- the request remains the immutable origin record once converted (closed with `converted_to_wo`)
 - request-to-review, review-to-approval, and approval-to-conversion timings are preserved for SLA and backlog analysis
-- photos, sensor snapshots, and free text support triage, but controlled classifications are used where analytics require structured evidence
-
+- photos, sensor snapshots, and free text support triage, but controlled classifications and dispositions are used where analytics require structured evidence
+- disposition rates (conversion, reject, duplicate, cancel, no-work) are first-class KPIs
 ---
 
 ### 6.5 Work Orders (OT - Ordres de Travail)

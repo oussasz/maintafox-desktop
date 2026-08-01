@@ -28,14 +28,15 @@ import { DataTable } from "@/components/data/DataTable";
 import { DiApprovalDialog } from "@/components/di/DiApprovalDialog";
 import { DiArchivePanel } from "@/components/di/DiArchivePanel";
 import { DiCalendarView } from "@/components/di/DiCalendarView";
+import { DiCloseDialog } from "@/components/di/DiCloseDialog";
 import { DiDashboardView } from "@/components/di/DiDashboardView";
 import { DiDetailDialog } from "@/components/di/DiDetailDialog";
 import { DiFormDialog } from "@/components/di/DiFormDialog";
 import { DiKanbanBoard } from "@/components/di/DiKanbanBoard";
-import { DiRejectionDialog } from "@/components/di/DiRejectionDialog";
 import { DiReturnDialog } from "@/components/di/DiReturnDialog";
 import { DiReviewPanel } from "@/components/di/DiReviewPanel";
 import { DiSlaRulesPanel } from "@/components/di/DiSlaRulesPanel";
+import { DI_DISPOSITION_FILTER_CODES } from "@/components/di/disposition-meta";
 import { DI_STATUS_STYLE, diStatusToI18nKey } from "@/components/di/status-meta";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
@@ -59,7 +60,7 @@ type ViewMode = "list" | "kanban" | "calendar" | "dashboard";
 
 /** Same cohort as `loadReviewQueue` in `di-review-store` (pending triage + approval). */
 const DI_REVIEW_QUEUE_STATUSES = [
-  "pending_review",
+  "in_review",
   "returned_for_clarification",
   "awaiting_approval",
 ] as const;
@@ -92,6 +93,8 @@ export function RequestsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
+  const [dispositionFilter, setDispositionFilter] = useState<string | null>(null);
+  const [archiveRefreshKey, setArchiveRefreshKey] = useState(0);
 
   const { can } = usePermissions();
   const [slaOpen, setSlaOpen] = useState(false);
@@ -147,6 +150,11 @@ export function RequestsPage() {
   useEffect(() => {
     void loadDis();
   }, [loadDis, searchParams]);
+
+  useEffect(() => {
+    if (loading) return;
+    setArchiveRefreshKey((k) => k + 1);
+  }, [loading]);
 
   const switchView = useCallback((v: ViewMode) => {
     setView(v);
@@ -257,10 +265,20 @@ export function RequestsPage() {
     [loadDis, setFilter],
   );
 
+  const handleDispositionFilter = useCallback(
+    (val: string | null) => {
+      setDispositionFilter(val);
+      setFilter({ disposition_code: val });
+      void loadDis();
+    },
+    [loadDis, setFilter],
+  );
+
   const resetFilters = useCallback(() => {
     setSearchInput("");
     setStatusFilter(null);
     setPriorityFilter(null);
+    setDispositionFilter(null);
     setSearchParams(
       (prev) => {
         const p = new URLSearchParams(prev);
@@ -274,6 +292,7 @@ export function RequestsPage() {
       search: null,
       status: null,
       urgency: null,
+      disposition_code: null,
       submitter_id: null,
       limit: 50,
       offset: 0,
@@ -290,6 +309,15 @@ export function RequestsPage() {
       ...STATUS_OPTIONS,
     ];
   }, [STATUS_OPTIONS, can, t]);
+
+  const DISPOSITION_OPTIONS = useMemo(
+    () =>
+      DI_DISPOSITION_FILTER_CODES.map((code) => ({
+        value: code,
+        label: t(`disposition.${code}` as const),
+      })),
+    [t],
+  );
 
   const filterDefs = useMemo<SmartFilterDef[]>(
     () => [
@@ -309,15 +337,26 @@ export function RequestsPage() {
         value: priorityFilter,
         onChange: handlePriorityFilter,
       },
+      {
+        id: "disposition",
+        kind: "select",
+        label: t("list.filters.disposition"),
+        options: DISPOSITION_OPTIONS,
+        value: dispositionFilter,
+        onChange: handleDispositionFilter,
+      },
     ],
     [
       t,
       statusFilterOptions,
       PRIORITY_OPTIONS,
+      DISPOSITION_OPTIONS,
       statusFilter,
       priorityFilter,
+      dispositionFilter,
       handleStatusFilter,
       handlePriorityFilter,
+      handleDispositionFilter,
     ],
   );
 
@@ -543,7 +582,7 @@ export function RequestsPage() {
       </div>
 
       {/* ── Archive section (collapsible) ─────────────────────────────── */}
-      <DiArchivePanel />
+      <DiArchivePanel refreshKey={archiveRefreshKey} onRowClick={(di) => void openDi(di.id)} />
 
       {/* ── Floating detail dialog ───────────────────────────────────── */}
       <DiDetailDialog
@@ -557,7 +596,7 @@ export function RequestsPage() {
 
       {/* Review dialogs */}
       <DiApprovalDialog />
-      <DiRejectionDialog />
+      <DiCloseDialog />
       <DiReturnDialog />
 
       {can(P.DI_ADMIN) && <DiSlaRulesPanel open={slaOpen} onClose={() => setSlaOpen(false)} />}

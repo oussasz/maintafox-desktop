@@ -99,6 +99,7 @@ fn category_for_known_code(code: &str) -> Option<GovernanceCategory> {
         | "EQUIPMENT.SUBFAMILY"
         | "DI.SYMPTOM"
         | "DI.ORIGIN"
+        | "DI.DISPOSITION"
         | "PERSONNEL.SKILLS"
         | "ORG.SCHEDULE_CLASS"
         | "WORK.DELAY_REASONS"

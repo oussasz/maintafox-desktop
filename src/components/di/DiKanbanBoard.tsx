@@ -3,6 +3,8 @@
  *
  * Data adapter for intervention-request lanes. Owns status→column mapping,
  * i18n, and reference labels only — all rendering belongs to KanbanBoard.
+ *
+ * Active operational stages only. Closed DIs live in DiArchivePanel.
  */
 
 import { AlertTriangle, Calendar as CalendarIcon } from "lucide-react";
@@ -25,16 +27,16 @@ const URGENCY_TONE: Record<string, KanbanTone> = {
 const COLUMN_DEFS = [
   { id: "submitted", labelKey: "kanban.colSubmitted", tone: "planning", statuses: ["submitted"] },
   {
-    id: "pending_review",
+    id: "in_review",
     labelKey: "kanban.colPendingReview",
     tone: "executing",
-    statuses: ["pending_review"],
+    statuses: ["in_review"],
   },
   {
     id: "awaiting_approval",
     labelKey: "kanban.colAwaitingApproval",
     tone: "ready",
-    statuses: ["screened", "awaiting_approval"],
+    statuses: ["awaiting_approval"],
   },
   {
     id: "needs_clarification",
@@ -46,19 +48,13 @@ const COLUMN_DEFS = [
     id: "approved",
     labelKey: "kanban.colApproved",
     tone: "success",
-    statuses: ["approved_for_planning"],
+    statuses: ["approved"],
   },
   {
-    id: "work",
-    labelKey: "kanban.colWork",
-    tone: "work",
-    statuses: ["converted_to_work_order"],
-  },
-  {
-    id: "closed",
-    labelKey: "kanban.colClosed",
+    id: "deferred",
+    labelKey: "kanban.colDeferred",
     tone: "muted",
-    statuses: ["closed_as_non_executable", "archived"],
+    statuses: ["deferred"],
   },
 ] as const satisfies readonly {
   id: string;
@@ -97,6 +93,7 @@ export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
     const result: KanbanCard[] = [];
 
     for (const di of items) {
+      if (di.status === "closed") continue;
       const columnId = STATUS_TO_COLUMN[di.status];
       if (!columnId) continue;
       const id = String(di.id);

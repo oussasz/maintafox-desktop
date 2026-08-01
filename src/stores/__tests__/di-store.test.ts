@@ -149,7 +149,7 @@ describe("di-store — Supervisor Verification S3", () => {
     });
 
     it("loadDis uses the current filter from state", async () => {
-      useDiStore.getState().setFilter({ status: ["pending_review"], limit: 25 });
+      useDiStore.getState().setFilter({ status: ["in_review"], limit: 25 });
 
       mockInvoke.mockResolvedValueOnce({ items: [], total: 0 });
 
@@ -157,7 +157,7 @@ describe("di-store — Supervisor Verification S3", () => {
 
       expect(mockInvoke).toHaveBeenCalledWith("list_di", {
         filter: expect.objectContaining({
-          status: ["pending_review"],
+          status: ["in_review"],
           limit: 25,
           offset: 0,
         }),

@@ -36,6 +36,7 @@ import { DiDetailPanel } from "@/components/di/DiDetailPanel";
 import { printDiFiche } from "@/components/di/DiPrintFiche";
 import { DiSlaStatusBadge } from "@/components/di/DiSlaStatusBadge";
 import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
+import { dispositionLabelKey } from "@/components/di/disposition-meta";
 import {
   DI_STATUS_STYLE,
   TERMINAL_DI_STATES,
@@ -86,10 +87,12 @@ interface DiDetailDialogProps {
 
 // ── Statuses that can be acted on ───────────────────────────────────────────
 
-const SCREENABLE = new Set(["pending_review"]);
+const SCREENABLE = new Set(["in_review"]);
 const APPROVABLE = new Set(["awaiting_approval"]);
-const REJECTABLE = new Set(["pending_review", "screened", "awaiting_approval"]);
-const RETURNABLE = new Set(["pending_review"]);
+const CLOSEABLE_REVIEW = new Set(["in_review", "awaiting_approval"]);
+const CLOSEABLE_APPROVE = new Set(["approved"]);
+const RETURNABLE = new Set(["in_review"]);
+const DEFERRABLE = new Set(["in_review", "awaiting_approval", "approved"]);
 
 // ── Component ───────────────────────────────────────────────────────────────
 
@@ -107,7 +110,8 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
   const openRejection = useDiReviewStore((s) => s.openRejection);
   const openReturn = useDiReviewStore((s) => s.openReturn);
   const screen = useDiReviewStore((s) => s.screen);
-  const closeAsNonExecutable = useDiReviewStore((s) => s.closeAsNonExecutable);
+  const defer = useDiReviewStore((s) => s.defer);
+  const cancelOwn = useDiReviewStore((s) => s.cancelOwn);
   const archiveDi = useDiReviewStore((s) => s.archive);
   const [screenError, setScreenError] = useState<string | null>(null);
   const [triageError, setTriageError] = useState<string | null>(null);
@@ -158,7 +162,7 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
     openApproval(di);
   }, [di, onClose, openApproval]);
 
-  const handleReject = useCallback(() => {
+  const handleCloseRequest = useCallback(() => {
     if (!di) return;
     onClose();
     openRejection(di);
@@ -182,17 +186,43 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
     }
   }, [di, triageSubmittedDi]);
 
-  const handleCloseAsNonExecutable = useCallback(async () => {
-    if (!di) return;
+  const handleCancelOwn = useCallback(async () => {
+    if (!di || info?.user_id == null) return;
     setScreenError(null);
     try {
-      await closeAsNonExecutable(di.id, di.row_version, null);
+      await cancelOwn({
+        di_id: di.id,
+        actor_id: info.user_id,
+        expected_row_version: di.row_version,
+        notes: null,
+      });
       window.dispatchEvent(new Event("mf:di-triage-refresh"));
       window.dispatchEvent(new Event("mf:dashboard-kpis-refresh"));
     } catch (e) {
       setScreenError(e instanceof Error ? e.message : String(e));
     }
-  }, [closeAsNonExecutable, di]);
+  }, [cancelOwn, di, info]);
+
+  const handleDefer = useCallback(async () => {
+    if (!di || info?.user_id == null) return;
+    setScreenError(null);
+    const deferredUntil = new Date();
+    deferredUntil.setDate(deferredUntil.getDate() + 30);
+    try {
+      await defer({
+        di_id: di.id,
+        actor_id: info.user_id,
+        expected_row_version: di.row_version,
+        deferred_until: deferredUntil.toISOString(),
+        reason_code: "operational",
+        notes: null,
+      });
+      window.dispatchEvent(new Event("mf:di-triage-refresh"));
+      window.dispatchEvent(new Event("mf:dashboard-kpis-refresh"));
+    } catch (e) {
+      setScreenError(e instanceof Error ? e.message : String(e));
+    }
+  }, [defer, di, info]);
 
   const handleArchive = useCallback(async () => {
     if (!di) return;
@@ -211,26 +241,33 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
   const statusKey = diStatusToI18nKey(di.status);
   const canRunScreen = (can(P.DI_SCREEN) || can(P.DI_REVIEW)) && SCREENABLE.has(di.status);
   const canReturnForClarification = can(P.DI_REVIEW) && RETURNABLE.has(di.status);
-  const canRejectInReview = can(P.DI_REVIEW) && REJECTABLE.has(di.status);
+  const canCloseInReview = can(P.DI_REVIEW) && CLOSEABLE_REVIEW.has(di.status);
+  const canCloseAfterApprove = can(P.DI_APPROVE) && CLOSEABLE_APPROVE.has(di.status);
   const canApproveForPlanning = can(P.DI_APPROVE) && APPROVABLE.has(di.status);
-  const canCloseNeed = can(P.DI_APPROVE) && di.status === "approved_for_planning";
+  const canDefer = can(P.DI_APPROVE) && DEFERRABLE.has(di.status);
+  const canConvert = can(P.DI_CONVERT) && di.status === "approved" && di.converted_to_wo_id == null;
   const canArchive =
-    (can(P.DI_APPROVE) || can(P.DI_ADMIN)) &&
-    (di.status === "rejected" ||
-      di.status === "converted_to_work_order" ||
-      di.status === "closed_as_non_executable");
-  const canResubmitAsAuthor =
-    di.status === "returned_for_clarification" &&
+    (can(P.DI_APPROVE) || can(P.DI_ADMIN)) && di.status === "closed" && di.archived_at == null;
+  const canCancelOwn =
+    (di.status === "submitted" || di.status === "returned_for_clarification") &&
     info?.user_id != null &&
     info.user_id === di.submitter_id &&
     can(P.DI_CREATE_OWN);
   const canTriageToReviewQueue =
     di.status === "submitted" && (can(P.DI_SCREEN) || can(P.DI_REVIEW)) && info?.user_id != null;
+  const canResubmitAsAuthor =
+    di.status === "returned_for_clarification" &&
+    info?.user_id != null &&
+    info.user_id === di.submitter_id &&
+    can(P.DI_CREATE_OWN);
   const canUploadAttachment =
     info != null &&
     !TERMINAL_DI_STATES.has(di.status) &&
     ((info.user_id === di.submitter_id && can(P.DI_CREATE_OWN)) || can(P.DI_REVIEW));
   const canDeleteAttachment = can(P.DI_ADMIN) && !TERMINAL_DI_STATES.has(di.status);
+
+  const dispositionKey = dispositionLabelKey(di.disposition_code);
+  const dispositionText = dispositionKey ? t(dispositionKey as "disposition.other") : null;
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -269,6 +306,20 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                 title={di.converted_to_wo_title}
                 className="text-xs"
               />
+              {di.status === "closed" && dispositionText && (
+                <Badge variant="outline" className="text-xs border-0 bg-slate-100 text-slate-700">
+                  {dispositionText}
+                </Badge>
+              )}
+              {di.status === "closed" && (
+                <LinkedEntityBadge
+                  entity="di"
+                  code={di.related_di_code}
+                  entityId={di.related_di_id}
+                  title={null}
+                  className="text-xs"
+                />
+              )}
               <DiSlaStatusBadge status={slaStatus?.status ?? null} className="text-xs" />
               {di.safety_flag && (
                 <Badge variant="destructive" className="text-xs gap-1">
@@ -456,15 +507,32 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                 {t("action.approve")}
               </Button>
             )}
-            {canCloseNeed && (
+            {canDefer && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => void handleDefer()}
+              >
+                <Calendar className="h-3.5 w-3.5" />
+                {t("action.defer")}
+              </Button>
+            )}
+            {canConvert && (
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={handleApprove}>
+                <Check className="h-3.5 w-3.5" />
+                {t("action.convertToWO")}
+              </Button>
+            )}
+            {canCloseAfterApprove && (
               <Button
                 variant="outline"
                 size="sm"
                 className="gap-1.5 text-slate-700 hover:text-slate-800 hover:bg-slate-50"
-                onClick={() => void handleCloseAsNonExecutable()}
+                onClick={handleCloseRequest}
               >
                 <X className="h-3.5 w-3.5" />
-                {t("action.cancelNeed")}
+                {t("action.closeRequest")}
               </Button>
             )}
             {canArchive && (
@@ -478,7 +546,18 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                 {t("action.archive")}
               </Button>
             )}
-            {(canReturnForClarification || canRejectInReview) && (
+            {canCancelOwn && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50"
+                onClick={() => void handleCancelOwn()}
+              >
+                <X className="h-3.5 w-3.5" />
+                {t("action.cancelOwn")}
+              </Button>
+            )}
+            {(canReturnForClarification || canCloseInReview) && (
               <>
                 {canReturnForClarification && (
                   <Button
@@ -492,16 +571,16 @@ export function DiDetailDialog({ di, transitions, open, onClose }: DiDetailDialo
                     {t("review.returnAction")}
                   </Button>
                 )}
-                {canRejectInReview && (
+                {canCloseInReview && (
                   <Button
                     variant="outline"
                     size="sm"
                     className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50"
-                    onClick={handleReject}
-                    title={t("action.reject")}
+                    onClick={handleCloseRequest}
+                    title={t("action.closeRequest")}
                   >
                     <X className="h-3.5 w-3.5" />
-                    {t("action.reject")}
+                    {t("action.closeRequest")}
                   </Button>
                 )}
               </>

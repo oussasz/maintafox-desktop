@@ -1,9 +1,8 @@
 /**
  * DiArchivePanel.tsx
  *
- * Collapsible section showing rejected + archived DIs.
+ * Collapsible SSOT for terminal (closed) DIs — including not-yet-archived.
  * Read-only — no edit actions.
- * Phase 2 – Sub-phase 04 – File 04 – Sprint S4.
  */
 
 import type { ColumnDef } from "@tanstack/react-table";
@@ -12,13 +11,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DataTable } from "@/components/data/DataTable";
+import { dispositionLabelKey } from "@/components/di/disposition-meta";
+import { diStatusToI18nKey, DI_STATUS_STYLE } from "@/components/di/status-meta";
 import { Badge } from "@/components/ui/badge";
 import { listDis } from "@/services/di-service";
 import type { InterventionRequest } from "@shared/ipc-types";
 
-// ── Component ─────────────────────────────────────────────────────────────────
+interface DiArchivePanelProps {
+  /** Bump after main list reload so an open archive stays fresh. */
+  refreshKey?: number;
+  onRowClick?: (di: InterventionRequest) => void;
+}
 
-export function DiArchivePanel() {
+export function DiArchivePanel({ refreshKey = 0, onRowClick }: DiArchivePanelProps) {
   const { t } = useTranslation("di");
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<InterventionRequest[]>([]);
@@ -29,7 +34,7 @@ export function DiArchivePanel() {
     setLoading(true);
     try {
       const page = await listDis({
-        status: ["rejected", "archived"],
+        status: ["closed"],
         limit: 50,
         offset: 0,
       });
@@ -41,10 +46,9 @@ export function DiArchivePanel() {
   }, []);
 
   useEffect(() => {
-    if (open && items.length === 0) {
-      void load();
-    }
-  }, [open, items.length, load]);
+    if (!open) return;
+    void load();
+  }, [open, refreshKey, load]);
 
   const columns: ColumnDef<InterventionRequest>[] = useMemo(
     () => [
@@ -65,16 +69,30 @@ export function DiArchivePanel() {
         header: t("list.columns.status"),
         cell: ({ row }) => {
           const s = row.original.status;
-          const isRejected = s === "rejected";
+          const dispositionKey = dispositionLabelKey(row.original.disposition_code);
           return (
             <Badge
               variant="outline"
-              className={`text-[10px] border-0 ${isRejected ? "bg-red-100 text-red-700" : "bg-neutral-100 text-neutral-500"}`}
+              className={`text-[10px] border-0 ${DI_STATUS_STYLE[s] ?? "bg-neutral-100 text-neutral-500"}`}
             >
-              {isRejected ? t("status.rejected") : t("status.closed")}
+              {dispositionKey
+                ? t(dispositionKey as "disposition.other")
+                : t(`status.${diStatusToI18nKey(s)}` as const)}
             </Badge>
           );
         },
+      },
+      {
+        id: "archived",
+        header: t("archive.archivedColumn"),
+        cell: ({ row }) =>
+          row.original.archived_at != null ? (
+            <Badge variant="secondary" className="text-[10px]">
+              {t("archive.archivedBadge")}
+            </Badge>
+          ) : (
+            <span className="text-xs text-text-muted">—</span>
+          ),
       },
       {
         accessorKey: "submitted_at",
@@ -93,6 +111,7 @@ export function DiArchivePanel() {
         type="button"
         className="flex items-center gap-2 w-full px-6 py-2.5 hover:bg-surface-1 transition-colors text-left"
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
       >
         {open ? (
           <ChevronDown className="h-4 w-4 text-text-muted" />
@@ -114,14 +133,13 @@ export function DiArchivePanel() {
             pageSize={10}
             isLoading={loading}
             skeletonRows={4}
+            onRowClick={(row) => onRowClick?.(row)}
           />
         </div>
       )}
     </div>
   );
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatDate(iso: string): string {
   try {

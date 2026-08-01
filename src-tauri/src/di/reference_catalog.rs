@@ -11,6 +11,7 @@ use crate::errors::{AppError, AppResult};
 const DOMAIN_ORIGIN: &str = "DI.ORIGIN";
 const DOMAIN_SYMPTOM: &str = "DI.SYMPTOM";
 const DOMAIN_REQUEST_TYPE: &str = "DI.REQUEST_TYPE";
+const DOMAIN_DISPOSITION: &str = "DI.DISPOSITION";
 
 /// Default request type when callers omit one (seeded Category A code).
 pub const DEFAULT_DI_REQUEST_TYPE: &str = "repair";
@@ -79,6 +80,55 @@ pub async fn validate_di_request_type(
     if row.is_none() {
         return Err(AppError::ValidationFailed(vec![format!(
             "Type de demande '{code}' introuvable dans le référentiel {DOMAIN_REQUEST_TYPE} (valeur publiée active requise)."
+        )]));
+    }
+
+    Ok(code)
+}
+
+/// Validate disposition code against published active `DI.DISPOSITION`.
+/// If the domain has no published values yet, accepts the code (migration edge).
+pub async fn validate_di_disposition(
+    db: &impl ConnectionTrait,
+    disposition_code: &str,
+) -> AppResult<String> {
+    let code = disposition_code.trim().to_string();
+    if code.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "Le code de disposition est obligatoire.".into(),
+        ]));
+    }
+
+    let any = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = ? AND rs.status = 'published' AND rv.is_active = 1 \
+             LIMIT 1",
+            [DOMAIN_DISPOSITION.into()],
+        ))
+        .await?;
+    if any.is_none() {
+        return Ok(code);
+    }
+
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rv.id FROM reference_values rv \
+             INNER JOIN reference_sets rs ON rs.id = rv.set_id \
+             INNER JOIN reference_domains d ON d.id = rs.domain_id \
+             WHERE d.code = ? AND rs.status = 'published' \
+               AND UPPER(TRIM(rv.code)) = UPPER(TRIM(?)) AND rv.is_active = 1",
+            [DOMAIN_DISPOSITION.into(), code.clone().into()],
+        ))
+        .await?;
+
+    if row.is_none() {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Disposition '{code}' introuvable dans le référentiel {DOMAIN_DISPOSITION}."
         )]));
     }
 

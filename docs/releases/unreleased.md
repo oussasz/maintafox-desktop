@@ -21,6 +21,11 @@ Move entries into a dated version section when cutting a release.
   - Personnel photo upload path and create-dialog image uploader (`maxItems` on `EntityFormImageUploader`).
   - Position combobox, create dialog, and positions panel surfaces gated on the new position permissions.
 - Inventory procurement: requisition rejection with mandatory reason; repairable stock-leg cancel/scrap flows and UI coverage.
+- **DI lifecycle & disposition** (branch `feature/p2-sp04-di-lifecycle-disposition`):
+  - Closed as sole terminal operational status; outcomes carried by `disposition_code` (`DI.DISPOSITION` reference domain).
+  - Migration `m20260816_000139_di_lifecycle_disposition` (columns, seed codes, status remaps, notification categories, audit/review event status remaps).
+  - `disposition` + `notifications` modules, close dialog, disposition meta, updated review/conversion/stats IPC and UI.
+  - AssetPicker and ProcurementArchive intentionally deferred to independent feature branches.
 
 ## Changed
 

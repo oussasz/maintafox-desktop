@@ -1036,3 +1036,196 @@ Derived metrics:
 Note:
 Do not report Ready for parts until reservation/stock evaluation replaces the stub in `list_pm_planning_readiness`.
 
+---
+
+# KPI-026
+
+Nom:
+DI Conversion Rate
+
+Module:
+Intervention Requests (DI)
+
+Description:
+Share of closed DIs that resulted in a Work Order (disposition converted_to_wo).
+
+Formula:
+(COUNT closed WHERE disposition_code = 'converted_to_wo' / COUNT closed) × 100
+
+Inputs:
+- intervention_requests.status
+- intervention_requests.disposition_code
+- intervention_requests.converted_to_wo_id
+
+Required fields:
+- status = 'closed'
+- disposition_code
+- converted_to_wo_id when disposition is converted_to_wo
+
+Displayed:
+- DI dashboard conversion KPI
+- DI stats payload
+
+Status:
+Partial
+
+Derived metrics:
+- Absolute converted count
+- Conversion rate excluding disposition = 'duplicate'
+
+---
+
+# KPI-027
+
+Nom:
+DI Reject Rate
+
+Module:
+Intervention Requests (DI)
+
+Description:
+Share of closed DIs dispositioned as invalid requests.
+
+Formula:
+(COUNT closed WHERE disposition_code = 'rejected_invalid' / COUNT closed) × 100
+
+Inputs:
+- intervention_requests.status
+- intervention_requests.disposition_code
+
+Required fields:
+- status = 'closed'
+- disposition_code
+
+Displayed:
+- DI dashboard reject KPI
+
+Status:
+Partial
+
+---
+
+# KPI-028
+
+Nom:
+DI Duplicate Rate
+
+Module:
+Intervention Requests (DI)
+
+Description:
+Share of closed DIs marked as duplicates of another request.
+
+Formula:
+(COUNT closed WHERE disposition_code = 'duplicate' / COUNT closed) × 100
+
+Inputs:
+- intervention_requests.status
+- intervention_requests.disposition_code
+- intervention_requests.related_di_id
+
+Required fields:
+- status = 'closed'
+- disposition_code = 'duplicate'
+- related_di_id (mandatory for this disposition)
+
+Displayed:
+- DI dashboard duplicate KPI
+
+Status:
+Partial
+
+Derived metrics:
+- Linked survivor DI code via related_di_id
+
+---
+
+# KPI-029
+
+Nom:
+DI Cancel Rate
+
+Module:
+Intervention Requests (DI)
+
+Description:
+Share of closed DIs cancelled by requester or planner.
+
+Formula:
+(COUNT closed WHERE disposition_code IN ('cancelled_by_requester','cancelled_by_planner') / COUNT closed) × 100
+
+Inputs:
+- intervention_requests.status
+- intervention_requests.disposition_code
+
+Required fields:
+- status = 'closed'
+- disposition_code
+
+Displayed:
+- DI dashboard cancel KPI
+
+Status:
+Partial
+
+Note:
+Cancelled-by-requester may be excluded from SLA breach blame in product policy (document when SLA stats implement the exclusion).
+
+---
+
+# KPI-030
+
+Nom:
+DI No-Work Rate
+
+Module:
+Intervention Requests (DI)
+
+Description:
+Share of closed DIs that required no maintenance work order (no work, solved immediately, or information only).
+
+Formula:
+(COUNT closed WHERE disposition_code IN ('no_work_required','solved_immediately','information_only') / COUNT closed) × 100
+
+Inputs:
+- intervention_requests.status
+- intervention_requests.disposition_code
+
+Required fields:
+- status = 'closed'
+- disposition_code
+
+Displayed:
+- DI dashboard no-work KPI
+
+Status:
+Partial
+
+---
+
+# KPI-031
+
+Nom:
+DI Open Backlog by Status
+
+Module:
+Intervention Requests (DI)
+
+Description:
+Count of non-closed DIs grouped by process status for queue management.
+
+Formula:
+COUNT WHERE status != 'closed' GROUP BY status
+
+Inputs:
+- intervention_requests.status
+
+Required fields:
+- status
+
+Displayed:
+- DI dashboard backlog / Kanban counters
+
+Status:
+Partial
+

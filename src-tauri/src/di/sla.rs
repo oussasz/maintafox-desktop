@@ -224,7 +224,7 @@ fn is_sla_terminal(di: &InterventionRequest) -> bool {
     }
     matches!(
         di.status.as_str(),
-        "rejected" | "closed_as_non_executable" | "archived"
+        "closed"
     )
 }
 

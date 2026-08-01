@@ -3778,16 +3778,12 @@ export interface PmGovernanceKpiReport {
 
 export type DiStatus =
   | "submitted"
-  | "pending_review"
+  | "in_review"
   | "returned_for_clarification"
-  | "rejected"
-  | "screened"
   | "awaiting_approval"
-  | "approved_for_planning"
+  | "approved"
   | "deferred"
-  | "converted_to_work_order"
-  | "closed_as_non_executable"
-  | "archived";
+  | "closed";
 
 export type DiOriginType =
   | "operator"
@@ -3836,6 +3832,12 @@ export interface InterventionRequest {
   archived_at: string | null;
   converted_to_wo_id: number | null;
   converted_at: string | null;
+  /** Governed close disposition (required when status = closed). */
+  disposition_code?: string | null;
+  disposition_notes?: string | null;
+  related_di_id?: number | null;
+  closed_by_id?: number | null;
+  deferred_from_status?: string | null;
   /** Immutable SLA snapshot (frozen at create). */
   sla_rule_id?: number | null;
   sla_target_response_hours?: number | null;
@@ -3863,6 +3865,7 @@ export interface InterventionRequest {
   reviewer_display_name?: string | null;
   converted_to_wo_code?: string | null;
   converted_to_wo_title?: string | null;
+  related_di_code?: string | null;
 }
 
 export interface DiListFilter {
@@ -3874,6 +3877,7 @@ export interface DiListFilter {
   origin_type?: string | null;
   urgency?: string | null;
   search?: string | null;
+  disposition_code?: string | null;
   limit: number;
   offset: number;
 }
@@ -3995,6 +3999,22 @@ export interface DiDeferInput {
 }
 
 export interface DiReactivateInput {
+  di_id: number;
+  actor_id: number;
+  expected_row_version: number;
+  notes?: string | null;
+}
+
+export interface DiCloseInput {
+  di_id: number;
+  actor_id: number;
+  expected_row_version: number;
+  disposition_code: string;
+  notes?: string | null;
+  related_di_id?: number | null;
+}
+
+export interface DiCancelOwnInput {
   di_id: number;
   actor_id: number;
   expected_row_version: number;
@@ -4310,6 +4330,11 @@ export interface DiOverdueDi {
   days_overdue: number;
 }
 
+export interface DiDispositionCount {
+  disposition_code: string;
+  count: number;
+}
+
 export interface DiStatsPayload {
   total: number;
   pending: number;
@@ -4324,6 +4349,7 @@ export interface DiStatsPayload {
   status_distribution: DiStatusCount[];
   priority_distribution: DiPriorityCount[];
   type_distribution: DiTypeCount[];
+  disposition_distribution: DiDispositionCount[];
   monthly_trend: DiTrendPoint[];
   available_years: number[];
   avg_age_days: number;

@@ -1,17 +1,16 @@
 //! DI IPC commands.
 //!
-//! Phase 2 – Sub-phase 04 – Files 01, 02 & 03.
+//! Phase 2 – lifecycle redesign (migration 139).
 //!
 //! Permission gates:
-//!   di.view       — list, get, review events, SLA status, list attachments
+//!   di.view         — list, get, review events, SLA status, list attachments
 //!   di.create       — create any DI
-//!   di.create.own   — create DI as self, upload attachment on own DI
-//!   di.screen       — triage submitted DIs (submitted → pending_review)
-//!   di.review       — update draft, return, reject, upload attachment on any DI; full review queue
-//!   (screen after triage: di.screen or di.review)
-//!   di.approve    — approve, defer, reactivate
-//!   di.convert    — convert DI to WO (step-up required)
-//!   di.admin      — SLA rule management, delete attachment records
+//!   di.create.own   — create DI as self, upload attachment on own DI, cancel own DI
+//!   di.screen       — triage submitted DIs (submitted → in_review)
+//!   di.review       — update draft, return, close from in_review, upload attachment on any DI
+//!   di.approve      — approve, defer, reactivate, close from awaiting_approval/approved
+//!   di.convert      — convert DI to WO (step-up required)
+//!   di.admin        — SLA rule management, delete attachment records
 
 use tauri::{Manager, State};
 
@@ -80,7 +79,7 @@ pub async fn get_di(
         &state.db,
         di.asset_id,
         di.symptom_code_id,
-        30, // look back 30 days for recurrence context
+        30,
     )
     .await?;
 
@@ -102,7 +101,6 @@ pub async fn create_di(
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
 
-    // Either di.create (global) or di.create.own (self-only)
     let has_global = crate::auth::rbac::check_permission(
         &state.db,
         user.user_id,
@@ -115,7 +113,6 @@ pub async fn create_di(
         require_permission!(state, &user, crate::rbac::permissions::DI_CREATE_OWN, PermissionScope::Global);
     }
 
-    // ── Validate required fields ──────────────────────────────────────────
     let mut errors: Vec<String> = Vec::new();
 
     if input.title.trim().is_empty() {
@@ -134,7 +131,6 @@ pub async fn create_di(
         errors.push("Le symptôme est obligatoire.".into());
     }
 
-    // Validate asset_id resolves
     let asset_exists = state
         .db
         .query_one(Statement::from_sql_and_values(
@@ -150,7 +146,6 @@ pub async fn create_di(
         ));
     }
 
-    // Validate org_node_id resolves
     let node_exists = state
         .db
         .query_one(Statement::from_sql_and_values(
@@ -166,8 +161,6 @@ pub async fn create_di(
         ));
     }
 
-    // Early catalog checks so the command returns a single ValidationFailed batch
-    // when basic fields + catalog membership both fail (queries also enforce).
     if errors.is_empty() {
         match crate::di::reference_catalog::validate_di_origin_code(&state.db, &input.origin_type)
             .await
@@ -202,7 +195,8 @@ pub async fn create_di(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// C2) triage_submitted_di — requires di.screen or di.review (supervisor / planner)
+// C2) triage_submitted_di — requires di.screen or di.review
+//     submitted|returned_for_clarification → in_review
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -241,7 +235,7 @@ pub async fn triage_submitted_di(
             di_id: Some(di.id),
             action: "triage_submitted".into(),
             actor_id: Some(uid),
-            summary: Some("Tri d'entrée : DI admise en file de revue (soumis → en revue)".into()),
+            summary: Some("Tri d'entrée : DI admise en revue (soumis → en_revue)".into()),
             details_json: None,
             requires_step_up: false,
             apply_result: "applied".into(),
@@ -262,8 +256,6 @@ pub async fn update_di_draft(
 ) -> AppResult<crate::di::domain::InterventionRequest> {
     let user = require_session!(state);
 
-    // Check ownership: if user owns the DI, di.create.own suffices;
-    // otherwise di.review is required.
     let current_di = queries::get_intervention_request(&state.db, input.id)
         .await?
         .ok_or_else(|| AppError::NotFound {
@@ -274,7 +266,6 @@ pub async fn update_di_draft(
     let is_owner = current_di.submitter_id == i64::from(user.user_id);
 
     if is_owner {
-        // Own DI — di.create.own suffices
         let has_own = crate::auth::rbac::check_permission(
             &state.db,
             user.user_id,
@@ -286,7 +277,6 @@ pub async fn update_di_draft(
             require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
         }
     } else {
-        // Not owner — must have di.review
         require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
     }
 
@@ -294,7 +284,8 @@ pub async fn update_di_draft(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// E) screen_di — requires di.screen or di.review (same gate as triage to pending_review)
+// E) screen_di — requires di.screen or di.review
+//    in_review → awaiting_approval (atomic single step)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -328,7 +319,7 @@ pub async fn screen_di(
         di_id: Some(di.id),
         action: "screened".into(),
         actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI screened and advanced to review".into()),
+        summary: Some("DI screened and advanced to awaiting_approval".into()),
         details_json: None,
         requires_step_up: false,
         apply_result: "applied".into(),
@@ -338,6 +329,7 @@ pub async fn screen_di(
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // F) return_di — requires di.review
+//    in_review → returned_for_clarification
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -362,7 +354,87 @@ pub async fn return_di(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// G) reject_di — requires di.review
+// G) close_di — permission depends on current DI status
+//    in_review       → requires di.review
+//    awaiting_approval | approved → requires di.approve
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn close_di(
+    mut input: review::DiCloseInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::di::domain::InterventionRequest> {
+    let user = require_session!(state);
+
+    // Load current status to determine which permission is required.
+    let current_di = queries::get_intervention_request(&state.db, input.di_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "InterventionRequest".into(),
+            id: input.di_id.to_string(),
+        })?;
+
+    match current_di.status.as_str() {
+        "in_review" => {
+            require_permission!(state, &user, crate::rbac::permissions::DI_REVIEW, PermissionScope::Global);
+        }
+        "awaiting_approval" | "approved" => {
+            require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
+        }
+        other => {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "La fermeture n'est possible qu'au statut 'in_review', 'awaiting_approval' ou 'approved'. \
+                 Statut actuel : '{}'.",
+                other
+            )]));
+        }
+    }
+
+    input.actor_id = i64::from(user.user_id);
+    let di = review::close_di(&state.db, input).await?;
+    audit::record_di_change_event(&state.db, audit::DiAuditInput {
+        di_id: Some(di.id),
+        action: "closed".into(),
+        actor_id: Some(i64::from(user.user_id)),
+        summary: Some(format!(
+            "DI fermée avec disposition '{}'.",
+            di.disposition_code.as_deref().unwrap_or("?")
+        )),
+        details_json: None,
+        requires_step_up: false,
+        apply_result: "applied".into(),
+    }).await;
+    Ok(di)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G2) cancel_own_di — submitted|returned_for_clarification → closed (requester cancel)
+//     requires di.create.own; actor must be submitter (enforced in domain)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn cancel_own_di(
+    mut input: review::DiCancelOwnInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::di::domain::InterventionRequest> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::DI_CREATE_OWN, PermissionScope::Global);
+    input.actor_id = i64::from(user.user_id);
+    let di = review::cancel_own_di(&state.db, input).await?;
+    audit::record_di_change_event(&state.db, audit::DiAuditInput {
+        di_id: Some(di.id),
+        action: "cancelled_own".into(),
+        actor_id: Some(i64::from(user.user_id)),
+        summary: Some("DI annulée par le demandeur.".into()),
+        details_json: None,
+        requires_step_up: false,
+        apply_result: "applied".into(),
+    }).await;
+    Ok(di)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G1b) reject_di — compat wrapper → close with rejected_invalid / duplicate
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -378,7 +450,35 @@ pub async fn reject_di(
         di_id: Some(di.id),
         action: "rejected".into(),
         actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI rejected".into()),
+        summary: Some(format!(
+            "DI rejected (disposition '{}').",
+            di.disposition_code.as_deref().unwrap_or("rejected_invalid")
+        )),
+        details_json: None,
+        requires_step_up: false,
+        apply_result: "applied".into(),
+    }).await;
+    Ok(di)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G1c) close_di_as_non_executable — compat wrapper → close with no_work_required
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn close_di_as_non_executable(
+    mut input: review::DiCloseNonExecutableInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::di::domain::InterventionRequest> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
+    input.actor_id = i64::from(user.user_id);
+    let di = review::close_di_as_non_executable(&state.db, input).await?;
+    audit::record_di_change_event(&state.db, audit::DiAuditInput {
+        di_id: Some(di.id),
+        action: "closed_non_executable".into(),
+        actor_id: Some(i64::from(user.user_id)),
+        summary: Some("DI closed as non-executable (disposition no_work_required).".into()),
         details_json: None,
         requires_step_up: false,
         apply_result: "applied".into(),
@@ -388,6 +488,7 @@ pub async fn reject_di(
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // H) approve_di — requires di.approve + step-up
+//    awaiting_approval → approved
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -398,7 +499,6 @@ pub async fn approve_di(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
 
-    // Step-up check — record blocked audit event if it fails
     {
         let guard = state.session.read().await;
         if !guard.is_step_up_valid() {
@@ -416,12 +516,12 @@ pub async fn approve_di(
     }
 
     input.actor_id = i64::from(user.user_id);
-    let di = review::approve_di_for_planning(&state.db, input).await?;
+    let di = review::approve_di(&state.db, input).await?;
     audit::record_di_change_event(&state.db, audit::DiAuditInput {
         di_id: Some(di.id),
         action: "approved".into(),
         actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI approved for planning".into()),
+        summary: Some("DI approuvée.".into()),
         details_json: None,
         requires_step_up: true,
         apply_result: "applied".into(),
@@ -446,7 +546,7 @@ pub async fn defer_di(
         di_id: Some(di.id),
         action: "deferred".into(),
         actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI deferred".into()),
+        summary: Some("DI reportée.".into()),
         details_json: None,
         requires_step_up: false,
         apply_result: "applied".into(),
@@ -471,7 +571,7 @@ pub async fn reactivate_di(
         di_id: Some(di.id),
         action: "reactivated".into(),
         actor_id: Some(i64::from(user.user_id)),
-        summary: Some("Deferred DI reactivated".into()),
+        summary: Some("DI réactivée depuis le report.".into()),
         details_json: None,
         requires_step_up: false,
         apply_result: "applied".into(),
@@ -480,32 +580,7 @@ pub async fn reactivate_di(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// K) close_di_as_non_executable — requires di.approve
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[tauri::command]
-pub async fn close_di_as_non_executable(
-    mut input: review::DiCloseNonExecutableInput,
-    state: State<'_, AppState>,
-) -> AppResult<crate::di::domain::InterventionRequest> {
-    let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::DI_APPROVE, PermissionScope::Global);
-    input.actor_id = i64::from(user.user_id);
-    let di = review::close_di_as_non_executable(&state.db, input).await?;
-    audit::record_di_change_event(&state.db, audit::DiAuditInput {
-        di_id: Some(di.id),
-        action: "closed_non_executable".into(),
-        actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI closed as non-executable".into()),
-        details_json: None,
-        requires_step_up: false,
-        apply_result: "applied".into(),
-    }).await;
-    Ok(di)
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// L) archive_di — requires di.approve
+// K) archive_di — requires di.approve (only on closed DIs)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -521,7 +596,7 @@ pub async fn archive_di(
         di_id: Some(di.id),
         action: "archived".into(),
         actor_id: Some(i64::from(user.user_id)),
-        summary: Some("DI archived".into()),
+        summary: Some("DI archivée.".into()),
         details_json: None,
         requires_step_up: false,
         apply_result: "applied".into(),
@@ -530,7 +605,7 @@ pub async fn archive_di(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// M) get_di_review_events — requires di.view
+// L) get_di_review_events — requires di.view
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -544,7 +619,7 @@ pub async fn get_di_review_events(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// L) upload_di_attachment — requires di.create.own (own) or di.review (any)
+// M) upload_di_attachment — requires di.create.own (own) or di.review (any)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -560,8 +635,6 @@ pub async fn upload_di_attachment(
 ) -> AppResult<attachments::DiAttachment> {
     let user = require_session!(state);
 
-    // Check ownership: if user owns the DI, di.create.own suffices;
-    // otherwise di.review is required.
     let current_di = queries::get_intervention_request(&state.db, di_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
@@ -673,7 +746,7 @@ pub async fn read_di_attachment_preview(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// M) list_di_attachments — requires di.view
+// N) list_di_attachments — requires di.view
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -687,7 +760,7 @@ pub async fn list_di_attachments(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// N) delete_di_attachment — requires di.admin
+// O) delete_di_attachment — requires di.admin
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -701,7 +774,8 @@ pub async fn delete_di_attachment(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// O) convert_di_to_wo — requires di.convert + step-up
+// P) convert_di_to_wo — requires di.convert + step-up
+//    approved → closed (disposition=converted_to_wo)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -712,7 +786,6 @@ pub async fn convert_di_to_wo(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::DI_CONVERT, PermissionScope::Global);
 
-    // Step-up check — record blocked audit event if it fails
     {
         let guard = state.session.read().await;
         if !guard.is_step_up_valid() {
@@ -735,7 +808,7 @@ pub async fn convert_di_to_wo(
         di_id: Some(result.di.id),
         action: "converted".into(),
         actor_id: Some(i64::from(user.user_id)),
-        summary: Some(format!("DI converted to work order {}", result.wo_code)),
+        summary: Some(format!("DI convertie en OT {}", result.wo_code)),
         details_json: Some(serde_json::json!({
             "wo_id": result.wo_id,
             "wo_code": result.wo_code
@@ -747,7 +820,7 @@ pub async fn convert_di_to_wo(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// P) get_sla_status — requires di.view
+// Q) get_sla_status — requires di.view
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -769,7 +842,7 @@ pub async fn get_sla_status(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Q) list_sla_rules — requires di.view
+// R) list_sla_rules — requires di.view
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -782,7 +855,7 @@ pub async fn list_sla_rules(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// R) update_sla_rule — requires di.admin
+// S) update_sla_rule — requires di.admin
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -796,7 +869,7 @@ pub async fn update_sla_rule(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// S) list_di_change_events — requires di.view
+// T) list_di_change_events — requires di.view
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -811,7 +884,7 @@ pub async fn list_di_change_events(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// T) list_all_di_change_events — requires di.admin
+// U) list_all_di_change_events — requires di.admin
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -825,7 +898,7 @@ pub async fn list_all_di_change_events(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// U) get_di_stats — requires di.view
+// V) get_di_stats — requires di.view
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -839,7 +912,7 @@ pub async fn get_di_stats(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Sprint S2 verification tests
+// Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
@@ -918,7 +991,6 @@ mod tests {
         let db = setup().await;
         assign_role(&db, 52, "Readonly").await;
 
-        // Verify user has di.view but not di.approve
         let view = rbac::check_permission(&db, 52, crate::rbac::permissions::DI_VIEW, &PermissionScope::Global)
             .await
             .expect("check");
@@ -927,7 +999,7 @@ mod tests {
             .expect("check");
 
         assert!(view, "Readonly must have di.view");
-        assert!(!approve, "Readonly must NOT have di.approve — PermissionDenied expected");
+        assert!(!approve, "Readonly must NOT have di.approve");
     }
 
     #[tokio::test]
@@ -1032,49 +1104,18 @@ mod tests {
         assert_eq!(requires, 0, "di.review must NOT require step-up");
     }
 
-    // ─── V2 bonus: screen_di domain-layer success with proper state ─────
+    // ─── V2 bonus: screen_di domain-layer success ───────────────────────
 
     #[tokio::test]
-    async fn v2_screen_succeeds_when_di_is_pending_review() {
+    async fn v2_screen_succeeds_when_di_is_in_review() {
         let db = setup().await;
 
-        // Seed FK data
-        db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
-             VALUES (1, 'eq-001', 'EQ-001', 'Test Equip', 'active_in_service', datetime('now'), datetime('now'))".to_string()
-        )).await.expect("equipment");
-        db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
-             VALUES (1, 'mdl-001', 1, 'active', datetime('now'), datetime('now'))".to_string()
-        )).await.expect("model");
-        db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT INTO org_node_types (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
-             VALUES (1, 'nt-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'))".to_string()
-        )).await.expect("node_type");
-        db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
-             VALUES (1, 'on-001', 'SITE-001', 'Test Site', 1, 'active', datetime('now'), datetime('now'), 1)".to_string()
-        )).await.expect("org_node");
-        db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT INTO reference_domains (id, code, name, structure_type, governance_level, is_extendable, created_at, updated_at) \
-             VALUES (900001, 'DI_CLASS', 'DI Classification', 'flat', 'tenant_managed', 1, datetime('now'), datetime('now'))".to_string()
-        )).await.expect("ref_domain");
-        db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT INTO reference_sets (id, domain_id, version_no, status, created_at) \
-             VALUES (900001, 900001, 1, 'published', datetime('now'))".to_string()
-        )).await.expect("ref_set");
-        db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (900001, 900001, 'MECH', 'Mécanique', 1)".to_string()
-        )).await.expect("ref_value");
-
-        // Get seeded admin user
+        seed_fk_data(&db).await;
         let user_id: i64 = db
             .query_one(Statement::from_string(DbBackend::Sqlite,
                 "SELECT id FROM user_accounts LIMIT 1".to_string()))
             .await.expect("q").expect("user").try_get::<i64>("", "id").expect("id");
 
-        // Create DI
         let symptom_id = crate::di::reference_catalog::resolve_di_symptom_id_by_code(&db, "vibration")
             .await
             .expect("lookup")
@@ -1087,7 +1128,7 @@ mod tests {
                 title: "Pump vibration".into(),
                 description: "Excessive vibration on pump P-101".into(),
                 origin_type: "operator".into(),
-            request_type: "repair".to_string(),
+                request_type: "repair".to_string(),
                 symptom_code_id: Some(symptom_id),
                 impact_level: "unknown".into(),
                 production_impact: false,
@@ -1103,14 +1144,13 @@ mod tests {
         .await
         .expect("create DI");
 
-        // Advance to pending_review
+        // Advance to in_review
         db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
-            "UPDATE intervention_requests SET status = 'pending_review', \
+            "UPDATE intervention_requests SET status = 'in_review', \
              row_version = row_version + 1, updated_at = datetime('now') WHERE id = ?",
             [di.id.into()],
         )).await.expect("advance");
 
-        // Screen via domain function (same path IPC command delegates to)
         let result = crate::di::review::screen_di(
             &db,
             crate::di::review::DiScreenInput {
@@ -1124,7 +1164,7 @@ mod tests {
             },
         )
         .await
-        .expect("screen_di must succeed when DI is in pending_review");
+        .expect("screen_di must succeed when DI is in_review");
 
         assert_eq!(result.status, "awaiting_approval");
     }
@@ -1133,9 +1173,6 @@ mod tests {
 
     #[test]
     fn v3_no_duplicate_command_function_names() {
-        // Structural check: all DI command functions compile and are distinct.
-        // If any were duplicated in invoke_handler, Tauri would emit a compile
-        // error — the fact that cargo check passes proves uniqueness.
         let fns: Vec<&str> = vec![
             "list_di",
             "get_di",
@@ -1144,10 +1181,14 @@ mod tests {
             "triage_submitted_di",
             "screen_di",
             "return_di",
+            "close_di",
+            "cancel_own_di",
             "reject_di",
+            "close_di_as_non_executable",
             "approve_di",
             "defer_di",
             "reactivate_di",
+            "archive_di",
             "get_di_review_events",
             "upload_di_attachment",
             "upload_di_attachment_from_path",
@@ -1164,14 +1205,10 @@ mod tests {
         ];
         let unique: std::collections::HashSet<&str> = fns.iter().copied().collect();
         assert_eq!(fns.len(), unique.len(), "All DI command names must be unique");
-        assert_eq!(fns.len(), 24, "Expected exactly 24 DI commands (incl. path upload + preview)");
+        assert_eq!(fns.len(), 28, "Expected exactly 28 DI commands (incl. close/reject compat paths)");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // File 04 — Sprint S1 Supervisor Verification Tests
-    // ═══════════════════════════════════════════════════════════════════════
-
-    // ─── V1 — Permission seed: canonical di.* permissions (catalog + seeder) ─────
+    // ─── Lifecycle V1 — Permission seed ─────────────────────────────────
 
     #[tokio::test]
     async fn s1_v1_permission_seed_exactly_7_di_rows() {
@@ -1204,39 +1241,35 @@ mod tests {
                 crate::rbac::permissions::DI_SCREEN,
                 crate::rbac::permissions::DI_VIEW,
             ],
-            "Canonical di.* permissions (triage: di.screen; no di.submit / di.submit.own)"
+            "Canonical di.* permissions"
         );
     }
 
-    // ─── V2 — Audit on approval: record_di_change_event produces row ────
+    // ─── Lifecycle V2 — Audit on approval ────────────────────────────────
 
     #[tokio::test]
     async fn s1_v2_audit_event_on_approval() {
         let db = setup().await;
-
-        // Seed minimal FK data required for DI creation
         seed_fk_data(&db).await;
 
-        // Create a DI and advance it through the state machine
         let di = create_test_di(&db).await;
 
-        // Advance to pending_review (submitted → pending_review)
+        // Advance to in_review then screen to awaiting_approval
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "UPDATE intervention_requests SET status = 'pending_review', \
+            "UPDATE intervention_requests SET status = 'in_review', \
              row_version = row_version + 1, updated_at = datetime('now') WHERE id = ?",
             [di.id.into()],
         ))
         .await
-        .expect("advance to pending_review");
+        .expect("advance to in_review");
 
-        // Screen: pending_review → awaiting_approval
         let screened = crate::di::review::screen_di(
             &db,
             crate::di::review::DiScreenInput {
                 di_id: di.id,
                 actor_id: 1,
-                expected_row_version: 2, // row_version after manual advance
+                expected_row_version: 2,
                 validated_urgency: "high".into(),
                 review_team_id: None,
                 classification_code_id: Some(900001),
@@ -1244,10 +1277,9 @@ mod tests {
             },
         )
         .await
-        .expect("screen should succeed from pending_review");
+        .expect("screen should succeed from in_review");
 
-        // Approve: awaiting_approval → approved_for_planning
-        let approved = crate::di::review::approve_di_for_planning(
+        let approved = crate::di::review::approve_di(
             &db,
             crate::di::review::DiApproveInput {
                 di_id: screened.id,
@@ -1259,14 +1291,13 @@ mod tests {
         .await
         .expect("approve should succeed");
 
-        // Now record the audit event (mimicking the command layer)
         crate::di::audit::record_di_change_event(
             &db,
             crate::di::audit::DiAuditInput {
                 di_id: Some(approved.id),
                 action: "approved".into(),
                 actor_id: Some(1),
-                summary: Some("DI approved for planning".into()),
+                summary: Some("DI approuvée.".into()),
                 details_json: None,
                 requires_step_up: true,
                 apply_result: "applied".into(),
@@ -1274,7 +1305,6 @@ mod tests {
         )
         .await;
 
-        // Verify: 1 row with action='approved' and apply_result='applied'
         let events = crate::di::audit::list_di_change_events(&db, approved.id, 100)
             .await
             .expect("list audit events");
@@ -1284,15 +1314,12 @@ mod tests {
             .filter(|e| e.action == "approved" && e.apply_result == "applied")
             .collect();
 
-        assert_eq!(
-            approved_events.len(),
-            1,
-            "Exactly 1 audit event with action='approved', apply_result='applied'"
-        );
+        assert_eq!(approved_events.len(), 1, "Exactly 1 audit event with action='approved'");
+        assert_eq!(approved.status, "approved");
         assert_eq!(approved_events[0].requires_step_up, 1);
     }
 
-    // ─── V3 — Audit on blocked step-up ──────────────────────────────────
+    // ─── Lifecycle V3 — Audit on blocked step-up ─────────────────────────
 
     #[tokio::test]
     async fn s1_v3_audit_event_on_blocked_step_up() {
@@ -1301,7 +1328,6 @@ mod tests {
 
         let di = create_test_di(&db).await;
 
-        // Record a blocked approval audit event (simulates failed step-up)
         crate::di::audit::record_di_change_event(
             &db,
             crate::di::audit::DiAuditInput {
@@ -1330,7 +1356,7 @@ mod tests {
         assert_eq!(blocked[0].requires_step_up, 1);
     }
 
-    // ─── V4 — Audit on conversion with requires_step_up = 1 ─────────────
+    // ─── Lifecycle V4 — Audit on conversion ──────────────────────────────
 
     #[tokio::test]
     async fn s1_v4_audit_event_on_conversion() {
@@ -1339,14 +1365,13 @@ mod tests {
 
         let di = create_test_di(&db).await;
 
-        // Record a conversion audit event
         crate::di::audit::record_di_change_event(
             &db,
             crate::di::audit::DiAuditInput {
                 di_id: Some(di.id),
                 action: "converted".into(),
                 actor_id: Some(1),
-                summary: Some("DI converted to WO".into()),
+                summary: Some("DI convertie en OT".into()),
                 details_json: Some(r#"{"wo_id":1,"wo_code":"OT-0001"}"#.into()),
                 requires_step_up: true,
                 apply_result: "applied".into(),
@@ -1384,8 +1409,8 @@ mod tests {
              VALUES (1, 'nt-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'))".to_string()
         )).await.expect("node_type");
         db.execute(Statement::from_string(DbBackend::Sqlite,
-            "INSERT OR IGNORE INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at) \
-             VALUES (1, 'on-001', 'SITE-001', 'Test Site', 1, 'active', datetime('now'), datetime('now'))".to_string()
+            "INSERT OR IGNORE INTO org_nodes (id, sync_id, code, name, node_type_id, structure_model_id, status, created_at, updated_at) \
+             VALUES (1, 'on-001', 'SITE-001', 'Test Site', 1, 1, 'active', datetime('now'), datetime('now'))".to_string()
         )).await.expect("org_node");
         db.execute(Statement::from_string(DbBackend::Sqlite,
             "INSERT OR IGNORE INTO reference_domains (id, code, name, structure_type, governance_level, is_extendable, created_at, updated_at) \
@@ -1415,7 +1440,7 @@ mod tests {
                 title: "Test DI for verification".into(),
                 description: "Verification test DI".into(),
                 origin_type: "operator".into(),
-            request_type: "repair".to_string(),
+                request_type: "repair".to_string(),
                 reported_urgency: "high".into(),
                 observed_at: None,
                 impact_level: "medium".into(),

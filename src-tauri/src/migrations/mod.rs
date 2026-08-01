@@ -136,6 +136,7 @@ mod m20260730_000135_inventory_procurement_maturity;
 mod m20260731_000136_supplier_contacts_po_eta_repairable;
 mod m20260729_000137_rbac_permission_normalization;
 mod m20260815_000138_personnel_create_platform;
+mod m20260816_000139_di_lifecycle_disposition;
 mod m_test;
 
 pub struct Migrator;
@@ -280,6 +281,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260731_000136_supplier_contacts_po_eta_repairable::Migration),
             Box::new(m20260729_000137_rbac_permission_normalization::Migration),
             Box::new(m20260815_000138_personnel_create_platform::Migration),
+            Box::new(m20260816_000139_di_lifecycle_disposition::Migration),
             Box::new(m_test::Migration),
         ]
     }
