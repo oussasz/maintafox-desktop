@@ -61,21 +61,26 @@ function checkNamingConvention(names: string[]): CheckResult {
   };
 }
 
-function checkContiguous(names: string[]): CheckResult {
-  const seqs = names.map(extractSeqNumber).sort((a, b) => a - b);
-  const gaps: string[] = [];
-  for (let i = 0; i < seqs.length; i++) {
-    if (seqs[i] !== i + 1) {
-      gaps.push(`expected ${i + 1} but got ${seqs[i]}`);
-    }
+function checkUniqueSequences(names: string[]): CheckResult {
+  // Historical gaps (e.g. retired/renumbered migrations) are allowed.
+  // Duplicate sequence numbers are not — they collide at registration time.
+  const seen = new Map<number, string[]>();
+  for (const name of names) {
+    const seq = extractSeqNumber(name);
+    const bucket = seen.get(seq) ?? [];
+    bucket.push(name);
+    seen.set(seq, bucket);
   }
+  const dupes = [...seen.entries()]
+    .filter(([, files]) => files.length > 1)
+    .map(([seq, files]) => `${String(seq).padStart(6, "0")}: ${files.join(", ")}`);
   return {
-    check: "Contiguous sequence",
-    passed: gaps.length === 0,
+    check: "Unique sequence numbers",
+    passed: dupes.length === 0,
     message:
-      gaps.length === 0
-        ? `Sequence is contiguous (1..${seqs.length})`
-        : `Sequence gaps: ${gaps.join("; ")}`,
+      dupes.length === 0
+        ? `All ${names.length} migration sequence numbers are unique`
+        : `Duplicate sequences: ${dupes.join("; ")}`,
   };
 }
 
@@ -106,7 +111,7 @@ function main(): void {
 
   const results: CheckResult[] = [
     checkNamingConvention(filesystem),
-    checkContiguous(filesystem),
+    checkUniqueSequences(filesystem),
     checkRegistration(filesystem, registered),
   ];
 

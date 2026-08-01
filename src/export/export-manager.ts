@@ -5,11 +5,7 @@
 import { exportImage } from "@/export/image-exporter";
 import { exportPdf } from "@/export/pdf-exporter";
 import { printHtml } from "@/export/print-manager";
-import {
-  ExportNotImplementedError,
-  type ExportRequest,
-  type ExportResult,
-} from "@/export/types";
+import { ExportNotImplementedError, type ExportRequest, type ExportResult } from "@/export/types";
 
 export async function exportDocument(request: ExportRequest): Promise<ExportResult> {
   switch (request.format) {

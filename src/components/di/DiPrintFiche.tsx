@@ -6,12 +6,12 @@
 
 import type { TFunction } from "i18next";
 
-import { diStatusToI18nKey } from "@/components/di/status-meta";
 import {
   fetchDiSymptomLabel,
   loadDiOriginLabelMap,
   resolveDiOriginLabel,
 } from "@/components/di/di-reference-labels";
+import { diStatusToI18nKey } from "@/components/di/status-meta";
 import { i18n } from "@/i18n";
 import {
   formatAssetLabel,
@@ -127,11 +127,7 @@ function buildHtml(
       <tr><th>${t("print.urgencyReported")}</th><td>${esc(urgencyR)}</td></tr>
       ${urgencyV != null ? `<tr><th>${t("print.urgencyValidated")}</th><td>${esc(urgencyV)}</td></tr>` : ""}
       <tr><th>${t("print.origin")}</th><td>${esc(originText)}</td></tr>
-      ${
-        symptomText
-          ? `<tr><th>${t("print.symptom")}</th><td>${esc(symptomText)}</td></tr>`
-          : ""
-      }
+      ${symptomText ? `<tr><th>${t("print.symptom")}</th><td>${esc(symptomText)}</td></tr>` : ""}
       <tr><th>${t("print.impactLevel")}</th><td>${esc(impactText)}</td></tr>
       <tr><th>${t("print.createdAt")}</th><td>${fmt(di.created_at)}</td></tr>
       <tr><th>${t("print.submittedAt")}</th><td>${fmt(di.submitted_at)}</td></tr>

@@ -106,17 +106,20 @@ export function IdentificationLabelDialog({
     }
   }, [companyName, context, svgHtml, t, toast]);
 
-  const handleOpenFolder = useCallback(async (path: string) => {
-    try {
-      await revealInFolder(path);
-    } catch (err) {
-      toast({
-        title: t("qr.export.failedTitle"),
-        description: toErrorMessage(err),
-        variant: "destructive",
-      });
-    }
-  }, [t, toast]);
+  const handleOpenFolder = useCallback(
+    async (path: string) => {
+      try {
+        await revealInFolder(path);
+      } catch (err) {
+        toast({
+          title: t("qr.export.failedTitle"),
+          description: toErrorMessage(err),
+          variant: "destructive",
+        });
+      }
+    },
+    [t, toast],
+  );
 
   const barcodeEnabled = Boolean(barcode?.value);
   const companyCaption = useMemo(() => companyName?.trim() || null, [companyName]);
@@ -214,8 +217,7 @@ export function IdentificationLabelDialog({
       </Dialog>
 
       {toasts.map((tm) => {
-        const path =
-          tm.variant === "success" && tm.description ? tm.description : null;
+        const path = tm.variant === "success" && tm.description ? tm.description : null;
         return (
           <Toast
             key={tm.id}

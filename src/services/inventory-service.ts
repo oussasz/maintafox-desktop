@@ -1199,9 +1199,7 @@ export function listInventoryRepairableOrders(): Promise<RepairableOrder[]> {
   );
 }
 
-export function getInventoryRepairableOrderDetail(
-  orderId: number,
-): Promise<RepairableOrderDetail> {
+export function getInventoryRepairableOrderDetail(orderId: number): Promise<RepairableOrderDetail> {
   return invokeParsed(
     "get_inventory_repairable_order_detail",
     { orderId },
@@ -1209,9 +1207,7 @@ export function getInventoryRepairableOrderDetail(
   );
 }
 
-export function evaluateInventoryRepairVsReplace(
-  orderId: number,
-): Promise<RepairVsReplaceResult> {
+export function evaluateInventoryRepairVsReplace(orderId: number): Promise<RepairVsReplaceResult> {
   return invokeParsed(
     "evaluate_inventory_repair_vs_replace",
     { orderId },
@@ -1383,11 +1379,7 @@ export function upsertSupplierPrice(
 }
 
 export function getInventorySupplierScorecard(supplierId: number): Promise<SupplierScorecard> {
-  return invokeParsed(
-    "get_inventory_supplier_scorecard",
-    { supplierId },
-    SupplierScorecardSchema,
-  );
+  return invokeParsed("get_inventory_supplier_scorecard", { supplierId }, SupplierScorecardSchema);
 }
 
 // ── Supplier contacts ────────────────────────────────────────────────────────

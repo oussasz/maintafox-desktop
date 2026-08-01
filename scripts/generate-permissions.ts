@@ -14,6 +14,7 @@
  *   pnpm rbac:check   (via check-rbac-parity.ts --check-generated)
  */
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -283,6 +284,19 @@ function main(): void {
   fs.mkdirSync(path.dirname(TS_OUT), { recursive: true });
   fs.writeFileSync(RUST_OUT, rust, "utf-8");
   fs.writeFileSync(TS_OUT, ts, "utf-8");
+  // Keep cargo fmt --check green: format generated Rust with the same rustfmt.toml CI uses.
+  try {
+    execFileSync(
+      "rustfmt",
+      ["--edition", "2021", "--config-path", path.join(ROOT, "src-tauri/rustfmt.toml"), RUST_OUT],
+      { cwd: ROOT, stdio: "pipe" },
+    );
+  } catch (err) {
+    console.warn(
+      "warning: rustfmt failed on permissions_generated.rs; commit may fail cargo fmt --check",
+      err,
+    );
+  }
   console.log(
     `Wrote ${path.relative(ROOT, RUST_OUT)} (${registry.permissions.length} permissions)`,
   );

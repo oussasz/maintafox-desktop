@@ -35,9 +35,7 @@ export function resolveAllowedNodeTypes(args: {
   if (!parentTypeInModel) return [];
 
   const childIds = new Set(
-    rules
-      .filter((r) => r.parent_type_id === parentTypeInModel.id)
-      .map((r) => r.child_type_id),
+    rules.filter((r) => r.parent_type_id === parentTypeInModel.id).map((r) => r.child_type_id),
   );
 
   return activeTypes.filter((t) => childIds.has(t.id) && !t.is_root_type);

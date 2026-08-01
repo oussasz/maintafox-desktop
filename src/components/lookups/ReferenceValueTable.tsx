@@ -6,7 +6,6 @@
 import { AlertTriangle } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { ReferenceTableConfirmState } from "@/components/lookups/reference-value-table-types";
 import {
   REF_TABLE_BODY_CELL_CLASS,
   REF_TABLE_HEADER_CELL_CLASS,
@@ -14,6 +13,7 @@ import {
   REF_TABLE_ROW_CLASS,
   REF_TABLE_SCROLL_CLASS,
 } from "@/components/lookups/reference-table-ui";
+import type { ReferenceTableConfirmState } from "@/components/lookups/reference-value-table-types";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -107,9 +107,7 @@ export function ReferenceValueTable({
               <DialogTitle>{confirm.title}</DialogTitle>
               <DialogDescription>{confirm.description}</DialogDescription>
             </DialogHeader>
-            {confirm.hint ? (
-              <p className="text-xs text-text-muted">{confirm.hint}</p>
-            ) : null}
+            {confirm.hint ? <p className="text-xs text-text-muted">{confirm.hint}</p> : null}
             <DialogFooter>
               <Button
                 variant="outline"
@@ -203,13 +201,7 @@ export function ReferenceValueTableRow({
   highlighted?: boolean;
 }) {
   return (
-    <tr
-      className={cn(
-        REF_TABLE_ROW_CLASS,
-        highlighted && "bg-primary/5",
-        className,
-      )}
-    >
+    <tr className={cn(REF_TABLE_ROW_CLASS, highlighted && "bg-primary/5", className)}>
       {children}
     </tr>
   );

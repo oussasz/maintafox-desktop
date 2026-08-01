@@ -5,7 +5,7 @@ import type { VendorAdminAuditRecordV1 } from "@shared/ipc-types";
 /** Must match `vps::audit_support_hardening::audit_record_preimage`. */
 export function auditRecordPreimage(record: VendorAdminAuditRecordV1): string {
   const e = record.entity_refs;
-  const o = (x?: string | null) => x ?? "";
+  const o = (x?: string | null): string => x ?? "";
   const parts = [
     "audit_v1",
     record.record_id,
@@ -33,7 +33,9 @@ export function auditRecordPreimage(record: VendorAdminAuditRecordV1): string {
   return parts.join("|");
 }
 
-export async function computeRecordIntegritySha256(record: VendorAdminAuditRecordV1): Promise<string> {
+export async function computeRecordIntegritySha256(
+  record: VendorAdminAuditRecordV1,
+): Promise<string> {
   const enc = new TextEncoder();
   const buf = await crypto.subtle.digest("SHA-256", enc.encode(auditRecordPreimage(record)));
   return Array.from(new Uint8Array(buf))
@@ -46,7 +48,9 @@ export async function verifyRecordIntegrity(record: VendorAdminAuditRecordV1): P
   return h === record.record_integrity_sha256;
 }
 
-export async function verifyAuditChain(records: VendorAdminAuditRecordV1[]): Promise<"ok" | "integrity_mismatch" | "chain_broken"> {
+export async function verifyAuditChain(
+  records: VendorAdminAuditRecordV1[],
+): Promise<"ok" | "integrity_mismatch" | "chain_broken"> {
   if (records.length === 0) return "ok";
   for (const r of records) {
     if (!(await verifyRecordIntegrity(r))) return "integrity_mismatch";

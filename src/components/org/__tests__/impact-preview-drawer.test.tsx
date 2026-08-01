@@ -376,7 +376,9 @@ describe("ImpactPreviewDrawer — Sprint S3 smoke tests", () => {
       expect(screen.getByText("preview.dependencyDomain.assets")).toBeInTheDocument();
       expect(screen.getByText("preview.dependencyDomain.open_work")).toBeInTheDocument();
       expect(screen.getByText("preview.dependencyNote.assets")).toBeInTheDocument();
-      expect(screen.getAllByText("preview.dependencyStatus.unavailable").length).toBeGreaterThanOrEqual(2);
+      expect(
+        screen.getAllByText("preview.dependencyStatus.unavailable").length,
+      ).toBeGreaterThanOrEqual(2);
     });
   });
 

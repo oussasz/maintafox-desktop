@@ -3,7 +3,9 @@ import type { Asset, AssetSearchResult } from "@shared/ipc-types";
 /** Map a full `Asset` row into the combobox/search shape used by DI/WO create forms. */
 export function assetToSearchResult(
   asset: Asset,
-  extras?: Partial<Pick<AssetSearchResult, "parent_asset_id" | "parent_asset_code" | "parent_asset_name">>,
+  extras?: Partial<
+    Pick<AssetSearchResult, "parent_asset_id" | "parent_asset_code" | "parent_asset_name">
+  >,
 ): AssetSearchResult {
   return {
     id: asset.id,

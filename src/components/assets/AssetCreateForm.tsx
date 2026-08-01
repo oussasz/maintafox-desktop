@@ -237,7 +237,7 @@ export function AssetCreateForm() {
             try {
               await uploadAssetPhoto({
                 asset_id: asset.id,
-                source_path: photo.path!,
+                source_path: photo.path ?? "",
                 caption: null,
               });
             } catch (err) {
@@ -307,11 +307,7 @@ export function AssetCreateForm() {
         </div>
       )}
 
-      <form
-        id={FORM_ID}
-        onSubmit={(e) => void handleSubmit(onSubmit)(e)}
-        className="space-y-6"
-      >
+      <form id={FORM_ID} onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
         <EntityFormSection title={t("createForm.sections.identification")}>
           <FormField
             name="asset_code"

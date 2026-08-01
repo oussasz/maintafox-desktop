@@ -7,9 +7,7 @@ import {
   type ProductActivationClaim,
 } from "@/services/product-license-service";
 
-function baseClaim(
-  overrides: Partial<ProductActivationClaim> = {},
-): ProductActivationClaim {
+function baseClaim(overrides: Partial<ProductActivationClaim> = {}): ProductActivationClaim {
   return {
     tenant_id: "tenant-1",
     license_id: "license-1",
@@ -72,8 +70,8 @@ describe("desktop activation claim serialization", () => {
   });
 
   it("assertClaimSerializableForDesktop rejects missing activation_token", () => {
-    expect(() =>
-      assertClaimSerializableForDesktop(baseClaim({ activation_token: "   " })),
-    ).toThrow(/activation_token/);
+    expect(() => assertClaimSerializableForDesktop(baseClaim({ activation_token: "   " }))).toThrow(
+      /activation_token/,
+    );
   });
 });

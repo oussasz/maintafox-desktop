@@ -31,8 +31,7 @@ export function WoDiManagementPanel() {
     () =>
       items.filter(
         (wo) =>
-          wo.source_di_id !== null &&
-          (wo.status_code === "draft" || wo.status_code === "planning"),
+          wo.source_di_id !== null && (wo.status_code === "draft" || wo.status_code === "planning"),
       ),
     [items],
   );
@@ -66,7 +65,10 @@ export function WoDiManagementPanel() {
         <CardContent className="p-0">
           <div className="divide-y">
             {previewItems.map((wo) => (
-              <div key={wo.id} className="flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-muted/50">
+              <div
+                key={wo.id}
+                className="flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-muted/50"
+              >
                 <span className="font-mono text-muted-foreground shrink-0 w-[90px]">{wo.code}</span>
                 <span className="truncate min-w-0 flex-1 font-medium">{wo.title}</span>
                 <span className="shrink-0 max-w-[120px] flex justify-end">
@@ -81,7 +83,10 @@ export function WoDiManagementPanel() {
                 <span className="truncate text-muted-foreground shrink-0 w-[150px] text-right">
                   {wo.asset_label ?? "—"}
                 </span>
-                <Badge variant="outline" className="text-[10px] border-0 bg-gray-100 text-gray-600 shrink-0">
+                <Badge
+                  variant="outline"
+                  className="text-[10px] border-0 bg-gray-100 text-gray-600 shrink-0"
+                >
                   {t(`status.${wo.status_code ?? "draft"}`)}
                 </Badge>
                 <Button

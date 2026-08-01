@@ -85,8 +85,7 @@ export function DiReturnDialog() {
               <span className="font-semibold truncate">{di.title}</span>
             </div>
             <div className="text-xs text-muted-foreground">
-              {t("detail.fields.reportedBy")}:{" "}
-              {formatPersonLabel(di.submitter_display_name)}
+              {t("detail.fields.reportedBy")}: {formatPersonLabel(di.submitter_display_name)}
             </div>
           </div>
 

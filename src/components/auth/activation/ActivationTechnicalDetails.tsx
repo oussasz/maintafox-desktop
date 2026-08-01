@@ -30,7 +30,10 @@ export function ActivationTechnicalDetails({
         <span aria-hidden>{open ? "−" : "+"}</span>
       </Button>
       {open ? (
-        <div id={panelId} className="space-y-1 border-t border-surface-border px-3 py-2 text-xs text-text-secondary">
+        <div
+          id={panelId}
+          className="space-y-1 border-t border-surface-border px-3 py-2 text-xs text-text-secondary"
+        >
           {rows.map((row) => (
             <p key={row.label}>
               {row.label}: <span className="font-mono text-text-primary">{row.value}</span>

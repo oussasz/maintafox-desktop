@@ -11,10 +11,19 @@ import {
 } from "@/services/license-service";
 import type { ApplyAdminLicenseActionInput, LicenseStatusView } from "@shared/ipc-types";
 
-const ACTIONS: ReadonlyArray<ApplyAdminLicenseActionInput["action"]> = ["suspend", "revoke", "reactivate"];
+const ACTIONS: ReadonlyArray<ApplyAdminLicenseActionInput["action"]> = [
+  "suspend",
+  "revoke",
+  "reactivate",
+];
 
 function stateTone(state: string): "default" | "secondary" | "destructive" | "outline" {
-  if (state === "active" || state === "trusted" || state === "verified" || state === "soft_accepted") {
+  if (
+    state === "active" ||
+    state === "trusted" ||
+    state === "verified" ||
+    state === "soft_accepted"
+  ) {
     return "secondary";
   }
   if (
@@ -37,7 +46,9 @@ export function LicenseEnforcementPanel() {
   const [status, setStatus] = useState<LicenseStatusView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState<ApplyAdminLicenseActionInput["action"] | null>(null);
+  const [actionLoading, setActionLoading] = useState<ApplyAdminLicenseActionInput["action"] | null>(
+    null,
+  );
   const [compromiseLoading, setCompromiseLoading] = useState(false);
 
   const reload = async () => {
@@ -59,7 +70,8 @@ export function LicenseEnforcementPanel() {
 
   const trustIcon = useMemo(() => {
     if (!status) return null;
-    if (status.trust_state === "trusted") return <ShieldCheck className="h-4 w-4 text-status-success" />;
+    if (status.trust_state === "trusted")
+      return <ShieldCheck className="h-4 w-4 text-status-success" />;
     return <ShieldAlert className="h-4 w-4 text-status-warning" />;
   }, [status]);
 
@@ -115,8 +127,12 @@ export function LicenseEnforcementPanel() {
         {status && (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={stateTone(status.entitlement_state)}>Entitlement: {status.entitlement_state}</Badge>
-              <Badge variant={stateTone(status.activation_state)}>Activation: {status.activation_state}</Badge>
+              <Badge variant={stateTone(status.entitlement_state)}>
+                Entitlement: {status.entitlement_state}
+              </Badge>
+              <Badge variant={stateTone(status.activation_state)}>
+                Activation: {status.activation_state}
+              </Badge>
               <Badge variant={stateTone(status.trust_state)}>
                 <span className="mr-1 inline-flex">{trustIcon}</span>
                 Trust: {status.trust_state}
@@ -190,7 +206,9 @@ export function LicenseEnforcementPanel() {
 
             {traces.length > 0 && (
               <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
-                <div className="mb-2 text-xs font-semibold text-text-secondary">Recent immutable traces</div>
+                <div className="mb-2 text-xs font-semibold text-text-secondary">
+                  Recent immutable traces
+                </div>
                 <div className="space-y-1 text-xs text-text-muted">
                   {traces.map((trace) => (
                     <div key={trace.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">

@@ -42,10 +42,7 @@ const MOTIF_CODES_BY_TYPE: Record<InventoryAdjustmentType, ReadonlySet<string>> 
   adjustment: new Set(["AJUSTEMENT", "INVENTAIRE"]),
 };
 
-const TYPE_STYLES: Record<
-  InventoryAdjustmentType,
-  { active: string; dot: string }
-> = {
+const TYPE_STYLES: Record<InventoryAdjustmentType, { active: string; dot: string }> = {
   entry: {
     active: "border-green-500 bg-green-50 text-green-800 ring-1 ring-green-500/30",
     dot: "bg-green-500",
@@ -114,10 +111,7 @@ export function InventoryAdjustmentDialog({
   const [loadingLocations, setLoadingLocations] = useState(false);
   const [loadingArticle, setLoadingArticle] = useState(false);
 
-  const activeWarehouses = useMemo(
-    () => warehouses.filter((w) => w.is_active === 1),
-    [warehouses],
-  );
+  const activeWarehouses = useMemo(() => warehouses.filter((w) => w.is_active === 1), [warehouses]);
 
   const filteredMotifs = useMemo(() => {
     const allowed = MOTIF_CODES_BY_TYPE[adjustType];
@@ -152,10 +146,7 @@ export function InventoryAdjustmentDialog({
     if (!open) return;
     resetForm();
     setLoadingArticle(true);
-    void Promise.all([
-      listInventoryArticles({}),
-      getLookupValues("inventory.movement_type"),
-    ])
+    void Promise.all([listInventoryArticles({}), getLookupValues("inventory.movement_type")])
       .then(([articles, movementTypes]) => {
         setArticle(articles.find((a) => a.id === articleId) ?? null);
         setMotifs(movementTypes);
@@ -218,9 +209,7 @@ export function InventoryAdjustmentDialog({
   const qtyNumber = Number(quantity);
   const delta = Number.isFinite(qtyNumber) ? resolveDelta(adjustType, qtyNumber) : 0;
   const afterStock =
-    currentStock != null && Number.isFinite(qtyNumber) && delta !== 0
-      ? currentStock + delta
-      : null;
+    currentStock != null && Number.isFinite(qtyNumber) && delta !== 0 ? currentStock + delta : null;
 
   const canSubmit =
     !saving &&

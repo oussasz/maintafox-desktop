@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { resolveReferenceValueColumns } from "@/components/lookups/reference-value-columns";
 import type { ReferenceDomain } from "@shared/ipc-types";
 
-function domain(partial: Partial<ReferenceDomain> & Pick<ReferenceDomain, "code" | "structure_type">): ReferenceDomain {
+function domain(
+  partial: Partial<ReferenceDomain> & Pick<ReferenceDomain, "code" | "structure_type">,
+): ReferenceDomain {
   return {
     id: 1,
     name: "Test",

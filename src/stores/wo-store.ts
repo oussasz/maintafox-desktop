@@ -187,7 +187,12 @@ export const useWoStore = create<WoStoreState>()((set, get) => ({
       const wo = await createWo(input);
       // Refresh list after create
       void get().loadWos();
-      set({ showCreateForm: false, editingWo: null, createPrefillAsset: null, createPrefillEquipmentId: null });
+      set({
+        showCreateForm: false,
+        editingWo: null,
+        createPrefillAsset: null,
+        createPrefillEquipmentId: null,
+      });
       return wo;
     } catch (err) {
       set({ error: toErrorMessage(err) });

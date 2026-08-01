@@ -104,7 +104,10 @@ export function SmartFilterBar({
     }
   };
 
-  const removeMultiValue = (def: Extract<SmartFilterDef, { kind: "multi-select" }>, value: string) => {
+  const removeMultiValue = (
+    def: Extract<SmartFilterDef, { kind: "multi-select" }>,
+    value: string,
+  ) => {
     def.onChange(def.value.filter((v) => v !== value));
   };
 

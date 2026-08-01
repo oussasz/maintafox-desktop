@@ -106,9 +106,7 @@ export function computeMetrics(
   const selected = days.find((d) => d.dayOfWeek === selectedDayOfWeek);
   const selectedDayHours = selected ? dayDurationHours(selected) : 0;
   const nominalHoursPerDay =
-    workingDays > 0
-      ? Math.round((weeklyHours / workingDays) * 100) / 100
-      : 0;
+    workingDays > 0 ? Math.round((weeklyHours / workingDays) * 100) / 100 : 0;
   return {
     workingDays,
     restDays,
@@ -159,17 +157,13 @@ export function applyTemplate(id: ScheduleTemplateId): AppliedTemplateResult {
       return {
         templateId: id,
         isContinuous: false,
-        days: ([1, 2, 3, 4, 5, 6, 7] as DayOfWeek[]).map((d) =>
-          workDay(d, "00:00", "23:59"),
-        ),
+        days: ([1, 2, 3, 4, 5, 6, 7] as DayOfWeek[]).map((d) => workDay(d, "00:00", "23:59")),
       };
     case "continuous_24_7":
       return {
         templateId: id,
         isContinuous: true,
-        days: ([1, 2, 3, 4, 5, 6, 7] as DayOfWeek[]).map((d) =>
-          workDay(d, "00:00", "23:59"),
-        ),
+        days: ([1, 2, 3, 4, 5, 6, 7] as DayOfWeek[]).map((d) => workDay(d, "00:00", "23:59")),
       };
     case "weekend_only":
       return {
@@ -293,10 +287,7 @@ export function updateDayMode(day: EditorDay, mode: DayMode): EditorDay {
   };
 }
 
-export function updateDayInterval(
-  day: EditorDay,
-  patch: Partial<ShiftInterval>,
-): EditorDay {
+export function updateDayInterval(day: EditorDay, patch: Partial<ShiftInterval>): EditorDay {
   if (day.mode === "rest") return day;
   const current = day.intervals[0] ?? { start: "08:00", end: "16:00" };
   return {

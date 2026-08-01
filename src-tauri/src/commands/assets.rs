@@ -21,7 +21,7 @@ use crate::assets::{
     lifecycle::{self, RecordLifecycleEventPayload},
     meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload},
     photos,
-    search::{self, AssetSearchFilters},
+    search::{self, AssetPickerSuggestFilters, AssetSearchFilters},
     taxonomy_reference, EquipmentTaxonomyCatalog,
 };
 use crate::auth::rbac::PermissionScope;
@@ -86,6 +86,16 @@ pub async fn search_assets(
     let user = require_session!(state);
     require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
     search::search_assets(&state.db, filters).await
+}
+
+#[tauri::command]
+pub async fn suggest_picker_assets(
+    filters: AssetPickerSuggestFilters,
+    state: State<'_, AppState>,
+) -> AppResult<search::AssetPickerSuggestions> {
+    let user = require_session!(state);
+    require_permission!(state, &user, crate::rbac::permissions::EQ_VIEW, PermissionScope::Global);
+    search::suggest_picker_assets(&state.db, i64::from(user.user_id), filters).await
 }
 
 #[tauri::command]

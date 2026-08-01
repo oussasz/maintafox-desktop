@@ -26,9 +26,7 @@ function blockingMessagesFromReport(result: WoReadinessResult): string[] {
 }
 
 export function needsPlanningApproval(checks: WoReadinessCheck[]): boolean {
-  return checks.some(
-    (c) => c.code === "approval_required" && c.blocking && c.outcome === "fail",
-  );
+  return checks.some((c) => c.code === "approval_required" && c.blocking && c.outcome === "fail");
 }
 
 export type MarkReadyResult = { ok: true } | { ok: false; blocking: string[] };

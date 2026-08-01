@@ -38,11 +38,7 @@ describe("vendor-ops-contracts", () => {
       summary: "s",
       recommended_action: "replay" as const,
     };
-    expect(
-      repairActionAllowed({ ...base, severity: "info" }, "escalate"),
-    ).toBe(false);
-    expect(
-      repairActionAllowed({ ...base, severity: "warn" }, "escalate"),
-    ).toBe(true);
+    expect(repairActionAllowed({ ...base, severity: "info" }, "escalate")).toBe(false);
+    expect(repairActionAllowed({ ...base, severity: "warn" }, "escalate")).toBe(true);
   });
 });

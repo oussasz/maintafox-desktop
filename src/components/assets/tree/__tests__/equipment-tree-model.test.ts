@@ -9,11 +9,7 @@ import {
 } from "@/components/assets/tree/equipment-tree-model";
 import type { AssetSearchResult } from "@shared/ipc-types";
 
-function asset(
-  id: number,
-  code: string,
-  parent_asset_id: number | null = null,
-): AssetSearchResult {
+function asset(id: number, code: string, parent_asset_id: number | null = null): AssetSearchResult {
   return {
     id,
     sync_id: `sync-${id}`,
@@ -54,11 +50,7 @@ describe("buildEquipmentForest", () => {
   });
 
   it("appears each asset only once", () => {
-    const forest = buildEquipmentForest([
-      asset(1, "A"),
-      asset(2, "B", 1),
-      asset(3, "C", 2),
-    ]);
+    const forest = buildEquipmentForest([asset(1, "A"), asset(2, "B", 1), asset(3, "C", 2)]);
     const ids: number[] = [];
     const walk = (nodes: typeof forest) => {
       for (const n of nodes) {
@@ -78,31 +70,19 @@ describe("buildEquipmentForest", () => {
   });
 
   it("preserves sibling order from results", () => {
-    const forest = buildEquipmentForest([
-      asset(1, "P"),
-      asset(10, "Z", 1),
-      asset(11, "A", 1),
-    ]);
+    const forest = buildEquipmentForest([asset(1, "P"), asset(10, "Z", 1), asset(11, "A", 1)]);
     expect(forest[0]?.children.map((c) => c.id)).toEqual([10, 11]);
   });
 
   it("breaks cycles by treating the cyclic edge as a root", () => {
-    const forest = buildEquipmentForest([
-      asset(1, "A", 2),
-      asset(2, "B", 1),
-    ]);
+    const forest = buildEquipmentForest([asset(1, "A", 2), asset(2, "B", 1)]);
     const rootIds = forest.map((n) => n.id).sort();
     expect(rootIds).toEqual([1, 2]);
     expect(forest.every((n) => n.children.length === 0)).toBe(true);
   });
 
   it("supports unlimited nesting depth", () => {
-    const rows = [
-      asset(1, "L0"),
-      asset(2, "L1", 1),
-      asset(3, "L2", 2),
-      asset(4, "L3", 3),
-    ];
+    const rows = [asset(1, "L0"), asset(2, "L1", 1), asset(3, "L2", 2), asset(4, "L3", 3)];
     const forest = buildEquipmentForest(rows);
     expect(forest[0]?.children[0]?.children[0]?.children[0]?.id).toBe(4);
   });
@@ -137,11 +117,7 @@ describe("flattenVisibleRows", () => {
 });
 
 describe("expand helpers", () => {
-  const forest = buildEquipmentForest([
-    asset(1, "COMP"),
-    asset(2, "REG", 1),
-    asset(3, "SONDE", 2),
-  ]);
+  const forest = buildEquipmentForest([asset(1, "COMP"), asset(2, "REG", 1), asset(3, "SONDE", 2)]);
 
   it("collectExpandableIds returns all parents", () => {
     expect(collectExpandableIds(forest).sort()).toEqual([1, 2]);

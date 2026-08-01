@@ -69,18 +69,23 @@ export function StockImpactPreview({
   if (articleId <= 0 || deltaQty === 0) return null;
 
   return (
-    <div className={cn("rounded-md border border-surface-border bg-surface-muted/30 p-3 text-sm", className)}>
+    <div
+      className={cn(
+        "rounded-md border border-surface-border bg-surface-muted/30 p-3 text-sm",
+        className,
+      )}
+    >
       {loading ? (
-        <p className="text-xs text-text-muted">{t("stockImpact.loading", { defaultValue: "Projecting…" })}</p>
+        <p className="text-xs text-text-muted">
+          {t("stockImpact.loading", { defaultValue: "Projecting…" })}
+        </p>
       ) : error ? (
         <p className="text-xs text-destructive">{error}</p>
       ) : projection ? (
         <div className="space-y-1.5">
           <p className="text-xs font-medium">
             {formatAssetLabel(projection.article_code, projection.article_name)}
-            {projection.warehouse_code
-              ? ` · ${formatOrDash(projection.warehouse_code)}`
-              : ""}
+            {projection.warehouse_code ? ` · ${formatOrDash(projection.warehouse_code)}` : ""}
           </p>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
             <span>

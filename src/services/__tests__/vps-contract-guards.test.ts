@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { VpsRequestContext, VpsRouteContract } from "@shared/ipc-types";
 import { assertVpsRequestReadiness } from "@/services/vps-contract-guards";
+import type { VpsRequestContext, VpsRouteContract } from "@shared/ipc-types";
 
 const syncRoute: VpsRouteContract = {
   family: "sync",

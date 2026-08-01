@@ -22,7 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { searchAssets } from "@/services/asset-search-service";
+import { searchAssets, suggestPickerAssets } from "@/services/asset-search-service";
 import type { AssetSearchResult } from "@shared/ipc-types";
 
 // ── Accent / case fold (mirrors Rust fold_search_text) ────────────────────────
@@ -80,8 +80,7 @@ export function highlightMatch(text: string, query: string): ReactNode {
   let foldedPos = 0;
   const chars = [...text];
   while (foldedPos < idx && origStart < chars.length) {
-    const ch = chars[origStart];
-    if (ch === undefined) break;
+    const ch = chars[origStart] ?? "";
     const foldedCh = foldSearchText(ch);
     foldedPos += foldedCh.length;
     origStart += 1;
@@ -89,8 +88,7 @@ export function highlightMatch(text: string, query: string): ReactNode {
   let origEnd = origStart;
   let consumed = 0;
   while (consumed < q.length && origEnd < chars.length) {
-    const ch = chars[origEnd];
-    if (ch === undefined) break;
+    const ch = chars[origEnd] ?? "";
     const foldedCh = foldSearchText(ch);
     consumed += foldedCh.length;
     origEnd += 1;
@@ -160,16 +158,25 @@ export function AssetPicker({
     setLoading(true);
     try {
       const trimmed = q.trim();
-      // Picker suggestions use the same search IPC until a dedicated
-      // suggest_picker_assets command lands on develop.
+      if (!trimmed) {
+        const res = await suggestPickerAssets({
+          limit: 15,
+          include_decommissioned: false,
+        });
+        if (gen !== requestGen.current) return;
+        setItems(res.items);
+        setMode(res.mode === "frequent" ? "frequent" : "recent");
+        setActiveIndex(0);
+        return;
+      }
       const results = await searchAssets({
-        query: trimmed || null,
-        limit: trimmed ? 20 : 15,
+        query: trimmed,
+        limit: 20,
         include_decommissioned: false,
       });
       if (gen !== requestGen.current) return;
       setItems(results);
-      setMode(trimmed ? "search" : "recent");
+      setMode("search");
       setActiveIndex(0);
     } catch {
       if (gen !== requestGen.current) return;
@@ -281,9 +288,9 @@ export function AssetPicker({
           })();
           return;
         }
-        const active = items[activeIndex];
-        if (open && active) {
-          selectAsset(active);
+        if (open && items[activeIndex]) {
+          const chosen = items[activeIndex];
+          if (chosen) selectAsset(chosen);
         }
       }
     },
@@ -340,8 +347,10 @@ export function AssetPicker({
               )}
             </div>
             <p className="text-sm truncate">{value.asset_name}</p>
-            {value.org_node_name && (
-              <p className="text-xs text-text-muted truncate">{value.org_node_name}</p>
+            {(value.org_path || value.org_node_name) && (
+              <p className="text-xs text-text-muted truncate">
+                {value.org_path || value.org_node_name}
+              </p>
             )}
           </div>
           {!disabled && (
@@ -453,9 +462,9 @@ export function AssetPicker({
                 )}
               </div>
               <span className="truncate w-full">{highlightMatch(asset.asset_name, query)}</span>
-              {asset.org_node_name && (
+              {(asset.org_path || asset.org_node_name) && (
                 <span className="text-xs text-text-muted truncate w-full">
-                  {asset.org_node_name}
+                  {asset.org_path || asset.org_node_name}
                 </span>
               )}
             </button>

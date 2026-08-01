@@ -24,10 +24,7 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { WoCompletionGatesChecklist } from "@/components/wo/WoCompletionGatesChecklist";
 import { useSession } from "@/hooks/use-session";
-import {
-  formatDurationMinutes,
-  hoursToMinutes,
-} from "@/lib/display";
+import { formatDurationMinutes, hoursToMinutes } from "@/lib/display";
 import { getPlanAdherence, type WoPlanAdherence } from "@/services/wo-execution-service";
 import { evaluateWoCompletionGates } from "@/services/wo-service";
 import { useWoStore } from "@/stores/wo-store";
@@ -38,11 +35,7 @@ function toDatetimeLocal(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function CompletionSummary({
-  adherence,
-}: {
-  adherence: WoPlanAdherence | null;
-}) {
+function CompletionSummary({ adherence }: { adherence: WoPlanAdherence | null }) {
   const { t } = useTranslation("ot");
   const durationLabels = {
     hours: t("execution.durationHours"),
@@ -50,9 +43,7 @@ function CompletionSummary({
   };
 
   if (!adherence) {
-    return (
-      <p className="text-sm text-muted-foreground">{t("completion.summary.loading")}</p>
-    );
+    return <p className="text-sm text-muted-foreground">{t("completion.summary.loading")}</p>;
   }
 
   const efficiency = adherence.efficiency_pct;
@@ -270,9 +261,7 @@ export function WoCompletionDialog({ wo }: WoCompletionDialogProps) {
             {step === "summary" ? t("completion.summary.title") : t("completion.title")}
           </DialogTitle>
           <DialogDescription>
-            {step === "summary"
-              ? t("completion.summary.description")
-              : t("completion.description")}
+            {step === "summary" ? t("completion.summary.description") : t("completion.description")}
           </DialogDescription>
         </DialogHeader>
 
@@ -284,10 +273,7 @@ export function WoCompletionDialog({ wo }: WoCompletionDialogProps) {
               <CompletionSummary adherence={adherence} />
             )}
             {!gatesLoading && gates.length > 0 && (
-              <WoCompletionGatesChecklist
-                gates={gates}
-                title={t("completion.gates.title")}
-              />
+              <WoCompletionGatesChecklist gates={gates} title={t("completion.gates.title")} />
             )}
           </div>
         )}
@@ -295,10 +281,7 @@ export function WoCompletionDialog({ wo }: WoCompletionDialogProps) {
         {step === "form" && (
           <div className="space-y-4 py-2">
             {!gatesLoading && (
-              <WoCompletionGatesChecklist
-                gates={gates}
-                title={t("completion.gates.title")}
-              />
+              <WoCompletionGatesChecklist gates={gates} title={t("completion.gates.title")} />
             )}
 
             <div className="space-y-1">

@@ -60,3 +60,4 @@ target-agent-*/
 
 # Local agent recovery backups
 .tmp-phase47-backup/
+.recovery/

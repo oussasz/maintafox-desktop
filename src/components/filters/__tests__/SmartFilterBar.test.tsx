@@ -86,7 +86,11 @@ describe("SmartFilterBar", () => {
     expect(screen.getByText("Search: motor")).toBeInTheDocument();
     expect(screen.getByText("1 active")).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByLabelText("Clear search")[0]!);
+    const clearSearch = screen.getAllByLabelText("Clear search")[0];
+    if (!clearSearch) {
+      throw new Error("expected Clear search control");
+    }
+    fireEvent.click(clearSearch);
     expect(onSearchChange).toHaveBeenCalledWith("");
   });
 

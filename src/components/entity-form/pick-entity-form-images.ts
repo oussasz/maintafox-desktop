@@ -19,7 +19,9 @@ export async function pickEntityFormImages(): Promise<EntityFormImageItem[]> {
   if (!selected) return [];
 
   const paths = Array.isArray(selected)
-    ? selected.map((s) => (typeof s === "string" ? s : (s as { path?: string }).path)).filter(Boolean)
+    ? selected
+        .map((s) => (typeof s === "string" ? s : (s as { path?: string }).path))
+        .filter(Boolean)
     : [typeof selected === "string" ? selected : (selected as { path?: string }).path].filter(
         Boolean,
       );
@@ -55,7 +57,9 @@ export async function pickEntityFormFiles(): Promise<EntityFormFileItem[]> {
   if (!selected) return [];
 
   const paths = Array.isArray(selected)
-    ? selected.map((s) => (typeof s === "string" ? s : (s as { path?: string }).path)).filter(Boolean)
+    ? selected
+        .map((s) => (typeof s === "string" ? s : (s as { path?: string }).path))
+        .filter(Boolean)
     : [typeof selected === "string" ? selected : (selected as { path?: string }).path].filter(
         Boolean,
       );

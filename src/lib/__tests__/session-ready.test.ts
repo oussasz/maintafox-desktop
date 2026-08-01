@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { useSessionStore, UNAUTHENTICATED_SESSION } from "@/store/session-store";
-import type { SessionInfo } from "@shared/ipc-types";
 import { fixtures } from "@/test/mocks/tauri";
+import type { SessionInfo } from "@shared/ipc-types";
 
 function asSession(
   info: (typeof fixtures)["authenticatedSession"] | (typeof fixtures)["lockedSession"],

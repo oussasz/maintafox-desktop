@@ -73,16 +73,13 @@ function mimeToFilters(
 
 export function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          reject(new Error("ImageExporter: canvas.toBlob returned null."));
-          return;
-        }
-        resolve(blob);
-      },
-      "image/png",
-    );
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("ImageExporter: canvas.toBlob returned null."));
+        return;
+      }
+      resolve(blob);
+    }, "image/png");
   });
 }
 

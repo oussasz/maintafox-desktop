@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { MarkovAdvancedPanel } from "@/components/reliability/MarkovAdvancedPanel";
 import { mfCard, mfLayout, mfTable } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import {
@@ -9,8 +10,6 @@ import {
   listFmecaItemsForEquipment,
 } from "@/services/reliability-service";
 import type { FmecaItemWithContext, FmecaSeverityOccurrenceMatrix } from "@shared/ipc-types";
-
-import { MarkovAdvancedPanel } from "@/components/reliability/MarkovAdvancedPanel";
 
 import { useRequiredRamsEquipmentId } from "./rams-equipment-context";
 

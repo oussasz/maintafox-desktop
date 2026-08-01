@@ -23,13 +23,14 @@ export { EntityFormHint } from "./EntityFormHint";
 export type { EntityFormHintProps } from "./EntityFormHint";
 
 export { EntityFormImageUploader } from "./EntityFormImageUploader";
-export type {
-  EntityFormImageItem,
-  EntityFormImageUploaderProps,
-} from "./EntityFormImageUploader";
+export type { EntityFormImageItem, EntityFormImageUploaderProps } from "./EntityFormImageUploader";
 
 export { EntityFormSection } from "./EntityFormSection";
 export type { EntityFormSectionProps } from "./EntityFormSection";
 
-export { orderImagesForUpload, pickEntityFormFiles, pickEntityFormImages } from "./pick-entity-form-images";
+export {
+  orderImagesForUpload,
+  pickEntityFormFiles,
+  pickEntityFormImages,
+} from "./pick-entity-form-images";
 export type { EntityFormFileItem } from "./pick-entity-form-images";

@@ -32,7 +32,9 @@ export function moduleCapabilityFromPermission(permission: string): string | nul
   return null;
 }
 
-export function parseCapabilityMap(capabilityMapJson: string | null | undefined): Record<string, boolean> {
+export function parseCapabilityMap(
+  capabilityMapJson: string | null | undefined,
+): Record<string, boolean> {
   if (!capabilityMapJson || capabilityMapJson.trim() === "" || capabilityMapJson.trim() === "{}") {
     return {};
   }

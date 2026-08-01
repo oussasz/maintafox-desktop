@@ -9,7 +9,8 @@ import type {
 
 function hasCreatedEvent(events: InventoryStateEvent[]): boolean {
   return events.some(
-    (e) => e.entity_type === "ARTICLE" && (e.to_status === "CREATED" || e.reason === "article.created"),
+    (e) =>
+      e.entity_type === "ARTICLE" && (e.to_status === "CREATED" || e.reason === "article.created"),
   );
 }
 
@@ -102,7 +103,12 @@ export function composeArticleActivity(params: {
 }
 
 export function computeArticleKpis(
-  balances: { on_hand_qty: number; reserved_qty: number; available_qty: number; location_id: number }[],
+  balances: {
+    on_hand_qty: number;
+    reserved_qty: number;
+    available_qty: number;
+    location_id: number;
+  }[],
   transactions: { performed_at: string }[],
 ): {
   onHand: number;
@@ -111,7 +117,9 @@ export function computeArticleKpis(
   locations: number;
   movements30d: number;
 } {
-  const real = balances.filter((b) => b.on_hand_qty !== 0 || b.reserved_qty !== 0 || b.available_qty !== 0);
+  const real = balances.filter(
+    (b) => b.on_hand_qty !== 0 || b.reserved_qty !== 0 || b.available_qty !== 0,
+  );
   const source = real.length > 0 ? real : balances;
   const onHand = source.reduce((s, b) => s + b.on_hand_qty, 0);
   const reserved = source.reduce((s, b) => s + b.reserved_qty, 0);

@@ -4,10 +4,10 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import { i18n } from "@/i18n/config";
+import { formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
 import { pushAppToast } from "@/store/app-toast-store";
 import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 import { extractIpcValidationDetails, formatOrgIpcError, toErrorMessage } from "@/utils/errors";
-import { formatOrgIssuesWithI18n } from "@/lib/format-org-validation-issue";
 
 /** Commands invoked during bootstrap where a toast would be noisy or misleading. */
 const SILENT_IPC_COMMANDS = new Set(["health_check", "get_app_info", "get_task_status"]);
@@ -207,9 +207,7 @@ function notifyInvokeFailure(cmd: string, err: unknown): void {
   }
 
   const i18nKey = code ? `errors:appError.${code}` : "";
-  const gateCodeMatch = rawMsg.match(
-    /(GATE_[A-Z0-9_]+)(?::[A-Za-z0-9_=,\-./]+)?/,
-  );
+  const gateCodeMatch = rawMsg.match(/(GATE_[A-Z0-9_]+)(?::[A-Za-z0-9_=,\-./]+)?/);
   const gateCode = gateCodeMatch?.[1] ?? "";
   const gateI18nKey = gateCode ? `errors:gateError.${gateCode}` : "";
   const title =

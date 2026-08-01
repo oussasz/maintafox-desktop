@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { clearPermissionCache } from "@/lib/permission-cache";
 import {
   getSessionInfo,
   login as authLogin,
@@ -7,7 +8,6 @@ import {
   unlockSession as authUnlock,
   forceChangePassword as authForceChange,
 } from "@/services/auth-service";
-import { clearPermissionCache } from "@/lib/permission-cache";
 import { useAuthInterceptorStore } from "@/store/auth-interceptor-store";
 import type { LoginRequest, SessionInfo } from "@shared/ipc-types";
 
@@ -86,7 +86,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   errorCode: null,
   hasBootstrapped: false,
 
-  ensureBootstrapped: async () => {
+  ensureBootstrapped: async (): Promise<void> => {
     if (get().hasBootstrapped) {
       return;
     }
@@ -102,7 +102,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     await bootstrapInFlight;
   },
 
-  refresh: async () => {
+  refresh: async (): Promise<void> => {
     set({ isLoading: true, error: null, errorCode: null });
     try {
       const info = await getSessionInfo();
@@ -120,7 +120,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
   },
 
-  login: async (req: LoginRequest) => {
+  login: async (req: LoginRequest): Promise<void> => {
     set({ isLoading: true, error: null, errorCode: null });
     try {
       const response = await authLogin(req);
@@ -143,7 +143,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
   },
 
-  logout: async () => {
+  logout: async (): Promise<void> => {
     set({ isLoading: true });
     try {
       await authLogout();
@@ -165,7 +165,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
   },
 
-  unlock: async (password: string) => {
+  unlock: async (password: string): Promise<void> => {
     set({ isLoading: true, error: null, errorCode: null });
     try {
       const info = await authUnlock(password);
@@ -182,7 +182,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
   },
 
-  changePassword: async (newPassword: string) => {
+  changePassword: async (newPassword: string): Promise<void> => {
     set({ isLoading: true, error: null, errorCode: null });
     try {
       const info = await authForceChange(newPassword);
@@ -199,7 +199,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
   },
 
-  resetForTests: () => {
+  resetForTests: (): void => {
     bootstrapInFlight = null;
     set({
       info: null,

@@ -110,5 +110,3 @@ export function SkillsMatrixPanel({ entityId, teamId }: SkillsMatrixPanelProps) 
     </Card>
   );
 }
-
-

@@ -1,11 +1,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
-import type {
-  AssetHistoryEvent,
-  AssetHistoryQuery,
-  AssetHistorySummary,
-} from "@shared/ipc-types";
+import type { AssetHistoryEvent, AssetHistoryQuery, AssetHistorySummary } from "@shared/ipc-types";
 
 const AssetHistoryEventRefSchema = z.object({
   entity_type: z.enum(["asset", "wo", "di", "pm", "inspection", "document", "photo"]),
@@ -49,4 +45,3 @@ export async function getAssetHistorySummary(assetId: number): Promise<AssetHist
   const raw = await invoke<unknown>("get_asset_history_summary", { assetId });
   return AssetHistorySummarySchema.parse(raw) as AssetHistorySummary;
 }
-

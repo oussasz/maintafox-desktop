@@ -57,9 +57,7 @@ export function LinkedEntityBadge({
 
   const Icon = ENTITY_ICON[entity];
   const label = t(`linkedEntity.${entity}`, { code: displayCode });
-  const tooltip =
-    (title ?? "").trim() ||
-    t(`linkedEntity.open.${entity}`, { code: displayCode });
+  const tooltip = (title ?? "").trim() || t(`linkedEntity.open.${entity}`, { code: displayCode });
   const canNavigate = entityId != null && entityId > 0;
 
   const go = () => {

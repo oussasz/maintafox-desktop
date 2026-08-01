@@ -101,7 +101,8 @@ function groupByPhase(attachments: WoAttachment[]): Map<string, WoAttachment[]> 
   for (const att of attachments) {
     const key = att.phase ?? "unset";
     if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(att);
+    const group = map.get(key);
+    if (group) group.push(att);
   }
   // Remove empty groups
   for (const [key, list] of map) {
@@ -329,7 +330,9 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
                     {attachmentIcon(att.mime_type)}
 
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-text-primary">{att.file_name}</p>
+                      <p className="truncate text-sm font-medium text-text-primary">
+                        {att.file_name}
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         {formatBytes(att.size_bytes, t)} ·{" "}
                         {new Date(att.uploaded_at).toLocaleDateString(i18n.language, {
@@ -351,7 +354,11 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
                             >
                               {t("attachment.confirm")}
                             </Button>
-                            <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(null)}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setConfirmDeleteId(null)}
+                            >
                               {t("attachment.cancel")}
                             </Button>
                           </div>
@@ -414,9 +421,7 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
               onClick={() => void doUpload(pendingFiles ?? [], selectedPhase)}
               disabled={uploading}
             >
-              {uploading ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
+              {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {t("attachment.phaseDialog.upload")}
             </Button>
           </DialogFooter>

@@ -2,9 +2,22 @@ import { Lock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   getNotificationPreferences,
   updateNotificationPreference,
@@ -161,9 +174,7 @@ export function NotificationPreferencesPanel() {
                     value={toDatetimeLocalValue(row.muted_until)}
                     onChange={(e) =>
                       void patchRow(row, {
-                        muted_until: e.target.value
-                          ? new Date(e.target.value).toISOString()
-                          : "",
+                        muted_until: e.target.value ? new Date(e.target.value).toISOString() : "",
                       })
                     }
                   />

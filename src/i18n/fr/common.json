@@ -136,6 +136,17 @@
     "addFilter": "Ajouter\u2026",
     "noMoreOptions": "Plus d\u2019options"
   },
+  "assetPicker": {
+    "searchPlaceholder": "Rechercher un actif par code, nom, s\u00e9rie, QR\u2026",
+    "recent": "R\u00e9cemment utilis\u00e9s",
+    "frequent": "Fr\u00e9quemment utilis\u00e9s",
+    "results": "R\u00e9sultats",
+    "empty": "Aucun actif trouv\u00e9",
+    "emptySuggestions": "Aucun actif r\u00e9cent — saisissez pour rechercher",
+    "scan": "Scanner QR",
+    "scanHint": "Focalisez ici, scannez avec un lecteur USB, puis Entr\u00e9e",
+    "clear": "Effacer la s\u00e9lection"
+  },
   "kanban": {
     "emptyColumn": "—"
   },

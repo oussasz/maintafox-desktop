@@ -59,11 +59,15 @@ export function ArticleConsumptionChart({ articleId, months = 12 }: ArticleConsu
         {t("article.consumption.title", { defaultValue: "Monthly consumption" })}
       </h4>
       {loading ? (
-        <p className="text-sm text-text-muted">{t("article.consumption.loading", { defaultValue: "Loading…" })}</p>
+        <p className="text-sm text-text-muted">
+          {t("article.consumption.loading", { defaultValue: "Loading…" })}
+        </p>
       ) : error ? (
         <p className="text-sm text-destructive">{error}</p>
       ) : chartData.length === 0 ? (
-        <p className="text-sm text-text-muted">{t("article.consumption.empty", { defaultValue: "No consumption in period." })}</p>
+        <p className="text-sm text-text-muted">
+          {t("article.consumption.empty", { defaultValue: "No consumption in period." })}
+        </p>
       ) : (
         <div className="h-48 w-full">
           <BarChart data={chartData} height={180} />

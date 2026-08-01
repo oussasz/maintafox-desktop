@@ -63,11 +63,21 @@ export function TeamCapacityBoard({ entityId }: TeamCapacityBoardProps) {
         <div className="flex flex-wrap gap-3">
           <label className="flex items-center gap-2 text-sm">
             {t("availability.from")}
-            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-44" />
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-44"
+            />
           </label>
           <label className="flex items-center gap-2 text-sm">
             {t("availability.to")}
-            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-44" />
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-44"
+            />
           </label>
         </div>
 
@@ -88,14 +98,18 @@ export function TeamCapacityBoard({ entityId }: TeamCapacityBoardProps) {
                 <div>{t("capacity.leadCount", { count: row.lead_count })}</div>
                 <div>{t("capacity.availableMinutes", { count: row.total_available_minutes })}</div>
                 <div>{t("capacity.blockedMinutes", { count: row.total_blocked_minutes })}</div>
-                <div>{t("capacity.ratio", { value: Math.round(row.avg_availability_ratio * 100) })}%</div>
+                <div>
+                  {t("capacity.ratio", { value: Math.round(row.avg_availability_ratio * 100) })}%
+                </div>
               </div>
             </div>
           ))}
         </div>
 
         <div className="space-y-2">
-          <div className="text-sm font-medium">{t("capacity.successionRisk", "Succession risk")}</div>
+          <div className="text-sm font-medium">
+            {t("capacity.successionRisk", "Succession risk")}
+          </div>
           {riskRows.length === 0 ? (
             <div className="text-sm text-text-muted">{t("common.noData")}</div>
           ) : (
@@ -103,8 +117,12 @@ export function TeamCapacityBoard({ entityId }: TeamCapacityBoardProps) {
               {riskRows.map((row) => (
                 <div key={row.personnel_id} className="rounded border p-2 text-sm">
                   <div className="font-medium">{row.full_name}</div>
-                  <div className="text-text-muted">{row.position_name ?? "—"} · {row.team_name ?? "—"}</div>
-                  <div className="text-xs">{row.risk_level.toUpperCase()} · {row.reason}</div>
+                  <div className="text-text-muted">
+                    {row.position_name ?? "—"} · {row.team_name ?? "—"}
+                  </div>
+                  <div className="text-xs">
+                    {row.risk_level.toUpperCase()} · {row.reason}
+                  </div>
                 </div>
               ))}
             </div>
@@ -114,5 +132,3 @@ export function TeamCapacityBoard({ entityId }: TeamCapacityBoardProps) {
     </Card>
   );
 }
-
-

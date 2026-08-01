@@ -194,9 +194,7 @@ export function LoginPage() {
               disabled={resettingActivation}
               className="w-full text-sm font-semibold text-primary underline-offset-2 hover:underline disabled:opacity-50"
             >
-              {resettingActivation
-                ? t("activation.activating")
-                : t("activation.changeKey")}
+              {resettingActivation ? t("activation.activating") : t("activation.changeKey")}
             </button>
           </div>
         ) : null}

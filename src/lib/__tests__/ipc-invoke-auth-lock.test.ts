@@ -49,7 +49,8 @@ describe("ipc-invoke auth lock gating", () => {
     mockInvoke
       .mockRejectedValueOnce({
         code: "SESSION_LOCKED",
-        message: "Session locked: Session verrouillée pour inactivité. Veuillez vous déverrouiller.",
+        message:
+          "Session locked: Session verrouillée pour inactivité. Veuillez vous déverrouiller.",
       })
       .mockResolvedValueOnce(fixtures.lockedSession);
 

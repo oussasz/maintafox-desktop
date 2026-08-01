@@ -117,34 +117,31 @@ export function AssetEditForm() {
     formState: { errors, isDirty },
   } = form;
 
-  const loadPhotos = useCallback(
-    async (assetId: number) => {
-      try {
-        const photos = await listAssetPhotos(assetId);
-        const items: EntityFormImageItem[] = await Promise.all(
-          photos.map(async (photo, index) => {
-            let previewUrl: string | null = null;
-            try {
-              const preview = await readAssetPhotoPreview(photo.id);
-              previewUrl = photoDataUrl(preview);
-            } catch {
-              previewUrl = null;
-            }
-            return {
-              id: String(photo.id),
-              name: photo.file_name,
-              previewUrl,
-              isPrimary: index === 0,
-            };
-          }),
-        );
-        setPhotoItems(items);
-      } catch {
-        setPhotoItems([]);
-      }
-    },
-    [],
-  );
+  const loadPhotos = useCallback(async (assetId: number) => {
+    try {
+      const photos = await listAssetPhotos(assetId);
+      const items: EntityFormImageItem[] = await Promise.all(
+        photos.map(async (photo, index) => {
+          let previewUrl: string | null = null;
+          try {
+            const preview = await readAssetPhotoPreview(photo.id);
+            previewUrl = photoDataUrl(preview);
+          } catch {
+            previewUrl = null;
+          }
+          return {
+            id: String(photo.id),
+            name: photo.file_name,
+            previewUrl,
+            isPrimary: index === 0,
+          };
+        }),
+      );
+      setPhotoItems(items);
+    } catch {
+      setPhotoItems([]);
+    }
+  }, []);
 
   useEffect(() => {
     if (!open || !asset) return;
@@ -391,11 +388,7 @@ export function AssetEditForm() {
           </div>
         )}
 
-        <form
-          id={FORM_ID}
-          onSubmit={(e) => void handleSubmit(onSubmit)(e)}
-          className="space-y-6"
-        >
+        <form id={FORM_ID} onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
           <EntityFormSection title={t("createForm.sections.identification")}>
             <FormField name="asset_code" label={t("form.identity.code.label")}>
               <Input id="asset_code" value={asset.asset_code} readOnly className="bg-muted" />
@@ -577,10 +570,7 @@ export function AssetEditForm() {
           </EntityFormSection>
 
           <EntityFormSection title={t("createForm.sections.attachments")}>
-            <EntityFormAttachments
-              items={[]}
-              emptyLabel={t("createForm.attachments.empty")}
-            />
+            <EntityFormAttachments items={[]} emptyLabel={t("createForm.attachments.empty")} />
           </EntityFormSection>
 
           <EntityFormCollapsible

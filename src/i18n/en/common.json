@@ -136,6 +136,17 @@
     "addFilter": "Add…",
     "noMoreOptions": "No more options"
   },
+  "assetPicker": {
+    "searchPlaceholder": "Search assets by code, name, serial, QR…",
+    "recent": "Recently used",
+    "frequent": "Frequently used",
+    "results": "Results",
+    "empty": "No assets found",
+    "emptySuggestions": "No recent assets yet — start typing to search",
+    "scan": "Scan QR",
+    "scanHint": "Focus here and scan with a USB reader, then press Enter",
+    "clear": "Clear selection"
+  },
   "kanban": {
     "emptyColumn": "—"
   },

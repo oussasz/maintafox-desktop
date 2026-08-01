@@ -2252,6 +2252,8 @@ export interface AssetSearchResult {
   status_code: string;
   org_node_id: number | null;
   org_node_name: string | null;
+  /** Root → … → node path for picker rows. */
+  org_path?: string | null;
   parent_asset_id: number | null;
   parent_asset_code: string | null;
   parent_asset_name: string | null;
@@ -2261,6 +2263,18 @@ export interface AssetSearchResult {
   primary_meter_last_read_at: string | null;
   external_id_count: number;
   row_version: number;
+}
+
+export interface AssetPickerSuggestFilters {
+  query?: string | null;
+  include_decommissioned?: boolean;
+  limit?: number | null;
+}
+
+export interface AssetPickerSuggestions {
+  /** `"recent"` | `"frequent"` | `"search"` */
+  mode: string;
+  items: AssetSearchResult[];
 }
 
 export interface AssetSuggestion {

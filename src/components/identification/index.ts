@@ -14,7 +14,4 @@ export type {
   IdentificationLabelMetadataRow,
 } from "./identification-types";
 
-export {
-  IDENTIFICATION_QR_DISPLAY_SIZE,
-  useIdentificationQr,
-} from "./useIdentificationQr";
+export { IDENTIFICATION_QR_DISPLAY_SIZE, useIdentificationQr } from "./useIdentificationQr";

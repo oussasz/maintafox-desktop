@@ -12,11 +12,7 @@ import { useTranslation } from "react-i18next";
 
 import { DataTable } from "@/components/data/DataTable";
 import { Badge } from "@/components/ui/badge";
-import type {
-  ProcurementRequisition,
-  PurchaseOrder,
-  RepairableOrder,
-} from "@shared/ipc-types";
+import type { ProcurementRequisition, PurchaseOrder, RepairableOrder } from "@shared/ipc-types";
 
 const REQ_TERMINAL = new Set(["CLOSED", "REJECTED", "CANCELLED"]);
 const PO_TERMINAL = new Set(["RECEIVED_CLOSED", "CANCELLED"]);
@@ -68,9 +64,7 @@ export function ProcurementArchivePanel({
       {
         accessorKey: "req_number",
         header: t("procurement.requisitions.columns.number"),
-        cell: ({ row }) => (
-          <span className="font-mono text-xs">{row.original.req_number}</span>
-        ),
+        cell: ({ row }) => <span className="font-mono text-xs">{row.original.req_number}</span>,
       },
       {
         accessorKey: "status",
@@ -86,9 +80,7 @@ export function ProcurementArchivePanel({
       {
         accessorKey: "demand_source_type",
         header: t("procurement.requisitions.columns.source"),
-        cell: ({ row }) => (
-          <span className="text-xs">{row.original.demand_source_type}</span>
-        ),
+        cell: ({ row }) => <span className="text-xs">{row.original.demand_source_type}</span>,
       },
       {
         accessorKey: "updated_at",
@@ -106,9 +98,7 @@ export function ProcurementArchivePanel({
       {
         accessorKey: "po_number",
         header: t("procurement.purchaseOrders.columns.number"),
-        cell: ({ row }) => (
-          <span className="font-mono text-xs">{row.original.po_number}</span>
-        ),
+        cell: ({ row }) => <span className="font-mono text-xs">{row.original.po_number}</span>,
       },
       {
         accessorKey: "status",
@@ -146,9 +136,7 @@ export function ProcurementArchivePanel({
       {
         accessorKey: "order_code",
         header: t("procurement.repairables.columns.order"),
-        cell: ({ row }) => (
-          <span className="font-mono text-xs">{row.original.order_code}</span>
-        ),
+        cell: ({ row }) => <span className="font-mono text-xs">{row.original.order_code}</span>,
       },
       {
         accessorKey: "article_code",

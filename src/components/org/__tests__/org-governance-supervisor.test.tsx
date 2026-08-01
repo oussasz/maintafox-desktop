@@ -281,12 +281,8 @@ describe("Supervisor Verification — Sprint S3 Governance UI", () => {
       // User-facing messages (technical codes are not shown as badges)
       expect(screen.getByText("Node type WORKSHOP has no mapping")).toBeInTheDocument();
       expect(screen.getByText("DEPT→TEAM rule removed")).toBeInTheDocument();
-      expect(
-        issuesList.querySelector('[data-issue-code="MISSING_TYPE_CODE"]'),
-      ).toBeTruthy();
-      expect(
-        issuesList.querySelector('[data-issue-code="PARENT_CHILD_DRIFT"]'),
-      ).toBeTruthy();
+      expect(issuesList.querySelector('[data-issue-code="MISSING_TYPE_CODE"]')).toBeTruthy();
+      expect(issuesList.querySelector('[data-issue-code="PARENT_CHILD_DRIFT"]')).toBeTruthy();
     });
 
     it("disables publish and shows repair CTA for UNMAPPED_ACTIVE_NODE_WITH_OPS_REFS", async () => {

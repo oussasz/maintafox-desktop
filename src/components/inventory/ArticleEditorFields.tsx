@@ -10,12 +10,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  calculateInventoryAbc,
-  calculateInventoryXyz,
-} from "@/services/inventory-service";
+import { calculateInventoryAbc, calculateInventoryXyz } from "@/services/inventory-service";
 import { toErrorMessage } from "@/utils/errors";
-import type { ArticleFamily, InventoryArticleInput, LookupValueOption, StockLocation, Warehouse } from "@shared/ipc-types";
+import type {
+  ArticleFamily,
+  InventoryArticleInput,
+  LookupValueOption,
+  StockLocation,
+  Warehouse,
+} from "@shared/ipc-types";
 
 /**
  * Extended form type for article editing — adds Phase 2 procurement maturity fields.
@@ -185,7 +188,9 @@ export function ArticleEditorFields({
         <label className="text-xs text-text-muted">Stocking type</label>
         <Select
           value={String(articleForm.stocking_type_value_id)}
-          onValueChange={(v) => setArticleForm((s) => ({ ...s, stocking_type_value_id: Number(v) }))}
+          onValueChange={(v) =>
+            setArticleForm((s) => ({ ...s, stocking_type_value_id: Number(v) }))
+          }
         >
           <SelectTrigger>
             <SelectValue placeholder="Select stocking type" />
@@ -305,7 +310,9 @@ export function ArticleEditorFields({
           min={0}
           placeholder="0"
           value={articleForm.min_stock}
-          onChange={(e) => setArticleForm((s) => ({ ...s, min_stock: Number(e.target.value || 0) }))}
+          onChange={(e) =>
+            setArticleForm((s) => ({ ...s, min_stock: Number(e.target.value || 0) }))
+          }
         />
       </div>
       <div className="space-y-1">
@@ -345,7 +352,9 @@ export function ArticleEditorFields({
           min={0}
           placeholder="0"
           value={articleForm.safety_stock}
-          onChange={(e) => setArticleForm((s) => ({ ...s, safety_stock: Number(e.target.value || 0) }))}
+          onChange={(e) =>
+            setArticleForm((s) => ({ ...s, safety_stock: Number(e.target.value || 0) }))
+          }
         />
       </div>
 
@@ -384,9 +393,7 @@ export function ArticleEditorFields({
       {/* ── REPLENISHMENT (Phase 2) ── */}
       <SectionTitle>{t("article.sections.replenishment")}</SectionTitle>
       <div className="space-y-1">
-        <label className="text-xs text-text-muted">
-          {t("article.fields.replenishmentPolicy")}
-        </label>
+        <label className="text-xs text-text-muted">{t("article.fields.replenishmentPolicy")}</label>
         <Select
           value={articleForm.replenishment_policy_code ?? "__none__"}
           onValueChange={(v) =>
@@ -554,9 +561,7 @@ export function ArticleEditorFields({
           id="is-critical-spare"
           type="checkbox"
           checked={articleForm.is_critical_spare ?? false}
-          onChange={(e) =>
-            setArticleForm((s) => ({ ...s, is_critical_spare: e.target.checked }))
-          }
+          onChange={(e) => setArticleForm((s) => ({ ...s, is_critical_spare: e.target.checked }))}
         />
         <label htmlFor="is-critical-spare" className="text-sm">
           {t("article.fields.isCriticalSpare")}
