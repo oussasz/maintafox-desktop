@@ -77,7 +77,7 @@ pub async fn get_plan_adherence(
         if let Some(sum_row) = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT COALESCE(SUM(hours_worked), 0) AS h FROM work_order_interveners WHERE work_order_id = ?",
+                "SELECT COALESCE(SUM(hours_worked), 0.0) AS h FROM work_order_interveners WHERE work_order_id = ?",
                 [wo_id.into()],
             ))
             .await?
@@ -116,9 +116,9 @@ pub async fn get_plan_adherence(
                 SUM(CASE WHEN consumption_status = 'not_used' THEN 1 ELSE 0 END) AS unused, \
                 SUM(CASE WHEN origin = 'execution_added' THEN 1 ELSE 0 END) AS extra, \
                 COALESCE(SUM(CASE WHEN origin = 'planned' \
-                  THEN quantity_planned * COALESCE(unit_cost, 0) ELSE 0 END), 0) AS planned_cost, \
+                  THEN quantity_planned * COALESCE(unit_cost, 0.0) ELSE 0.0 END), 0.0) AS planned_cost, \
                 COALESCE(SUM(CASE WHEN consumption_status = 'used' \
-                  THEN COALESCE(quantity_used, 0) * COALESCE(unit_cost, 0) ELSE 0 END), 0) AS used_cost \
+                  THEN COALESCE(quantity_used, 0.0) * COALESCE(unit_cost, 0.0) ELSE 0.0 END), 0.0) AS used_cost \
              FROM work_order_parts WHERE work_order_id = ?",
             [wo_id.into()],
         ))

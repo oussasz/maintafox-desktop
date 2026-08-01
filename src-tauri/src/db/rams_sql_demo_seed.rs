@@ -178,7 +178,7 @@ async fn equipment_needs_simulation(db: &DatabaseConnection, equipment_id: i64) 
     let exp_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT COALESCE(SUM(value), 0) AS t FROM runtime_exposure_logs
+            "SELECT COALESCE(SUM(value), 0.0) AS t FROM runtime_exposure_logs
              WHERE equipment_id = ? AND exposure_type = 'hours'
                AND source_type = ?
                AND recorded_at >= ? AND recorded_at <= ?",

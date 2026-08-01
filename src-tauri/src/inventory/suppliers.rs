@@ -641,8 +641,8 @@ pub async fn get_supplier_scorecard(
                 COUNT(*) AS total_lines,
                 SUM(CASE WHEN grl.accepted_qty >= COALESCE(grl.ordered_qty, pol.ordered_qty) THEN 1 ELSE 0 END) AS accurate_lines,
                 AVG(grl.actual_lead_time_days) AS avg_lead_time,
-                SUM(COALESCE(grl.accepted_qty, 0) + COALESCE(grl.rejected_qty, 0)) AS total_received,
-                SUM(COALESCE(grl.rejected_qty, 0)) AS total_rejected,
+                SUM(COALESCE(grl.accepted_qty, 0.0) + COALESCE(grl.rejected_qty, 0.0)) AS total_received,
+                SUM(COALESCE(grl.rejected_qty, 0.0)) AS total_rejected,
                 SUM(CASE
                       WHEN po.expected_delivery_date IS NOT NULL
                        AND date(COALESCE(gr.received_at, grl.created_at)) <= date(po.expected_delivery_date)

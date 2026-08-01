@@ -2685,9 +2685,9 @@ pub async fn evaluate_reorder(
         "SELECT a.id AS article_id, a.article_code, a.article_name,
                 w.id AS warehouse_id, w.code AS warehouse_code,
                 a.min_stock, a.reorder_point, a.max_stock,
-                COALESCE(SUM(sb.on_hand_qty), 0) AS on_hand_qty,
-                COALESCE(SUM(sb.reserved_qty), 0) AS reserved_qty,
-                COALESCE(SUM(sb.available_qty), 0) AS available_qty
+                COALESCE(SUM(sb.on_hand_qty), 0.0) AS on_hand_qty,
+                COALESCE(SUM(sb.reserved_qty), 0.0) AS reserved_qty,
+                COALESCE(SUM(sb.available_qty), 0.0) AS available_qty
          FROM articles a
          JOIN warehouses w ON w.is_active = 1
          LEFT JOIN stock_balances sb ON sb.article_id = a.id AND sb.warehouse_id = w.id
@@ -2868,7 +2868,7 @@ pub async fn calculate_abc_classification(db: &DatabaseConnection) -> AppResult<
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT t.article_id, COALESCE(SUM(t.quantity), 0) AS total_issued
+            "SELECT t.article_id, COALESCE(SUM(t.quantity), 0.0) AS total_issued
              FROM inventory_transactions t
              WHERE t.movement_type IN ('ISSUE','ADJUST_OUT','GR_ACCEPT')
                AND t.performed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-12 months')
@@ -3169,7 +3169,7 @@ pub async fn get_procurement_alerts(
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT a.id, a.article_code, a.article_name,
-                    COALESCE(SUM(sb.available_qty), 0) AS available_qty, a.min_stock
+                    COALESCE(SUM(sb.available_qty), 0.0) AS available_qty, a.min_stock
              FROM articles a
              JOIN stock_balances sb ON sb.article_id = a.id
              WHERE a.is_active = 1 AND COALESCE(a.is_critical_spare, 0) = 1
@@ -3285,12 +3285,12 @@ pub async fn get_procurement_alerts(
                      JOIN purchase_order_lines pol ON pol.id = grl.po_line_id
                      JOIN purchase_orders po ON po.id = pol.purchase_order_id
                      WHERE po.supplier_id = s.id) AS avg_lead_time,
-                    (SELECT SUM(COALESCE(grl.accepted_qty, 0) + COALESCE(grl.rejected_qty, 0))
+                    (SELECT SUM(COALESCE(grl.accepted_qty, 0.0) + COALESCE(grl.rejected_qty, 0.0))
                      FROM goods_receipt_lines grl
                      JOIN purchase_order_lines pol ON pol.id = grl.po_line_id
                      JOIN purchase_orders po ON po.id = pol.purchase_order_id
                      WHERE po.supplier_id = s.id) AS total_received,
-                    (SELECT SUM(COALESCE(grl.rejected_qty, 0))
+                    (SELECT SUM(COALESCE(grl.rejected_qty, 0.0))
                      FROM goods_receipt_lines grl
                      JOIN purchase_order_lines pol ON pol.id = grl.po_line_id
                      JOIN purchase_orders po ON po.id = pol.purchase_order_id

@@ -120,10 +120,10 @@ pub async fn get_cost_summary(
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT \
-                    COALESCE((SELECT SUM(hours_worked * COALESCE(hourly_rate, 0)) \
-                              FROM work_order_interveners WHERE work_order_id = ?), 0) AS live_labor, \
-                    COALESCE((SELECT SUM(quantity_used * COALESCE(unit_cost, 0)) \
-                              FROM work_order_parts WHERE work_order_id = ?), 0) AS live_parts",
+                    COALESCE((SELECT SUM(hours_worked * COALESCE(hourly_rate, 0.0)) \
+                              FROM work_order_interveners WHERE work_order_id = ?), 0.0) AS live_labor, \
+                    COALESCE((SELECT SUM(quantity_used * COALESCE(unit_cost, 0.0)) \
+                              FROM work_order_parts WHERE work_order_id = ?), 0.0) AS live_parts",
                 [wo_id.into(), wo_id.into()],
             ))
             .await?;
