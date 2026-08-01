@@ -27,8 +27,7 @@ pub async fn init_db(db_path: &str) -> AppResult<DatabaseConnection> {
         .idle_timeout(Duration::from_secs(120))
         .sqlx_logging(
             std::env::var("MAINTAFOX_SQL_LOG")
-                .map(|v| v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false),
+                .is_ok_and(|v| v.eq_ignore_ascii_case("true")),
         );
 
     let db = Database::connect(opts).await?;
