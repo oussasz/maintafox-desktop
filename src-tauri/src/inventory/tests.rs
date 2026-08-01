@@ -700,6 +700,503 @@ async fn repairable_flow_blocks_invalid_close_and_posts_events() {
     assert!(movements.iter().any(|t| t.movement_type == "REPAIRABLE_RETURN"));
 }
 
+async fn on_hand_at(db: &DatabaseConnection, article_id: i64, location_id: i64) -> f64 {
+    let balances = queries::list_stock_balances(
+        db,
+        InventoryStockFilter {
+            article_id: Some(article_id),
+            warehouse_id: None,
+            low_stock_only: None,
+        },
+    )
+    .await
+    .expect("list balances");
+    balances
+        .iter()
+        .find(|b| b.location_id == location_id)
+        .map(|b| b.on_hand_qty)
+        .unwrap_or(0.0)
+}
+
+async fn repairable_movements(
+    db: &DatabaseConnection,
+    article_id: i64,
+) -> Vec<crate::inventory::domain::InventoryTransaction> {
+    queries::list_transactions(
+        db,
+        crate::inventory::domain::InventoryTransactionFilter {
+            article_id: Some(article_id),
+            warehouse_id: None,
+            source_type: Some("REPAIRABLE_ORDER".to_string()),
+            source_id: None,
+            limit: Some(50),
+        },
+    )
+    .await
+    .expect("movement list")
+}
+
+#[tokio::test]
+async fn repairable_cancel_from_requested_is_balance_neutral() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-REP-CXL-REQ").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 5.0,
+            reason_code: Some("seed".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed");
+    let before = on_hand_at(&db, article_id, location_id).await;
+
+    let order = procurement::create_repairable_order(
+        &db,
+        CreateRepairableOrderInput {
+            article_id,
+            quantity: 2.0,
+            source_location_id: location_id,
+            return_location_id: Some(location_id),
+            linked_po_line_id: None,
+            linked_reservation_id: None,
+            reason: Some("cancel before release".to_string()),
+            serial_number: None,
+            vendor_supplier_id: None,
+            actor_id: None,
+        },
+    )
+    .await
+    .expect("create");
+
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "CANCELLED".to_string(),
+            reason: Some("not needed".to_string()),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("cancel from requested");
+    assert_eq!(order.status, "CANCELLED");
+    assert!((on_hand_at(&db, article_id, location_id).await - before).abs() < f64::EPSILON);
+    let movements = repairable_movements(&db, article_id).await;
+    assert!(!movements.iter().any(|t| t.movement_type == "REPAIRABLE_CANCEL_RESTORE"));
+    assert!(!movements.iter().any(|t| t.movement_type == "REPAIRABLE_RELEASE"));
+}
+
+#[tokio::test]
+async fn repairable_cancel_from_released_restores_source_stock() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-REP-CXL-REL").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 5.0,
+            reason_code: Some("seed".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed");
+    let before = on_hand_at(&db, article_id, location_id).await;
+
+    let order = procurement::create_repairable_order(
+        &db,
+        CreateRepairableOrderInput {
+            article_id,
+            quantity: 2.0,
+            source_location_id: location_id,
+            return_location_id: Some(location_id),
+            linked_po_line_id: None,
+            linked_reservation_id: None,
+            reason: Some("will cancel after release".to_string()),
+            serial_number: None,
+            vendor_supplier_id: None,
+            actor_id: None,
+        },
+    )
+    .await
+    .expect("create");
+
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "RELEASED".to_string(),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("release");
+    assert!((on_hand_at(&db, article_id, location_id).await - (before - 2.0)).abs() < f64::EPSILON);
+
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "CANCELLED".to_string(),
+            reason: Some("abort after release".to_string()),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("cancel from released");
+    assert_eq!(order.status, "CANCELLED");
+    assert!((on_hand_at(&db, article_id, location_id).await - before).abs() < f64::EPSILON);
+    let movements = repairable_movements(&db, article_id).await;
+    assert!(movements.iter().any(|t| t.movement_type == "REPAIRABLE_RELEASE"));
+    assert!(movements.iter().any(|t| t.movement_type == "REPAIRABLE_CANCEL_RESTORE"));
+}
+
+#[tokio::test]
+async fn repairable_scrap_from_sent_is_balance_neutral() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-REP-SCRAP-SENT").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 5.0,
+            reason_code: Some("seed".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed");
+    let before = on_hand_at(&db, article_id, location_id).await;
+
+    let order = procurement::create_repairable_order(
+        &db,
+        CreateRepairableOrderInput {
+            article_id,
+            quantity: 2.0,
+            source_location_id: location_id,
+            return_location_id: Some(location_id),
+            linked_po_line_id: None,
+            linked_reservation_id: None,
+            reason: Some("scrap at vendor".to_string()),
+            serial_number: None,
+            vendor_supplier_id: None,
+            actor_id: None,
+        },
+    )
+    .await
+    .expect("create");
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "RELEASED".to_string(),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("release");
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "SENT_FOR_REPAIR".to_string(),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("sent");
+    let after_sent = on_hand_at(&db, article_id, location_id).await;
+    assert!((after_sent - (before - 2.0)).abs() < f64::EPSILON);
+
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "SCRAPPED".to_string(),
+            reason: Some("beyond repair".to_string()),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("scrap from sent");
+    assert_eq!(order.status, "SCRAPPED");
+    assert!((on_hand_at(&db, article_id, location_id).await - after_sent).abs() < f64::EPSILON);
+    let movements = repairable_movements(&db, article_id).await;
+    assert!(!movements.iter().any(|t| t.movement_type == "REPAIRABLE_SCRAP_WRITEOFF"));
+}
+
+#[tokio::test]
+async fn repairable_scrap_from_returned_writes_off_return_stock() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-REP-SCRAP-RET").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 5.0,
+            reason_code: Some("seed".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed");
+    let before = on_hand_at(&db, article_id, location_id).await;
+
+    let order = procurement::create_repairable_order(
+        &db,
+        CreateRepairableOrderInput {
+            article_id,
+            quantity: 2.0,
+            source_location_id: location_id,
+            return_location_id: Some(location_id),
+            linked_po_line_id: None,
+            linked_reservation_id: None,
+            reason: Some("scrap after return".to_string()),
+            serial_number: None,
+            vendor_supplier_id: None,
+            actor_id: None,
+        },
+    )
+    .await
+    .expect("create");
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "RELEASED".to_string(),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("release");
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "SENT_FOR_REPAIR".to_string(),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("sent");
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "RETURNED_FROM_REPAIR".to_string(),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("return");
+    assert!((on_hand_at(&db, article_id, location_id).await - before).abs() < f64::EPSILON);
+
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "SCRAPPED".to_string(),
+            reason: Some("failed inspection".to_string()),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("scrap from returned");
+    assert_eq!(order.status, "SCRAPPED");
+    assert!((on_hand_at(&db, article_id, location_id).await - (before - 2.0)).abs() < f64::EPSILON);
+    let movements = repairable_movements(&db, article_id).await;
+    assert!(movements.iter().any(|t| t.movement_type == "REPAIRABLE_SCRAP_WRITEOFF"));
+}
+
+#[tokio::test]
+async fn repairable_scrap_from_returned_rejects_when_stock_short() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-REP-SCRAP-SHORT").await;
+    let location_id = main_location_id(&db).await;
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: 2.0,
+            reason_code: Some("seed".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("seed");
+
+    let order = procurement::create_repairable_order(
+        &db,
+        CreateRepairableOrderInput {
+            article_id,
+            quantity: 2.0,
+            source_location_id: location_id,
+            return_location_id: Some(location_id),
+            linked_po_line_id: None,
+            linked_reservation_id: None,
+            reason: Some("scrap short".to_string()),
+            serial_number: None,
+            vendor_supplier_id: None,
+            actor_id: None,
+        },
+    )
+    .await
+    .expect("create");
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "RELEASED".to_string(),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("release");
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "SENT_FOR_REPAIR".to_string(),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("sent");
+    let order = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "RETURNED_FROM_REPAIR".to_string(),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect("return");
+
+    // Drain stock so scrap cannot write off.
+    queries::adjust_stock(
+        &db,
+        InventoryStockAdjustInput {
+            article_id,
+            location_id,
+            delta_qty: -2.0,
+            reason_code: Some("drain".to_string()),
+            notes: None,
+            source_ref: None,
+        },
+    )
+    .await
+    .expect("drain");
+
+    let err = procurement::transition_repairable_order(
+        &db,
+        TransitionRepairableOrderInput {
+            next_status: "SCRAPPED".to_string(),
+            reason: Some("should fail".to_string()),
+            ..repairable_transition(order.id, order.row_version, location_id)
+        },
+    )
+    .await
+    .expect_err("scrap must reject when on-hand is short");
+    assert!(matches!(err, AppError::ValidationFailed(_)));
+    assert_eq!(
+        procurement::get_repairable_order(&db, order.id)
+            .await
+            .expect("reload")
+            .status,
+        "RETURNED_FROM_REPAIR",
+        "failed scrap must leave status unchanged"
+    );
+}
+
+#[tokio::test]
+async fn requisition_reject_requires_reason_and_is_terminal() {
+    let db = setup_db().await;
+    let article_id = create_test_article(&db, "INV-REQ-REJ").await;
+    let location_id = main_location_id(&db).await;
+    let req = procurement::create_procurement_requisition(
+        &db,
+        CreateProcurementRequisitionInput {
+            article_id,
+            preferred_location_id: Some(location_id),
+            requested_qty: 1.0,
+            demand_source_type: "REORDER".to_string(),
+            demand_source_id: None,
+            demand_source_ref: None,
+            demand_source_line_id: None,
+            source_reservation_id: None,
+            source_reorder_trigger: None,
+            purchase_priority: Some("NORMAL".to_string()),
+            reason: Some("need stock".to_string()),
+            actor_id: None,
+        },
+    )
+    .await
+    .expect("create req");
+    let req = procurement::transition_procurement_requisition(
+        &db,
+        TransitionProcurementRequisitionInput {
+            requisition_id: req.id,
+            expected_row_version: req.row_version,
+            next_status: "SUBMITTED".to_string(),
+            reason: None,
+            note: None,
+            actor_id: None,
+        },
+    )
+    .await
+    .expect("submit");
+
+    let missing = procurement::transition_procurement_requisition(
+        &db,
+        TransitionProcurementRequisitionInput {
+            requisition_id: req.id,
+            expected_row_version: req.row_version,
+            next_status: "REJECTED".to_string(),
+            reason: Some("   ".to_string()),
+            note: None,
+            actor_id: None,
+        },
+    )
+    .await
+    .expect_err("blank reason must fail");
+    assert!(matches!(missing, AppError::ValidationFailed(_)));
+
+    let rejected = procurement::transition_procurement_requisition(
+        &db,
+        TransitionProcurementRequisitionInput {
+            requisition_id: req.id,
+            expected_row_version: req.row_version,
+            next_status: "REJECTED".to_string(),
+            reason: Some("duplicate request".to_string()),
+            note: None,
+            actor_id: None,
+        },
+    )
+    .await
+    .expect("reject");
+    assert_eq!(rejected.status, "REJECTED");
+
+    let reopen = procurement::transition_procurement_requisition(
+        &db,
+        TransitionProcurementRequisitionInput {
+            requisition_id: rejected.id,
+            expected_row_version: rejected.row_version,
+            next_status: "APPROVED".to_string(),
+            reason: None,
+            note: None,
+            actor_id: None,
+        },
+    )
+    .await
+    .expect_err("REJECTED is terminal");
+    assert!(matches!(reopen, AppError::ValidationFailed(_)));
+}
+
 #[tokio::test]
 async fn count_session_requires_reviewer_evidence_for_posting() {
     let db = setup_db().await;

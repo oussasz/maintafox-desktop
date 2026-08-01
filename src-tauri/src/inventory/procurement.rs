@@ -433,14 +433,26 @@ pub async fn transition_procurement_requisition(
         &input.next_status,
         &[
             ("DRAFT", &["SUBMITTED", "CANCELLED"]),
-            ("SUBMITTED", &["APPROVED", "CANCELLED"]),
+            ("SUBMITTED", &["APPROVED", "REJECTED", "CANCELLED"]),
             ("APPROVED", &["CLOSED", "CANCELLED"]),
             ("PARTIALLY_RECEIVED", &["CLOSED", "CANCELLED"]),
             ("CLOSED", &[]),
             ("CANCELLED", &[]),
+            ("REJECTED", &[]),
         ],
         "requisition",
     )?;
+
+    // Rejection is a first-class approval outcome; reason is mandatory so audit/KPIs
+    // can distinguish it from requester/system CANCELLED.
+    if input.next_status == "REJECTED" {
+        let reason = input.reason.as_deref().map(str::trim).unwrap_or("");
+        if reason.is_empty() {
+            return Err(AppError::ValidationFailed(vec![
+                "Rejection reason is required.".to_string(),
+            ]));
+        }
+    }
 
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(
@@ -1199,6 +1211,80 @@ pub async fn transition_repairable_order(
             warehouse_id,
             target_location_id,
             "REPAIRABLE_RETURN",
+            quantity,
+            "REPAIRABLE_ORDER",
+            Some(input.order_id),
+            None,
+            input.reason.as_deref(),
+            input.actor_id,
+        )
+        .await?;
+    }
+
+    // Cancel / scrap stock legs branch on *current* status: the same next_status has
+    // opposite inventory meaning depending on how far the part has moved.
+    // - CANCELLED from REQUESTED: nothing was issued → no leg
+    // - CANCELLED from RELEASED: restore quantity to source
+    // - SCRAPPED from SENT_FOR_REPAIR: already written off at release → no leg
+    // - SCRAPPED from RETURNED_FROM_REPAIR: write off from return location
+    if input.next_status == "CANCELLED" && current_status == "RELEASED" {
+        let warehouse_id = ensure_location_active(&tx, source_location_id).await?;
+        let before = get_balance_snapshot(&tx, article_id, warehouse_id, source_location_id).await?;
+        upsert_balance(
+            &tx,
+            article_id,
+            warehouse_id,
+            source_location_id,
+            before.on_hand + quantity,
+            before.reserved,
+        )
+        .await?;
+        append_stock_event(
+            &tx,
+            article_id,
+            warehouse_id,
+            source_location_id,
+            "REPAIRABLE_CANCEL_RESTORE",
+            quantity,
+            "REPAIRABLE_ORDER",
+            Some(input.order_id),
+            None,
+            input.reason.as_deref(),
+            input.actor_id,
+        )
+        .await?;
+    }
+    if input.next_status == "SCRAPPED" && current_status == "RETURNED_FROM_REPAIR" {
+        let target_location_id = input
+            .return_location_id
+            .or(current_return_location_id)
+            .ok_or_else(|| {
+                AppError::ValidationFailed(vec![
+                    "return_location_id is required to scrap a returned repairable.".to_string(),
+                ])
+            })?;
+        let warehouse_id = ensure_location_active(&tx, target_location_id).await?;
+        let before = get_balance_snapshot(&tx, article_id, warehouse_id, target_location_id).await?;
+        if before.on_hand < quantity {
+            return Err(AppError::ValidationFailed(vec![
+                "Insufficient on-hand stock at return location to scrap repairable.".to_string(),
+            ]));
+        }
+        upsert_balance(
+            &tx,
+            article_id,
+            warehouse_id,
+            target_location_id,
+            before.on_hand - quantity,
+            before.reserved,
+        )
+        .await?;
+        append_stock_event(
+            &tx,
+            article_id,
+            warehouse_id,
+            target_location_id,
+            "REPAIRABLE_SCRAP_WRITEOFF",
             quantity,
             "REPAIRABLE_ORDER",
             Some(input.order_id),

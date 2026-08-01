@@ -157,8 +157,216 @@
       "cost": "Coût estimé",
       "surplusFrom": "Surplus depuis",
       "transferHint": "Préférer un transfert interne",
-      "createPo": "Créer BC",
+      "createRequisition": "Créer une demande",
       "creating": "Création…"
+    },
+    "statuses": {
+      "DRAFT": "Brouillon",
+      "SUBMITTED": "Soumise",
+      "APPROVED": "Approuvée",
+      "PARTIALLY_RECEIVED": "Partiellement réceptionnée",
+      "RECEIVED_CLOSED": "Réception terminée",
+      "CLOSED": "Clôturée",
+      "CANCELLED": "Annulée",
+      "REJECTED": "Rejetée"
+    },
+    "repairableStatuses": {
+      "REQUESTED": "Demandée",
+      "RELEASED": "Sortie magasin",
+      "SENT_FOR_REPAIR": "Envoyée en réparation",
+      "RETURNED_FROM_REPAIR": "Reçue de réparation",
+      "CLOSED": "Clôturée",
+      "SCRAPPED": "Rebut",
+      "CANCELLED": "Annulée"
+    },
+    "postingStates": {
+      "PENDING_POSTING": "À publier",
+      "POSTED": "Publié",
+      "POSTING_FAILED": "Publication en erreur",
+      "RECONCILED": "Rapproché"
+    },
+    "requisitions": {
+      "searchPlaceholder": "Rechercher un numéro de demande ou une origine",
+      "empty": "Aucune demande d'achat.",
+      "emptyDescription": "Créez une demande pour démarrer le flux d'achat.",
+      "kanbanEmpty": "Aucune demande",
+      "columns": {
+        "number": "Demande",
+        "status": "Statut",
+        "source": "Origine",
+        "updated": "Mise à jour",
+        "actions": "Actions"
+      },
+      "filters": {
+        "status": "Statut"
+      },
+      "actions": {
+        "open": "Ouvrir",
+        "submit": "Soumettre",
+        "approve": "Approuver",
+        "reject": "Rejeter",
+        "cancel": "Annuler",
+        "close": "Clôturer",
+        "menu": "Actions de la ligne"
+      },
+      "reject": {
+        "title": "Rejeter la demande",
+        "hint": "Le rejet est définitif et reste distinct de l'annulation pour l'audit.",
+        "reason": "Motif du rejet",
+        "reasonPlaceholder": "Expliquez le motif du rejet",
+        "confirm": "Rejeter la demande"
+      },
+      "history": {
+        "title": "Historique d'approbation",
+        "empty": "Aucune transition enregistrée.",
+        "loading": "Chargement de l'historique…"
+      }
+    },
+    "purchaseOrders": {
+      "create": "Créer un bon de commande",
+      "searchPlaceholder": "Rechercher un numéro de BC ou un fournisseur",
+      "empty": "Aucun bon de commande.",
+      "emptyDescription": "Créez un bon de commande depuis une demande approuvée.",
+      "kanbanEmpty": "Aucun bon de commande",
+      "columns": {
+        "number": "BC",
+        "status": "Statut",
+        "supplier": "Fournisseur",
+        "updated": "Mise à jour",
+        "actions": "Actions"
+      },
+      "filters": {
+        "status": "Statut",
+        "supplier": "Fournisseur"
+      },
+      "actions": {
+        "open": "Ouvrir",
+        "submit": "Soumettre",
+        "approve": "Approuver",
+        "receive": "Réceptionner",
+        "cancel": "Annuler",
+        "menu": "Actions de la ligne"
+      }
+    },
+    "repairables": {
+      "title": "Réparables",
+      "searchPlaceholder": "Rechercher un ordre, un article ou un numéro de série",
+      "empty": "Aucun ordre de réparation.",
+      "emptyDescription": "Envoyez une pièce réparable chez un prestataire pour suivre son cycle de réparation.",
+      "create": "Nouvel ordre de réparation",
+      "columns": {
+        "order": "Ordre",
+        "article": "Article",
+        "source": "Source",
+        "vendor": "Prestataire",
+        "status": "Statut",
+        "updated": "Mise à jour",
+        "actions": "Actions"
+      },
+      "filters": {
+        "status": "Statut",
+        "vendor": "Prestataire"
+      },
+      "actions": {
+        "open": "Ouvrir",
+        "release": "Sortir du magasin",
+        "send": "Envoyer en réparation",
+        "receiveBack": "Réceptionner",
+        "close": "Clôturer l'ordre",
+        "scrap": "Mettre au rebut",
+        "cancel": "Annuler",
+        "menu": "Actions de la ligne"
+      },
+      "form": {
+        "title": "Nouvel ordre de réparation",
+        "article": "Article",
+        "selectArticle": "Sélectionner un article",
+        "sourceLocation": "Emplacement source",
+        "selectSource": "Sélectionner la source",
+        "returnLocation": "Emplacement de retour",
+        "noReturnLocation": "Aucun emplacement de retour",
+        "quantity": "Quantité",
+        "reason": "Motif",
+        "serial": "Numéro de série",
+        "vendor": "Prestataire",
+        "noVendor": "Aucun prestataire",
+        "balancesTitle": "Stocks de l'article sélectionné",
+        "balancesEmpty": "Aucun stock disponible pour cet article.",
+        "balanceRow": "en stock {{onHand}}, réservé {{reserved}}, disponible {{available}}",
+        "cancel": "Annuler",
+        "submit": "Créer l'ordre de réparation"
+      }
+    },
+    "repairableAction": {
+      "dispatch": {
+        "title": "Envoyer en réparation",
+        "hint": "Renseignez le numéro de série et le prestataire pour assurer la traçabilité.",
+        "confirm": "Envoyer en réparation"
+      },
+      "scrap": {
+        "title": "Mettre au rebut",
+        "hint": "La mise au rebut est définitive et sort la quantité du stock si la pièce est revenue en magasin.",
+        "confirm": "Mettre au rebut"
+      },
+      "cancel": {
+        "title": "Annuler l'ordre de réparation",
+        "hint": "L'annulation restitue la quantité sortie à l'emplacement source.",
+        "confirm": "Annuler l'ordre"
+      },
+      "receive": {
+        "title": "Réceptionner la pièce réparée",
+        "hint": "Choisissez l'emplacement de rangement de la pièce réparée.",
+        "confirm": "Réceptionner"
+      },
+      "fields": {
+        "serial": "Numéro de série",
+        "vendor": "Prestataire",
+        "noVendor": "Aucun prestataire",
+        "reason": "Motif",
+        "reasonPlaceholder": "Expliquez la décision",
+        "returnLocation": "Emplacement de retour",
+        "selectLocation": "Sélectionner un emplacement"
+      },
+      "close": "Fermer"
+    },
+    "goodsReceipts": {
+      "title": "Réceptions",
+      "searchPlaceholder": "Rechercher une réception ou un numéro de BC",
+      "empty": "Aucune réception.",
+      "emptyDescription": "Enregistrez une réception depuis un bon de commande approuvé.",
+      "columns": {
+        "number": "Réception",
+        "po": "Bon de commande",
+        "status": "Statut",
+        "posting": "Publication",
+        "receivedAt": "Réceptionné"
+      },
+      "actions": {
+        "openPo": "Ouvrir le bon de commande",
+        "viewLines": "Voir les lignes",
+        "menu": "Actions de la ligne"
+      },
+      "lines": {
+        "title": "Lignes de réception",
+        "empty": "Aucune ligne sur cette réception.",
+        "loading": "Chargement des lignes…",
+        "columns": {
+          "article": "Article",
+          "location": "Emplacement",
+          "received": "Réceptionné",
+          "accepted": "Accepté",
+          "rejected": "Refusé",
+          "reason": "Motif du refus"
+        }
+      }
+    },
+    "posting": {
+      "title": "Publication ERP",
+      "state": "Statut de publication",
+      "error": "Erreur de publication",
+      "errorPlaceholder": "Détail de l'erreur (optionnel)",
+      "apply": "Mettre à jour la publication",
+      "hint": "Rapprochez le statut de publication ERP après un rejeu de l'intégration sortante."
     },
     "suppliers": {
       "title": "Fournisseurs",
@@ -327,6 +535,31 @@
       }
     },
     "receive": {
+      "title": "Enregistrer une réception",
+      "hint": "Saisissez les quantités reçues par ligne ouverte, puis validez la réception en une seule opération.",
+      "purchaseOrder": "Bon de commande",
+      "selectPo": "Sélectionner un bon de commande",
+      "noPo": "Aucun bon de commande sélectionné.",
+      "loadingLines": "Chargement des lignes du bon de commande…",
+      "linesEmpty": "Ce bon de commande n'a aucune ligne ouverte à réceptionner.",
+      "columns": {
+        "article": "Article",
+        "remaining": "Restant",
+        "location": "Emplacement",
+        "receivedQty": "Reçu",
+        "rejectedQty": "Refusé",
+        "accepted": "Accepté",
+        "rejectionReason": "Motif du refus"
+      },
+      "selectLocation": "Sélectionner un emplacement",
+      "cancel": "Annuler",
+      "post": "Valider la réception",
+      "errors": {
+        "noLines": "Saisissez une quantité reçue sur au moins une ligne.",
+        "location": "Sélectionnez un emplacement pour chaque ligne réceptionnée.",
+        "overRemaining": "La quantité reçue ne peut pas dépasser la quantité restante.",
+        "rejectedExceeds": "La quantité refusée ne peut pas dépasser la quantité reçue."
+      },
       "fulfillmentAction": "Action d'affectation",
       "fulfillmentValues": {
         "STOCK_ONLY": "Stock uniquement",
@@ -355,6 +588,7 @@
         "supplier": "Fournisseur",
         "status": "Statut",
         "posting": "Comptabilisation",
+        "requisition": "Demande d'origine",
         "createdAt": "Créé le",
         "updatedAt": "Mis à jour",
         "orderedAt": "Commandé le",
@@ -382,7 +616,8 @@
       },
       "receipts": {
         "empty": "Aucune réception pour l'instant.",
-        "receivedAt": "Reçu le"
+        "receivedAt": "Reçu le",
+        "open": "Ouvrir le détail de la réception"
       },
       "documents": {
         "empty": "Aucun lien documentaire.",
@@ -398,6 +633,7 @@
         "submit": "Soumettre",
         "approve": "Approuver",
         "cancel": "Annuler",
+        "receive": "Réceptionner",
         "print": "Imprimer"
       },
       "print": {
@@ -479,7 +715,9 @@
         "release": "Libérer",
         "send": "Envoyer",
         "receiveBack": "Réceptionner",
-        "closeOrder": "Clôturer"
+        "closeOrder": "Clôturer",
+        "scrap": "Mettre au rebut",
+        "cancel": "Annuler l'ordre"
       }
     }
   },

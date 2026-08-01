@@ -25,6 +25,9 @@ import { RepairableDetailDialog } from "@/components/inventory/RepairableDetailD
 import { SupplierArticleSourcesSection } from "@/components/inventory/SupplierArticleSourcesSection";
 import { SupplierContactsSection } from "@/components/inventory/SupplierContactsSection";
 import { riskBadgeVariant } from "@/components/inventory/supplier-sourcing";
+import { KanbanBoard } from "@/components/kanban";
+import type { KanbanCard, KanbanColumn, KanbanTone } from "@/components/kanban";
+import { Timeline } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -171,6 +174,17 @@ const PO_KANBAN_STATUSES = [
   "CANCELLED",
 ] as const;
 
+const PROCUREMENT_STATUS_TONE: Record<string, KanbanTone> = {
+  DRAFT: "draft",
+  SUBMITTED: "planning",
+  APPROVED: "success",
+  PARTIALLY_RECEIVED: "executing",
+  RECEIVED_CLOSED: "closed",
+  CLOSED: "closed",
+  REJECTED: "cancelled",
+  CANCELLED: "cancelled",
+};
+
 const REPAIRABLE_STATUSES = [
   "REQUESTED",
   "RELEASED",
@@ -251,7 +265,7 @@ export const ProcurementRepairablePanel = forwardRef<
   ProcurementRepairablePanelProps
 >(function ProcurementRepairablePanel(props, ref) {
   const { viewMode: viewModeProp, onViewModeChange, onOpenArticle } = props;
-  const { t } = useTranslation("inventory");
+  const { t } = useTranslation(["inventory", "common"]);
   const { can } = usePermissions();
   const canProcure = can(P.INV_PROCURE);
 
@@ -1228,6 +1242,55 @@ export const ProcurementRepairablePanel = forwardRef<
     });
   }, [purchaseOrders, poSearch, poStatusFilter, poSupplierFilter]);
 
+  const reqKanbanColumns = useMemo<KanbanColumn[]>(
+    () =>
+      REQ_KANBAN_STATUSES.map((status) => ({
+        id: status,
+        label: t(`procurement.statuses.${status}`, { defaultValue: status }),
+        tone: PROCUREMENT_STATUS_TONE[status] ?? "muted",
+      })),
+    [t],
+  );
+
+  const reqKanbanCards = useMemo<KanbanCard[]>(
+    () =>
+      filteredRequisitions.map((req) => ({
+        id: String(req.id),
+        columnId: req.status,
+        code: req.req_number,
+        title: req.demand_source_type,
+        ...(req.purchase_priority
+          ? { badges: [{ label: req.purchase_priority, tone: "warning" as const }] }
+          : {}),
+        selected: selectedReqId === req.id,
+      })),
+    [filteredRequisitions, selectedReqId],
+  );
+
+  const poKanbanColumns = useMemo<KanbanColumn[]>(
+    () =>
+      PO_KANBAN_STATUSES.map((status) => ({
+        id: status,
+        label: t(`procurement.statuses.${status}`, { defaultValue: status }),
+        tone: PROCUREMENT_STATUS_TONE[status] ?? "muted",
+      })),
+    [t],
+  );
+
+  const poKanbanCards = useMemo<KanbanCard[]>(
+    () =>
+      filteredPurchaseOrders.map((po) => ({
+        id: String(po.id),
+        columnId: po.status,
+        code: po.po_number,
+        title:
+          po.supplier_company_name ??
+          t("procurement.purchaseOrders.noSupplier", { defaultValue: "No supplier" }),
+        selected: selectedPoId === po.id,
+      })),
+    [filteredPurchaseOrders, selectedPoId, t],
+  );
+
   const filteredRepairables = useMemo(() => {
     const term = repairSearch.trim().toLowerCase();
     return repairables.filter((row) => {
@@ -1684,49 +1747,16 @@ export const ProcurementRepairablePanel = forwardRef<
                 ) : null}
               </div>
               {reqView === "kanban" ? (
-                <div className="mb-3 flex gap-3 overflow-x-auto pb-2">
-                  {REQ_KANBAN_STATUSES.map((status) => {
-                    const rows = filteredRequisitions.filter((row) => row.status === status);
-                    return (
-                      <div
-                        key={status}
-                        className="min-w-[240px] flex-shrink-0 rounded-md border bg-muted/30 p-2"
-                      >
-                        <div className="mb-2 flex items-center justify-between text-xs font-semibold">
-                          <span>{status}</span>
-                          <span className="rounded bg-background px-1.5 py-0.5">{rows.length}</span>
-                        </div>
-                        <div className="space-y-2">
-                          {rows.map((req) => (
-                            <button
-                              key={req.id}
-                              type="button"
-                              className={cn(
-                                "w-full rounded border bg-background p-2 text-left text-xs shadow-sm hover:bg-accent",
-                                selectedReqId === req.id ? "ring-2 ring-primary" : "",
-                              )}
-                              onClick={() => openRequisitionDetails(req.id)}
-                            >
-                              <div className="font-mono">{req.req_number}</div>
-                              {req.purchase_priority ? (
-                                <div className="mt-0.5 text-[10px] font-medium text-status-warning">
-                                  {req.purchase_priority}
-                                </div>
-                              ) : null}
-                              <div className="mt-0.5 text-[11px] text-text-muted">
-                                {req.demand_source_type}
-                              </div>
-                            </button>
-                          ))}
-                          {rows.length === 0 ? (
-                            <div className="rounded border border-dashed bg-background/50 px-2 py-3 text-center text-[11px] text-text-muted">
-                              {t("procurement.requisitions.kanbanEmpty")}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="mb-3">
+                  <KanbanBoard
+                    columns={reqKanbanColumns}
+                    cards={reqKanbanCards}
+                    onCardClick={(card) => openRequisitionDetails(Number(card.id))}
+                    emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
+                    aria-label={t("procurement.requisitions.title", {
+                      defaultValue: "Requisitions board",
+                    })}
+                  />
                 </div>
               ) : null}
               {reqView === "list" ? (
@@ -1772,44 +1802,16 @@ export const ProcurementRepairablePanel = forwardRef<
                 />
               </div>
               {reqView === "kanban" ? (
-                <div className="mb-3 flex gap-3 overflow-x-auto pb-2">
-                  {PO_KANBAN_STATUSES.map((status) => {
-                    const rows = filteredPurchaseOrders.filter((row) => row.status === status);
-                    return (
-                      <div
-                        key={status}
-                        className="min-w-[240px] flex-shrink-0 rounded-md border bg-muted/30 p-2"
-                      >
-                        <div className="mb-2 flex items-center justify-between text-xs font-semibold">
-                          <span>{status}</span>
-                          <span className="rounded bg-background px-1.5 py-0.5">{rows.length}</span>
-                        </div>
-                        <div className="space-y-2">
-                          {rows.map((po) => (
-                            <button
-                              key={po.id}
-                              type="button"
-                              className={cn(
-                                "w-full rounded border bg-background p-2 text-left text-xs shadow-sm hover:bg-accent",
-                                selectedPoId === po.id ? "ring-2 ring-primary" : "",
-                              )}
-                              onClick={() => openPoDetails(po.id)}
-                            >
-                              <div className="font-mono">{po.po_number}</div>
-                              <div className="mt-1 text-[11px] text-text-muted">
-                                {po.supplier_company_name ?? "No supplier"}
-                              </div>
-                            </button>
-                          ))}
-                          {rows.length === 0 ? (
-                            <div className="rounded border border-dashed bg-background/50 px-2 py-3 text-center text-[11px] text-text-muted">
-                              {t("procurement.purchaseOrders.kanbanEmpty")}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="mb-3">
+                  <KanbanBoard
+                    columns={poKanbanColumns}
+                    cards={poKanbanCards}
+                    onCardClick={(card) => openPoDetails(Number(card.id))}
+                    emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
+                    aria-label={t("procurement.purchaseOrders.title", {
+                      defaultValue: "Purchase orders board",
+                    })}
+                  />
                 </div>
               ) : !loading && purchaseOrders.length === 0 ? (
                 <EmptyState
@@ -2549,31 +2551,30 @@ export const ProcurementRepairablePanel = forwardRef<
                     {t("procurement.requisitions.history.empty")}
                   </div>
                 ) : (
-                  <ul className="space-y-2">
-                    {reqEvents.map((event) => (
-                      <li key={event.id} className="border-b pb-2 last:border-0 last:pb-0">
-                        <div className="flex flex-wrap items-center gap-1 text-xs">
-                          <span className="font-medium">
-                            {event.from_status
-                              ? t(`procurement.statuses.${event.from_status}`, {
-                                  defaultValue: event.from_status,
-                                })
-                              : "—"}
+                  <Timeline
+                    items={reqEvents}
+                    aria-label={t("procurement.requisitions.history.title")}
+                    getEntry={(event) => ({
+                      id: String(event.id),
+                      title: (
+                        <>
+                          {event.from_status
+                            ? t(`procurement.statuses.${event.from_status}`, {
+                                defaultValue: event.from_status,
+                              })
+                            : "—"}
+                          <span aria-hidden className="mx-1">
+                            →
                           </span>
-                          <span aria-hidden>→</span>
-                          <span className="font-medium">
-                            {t(`procurement.statuses.${event.to_status}`, {
-                              defaultValue: event.to_status,
-                            })}
-                          </span>
-                          <span className="ml-auto text-text-muted">{event.changed_at}</span>
-                        </div>
-                        {event.reason ? (
-                          <div className="mt-0.5 text-xs text-text-muted">{event.reason}</div>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
+                          {t(`procurement.statuses.${event.to_status}`, {
+                            defaultValue: event.to_status,
+                          })}
+                        </>
+                      ),
+                      timestamp: event.changed_at,
+                      ...(event.reason ? { description: event.reason } : {}),
+                    })}
+                  />
                 )}
               </div>
             </div>

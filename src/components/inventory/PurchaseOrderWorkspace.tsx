@@ -11,6 +11,8 @@ import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { printPoFiche } from "@/components/inventory/PoPrintFiche";
 import { isReceivablePurchaseOrder } from "@/components/inventory/ReceiveGoodsDialog";
 import { StockImpactPreview } from "@/components/inventory/StockImpactPreview";
+import { Timeline } from "@/components/timeline";
+import type { TimelineEntry, TimelineStepState } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -505,42 +507,32 @@ export function PurchaseOrderWorkspace({
                 </TabsContent>
 
                 <TabsContent value="timeline">
-                  <ol className="relative space-y-0 border-l border-border ml-3">
-                    {PO_TIMELINE_STEPS.map((step, index) => {
+                  <Timeline
+                    items={PO_TIMELINE_STEPS.map((step, index) => ({ step, index }))}
+                    locale={locale}
+                    getEntry={({ step, index }): TimelineEntry => {
                       const complete = isStepComplete(order.status, index);
                       const event = eventForStep(detail.state_events, step.statuses);
                       const isCurrent =
                         (step.statuses as readonly string[]).includes(order.status) ||
                         (step.key === "RECEIVED" && order.status === "PARTIALLY_RECEIVED") ||
                         (step.key === "CLOSED" && order.status === "RECEIVED_CLOSED");
-                      return (
-                        <li key={step.key} className="relative pb-6 pl-6 last:pb-0">
-                          <span
-                            className={cn(
-                              "absolute -left-1.5 top-1 h-3 w-3 rounded-full border-2 border-background",
-                              complete ? "bg-primary" : "bg-muted-foreground/30",
-                              isCurrent && "ring-2 ring-primary/40",
-                            )}
-                          />
-                          <div className="text-sm font-medium">
-                            {t(`procurement.poWorkspace.timeline.${step.key}`)}
-                          </div>
-                          {event ? (
-                            <div className="mt-0.5 text-xs text-text-muted">
-                              {formatDate(event.changed_at, locale)}
-                              {event.note ? ` — ${event.note}` : null}
-                            </div>
-                          ) : (
-                            <div className="mt-0.5 text-xs text-text-muted">
-                              {complete
-                                ? t("procurement.poWorkspace.timeline.reached")
-                                : t("procurement.poWorkspace.timeline.pending")}
-                            </div>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ol>
+                      let stepState: TimelineStepState = "pending";
+                      if (complete && isCurrent) stepState = "current";
+                      else if (complete) stepState = "complete";
+                      return {
+                        id: step.key,
+                        title: t(`procurement.poWorkspace.timeline.${step.key}`),
+                        ...(event?.changed_at ? { timestamp: event.changed_at } : {}),
+                        subtitle: event
+                          ? `${formatDate(event.changed_at, locale)}${event.note ? ` — ${event.note}` : ""}`
+                          : complete
+                            ? t("procurement.poWorkspace.timeline.reached")
+                            : t("procurement.poWorkspace.timeline.pending"),
+                        stepState,
+                      };
+                    }}
+                  />
                   {order.status === "CANCELLED" ? (
                     <Badge variant="destructive" className="mt-2">
                       {t("procurement.poWorkspace.timeline.CANCELLED")}

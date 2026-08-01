@@ -12,6 +12,8 @@ import {
   type RepairableActionKind,
   type RepairableActionPayload,
 } from "@/components/inventory/RepairableActionDialog";
+import { Timeline } from "@/components/timeline";
+import type { TimelineEntry, TimelineStepState } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +33,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatAssetLabel, formatEntityCode, formatOrDash } from "@/lib/display";
-import { cn } from "@/lib/utils";
 import {
   getInventoryRepairableOrderDetail,
   listInventoryDocumentLinks,
@@ -439,39 +440,29 @@ export function RepairableDetailDialog({
                   <h3 className="mb-2 text-sm font-semibold">
                     {t("procurement.repairableDetail.sections.timeline")}
                   </h3>
-                  <ol className="relative ml-3 space-y-0 border-l border-border">
-                    {REPAIR_TIMELINE_STEPS.map((step, index) => {
+                  <Timeline
+                    items={REPAIR_TIMELINE_STEPS.map((step, index) => ({ step, index }))}
+                    locale={locale}
+                    getEntry={({ step, index }): TimelineEntry => {
                       const complete = currentRank >= 0 && index <= currentRank;
                       const event = eventForStatus(detail.state_events, step.status);
                       const isCurrent = order.status === step.status;
-                      return (
-                        <li key={step.key} className="relative pb-5 pl-6 last:pb-0">
-                          <span
-                            className={cn(
-                              "absolute -left-1.5 top-1 h-3 w-3 rounded-full border-2 border-background",
-                              complete ? "bg-primary" : "bg-muted-foreground/30",
-                              isCurrent && "ring-2 ring-primary/40",
-                            )}
-                          />
-                          <div className="text-sm font-medium">
-                            {t(`procurement.repairableDetail.timeline.${step.key}`)}
-                          </div>
-                          {event ? (
-                            <div className="mt-0.5 text-xs text-text-muted">
-                              {formatDate(event.changed_at, locale)}
-                              {event.note ? ` — ${event.note}` : null}
-                            </div>
-                          ) : (
-                            <div className="mt-0.5 text-xs text-text-muted">
-                              {complete
-                                ? t("procurement.repairableDetail.timeline.reached")
-                                : t("procurement.repairableDetail.timeline.pending")}
-                            </div>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ol>
+                      let stepState: TimelineStepState = "pending";
+                      if (complete && isCurrent) stepState = "current";
+                      else if (complete) stepState = "complete";
+                      return {
+                        id: step.key,
+                        title: t(`procurement.repairableDetail.timeline.${step.key}`),
+                        ...(event?.changed_at ? { timestamp: event.changed_at } : {}),
+                        subtitle: event
+                          ? `${formatDate(event.changed_at, locale)}${event.note ? ` — ${event.note}` : ""}`
+                          : complete
+                            ? t("procurement.repairableDetail.timeline.reached")
+                            : t("procurement.repairableDetail.timeline.pending"),
+                        stepState,
+                      };
+                    }}
+                  />
                 </section>
 
                 <section>
