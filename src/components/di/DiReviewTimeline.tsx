@@ -2,13 +2,16 @@
  * DiReviewTimeline.tsx
  *
  * Renders di_review_events including SLA snapshot fields.
+ * Presentation via shared Timeline.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { getDiReviewEvents } from "@/services/di-review-service";
+import { Timeline } from "@/components/timeline";
+import type { TimelineEntry } from "@/components/timeline";
 import { formatOrDash } from "@/lib/display";
+import { getDiReviewEvents } from "@/services/di-review-service";
 import { formatDate as formatDiDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { DiReviewEvent } from "@shared/ipc-types";
 
@@ -45,81 +48,74 @@ export function DiReviewTimeline({ diId }: DiReviewTimelineProps) {
     };
   }, [diId]);
 
-  if (loading) {
-    return <p className="text-sm text-text-muted p-2">{t("sla.loading")}</p>;
-  }
-
-  if (events.length === 0) {
-    return <p className="text-sm text-text-muted p-2">{t("reviewTimeline.empty")}</p>;
-  }
-
-  return (
-    <ul className="space-y-3">
-      {events.map((ev) => {
-        const breached =
-          ev.sla_deadline != null && isPastDeadline(ev.sla_deadline, ev.acted_at);
+  const entries: TimelineEntry[] = useMemo(
+    () =>
+      events.map((ev) => {
+        const breached = ev.sla_deadline != null && isPastDeadline(ev.sla_deadline, ev.acted_at);
         const eventLabel = t(`reviewTimeline.eventType.${ev.event_type}`, {
           defaultValue: ev.event_type,
         });
-        return (
-          <li
-            key={ev.id}
-            className="rounded-md border border-surface-border p-3 text-sm space-y-1.5"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-medium text-text-primary">{eventLabel}</span>
-              <span className="text-xs text-text-muted">
-                {formatDiDate(ev.acted_at, dateLocale)}
-              </span>
-            </div>
-            <div className="text-xs text-text-muted">
-              {ev.from_status} → {ev.to_status}
-            </div>
-            {ev.notes ? (
-              <p className="text-xs text-text-secondary">{ev.notes}</p>
-            ) : null}
-            {(ev.sla_target_hours != null ||
-              ev.sla_deadline != null ||
-              ev.sla_resolution_target_hours != null ||
-              ev.sla_resolution_deadline != null) && (
-              <div className="mt-1 grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <span className="text-text-muted">{t("reviewTimeline.slaTarget")}: </span>
-                  {ev.sla_target_hours != null
-                    ? t("reviewTimeline.hours", { hours: ev.sla_target_hours })
-                    : formatOrDash(null)}
-                </div>
-                <div>
-                  <span className="text-text-muted">{t("reviewTimeline.slaDeadline")}: </span>
-                  {ev.sla_deadline
-                    ? formatDiDate(ev.sla_deadline, dateLocale)
-                    : formatOrDash(null)}
-                </div>
-                <div>
-                  <span className="text-text-muted">{t("reviewTimeline.slaResolutionTarget")}: </span>
-                  {ev.sla_resolution_target_hours != null
-                    ? t("reviewTimeline.hours", { hours: ev.sla_resolution_target_hours })
-                    : formatOrDash(null)}
-                </div>
-                <div>
-                  <span className="text-text-muted">{t("reviewTimeline.slaResolutionDeadline")}: </span>
-                  {ev.sla_resolution_deadline
-                    ? formatDiDate(ev.sla_resolution_deadline, dateLocale)
-                    : formatOrDash(null)}
-                </div>
-                {breached ? (
-                  <div className="col-span-2 text-red-700 font-medium">
-                    {t("reviewTimeline.breachHint")}
-                  </div>
-                ) : null}
+        const hasSla =
+          ev.sla_target_hours != null ||
+          ev.sla_deadline != null ||
+          ev.sla_resolution_target_hours != null ||
+          ev.sla_resolution_deadline != null;
+
+        return {
+          id: String(ev.id),
+          title: eventLabel,
+          subtitle: `${ev.from_status} → ${ev.to_status}`,
+          description: ev.notes ?? undefined,
+          timestamp: ev.acted_at,
+          actor: `${t("reviewTimeline.actor")}: ${t("reviewTimeline.systemActor")}`,
+          tone: breached ? ("danger" as const) : undefined,
+          details: hasSla ? (
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-text-muted">{t("reviewTimeline.slaTarget")}: </span>
+                {ev.sla_target_hours != null
+                  ? t("reviewTimeline.hours", { hours: ev.sla_target_hours })
+                  : formatOrDash(null)}
               </div>
-            )}
-            <div className="text-xs text-text-muted">
-              {t("reviewTimeline.actor")}: {t("reviewTimeline.systemActor")}
+              <div>
+                <span className="text-text-muted">{t("reviewTimeline.slaDeadline")}: </span>
+                {ev.sla_deadline ? formatDiDate(ev.sla_deadline, dateLocale) : formatOrDash(null)}
+              </div>
+              <div>
+                <span className="text-text-muted">{t("reviewTimeline.slaResolutionTarget")}: </span>
+                {ev.sla_resolution_target_hours != null
+                  ? t("reviewTimeline.hours", { hours: ev.sla_resolution_target_hours })
+                  : formatOrDash(null)}
+              </div>
+              <div>
+                <span className="text-text-muted">
+                  {t("reviewTimeline.slaResolutionDeadline")}:{" "}
+                </span>
+                {ev.sla_resolution_deadline
+                  ? formatDiDate(ev.sla_resolution_deadline, dateLocale)
+                  : formatOrDash(null)}
+              </div>
+              {breached ? (
+                <div className="col-span-2 font-medium text-red-700">
+                  {t("reviewTimeline.breachHint")}
+                </div>
+              ) : null}
             </div>
-          </li>
-        );
-      })}
-    </ul>
+          ) : undefined,
+          detailsLabel: t("reviewTimeline.slaDetails", { defaultValue: "SLA details" }),
+        };
+      }),
+    [events, t, dateLocale],
+  );
+
+  return (
+    <Timeline
+      items={entries}
+      loading={loading}
+      locale={dateLocale}
+      density="compact"
+      empty={t("reviewTimeline.empty")}
+      aria-label={t("reviewTimeline.title", { defaultValue: "Review timeline" })}
+    />
   );
 }

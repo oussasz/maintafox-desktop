@@ -1,8 +1,14 @@
+/**
+ * EntityActivityTimeline — filter/group adapter over the shared Timeline.
+ * Presentation-only; callers supply EntityActivityItem[].
+ */
+
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { EntityActivityItem } from "@/components/detail/entity-activity-types";
-import { Badge } from "@/components/ui/badge";
+import { Timeline } from "@/components/timeline";
+import type { TimelineEntry } from "@/components/timeline";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -11,24 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-function dayKey(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toISOString().slice(0, 10);
-}
-
-function dayLabel(iso: string, locale: string, todayLabel: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) return todayLabel;
-  return d.toLocaleDateString(locale, {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
 
 export interface EntityActivityTimelineProps {
   items: EntityActivityItem[];
@@ -64,8 +52,7 @@ export function EntityActivityTimeline({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const now = Date.now();
-    const periodMs =
-      period === "30d" ? 30 * 86400000 : period === "90d" ? 90 * 86400000 : null;
+    const periodMs = period === "30d" ? 30 * 86400000 : period === "90d" ? 90 * 86400000 : null;
 
     return items.filter((item) => {
       if (kind !== "all" && item.kind !== kind) return false;
@@ -79,22 +66,18 @@ export function EntityActivityTimeline({
     });
   }, [items, kind, period, search]);
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, { label: string; items: EntityActivityItem[] }>();
-    for (const ev of filtered) {
-      const key = dayKey(ev.at);
-      const existing = map.get(key);
-      if (existing) {
-        existing.items.push(ev);
-      } else {
-        map.set(key, {
-          label: dayLabel(ev.at, i18n.language, todayLabel),
-          items: [ev],
-        });
-      }
-    }
-    return Array.from(map.entries());
-  }, [filtered, i18n.language, todayLabel]);
+  const entries: TimelineEntry[] = useMemo(
+    () =>
+      filtered.map((ev) => ({
+        id: ev.id,
+        title: ev.title,
+        description: ev.description ?? undefined,
+        timestamp: ev.at,
+        badges: [{ label: typeLabel(ev.typeKey), tone: "muted" as const }],
+        subtitle: ev.statusLabel ?? undefined,
+      })),
+    [filtered, typeLabel],
+  );
 
   const kindOptions = kindFilterOptions ?? [
     { value: "all", label: kindAllLabel },
@@ -138,49 +121,15 @@ export function EntityActivityTimeline({
         </Select>
       </div>
 
-      {filtered.length === 0 ? (
-        <p className="text-sm text-text-muted">{emptyLabel}</p>
-      ) : (
-        <div className="space-y-4">
-          {grouped.map(([key, group]) => (
-            <div key={key} className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-                {group.label}
-              </p>
-              <div className="space-y-2 border-l border-surface-border pl-3">
-                {group.items.map((ev) => (
-                  <div
-                    key={ev.id}
-                    className="relative rounded border border-surface-border bg-surface-1 p-2.5"
-                  >
-                    <div className="absolute -left-[14px] top-3.5 h-2.5 w-2.5 rounded-full border-2 border-primary bg-surface-0" />
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-normal">
-                          {typeLabel(ev.typeKey)}
-                        </Badge>
-                        {ev.statusLabel ? (
-                          <span className="text-[11px] text-text-muted">{ev.statusLabel}</span>
-                        ) : null}
-                      </div>
-                      <p className="text-sm font-medium leading-snug">{ev.title}</p>
-                      {ev.description ? (
-                        <p className="text-xs text-text-muted line-clamp-2">{ev.description}</p>
-                      ) : null}
-                      <p className="text-[11px] text-text-muted">
-                        {new Date(ev.at).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <Timeline
+        items={entries}
+        groupBy="day"
+        todayLabel={todayLabel}
+        locale={i18n.language}
+        density="compact"
+        empty={emptyLabel}
+        aria-label="Entity activity"
+      />
     </div>
   );
 }

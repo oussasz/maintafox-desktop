@@ -1,6 +1,7 @@
 import { History, Lock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { Timeline } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -299,30 +300,31 @@ export function RetentionPolicyPanel() {
             {historyLoading ? (
               <p className="text-xs text-muted-foreground">Loading history…</p>
             ) : persistedHistory.length > 0 ? (
-              <div className="max-h-[400px] space-y-2 overflow-y-auto">
-                {persistedHistory.map((event) => {
+              <Timeline
+                items={persistedHistory}
+                className="max-h-[400px] overflow-y-auto"
+                aria-label="Change history"
+                empty={
+                  <p className="text-sm text-muted-foreground">
+                    No persisted events found for this policy.
+                  </p>
+                }
+                getEntry={(event) => {
                   const summary =
                     event.summary_json && typeof event.summary_json === "object"
                       ? (event.summary_json as Record<string, unknown>)
                       : null;
-                  return (
-                    <div key={event.id} className="rounded border p-2">
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(event.happened_at).toLocaleString()}
-                      </p>
-                      <p className="mt-0.5 text-sm font-medium">{event.event_code}</p>
-                      {summary?.["result"] != null && (
-                        <p className="text-xs text-muted-foreground">
-                          Result: {`${summary["result"]}`}
-                        </p>
-                      )}
-                      {event.actor_username && (
-                        <p className="text-xs text-muted-foreground">By: {event.actor_username}</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                  return {
+                    id: String(event.id),
+                    title: event.event_code,
+                    timestamp: event.happened_at,
+                    ...(event.actor_username ? { actor: event.actor_username } : {}),
+                    ...(summary?.["result"] != null
+                      ? { description: `Result: ${summary["result"]}` }
+                      : {}),
+                  };
+                }}
+              />
             ) : (
               <p className="text-sm text-muted-foreground">
                 No persisted events found for this policy.

@@ -1,26 +1,10 @@
-import { useMemo } from "react";
+import { Clock3, User } from "lucide-react";
+import { useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
-import { AssetTimelineItem } from "@/components/assets/history/AssetTimelineItem";
+import { Timeline } from "@/components/timeline";
+import type { TimelineEntry } from "@/components/timeline";
 import type { AssetHistoryEvent } from "@shared/ipc-types";
-
-function dayKey(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toISOString().slice(0, 10);
-}
-
-function dayLabel(iso: string, locale: string, todayLabel: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) return todayLabel;
-  return d.toLocaleDateString(locale, {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
 
 export function AssetTimelineList({
   events,
@@ -30,41 +14,61 @@ export function AssetTimelineList({
   onOpenRef: (ev: AssetHistoryEvent) => void;
 }) {
   const { t, i18n } = useTranslation("equipment");
-  const grouped = useMemo(() => {
-    const map = new Map<string, { label: string; items: AssetHistoryEvent[] }>();
-    for (const ev of events) {
-      const key = dayKey(ev.occurred_at);
-      const existing = map.get(key);
-      if (existing) {
-        existing.items.push(ev);
-      } else {
-        map.set(key, {
-          label: dayLabel(ev.occurred_at, i18n.language, t("history.today")),
-          items: [ev],
-        });
-      }
-    }
-    return Array.from(map.entries());
-  }, [events, i18n.language, t]);
 
-  if (events.length === 0) {
-    return <p className="text-sm text-text-muted">{t("history.empty")}</p>;
-  }
+  const entries: TimelineEntry[] = useMemo(
+    () =>
+      events.map((event) => {
+        const typeLabel = t(`history.eventTypes.${event.event_type}`, {
+          defaultValue: event.event_type,
+        });
+        const clickable = Boolean(event.ref?.entity_type);
+        const metaBits: ReactNode[] = [];
+        if (event.actor_label) {
+          metaBits.push(
+            <span key="actor" className="inline-flex items-center gap-1">
+              <User className="h-3 w-3" aria-hidden />
+              {event.actor_label}
+            </span>,
+          );
+        }
+        if (event.duration_minutes != null) {
+          metaBits.push(
+            <span key="dur" className="inline-flex items-center gap-1">
+              <Clock3 className="h-3 w-3" aria-hidden />
+              {Math.floor(event.duration_minutes / 60)}h
+              {String(event.duration_minutes % 60).padStart(2, "0")}
+            </span>,
+          );
+        }
+
+        return {
+          id: event.id,
+          title: event.title,
+          description: event.description ?? undefined,
+          timestamp: event.occurred_at,
+          subtitle: event.status_label ?? undefined,
+          badges: [{ label: typeLabel, tone: "muted" as const }],
+          actor: metaBits.length ? <>{metaBits}</> : undefined,
+          link: clickable
+            ? {
+                label: event.ref?.entity_code ?? t("history.open"),
+                onClick: () => onOpenRef(event),
+              }
+            : undefined,
+        };
+      }),
+    [events, onOpenRef, t],
+  );
 
   return (
-    <div className="space-y-4">
-      {grouped.map(([key, group]) => (
-        <div key={key} className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-            {group.label}
-          </p>
-          <div className="space-y-2 border-l border-surface-border pl-3">
-            {group.items.map((ev) => (
-              <AssetTimelineItem key={ev.id} event={ev} onOpenRef={onOpenRef} />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
+    <Timeline
+      items={entries}
+      groupBy="day"
+      todayLabel={t("history.today")}
+      locale={i18n.language}
+      density="compact"
+      empty={t("history.empty")}
+      aria-label={t("history.title", { defaultValue: "Asset history" })}
+    />
   );
 }

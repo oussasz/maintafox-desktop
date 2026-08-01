@@ -32,6 +32,7 @@ import { AssetQrCode } from "@/components/assets/AssetQrCode";
 import { AssetStatusBadge } from "@/components/assets/AssetStatusBadge";
 import { CriticalityBadge } from "@/components/assets/CriticalityBadge";
 import { AssetHistoryView } from "@/components/assets/history/AssetHistoryView";
+import { Timeline } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -411,23 +412,21 @@ export function AssetDetailPanel({ assetId, onToast }: AssetDetailPanelProps) {
               </div>
             </CardHeader>
             <CardContent className="text-sm">
-              {events.length === 0 ? (
-                <p className="text-xs text-text-muted">{t("registry.detail.noEvents")}</p>
-              ) : (
-                <ul className="space-y-2">
-                  {events.map((ev) => (
-                    <li key={ev.id} className="flex items-start gap-2 text-xs">
-                      <span className="rounded border border-surface-border px-1.5 py-0.5 font-medium text-[10px]">
-                        {ev.event_type}
-                      </span>
-                      <span className="text-text-muted">
-                        {new Date(ev.event_at).toLocaleDateString()}
-                      </span>
-                      {ev.notes && <span className="text-text-secondary truncate">{ev.notes}</span>}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <Timeline
+                items={events}
+                aria-label={t("detail.sections.lifecycle")}
+                empty={<p className="text-xs text-text-muted">{t("registry.detail.noEvents")}</p>}
+                getEntry={(ev) => ({
+                  id: String(ev.id),
+                  title: (
+                    <span className="rounded border border-surface-border px-1.5 py-0.5 font-medium text-[10px]">
+                      {ev.event_type}
+                    </span>
+                  ),
+                  timestamp: ev.event_at,
+                  ...(ev.notes ? { description: ev.notes } : {}),
+                })}
+              />
             </CardContent>
           </Card>
 

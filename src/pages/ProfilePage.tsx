@@ -13,6 +13,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
+import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
+import { Timeline } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -21,7 +23,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { mfAlert, mfLayout, mfTable } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import { clearPin, setPin } from "@/services/auth-service";
@@ -355,9 +356,7 @@ export function ProfilePage() {
                     referenceType="personnel.skills"
                     valueMode="id"
                     value={selectedSkillRef != null ? String(selectedSkillRef) : null}
-                    onChange={(idStr) =>
-                      setSelectedSkillRef(idStr ? Number(idStr) : null)
-                    }
+                    onChange={(idStr) => setSelectedSkillRef(idStr ? Number(idStr) : null)}
                     allowClear={false}
                     placeholder={t("profile.selectSkill", "Select a skill")}
                   />
@@ -426,22 +425,17 @@ export function ProfilePage() {
                     <div className="mb-2 text-xs font-medium text-text-secondary">
                       {t("profile.recentWorkHistory", "Recent work history")}
                     </div>
-                    <div className="space-y-1">
-                      {workHistory.slice(0, 4).map((h) => (
-                        <div
-                          key={`${h.source_module}-${h.record_id}`}
-                          className="text-xs text-text-primary"
-                        >
-                          {h.source_module.toUpperCase()} {h.record_code ?? h.record_id} ·{" "}
-                          {h.role_code}
-                        </div>
-                      ))}
-                      {workHistory.length === 0 ? (
-                        <div className="text-xs text-text-muted">
-                          {t("profile.noHistory", "No history found.")}
-                        </div>
-                      ) : null}
-                    </div>
+                    <Timeline
+                      items={workHistory.slice(0, 4)}
+                      density="compact"
+                      aria-label={t("profile.recentWorkHistory", "Recent work history")}
+                      empty={t("profile.noHistory", "No history found.")}
+                      getEntry={(h) => ({
+                        id: `${h.source_module}-${h.record_id}`,
+                        title: `${h.source_module.toUpperCase()} ${h.record_code ?? h.record_id}`,
+                        subtitle: h.role_code,
+                      })}
+                    />
                   </div>
                 </div>
               </div>

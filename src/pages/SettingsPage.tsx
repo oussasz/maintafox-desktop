@@ -8,7 +8,7 @@ import { PolicyEditorPanel, partitionSettings } from "@/components/settings/Poli
 import { SettingsCategorySidebar } from "@/components/settings/SettingsCategorySidebar";
 import { SettingsValueEditor } from "@/components/settings/SettingsValueEditor";
 import { SyncFeedbackPanel } from "@/components/sync/SyncFeedbackPanel";
-import { Badge } from "@/components/ui/badge";
+import { Timeline } from "@/components/timeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Toast,
@@ -169,26 +169,19 @@ export function SettingsPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="divide-y divide-border">
-                    {auditLog.map((evt) => (
-                      <div key={evt.id} className="flex items-center justify-between py-2 text-sm">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="font-medium text-text-primary">
-                            {evt.setting_key_or_domain}
-                          </span>
-                          <span className="text-text-muted">{evt.change_summary}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {evt.required_step_up && (
-                            <Badge variant="outline">{t("auditLog.stepUp")}</Badge>
-                          )}
-                          <span className="text-xs text-text-muted">
-                            {new Date(evt.changed_at).toLocaleString()}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <Timeline
+                    items={auditLog}
+                    aria-label={t("auditLog.title")}
+                    getEntry={(evt) => ({
+                      id: String(evt.id),
+                      title: evt.setting_key_or_domain,
+                      description: evt.change_summary,
+                      timestamp: evt.changed_at,
+                      ...(evt.required_step_up
+                        ? { badges: [{ label: t("auditLog.stepUp"), tone: "info" as const }] }
+                        : {}),
+                    })}
+                  />
                 </CardContent>
               </Card>
             )}

@@ -1,7 +1,8 @@
-import { AlertCircle, Link2, RefreshCw } from "lucide-react";
+import { AlertCircle, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
+import { Timeline } from "@/components/timeline";
+import type { TimelineEntry, TimelineTone } from "@/components/timeline";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -109,42 +110,66 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
     return () => window.clearInterval(handle);
   }, [autoRefresh, loadData]);
 
-  const grouped = useMemo(() => {
-    const groups = new Map<string, ActivityEventSummary[]>();
-    for (const item of items) {
-      const day = item.happened_at.slice(0, 10) || "unknown";
-      const list = groups.get(day) ?? [];
-      list.push(item);
-      groups.set(day, list);
-    }
-    return Array.from(groups.entries()).sort(([a], [b]) => b.localeCompare(a));
-  }, [items]);
+  const handleExpand = useCallback(
+    async (row: ActivityEventSummary) => {
+      if (expanded[row.id]) {
+        setExpanded((prev) => {
+          const next = { ...prev };
+          delete next[row.id];
+          return next;
+        });
+        return;
+      }
+      setChainLoading((prev) => ({ ...prev, [row.id]: true }));
+      try {
+        const chain = await getEventChain(row.id, "activity_events");
+        const text = chain.events
+          .map((e) => {
+            const code = e.event_code ?? e.action_code ?? "unknown";
+            return `- ${e.happened_at} [${e.link_type ?? "related"}] ${code}`;
+          })
+          .join("\n");
+        setExpanded((prev) => ({ ...prev, [row.id]: text }));
+      } catch (err) {
+        setError(toErrorMessage(err));
+      } finally {
+        setChainLoading((prev) => ({ ...prev, [row.id]: false }));
+      }
+    },
+    [expanded],
+  );
 
-  const handleExpand = async (row: ActivityEventSummary) => {
-    if (expanded[row.id]) {
-      setExpanded((prev) => {
-        const next = { ...prev };
-        delete next[row.id];
-        return next;
-      });
-      return;
-    }
-    setChainLoading((prev) => ({ ...prev, [row.id]: true }));
-    try {
-      const chain = await getEventChain(row.id, "activity_events");
-      const text = chain.events
-        .map((e) => {
-          const code = e.event_code ?? e.action_code ?? "unknown";
-          return `- ${e.happened_at} [${e.link_type ?? "related"}] ${code}`;
-        })
-        .join("\n");
-      setExpanded((prev) => ({ ...prev, [row.id]: text }));
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setChainLoading((prev) => ({ ...prev, [row.id]: false }));
-    }
-  };
+  const timelineEntries = useMemo((): TimelineEntry[] => {
+    const severityTone: Record<string, TimelineTone> = {
+      critical: "danger",
+      error: "danger",
+      warning: "warning",
+      info: "info",
+    };
+    return items.map((row) => ({
+      id: String(row.id),
+      title: row.event_code,
+      timestamp: row.happened_at,
+      actor: row.actor_username ?? `user:${row.actor_id ?? "system"}`,
+      badges: [
+        {
+          label: row.severity,
+          tone: severityTone[row.severity] ?? "muted",
+        },
+        { label: row.source_module, tone: "muted" },
+      ],
+      description: row.summary_json ? JSON.stringify(row.summary_json) : "No summary payload",
+      ...(row.source_record_id ? { link: { label: "Open source record", disabled: true } } : {}),
+      details: expanded[row.id] ? (
+        <pre className="whitespace-pre-wrap rounded bg-muted p-2 text-xs">{expanded[row.id]}</pre>
+      ) : (
+        <span className="sr-only">Expand to load correlation chain</span>
+      ),
+      detailsExpanded: Boolean(expanded[row.id]),
+      onDetailsToggle: () => void handleExpand(row),
+      detailsLabel: chainLoading[row.id] ? "Loading chain..." : "Correlation chain",
+    }));
+  }, [items, expanded, chainLoading, handleExpand]);
 
   const applyFilters = useCallback(() => {
     setOffset(0);
@@ -352,66 +377,18 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
           </div>
         )}
 
-        {loading && <div className="text-sm text-muted-foreground">Loading activity feed...</div>}
-
-        <div className="space-y-3">
-          {grouped.map(([day, rows]) => (
-            <div key={day} className="space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {day}
-              </div>
-              {rows.map((row) => (
-                <div key={row.id} className="rounded-md border p-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline">{row.severity}</Badge>
-                    <Badge>{row.event_code}</Badge>
-                    <span className="text-xs text-muted-foreground">{row.source_module}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {row.actor_username ?? `user:${row.actor_id ?? "system"}`}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(row.happened_at).toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    {row.summary_json ? JSON.stringify(row.summary_json) : "No summary payload"}
-                  </div>
-
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {row.source_record_id && (
-                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled>
-                        Open source record
-                      </Button>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs"
-                      disabled={Boolean(chainLoading[row.id])}
-                      onClick={() => void handleExpand(row)}
-                    >
-                      <Link2 className="mr-1 h-3 w-3" />
-                      {chainLoading[row.id] ? "Loading chain..." : "Correlation chain"}
-                    </Button>
-                  </div>
-
-                  {expanded[row.id] && (
-                    <pre className="mt-2 whitespace-pre-wrap rounded bg-muted p-2 text-xs">
-                      {expanded[row.id]}
-                    </pre>
-                  )}
-                </div>
-              ))}
-            </div>
-          ))}
-
-          {!loading && items.length === 0 && (
+        <Timeline
+          items={timelineEntries}
+          loading={loading}
+          groupBy="day"
+          todayLabel="Today"
+          aria-label="Activity feed"
+          empty={
             <div className="rounded-md border p-4 text-center text-sm text-muted-foreground">
               No activity events found for current filters.
             </div>
-          )}
-        </div>
+          }
+        />
 
         <div className="flex items-center justify-end gap-2">
           <Button

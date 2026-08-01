@@ -21,6 +21,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { Timeline } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -675,27 +676,25 @@ export function PolicyEditorPanel({ settings, onToast }: PolicyEditorPanelProps)
             <History className="h-4 w-4" />
             {t("policy.changeHistory")}
           </h3>
-          <div className="divide-y divide-border rounded-md border">
-            {history.map((snap) => (
-              <div key={snap.id} className="flex items-center justify-between px-3 py-2 text-sm">
-                <div className="flex items-center gap-2">
-                  <Badge variant={snap.is_active ? "default" : "outline"} className="text-xs">
-                    v{snap.version_no}
-                  </Badge>
-                  <span>
-                    {snap.is_active
-                      ? t("policy.historyActive")
-                      : snap.activated_at
-                        ? t("policy.historySuperseded")
-                        : t("policy.historyDraft")}
-                  </span>
-                </div>
-                <span className="text-xs text-text-muted">
-                  {snap.activated_at ? new Date(snap.activated_at).toLocaleString() : "—"}
-                </span>
-              </div>
-            ))}
-          </div>
+          <Timeline
+            items={history}
+            aria-label={t("policy.changeHistory")}
+            getEntry={(snap) => ({
+              id: String(snap.id),
+              title: snap.is_active
+                ? t("policy.historyActive")
+                : snap.activated_at
+                  ? t("policy.historySuperseded")
+                  : t("policy.historyDraft"),
+              ...(snap.activated_at ? { timestamp: snap.activated_at } : {}),
+              badges: [
+                {
+                  label: `v${snap.version_no}`,
+                  tone: snap.is_active ? ("success" as const) : ("muted" as const),
+                },
+              ],
+            })}
+          />
         </div>
       )}
 

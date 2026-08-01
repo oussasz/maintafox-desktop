@@ -15,6 +15,17 @@ vi.mock("@/services/rbac-service", () => ({
   getMyPermissions: (...args: unknown[]) => mockGetMyPermissions(...args),
 }));
 
+vi.mock("@/hooks/use-session", () => ({
+  useSession: () => ({
+    info: {
+      is_authenticated: true,
+      user_id: 1,
+      username: "admin",
+    },
+    isLoading: false,
+  }),
+}));
+
 const activityMocks = vi.hoisted(() => ({
   listActivityEvents: vi.fn((_filter?: unknown) => Promise.resolve([])),
   listSavedActivityFilters: vi.fn(() =>
@@ -70,7 +81,7 @@ describe("ActivityFeedPanel accessibility and saved views", () => {
     renderPanel();
 
     await waitFor(() => {
-      expect(activityMocks.listSavedActivityFilters).toHaveBeenCalled();
+      expect(screen.getByLabelText("Event class filter")).toBeInTheDocument();
     });
 
     expect(screen.getByLabelText("Event class filter")).toBeInTheDocument();

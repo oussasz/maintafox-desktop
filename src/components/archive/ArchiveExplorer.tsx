@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { type ElementType, useCallback, useEffect, useMemo, useState } from "react";
 
+import { Timeline } from "@/components/timeline";
+import type { TimelineTone } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -715,27 +717,23 @@ function ArchiveItemDetailView({
           </details>
         </div>
       ) : (
-        <div className="space-y-2 rounded-md border p-3">
-          {detail.actions.map((action) => (
-            <div key={action.id} className="rounded border p-2 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">{action.action}</Badge>
-                <span className="text-xs text-muted-foreground">
-                  {formatShortDate(action.action_at)}
-                </span>
-                <Badge variant={action.result_status === "success" ? "outline" : "destructive"}>
-                  {action.result_status}
-                </Badge>
-              </div>
-              {action.reason_note && (
-                <p className="mt-1 text-xs text-muted-foreground">{action.reason_note}</p>
-              )}
-            </div>
-          ))}
-          {detail.actions.length === 0 && (
-            <div className="text-sm text-muted-foreground">No history events.</div>
-          )}
-        </div>
+        <Timeline
+          items={detail.actions}
+          aria-label="Archive record history"
+          empty={<div className="text-sm text-muted-foreground">No history events.</div>}
+          getEntry={(action) => ({
+            id: String(action.id),
+            title: action.action,
+            timestamp: action.action_at,
+            badges: [
+              {
+                label: action.result_status,
+                tone: (action.result_status === "success" ? "success" : "danger") as TimelineTone,
+              },
+            ],
+            ...(action.reason_note ? { description: action.reason_note } : {}),
+          })}
+        />
       )}
 
       <Dialog open={restoreDialogOpen} onOpenChange={setRestoreDialogOpen}>

@@ -2,6 +2,7 @@ import { Download, LifeBuoy, Play, RefreshCw, ShieldAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { SupportBundleDialog } from "@/components/SupportBundleDialog";
+import { Timeline } from "@/components/timeline";
 import { useSyncOrchestratorStore } from "@/stores/sync-orchestrator-store";
 import type { ResolveSyncConflictInput, SyncConflictRecord } from "@shared/ipc-types";
 
@@ -52,11 +53,14 @@ export function SyncFeedbackPanel() {
 
   const [pauseMinutes, setPauseMinutes] = useState(15);
   const [supportOpen, setSupportOpen] = useState(false);
-  const [resolvingById, setResolvingById] = useState<Record<number, ResolveSyncConflictInput["action"]>>({});
+  const [resolvingById, setResolvingById] = useState<
+    Record<number, ResolveSyncConflictInput["action"]>
+  >({});
 
   const healthTone = useMemo(() => {
     if (state === "error") return "text-status-error";
-    if (state === "degraded" || state === "blocked" || state === "paused") return "text-status-warning";
+    if (state === "degraded" || state === "blocked" || state === "paused")
+      return "text-status-warning";
     if (state === "running") return "text-primary";
     return "text-status-success";
   }, [state]);
@@ -160,7 +164,9 @@ export function SyncFeedbackPanel() {
                 className="ml-2 rounded border border-surface-border bg-surface-2 px-2 py-1 text-xs"
                 value={policy.entitlementStatus}
                 onChange={(e) =>
-                  updatePolicy({ entitlementStatus: e.currentTarget.value as typeof policy.entitlementStatus })
+                  updatePolicy({
+                    entitlementStatus: e.currentTarget.value as typeof policy.entitlementStatus,
+                  })
                 }
               >
                 <option value="active">active</option>
@@ -173,7 +179,11 @@ export function SyncFeedbackPanel() {
               <select
                 className="ml-2 rounded border border-surface-border bg-surface-2 px-2 py-1 text-xs"
                 value={policy.bandwidthMode}
-                onChange={(e) => updatePolicy({ bandwidthMode: e.currentTarget.value as typeof policy.bandwidthMode })}
+                onChange={(e) =>
+                  updatePolicy({
+                    bandwidthMode: e.currentTarget.value as typeof policy.bandwidthMode,
+                  })
+                }
               >
                 <option value="normal">normal</option>
                 <option value="constrained">constrained</option>
@@ -213,28 +223,28 @@ export function SyncFeedbackPanel() {
           </div>
           {retry.nextRetryAt && (
             <p className="text-2xs text-status-warning">
-              Retry attempt {retry.attempt} scheduled at {new Date(retry.nextRetryAt).toLocaleTimeString()}.
+              Retry attempt {retry.attempt} scheduled at{" "}
+              {new Date(retry.nextRetryAt).toLocaleTimeString()}.
             </p>
           )}
         </div>
 
         <div className="rounded-md border border-surface-border bg-surface-0 p-3">
           <h3 className="text-sm font-medium text-text-primary mb-2">Timeline diagnostics</h3>
-          <div className="max-h-56 overflow-auto space-y-2">
-            {recentTimeline.length === 0 && (
-              <p className="text-xs text-text-muted">No diagnostics events captured yet.</p>
-            )}
-            {recentTimeline.map((event) => (
-              <div key={event.id} className="rounded border border-surface-border p-2">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-medium text-text-primary">{event.event}</p>
-                  <span className="text-2xs text-text-muted">{new Date(event.at).toLocaleTimeString()}</span>
-                </div>
-                <p className="text-2xs text-text-muted mt-0.5">{event.message}</p>
-                <p className="text-[10px] text-text-muted mt-1">correlation: {event.correlationId}</p>
-              </div>
-            ))}
-          </div>
+          <Timeline
+            items={recentTimeline}
+            density="compact"
+            className="max-h-56 overflow-auto"
+            aria-label="Timeline diagnostics"
+            empty={<p className="text-xs text-text-muted">No diagnostics events captured yet.</p>}
+            getEntry={(event) => ({
+              id: event.id,
+              title: event.event,
+              timestamp: event.at,
+              description: event.message,
+              subtitle: `correlation: ${event.correlationId}`,
+            })}
+          />
         </div>
       </div>
 
@@ -245,7 +255,9 @@ export function SyncFeedbackPanel() {
         </h3>
         <div className="space-y-2 max-h-64 overflow-auto">
           {conflictInbox.length === 0 && (
-            <p className="text-xs text-text-muted">No unresolved conflicts in the operator inbox.</p>
+            <p className="text-xs text-text-muted">
+              No unresolved conflicts in the operator inbox.
+            </p>
           )}
           {conflictInbox.map((conflict) => (
             <div key={conflict.id} className="rounded border border-surface-border p-2">
