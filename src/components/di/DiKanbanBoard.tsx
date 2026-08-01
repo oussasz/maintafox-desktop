@@ -1,272 +1,157 @@
 /**
  * DiKanbanBoard.tsx
  *
- * Kanban board view for intervention requests, inspired by the web version.
- * Granular columns: Soumises → En attente de tri → En attente d'approbation
- * → Besoin de précisions → Approuvées/planifiées → En travaux → Clôturées.
- * Cards show code, title, priority badge, origin tag, and date.
+ * Data adapter for intervention-request lanes. Owns status→column mapping,
+ * i18n, and reference labels only — all rendering belongs to KanbanBoard.
  */
 
-import { CheckCircle, ClipboardCheck, Inbox, MessageSquareWarning, Search, Wrench } from "lucide-react";
-import type { ReactNode } from "react";
-import { useMemo } from "react";
+import { AlertTriangle, Calendar as CalendarIcon } from "lucide-react";
+import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
-import { LinkedEntityBadge } from "@/components/common/LinkedEntityBadge";
 import { useDiReferenceLabels } from "@/components/di/di-reference-labels";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import { KanbanBoard } from "@/components/kanban";
+import type { KanbanBadge, KanbanCard, KanbanColumn, KanbanTone } from "@/components/kanban";
 import { formatShortDate, intlLocaleForLanguage } from "@/utils/format-date";
 import type { InterventionRequest } from "@shared/ipc-types";
 
-// ── Kanban column definitions ───────────────────────────────────────────────
+const URGENCY_TONE: Record<string, KanbanTone> = {
+  critical: "critical",
+  high: "high",
+  medium: "medium",
+  low: "low",
+};
 
-interface KanbanColumnDef {
+const COLUMN_DEFS = [
+  { id: "submitted", labelKey: "kanban.colSubmitted", tone: "planning", statuses: ["submitted"] },
+  {
+    id: "pending_review",
+    labelKey: "kanban.colPendingReview",
+    tone: "executing",
+    statuses: ["pending_review"],
+  },
+  {
+    id: "awaiting_approval",
+    labelKey: "kanban.colAwaitingApproval",
+    tone: "ready",
+    statuses: ["screened", "awaiting_approval"],
+  },
+  {
+    id: "needs_clarification",
+    labelKey: "kanban.colNeedsClarification",
+    tone: "warning",
+    statuses: ["returned_for_clarification"],
+  },
+  {
+    id: "approved",
+    labelKey: "kanban.colApproved",
+    tone: "success",
+    statuses: ["approved_for_planning"],
+  },
+  {
+    id: "work",
+    labelKey: "kanban.colWork",
+    tone: "work",
+    statuses: ["converted_to_work_order"],
+  },
+  {
+    id: "closed",
+    labelKey: "kanban.colClosed",
+    tone: "muted",
+    statuses: ["closed_as_non_executable", "archived"],
+  },
+] as const satisfies readonly {
   id: string;
-  label: string;
-  icon: ReactNode;
-  headerClass: string;
-  statuses: string[];
-}
+  labelKey: string;
+  tone: KanbanTone;
+  statuses: readonly string[];
+}[];
 
-// ── Priority styling ────────────────────────────────────────────────────────
-
-const URGENCY_STYLE: Record<string, { class: string; icon: string }> = {
-  critical: { class: "bg-red-100 text-red-700", icon: "✗" },
-  high: { class: "bg-orange-100 text-orange-800", icon: "↑" },
-  medium: { class: "bg-yellow-100 text-yellow-800", icon: "–" },
-  low: { class: "bg-green-100 text-green-800", icon: "↓" },
-};
-
-const URGENCY_BAR: Record<string, string> = {
-  critical: "bg-red-600",
-  high: "bg-orange-500",
-  medium: "bg-amber-400",
-  low: "bg-emerald-400",
-};
-
-// ── Props ───────────────────────────────────────────────────────────────────
+const STATUS_TO_COLUMN: Record<string, string> = Object.fromEntries(
+  COLUMN_DEFS.flatMap((col) => col.statuses.map((status) => [status, col.id])),
+);
 
 interface DiKanbanBoardProps {
   items: InterventionRequest[];
   onCardClick: (di: InterventionRequest) => void;
 }
 
-// ── Component ───────────────────────────────────────────────────────────────
-
 export function DiKanbanBoard({ items, onCardClick }: DiKanbanBoardProps) {
-  const { t } = useTranslation("di");
+  const { t, i18n } = useTranslation(["di", "common"]);
   const { originLabel } = useDiReferenceLabels();
+  const locale = intlLocaleForLanguage(i18n.language);
+  const byId = useRef(new Map<string, InterventionRequest>());
 
-  const columns = useMemo<KanbanColumnDef[]>(
-    () => [
-      {
-        id: "submitted",
-        label: t("kanban.colSubmitted"),
-        icon: <Inbox className="h-4 w-4" />,
-        headerClass: "bg-blue-50 text-blue-700 border-blue-200",
-        statuses: ["submitted"],
-      },
-      {
-        id: "pending_review",
-        label: t("kanban.colPendingReview"),
-        icon: <Search className="h-4 w-4" />,
-        headerClass: "bg-amber-50 text-amber-700 border-amber-200",
-        statuses: ["pending_review"],
-      },
-      {
-        id: "awaiting_approval",
-        label: t("kanban.colAwaitingApproval"),
-        icon: <ClipboardCheck className="h-4 w-4" />,
-        headerClass: "bg-indigo-50 text-indigo-700 border-indigo-200",
-        statuses: ["screened", "awaiting_approval"],
-      },
-      {
-        id: "needs_clarification",
-        label: t("kanban.colNeedsClarification"),
-        icon: <MessageSquareWarning className="h-4 w-4" />,
-        headerClass: "bg-orange-50 text-orange-700 border-orange-200",
-        statuses: ["returned_for_clarification"],
-      },
-      {
-        id: "approved",
-        label: t("kanban.colApproved"),
-        icon: <ClipboardCheck className="h-4 w-4" />,
-        headerClass: "bg-green-50 text-green-700 border-green-200",
-        statuses: ["approved_for_planning"],
-      },
-      {
-        id: "work",
-        label: t("kanban.colWork"),
-        icon: <Wrench className="h-4 w-4" />,
-        headerClass: "bg-purple-50 text-purple-700 border-purple-200",
-        statuses: ["converted_to_work_order"],
-      },
-      {
-        id: "closed",
-        label: t("kanban.colClosed"),
-        icon: <CheckCircle className="h-4 w-4" />,
-        headerClass: "bg-slate-50 text-slate-600 border-slate-200",
-        statuses: ["closed_as_non_executable", "archived"],
-      },
-    ],
+  const columns = useMemo<KanbanColumn[]>(
+    () =>
+      COLUMN_DEFS.map((col) => ({
+        id: col.id,
+        label: t(col.labelKey),
+        tone: col.tone,
+      })),
     [t],
   );
 
-  const grouped = new Map<string, InterventionRequest[]>();
-  for (const col of columns) {
-    grouped.set(col.id, []);
-  }
-  for (const item of items) {
-    const col = columns.find((c) => c.statuses.includes(item.status));
-    if (col) {
-      grouped.get(col.id)?.push(item);
+  const cards = useMemo<KanbanCard[]>(() => {
+    const map = new Map<string, InterventionRequest>();
+    const result: KanbanCard[] = [];
+
+    for (const di of items) {
+      const columnId = STATUS_TO_COLUMN[di.status];
+      if (!columnId) continue;
+      const id = String(di.id);
+      map.set(id, di);
+
+      const urgencyTone = URGENCY_TONE[di.reported_urgency];
+      const badges: KanbanBadge[] = [];
+      if (di.is_modified) {
+        badges.push({ label: t("review.modified"), tone: "warning" });
+      }
+      if (urgencyTone) {
+        badges.push({ label: t(`priority.${di.reported_urgency}`), tone: urgencyTone });
+      }
+      badges.push({ label: originLabel(di.origin_type) });
+      if (di.safety_flag) {
+        badges.push({ label: t("detail.safety"), tone: "danger", icon: AlertTriangle });
+      }
+
+      result.push({
+        id,
+        columnId,
+        code: di.code,
+        title: di.title,
+        description: di.description,
+        badges,
+        link: {
+          entity: "work_order",
+          code: di.converted_to_wo_code,
+          entityId: di.converted_to_wo_id,
+          title: di.converted_to_wo_title,
+        },
+        meta: [{ label: formatShortDate(di.submitted_at, locale), icon: CalendarIcon }],
+        accent: urgencyTone ?? "neutral",
+      });
     }
-  }
 
-  return (
-    <div className="relative flex flex-col h-full">
-      <div className="flex gap-3 flex-1 overflow-x-auto p-1 pb-2">
-        {columns.map((col) => (
-          <KanbanColumn
-            key={col.id}
-            def={col}
-            items={grouped.get(col.id) ?? []}
-            onCardClick={onCardClick}
-            originLabel={originLabel}
-          />
-        ))}
-      </div>
-    </div>
+    byId.current = map;
+    return result;
+  }, [items, locale, originLabel, t]);
+
+  const handleCardClick = useCallback(
+    (card: KanbanCard) => {
+      const di = byId.current.get(card.id);
+      if (di) onCardClick(di);
+    },
+    [onCardClick],
   );
-}
-
-// ── Column ──────────────────────────────────────────────────────────────────
-
-function KanbanColumn({
-  def,
-  items,
-  onCardClick,
-  originLabel,
-}: {
-  def: KanbanColumnDef;
-  items: InterventionRequest[];
-  onCardClick: (di: InterventionRequest) => void;
-  originLabel: (code: string | null | undefined) => string;
-}) {
-  return (
-    <div className="flex flex-col min-w-[220px] max-w-[260px] flex-1 rounded-lg border bg-muted/30">
-      {/* Column header */}
-      <div
-        className={`flex items-center gap-2 px-3 py-2.5 rounded-t-lg border-b font-medium text-sm ${def.headerClass}`}
-      >
-        {def.icon}
-        <span>{def.label}</span>
-        <Badge variant="secondary" className="ml-auto text-[10px] h-5 min-w-[20px] justify-center">
-          {items.length}
-        </Badge>
-      </div>
-
-      {/* Cards */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-2">
-        {items.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-8">—</p>
-        ) : (
-          items.map((di) => (
-            <DiKanbanCard
-              key={di.id}
-              di={di}
-              onClick={() => onCardClick(di)}
-              originLabel={originLabel}
-            />
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Card ────────────────────────────────────────────────────────────────────
-
-function DiKanbanCard({
-  di,
-  onClick,
-  originLabel,
-}: {
-  di: InterventionRequest;
-  onClick: () => void;
-  originLabel: (code: string | null | undefined) => string;
-}) {
-  const { t, i18n } = useTranslation("di");
-  const locale = intlLocaleForLanguage(i18n.language);
-  const urgency = URGENCY_STYLE[di.reported_urgency];
-  const desc = di.description.length > 80 ? `${di.description.substring(0, 80)}…` : di.description;
-  const urgencyBarClass = URGENCY_BAR[di.reported_urgency] ?? "bg-gray-300";
 
   return (
-    <Card
-      className="cursor-pointer hover:shadow-md transition-shadow border overflow-hidden"
-      onClick={onClick}
-    >
-      <div className={`h-1 w-full ${urgencyBarClass}`} />
-      <CardContent className="p-3 space-y-2">
-        {/* Title row */}
-        <div className="flex items-start justify-between gap-2">
-          <h4 className="text-xs font-semibold leading-tight line-clamp-2">
-            <span className="text-muted-foreground">{di.code}</span>
-            {di.is_modified && (
-              <Badge className="ml-1 bg-amber-100 text-amber-800 border-0 text-[9px] px-1 py-0 align-middle">
-                {t("review.modified")}
-              </Badge>
-            )}{" "}
-            {di.title}
-          </h4>
-        </div>
-
-        {/* Description snippet */}
-        <p className="text-[11px] text-muted-foreground leading-snug">{desc}</p>
-
-        {/* Badges row */}
-        <div className="flex flex-wrap gap-1">
-          {/* Priority badge */}
-          {urgency && (
-            <Badge
-              variant="outline"
-              className={`text-[10px] border-0 px-1.5 py-0 ${urgency.class}`}
-            >
-              {urgency.icon} {t(`priority.${di.reported_urgency}`)}
-            </Badge>
-          )}
-
-          {/* Origin tag — label from DI.ORIGIN catalog */}
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-            {originLabel(di.origin_type)}
-          </Badge>
-
-          <LinkedEntityBadge
-            entity="work_order"
-            code={di.converted_to_wo_code}
-            entityId={di.converted_to_wo_id}
-            title={di.converted_to_wo_title}
-            className="text-[10px] px-1.5 py-0"
-          />
-
-          {/* Safety flag */}
-          {di.safety_flag && (
-            <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
-              ⚠ {t("detail.safety")}
-            </Badge>
-          )}
-
-          {/* Date */}
-          <Badge
-            variant="outline"
-            className="text-[10px] px-1.5 py-0 ml-auto text-muted-foreground"
-          >
-            {formatShortDate(di.submitted_at, locale)}
-          </Badge>
-        </div>
-      </CardContent>
-    </Card>
+    <KanbanBoard
+      columns={columns}
+      cards={cards}
+      onCardClick={handleCardClick}
+      emptyColumnLabel={t("kanban.emptyColumn", { ns: "common" })}
+      aria-label={t("page.viewKanban")}
+    />
   );
 }

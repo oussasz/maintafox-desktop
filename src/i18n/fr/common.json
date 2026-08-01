@@ -136,6 +136,9 @@
     "addFilter": "Ajouter\u2026",
     "noMoreOptions": "Plus d\u2019options"
   },
+  "kanban": {
+    "emptyColumn": "—"
+  },
   "linkedEntity": {
     "work_order": "{{code}}",
     "di": "{{code}}",
