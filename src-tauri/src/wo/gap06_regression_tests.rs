@@ -232,6 +232,7 @@ mod tests {
                 planned_end: "2026-04-10T16:00:00Z".into(),
                 shift: None,
                 expected_duration_hours: Some(8.0),
+                planned_downtime_hours: None,
                 urgency_id: None,
             },
         )
@@ -539,6 +540,7 @@ mod tests {
                 stock_location_id: None,
                 auto_reserve: Some(false),
                 notes: None,
+                origin: None,
             },
         )
         .await

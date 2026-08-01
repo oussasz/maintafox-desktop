@@ -258,6 +258,7 @@ async fn transition_planned_assigned_in_progress_for_user(
             planned_end: "2026-04-10T16:00:00Z".into(),
             shift: None,
             expected_duration_hours: Some(8.0),
+            planned_downtime_hours: None,
             urgency_id: None,
         },
     )
@@ -361,6 +362,7 @@ async fn close_wo_all_gates(db: &DatabaseConnection, actor: i64) -> crate::wo::d
             stock_location_id: None,
             auto_reserve: Some(false),
             notes: None,
+            origin: None,
         },
     )
     .await
@@ -1320,6 +1322,7 @@ async fn test_obs_12_full_observability_chain() {
             stock_location_id: None,
             auto_reserve: Some(false),
             notes: None,
+            origin: None,
         },
     )
     .await

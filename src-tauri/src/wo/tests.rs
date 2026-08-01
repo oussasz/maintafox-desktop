@@ -286,6 +286,7 @@ mod tests {
                 planned_end: "2026-04-10T16:00:00Z".into(),
                 shift: None,
                 expected_duration_hours: Some(8.0),
+                planned_downtime_hours: None,
                 urgency_id: None,
             },
         )
@@ -513,6 +514,7 @@ mod tests {
                 planned_end: "2026-04-10T08:00:00Z".into(),
                 shift: None,
                 expected_duration_hours: Some(8.0),
+                planned_downtime_hours: None,
                 urgency_id: None,
             },
         )
@@ -628,6 +630,7 @@ mod tests {
                 stock_location_id: None,
                 auto_reserve: Some(false),
                 notes: None,
+                origin: None,
             },
         )
         .await
@@ -896,6 +899,7 @@ mod tests {
                 stock_location_id: None,
                 auto_reserve: Some(false),
                 notes: None,
+                origin: None,
             },
         )
         .await
@@ -994,6 +998,7 @@ mod tests {
                 planned_end: "2026-04-10T16:00:00Z".into(),
                 shift: None,
                 expected_duration_hours: Some(8.0),
+                planned_downtime_hours: None,
                 urgency_id: None,
             },
         )
@@ -1141,6 +1146,7 @@ mod tests {
                 planned_end: "2026-04-10T16:00:00Z".into(),
                 shift: None,
                 expected_duration_hours: Some(8.0),
+                planned_downtime_hours: None,
                 urgency_id: None,
             },
         )
@@ -1186,6 +1192,7 @@ mod tests {
                 sequence_order: 1,
                 is_mandatory: true,
                 estimated_minutes: Some(30),
+                origin: None,
             },
         )
         .await
@@ -1256,6 +1263,7 @@ mod tests {
                 stock_location_id: None,
                 auto_reserve: Some(false),
                 notes: None,
+                origin: None,
             },
         )
         .await
@@ -1271,6 +1279,7 @@ mod tests {
                 wo_id: wo.id,
                 downtime_type: "partial".into(),
                 comment: Some("brief stop".into()),
+                classification_code: None,
                 actor_id: actor,
             },
         )
