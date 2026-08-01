@@ -27,6 +27,16 @@ Move entries into a dated version section when cutting a release.
   - `disposition` + `notifications` modules, close dialog, disposition meta, updated review/conversion/stats IPC and UI.
   - AssetPicker and ProcurementArchive intentionally deferred to independent feature branches.
 
+## Stash hygiene
+
+DI lifecycle divergent stashes are **obsolete** after `96d0490f` on `feature/p2-sp04-di-lifecycle-disposition` (canonical = Quarantine + S audit remaps; V not restored). Former tips (recoverable via `git fsck` / reflog until GC):
+
+- quarantine `2796f092` (Q)
+- safety-wt-c5-polluted `896ad674` (S)
+- verify-c5 `013df0e4` (V)
+
+AssetPicker / ProcurementArchive remain only inside the quarantine tip above until their own feature branches are cut.
+
 ## Changed
 
 - DI, WO, admin, org, assets, activity, archive, settings, sync, and profile timeline UIs now adapt to the shared Timeline primitive instead of bespoke rails.
