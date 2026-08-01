@@ -8,9 +8,15 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
-import type { AssetSearchFilters, AssetSearchResult, AssetSuggestion } from "@shared/ipc-types";
+import type {
+  AssetPickerSuggestFilters,
+  AssetPickerSuggestions,
+  AssetSearchFilters,
+  AssetSearchResult,
+  AssetSuggestion,
+} from "@shared/ipc-types";
 
-// â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Zod schemas ───────────────────────────────────────────────────────────────
 
 export const AssetSearchResultSchema = z.object({
   id: z.number(),
@@ -27,6 +33,7 @@ export const AssetSearchResultSchema = z.object({
   status_code: z.string(),
   org_node_id: z.number().nullable(),
   org_node_name: z.string().nullable(),
+  org_path: z.string().nullish(),
   parent_asset_id: z.number().nullable(),
   parent_asset_code: z.string().nullable(),
   parent_asset_name: z.string().nullable(),
@@ -45,14 +52,27 @@ export const AssetSuggestionSchema = z.object({
   status_code: z.string(),
 });
 
-// â”€â”€ Search command â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+export const AssetPickerSuggestionsSchema = z.object({
+  mode: z.string(),
+  items: z.array(AssetSearchResultSchema),
+});
+
+// ── Search command ────────────────────────────────────────────────────────────
 
 export async function searchAssets(filters: AssetSearchFilters): Promise<AssetSearchResult[]> {
   const raw = await invoke<unknown>("search_assets", { filters });
   return z.array(AssetSearchResultSchema).parse(raw) as AssetSearchResult[];
 }
 
-// â”€â”€ Suggestion commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/** Empty-query recent/frequent (or typed search) for the shared AssetPicker. */
+export async function suggestPickerAssets(
+  filters: AssetPickerSuggestFilters = {},
+): Promise<AssetPickerSuggestions> {
+  const raw = await invoke<unknown>("suggest_picker_assets", { filters });
+  return AssetPickerSuggestionsSchema.parse(raw) as AssetPickerSuggestions;
+}
+
+// ── Suggestion commands ───────────────────────────────────────────────────────
 
 export async function suggestAssetCodes(
   prefix: string,

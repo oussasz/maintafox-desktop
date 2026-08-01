@@ -6,12 +6,12 @@
  * Phase 2 – Sub-phase 05 – File 01 – Sprint S4.
  */
 
-import { Loader2, Search, X } from "lucide-react";
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AssetPicker } from "@/components/assets/AssetPicker";
 import { FormField } from "@/components/ui/FormField";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -26,7 +26,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
 import { assetToSearchResult } from "@/lib/asset-to-search-result";
 import { getStoredRamsEquipmentId } from "@/pages/reliability/rams-equipment-context";
-import { searchAssets } from "@/services/asset-search-service";
 import { getAssetByIdSilent } from "@/services/asset-service";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
@@ -147,14 +146,8 @@ export function WoCreateForm({
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
 
-  // Equipment combobox state
+  // Equipment selection (shared AssetPicker)
   const [selectedAsset, setSelectedAsset] = useState<AssetSearchResult | null>(null);
-  const [assetQuery, setAssetQuery] = useState("");
-  const [assetResults, setAssetResults] = useState<AssetSearchResult[]>([]);
-  const [assetSearching, setAssetSearching] = useState(false);
-  const [showAssetDropdown, setShowAssetDropdown] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** RAMS prefill runs once per form mount; do not re-apply after the user clears or picks another asset. */
   const ramsEquipmentPrefillConsumedRef = useRef(false);
   /** Edit-mode equipment hydrate once per `initial` WO. */
@@ -198,15 +191,13 @@ export function WoCreateForm({
     if (editEquipmentHydrateKeyRef.current === key) return;
     editEquipmentHydrateKeyRef.current = key;
     let cancelled = false;
-    void searchAssets({ query: initial.asset_code ?? null, limit: 20 }).then((results) => {
-      if (cancelled) return;
-      const match = results.find((a) => a.id === initial.equipment_id);
-      if (match) setSelectedAsset(match);
+    void getAssetByIdSilent(initial.equipment_id).then((asset) => {
+      if (!cancelled && asset) setSelectedAsset(assetToSearchResult(asset));
     });
     return () => {
       cancelled = true;
     };
-  }, [initial?.id, initial?.equipment_id, initial?.asset_code]);
+  }, [initial?.id, initial?.equipment_id]);
 
   // ── New WO: one-shot pre-fill from asset context, id hint, or RAMS ────────
 
@@ -235,55 +226,6 @@ export function WoCreateForm({
     };
   }, [isEdit, prefillAsset, prefillEquipmentId]);
 
-  // ── Equipment search with debounce ────────────────────────────────────
-
-  const handleAssetSearch = useCallback((query: string) => {
-    setAssetQuery(query);
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    if (query.length < 2) {
-      setAssetResults([]);
-      setShowAssetDropdown(false);
-      return;
-    }
-    searchTimerRef.current = setTimeout(async () => {
-      setAssetSearching(true);
-      try {
-        const results = await searchAssets({
-          query,
-          limit: 20,
-          include_decommissioned: false,
-        });
-        setAssetResults(results);
-        setShowAssetDropdown(true);
-      } finally {
-        setAssetSearching(false);
-      }
-    }, 300);
-  }, []);
-
-  const handleSelectAsset = useCallback((asset: AssetSearchResult) => {
-    setSelectedAsset(asset);
-    setAssetQuery("");
-    setAssetResults([]);
-    setShowAssetDropdown(false);
-  }, []);
-
-  const handleClearAsset = useCallback(() => {
-    setSelectedAsset(null);
-    setAssetQuery("");
-  }, []);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setShowAssetDropdown(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
   // ── Validation ────────────────────────────────────────────────────────
 
   /** Create flow always requires an explicit type; edit only when the catalog has rows. */
@@ -292,7 +234,8 @@ export function WoCreateForm({
   const requireEquipment = !isEdit;
   const urgencyIdValid =
     !requireUrgency || activePriorities.some((p) => String(p.id) === urgencyId.trim());
-  const selectedEquipmentId = selectedAsset != null && selectedAsset.id > 0 ? selectedAsset.id : null;
+  const selectedEquipmentId =
+    selectedAsset != null && selectedAsset.id > 0 ? selectedAsset.id : null;
 
   const currentErrors = useMemo(
     () =>
@@ -383,7 +326,7 @@ export function WoCreateForm({
     title,
     description,
     typeCode,
-    selectedAsset,
+    selectedEquipmentId,
     urgencyId,
     plannedStart,
     plannedEnd,
@@ -438,73 +381,15 @@ export function WoCreateForm({
           error={fieldError("equipment")}
           required={requireEquipment}
         >
-          {selectedAsset ? (
-            <div className="rounded-lg border border-surface-border bg-surface-1 p-3">
-              <div className="flex items-start justify-between">
-                <div className="space-y-0.5">
-                  <p className="text-sm font-medium text-text-primary">
-                    {selectedAsset.asset_code} — {selectedAsset.asset_name}
-                  </p>
-                  {selectedAsset.family_name && (
-                    <p className="text-xs text-text-muted">{selectedAsset.family_name}</p>
-                  )}
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 p-0"
-                  onClick={handleClearAsset}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div ref={dropdownRef} className="relative">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
-                <Input
-                  id="wo-equipment-search"
-                  className="pl-9"
-                  placeholder={t("form.equipment.placeholder")}
-                  value={assetQuery}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => handleAssetSearch(e.target.value)}
-                  onFocus={() => {
-                    if (assetResults.length > 0) setShowAssetDropdown(true);
-                  }}
-                />
-                {assetSearching && (
-                  <Loader2 className="absolute right-2.5 top-2.5 h-4 w-4 animate-spin text-text-muted" />
-                )}
-              </div>
-
-              {showAssetDropdown && assetResults.length > 0 && (
-                <div className="absolute z-50 mt-1 w-full rounded-md border border-surface-border bg-surface-0 shadow-lg max-h-60 overflow-y-auto">
-                  {assetResults.map((asset) => (
-                    <button
-                      key={asset.id}
-                      type="button"
-                      className="flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-surface-1 transition-colors"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        handleSelectAsset(asset);
-                      }}
-                    >
-                      <span className="font-mono text-xs text-text-muted shrink-0">
-                        {asset.asset_code}
-                      </span>
-                      <span className="truncate">{asset.asset_name}</span>
-                      {asset.family_name && (
-                        <Badge variant="outline" className="text-[10px] ml-auto shrink-0">
-                          {asset.family_name}
-                        </Badge>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <AssetPicker
+            id="wo-equipment-search"
+            value={selectedAsset}
+            onChange={(asset) => {
+              setSelectedAsset(asset);
+              markTouched("equipment");
+            }}
+            error={null}
+          />
         </FormField>
 
         {/* Urgency */}

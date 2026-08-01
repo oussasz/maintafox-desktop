@@ -612,6 +612,7 @@ pub fn run() {
             commands::assets::list_asset_children,
             commands::assets::list_asset_parents,
             commands::assets::search_assets,
+            commands::assets::suggest_picker_assets,
             commands::assets::suggest_asset_codes,
             commands::assets::suggest_asset_names,
             commands::assets::get_asset_binding_summary,

@@ -1,18 +1,16 @@
 //! Asset search service.
 //!
-//! Phase 2 - Sub-phase 02 - File 03 - Sprint S1.
-//!
 //! Provides domain-aware search across asset identity fields with multi-criteria
-//! filtering. Search ranks asset code first, then name, org location, class,
-//! family, status, and external IDs rather than plain text.
+//! filtering. Search is case- and accent-insensitive (French diacritics) and ranks
+//! exact code matches first, then prefix, then partial name/serial/external ID.
 //!
 //! The search result is an enriched DTO that includes parent asset context,
-//! primary meter summary, and external ID count — giving downstream consumers
-//! a quick snapshot without separate round-trips.
+//! primary meter summary, org path, and external ID count.
 
 use crate::errors::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +22,14 @@ pub struct AssetSearchFilters {
     pub family_codes: Option<Vec<String>>,
     pub status_codes: Option<Vec<String>>,
     pub org_node_ids: Option<Vec<i64>>,
+    pub include_decommissioned: Option<bool>,
+    pub limit: Option<u64>,
+}
+
+/// Filters for the shared AssetPicker empty-query / typed suggestions.
+#[derive(Debug, Deserialize)]
+pub struct AssetPickerSuggestFilters {
+    pub query: Option<String>,
     pub include_decommissioned: Option<bool>,
     pub limit: Option<u64>,
 }
@@ -45,6 +51,8 @@ pub struct AssetSearchResult {
     pub status_code: String,
     pub org_node_id: Option<i64>,
     pub org_node_name: Option<String>,
+    /// Root → … → node display path (e.g. "Site / Zone / Line").
+    pub org_path: Option<String>,
     // Parent asset context (from hierarchy)
     pub parent_asset_id: Option<i64>,
     pub parent_asset_code: Option<String>,
@@ -68,6 +76,105 @@ pub struct AssetSuggestion {
     pub status_code: String,
 }
 
+/// Picker suggestion payload: recent-for-user or global frequent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetPickerSuggestions {
+    /// `"recent"` or `"frequent"`.
+    pub mode: String,
+    pub items: Vec<AssetSearchResult>,
+}
+
+// ─── Accent / case fold ───────────────────────────────────────────────────────
+
+/// Lowercase and strip Latin/French diacritics for accent-insensitive search.
+pub fn fold_search_text(input: &str) -> String {
+    let lower: String = input.chars().flat_map(char::to_lowercase).collect();
+    let mut out = String::with_capacity(lower.len());
+    for ch in lower.chars() {
+        match ch {
+            'à' | 'á' | 'â' | 'ä' | 'ã' | 'å' => out.push('a'),
+            'è' | 'é' | 'ê' | 'ë' => out.push('e'),
+            'ì' | 'í' | 'î' | 'ï' => out.push('i'),
+            'ò' | 'ó' | 'ô' | 'ö' | 'õ' => out.push('o'),
+            'ù' | 'ú' | 'û' | 'ü' => out.push('u'),
+            'ý' | 'ÿ' => out.push('y'),
+            'ç' => out.push('c'),
+            'ñ' => out.push('n'),
+            'œ' => out.push_str("oe"),
+            'æ' => out.push_str("ae"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// SQLite expression that folds a text column the same way as [`fold_search_text`].
+fn sql_fold_expr(column_sql: &str) -> String {
+    // Nest REPLACE for diacritics then LOWER for ASCII case.
+    // Order: map accented chars → base, then LOWER.
+    let pairs = [
+        ("à", "a"),
+        ("á", "a"),
+        ("â", "a"),
+        ("ä", "a"),
+        ("ã", "a"),
+        ("å", "a"),
+        ("À", "a"),
+        ("Á", "a"),
+        ("Â", "a"),
+        ("Ä", "a"),
+        ("è", "e"),
+        ("é", "e"),
+        ("ê", "e"),
+        ("ë", "e"),
+        ("È", "e"),
+        ("É", "e"),
+        ("Ê", "e"),
+        ("Ë", "e"),
+        ("ì", "i"),
+        ("í", "i"),
+        ("î", "i"),
+        ("ï", "i"),
+        ("Ì", "i"),
+        ("Í", "i"),
+        ("Î", "i"),
+        ("Ï", "i"),
+        ("ò", "o"),
+        ("ó", "o"),
+        ("ô", "o"),
+        ("ö", "o"),
+        ("õ", "o"),
+        ("Ò", "o"),
+        ("Ó", "o"),
+        ("Ô", "o"),
+        ("Ö", "o"),
+        ("ù", "u"),
+        ("ú", "u"),
+        ("û", "u"),
+        ("ü", "u"),
+        ("Ù", "u"),
+        ("Ú", "u"),
+        ("Û", "u"),
+        ("Ü", "u"),
+        ("ý", "y"),
+        ("ÿ", "y"),
+        ("ç", "c"),
+        ("Ç", "c"),
+        ("ñ", "n"),
+        ("Ñ", "n"),
+    ];
+    let mut expr = column_sql.to_string();
+    for (from, to) in pairs {
+        expr = format!("REPLACE({expr}, '{from}', '{to}')");
+    }
+    // Multi-char ligatures
+    expr = format!("REPLACE({expr}, 'œ', 'oe')");
+    expr = format!("REPLACE({expr}, 'Œ', 'oe')");
+    expr = format!("REPLACE({expr}, 'æ', 'ae')");
+    expr = format!("REPLACE({expr}, 'Æ', 'ae')");
+    format!("LOWER({expr})")
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
@@ -78,7 +185,9 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResult> {
     Ok(AssetSearchResult {
-        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        id: row
+            .try_get::<i64>("", "id")
+            .map_err(|e| decode_err("id", e))?,
         sync_id: row
             .try_get::<String>("", "sync_id")
             .map_err(|e| decode_err("sync_id", e))?,
@@ -118,6 +227,7 @@ fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResult> {
         org_node_name: row
             .try_get::<Option<String>>("", "org_node_name")
             .map_err(|e| decode_err("org_node_name", e))?,
+        org_path: None,
         parent_asset_id: row
             .try_get::<Option<i64>>("", "parent_asset_id")
             .map_err(|e| decode_err("parent_asset_id", e))?,
@@ -150,7 +260,9 @@ fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResult> {
 
 fn map_suggestion(row: &QueryResult) -> AppResult<AssetSuggestion> {
     Ok(AssetSuggestion {
-        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
+        id: row
+            .try_get::<i64>("", "id")
+            .map_err(|e| decode_err("id", e))?,
         asset_code: row
             .try_get::<String>("", "asset_code")
             .map_err(|e| decode_err("asset_code", e))?,
@@ -161,6 +273,185 @@ fn map_suggestion(row: &QueryResult) -> AppResult<AssetSuggestion> {
             .try_get::<String>("", "status_code")
             .map_err(|e| decode_err("status_code", e))?,
     })
+}
+
+/// Resolve org paths for the returned result set only (bounded by result count).
+async fn enrich_org_paths(
+    db: &DatabaseConnection,
+    results: &mut [AssetSearchResult],
+) -> AppResult<()> {
+    let mut node_ids: Vec<i64> = results
+        .iter()
+        .filter_map(|r| r.org_node_id)
+        .collect();
+    node_ids.sort_unstable();
+    node_ids.dedup();
+    if node_ids.is_empty() {
+        return Ok(());
+    }
+
+    let placeholders = node_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let binds: Vec<sea_orm::Value> = node_ids.iter().map(|&id| id.into()).collect();
+
+    let sql = format!(
+        "WITH RECURSIVE chain AS (
+            SELECT id AS leaf_id, id, parent_id, name, 0 AS depth
+            FROM org_nodes
+            WHERE id IN ({placeholders}) AND deleted_at IS NULL
+            UNION ALL
+            SELECT c.leaf_id, n.id, n.parent_id, n.name, c.depth + 1
+            FROM org_nodes n
+            INNER JOIN chain c ON n.id = c.parent_id
+            WHERE n.deleted_at IS NULL AND c.depth < 32
+         )
+         SELECT leaf_id, name, depth FROM chain
+         ORDER BY leaf_id ASC, depth DESC"
+    );
+
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            binds,
+        ))
+        .await?;
+
+    let mut path_parts: HashMap<i64, Vec<String>> = HashMap::new();
+    for row in rows {
+        let leaf_id: i64 = row
+            .try_get("", "leaf_id")
+            .map_err(|e| decode_err("leaf_id", e))?;
+        let name: String = row
+            .try_get("", "name")
+            .map_err(|e| decode_err("name", e))?;
+        path_parts.entry(leaf_id).or_default().push(name);
+    }
+
+    let path_map: HashMap<i64, String> = path_parts
+        .into_iter()
+        .map(|(id, parts)| (id, parts.join(" / ")))
+        .collect();
+
+    for result in results.iter_mut() {
+        if let Some(node_id) = result.org_node_id {
+            result.org_path = path_map.get(&node_id).cloned().or_else(|| {
+                result.org_node_name.clone()
+            });
+        }
+    }
+
+    Ok(())
+}
+
+async fn hydrate_assets_by_ids(
+    db: &DatabaseConnection,
+    ordered_ids: &[i64],
+    include_decommissioned: bool,
+) -> AppResult<Vec<AssetSearchResult>> {
+    if ordered_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = ordered_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let binds: Vec<sea_orm::Value> = ordered_ids.iter().map(|&id| id.into()).collect();
+
+    let mut where_clauses = vec![
+        "e.deleted_at IS NULL".to_string(),
+        format!("e.id IN ({placeholders})"),
+    ];
+    if !include_decommissioned {
+        where_clauses.push(
+            "COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')"
+                .to_string(),
+        );
+    }
+    let where_sql = where_clauses.join(" AND ");
+
+    // Preserve caller order via CASE.
+    let mut order_cases = String::from("ORDER BY CASE e.id");
+    for (idx, id) in ordered_ids.iter().enumerate() {
+        order_cases.push_str(&format!(" WHEN {id} THEN {idx}"));
+    }
+    order_cases.push_str(" ELSE 9999 END");
+
+    let sql = format!("SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_cases}");
+
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            binds,
+        ))
+        .await?;
+
+    let mut results: Vec<AssetSearchResult> = rows.iter().map(map_search_result).collect::<AppResult<_>>()?;
+    enrich_org_paths(db, &mut results).await?;
+    Ok(results)
+}
+
+async fn usage_asset_ids(
+    db: &DatabaseConnection,
+    user_id: Option<i64>,
+    limit: u64,
+) -> AppResult<Vec<i64>> {
+    let (sql, binds): (String, Vec<sea_orm::Value>) = if let Some(uid) = user_id {
+        (
+            format!(
+                "WITH usage AS (
+                    SELECT equipment_id AS asset_id, created_at AS used_at
+                    FROM work_orders
+                    WHERE requester_id = ? AND equipment_id IS NOT NULL
+                    UNION ALL
+                    SELECT asset_id, submitted_at AS used_at
+                    FROM intervention_requests
+                    WHERE submitter_id = ? AND asset_id IS NOT NULL AND asset_id > 0
+                 )
+                 SELECT asset_id
+                 FROM usage
+                 GROUP BY asset_id
+                 ORDER BY MAX(used_at) DESC
+                 LIMIT {limit}"
+            ),
+            vec![uid.into(), uid.into()],
+        )
+    } else {
+        (
+            format!(
+                "WITH usage AS (
+                    SELECT equipment_id AS asset_id, created_at AS used_at
+                    FROM work_orders
+                    WHERE equipment_id IS NOT NULL
+                    UNION ALL
+                    SELECT asset_id, submitted_at AS used_at
+                    FROM intervention_requests
+                    WHERE asset_id IS NOT NULL AND asset_id > 0
+                 )
+                 SELECT asset_id
+                 FROM usage
+                 GROUP BY asset_id
+                 ORDER BY COUNT(*) DESC, MAX(used_at) DESC
+                 LIMIT {limit}"
+            ),
+            vec![],
+        )
+    };
+
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            binds,
+        ))
+        .await?;
+
+    let mut ids = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id: i64 = row
+            .try_get("", "asset_id")
+            .map_err(|e| decode_err("asset_id", e))?;
+        ids.push(id);
+    }
+    Ok(ids)
 }
 
 // ─── SQL fragments ────────────────────────────────────────────────────────────
@@ -228,55 +519,57 @@ const SEARCH_FROM: &str = r"
 /// Domain-aware asset search with multi-criteria filtering.
 ///
 /// Search ranking: asset code exact match is ordered first (via CASE expression),
-/// then code prefix, then name/serial partial match.
-///
-/// Filters:
-///   - `query` — searches asset_code, name, serial_number, and external_ids
-///   - `class_codes` — restrict to resolved class codes (`COALESCE(rs_class, ec)`)
-///   - `family_codes` — restrict to family codes (`equipment_family_ref_id`)
-///   - `status_codes` — restrict to specific lifecycle status codes
-///   - `org_node_ids` — restrict to specific org nodes
-///   - `include_decommissioned` — when false (default), excludes DECOMMISSIONED
-///   - `limit` — max rows returned (capped at 200)
-pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters) -> AppResult<Vec<AssetSearchResult>> {
+/// then code prefix, then name/serial partial match. Matching is accent- and
+/// case-insensitive.
+pub async fn search_assets(
+    db: &DatabaseConnection,
+    filters: AssetSearchFilters,
+) -> AppResult<Vec<AssetSearchResult>> {
     let mut where_clauses = vec!["e.deleted_at IS NULL".to_string()];
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
-    // ── Decommissioned filter (resolved status, same as SEARCH_SELECT) ────
     if !filters.include_decommissioned.unwrap_or(false) {
-        where_clauses
-            .push("COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')".to_string());
+        where_clauses.push(
+            "COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')"
+                .to_string(),
+        );
     }
 
-    // ── Text query (domain-aware: code, name, serial, external IDs) ──────
-    if let Some(ref q) = filters.query {
-        let trimmed = q.trim();
-        if !trimmed.is_empty() {
-            where_clauses.push(
-                "(e.asset_id_code LIKE ? OR e.name LIKE ? OR e.serial_number LIKE ? \
-                 OR e.id IN (SELECT asset_id FROM asset_external_ids WHERE external_id LIKE ? AND valid_to IS NULL))"
-                    .to_string(),
-            );
-            let pattern = format!("%{trimmed}%");
-            binds.push(pattern.clone().into());
-            binds.push(pattern.clone().into());
-            binds.push(pattern.clone().into());
-            binds.push(pattern.into());
-        }
+    let folded_query = filters
+        .query
+        .as_ref()
+        .map(|q| fold_search_text(q.trim()))
+        .filter(|q| !q.is_empty());
+
+    if let Some(ref folded) = folded_query {
+        let code_fold = sql_fold_expr("e.asset_id_code");
+        let name_fold = sql_fold_expr("e.name");
+        let serial_fold = sql_fold_expr("COALESCE(e.serial_number, '')");
+        let ext_fold = sql_fold_expr("external_id");
+        where_clauses.push(format!(
+            "({code_fold} LIKE ? OR {name_fold} LIKE ? OR {serial_fold} LIKE ? \
+             OR e.id IN (SELECT asset_id FROM asset_external_ids \
+               WHERE {ext_fold} LIKE ? AND valid_to IS NULL))"
+        ));
+        let pattern = format!("%{folded}%");
+        binds.push(pattern.clone().into());
+        binds.push(pattern.clone().into());
+        binds.push(pattern.clone().into());
+        binds.push(pattern.into());
     }
 
-    // ── Class code filter (same resolved code as Details / SEARCH_SELECT) ─
     if let Some(ref codes) = filters.class_codes {
         if !codes.is_empty() {
             let placeholders = codes.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-            where_clauses.push(format!("COALESCE(rs_class.code, ec.code) IN ({placeholders})"));
+            where_clauses.push(format!(
+                "COALESCE(rs_class.code, ec.code) IN ({placeholders})"
+            ));
             for code in codes {
                 binds.push(code.clone().into());
             }
         }
     }
 
-    // ── Family code filter (equipment_family_ref_id → reference_values) ───
     if let Some(ref codes) = filters.family_codes {
         if !codes.is_empty() {
             let placeholders = codes.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
@@ -287,7 +580,6 @@ pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters)
         }
     }
 
-    // ── Status code filter (resolved status, same as SEARCH_SELECT) ───────
     if let Some(ref codes) = filters.status_codes {
         if !codes.is_empty() {
             let placeholders = codes.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
@@ -300,7 +592,6 @@ pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters)
         }
     }
 
-    // ── Org node filter ───────────────────────────────────────────────────
     if let Some(ref ids) = filters.org_node_ids {
         if !ids.is_empty() {
             let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
@@ -314,33 +605,94 @@ pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters)
     let where_sql = where_clauses.join(" AND ");
     let row_limit = filters.limit.unwrap_or(100).min(200);
 
-    // ── Order: exact code match first, then code prefix, then name ────────
-    let order_sql = if let Some(ref q) = filters.query {
-        let trimmed = q.trim();
-        if !trimmed.is_empty() {
-            // Bind the query for CASE ordering expressions
-            binds.push(trimmed.to_uppercase().into());
-            binds.push(format!("{}%", trimmed.to_uppercase()).into());
+    let order_sql = if let Some(ref folded) = folded_query {
+        let code_fold = sql_fold_expr("e.asset_id_code");
+        binds.push(folded.clone().into());
+        binds.push(format!("{folded}%").into());
+        format!(
             "ORDER BY \
-                CASE WHEN UPPER(e.asset_id_code) = UPPER(?) THEN 0 \
-                     WHEN UPPER(e.asset_id_code) LIKE UPPER(?) THEN 1 \
+                CASE WHEN {code_fold} = ? THEN 0 \
+                     WHEN {code_fold} LIKE ? THEN 1 \
                      ELSE 2 END, \
                 e.asset_id_code ASC"
-                .to_string()
-        } else {
-            "ORDER BY e.asset_id_code ASC".to_string()
-        }
+        )
     } else {
         "ORDER BY e.asset_id_code ASC".to_string()
     };
 
-    let sql = format!("SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_sql} LIMIT {row_limit}");
+    let sql = format!(
+        "SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_sql} LIMIT {row_limit}"
+    );
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            binds,
+        ))
         .await?;
 
-    rows.iter().map(map_search_result).collect()
+    let mut results: Vec<AssetSearchResult> =
+        rows.iter().map(map_search_result).collect::<AppResult<_>>()?;
+    enrich_org_paths(db, &mut results).await?;
+    Ok(results)
+}
+
+/// Suggestions for the shared AssetPicker.
+///
+/// - Non-empty query → accent-aware [`search_assets`].
+/// - Empty query → recent assets for `user_id`; if none, global frequent.
+pub async fn suggest_picker_assets(
+    db: &DatabaseConnection,
+    user_id: i64,
+    filters: AssetPickerSuggestFilters,
+) -> AppResult<AssetPickerSuggestions> {
+    let limit = filters.limit.unwrap_or(15).min(20);
+    let include_decommissioned = filters.include_decommissioned.unwrap_or(false);
+
+    let trimmed = filters
+        .query
+        .as_deref()
+        .map(str::trim)
+        .filter(|q| !q.is_empty());
+
+    if trimmed.is_some() {
+        let items = search_assets(
+            db,
+            AssetSearchFilters {
+                query: filters.query,
+                class_codes: None,
+                family_codes: None,
+                status_codes: None,
+                org_node_ids: None,
+                include_decommissioned: Some(include_decommissioned),
+                limit: Some(limit),
+            },
+        )
+        .await?;
+        return Ok(AssetPickerSuggestions {
+            mode: "search".into(),
+            items,
+        });
+    }
+
+    let recent_ids = usage_asset_ids(db, Some(user_id), limit).await?;
+    if !recent_ids.is_empty() {
+        let items = hydrate_assets_by_ids(db, &recent_ids, include_decommissioned).await?;
+        if !items.is_empty() {
+            return Ok(AssetPickerSuggestions {
+                mode: "recent".into(),
+                items,
+            });
+        }
+    }
+
+    let frequent_ids = usage_asset_ids(db, None, limit).await?;
+    let items = hydrate_assets_by_ids(db, &frequent_ids, include_decommissioned).await?;
+    Ok(AssetPickerSuggestions {
+        mode: "frequent".into(),
+        items,
+    })
 }
 
 /// Suggest asset codes matching a prefix. Returns lightweight entries for
@@ -355,15 +707,17 @@ pub async fn suggest_asset_codes(
         return Ok(Vec::new());
     }
 
-    let pattern = format!("{trimmed}%");
+    let folded = fold_search_text(trimmed);
+    let pattern = format!("{folded}%");
     let row_limit = limit.unwrap_or(10).min(50);
+    let code_fold = sql_fold_expr("e.asset_id_code");
 
     let sql = format!(
         "SELECT e.id, e.asset_id_code AS asset_code, e.name AS asset_name, \
                 e.lifecycle_status AS status_code \
          FROM equipment e \
          WHERE e.deleted_at IS NULL \
-           AND e.asset_id_code LIKE ? \
+           AND {code_fold} LIKE ? \
          ORDER BY e.asset_id_code ASC \
          LIMIT {row_limit}"
     );
@@ -391,15 +745,17 @@ pub async fn suggest_asset_names(
         return Ok(Vec::new());
     }
 
-    let pattern = format!("%{trimmed}%");
+    let folded = fold_search_text(trimmed);
+    let pattern = format!("%{folded}%");
     let row_limit = limit.unwrap_or(10).min(50);
+    let name_fold = sql_fold_expr("e.name");
 
     let sql = format!(
         "SELECT e.id, e.asset_id_code AS asset_code, e.name AS asset_name, \
                 e.lifecycle_status AS status_code \
          FROM equipment e \
          WHERE e.deleted_at IS NULL \
-           AND e.name LIKE ? \
+           AND {name_fold} LIKE ? \
          ORDER BY e.name ASC \
          LIMIT {row_limit}"
     );
@@ -413,4 +769,18 @@ pub async fn suggest_asset_names(
         .await?;
 
     rows.iter().map(map_suggestion).collect()
+}
+
+#[cfg(test)]
+mod fold_tests {
+    use super::fold_search_text;
+
+    #[test]
+    fn folds_french_accents_and_case() {
+        assert_eq!(fold_search_text("Compresseur"), "compresseur");
+        assert_eq!(fold_search_text("COMPRESSEUR"), "compresseur");
+        assert_eq!(fold_search_text("Compresseùr"), "compresseur");
+        assert_eq!(fold_search_text("Électricité"), "electricite");
+        assert_eq!(fold_search_text("çà"), "ca");
+    }
 }

@@ -8,10 +8,11 @@
  * Phase 2 – Sub-phase 04 – File 01 – Sprint S4.
  */
 
-import { Loader2, Search, X } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AssetPicker } from "@/components/assets/AssetPicker";
 import { DiAttachmentPanel } from "@/components/di/DiAttachmentPanel";
 import {
   EntityFormAttachments,
@@ -23,25 +24,19 @@ import {
   type EntityFormFileItem,
   type EntityFormImageItem,
 } from "@/components/entity-form";
+import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { FormField } from "@/components/ui/FormField";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { ReferenceCombobox } from "@/components/reference/ReferenceCombobox";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
 import { assetToSearchResult } from "@/lib/asset-to-search-result";
-import { searchAssets } from "@/services/asset-search-service";
 import { getAssetById, getAssetByIdSilent } from "@/services/asset-service";
 import { uploadDiAttachmentFromPath } from "@/services/di-attachment-service";
 import { useDiStore } from "@/stores/di-store";
-import type {
-  AssetSearchResult,
-  DiCreateInput,
-  InterventionRequest,
-} from "@shared/ipc-types";
+import type { AssetSearchResult, DiCreateInput, InterventionRequest } from "@shared/ipc-types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -141,14 +136,8 @@ export function DiCreateForm({
   const [pendingPhotos, setPendingPhotos] = useState<EntityFormImageItem[]>([]);
   const [pendingFiles, setPendingFiles] = useState<EntityFormFileItem[]>([]);
 
-  // Equipment combobox state
+  // Equipment selection (shared AssetPicker)
   const [selectedAsset, setSelectedAsset] = useState<AssetSearchResult | null>(null);
-  const [assetQuery, setAssetQuery] = useState("");
-  const [assetResults, setAssetResults] = useState<AssetSearchResult[]>([]);
-  const [assetSearching, setAssetSearching] = useState(false);
-  const [showAssetDropdown, setShowAssetDropdown] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Validation
   const [touched, setTouched] = useState<Set<string>>(new Set());
@@ -193,55 +182,6 @@ export function DiCreateForm({
     };
   }, [isEdit, prefillAsset, prefillEquipmentId]);
 
-  // ── Equipment search with debounce ────────────────────────────────────
-
-  const handleAssetSearch = useCallback((query: string) => {
-    setAssetQuery(query);
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    if (query.length < 2) {
-      setAssetResults([]);
-      setShowAssetDropdown(false);
-      return;
-    }
-    searchTimerRef.current = setTimeout(async () => {
-      setAssetSearching(true);
-      try {
-        const results = await searchAssets({
-          query,
-          limit: 20,
-          include_decommissioned: false,
-        });
-        setAssetResults(results);
-        setShowAssetDropdown(true);
-      } finally {
-        setAssetSearching(false);
-      }
-    }, 300);
-  }, []);
-
-  const handleSelectAsset = useCallback((asset: AssetSearchResult) => {
-    setSelectedAsset(asset);
-    setAssetQuery("");
-    setAssetResults([]);
-    setShowAssetDropdown(false);
-  }, []);
-
-  const handleClearAsset = useCallback(() => {
-    setSelectedAsset(null);
-    setAssetQuery("");
-  }, []);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setShowAssetDropdown(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
   // ── Validation ────────────────────────────────────────────────────────
 
   const currentErrors = useMemo(
@@ -259,7 +199,17 @@ export function DiCreateForm({
         },
         (key) => t(key as never),
       ),
-    [title, description, originType, requestType, urgency, impactLevel, symptomCodeId, selectedAsset, t],
+    [
+      title,
+      description,
+      originType,
+      requestType,
+      urgency,
+      impactLevel,
+      symptomCodeId,
+      selectedAsset,
+      t,
+    ],
   );
 
   const isValid = Object.keys(currentErrors).length === 0;
@@ -347,9 +297,13 @@ export function DiCreateForm({
           try {
             for (const photo of photos) {
               try {
+                if (!photo.path) {
+                  failed += 1;
+                  continue;
+                }
                 await uploadDiAttachmentFromPath({
                   diId: di.id,
-                  sourcePath: photo.path!,
+                  sourcePath: photo.path,
                   attachmentType: "photo",
                 });
               } catch {
@@ -447,77 +401,15 @@ export function DiCreateForm({
         <h3 className="text-sm font-semibold text-text-primary mb-3">
           {t("form.section.equipment")}
         </h3>
-
-        {selectedAsset ? (
-          <div className="rounded-lg border border-surface-border bg-surface-1 p-3">
-            <div className="flex items-start justify-between">
-              <div className="space-y-0.5">
-                <p className="text-sm font-medium text-text-primary">
-                  {selectedAsset.asset_code} — {selectedAsset.asset_name}
-                </p>
-                {selectedAsset.family_name && (
-                  <p className="text-xs text-text-muted">{selectedAsset.family_name}</p>
-                )}
-                {selectedAsset.org_node_name && (
-                  <p className="text-xs text-text-muted">{selectedAsset.org_node_name}</p>
-                )}
-              </div>
-              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={handleClearAsset}>
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div ref={dropdownRef} className="relative">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
-              <Input
-                id="equipment-search"
-                className="pl-9"
-                placeholder={t("form.equipmentSearch")}
-                value={assetQuery}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => handleAssetSearch(e.target.value)}
-                onFocus={() => {
-                  if (assetResults.length > 0) setShowAssetDropdown(true);
-                }}
-                onBlur={() => markTouched("equipment")}
-              />
-              {assetSearching && (
-                <Loader2 className="absolute right-2.5 top-2.5 h-4 w-4 animate-spin text-text-muted" />
-              )}
-            </div>
-
-            {showAssetDropdown && assetResults.length > 0 && (
-              <div className="absolute z-50 mt-1 w-full rounded-md border border-surface-border bg-surface-0 shadow-lg max-h-60 overflow-y-auto">
-                {assetResults.map((asset) => (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    className="flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-surface-1 transition-colors"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      handleSelectAsset(asset);
-                    }}
-                  >
-                    <span className="font-mono text-xs text-text-muted shrink-0">
-                      {asset.asset_code}
-                    </span>
-                    <span className="truncate">{asset.asset_name}</span>
-                    {asset.family_name && (
-                      <Badge variant="outline" className="text-[10px] ml-auto shrink-0">
-                        {asset.family_name}
-                      </Badge>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {fieldError("equipment") && (
-              <p className="text-xs text-status-danger mt-1">{fieldError("equipment")}</p>
-            )}
-          </div>
-        )}
+        <AssetPicker
+          id="equipment-search"
+          value={selectedAsset}
+          onChange={(asset) => {
+            setSelectedAsset(asset);
+            markTouched("equipment");
+          }}
+          error={fieldError("equipment")}
+        />
       </section>
 
       <Separator />
@@ -729,9 +621,7 @@ export function DiCreateForm({
 
       {/* ── Media: pictures + attachments ───────────────────────────── */}
       <section className="space-y-4">
-        <h3 className="text-sm font-semibold text-text-primary mb-1">
-          {t("form.section.media")}
-        </h3>
+        <h3 className="text-sm font-semibold text-text-primary mb-1">{t("form.section.media")}</h3>
 
         {isEdit && initial ? (
           <DiAttachmentPanel diId={initial.id} canUpload={true} canDelete={false} />
@@ -754,7 +644,9 @@ export function DiCreateForm({
             </div>
 
             <div className="space-y-2">
-              <p className="text-xs font-medium text-text-secondary">{t("form.attachments.label")}</p>
+              <p className="text-xs font-medium text-text-secondary">
+                {t("form.attachments.label")}
+              </p>
               <EntityFormAttachments
                 items={attachmentListItems}
                 onAdd={() => void handleAddFiles()}

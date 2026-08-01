@@ -22,12 +22,23 @@ The Design System owns rendering. Modules may only provide typed presentation ad
 - Modules may provide columns, cards, permissions, actions, and transition callbacks; they must not render their own board, columns, headers, counters, cards, or Kanban empty states.
 - Reject any change that introduces a second Kanban renderer.
 
+### Active operational stages vs Archive SSOT
+
+- Workflow Kanban adapters must show **active operational stages only**.
+- Terminal / archived / cancelled / rejected / received-closed states must **not** be Kanban columns when the module has (or is adding) an Archive/Completed panel as SSOT for those records.
+- Adapters must not keep duplicate terminal lanes that only mirror the archive.
+- Pre-closure waiting states that are still operational (e.g. WO `completed`, DI `approved` / `deferred`) may remain on the board.
+- New boards (PM, permits, etc.) must follow the same split from day one.
+- DS tones such as `closed` / `cancelled` may remain for **badges**; they must not justify terminal board columns when Archive exists.
+- No change to the `KanbanBoard` primitive API for this split — adapters own column lists and card filters.
+
 ### Forbidden in adapters
 
 - Column icons
 - Per-column empty copy (`column.empty`) — use board `emptyColumnLabel` from `common.kanban.emptyColumn`
 - `headerBadge` or any trailing badge on the code row
 - JSX, `className`, or Tailwind in card/column data
+- Terminal lanes that only duplicate an Archive panel
 
 ### Required slot semantics
 
@@ -49,3 +60,35 @@ Missing optional fields omit the node; they must never invent an alternate layou
 - When a new application-wide interface primitive is established, add it to this rule with its canonical renderer path and adapter boundary.
 - Keep shared visual behavior, accessibility, responsive layout, and interaction chrome inside the primitive.
 - Do not move business fetching, workflow rules, IPC, or domain mutations into Design System primitives.
+
+## AssetPicker
+
+- AssetPicker is a Design System primitive.
+- All asset/equipment selection surfaces (DI, WO, and later PM, Inspection, LOTO,
+  Failure Reporting, Inventory Reservation, Reliability) must use
+  `src/components/assets/AssetPicker.tsx`.
+- Modules may pass value, onChange, error, disabled, and context prefill;
+  they must not render their own asset search box, 2-char gates, result lists,
+  or scan chrome.
+- Reject any change that introduces a second asset/equipment picker for identity selection.
+
+### Required behavior (owned by the primitive)
+
+- Open with suggestions (recent for current user, else frequent); no min-char gate
+- Search from the first character; accent-insensitive and case-insensitive
+- Search fields: code, name, serial, QR/barcode/alias (via external ids)
+- Rich rows: code (prominent) + name + org path + optional status; never name-only
+- Highlight matching substrings in code and name
+- Unique exact code match + Enter selects immediately without showing the list
+- Keyboard: Arrow navigation, Enter select, Escape close
+- Hardware Scan-QR affordance inside the picker
+- Server-side filtering only; do not preload the full asset catalog
+
+### Forbidden in modules
+
+- Inline `searchAssets` comboboxes / duplicated debounce gates
+- Min-character gates before showing suggestions
+- Name-only result rows
+- Module-specific alternate pickers named EquipmentPicker for asset identity selection
+  (`EquipmentSearchSelect` remains for reference catalogs only — class/family/org options,
+  not asset identity search)
