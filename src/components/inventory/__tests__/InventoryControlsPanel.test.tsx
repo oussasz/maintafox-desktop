@@ -76,11 +76,12 @@ describe("InventoryControlsPanel", () => {
     const selects = screen.getAllByRole("combobox");
     const warehouseSelect = selects[0];
     const locationSelect = selects[1];
-    expect(warehouseSelect).toBeTruthy();
-    expect(locationSelect).toBeTruthy();
-    fireEvent.click(warehouseSelect as HTMLElement);
+    if (!warehouseSelect || !locationSelect) {
+      throw new Error("expected warehouse and location comboboxes");
+    }
+    fireEvent.click(warehouseSelect);
     fireEvent.click(screen.getByText("MAIN - Main"));
-    fireEvent.click(locationSelect as HTMLElement);
+    fireEvent.click(locationSelect);
     fireEvent.click(screen.getByText("MAIN/BIN"));
     fireEvent.change(screen.getByLabelText("Critical abs threshold"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Create session" }));
@@ -121,7 +122,9 @@ describe("InventoryControlsPanel", () => {
     await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
 
     const sessionSelect = screen.getAllByRole("combobox")[2];
-    expect(sessionSelect).toBeTruthy();
+    if (!sessionSelect) {
+      throw new Error("expected session combobox");
+    }
     fireEvent.click(sessionSelect);
     fireEvent.click(screen.getByText("CC-100 (approved)"));
     fireEvent.click(screen.getByRole("button", { name: "Post variances" }));
