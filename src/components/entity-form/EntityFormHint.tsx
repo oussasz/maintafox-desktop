@@ -17,10 +17,7 @@ export function EntityFormHint({
   return (
     <div
       role="status"
-      className={cn(
-        variant === "info" ? mfEntityForm.hintInfo : mfEntityForm.hint,
-        className,
-      )}
+      className={cn(variant === "info" ? mfEntityForm.hintInfo : mfEntityForm.hint, className)}
       {...props}
     >
       {children}

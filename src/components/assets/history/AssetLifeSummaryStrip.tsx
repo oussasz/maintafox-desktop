@@ -64,4 +64,3 @@ export function AssetLifeSummaryStrip({ summary }: { summary: AssetHistorySummar
     </div>
   );
 }
-

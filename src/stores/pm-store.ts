@@ -71,10 +71,18 @@ interface PmStoreState {
   transitionOccurrence: (input: TransitionPmOccurrenceInput) => Promise<PmOccurrence>;
   executeOccurrence: (input: ExecutePmOccurrenceInput) => Promise<ExecutePmOccurrenceResult>;
   createPlan: (input: CreatePmPlanInput) => Promise<PmPlan>;
-  updatePlan: (planId: number, expectedRowVersion: number, input: UpdatePmPlanInput) => Promise<PmPlan>;
+  updatePlan: (
+    planId: number,
+    expectedRowVersion: number,
+    input: UpdatePmPlanInput,
+  ) => Promise<PmPlan>;
   transitionPlanLifecycle: (input: TransitionPmPlanLifecycleInput) => Promise<PmPlan>;
   createVersion: (pmPlanId: number, input: CreatePmPlanVersionInput) => Promise<PmPlanVersion>;
-  updateVersion: (versionId: number, expectedRowVersion: number, input: UpdatePmPlanVersionInput) => Promise<PmPlanVersion>;
+  updateVersion: (
+    versionId: number,
+    expectedRowVersion: number,
+    input: UpdatePmPlanVersionInput,
+  ) => Promise<PmPlanVersion>;
   publishVersion: (versionId: number, expectedRowVersion: number) => Promise<PmPlanVersion>;
 }
 
@@ -99,7 +107,9 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
       const plans = await listPmPlans({});
       const selectedPlanId = get().selectedPlanId;
       const nextSelected =
-        selectedPlanId && plans.some((p) => p.id === selectedPlanId) ? selectedPlanId : (plans[0]?.id ?? null);
+        selectedPlanId && plans.some((p) => p.id === selectedPlanId)
+          ? selectedPlanId
+          : (plans[0]?.id ?? null);
       set({ plans, selectedPlanId: nextSelected });
       if (nextSelected !== null) {
         const versions = await listPmPlanVersions(nextSelected);
@@ -183,7 +193,10 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
 
   loadRecurringFindings: async (pmPlanId) => {
     try {
-      const recurringFindings = await listPmRecurringFindings({ pm_plan_id: pmPlanId ?? null, days_window: 90 });
+      const recurringFindings = await listPmRecurringFindings({
+        pm_plan_id: pmPlanId ?? null,
+        days_window: 90,
+      });
       set({ recurringFindings });
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -191,7 +204,10 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
   },
   loadPlanningReadiness: async (pmPlanId) => {
     try {
-      const planningReadiness = await listPmPlanningReadiness({ pm_plan_id: pmPlanId ?? null, limit: 200 });
+      const planningReadiness = await listPmPlanningReadiness({
+        pm_plan_id: pmPlanId ?? null,
+        limit: 200,
+      });
       set({ planningReadiness });
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -338,7 +354,10 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
   publishVersion: async (versionId, expectedRowVersion) => {
     set({ saving: true, error: null });
     try {
-      const version = await publishPmPlanVersion({ version_id: versionId, expected_row_version: expectedRowVersion });
+      const version = await publishPmPlanVersion({
+        version_id: versionId,
+        expected_row_version: expectedRowVersion,
+      });
       await get().loadPlans();
       await get().selectPlan(version.pm_plan_id);
       return version;

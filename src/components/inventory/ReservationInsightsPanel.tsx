@@ -36,9 +36,11 @@ export function ReservationInsightsPanel({ reservations }: ReservationInsightsPa
         existing.rows.push(row);
       } else {
         map.set(key, {
-          workOrderCode: row.work_order_code ?? (row.source_ref?.startsWith("OT-") || row.source_ref?.startsWith("WO-")
-            ? row.source_ref
-            : null),
+          workOrderCode:
+            row.work_order_code ??
+            (row.source_ref?.startsWith("OT-") || row.source_ref?.startsWith("WO-")
+              ? row.source_ref
+              : null),
           sourceId:
             row.source_type === "WORK_ORDER" || row.source_type === "WORK_ORDER_PART"
               ? row.source_id

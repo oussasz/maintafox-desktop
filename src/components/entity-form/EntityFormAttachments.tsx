@@ -59,9 +59,7 @@ export function EntityFormAttachments({
   return (
     <div className={cn("space-y-3", className)}>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-text-muted">
-          {items.length === 0 ? emptyLabel : null}
-        </span>
+        <span className="text-xs text-text-muted">{items.length === 0 ? emptyLabel : null}</span>
         {onAdd && (
           <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={onAdd}>
             <Upload className="mr-1.5 h-3.5 w-3.5" />
@@ -80,9 +78,7 @@ export function EntityFormAttachments({
               <FileText className="h-4 w-4 shrink-0 text-text-muted" />
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">{item.name}</p>
-                {item.meta ? (
-                  <p className="truncate text-xs text-text-muted">{item.meta}</p>
-                ) : null}
+                {item.meta ? <p className="truncate text-xs text-text-muted">{item.meta}</p> : null}
               </div>
               {onRemove && (
                 <Button

@@ -64,9 +64,11 @@ export class ExportCancelledError extends Error {
 }
 
 export function isExportCancelled(err: unknown): boolean {
-  return err instanceof ExportCancelledError ||
+  return (
+    err instanceof ExportCancelledError ||
     (typeof err === "object" &&
       err !== null &&
       "code" in err &&
-      (err as { code: unknown }).code === "EXPORT_CANCELLED");
+      (err as { code: unknown }).code === "EXPORT_CANCELLED")
+  );
 }

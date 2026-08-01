@@ -24,8 +24,7 @@ export const DOMAIN_TREE_LEADING_ICON = "h-4 w-4 shrink-0 text-text-muted";
  * Primary label region. Takes all leftover space; truncates only when necessary.
  * Sibling badges/actions must be `shrink-0` so they cannot starve this flex item.
  */
-export const DOMAIN_TREE_LABEL_CLASS =
-  "min-w-0 flex-1 truncate text-left leading-5";
+export const DOMAIN_TREE_LABEL_CLASS = "min-w-0 flex-1 truncate text-left leading-5";
 
 /**
  * Governance badge slot — equal width on every row so labels align vertically.

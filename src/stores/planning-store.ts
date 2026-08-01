@@ -61,7 +61,11 @@ interface PlanningStoreState {
   loadCommitments: (filter: ScheduleCommitmentFilter) => Promise<void>;
   loadCapacityRules: (filter?: CapacityRuleFilter) => Promise<void>;
   loadPlanningWindows: (filter?: PlanningWindowFilter) => Promise<void>;
-  loadCapacityLoad: (periodStart: string, periodEnd: string, teamId?: number | null) => Promise<void>;
+  loadCapacityLoad: (
+    periodStart: string,
+    periodEnd: string,
+    teamId?: number | null,
+  ) => Promise<void>;
   loadGantt: (filter: PlanningGanttFilter) => Promise<void>;
   loadChangeLog: (commitmentId?: number | null) => Promise<void>;
   loadBreakIns: (filter?: ScheduleBreakInFilter) => Promise<void>;
@@ -182,7 +186,11 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
     set({ loading: true, error: null });
     try {
       const ganttSnapshot = await getPlanningGanttSnapshot(filter);
-      set({ ganttSnapshot, commitments: ganttSnapshot.commitments, capacityLoad: ganttSnapshot.capacity });
+      set({
+        ganttSnapshot,
+        commitments: ganttSnapshot.commitments,
+        capacityLoad: ganttSnapshot.capacity,
+      });
     } catch (err) {
       set({ error: toErrorMessage(err) });
     } finally {
@@ -324,4 +332,3 @@ export const usePlanningStore = create<PlanningStoreState>()((set, get) => ({
     }
   },
 }));
-

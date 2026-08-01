@@ -6,7 +6,10 @@ const DISPLAY_QR_SIZE = 280;
 /**
  * Generates an SVG string for the given identification payload while the dialog is open.
  */
-export function useIdentificationQr(payload: string, enabled: boolean): {
+export function useIdentificationQr(
+  payload: string,
+  enabled: boolean,
+): {
   svgHtml: string;
   loading: boolean;
   error: string | null;

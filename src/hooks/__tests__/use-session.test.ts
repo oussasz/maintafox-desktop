@@ -70,12 +70,10 @@ describe("useSession", () => {
   });
 
   it("captures typed tenant mismatch error code for actionable UX", async () => {
-    mockInvoke
-      .mockResolvedValueOnce(fixtures.noSession)
-      .mockRejectedValueOnce({
-        code: "TENANT_SCOPE_VIOLATION",
-        message: "Compte non autorisé pour le tenant activé.",
-      });
+    mockInvoke.mockResolvedValueOnce(fixtures.noSession).mockRejectedValueOnce({
+      code: "TENANT_SCOPE_VIOLATION",
+      message: "Compte non autorisé pour le tenant activé.",
+    });
 
     const { result } = renderHook(() => useSession());
     await waitFor(() => expect(result.current.hasBootstrapped).toBe(true));

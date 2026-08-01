@@ -90,16 +90,7 @@ export function ReferenceCreateModal({
     } finally {
       setSaving(false);
     }
-  }, [
-    description,
-    label,
-    modal,
-    onClose,
-    onCreated,
-    parentValueId,
-    reset,
-    t,
-  ]);
+  }, [description, label, modal, onClose, onCreated, parentValueId, reset, t]);
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && handleClose()}>
@@ -112,11 +103,7 @@ export function ReferenceCreateModal({
           {modal.requireParent && (
             <div className="space-y-1.5">
               <Label>{t("combobox.parentLabel")}</Label>
-              <Input
-                value={parentLabel?.trim() || t("combobox.parentMissing")}
-                disabled
-                readOnly
-              />
+              <Input value={parentLabel?.trim() || t("combobox.parentMissing")} disabled readOnly />
             </div>
           )}
 

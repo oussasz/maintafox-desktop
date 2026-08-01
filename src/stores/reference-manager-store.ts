@@ -10,7 +10,11 @@
 import { create } from "zustand";
 
 import { preferredWorkingSet } from "@/lib/reference-governance-ui";
-import { listReferenceDomains, listReferenceSets, getReferenceGovernanceCapabilities } from "@/services/reference-service";
+import {
+  listReferenceDomains,
+  listReferenceSets,
+  getReferenceGovernanceCapabilities,
+} from "@/services/reference-service";
 import { toErrorMessage } from "@/utils/errors";
 import type {
   ReferenceDomain,

@@ -161,22 +161,19 @@ export function DataTable<TData, TValue>({
               table.getRowModel().rows.map((row) => {
                 const selected = isRowSelected?.(row.original) ?? row.getIsSelected();
                 return (
-                <TableRow
-                  key={row.id}
-                  data-state={selected ? "selected" : undefined}
-                  className={cn(
-                    onRowClick && "cursor-pointer",
-                    selected && "bg-muted",
-                  )}
-                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              );
+                  <TableRow
+                    key={row.id}
+                    data-state={selected ? "selected" : undefined}
+                    className={cn(onRowClick && "cursor-pointer", selected && "bg-muted")}
+                    onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                );
               })
             ) : (
               <TableRow>

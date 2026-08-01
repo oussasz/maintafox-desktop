@@ -35,9 +35,15 @@ vi.mock("@/services/inventory-service", () => mocks);
 describe("InventoryControlsPanel", () => {
   beforeEach(() => {
     Object.values(mocks).forEach((fn) => fn.mockReset());
-    mocks.listInventoryWarehouses.mockResolvedValue([{ id: 1, code: "MAIN", name: "Main", is_active: 1 }]);
-    mocks.listInventoryLocations.mockResolvedValue([{ id: 10, warehouse_id: 1, warehouse_code: "MAIN", code: "BIN", is_active: 1 }]);
-    mocks.listInventoryArticles.mockResolvedValue([{ id: 21, article_code: "A-21", article_name: "Bearing", is_active: 1 }]);
+    mocks.listInventoryWarehouses.mockResolvedValue([
+      { id: 1, code: "MAIN", name: "Main", is_active: 1 },
+    ]);
+    mocks.listInventoryLocations.mockResolvedValue([
+      { id: 10, warehouse_id: 1, warehouse_code: "MAIN", code: "BIN", is_active: 1 },
+    ]);
+    mocks.listInventoryArticles.mockResolvedValue([
+      { id: 21, article_code: "A-21", article_name: "Bearing", is_active: 1 },
+    ]);
     mocks.listInventoryCountSessions.mockResolvedValue([]);
     mocks.listInventoryCountLines.mockResolvedValue([]);
     mocks.listInventoryReconciliationRuns.mockResolvedValue([]);
@@ -68,9 +74,13 @@ describe("InventoryControlsPanel", () => {
     await waitFor(() => expect(mocks.listInventoryWarehouses).toHaveBeenCalled());
 
     const selects = screen.getAllByRole("combobox");
-    fireEvent.click(selects[0]!);
+    const warehouseSelect = selects[0];
+    const locationSelect = selects[1];
+    expect(warehouseSelect).toBeTruthy();
+    expect(locationSelect).toBeTruthy();
+    fireEvent.click(warehouseSelect as HTMLElement);
     fireEvent.click(screen.getByText("MAIN - Main"));
-    fireEvent.click(selects[1]!);
+    fireEvent.click(locationSelect as HTMLElement);
     fireEvent.click(screen.getByText("MAIN/BIN"));
     fireEvent.change(screen.getByLabelText("Critical abs threshold"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Create session" }));
@@ -103,12 +113,15 @@ describe("InventoryControlsPanel", () => {
         updated_at: "2026-01-01T00:00:00Z",
       },
     ]);
-    mocks.postInventoryCountSession.mockRejectedValue({ message: "cannot post without reviewer evidence" });
+    mocks.postInventoryCountSession.mockRejectedValue({
+      message: "cannot post without reviewer evidence",
+    });
 
     render(<InventoryControlsPanel />);
     await waitFor(() => expect(mocks.listInventoryCountSessions).toHaveBeenCalled());
 
-    const sessionSelect = screen.getAllByRole("combobox")[2]!;
+    const sessionSelect = screen.getAllByRole("combobox")[2];
+    expect(sessionSelect).toBeTruthy();
     fireEvent.click(sessionSelect);
     fireEvent.click(screen.getByText("CC-100 (approved)"));
     fireEvent.click(screen.getByRole("button", { name: "Post variances" }));

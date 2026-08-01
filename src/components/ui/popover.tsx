@@ -112,15 +112,7 @@ type PopoverContentProps = React.HTMLAttributes<HTMLDivElement> & {
 
 const PopoverContent = React.forwardRef<HTMLDivElement, PopoverContentProps>(
   (
-    {
-      className,
-      align = "center",
-      side = "bottom",
-      sideOffset = 8,
-      style,
-      children,
-      ...props
-    },
+    { className, align = "center", side = "bottom", sideOffset = 8, style, children, ...props },
     forwardedRef,
   ) => {
     const { open, setOpen, triggerRef } = usePopoverContext("PopoverContent");

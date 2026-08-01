@@ -158,8 +158,8 @@ export function ProcurementRecommendationsPanel({
                     {" · "}
                     {t("procurement.recommendations.available", {
                       defaultValue: "Available",
-                    })}:{" "}
-                    <strong className="text-foreground tabular-nums">{rec.available_qty}</strong>
+                    })}
+                    : <strong className="text-foreground tabular-nums">{rec.available_qty}</strong>
                   </p>
                   <p className="text-xs text-text-muted">
                     {t("procurement.recommendations.supplier", {

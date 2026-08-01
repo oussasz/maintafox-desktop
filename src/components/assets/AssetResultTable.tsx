@@ -42,10 +42,7 @@ export function AssetResultTable() {
   const collapseAll = useAssetSearchStore((s) => s.collapseAll);
 
   const forest = useMemo(() => buildEquipmentForest(results), [results]);
-  const visibleRows = useMemo(
-    () => flattenVisibleRows(forest, expandedIds),
-    [forest, expandedIds],
-  );
+  const visibleRows = useMemo(() => flattenVisibleRows(forest, expandedIds), [forest, expandedIds]);
 
   const handleRowClick = (asset: AssetSearchResult) => {
     selectAsset(asset.id === selectedId ? null : asset.id);

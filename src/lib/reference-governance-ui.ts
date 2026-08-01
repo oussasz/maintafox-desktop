@@ -12,9 +12,7 @@ export type GovernanceCategoryId =
 
 export function isGovernanceCategory(raw: string | null | undefined): raw is GovernanceCategoryId {
   return (
-    raw === "system_catalog" ||
-    raw === "operational_dictionary" ||
-    raw === "controlled_catalog"
+    raw === "system_catalog" || raw === "operational_dictionary" || raw === "controlled_catalog"
   );
 }
 

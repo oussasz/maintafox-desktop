@@ -422,7 +422,7 @@
       "actualEmpty": "Aucune pièce enregistrée comme utilisée.",
       "nonePlanned": "Aucune pièce planifiée",
       "noneConfirmed": "✓ Aucune pièce de rechange n'a été utilisée",
-    "undoNoneConfirmed": "Annuler",
+      "undoNoneConfirmed": "Annuler",
       "summaryNonePlanned": "Aucune pièce planifiée — ajoutez ce qui a été consommé ou confirmez aucune.",
       "summaryPlanned": "{{pending}} / {{total}} lignes planifiées à marquer Utilisée ou Non utilisée",
       "markUsed": "Utilisée",

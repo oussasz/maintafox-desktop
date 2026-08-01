@@ -25,9 +25,7 @@ export function WoCompletionGatesChecklist({
 
   return (
     <div className="space-y-2 rounded-md border bg-muted/20 p-3">
-      {title ? (
-        <p className="text-sm font-semibold">{title}</p>
-      ) : null}
+      {title ? <p className="text-sm font-semibold">{title}</p> : null}
       <ul className="space-y-1.5">
         {visible.map((gate) => (
           <li key={gate.code} className="flex items-start gap-2 text-sm">

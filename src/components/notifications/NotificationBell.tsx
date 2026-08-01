@@ -3,7 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { getUnreadCount } from "@/services/notification-service";
 import { useSessionStore } from "@/store/session-store";
@@ -59,9 +63,7 @@ export function NotificationBell() {
         >
           <Bell className="h-4 w-4" />
           {count > 0 && (
-            <span
-              className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white"
-            >
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white">
               {count > 99 ? "99+" : count}
             </span>
           )}

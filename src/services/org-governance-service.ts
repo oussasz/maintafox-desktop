@@ -20,7 +20,10 @@ export const OrgValidationIssueSchema = z.object({
   code: z.string(),
   severity: z.string(),
   message: z.string(),
-  related_id: z.number().nullish().transform((v) => v ?? null),
+  related_id: z
+    .number()
+    .nullish()
+    .transform((v) => v ?? null),
   params: z.record(z.string()).optional().default({}),
 });
 

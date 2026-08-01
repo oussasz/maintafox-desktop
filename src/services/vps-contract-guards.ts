@@ -46,7 +46,10 @@ function contractError(
   return err;
 }
 
-export function assertVpsRequestReadiness(routeInput: VpsRouteContract, ctxInput: VpsRequestContext): void {
+export function assertVpsRequestReadiness(
+  routeInput: VpsRouteContract,
+  ctxInput: VpsRequestContext,
+): void {
   const route = VpsRouteContractSchema.parse(routeInput) as VpsRouteContract;
   const ctx = VpsRequestContextSchema.parse(ctxInput) as VpsRequestContext;
 
@@ -54,7 +57,12 @@ export function assertVpsRequestReadiness(routeInput: VpsRouteContract, ctxInput
     throw contractError(route, "unsupported_api_version", "API version is not compatible.", 426);
   }
   if (ctx.auth_boundary !== route.required_boundary) {
-    throw contractError(route, "auth_boundary_violation", "Auth boundary mismatch for route family.", 403);
+    throw contractError(
+      route,
+      "auth_boundary_violation",
+      "Auth boundary mismatch for route family.",
+      403,
+    );
   }
   if (route.tenant_scope === "required") {
     if (!ctx.tenant_id || !ctx.token_tenant_id) {
@@ -64,16 +72,31 @@ export function assertVpsRequestReadiness(routeInput: VpsRouteContract, ctxInput
       throw contractError(route, "tenant_isolation_violation", "Token tenant mismatch.", 403);
     }
   } else if (ctx.tenant_id || ctx.token_tenant_id) {
-    throw contractError(route, "tenant_context_forbidden", "Vendor admin boundary cannot carry tenant scope.", 403);
+    throw contractError(
+      route,
+      "tenant_context_forbidden",
+      "Vendor admin boundary cannot carry tenant scope.",
+      403,
+    );
   }
 
   for (const requiredPermission of route.required_permissions) {
     if (!ctx.permissions.includes(requiredPermission)) {
-      throw contractError(route, "permission_scope_missing", "Required permission scope missing.", 403);
+      throw contractError(
+        route,
+        "permission_scope_missing",
+        "Required permission scope missing.",
+        403,
+      );
     }
   }
   if (route.idempotency_required && !ctx.idempotency_key) {
-    throw contractError(route, "idempotency_key_required", "Mutation endpoint requires idempotency key.", 400);
+    throw contractError(
+      route,
+      "idempotency_key_required",
+      "Mutation endpoint requires idempotency key.",
+      400,
+    );
   }
   if (route.replay_guard_required && !ctx.request_nonce && !ctx.checkpoint_token) {
     throw contractError(route, "replay_guard_required", "Replay guard metadata required.", 400);

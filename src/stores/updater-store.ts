@@ -62,7 +62,8 @@ export const useUpdaterStore = create<UpdaterState>()((set) => ({
         forceReason,
         error:
           forceRequired && !result.available
-            ? forceReason ?? "A forced update policy is active but no update package is currently available."
+            ? (forceReason ??
+              "A forced update policy is active but no update package is currently available.")
             : null,
       });
     } catch (err) {
@@ -96,5 +97,11 @@ export const useUpdaterStore = create<UpdaterState>()((set) => ({
   },
 
   dismissNotification: () =>
-    set({ lastCheckResult: null, error: null, installComplete: false, forceRequired: false, forceReason: null }),
+    set({
+      lastCheckResult: null,
+      error: null,
+      installComplete: false,
+      forceRequired: false,
+      forceReason: null,
+    }),
 }));

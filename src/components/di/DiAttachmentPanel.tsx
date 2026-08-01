@@ -191,7 +191,9 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
       });
       if (!selected) return;
       const paths = Array.isArray(selected)
-        ? selected.map((s) => (typeof s === "string" ? s : (s as { path?: string }).path)).filter(Boolean)
+        ? selected
+            .map((s) => (typeof s === "string" ? s : (s as { path?: string }).path))
+            .filter(Boolean)
         : [typeof selected === "string" ? selected : (selected as { path?: string }).path].filter(
             Boolean,
           );

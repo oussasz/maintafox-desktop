@@ -136,11 +136,21 @@ export function AvailabilityCalendar({ entityId, teamId }: AvailabilityCalendarP
         <div className="flex flex-wrap gap-3">
           <label className="flex items-center gap-2 text-sm">
             {t("availability.from")}
-            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-44" />
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-44"
+            />
           </label>
           <label className="flex items-center gap-2 text-sm">
             {t("availability.to")}
-            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-44" />
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-44"
+            />
           </label>
         </div>
 
@@ -210,7 +220,12 @@ export function AvailabilityCalendar({ entityId, teamId }: AvailabilityCalendarP
           </label>
 
           <div className="mt-3 flex items-center gap-2">
-            <Button type="button" size="sm" onClick={() => void submitNewBlock()} disabled={creating}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void submitNewBlock()}
+              disabled={creating}
+            >
               {creating ? t("common.loading") : t("availability.form.submit")}
             </Button>
             {createError ? <span className="text-sm text-destructive">{createError}</span> : null}
@@ -229,7 +244,10 @@ export function AvailabilityCalendar({ entityId, teamId }: AvailabilityCalendarP
               <div className="mb-2 text-sm font-medium">{day}</div>
               <div className="space-y-1">
                 {dayRows.map((row) => (
-                  <div key={`${row.personnel_id}-${row.work_date}`} className="grid grid-cols-12 gap-2 text-sm">
+                  <div
+                    key={`${row.personnel_id}-${row.work_date}`}
+                    className="grid grid-cols-12 gap-2 text-sm"
+                  >
                     <div className="col-span-4">
                       {row.full_name}
                       <span className="ml-2 text-xs text-text-muted">{row.employee_code}</span>
@@ -239,7 +257,9 @@ export function AvailabilityCalendar({ entityId, teamId }: AvailabilityCalendarP
                     <div className="col-span-2 text-text-muted">{row.blocked_minutes}m blocked</div>
                     <div className="col-span-1 text-right">
                       {row.has_critical_block ? (
-                        <span className="rounded bg-destructive/10 px-2 py-0.5 text-xs text-destructive">!</span>
+                        <span className="rounded bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
+                          !
+                        </span>
                       ) : null}
                     </div>
                   </div>
@@ -252,5 +272,3 @@ export function AvailabilityCalendar({ entityId, teamId }: AvailabilityCalendarP
     </Card>
   );
 }
-
-

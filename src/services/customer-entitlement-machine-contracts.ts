@@ -30,10 +30,7 @@ export function entitlementTransitionAllowed(
   from: EntitlementLifecycleState,
   action: EntitlementLifecycleAction,
 ): boolean {
-  if (
-    (from === "expired" || from === "revoked") &&
-    action === "issue"
-  ) {
+  if ((from === "expired" || from === "revoked") && action === "issue") {
     return true;
   }
   if ((from === "active" || from === "grace") && action === "renew") return true;
@@ -93,9 +90,7 @@ export const BulkEntitlementOperationRequestV1Schema = z.object({
   dry_run: z.boolean(),
   tenant_ids: z.array(z.string().min(1)),
   target_channel: UpdateChannelSchema.optional(),
-  expected_lineage_version_by_tenant: z.array(
-    z.tuple([z.string().min(1), z.number().int()]),
-  ),
+  expected_lineage_version_by_tenant: z.array(z.tuple([z.string().min(1), z.number().int()])),
 });
 
 export const OptimisticConcurrencyV1Schema = z.object({

@@ -20,9 +20,7 @@ export function EntityFormSection({
     <section className={cn(mfEntityForm.section, className)} {...props}>
       <div className="space-y-1">
         <h3 className={mfEntityForm.sectionTitle}>{title}</h3>
-        {description != null && (
-          <p className={mfEntityForm.sectionDescription}>{description}</p>
-        )}
+        {description != null && <p className={mfEntityForm.sectionDescription}>{description}</p>}
       </div>
       <div className="space-y-3">{children}</div>
     </section>

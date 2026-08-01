@@ -122,8 +122,7 @@ function buildHtml(detail: PurchaseOrderDetail, t: TFn, locale: string): string 
         <th style="width:15%;text-align:right">${esc(t("procurement.poWorkspace.lines.lineTotal"))}</th>
       </tr>
       ${
-        lineRows ||
-        `<tr><td colspan="4">${esc(t("procurement.poWorkspace.lines.empty"))}</td></tr>`
+        lineRows || `<tr><td colspan="4">${esc(t("procurement.poWorkspace.lines.empty"))}</td></tr>`
       }
       <tr class="total-row">
         <td colspan="3" style="text-align:right">${esc(t("procurement.poWorkspace.grandTotal"))}</td>
@@ -160,11 +159,7 @@ function buildHtml(detail: PurchaseOrderDetail, t: TFn, locale: string): string 
 </html>`;
 }
 
-export function printPoFiche(
-  detail: PurchaseOrderDetail,
-  t: TFn = DEFAULT_T,
-  locale = "fr",
-): void {
+export function printPoFiche(detail: PurchaseOrderDetail, t: TFn = DEFAULT_T, locale = "fr"): void {
   const html = buildHtml(detail, t, locale);
 
   const iframe = document.createElement("iframe");

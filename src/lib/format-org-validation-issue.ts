@@ -12,11 +12,7 @@ export type OrgIssueLike = Pick<OrgValidationIssue, "code" | "message"> & {
   params?: Record<string, string> | null;
 };
 
-const ISSUE_KEY_PREFIXES = [
-  "governance.issues",
-  "errors",
-  "preview.issues",
-] as const;
+const ISSUE_KEY_PREFIXES = ["governance.issues", "errors", "preview.issues"] as const;
 
 function translateIssueKey(
   code: string,
@@ -33,14 +29,9 @@ function translateIssueKey(
   return null;
 }
 
-export function formatOrgValidationIssue(
-  issue: OrgIssueLike,
-  t: TFunction<"org">,
-): string {
+export function formatOrgValidationIssue(issue: OrgIssueLike, t: TFunction<"org">): string {
   const params = issue.params ?? {};
-  const translated = translateIssueKey(issue.code, params, (key, opts) =>
-    String(t(key, opts)),
-  );
+  const translated = translateIssueKey(issue.code, params, (key, opts) => String(t(key, opts)));
   if (translated) return translated;
   return issue.message;
 }

@@ -4,12 +4,7 @@ import { z } from "zod";
 export const SyncHealthSeverityV1Schema = z.enum(["info", "warn", "critical"]);
 export type SyncHealthSeverityV1 = z.infer<typeof SyncHealthSeverityV1Schema>;
 
-export const RepairQueueActionV1Schema = z.enum([
-  "replay",
-  "requeue",
-  "acknowledge",
-  "escalate",
-]);
+export const RepairQueueActionV1Schema = z.enum(["replay", "requeue", "acknowledge", "escalate"]);
 
 export const TenantSyncHealthRowV1Schema = z.object({
   tenant_id: z.string().min(1),
@@ -51,7 +46,9 @@ export const IncidentDrillThroughRefsV1Schema = z
   .strict();
 
 /** Client guard mirroring Rust `tenant_safe_drill_through`. */
-export function tenantSafeDrillThrough(refs: z.infer<typeof IncidentDrillThroughRefsV1Schema>): boolean {
+export function tenantSafeDrillThrough(
+  refs: z.infer<typeof IncidentDrillThroughRefsV1Schema>,
+): boolean {
   const fields = [
     refs.tenant_id_hint,
     refs.sync_batch_id,
@@ -87,7 +84,10 @@ export function severityRank(s: SyncHealthSeverityV1): number {
   }
 }
 
-export function worstSeverity(a: SyncHealthSeverityV1, b: SyncHealthSeverityV1): SyncHealthSeverityV1 {
+export function worstSeverity(
+  a: SyncHealthSeverityV1,
+  b: SyncHealthSeverityV1,
+): SyncHealthSeverityV1 {
   return severityRank(a) >= severityRank(b) ? a : b;
 }
 

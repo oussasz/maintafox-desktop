@@ -70,4 +70,3 @@ export function AssetTimelineFilters({
     </div>
   );
 }
-

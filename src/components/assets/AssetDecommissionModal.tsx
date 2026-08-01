@@ -67,7 +67,12 @@ function buildDependencies(
 ): DependencyRow[] {
   const entry = (
     domain: string,
-    field: "open_di_count" | "open_wo_count" | "linked_pm_plan_count" | "linked_iot_signal_count" | "linked_document_count",
+    field:
+      | "open_di_count"
+      | "open_wo_count"
+      | "linked_pm_plan_count"
+      | "linked_iot_signal_count"
+      | "linked_document_count",
     icon: React.ReactNode,
     level: "blocker" | "warning" | "info",
     detail: string,
@@ -223,7 +228,9 @@ export function AssetDecommissionModal({
                   <span className="truncate">{dep.domain}</span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="font-mono text-xs">{dep.available ? (dep.count ?? 0) : "—"}</span>
+                  <span className="font-mono text-xs">
+                    {dep.available ? (dep.count ?? 0) : "—"}
+                  </span>
                   <span className="text-xs text-text-muted">{dep.detail}</span>
                 </div>
               </div>

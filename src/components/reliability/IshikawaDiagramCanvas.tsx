@@ -402,7 +402,8 @@ function IshikawaDiagramInner({ equipmentId }: { equipmentId: number }) {
   }, [load]);
 
   const onConnect = useCallback(
-    (c: Connection) => setEdges((eds) => addEdge({ ...c, type: "straight", style: { strokeWidth: 1.6 } }, eds)),
+    (c: Connection) =>
+      setEdges((eds) => addEdge({ ...c, type: "straight", style: { strokeWidth: 1.6 } }, eds)),
     [setEdges],
   );
 

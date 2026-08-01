@@ -13,7 +13,10 @@ export function ActivationStepper({ current, labels }: ActivationStepperProps) {
   const currentIndex = STEP_ORDER.indexOf(current);
 
   return (
-    <ol className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between" aria-label="Activation progress">
+    <ol
+      className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+      aria-label="Activation progress"
+    >
       {STEP_ORDER.map((id, index) => {
         const done = index < currentIndex;
         const active = index === currentIndex;

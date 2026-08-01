@@ -1,10 +1,6 @@
 import type { ReactNode } from "react";
 
-import {
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { mfEntityForm } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 

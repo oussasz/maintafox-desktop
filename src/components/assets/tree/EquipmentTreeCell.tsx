@@ -26,11 +26,7 @@ export function EquipmentTreeCell({ row, isExpanded, onToggle }: EquipmentTreeCe
     <div className="flex items-center min-w-0">
       <div className="flex items-stretch shrink-0 self-stretch" aria-hidden>
         {ancestorIsLast.map((ancestorLast, i) => (
-          <span
-            key={i}
-            className="relative shrink-0"
-            style={{ width: GUIDE_WIDTH_PX }}
-          >
+          <span key={i} className="relative shrink-0" style={{ width: GUIDE_WIDTH_PX }}>
             {!ancestorLast && (
               <span className="absolute left-1/2 top-0 bottom-0 w-px -translate-x-1/2 bg-surface-border" />
             )}

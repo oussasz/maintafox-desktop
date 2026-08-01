@@ -41,12 +41,7 @@ export function ExportActions({
       <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
         {labels.close}
       </Button>
-      <Button
-        type="button"
-        variant="outline"
-        disabled={locked}
-        onClick={() => void onPrint()}
-      >
+      <Button type="button" variant="outline" disabled={locked} onClick={() => void onPrint()}>
         <Printer className="mr-1.5 h-3.5 w-3.5" />
         {labels.print}
       </Button>

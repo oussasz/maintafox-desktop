@@ -113,11 +113,7 @@ export function flattenVisibleRows(
 ): VisibleTreeRow[] {
   const rows: VisibleTreeRow[] = [];
 
-  const visit = (
-    nodes: EquipmentTreeNode[],
-    depth: number,
-    ancestorIsLast: boolean[],
-  ) => {
+  const visit = (nodes: EquipmentTreeNode[], depth: number, ancestorIsLast: boolean[]) => {
     nodes.forEach((node, index) => {
       const isLastSibling = index === nodes.length - 1;
       const childCount = node.children.length;
