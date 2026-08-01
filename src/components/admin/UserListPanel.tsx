@@ -1,18 +1,9 @@
-import type { ColumnDef } from "@tanstack/react-table";
-import {
-  ArrowRight,
-  Eye,
-  EyeOff,
-  Loader2,
-  LockOpen,
-  Pencil,
-  Plus,
-  ShieldCheck,
-  UserX,
-} from "lucide-react";
+﻿import type { ColumnDef } from "@tanstack/react-table";
+import { ArrowRight, Loader2, LockOpen, Pencil, Plus, ShieldCheck, UserX } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { CreateUserDialog } from "@/components/admin/CreateUserDialog";
 import { OnlinePresenceIndicator } from "@/components/admin/OnlinePresenceIndicator";
 import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
@@ -44,21 +35,17 @@ import { listPersonnel } from "@/services/personnel-service";
 import {
   listUsers,
   getUser,
-  createUser,
   deactivateUser,
   updateUser,
   assignRoleScope,
   revokeRoleScope,
-  listAssignableRoles,
   listRoles,
   unlockUserAccount,
 } from "@/services/rbac-service";
 import type {
-  AssignableRoleSummary,
   UserWithRoles,
   UserDetail,
   UserListFilter,
-  CreateUserInput,
   UpdateUserInput,
   AssignRoleScopeInput,
   RoleWithPermissions,
@@ -66,7 +53,7 @@ import type {
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-// ── Detail modal ────────────────────────────────────────────────────────────
+// â”€â”€ Detail modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function UserDetailSheet({
   userId,
@@ -96,11 +83,11 @@ function UserDetailSheet({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{detail?.user.display_name ?? detail?.user.username ?? "…"}</DialogTitle>
+          <DialogTitle>{detail?.user.display_name ?? detail?.user.username ?? "â€¦"}</DialogTitle>
         </DialogHeader>
 
         {loading && (
-          <p className="mt-4 text-sm text-text-secondary">{t("common.loading", "Chargement…")}</p>
+          <p className="mt-4 text-sm text-text-secondary">{t("common.loading", "Chargementâ€¦")}</p>
         )}
 
         {detail && !loading && (
@@ -108,7 +95,7 @@ function UserDetailSheet({
             {/* Identity */}
             <section className="space-y-2">
               <h4 className="font-medium text-text-primary">
-                {t("users.detail.identity", "Identité")}
+                {t("users.detail.identity", "IdentitÃ©")}
               </h4>
               <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
                 <dt className="text-text-secondary">{t("users.fields.username", "Identifiant")}</dt>
@@ -128,20 +115,20 @@ function UserDetailSheet({
                   </Badge>
                 </dd>
                 <dt className="text-text-secondary">
-                  {t("users.fields.lastSeen", "Dernière connexion")}
+                  {t("users.fields.lastSeen", "DerniÃ¨re connexion")}
                 </dt>
-                <dd>{detail.user.last_seen_at ?? "—"}</dd>
+                <dd>{detail.user.last_seen_at ?? "â€”"}</dd>
               </dl>
             </section>
 
             {/* Role assignments */}
             <section className="space-y-2">
               <h4 className="font-medium text-text-primary">
-                {t("users.detail.roles", "Rôles assignés")}
+                {t("users.detail.roles", "RÃ´les assignÃ©s")}
               </h4>
               {detail.scope_assignments.length === 0 && (
                 <p className="text-text-secondary">
-                  {t("users.detail.noRoles", "Aucun rôle assigné.")}
+                  {t("users.detail.noRoles", "Aucun rÃ´le assignÃ©.")}
                 </p>
               )}
               <ul className="space-y-1">
@@ -169,7 +156,7 @@ function UserDetailSheet({
                         void revokeRoleScope(r.assignment_id).then(onClose);
                       }}
                     >
-                      {t("users.actions.revoke", "Révoquer")}
+                      {t("users.actions.revoke", "RÃ©voquer")}
                     </Button>
                   </li>
                 ))}
@@ -205,7 +192,7 @@ function UserDetailSheet({
                   }}
                 >
                   <UserX className="mr-1.5 h-4 w-4" />
-                  {t("users.actions.deactivate", "Désactiver")}
+                  {t("users.actions.deactivate", "DÃ©sactiver")}
                 </Button>
               </div>
             )}
@@ -216,432 +203,8 @@ function UserDetailSheet({
   );
 }
 
-// ── Password strength ───────────────────────────────────────────────────────
-
-type PasswordStrength = "weak" | "medium" | "strong";
-
-function computeStrength(password: string): PasswordStrength {
-  if (password.length < 8) return "weak";
-  const hasUpper = /[A-Z]/.test(password);
-  const hasLower = /[a-z]/.test(password);
-  const hasDigit = /\d/.test(password);
-  const hasSpecial = /[^A-Za-z0-9]/.test(password);
-  const score = [hasUpper, hasLower, hasDigit, hasSpecial].filter(Boolean).length;
-  if (score >= 4 && password.length >= 12) return "strong";
-  if (score >= 3 && password.length >= 8) return "medium";
-  return "weak";
-}
-
-const STRENGTH_STYLES: Record<PasswordStrength, { bar: string; label: string }> = {
-  weak: { bar: "bg-red-500 w-1/3", label: "Faible" },
-  medium: { bar: "bg-amber-500 w-2/3", label: "Moyen" },
-  strong: { bar: "bg-emerald-500 w-full", label: "Fort" },
-};
-
-function PasswordStrengthBar({ password }: { password: string }) {
-  const { t } = useTranslation("admin");
-  if (!password) return null;
-  const strength = computeStrength(password);
-  const style = STRENGTH_STYLES[strength];
-  return (
-    <div className="space-y-1">
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
-        <div className={`h-full rounded-full transition-all ${style.bar}`} />
-      </div>
-      <p className="text-[10px] text-text-secondary">
-        {t(`users.create.strength.${strength}`, style.label)}
-      </p>
-    </div>
-  );
-}
-
-// ── Create-user dialog ──────────────────────────────────────────────────────
-
-function CreateUserDialog({
-  open,
-  onClose,
-  onCreated,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onCreated: () => void;
-}) {
-  const { t } = useTranslation("admin");
-  const { toast } = useToast();
-  const { can } = usePermissions();
-  const canViewPersonnel = can(P.PER_VIEW);
-
-  const [username, setUsername] = useState("");
-  const [identityMode, setIdentityMode] = useState("local");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [forceChange, setForceChange] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [personnelId, setPersonnelId] = useState<number | null>(null);
-  const [personnelItems, setPersonnelItems] = useState<Personnel[]>([]);
-  const [personnelLoading, setPersonnelLoading] = useState(false);
-  const [assignableRoles, setAssignableRoles] = useState<AssignableRoleSummary[]>([]);
-  const [rolesLoading, setRolesLoading] = useState(false);
-  const [rolesLoadError, setRolesLoadError] = useState<string | null>(null);
-  const [roleIdStr, setRoleIdStr] = useState("");
-
-  const loadAssignableRoles = useCallback(async () => {
-    setRolesLoading(true);
-    setRolesLoadError(null);
-    try {
-      const list = await listAssignableRoles();
-      setAssignableRoles(list);
-    } catch {
-      setAssignableRoles([]);
-      const msg = t("users.create.rolesLoadError", "Could not load roles from the server.");
-      setRolesLoadError(msg);
-      toast({ title: msg, variant: "destructive" });
-    } finally {
-      setRolesLoading(false);
-    }
-  }, [t, toast]);
-
-  useEffect(() => {
-    if (!open) {
-      setAssignableRoles([]);
-      setRoleIdStr("");
-      setRolesLoadError(null);
-      return;
-    }
-    void loadAssignableRoles();
-  }, [open, loadAssignableRoles]);
-
-  useEffect(() => {
-    if (!open) {
-      setPersonnelId(null);
-      return;
-    }
-    if (!canViewPersonnel) return;
-    let cancelled = false;
-    setPersonnelLoading(true);
-    void listPersonnel({ limit: 2000, offset: 0 })
-      .then((page) => {
-        if (!cancelled) setPersonnelItems(page.items);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setPersonnelItems([]);
-          toast({
-            title: t("users.create.personnelLoadError", "Could not load personnel list"),
-            variant: "destructive",
-          });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setPersonnelLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, canViewPersonnel, t, toast]);
-
-  const showPasswordFields = identityMode !== "sso";
-  const passwordRequired = identityMode === "local";
-
-  const passwordError = useMemo(() => {
-    if (!password && !passwordRequired) return null;
-    if (password.length > 0 && password.length < 8)
-      return t("users.create.passwordTooShort", "8 caractères minimum");
-    if (password && !/[A-Z]/.test(password))
-      return t("users.create.passwordNeedUpper", "Une majuscule requise");
-    if (password && !/[a-z]/.test(password))
-      return t("users.create.passwordNeedLower", "Une minuscule requise");
-    if (password && !/\d/.test(password))
-      return t("users.create.passwordNeedDigit", "Un chiffre requis");
-    return null;
-  }, [password, passwordRequired, t]);
-
-  const confirmError = useMemo(() => {
-    if (confirmPassword && password !== confirmPassword)
-      return t("users.create.passwordMismatch", "Les mots de passe ne correspondent pas");
-    return null;
-  }, [password, confirmPassword, t]);
-
-  const roleIdParsed = roleIdStr ? Number.parseInt(roleIdStr, 10) : NaN;
-  const roleSelectionValid =
-    roleIdStr.length > 0 &&
-    Number.isFinite(roleIdParsed) &&
-    roleIdParsed > 0 &&
-    assignableRoles.some((r) => r.id === roleIdParsed);
-
-  const canSubmit =
-    username.trim().length > 0 &&
-    roleSelectionValid &&
-    !rolesLoading &&
-    !submitting &&
-    (identityMode === "sso" ||
-      (password.length >= 8 &&
-        !passwordError &&
-        confirmPassword.length > 0 &&
-        password === confirmPassword));
-
-  const handleSubmit = async () => {
-    if (!canSubmit) return;
-    const rid = Number.parseInt(roleIdStr, 10);
-    if (!Number.isFinite(rid) || rid <= 0 || !assignableRoles.some((r) => r.id === rid)) {
-      toast({
-        title: t("users.create.roleRequired", "Select a role for this user."),
-        variant: "destructive",
-      });
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const input: CreateUserInput = {
-        username: username.trim(),
-        identity_mode: identityMode,
-        role_id: rid,
-        ...(personnelId != null ? { personnel_id: personnelId } : {}),
-        ...(showPasswordFields && password
-          ? { initial_password: password, force_password_change: forceChange }
-          : {}),
-      };
-      await createUser(input);
-      toast({ title: t("users.create.success", "Utilisateur créé"), variant: "success" });
-      onCreated();
-      onClose();
-      // Reset form
-      setUsername("");
-      setPassword("");
-      setConfirmPassword("");
-      setIdentityMode("local");
-      setForceChange(true);
-      setPersonnelId(null);
-      setRoleIdStr("");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast({
-        title: msg || t("users.create.error", "Erreur lors de la création"),
-        variant: "destructive",
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{t("users.create.title", "Nouvel utilisateur")}</DialogTitle>
-          <DialogDescription>
-            {t(
-              "users.create.description",
-              "Créez un compte utilisateur et définissez son mode d'authentification.",
-            )}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4 py-2">
-          {/* Username */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("users.fields.username", "Identifiant")} *
-            </label>
-            <Input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="jean.dupont"
-              autoComplete="off"
-            />
-          </div>
-
-          {/* Initial tenant role (required) */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <label className="text-sm font-medium" htmlFor="create-user-role">
-                {t("users.create.roleLabel", "Initial role")} *
-              </label>
-              {rolesLoadError ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 shrink-0 text-xs"
-                  disabled={rolesLoading}
-                  onClick={() => void loadAssignableRoles()}
-                >
-                  {t("users.create.rolesRetry", "Retry")}
-                </Button>
-              ) : null}
-            </div>
-            <p className="text-xs text-text-secondary">
-              {t(
-                "users.create.roleHint",
-                "This role is assigned at tenant scope for the active organization. It defines the user’s permissions.",
-              )}
-            </p>
-            {rolesLoading ? (
-              <p className="text-xs text-text-secondary">{t("common.loading", "Chargement…")}</p>
-            ) : rolesLoadError ? (
-              <p className="text-xs text-red-600" role="alert">
-                {rolesLoadError}
-              </p>
-            ) : assignableRoles.length === 0 ? (
-              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
-                {t(
-                  "users.create.noRolesAvailable",
-                  "No roles are available (none defined, or all are retired). Create or restore a role before adding users.",
-                )}
-              </p>
-            ) : (
-              <Select value={roleIdStr} onValueChange={setRoleIdStr} disabled={submitting}>
-                <SelectTrigger id="create-user-role" className="w-full">
-                  <SelectValue placeholder={t("users.create.rolePlaceholder", "Choose a role…")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {assignableRoles.map((r) => (
-                    <SelectItem
-                      key={r.id}
-                      value={String(r.id)}
-                      title={r.description ?? undefined}
-                      textValue={r.name}
-                    >
-                      {r.is_system
-                        ? `${r.name} (${t("users.create.roleSystemBadge", "system")})`
-                        : r.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-
-          {/* Optional link to personnel */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("users.create.linkPersonnel", "Link to existing personnel")}
-            </label>
-            <p className="text-xs text-text-secondary">
-              {t(
-                "users.create.linkPersonnelHint",
-                "Optional. Recommended so the account matches profile, skills, and assignments for that person.",
-              )}
-            </p>
-            {canViewPersonnel ? (
-              personnelLoading ? (
-                <p className="text-xs text-text-secondary">{t("common.loading", "Chargement…")}</p>
-              ) : (
-                <PersonnelPickerCombobox
-                  items={personnelItems}
-                  value={personnelId}
-                  onChange={setPersonnelId}
-                  disabled={submitting}
-                  placeholder={t(
-                    "users.create.personnelSearchPlaceholder",
-                    "Search by name or employee code…",
-                  )}
-                />
-              )
-            ) : (
-              <p className="text-xs text-amber-800 dark:text-amber-200">
-                {t(
-                  "users.create.noPersonnelPermission",
-                  "Listing personnel requires the « per.view » permission. You can create the account without a link and associate it later.",
-                )}
-              </p>
-            )}
-          </div>
-
-          {/* Identity mode */}
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              {t("users.fields.identityMode", "Mode d'authentification")}
-            </label>
-            <Select
-              value={identityMode}
-              onValueChange={(v) => {
-                setIdentityMode(v);
-                setPassword("");
-                setConfirmPassword("");
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="local">{t("users.filter.local", "Local")}</SelectItem>
-                <SelectItem value="sso">{t("users.filter.sso", "SSO")}</SelectItem>
-                <SelectItem value="hybrid">{t("users.filter.hybrid", "Hybride")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Password fields */}
-          {showPasswordFields && (
-            <>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">
-                  {t("users.create.password", "Mot de passe")}
-                  {passwordRequired && " *"}
-                </label>
-                <div className="relative">
-                  <Input
-                    type={showPassword ? "text" : "password"}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    autoComplete="new-password"
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary"
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                {passwordError && <p className="text-xs text-red-600">{passwordError}</p>}
-                <PasswordStrengthBar password={password} />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">
-                  {t("users.create.confirmPassword", "Confirmer le mot de passe")}
-                </label>
-                <Input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  autoComplete="new-password"
-                />
-                {confirmError && <p className="text-xs text-red-600">{confirmError}</p>}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="force-change"
-                  checked={forceChange}
-                  onCheckedChange={(checked) => setForceChange(checked === true)}
-                />
-                <label htmlFor="force-change" className="text-sm">
-                  {t("users.create.forceChange", "Forcer le changement au premier login")}
-                </label>
-              </div>
-            </>
-          )}
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            {t("common.cancel", "Annuler")}
-          </Button>
-          <Button onClick={handleSubmit} disabled={!canSubmit}>
-            {t("users.create.confirm", "Créer")}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ── Assign-role dialog ──────────────────────────────────────────────────────
+// â”€â”€ CreateUserDialog â€” imported from CreateUserDialog.tsx â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Assign-role dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function AssignRoleDialog({
   user,
@@ -702,17 +265,17 @@ function AssignRoleDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {t("users.assignRole.title", "Assigner un rôle")} — {user?.username}
+            {t("users.assignRole.title", "Assigner un rÃ´le")} â€” {user?.username}
           </DialogTitle>
           <DialogDescription>
-            {t("users.assignRole.description", "Sélectionnez un rôle et un type de périmètre.")}
+            {t("users.assignRole.description", "SÃ©lectionnez un rÃ´le et un type de pÃ©rimÃ¨tre.")}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
             <label className="text-sm font-medium">
-              {t("users.assignRole.scope", "Périmètre")}
+              {t("users.assignRole.scope", "PÃ©rimÃ¨tre")}
             </label>
             <Select value={scopeType} onValueChange={setScopeType}>
               <SelectTrigger>
@@ -721,28 +284,28 @@ function AssignRoleDialog({
               <SelectContent>
                 <SelectItem value="tenant">{t("scope.global", "Global")}</SelectItem>
                 <SelectItem value="site">{t("scope.site", "Site")}</SelectItem>
-                <SelectItem value="org_node">{t("scope.department", "Département")}</SelectItem>
+                <SelectItem value="org_node">{t("scope.department", "DÃ©partement")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div className="space-y-2">
             <label className="text-sm font-medium">
-              {t("users.assignRole.replacement", "Ancien rôle → nouveau rôle")}
+              {t("users.assignRole.replacement", "Ancien rÃ´le â†’ nouveau rÃ´le")}
             </label>
             <p className="text-xs text-text-secondary">
               {t(
                 "users.assignRole.replacementHint",
-                "Pour ce périmètre, une seule attribution à la fois : le nouveau rôle remplace l’actuel (y compris une élévation d’urgence à ce niveau).",
+                "Pour ce pÃ©rimÃ¨tre, une seule attribution Ã  la fois : le nouveau rÃ´le remplace lâ€™actuel (y compris une Ã©lÃ©vation dâ€™urgence Ã  ce niveau).",
               )}
             </p>
             <div
               className="flex min-h-[2.5rem] flex-col gap-2 rounded-md border border-surface-border bg-surface-1/50 p-3 sm:flex-row sm:items-stretch"
-              aria-label={t("users.assignRole.replacement", "Ancien rôle → nouveau rôle")}
+              aria-label={t("users.assignRole.replacement", "Ancien rÃ´le â†’ nouveau rÃ´le")}
             >
               <div className="flex min-w-0 flex-1 flex-col justify-center gap-1 sm:pr-1">
                 <span className="text-xs text-text-secondary">
-                  {t("users.assignRole.current", "Rôle actuel")}
+                  {t("users.assignRole.current", "RÃ´le actuel")}
                 </span>
                 {assignmentAtScope ? (
                   <span className="font-medium text-foreground">
@@ -767,12 +330,12 @@ function AssignRoleDialog({
               </div>
               <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:pl-1">
                 <span className="text-xs text-text-secondary">
-                  {t("users.assignRole.newLabel", "Nouveau rôle")}
+                  {t("users.assignRole.newLabel", "Nouveau rÃ´le")}
                 </span>
                 <Select value={selectedRole} onValueChange={setSelectedRole}>
                   <SelectTrigger className="w-full min-w-0">
                     <SelectValue
-                      placeholder={t("users.assignRole.selectRole", "Choisir un rôle")}
+                      placeholder={t("users.assignRole.selectRole", "Choisir un rÃ´le")}
                     />
                   </SelectTrigger>
                   <SelectContent>
@@ -801,7 +364,7 @@ function AssignRoleDialog({
   );
 }
 
-// ── Edit-user dialog ────────────────────────────────────────────────────────
+// â”€â”€ Edit-user dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function EditUserDialog({
   user,
@@ -943,13 +506,13 @@ function EditUserDialog({
               <p className="text-xs text-text-secondary">
                 {t("users.fields.identityMode", "Authentication mode")}
               </p>
-              <p className="text-sm font-medium">{user?.identity_mode ?? "—"}</p>
+              <p className="text-sm font-medium">{user?.identity_mode ?? "â€”"}</p>
             </div>
             <div>
               <p className="text-xs text-text-secondary">
                 {t("users.fields.lastSeen", "Last seen")}
               </p>
-              <p className="text-sm font-medium">{user?.last_seen_at ?? "—"}</p>
+              <p className="text-sm font-medium">{user?.last_seen_at ?? "â€”"}</p>
             </div>
           </div>
 
@@ -983,7 +546,7 @@ function EditUserDialog({
 
             <div className="space-y-1.5">
               <label className="text-sm font-medium">
-                {t("users.fields.phone", "Numéro de Téléphone")}
+                {t("users.fields.phone", "NumÃ©ro de TÃ©lÃ©phone")}
               </label>
               <Input
                 type="tel"
@@ -1013,7 +576,9 @@ function EditUserDialog({
             </label>
             {canViewPersonnel ? (
               personnelLoading ? (
-                <p className="text-xs text-text-secondary">{t("common.loading", "Chargement…")}</p>
+                <p className="text-xs text-text-secondary">
+                  {t("common.loading", "Chargementâ€¦")}
+                </p>
               ) : (
                 <PersonnelPickerCombobox
                   items={personnelItems}
@@ -1022,7 +587,7 @@ function EditUserDialog({
                   disabled={saving}
                   placeholder={t(
                     "users.create.personnelSearchPlaceholder",
-                    "Search by name or employee code…",
+                    "Search by name or employee codeâ€¦",
                   )}
                 />
               )
@@ -1030,7 +595,7 @@ function EditUserDialog({
               <p className="text-xs text-amber-800 dark:text-amber-200">
                 {t(
                   "users.create.noPersonnelPermission",
-                  "Listing personnel requires the « per.view » permission. You can create the account without a link and associate it later.",
+                  "Listing personnel requires the Â« per.view Â» permission. You can create the account without a link and associate it later.",
                 )}
               </p>
             )}
@@ -1059,7 +624,7 @@ function EditUserDialog({
             {saving ? (
               <>
                 <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                {t("common.saving", "Saving…")}
+                {t("common.saving", "Savingâ€¦")}
               </>
             ) : (
               t("common.save", "Save")
@@ -1071,7 +636,7 @@ function EditUserDialog({
   );
 }
 
-// ── Main panel ──────────────────────────────────────────────────────────────
+// â”€â”€ Main panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function UserListPanel() {
   const { t } = useTranslation("admin");
@@ -1084,7 +649,7 @@ export function UserListPanel() {
   const [roles, setRoles] = useState<RoleWithPermissions[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filters — searchInput is immediate UI; search is debounced (via SmartFilterBar)
+  // Filters â€” searchInput is immediate UI; search is debounced (via SmartFilterBar)
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState<string>("all");
@@ -1137,7 +702,7 @@ export function UserListPanel() {
     async (userId: number) => {
       try {
         await withStepUp(() => deactivateUser(userId));
-        toast({ title: t("users.deactivated", "Utilisateur désactivé"), variant: "success" });
+        toast({ title: t("users.deactivated", "Utilisateur dÃ©sactivÃ©"), variant: "success" });
         void fetchUsers();
       } catch (err) {
         // User explicitly cancelled the step-up dialog.
@@ -1145,7 +710,7 @@ export function UserListPanel() {
           return;
         }
         toast({
-          title: t("users.errors.deactivateFailed", "Erreur lors de la désactivation"),
+          title: t("users.errors.deactivateFailed", "Erreur lors de la dÃ©sactivation"),
           variant: "destructive",
         });
       }
@@ -1158,11 +723,11 @@ export function UserListPanel() {
     async (userId: number) => {
       try {
         await withStepUp(() => unlockUserAccount(userId));
-        toast({ title: t("users.unlocked", "Compte déverrouillé"), variant: "success" });
+        toast({ title: t("users.unlocked", "Compte dÃ©verrouillÃ©"), variant: "success" });
         void fetchUsers();
       } catch {
         toast({
-          title: t("users.errors.unlockFailed", "Erreur lors du déverrouillage"),
+          title: t("users.errors.unlockFailed", "Erreur lors du dÃ©verrouillage"),
           variant: "destructive",
         });
       }
@@ -1185,8 +750,8 @@ export function UserListPanel() {
       },
       {
         accessorKey: "display_name",
-        header: t("users.columns.displayName", "Nom affiché"),
-        cell: ({ row }) => row.original.display_name ?? "—",
+        header: t("users.columns.displayName", "Nom affichÃ©"),
+        cell: ({ row }) => row.original.display_name ?? "â€”",
       },
       {
         accessorKey: "identity_mode",
@@ -1216,7 +781,7 @@ export function UserListPanel() {
                   variant="outline"
                   className="border-amber-300 bg-amber-50 text-amber-700 text-[10px]"
                 >
-                  {t("users.locked", "Verrouillé")}
+                  {t("users.locked", "VerrouillÃ©")}
                 </Badge>
               )}
             </div>
@@ -1225,11 +790,11 @@ export function UserListPanel() {
       },
       {
         id: "roles",
-        header: t("users.columns.roles", "Rôles"),
+        header: t("users.columns.roles", "RÃ´les"),
         cell: ({ row }) => {
           const roleRows = row.original.roles;
           if (roleRows.length === 0) {
-            return <span className="text-xs text-text-muted">—</span>;
+            return <span className="text-xs text-text-muted">â€”</span>;
           }
           return (
             <div className="flex max-w-[14rem] flex-wrap gap-1">
@@ -1244,9 +809,9 @@ export function UserListPanel() {
       },
       {
         accessorKey: "last_seen_at",
-        header: t("users.columns.lastSeen", "Dernière connexion"),
+        header: t("users.columns.lastSeen", "DerniÃ¨re connexion"),
         cell: ({ row }) => (
-          <span className="text-xs text-text-secondary">{row.original.last_seen_at ?? "—"}</span>
+          <span className="text-xs text-text-secondary">{row.original.last_seen_at ?? "â€”"}</span>
         ),
       },
       {
@@ -1260,7 +825,7 @@ export function UserListPanel() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  title={t("users.unlock", "Déverrouiller")}
+                  title={t("users.unlock", "DÃ©verrouiller")}
                   onClick={(e) => {
                     e.stopPropagation();
                     void handleUnlock(row.original.id);
@@ -1319,7 +884,7 @@ export function UserListPanel() {
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1">
             <SmartFilterBar
-              searchPlaceholder={t("users.search", "Rechercher un utilisateur…")}
+              searchPlaceholder={t("users.search", "Rechercher un utilisateurâ€¦")}
               searchValue={searchInput}
               onSearchInputChange={setSearchInput}
               onSearchChange={setSearch}
