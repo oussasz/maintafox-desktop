@@ -7,13 +7,13 @@
  * Phase 2 – Sub-phase 05 – File 03 – Sprint S4.
  */
 
+import { formatEntityCode, formatOrDash, formatPersonLabel } from "@/lib/display";
 import {
   getWoAnalyticsSnapshot,
   type WoFailureDetail,
   type WoVerification,
 } from "@/services/wo-closeout-service";
 import { listLabor, listParts, listTasks } from "@/services/wo-execution-service";
-import { formatEntityCode, formatOrDash, formatPersonLabel } from "@/lib/display";
 import type { WoExecPart, WoExecTask, WoIntervener, WorkOrder } from "@shared/ipc-types";
 
 // ── i18n keys for the print template ────────────────────────────────────────

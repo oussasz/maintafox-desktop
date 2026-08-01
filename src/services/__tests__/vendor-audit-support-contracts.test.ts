@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import type { VendorAdminAuditRecordV1 } from "@shared/ipc-types";
+
 import {
   auditRecordPreimage,
   computeRecordIntegritySha256,
@@ -8,8 +10,6 @@ import {
 
 const EXPECTED_PREIMAGE =
   "audit_v1|rec_1|1|2026-04-16T12:00:00Z|actor_1|entitlement_suspend|entitlement|corr_1|ten_a|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc||cust_request|appr_1|ten_a|ent_1|||||sup_9";
-
-import type { VendorAdminAuditRecordV1 } from "@shared/ipc-types";
 
 const aa = "a".repeat(64);
 const bb = "b".repeat(64);
@@ -29,8 +29,7 @@ function baseRecord(overrides: Partial<VendorAdminAuditRecordV1>): VendorAdminAu
     after_snapshot_sha256: bb,
     payload_canonical_sha256: cc,
     chain_prev_hash: null,
-    record_integrity_sha256:
-      "bf10b554ae7c52657f66c7f11b9fcac5f8455fb7a55c2be01f93a9339af2509d",
+    record_integrity_sha256: "bf10b554ae7c52657f66c7f11b9fcac5f8455fb7a55c2be01f93a9339af2509d",
     reason_code: "cust_request",
     approval_correlation_id: "appr_1",
     entity_refs: {
@@ -59,8 +58,7 @@ describe("vendor-audit-support-contracts", () => {
 
   it("verifies two-record chain", async () => {
     const first = baseRecord({});
-    const secondHash =
-      "6e471038f40be62cdfe49df97c92225d81c9d1e3227ed16c2f299643e7b7b082";
+    const secondHash = "6e471038f40be62cdfe49df97c92225d81c9d1e3227ed16c2f299643e7b7b082";
     const second = baseRecord({
       record_id: "rec_b",
       sequence: 2,

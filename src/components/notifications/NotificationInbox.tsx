@@ -1,16 +1,10 @@
-import {
-  AlertTriangle,
-  BellRing,
-  Info,
-  Siren,
-} from "lucide-react";
+import { AlertTriangle, BellRing, Info, Siren } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { toErrorMessage } from "@/utils/errors";
 import {
   acknowledgeNotification,
   listNotifications,
@@ -18,6 +12,7 @@ import {
   snoozeNotification,
   type NotificationSummary,
 } from "@/services/notification-service";
+import { toErrorMessage } from "@/utils/errors";
 
 type InboxTab = "all" | "unread" | "escalated" | "snoozed";
 
@@ -137,9 +132,7 @@ export function NotificationInbox({ className, onChanged }: NotificationInboxPro
         )}
 
         {error && (
-          <div className="p-3 text-sm text-destructive">
-            Failed to load notifications: {error}
-          </div>
+          <div className="p-3 text-sm text-destructive">Failed to load notifications: {error}</div>
         )}
 
         <div className="divide-y">
@@ -169,7 +162,11 @@ export function NotificationInbox({ className, onChanged }: NotificationInboxPro
                   </Button>
                 )}
                 {row.requires_ack && row.delivery_state !== "acknowledged" && (
-                  <Button size="sm" variant="outline" onClick={() => void handleAcknowledge(row.id)}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleAcknowledge(row.id)}
+                  >
                     Acknowledge
                   </Button>
                 )}

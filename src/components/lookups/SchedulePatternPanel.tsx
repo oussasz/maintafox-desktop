@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 
+import { EntityFormDialog, EntityFormFooter } from "@/components/entity-form";
 import {
   applyTemplate,
   computeMetrics,
@@ -24,10 +25,6 @@ import {
   type EditorDay,
   type ScheduleTemplateId,
 } from "@/components/lookups/schedule-pattern-editor";
-import {
-  EntityFormDialog,
-  EntityFormFooter,
-} from "@/components/entity-form";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -35,10 +32,7 @@ import { Label } from "@/components/ui/label";
 import { TimeInput } from "@/components/ui/time-input";
 import { mfCard } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
-import {
-  getSchedulePattern,
-  upsertSchedulePattern,
-} from "@/services/reference-service";
+import { getSchedulePattern, upsertSchedulePattern } from "@/services/reference-service";
 import { toErrorMessage } from "@/utils/errors";
 import type { ReferenceValue } from "@shared/ipc-types";
 
@@ -84,9 +78,7 @@ export function SchedulePatternEditor({
       setShiftPatternCode(pattern.shift_pattern_code);
       setIsContinuous(pattern.is_continuous);
       setDays(
-        pattern.details.length === 7
-          ? fromScheduleDetails(pattern.details)
-          : defaultEditorDays(),
+        pattern.details.length === 7 ? fromScheduleDetails(pattern.details) : defaultEditorDays(),
       );
       setActiveTemplate("personalized");
       setSelectedDay(1);
@@ -102,10 +94,7 @@ export function SchedulePatternEditor({
     void load();
   }, [load]);
 
-  const metrics = useMemo(
-    () => computeMetrics(days, selectedDay),
-    [days, selectedDay],
-  );
+  const metrics = useMemo(() => computeMetrics(days, selectedDay), [days, selectedDay]);
   const validation = useMemo(() => validateEditorDays(days), [days]);
 
   const markPersonalized = () => setActiveTemplate("personalized");
@@ -203,10 +192,7 @@ export function SchedulePatternEditor({
           label={t("schedulePattern.metrics.workingDays")}
           value={String(metrics.workingDays)}
         />
-        <Metric
-          label={t("schedulePattern.metrics.restDays")}
-          value={String(metrics.restDays)}
-        />
+        <Metric label={t("schedulePattern.metrics.restDays")} value={String(metrics.restDays)} />
         <Metric
           label={t("schedulePattern.metrics.weeklyHours")}
           value={t("schedulePattern.metrics.hoursValue", {
@@ -298,8 +284,7 @@ export function SchedulePatternEditor({
               day.mode === "work" && interval
                 ? intervalBarSegments(interval.start, interval.end)
                 : [];
-            const hours =
-              day.mode === "work" ? formatHours(dayDurationHours(day)) : null;
+            const hours = day.mode === "work" ? formatHours(dayDurationHours(day)) : null;
 
             return (
               <div
@@ -372,9 +357,7 @@ export function SchedulePatternEditor({
                           disabled={!canMutate}
                           aria-label={t("schedulePattern.start")}
                           className="h-8 w-[7.5rem]"
-                          onChange={(v) =>
-                            patchDay(updateDayInterval(day, { start: v }))
-                          }
+                          onChange={(v) => patchDay(updateDayInterval(day, { start: v }))}
                         />
                         <span className="text-xs text-text-muted">–</span>
                         <TimeInput
@@ -383,9 +366,7 @@ export function SchedulePatternEditor({
                           disabled={!canMutate}
                           aria-label={t("schedulePattern.end")}
                           className="h-8 w-[7.5rem]"
-                          onChange={(v) =>
-                            patchDay(updateDayInterval(day, { end: v }))
-                          }
+                          onChange={(v) => patchDay(updateDayInterval(day, { end: v }))}
                         />
                       </>
                     ) : (
@@ -396,9 +377,7 @@ export function SchedulePatternEditor({
                   </div>
                 ) : (
                   <span className="w-20 shrink-0 text-right font-mono text-[10px] tabular-nums text-text-muted">
-                    {day.mode === "rest"
-                      ? "—"
-                      : `${interval?.start ?? ""}–${interval?.end ?? ""}`}
+                    {day.mode === "rest" ? "—" : `${interval?.start ?? ""}–${interval?.end ?? ""}`}
                   </span>
                 )}
 
@@ -468,9 +447,7 @@ export function SchedulePatternDialog({
       footer={
         <EntityFormFooter
           cancelLabel={t("schedulePattern.cancel")}
-          primaryLabel={
-            chrome.saving ? t("schedulePattern.saving") : t("schedulePattern.save")
-          }
+          primaryLabel={chrome.saving ? t("schedulePattern.saving") : t("schedulePattern.save")}
           onCancel={() => onOpenChange(false)}
           onPrimary={() => chrome.save()}
           primaryType="button"
