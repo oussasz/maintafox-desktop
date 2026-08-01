@@ -185,9 +185,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 
 fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResult> {
     Ok(AssetSearchResult {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         sync_id: row
             .try_get::<String>("", "sync_id")
             .map_err(|e| decode_err("sync_id", e))?,
@@ -260,9 +258,7 @@ fn map_search_result(row: &QueryResult) -> AppResult<AssetSearchResult> {
 
 fn map_suggestion(row: &QueryResult) -> AppResult<AssetSuggestion> {
     Ok(AssetSuggestion {
-        id: row
-            .try_get::<i64>("", "id")
-            .map_err(|e| decode_err("id", e))?,
+        id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         asset_code: row
             .try_get::<String>("", "asset_code")
             .map_err(|e| decode_err("asset_code", e))?,
@@ -276,14 +272,8 @@ fn map_suggestion(row: &QueryResult) -> AppResult<AssetSuggestion> {
 }
 
 /// Resolve org paths for the returned result set only (bounded by result count).
-async fn enrich_org_paths(
-    db: &DatabaseConnection,
-    results: &mut [AssetSearchResult],
-) -> AppResult<()> {
-    let mut node_ids: Vec<i64> = results
-        .iter()
-        .filter_map(|r| r.org_node_id)
-        .collect();
+async fn enrich_org_paths(db: &DatabaseConnection, results: &mut [AssetSearchResult]) -> AppResult<()> {
+    let mut node_ids: Vec<i64> = results.iter().filter_map(|r| r.org_node_id).collect();
     node_ids.sort_unstable();
     node_ids.dedup();
     if node_ids.is_empty() {
@@ -309,21 +299,13 @@ async fn enrich_org_paths(
     );
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
     let mut path_parts: HashMap<i64, Vec<String>> = HashMap::new();
     for row in rows {
-        let leaf_id: i64 = row
-            .try_get("", "leaf_id")
-            .map_err(|e| decode_err("leaf_id", e))?;
-        let name: String = row
-            .try_get("", "name")
-            .map_err(|e| decode_err("name", e))?;
+        let leaf_id: i64 = row.try_get("", "leaf_id").map_err(|e| decode_err("leaf_id", e))?;
+        let name: String = row.try_get("", "name").map_err(|e| decode_err("name", e))?;
         path_parts.entry(leaf_id).or_default().push(name);
     }
 
@@ -334,9 +316,7 @@ async fn enrich_org_paths(
 
     for result in results.iter_mut() {
         if let Some(node_id) = result.org_node_id {
-            result.org_path = path_map.get(&node_id).cloned().or_else(|| {
-                result.org_node_name.clone()
-            });
+            result.org_path = path_map.get(&node_id).cloned().or_else(|| result.org_node_name.clone());
         }
     }
 
@@ -355,15 +335,10 @@ async fn hydrate_assets_by_ids(
     let placeholders = ordered_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let binds: Vec<sea_orm::Value> = ordered_ids.iter().map(|&id| id.into()).collect();
 
-    let mut where_clauses = vec![
-        "e.deleted_at IS NULL".to_string(),
-        format!("e.id IN ({placeholders})"),
-    ];
+    let mut where_clauses = vec!["e.deleted_at IS NULL".to_string(), format!("e.id IN ({placeholders})")];
     if !include_decommissioned {
-        where_clauses.push(
-            "COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')"
-                .to_string(),
-        );
+        where_clauses
+            .push("COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')".to_string());
     }
     let where_sql = where_clauses.join(" AND ");
 
@@ -377,11 +352,7 @@ async fn hydrate_assets_by_ids(
     let sql = format!("SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_cases}");
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
     let mut results: Vec<AssetSearchResult> = rows.iter().map(map_search_result).collect::<AppResult<_>>()?;
@@ -389,11 +360,7 @@ async fn hydrate_assets_by_ids(
     Ok(results)
 }
 
-async fn usage_asset_ids(
-    db: &DatabaseConnection,
-    user_id: Option<i64>,
-    limit: u64,
-) -> AppResult<Vec<i64>> {
+async fn usage_asset_ids(db: &DatabaseConnection, user_id: Option<i64>, limit: u64) -> AppResult<Vec<i64>> {
     let (sql, binds): (String, Vec<sea_orm::Value>) = if let Some(uid) = user_id {
         (
             format!(
@@ -437,18 +404,12 @@ async fn usage_asset_ids(
     };
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
     let mut ids = Vec::with_capacity(rows.len());
     for row in rows {
-        let id: i64 = row
-            .try_get("", "asset_id")
-            .map_err(|e| decode_err("asset_id", e))?;
+        let id: i64 = row.try_get("", "asset_id").map_err(|e| decode_err("asset_id", e))?;
         ids.push(id);
     }
     Ok(ids)
@@ -521,18 +482,13 @@ const SEARCH_FROM: &str = r"
 /// Search ranking: asset code exact match is ordered first (via CASE expression),
 /// then code prefix, then name/serial partial match. Matching is accent- and
 /// case-insensitive.
-pub async fn search_assets(
-    db: &DatabaseConnection,
-    filters: AssetSearchFilters,
-) -> AppResult<Vec<AssetSearchResult>> {
+pub async fn search_assets(db: &DatabaseConnection, filters: AssetSearchFilters) -> AppResult<Vec<AssetSearchResult>> {
     let mut where_clauses = vec!["e.deleted_at IS NULL".to_string()];
     let mut binds: Vec<sea_orm::Value> = Vec::new();
 
     if !filters.include_decommissioned.unwrap_or(false) {
-        where_clauses.push(
-            "COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')"
-                .to_string(),
-        );
+        where_clauses
+            .push("COALESCE(rs_stat.code, e.lifecycle_status) NOT IN ('DECOMMISSIONED', 'SCRAPPED')".to_string());
     }
 
     let folded_query = filters
@@ -561,9 +517,7 @@ pub async fn search_assets(
     if let Some(ref codes) = filters.class_codes {
         if !codes.is_empty() {
             let placeholders = codes.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-            where_clauses.push(format!(
-                "COALESCE(rs_class.code, ec.code) IN ({placeholders})"
-            ));
+            where_clauses.push(format!("COALESCE(rs_class.code, ec.code) IN ({placeholders})"));
             for code in codes {
                 binds.push(code.clone().into());
             }
@@ -620,20 +574,13 @@ pub async fn search_assets(
         "ORDER BY e.asset_id_code ASC".to_string()
     };
 
-    let sql = format!(
-        "SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_sql} LIMIT {row_limit}"
-    );
+    let sql = format!("SELECT {SEARCH_SELECT} {SEARCH_FROM} WHERE {where_sql} {order_sql} LIMIT {row_limit}");
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
 
-    let mut results: Vec<AssetSearchResult> =
-        rows.iter().map(map_search_result).collect::<AppResult<_>>()?;
+    let mut results: Vec<AssetSearchResult> = rows.iter().map(map_search_result).collect::<AppResult<_>>()?;
     enrich_org_paths(db, &mut results).await?;
     Ok(results)
 }
@@ -650,11 +597,7 @@ pub async fn suggest_picker_assets(
     let limit = filters.limit.unwrap_or(15).min(20);
     let include_decommissioned = filters.include_decommissioned.unwrap_or(false);
 
-    let trimmed = filters
-        .query
-        .as_deref()
-        .map(str::trim)
-        .filter(|q| !q.is_empty());
+    let trimmed = filters.query.as_deref().map(str::trim).filter(|q| !q.is_empty());
 
     if trimmed.is_some() {
         let items = search_assets(
