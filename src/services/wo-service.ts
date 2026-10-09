@@ -233,16 +233,16 @@ export class CompletionBlockedError extends Error {
 export function normalizePreflightCode(message: string): string {
   const lower = message.toLowerCase();
 
-  if (lower.includes("open labor") || lower.includes("main-d'Å“uvre ouvertes")) {
+  if (lower.includes("open labor") || lower.includes("main-d'œuvre ouvertes")) {
     return "OPEN_LABOR";
   }
-  if (lower.includes("mandatory tasks incomplete") || lower.includes("tÃ¢ches obligatoires")) {
+  if (lower.includes("mandatory tasks incomplete") || lower.includes("tâches obligatoires")) {
     return "INCOMPLETE_TASKS";
   }
-  if (lower.includes("parts actuals") || lower.includes("piÃ¨ces")) {
+  if (lower.includes("parts actuals") || lower.includes("pièces")) {
     return "MISSING_PARTS";
   }
-  if (lower.includes("open downtime") || lower.includes("temps d'arrÃªt ouverts")) {
+  if (lower.includes("open downtime") || lower.includes("temps d'arrêt ouverts")) {
     return "OPEN_DOWNTIME";
   }
 
