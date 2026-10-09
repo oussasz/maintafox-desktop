@@ -465,7 +465,7 @@ pub async fn record_inspection_result(
     }
 
     let recorded_at = Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     let row = if let Some(eid) = existing_id {
         let cur_row = db
@@ -522,7 +522,7 @@ pub async fn record_inspection_result(
              text_value, boolean_value, comment, recorded_at, recorded_by_id, row_version) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
             [
-                sync_id.into(),
+                entity_sync_id.into(),
                 input.round_id.into(),
                 input.checkpoint_id.into(),
                 status.clone().into(),
@@ -611,14 +611,14 @@ async fn insert_auto_anomaly(
         [rid.into(), anomaly_type.into()],
     ))
     .await?;
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inspection_anomalies (entity_sync_id, round_id, result_id, anomaly_type, severity, description, \
          linked_di_id, linked_work_order_id, requires_permit_review, resolution_status, row_version) \
          VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 0, 'open', 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             round_id.into(),
             rid.into(),
             anomaly_type.into(),
@@ -685,7 +685,7 @@ pub async fn add_inspection_evidence(
         }
     }
     let cap = input.captured_at.unwrap_or_else(|| Utc::now().to_rfc3339());
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inspection_evidence (result_id, evidence_type, file_path_or_value, captured_at, entity_sync_id, \
@@ -695,7 +695,7 @@ pub async fn add_inspection_evidence(
             input.evidence_type.trim().into(),
             input.file_path_or_value.into(),
             cap.into(),
-            sync_id.into(),
+            entity_sync_id.into(),
         ],
     ))
     .await?;

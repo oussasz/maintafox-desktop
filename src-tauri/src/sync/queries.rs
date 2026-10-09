@@ -9,9 +9,10 @@ use crate::sync::domain::{
     ApplySyncBatchInput, ApplySyncBatchResult, ExecuteSyncRepairInput, ListOutboxFilter, ReplaySyncFailuresInput,
     ReplaySyncFailuresResult, ResolveSyncConflictInput, StageOutboxItemInput, SyncCheckpoint, SyncConflictFilter,
     SyncConflictRecord, SyncHealthAlert, SyncHealthMetrics, SyncInboundItemInput, SyncInboxItem,
-    SyncObservabilityReport, SyncOutboxItem, SyncPushPayload, SyncRecoveryProof, SyncRepairActionRecord,
-    SyncRepairExecutionResult, SyncRepairPreview, SyncRepairPreviewInput, SyncReplayRun, SyncStateSummary,
-    SyncTypedRejection, SYNC_ENTITY_BUDGET_LINES, SYNC_ENTITY_BUDGET_VERSIONS, SYNC_PROTOCOL_VERSION_V1,
+    SyncMediaManifestItem, SyncObservabilityReport, SyncOutboxItem, SyncPushPayload, SyncRecoveryProof,
+    SyncRepairActionRecord, SyncRepairExecutionResult, SyncRepairPreview, SyncRepairPreviewInput, SyncReplayRun,
+    SyncStateSummary, SyncTypedRejection, SYNC_ENTITY_BUDGET_LINES, SYNC_ENTITY_BUDGET_VERSIONS,
+    SYNC_ENTITY_MEDIA_ATTACHMENTS, SYNC_PROTOCOL_VERSION_V1,
 };
 
 fn hash_payload(payload: &str) -> String {
@@ -461,13 +462,59 @@ pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) 
     .await?;
 
     let tenant_config = tenant_config_sync_payload(db).await?;
+    let media_manifest = build_media_manifest_from_outbox(&outbox_batch);
 
     Ok(SyncPushPayload {
         protocol_version: SYNC_PROTOCOL_VERSION_V1.to_string(),
         checkpoint_token,
         outbox_batch,
         tenant_config,
+        device_class: Some("desktop".to_string()),
+        media_manifest,
     })
+}
+
+fn build_media_manifest_from_outbox(outbox_batch: &[SyncOutboxItem]) -> Option<Vec<SyncMediaManifestItem>> {
+    let mut items = Vec::new();
+    for item in outbox_batch {
+        if item.entity_type != SYNC_ENTITY_MEDIA_ATTACHMENTS {
+            continue;
+        }
+        if item.operation == "delete" || item.operation == "archive" {
+            continue;
+        }
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(&item.payload_json) else {
+            continue;
+        };
+        let content_sha256 = payload
+            .get("content_sha256")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let object_key = payload
+            .get("object_key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let byte_size = payload
+            .get("byte_size")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        if content_sha256.is_empty() || object_key.is_empty() {
+            continue;
+        }
+        items.push(SyncMediaManifestItem {
+            entity_sync_id: item.entity_sync_id.clone(),
+            content_sha256,
+            object_key,
+            byte_size,
+        });
+    }
+    if items.is_empty() {
+        None
+    } else {
+        Some(items)
+    }
 }
 
 async fn upsert_sync_conflict(
@@ -780,7 +827,7 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
                 "INSERT INTO sync_inbox (
                     server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
                     row_version, payload_json, payload_hash, apply_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'applied')",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
                 [
                     input.server_batch_id.clone().into(),
                     input.checkpoint_token.clone().into(),

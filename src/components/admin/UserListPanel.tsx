@@ -1,10 +1,20 @@
 ﻿import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowRight, Loader2, LockOpen, Pencil, Plus, ShieldCheck, UserX } from "lucide-react";
+import {
+  ArrowRight,
+  KeyRound,
+  Loader2,
+  LockOpen,
+  Pencil,
+  Plus,
+  ShieldCheck,
+  UserX,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CreateUserDialog } from "@/components/admin/CreateUserDialog";
 import { OnlinePresenceIndicator } from "@/components/admin/OnlinePresenceIndicator";
+import { TempPasswordDialog } from "@/components/admin/TempPasswordDialog";
 import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
@@ -41,6 +51,7 @@ import {
   revokeRoleScope,
   listRoles,
   unlockUserAccount,
+  adminSetUserPassword,
 } from "@/services/rbac-service";
 import type {
   UserWithRoles,
@@ -665,6 +676,9 @@ export function UserListPanel() {
   // Create dialog
   const [showCreate, setShowCreate] = useState(false);
 
+  // Show-once temporary password after admin reset (never persist beyond React state)
+  const [tempPassword, setTempPassword] = useState<string | null>(null);
+
   const buildFilter = useCallback((): UserListFilter => {
     const f: UserListFilter = {};
     if (search.trim()) f.search = search.trim();
@@ -728,6 +742,37 @@ export function UserListPanel() {
       } catch {
         toast({
           title: t("users.errors.unlockFailed", "Erreur lors du dÃ©verrouillage"),
+          variant: "destructive",
+        });
+      }
+    },
+    [fetchUsers, toast, t, withStepUp],
+  );
+
+  const handleResetPassword = useCallback(
+    async (user: UserWithRoles) => {
+      if (user.identity_mode === "sso") {
+        toast({
+          title: t("users.resetPassword.ssoUnavailable"),
+          variant: "destructive",
+        });
+        return;
+      }
+      const confirmed = window.confirm(t("users.resetPassword.confirm"));
+      if (!confirmed) return;
+      try {
+        const result = await withStepUp(() =>
+          adminSetUserPassword({ user_id: user.id, temporary_password: null }),
+        );
+        setTempPassword(result.temporary_password);
+        toast({ title: t("users.resetPassword.success"), variant: "success" });
+        void fetchUsers();
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("Step-up cancelled")) {
+          return;
+        }
+        toast({
+          title: t("users.errors.resetPasswordFailed"),
           variant: "destructive",
         });
       }
@@ -834,6 +879,19 @@ export function UserListPanel() {
                   <LockOpen className="h-3.5 w-3.5 text-amber-600" />
                 </Button>
               )}
+            {can(P.ADM_USERS) && row.original.identity_mode !== "sso" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                title={t("users.actions.resetPassword")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleResetPassword(row.original);
+                }}
+              >
+                <KeyRound className="h-3.5 w-3.5 text-primary" />
+              </Button>
+            )}
             {can(P.ADM_USERS) && (
               <Button
                 variant="ghost"
@@ -875,7 +933,7 @@ export function UserListPanel() {
         ),
       },
     ],
-    [t, can, handleDeactivate, handleUnlock],
+    [t, can, handleDeactivate, handleUnlock, handleResetPassword],
   );
 
   return (
@@ -972,6 +1030,12 @@ export function UserListPanel() {
         open={editTarget !== null}
         onClose={() => setEditTarget(null)}
         onSaved={() => void fetchUsers()}
+      />
+
+      <TempPasswordDialog
+        open={tempPassword !== null}
+        temporaryPassword={tempPassword}
+        onClose={() => setTempPassword(null)}
       />
 
       {/* Create user dialog */}

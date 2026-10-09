@@ -49,6 +49,7 @@ export function SmartFilterBar({
   searchValue,
   onSearchChange,
   onSearchInputChange,
+  showSearch = true,
   filters,
   resultCount,
   resultCountLabel,
@@ -93,7 +94,7 @@ export function SmartFilterBar({
   };
 
   const activeFilters = useMemo(() => filters.filter(isFilterActive), [filters]);
-  const searchActive = draftSearch.trim().length > 0;
+  const searchActive = showSearch && draftSearch.trim().length > 0;
   const activeCount = activeFilters.length + (searchActive ? 1 : 0);
 
   const clearFilter = (def: SmartFilterDef) => {
@@ -115,28 +116,30 @@ export function SmartFilterBar({
     <div className={cn(mfLayout.moduleFilterBar, "flex-col items-stretch gap-2", className)}>
       {/* Search row */}
       <div className="flex flex-wrap items-center gap-2 w-full">
-        <div className="relative min-w-[200px] flex-1 max-w-xl">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted pointer-events-none" />
-          <Input
-            value={draftSearch}
-            onChange={(e) => handleSearchInput(e.target.value)}
-            placeholder={searchPlaceholder}
-            className={mfInput.filterSearch}
-            aria-label={searchPlaceholder}
-          />
-          {searchActive && (
-            <button
-              type="button"
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
-              onClick={clearSearch}
-              aria-label={t("smartFilter.clearSearch")}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+        {showSearch ? (
+          <div className="relative min-w-[200px] flex-1 max-w-xl">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted pointer-events-none" />
+            <Input
+              value={draftSearch}
+              onChange={(e) => handleSearchInput(e.target.value)}
+              placeholder={searchPlaceholder}
+              className={mfInput.filterSearch}
+              aria-label={searchPlaceholder}
+            />
+            {searchActive && (
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+                onClick={clearSearch}
+                aria-label={t("smartFilter.clearSearch")}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        ) : null}
 
-        <div className="flex items-center gap-2 ml-auto shrink-0">
+        <div className={cn("flex items-center gap-2 shrink-0", showSearch ? "ml-auto" : "ml-0")}>
           {resultCount != null && (
             <span className="text-xs text-text-muted whitespace-nowrap">
               {resultCountLabel ?? t("smartFilter.resultCount", { count: resultCount })}

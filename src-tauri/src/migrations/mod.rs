@@ -133,6 +133,17 @@ mod m20260813_000129_di_sla_immutable_snapshot;
 mod m20260814_000130_wo_lifecycle_redesign;
 mod m20260815_000138_personnel_create_platform;
 mod m20260816_000139_di_lifecycle_disposition;
+mod m20260820_000140_personnel_crew_ssot;
+mod m20260821_000141_crew_fk_followup;
+mod m20260821_000142_team_crest_identity;
+mod m20260822_000143_wo_assigned_team_id;
+mod m20260822_000144_pm_assigned_team_id;
+mod m20260822_000145_di_drop_review_team_id;
+mod m20260823_000146_di_equipment_id;
+mod m20260824_000147_pm_generation_autopilot;
+mod m20260825_000148_universal_sync_identity;
+mod m20260826_000149_report_artifacts;
+mod m20260826_000150_user_analytics_dashboard_layouts;
 mod m20260901_000034_notification_core;
 mod m20261001_000035_archive_core;
 mod m20261101_000036_activity_audit_log;
@@ -282,6 +293,17 @@ impl MigratorTrait for Migrator {
             Box::new(m20260729_000137_rbac_permission_normalization::Migration),
             Box::new(m20260815_000138_personnel_create_platform::Migration),
             Box::new(m20260816_000139_di_lifecycle_disposition::Migration),
+            Box::new(m20260820_000140_personnel_crew_ssot::Migration),
+            Box::new(m20260821_000141_crew_fk_followup::Migration),
+            Box::new(m20260821_000142_team_crest_identity::Migration),
+            Box::new(m20260822_000143_wo_assigned_team_id::Migration),
+            Box::new(m20260822_000144_pm_assigned_team_id::Migration),
+            Box::new(m20260822_000145_di_drop_review_team_id::Migration),
+            Box::new(m20260823_000146_di_equipment_id::Migration),
+            Box::new(m20260824_000147_pm_generation_autopilot::Migration),
+            Box::new(m20260825_000148_universal_sync_identity::Migration),
+            Box::new(m20260826_000149_report_artifacts::Migration),
+            Box::new(m20260826_000150_user_analytics_dashboard_layouts::Migration),
             Box::new(m_test::Migration),
         ]
     }

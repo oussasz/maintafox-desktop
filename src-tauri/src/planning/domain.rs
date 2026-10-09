@@ -31,6 +31,13 @@ pub struct ScheduleCandidate {
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// Business code of the source WO / DI / PM plan (enriched via JOIN).
+    pub source_code: Option<String>,
+    /// Human-readable title of the source record (enriched via JOIN).
+    pub source_title: Option<String>,
+    pub assigned_team_label: Option<String>,
+    pub assigned_personnel_name: Option<String>,
+    pub priority_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +150,10 @@ pub struct ScheduleCommitment {
     pub row_version: i64,
     pub created_at: String,
     pub updated_at: String,
+    pub source_code: Option<String>,
+    pub source_title: Option<String>,
+    pub assigned_team_label: Option<String>,
+    pub assigned_personnel_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +170,7 @@ pub struct ScheduleChangeLogEntry {
     pub reason: Option<String>,
     pub details_json: Option<String>,
     pub created_at: String,
+    pub actor_display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,6 +192,10 @@ pub struct ScheduleBreakIn {
     pub row_version: i64,
     pub created_by_id: Option<i64>,
     pub created_at: String,
+    pub commitment_source_code: Option<String>,
+    pub approved_by_display_name: Option<String>,
+    pub old_assignee_name: Option<String>,
+    pub new_assignee_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +217,14 @@ pub struct PlanningAssigneeLane {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanningCrewLane {
+    pub team_id: i64,
+    pub team_code: String,
+    pub team_name: String,
+    pub commitments_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanningGanttSnapshot {
     pub period_start: String,
     pub period_end: String,
@@ -208,6 +232,9 @@ pub struct PlanningGanttSnapshot {
     pub locked_windows: Vec<PlanningWindow>,
     pub capacity: Vec<TeamCapacityLoad>,
     pub assignee_lanes: Vec<PlanningAssigneeLane>,
+    /// Populated when `team_id` filter is None (plant-wide All Crews overview).
+    #[serde(default)]
+    pub crew_lanes: Vec<PlanningCrewLane>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

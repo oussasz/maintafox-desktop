@@ -23,15 +23,15 @@ mod tests {
 
     async fn insert_minimal_equipment(db: &DatabaseConnection) -> i64 {
         let now = chrono::Utc::now().to_rfc3339();
-        let sync_id = Uuid::new_v4().to_string();
-        let code = format!("EQ-{}", &sync_id[..8]);
+        let entity_sync_id = Uuid::new_v4().to_string();
+        let code = format!("EQ-{}", &entity_sync_id[..8]);
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO equipment
-              (sync_id, asset_id_code, name, lifecycle_status, maintainable_boundary, rams_utilization_factor, created_at, updated_at, row_version)
+              (entity_sync_id, asset_id_code, name, lifecycle_status, maintainable_boundary, rams_utilization_factor, created_at, updated_at, row_version)
              VALUES (?, ?, ?, 'IN_SERVICE', 1, 1.0, ?, ?, 1)",
             [
-                sync_id.clone().into(),
+                entity_sync_id.clone().into(),
                 code.into(),
                 "KPI Test Asset".into(),
                 now.clone().into(),
@@ -43,8 +43,8 @@ mod tests {
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "SELECT id FROM equipment WHERE sync_id = ?",
-                [sync_id.into()],
+                "SELECT id FROM equipment WHERE entity_sync_id = ?",
+                [entity_sync_id.into()],
             ))
             .await
             .expect("select equipment id")

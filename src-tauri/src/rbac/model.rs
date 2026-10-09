@@ -53,7 +53,7 @@ pub struct UserAccountRow {
 /// Column names match the actual schema created by migration 002 + 028:
 /// - `assigned_by_id` (not `granted_by_id`)
 /// - `is_emergency`, `emergency_reason`, `emergency_expires_at` added by mig 028
-/// - `deleted_at` soft-delete, `sync_id`, `row_version` from mig 002
+/// - `deleted_at` soft-delete, `entity_sync_id`, `row_version` from mig 002
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserScopeAssignment {
     pub id: i64,

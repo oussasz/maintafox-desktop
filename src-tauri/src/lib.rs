@@ -10,6 +10,7 @@
 
 pub mod activation;
 pub mod activity;
+pub mod analytics;
 pub mod analytics_contract;
 pub mod archive;
 pub mod assets;
@@ -143,6 +144,7 @@ pub fn run() {
             commands::auth::clear_pin,
             commands::auth::unlock_session_with_pin,
             commands::auth::force_change_password,
+            commands::auth::get_password_recovery_contacts,
             // Ã¢â€â‚¬Ã¢â€â‚¬ Profile Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::profile::get_my_profile,
             commands::profile::update_my_profile,
@@ -177,6 +179,7 @@ pub fn run() {
             commands::admin_users::grant_emergency_elevation,
             commands::admin_users::revoke_emergency_elevation,
             commands::admin_users::unlock_user_account,
+            commands::admin_users::admin_set_user_password,
             commands::admin_users::get_user_presence,
             commands::admin_users::list_users_missing_tenant_scope,
             commands::admin_users::backfill_users_missing_tenant_scope,
@@ -210,6 +213,16 @@ pub fn run() {
             commands::settings::get_policy_snapshot,
             commands::settings::get_session_policy,
             commands::settings::list_setting_change_events,
+            commands::settings::list_policy_snapshots,
+            commands::settings::save_policy_draft,
+            commands::settings::test_policy_draft,
+            commands::settings::activate_policy,
+            commands::settings::discard_policy_draft,
+            commands::settings::list_connection_profiles,
+            commands::settings::ensure_settings_defaults,
+            commands::settings::upload_document_branding_logo,
+            commands::settings::clear_document_branding_logo,
+            commands::settings::read_document_branding_logo_preview,
             // ── Document library (PRD §6.15) ──
             commands::library_documents::list_library_documents,
             commands::library_documents::upload_library_document,
@@ -303,6 +316,7 @@ pub fn run() {
             commands::sync::execute_sync_repair,
             commands::sync::list_sync_repair_actions,
             commands::sync::get_sync_observability_report,
+            commands::sync::materialize_sync_inbox,
             // Ã¢â€â‚¬Ã¢â€â‚¬ Org Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             commands::org::list_org_structure_models,
             commands::org::get_active_org_structure_model,
@@ -355,9 +369,11 @@ pub fn run() {
             commands::personnel::get_position_requirement_seed,
             commands::personnel::list_personnel_assignment_history,
             commands::personnel::upload_personnel_photo,
+            commands::personnel::read_personnel_photo_preview,
             commands::personnel::get_personnel_availability_state,
             commands::personnel::list_schedule_classes,
             commands::personnel::list_rate_cards,
+            commands::personnel::get_active_rate_card,
             commands::personnel::create_rate_card,
             commands::personnel::list_authorizations,
             commands::personnel::create_authorization,
@@ -367,7 +383,16 @@ pub fn run() {
             commands::personnel::list_skills_matrix,
             commands::personnel::list_availability_calendar,
             commands::personnel::list_team_capacity_summary,
+            commands::personnel::list_active_teams,
+            commands::personnel::get_team,
+            commands::personnel::list_team_members,
+            commands::personnel::create_team,
+            commands::personnel::update_team,
+            commands::personnel::set_team_lead,
             commands::personnel::create_availability_block,
+            commands::personnel::update_availability_block,
+            commands::personnel::delete_availability_block,
+            commands::personnel::end_availability_block,
             commands::personnel::list_personnel_team_assignments,
             commands::personnel::list_personnel_availability_blocks,
             commands::personnel::list_personnel_work_history,
@@ -394,6 +419,8 @@ pub fn run() {
             commands::pm::publish_pm_plan_version,
             commands::pm::list_pm_occurrences,
             commands::pm::generate_pm_occurrences,
+            commands::pm::get_pm_generation_status,
+            commands::pm::update_pm_generation_settings,
             commands::pm::transition_pm_occurrence,
             commands::pm::get_pm_due_metrics,
             commands::pm::list_pm_planning_readiness,
@@ -612,6 +639,7 @@ pub fn run() {
             commands::assets::list_asset_children,
             commands::assets::list_asset_parents,
             commands::assets::search_assets,
+            commands::assets::get_equipment_registry_metrics,
             commands::assets::suggest_picker_assets,
             commands::assets::suggest_asset_codes,
             commands::assets::suggest_asset_names,
@@ -697,6 +725,7 @@ pub fn run() {
             commands::wo::return_to_planning,
             commands::wo::approve_planning,
             commands::wo::assign_wo,
+            commands::wo::emergency_reassign_wo,
             commands::wo::start_wo,
             commands::wo::pause_wo,
             commands::wo::resume_wo,
@@ -762,6 +791,10 @@ pub fn run() {
             commands::reports::delete_my_report_schedule,
             commands::reports::list_my_report_runs,
             commands::reports::export_report_now,
+            commands::reports::download_report_run_artifact,
+            commands::analytics_dashboard::get_analytics_executive_dashboard,
+            commands::analytics_dashboard::get_analytics_dashboard_layout,
+            commands::analytics_dashboard::save_analytics_dashboard_layout,
             commands::permit::list_permit_types,
             commands::permit::upsert_permit_type,
             commands::permit::list_work_permits,
@@ -911,6 +944,9 @@ pub fn run() {
             commands::dashboard::get_dashboard_di_status_chart,
             commands::dashboard::get_dashboard_reliability_snapshot_summary,
             commands::dashboard::get_dashboard_kpi_validation,
+            commands::dashboard::get_overview_kpis,
+            commands::dashboard::get_overview_kpi_layout,
+            commands::dashboard::save_overview_kpi_layout,
         ])
         .run(tauri::generate_context!())
         // EXPECT: If the Tauri context cannot be loaded, the application binary is corrupt or

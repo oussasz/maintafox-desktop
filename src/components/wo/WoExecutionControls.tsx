@@ -36,6 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useFormatters } from "@/hooks/use-formatters";
 import { useSession } from "@/hooks/use-session";
 import {
   elapsedMinutesBetween,
@@ -228,6 +229,7 @@ function executionLogI18nKey(summaryKey: string): string {
 export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecutionControlsProps>(
   function WoExecutionControls({ wo, canEdit }, ref) {
     const { t, i18n } = useTranslation("ot");
+    const { formatCurrency } = useFormatters();
     const { info } = useSession();
     const refreshActiveWo = useWoStore((s) => s.refreshActiveWo);
     const woItems = useWoStore((s) => s.items);
@@ -1031,10 +1033,15 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                         "auto",
                         durationLabels,
                       );
+                const rateMissing = entry.hourly_rate == null || entry.rate_source === "missing";
+                const lineCost =
+                  entry.hours_worked != null && entry.hourly_rate != null
+                    ? entry.hours_worked * entry.hourly_rate
+                    : null;
                 return (
                   <div
                     key={entry.id}
-                    className="grid gap-2 border-b border-border/60 py-2 text-sm last:border-0 md:grid-cols-[1.2fr_1fr_1fr_100px]"
+                    className="grid gap-2 border-b border-border/60 py-2 text-sm last:border-0 md:grid-cols-[1.2fr_1fr_1fr_90px_1fr]"
                   >
                     <div className="font-medium">
                       {formatPersonLabel(entry.intervener_display_name)}
@@ -1046,6 +1053,20 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
                       {formatDateTime(entry.ended_at, i18n.language)}
                     </div>
                     <div className="font-medium tabular-nums">{duration}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {rateMissing ? (
+                        <Badge variant="outline" className="text-[10px]">
+                          {t("execution.rateMissing")}
+                        </Badge>
+                      ) : (
+                        <>
+                          {formatCurrency(entry.hourly_rate ?? 0)}
+                          {lineCost != null ? (
+                            <span className="ml-1">· {formatCurrency(lineCost)}</span>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -1678,7 +1699,9 @@ export const WoExecutionControls = forwardRef<WoExecutionControlsHandle, WoExecu
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>{t("execution.addLabor")}</DialogTitle>
-              <DialogDescription>{t("execution.laborDialog.hint")}</DialogDescription>
+              <DialogDescription>
+                {t("execution.laborDialog.hint")} {t("execution.laborDialog.rateHint")}
+              </DialogDescription>
             </DialogHeader>
             <div className="grid gap-3">
               <div className="space-y-1">

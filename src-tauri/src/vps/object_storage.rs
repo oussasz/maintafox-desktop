@@ -49,6 +49,8 @@ pub enum ObjectCategory {
     TenantRestoreBundles,
     /// Support exports (bundles, logs metadata)
     SupportEvidence,
+    /// Tenant operational media (WO/DI/inspection photos, video, voice, documents)
+    TenantMedia,
 }
 
 impl ObjectCategory {
@@ -58,6 +60,7 @@ impl ObjectCategory {
             Self::BackupSnapshots => "backups",
             Self::TenantRestoreBundles => "restore-bundles",
             Self::SupportEvidence => "support",
+            Self::TenantMedia => "media",
         }
     }
 }
@@ -91,6 +94,7 @@ impl StorageDataClass {
             ObjectCategory::BackupSnapshots => Self::BackupOperational,
             ObjectCategory::TenantRestoreBundles => Self::BackupOperational,
             ObjectCategory::SupportEvidence => Self::SupportExport,
+            ObjectCategory::TenantMedia => Self::BackupOperational,
         }
     }
 }
@@ -166,6 +170,29 @@ pub fn build_object_key(
         category,
         data_class,
     })
+}
+
+/// Canonical media object key: `{env}/media/{tenant}/{parent_type}/{parent_sync_id}/{content_sha256}`
+pub fn build_tenant_media_object_key(
+    env: DeploymentEnvironment,
+    tenant_id: &str,
+    parent_entity_type: &str,
+    parent_entity_sync_id: &str,
+    content_sha256: &str,
+) -> Result<ObjectStorageObjectKey, VpsTypedError> {
+    let sha = content_sha256.trim().to_ascii_lowercase();
+    if sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(typed(
+            "media_sha_invalid",
+            "content_sha256 must be 64 lowercase hex characters.",
+        ));
+    }
+    build_object_key(
+        env,
+        ObjectCategory::TenantMedia,
+        Some(tenant_id),
+        &[parent_entity_type, parent_entity_sync_id, &sha],
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

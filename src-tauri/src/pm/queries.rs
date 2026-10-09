@@ -9,11 +9,11 @@ use crate::notifications::emitter::{emit_event as emit_notification_event, Notif
 use crate::pm::domain::{
     CreatePmPlanInput, CreatePmPlanVersionInput, ExecutePmOccurrenceInput, ExecutePmOccurrenceResult,
     GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmDueMetrics, PmEffortVarianceKpi, PmExecution,
-    PmExecutionFilter, PmExecutionFindingInput, PmFinding, PmGovernanceKpiInput, PmGovernanceKpiReport, PmOccurrence,
-    PmOccurrenceFilter, PmPlan, PmPlanFilter, PmPlanVersion, PmPlanningCandidate, PmPlanningReadinessBlocker,
-    PmPlanningReadinessInput, PmPlanningReadinessProjection, PmRateKpi, PmRecurringFinding, PmRecurringFindingsInput,
-    PublishPmPlanVersionInput, TransitionPmOccurrenceInput, TransitionPmPlanLifecycleInput, UpdatePmPlanInput,
-    UpdatePmPlanVersionInput,
+    PmExecutionFilter, PmExecutionFindingInput, PmFinding, PmGovernanceKpiInput, PmGovernanceKpiReport,
+    PmOccurrence, PmOccurrenceFilter, PmPlan, PmPlanFilter, PmPlanVersion, PmPlanningCandidate,
+    PmPlanningReadinessBlocker, PmPlanningReadinessInput, PmPlanningReadinessProjection, PmRateKpi,
+    PmRecurringFinding, PmRecurringFindingsInput, PublishPmPlanVersionInput, TransitionPmOccurrenceInput,
+    TransitionPmPlanLifecycleInput, UpdatePmPlanInput, UpdatePmPlanVersionInput,
 };
 use crate::wo::domain::WoCreateInput;
 use crate::wo::queries as wo_queries;
@@ -268,7 +268,10 @@ fn decode_pm_plan_row(row: &sea_orm::QueryResult) -> AppResult<PmPlan> {
         criticality_value_id: row.try_get("", "criticality_value_id")?,
         criticality_code: row.try_get("", "criticality_code")?,
         criticality_label: row.try_get("", "criticality_label")?,
-        assigned_group_id: row.try_get("", "assigned_group_id")?,
+        assigned_team_id: row.try_get("", "assigned_team_id")?,
+        assigned_team_code: row.try_get::<Option<String>>("", "assigned_team_code").unwrap_or(None),
+        assigned_team_name: row.try_get::<Option<String>>("", "assigned_team_name").unwrap_or(None),
+        assigned_team_label: row.try_get::<Option<String>>("", "assigned_team_label").unwrap_or(None),
         requires_shutdown: row.try_get("", "requires_shutdown")?,
         requires_permit: row.try_get("", "requires_permit")?,
         is_active: row.try_get("", "is_active")?,
@@ -307,18 +310,34 @@ fn decode_pm_plan_version_row(row: &sea_orm::QueryResult) -> AppResult<PmPlanVer
 pub async fn list_pm_plans(db: &DatabaseConnection, _filter: PmPlanFilter) -> AppResult<Vec<PmPlan>> {
     let rows = db.query_all(Statement::from_string(DbBackend::Sqlite,
         "SELECT p.id,p.code,p.title,p.description,p.asset_scope_type,p.asset_scope_id,p.strategy_type,
-                p.criticality_value_id,lv.code AS criticality_code,lv.label AS criticality_label,p.assigned_group_id,
+                p.criticality_value_id,lv.code AS criticality_code,lv.label AS criticality_label,p.assigned_team_id,
+                tm.code AS assigned_team_code, tm.name AS assigned_team_name,
+                CASE
+                  WHEN tm.code IS NOT NULL AND tm.name IS NOT NULL THEN tm.code || ' — ' || tm.name
+                  ELSE COALESCE(tm.name, tm.code)
+                END AS assigned_team_label,
                 p.requires_shutdown,p.requires_permit,p.is_active,p.lifecycle_status,p.current_version_id,p.row_version,p.created_at,p.updated_at
-         FROM pm_plans p LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id ORDER BY p.code".to_string())).await?;
+         FROM pm_plans p
+         LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id
+         LEFT JOIN teams tm ON tm.id = p.assigned_team_id AND tm.deleted_at IS NULL
+         ORDER BY p.code".to_string())).await?;
     rows.iter().map(decode_pm_plan_row).collect()
 }
 
 pub async fn get_pm_plan(db: &DatabaseConnection, plan_id: i64) -> AppResult<PmPlan> {
     let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite,
         "SELECT p.id,p.code,p.title,p.description,p.asset_scope_type,p.asset_scope_id,p.strategy_type,
-                p.criticality_value_id,lv.code AS criticality_code,lv.label AS criticality_label,p.assigned_group_id,
+                p.criticality_value_id,lv.code AS criticality_code,lv.label AS criticality_label,p.assigned_team_id,
+                tm.code AS assigned_team_code, tm.name AS assigned_team_name,
+                CASE
+                  WHEN tm.code IS NOT NULL AND tm.name IS NOT NULL THEN tm.code || ' — ' || tm.name
+                  ELSE COALESCE(tm.name, tm.code)
+                END AS assigned_team_label,
                 p.requires_shutdown,p.requires_permit,p.is_active,p.lifecycle_status,p.current_version_id,p.row_version,p.created_at,p.updated_at
-         FROM pm_plans p LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id WHERE p.id = ?", [plan_id.into()])).await?
+         FROM pm_plans p
+         LEFT JOIN lookup_values lv ON lv.id = p.criticality_value_id
+         LEFT JOIN teams tm ON tm.id = p.assigned_team_id AND tm.deleted_at IS NULL
+         WHERE p.id = ?", [plan_id.into()])).await?
         .ok_or_else(|| AppError::NotFound{entity:"pm_plan".to_string(), id:plan_id.to_string()})?;
     decode_pm_plan_row(&row)
 }
@@ -336,10 +355,13 @@ pub async fn create_pm_plan(db: &DatabaseConnection, input: CreatePmPlanInput) -
     if let Some(v) = input.criticality_value_id {
         ensure_lookup_value_in_domain(db, v, "equipment.criticality", "criticality_value_id").await?;
     }
+    if let Some(team_id) = input.assigned_team_id {
+        crate::repository::team_repository::assert_active_crew_exists(db, team_id).await?;
+    }
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
-        "INSERT INTO pm_plans (code,title,description,asset_scope_type,asset_scope_id,strategy_type,criticality_value_id,assigned_group_id,requires_shutdown,requires_permit,is_active,lifecycle_status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')",
-        [code.clone().into(),title.into(),input.description.into(),asset_scope_type.into(),input.asset_scope_id.into(),strategy_type.into(),input.criticality_value_id.into(),input.assigned_group_id.into(),i64::from(input.requires_shutdown).into(),i64::from(input.requires_permit).into(),parse_bool_to_i64(input.is_active,true).into()])).await?;
+        "INSERT INTO pm_plans (entity_sync_id,code,title,description,asset_scope_type,asset_scope_id,strategy_type,criticality_value_id,assigned_team_id,requires_shutdown,requires_permit,is_active,lifecycle_status,row_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1)",
+        [uuid::Uuid::new_v4().to_string().into(),code.clone().into(),title.into(),input.description.into(),asset_scope_type.into(),input.asset_scope_id.into(),strategy_type.into(),input.criticality_value_id.into(),input.assigned_team_id.into(),i64::from(input.requires_shutdown).into(),i64::from(input.requires_permit).into(),parse_bool_to_i64(input.is_active,true).into()])).await?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -348,7 +370,13 @@ pub async fn create_pm_plan(db: &DatabaseConnection, input: CreatePmPlanInput) -
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created pm plan not found")))?;
-    get_pm_plan(db, row.try_get("", "id")?).await
+    let plan_id: i64 = row.try_get("", "id")?;
+    let plan = get_pm_plan(db, plan_id).await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_pm_plan_sync(db, plan_id).await,
+        "pm_plan create",
+    );
+    Ok(plan)
 }
 
 pub async fn update_pm_plan(
@@ -371,14 +399,23 @@ pub async fn update_pm_plan(
     if let Some(v) = criticality_value_id {
         ensure_lookup_value_in_domain(db, v, "equipment.criticality", "criticality_value_id").await?;
     }
+    let assigned_team_id = input.assigned_team_id.or(current.assigned_team_id);
+    if let Some(team_id) = assigned_team_id {
+        crate::repository::team_repository::assert_active_crew_exists(db, team_id).await?;
+    }
     let result = db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
-        "UPDATE pm_plans SET title=?,description=?,asset_scope_type=?,asset_scope_id=?,strategy_type=?,criticality_value_id=?,assigned_group_id=?,requires_shutdown=?,requires_permit=?,is_active=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        "UPDATE pm_plans SET title=?,description=?,asset_scope_type=?,asset_scope_id=?,strategy_type=?,criticality_value_id=?,assigned_team_id=?,requires_shutdown=?,requires_permit=?,is_active=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id=? AND row_version=?",
-        [title.into(),input.description.or(current.description).into(),asset_scope_type.into(),input.asset_scope_id.or(current.asset_scope_id).into(),strategy_type.into(),criticality_value_id.into(),input.assigned_group_id.or(current.assigned_group_id).into(),i64::from(input.requires_shutdown.unwrap_or(current.requires_shutdown==1)).into(),i64::from(input.requires_permit.unwrap_or(current.requires_permit==1)).into(),i64::from(input.is_active.unwrap_or(current.is_active==1)).into(),plan_id.into(),expected_row_version.into()])).await?;
+        [title.into(),input.description.or(current.description).into(),asset_scope_type.into(),input.asset_scope_id.or(current.asset_scope_id).into(),strategy_type.into(),criticality_value_id.into(),assigned_team_id.into(),i64::from(input.requires_shutdown.unwrap_or(current.requires_shutdown==1)).into(),i64::from(input.requires_permit.unwrap_or(current.requires_permit==1)).into(),i64::from(input.is_active.unwrap_or(current.is_active==1)).into(),plan_id.into(),expected_row_version.into()])).await?;
     if result.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec!["PM plan update failed.".to_string()]));
     }
-    get_pm_plan(db, plan_id).await
+    let plan = get_pm_plan(db, plan_id).await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_pm_plan_sync(db, plan_id).await,
+        "pm_plan update",
+    );
+    Ok(plan)
 }
 
 pub async fn transition_pm_plan_lifecycle(
@@ -406,7 +443,12 @@ pub async fn transition_pm_plan_lifecycle(
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
         "UPDATE pm_plans SET lifecycle_status=?,row_version=row_version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=? AND row_version=?",
         [next.into(), input.plan_id.into(), input.expected_row_version.into()])).await?;
-    get_pm_plan(db, input.plan_id).await
+    let plan = get_pm_plan(db, input.plan_id).await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_pm_plan_sync(db, input.plan_id).await,
+        "pm_plan lifecycle",
+    );
+    Ok(plan)
 }
 
 pub async fn list_pm_plan_versions(db: &DatabaseConnection, pm_plan_id: i64) -> AppResult<Vec<PmPlanVersion>> {
@@ -434,10 +476,11 @@ pub async fn create_pm_plan_version(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("next version not found")))?;
     let next_no: i64 = version_no_row.try_get("", "next_no")?;
+    let version_entity_sync_id = uuid::Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite,
-        "INSERT INTO pm_plan_versions (pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason)
-         VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [pm_plan_id.into(),next_no.into(),input.effective_from.into(),input.effective_to.into(),input.trigger_definition_json.into(),input.task_package_json.into(),input.required_parts_json.into(),input.required_skills_json.into(),input.required_tools_json.into(),input.estimated_duration_hours.into(),input.estimated_labor_cost.into(),input.estimated_parts_cost.into(),input.estimated_service_cost.into(),input.change_reason.into()])).await?;
+        "INSERT INTO pm_plan_versions (entity_sync_id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason)
+         VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [version_entity_sync_id.into(),pm_plan_id.into(),next_no.into(),input.effective_from.into(),input.effective_to.into(),input.trigger_definition_json.into(),input.task_package_json.into(),input.required_parts_json.into(),input.required_skills_json.into(),input.required_tools_json.into(),input.estimated_duration_hours.into(),input.estimated_labor_cost.into(),input.estimated_parts_cost.into(),input.estimated_service_cost.into(),input.change_reason.into()])).await?;
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -449,7 +492,12 @@ pub async fn create_pm_plan_version(
     let id: i64 = row.try_get("", "id")?;
     let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created version missing")))?;
-    decode_pm_plan_version_row(&row)
+    let version = decode_pm_plan_version_row(&row)?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_pm_plan_version_sync(db, id).await,
+        "pm_plan_version create",
+    );
+    Ok(version)
 }
 
 pub async fn update_pm_plan_version(
@@ -497,7 +545,12 @@ pub async fn update_pm_plan_version(
         [effective_from.into(),effective_to.into(),trigger_definition_json.into(),input.task_package_json.or(row.try_get("", "task_package_json")?).into(),input.required_parts_json.or(row.try_get("", "required_parts_json")?).into(),required_skills_json.into(),input.required_tools_json.or(row.try_get("", "required_tools_json")?).into(),input.estimated_duration_hours.or(row.try_get("", "estimated_duration_hours")?).into(),input.estimated_labor_cost.or(row.try_get("", "estimated_labor_cost")?).into(),input.estimated_parts_cost.or(row.try_get("", "estimated_parts_cost")?).into(),input.estimated_service_cost.or(row.try_get("", "estimated_service_cost")?).into(),input.change_reason.or(row.try_get("", "change_reason")?).into(),version_id.into(),expected_row_version.into()])).await?;
     let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [version_id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("updated version missing")))?;
-    decode_pm_plan_version_row(&row)
+    let version = decode_pm_plan_version_row(&row)?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_pm_plan_version_sync(db, version_id).await,
+        "pm_plan_version update",
+    );
+    Ok(version)
 }
 
 pub async fn publish_pm_plan_version(
@@ -540,7 +593,16 @@ pub async fn publish_pm_plan_version(
     tx.commit().await?;
     let row = db.query_one(Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT id,pm_plan_id,version_no,status,effective_from,effective_to,trigger_definition_json,task_package_json,required_parts_json,required_skills_json,required_tools_json,estimated_duration_hours,estimated_labor_cost,estimated_parts_cost,estimated_service_cost,change_reason,row_version,created_at,updated_at FROM pm_plan_versions WHERE id = ?", [input.version_id.into()])).await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("published version missing")))?;
-    decode_pm_plan_version_row(&row)
+    let version = decode_pm_plan_version_row(&row)?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_pm_plan_version_sync(db, input.version_id).await,
+        "pm_plan_version publish",
+    );
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_pm_plan_sync(db, plan_id).await,
+        "pm_plan after version publish",
+    );
+    Ok(version)
 }
 
 const OCCURRENCE_STATUSES: &[&str] = &[
@@ -761,9 +823,10 @@ async fn insert_occurrence(
     let insert_result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO pm_occurrences (pm_plan_id, plan_version_id, due_basis, due_at, due_meter_value, status)
-             VALUES (?, ?, ?, ?, ?, 'forecasted')",
+            "INSERT INTO pm_occurrences (entity_sync_id, pm_plan_id, plan_version_id, due_basis, due_at, due_meter_value, status)
+             VALUES (?, ?, ?, ?, ?, ?, 'generated')",
             [
+                uuid::Uuid::new_v4().to_string().into(),
                 pm_plan_id.into(),
                 plan_version_id.into(),
                 due_basis.to_string().into(),
@@ -1301,6 +1364,10 @@ pub async fn generate_pm_occurrences(
         sql.push_str(" AND p.id = ?");
         binds.push(plan_id.into());
     }
+    if let Some(equipment_id) = input.equipment_id {
+        sql.push_str(" AND p.asset_scope_type = 'equipment' AND p.asset_scope_id = ?");
+        binds.push(equipment_id.into());
+    }
     let rows = db
         .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds))
         .await?;
@@ -1704,6 +1771,10 @@ pub async fn generate_pm_occurrences(
     }
     for occurrence_id in &occurrence_ids {
         let _ = emit_pm_due_event(db, *occurrence_id).await;
+        crate::sync::foundation_stage::warn_stage(
+            crate::sync::ops_stage::stage_pm_occurrence_sync(db, *occurrence_id).await,
+            "pm_occurrence generate",
+        );
     }
 
     Ok(GeneratePmOccurrencesResult {
@@ -1890,6 +1961,10 @@ pub async fn transition_pm_occurrence(
     .await?;
 
     let updated = get_pm_occurrence_by_id(db, input.occurrence_id).await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_pm_occurrence_sync(db, input.occurrence_id).await,
+        "pm_occurrence transition",
+    );
     if updated.status == "missed" {
         let _ = emit_pm_missed_event(db, &updated, input.reason_code.clone()).await;
     } else if updated.status == "deferred" {
@@ -1998,7 +2073,7 @@ async fn load_pm_routing_context(db: &DatabaseConnection, occurrence_id: i64) ->
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT pp.assigned_group_id, e.installed_at_node_id
+            "SELECT pp.assigned_team_id, e.installed_at_node_id
              FROM pm_occurrences po
              JOIN pm_plans pp ON pp.id = po.pm_plan_id
              LEFT JOIN equipment e ON e.id = pp.asset_scope_id AND pp.asset_scope_type = 'equipment'
@@ -2011,9 +2086,9 @@ async fn load_pm_routing_context(db: &DatabaseConnection, occurrence_id: i64) ->
             id: occurrence_id.to_string(),
         })?;
 
-    let assigned_group_id: Option<i64> = row.try_get("", "assigned_group_id")?;
+    let assigned_team_id: Option<i64> = row.try_get("", "assigned_team_id")?;
     let installed_at_node_id: Option<i64> = row.try_get("", "installed_at_node_id")?;
-    Ok((assigned_group_id, installed_at_node_id))
+    Ok((assigned_team_id, installed_at_node_id))
 }
 
 async fn emit_pm_occurrence_activity(
@@ -2065,7 +2140,7 @@ async fn emit_pm_notification(
     dedupe_key: Option<String>,
     reason_code: Option<String>,
 ) -> AppResult<()> {
-    let (assigned_group_id, org_node_id) = load_pm_routing_context(db, occurrence.id).await?;
+    let (assigned_team_id, org_node_id) = load_pm_routing_context(db, occurrence.id).await?;
     let payload = json!({
         "source_module": "pm",
         "source_record_id": occurrence.id,
@@ -2075,7 +2150,7 @@ async fn emit_pm_notification(
         "pm_plan_title": occurrence.plan_title,
         "pm_status": occurrence.status,
         "due_at": occurrence.due_at,
-        "assigned_group_id": assigned_group_id,
+        "assigned_team_id": assigned_team_id,
         "org_node_id": org_node_id,
         "reason_code": reason_code,
     });
@@ -2225,7 +2300,7 @@ async fn create_follow_up_di_from_finding(
     let di = create_intervention_request(
         db,
         DiCreateInput {
-            asset_id: equipment_id,
+            equipment_id: equipment_id,
             org_node_id,
             title: format!(
                 "PM finding follow-up [{}] {}",
@@ -2626,6 +2701,25 @@ pub async fn execute_pm_occurrence(
 
     if work_order_code.is_some() && work_order_id.is_none() {
         work_order_id = occurrence.linked_work_order_id;
+    }
+
+    // Floating/meter strategies need a fresh due slot after completion.
+    if matches!(
+        execution_result.as_str(),
+        "completed_no_findings" | "completed_with_findings"
+    ) {
+        let _ = generate_pm_occurrences(
+            db,
+            GeneratePmOccurrencesInput {
+                pm_plan_id: Some(occurrence.pm_plan_id),
+                as_of: None,
+                horizon_days: Some(30),
+                equipment_id: None,
+                event_codes: None,
+                condition_codes: None,
+            },
+        )
+        .await;
     }
 
     Ok(ExecutePmOccurrenceResult {

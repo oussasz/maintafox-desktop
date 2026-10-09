@@ -1,93 +1,176 @@
 ﻿{
   "page": {
-    "title": "Strategies de maintenance preventive",
+    "title": "Maintenance preventive",
     "filters": "Filtres",
     "searchPlaceholder": "Rechercher par code ou titre du plan",
-    "clearSearch": "Effacer la recherche",
-    "allLifecycles": "Tous les cycles de vie",
-    "allStrategies": "Toutes les strategies"
+    "dueSearchPlaceholder": "Rechercher les echeances par plan ou OT",
+    "plansView": "Plans",
+    "dueView": "File d'echeance",
+    "planCount": "{{count}} plans",
+    "dueCount": "{{count}} echeances",
+    "calendarCount": "{{count}} datees"
   },
   "actions": {
     "refresh": "Actualiser",
-    "generate": "Générer le Planning",
+    "refreshForecast": "Rafraichir la prevision",
     "newPlan": "Nouveau plan",
+    "editPlan": "Modifier le plan",
     "newVersion": "Nouvelle version",
     "editVersion": "Modifier",
     "publish": "Publier",
-    "transition": "Mettre a jour le statut du plan",
-    "transitionOccurrence": "Appliquer",
-    "logExecution": "Saisir execution",
-    "viewFindings": "Voir constats",
+    "transition": "Mettre a jour le statut",
+    "transitionOccurrence": "Changer le statut",
+    "logExecution": "Saisir l'execution",
+    "viewFindings": "Voir les constats",
     "createFollowUpDi": "Creer DI de suivi",
     "createFollowUpWo": "Creer OT de suivi",
-    "touch": "Rafraichir l'etat du plan",
     "cancel": "Annuler",
     "create": "Creer",
     "save": "Enregistrer",
-    "moveToStatus": "Passer a {{status}}",
-    "refreshTaskLists": "Rafraichir les listes de taches",
-    "saveTaskListToReferences": "Enregistrer dans les donnees de reference",
-    "clearSelection": "Effacer la selection",
+    "close": "Fermer",
+    "openPlan": "Ouvrir le plan",
+    "propose": "Proposer",
+    "approve": "Approuver",
+    "activate": "Activer",
     "delete": "Supprimer",
     "deletePlan": "Supprimer le plan",
     "deleteVersion": "Supprimer la version",
-    "confirmDelete": "Supprimer definitivement"
+    "confirmDelete": "Supprimer definitivement",
+    "runForecast": "Lancer la prevision"
+  },
+  "views": {
+    "plans": "Plans",
+    "due": "File d'echeance",
+    "calendar": "Calendrier"
+  },
+  "calendar": {
+    "today": "Aujourd'hui",
+    "loading": "Chargement…",
+    "empty": "Aucune occurrence echeance ce jour.",
+    "more": "+{{count}} de plus",
+    "mode": {
+      "month": "Mois",
+      "week": "Semaine",
+      "day": "Jour"
+    },
+    "legend": {
+      "overdue": "En retard",
+      "today": "Aujourd'hui",
+      "pipeline": "A venir",
+      "completed": "Terminee"
+    }
   },
   "fields": {
     "code": "Code",
     "title": "Titre",
     "description": "Description",
     "strategy": "Strategie",
-    "scopeType": "Type de portee actif",
-    "scopeId": "Identifiant de portee",
+    "scopeType": "Type de portee",
+    "asset": "Actif",
+    "crew": "Equipe",
+    "criticality": "Criticite",
     "lifecycle": "Cycle de vie",
+    "requiresShutdown": "Arret requis",
+    "requiresPermit": "Permis requis",
+    "isActive": "Actif",
     "reasonCode": "Code raison",
     "reason": "Raison",
     "effectiveFrom": "Prise d'effet",
     "effectiveTo": "Fin d'effet",
-    "triggerDefinitionJson": "JSON definition de declenchement",
     "intervalUnit": "Unite d'intervalle",
     "intervalValue": "Valeur d'intervalle",
     "meterSource": "Source compteur",
     "eventCode": "Code evenement",
     "conditionCode": "Code condition",
-    "taskListReference": "Gamme de maintenance (reference)",
-    "taskContent": "Contenu des taches",
-    "taskContentPlaceholder": "Une etape par ligne, par exemple:\nInspecter les courroies\nVerifier la lubrification\nResserrer les bornes",
-    "newTaskListName": "Nom de la nouvelle gamme",
-    "requiredPartsJson": "JSON pieces requises",
-    "requiredSkillsJson": "JSON competences requises (tableau de codes)",
-    "requiredToolsJson": "JSON outils requis",
-    "requiredParts": "Pieces requises",
-    "requiredSkills": "Competences requises",
-    "requiredTools": "Outils requis",
-    "searchPartsPlaceholder": "Rechercher des pieces par code ou libelle",
-    "searchSkillsPlaceholder": "Rechercher des competences par code ou libelle",
-    "searchToolsPlaceholder": "Rechercher des outils par code ou libelle",
+    "eventCodesOptional": "Codes evenement (optionnel)",
+    "conditionCodesOptional": "Codes condition (optionnel)",
+    "horizonDays": "Horizon (jours)",
+    "forecastScope": "Portee",
+    "forecastAllPlans": "Tous les plans eligibles",
+    "forecastSelectedPlan": "Plan selectionne uniquement",
+    "taskPackage": "Gamme (une etape par ligne)",
+    "requiredParts": "Pieces requises (codes, separes par des virgules)",
+    "requiredSkills": "Competences requises (codes, separes par des virgules)",
+    "requiredTools": "Outils requis (codes, separes par des virgules)",
     "estimatedDurationHours": "Duree estimee (h)",
-    "estimatedLaborCost": "Cout main d'oeuvre estime",
+    "estimatedLaborCost": "Cout main-d'oeuvre estime",
     "estimatedPartsCost": "Cout pieces estime",
     "estimatedServiceCost": "Cout service estime",
-    "changeReason": "Raison du changement",
+    "changeReason": "Motif de changement",
     "executionResult": "Resultat d'execution",
     "findingType": "Type de constat",
     "severity": "Severite",
-    "findingDescription": "Description du constat"
+    "findingDescription": "Description du constat",
+    "dueWindow": "Fenetre d'echeance",
+    "status": "Statut",
+    "note": "Note"
   },
   "sections": {
-    "versions": "Versions du plan",
-    "occurrences": "Occurrences previsionnelles",
-    "executions": "Historique d'execution",
-    "findingsForExecution": "Constats pour execution #{{id}}",
-    "recurringFindings": "Constats recurrents (90j)"
+    "overview": "Vue d'ensemble",
+    "versions": "Versions",
+    "occurrences": "Occurrences",
+    "executions": "Executions",
+    "governance": "Gouvernance",
+    "findings": "Constats",
+    "recurringFindings": "Constats recurrents (90 j)",
+    "readiness": "Readiness planification",
+    "kpis": "KPI de gouvernance",
+    "archive": "Plans retires"
+  },
+  "strategy": {
+    "fixed": "Calendrier fixe",
+    "floating": "Calendrier flottant",
+    "meter": "Compteur / metre",
+    "event": "Base evenement",
+    "condition": "Base condition"
+  },
+  "lifecycle": {
+    "draft": "Brouillon",
+    "proposed": "Propose",
+    "approved": "Approuve",
+    "active": "Actif",
+    "suspended": "Suspendu",
+    "retired": "Retire"
+  },
+  "occurrenceStatus": {
+    "forecasted": "Prevu",
+    "generated": "Genere",
+    "ready_for_scheduling": "Pret a planifier",
+    "scheduled": "Planifie",
+    "in_progress": "En cours",
+    "completed": "Termine",
+    "deferred": "Reporte",
+    "missed": "Manque",
+    "cancelled": "Annule"
+  },
+  "executionResult": {
+    "completed_no_findings": "Termine — sans constat",
+    "completed_with_findings": "Termine — avec constats",
+    "deferred": "Reporte",
+    "missed": "Manque",
+    "cancelled": "Annule"
+  },
+  "scope": {
+    "equipment": "Equipement",
+    "family": "Famille",
+    "location": "Emplacement",
+    "criticality_group": "Groupe de criticite"
+  },
+  "dueWindow": {
+    "all": "Tous",
+    "overdue": "En retard",
+    "today": "Aujourd'hui",
+    "next7": "7 prochains jours"
   },
   "labels": {
     "active": "Actif",
     "inactive": "Inactif",
     "loading": "Chargement...",
-    "none": "Aucun",
-    "noResults": "Aucun element correspondant",
-    "selectedCount": "{{count}} selectionnes"
+    "none": "—",
+    "yes": "Oui",
+    "no": "Non",
+    "noResults": "Aucun element",
+    "blockers": "{{count}} bloqueurs"
   },
   "reasons": {
     "capacity_constraint": "Contrainte de capacite",
@@ -99,100 +182,143 @@
   },
   "options": {
     "intervalUnit": {
-      "day": "Quotidien",
+      "day": "Journalier",
       "week": "Hebdomadaire",
       "month": "Mensuel",
       "year": "Annuel"
     },
     "meterSource": {
       "odometer": "Odometre",
-      "operatingHours": "Heures de fonctionnement"
+      "operating_hours": "Heures de fonctionnement"
     }
   },
   "metrics": {
     "overdue": "En retard",
-    "dueToday": "A echeance aujourd'hui",
-    "next7d": "Echeance 7 jours",
+    "dueToday": "Echeance aujourd'hui",
+    "next7d": "Echeance 7 j",
     "ready": "Pret a planifier"
   },
   "table": {
     "code": "Code",
+    "title": "Titre",
     "strategy": "Strategie",
     "status": "Statut",
+    "lifecycle": "Cycle de vie",
+    "crew": "Equipe",
+    "criticality": "Criticite",
+    "updated": "Mis a jour",
     "version": "Version",
     "window": "Fenetre d'effet",
     "due": "Echeance",
     "basis": "Base",
-    "workOrder": "OT",
-    "occurrence": "Occurrence",
+    "workOrder": "Ordre de travail",
+    "plan": "Plan",
     "result": "Resultat",
     "actualDuration": "Duree reelle (h)",
-    "findingType": "Type constat",
-    "plan": "Plan",
+    "findingType": "Type de constat",
     "count": "Nombre",
-    "lastSeen": "Derniere occurrence",
-    "actions": "Actions"
+    "lastSeen": "Derniere vue",
+    "actions": "Actions",
+    "readiness": "Readiness"
   },
   "dialogs": {
     "newPlan": {
       "title": "Creer un plan PM",
-      "description": "Creer une strategie PM gouvernee avec controle de cycle de vie."
+      "description": "Definir une strategie PM gouvernee. Publiez une version apres approbation pour generer les echeances."
+    },
+    "editPlan": {
+      "title": "Modifier le plan PM",
+      "description": "Mettre a jour les metadonnees. Un changement de strategie necessite une nouvelle version."
     },
     "newVersion": {
       "title": "Creer une version PM",
-      "description": "Preparer une version brouillon avant publication."
+      "description": "Rediger les regles de declenchement et les estimations avant publication."
     },
     "editVersion": {
-      "title": "Modifier une version PM",
-      "description": "Seules les versions brouillon peuvent etre modifiees."
+      "title": "Modifier la version PM",
+      "description": "Seules les versions brouillon sont modifiables."
+    },
+    "refreshForecast": {
+      "title": "Rafraichir la prevision",
+      "description": "Evaluer les strategies publiees actives et creer les occurrences. Les codes evenement/condition sont optionnels."
+    },
+    "transitionOccurrence": {
+      "title": "Mettre a jour le statut d'occurrence",
+      "description": "Faire avancer cette occurrence dans le pipeline operationnel."
     },
     "execution": {
-      "title": "Saisir execution PM",
+      "title": "Saisir l'execution PM",
       "description": "Capturer le resultat, les constats et le routage de suivi."
     },
     "deletePlan": {
       "title": "Supprimer le plan PM",
-      "description": "Supprimer le plan {{code}} ? Cette action est definitive et autorisee uniquement pour les plans brouillon sans version."
+      "description": "Supprimer le plan {{code}} ? Autorise uniquement pour les brouillons sans versions."
     },
     "deleteVersion": {
       "title": "Supprimer la version PM",
-      "description": "Supprimer la version v{{version}} ? Cette action est definitive et autorisee uniquement pour les versions brouillon."
+      "description": "Supprimer la version v{{version}} ? Autorise uniquement pour les brouillons sans occurrences."
     }
   },
   "guidance": {
-    "activationTitle": "Comment rendre ce plan actif",
-    "activationPath": "Suivre les etapes du cycle de vie dans l'ordre : draft -> proposed -> approved -> active. Un plan en brouillon ne pilote pas les operations PM actives.",
+    "activationTitle": "Comment activer ce plan",
+    "activationPath": "Ordre du cycle : brouillon → propose → approuve → actif. Publiez une version en approuve/actif/suspendu. Puis utilisez Rafraichir la prevision.",
     "currentStatus": "Statut actuel : {{status}}",
-    "alreadyOperational": "Deja actif ou au-dela du parcours d'activation"
+    "alreadyOperational": "Ce plan est deja operationnel ou retire."
   },
   "empty": {
-    "noPlanSelected": "Selectionnez un plan PM pour gerer ses versions.",
-    "noPlansMatch": "Aucun plan ne correspond a la recherche/aux filtres."
+    "noPlans": "Aucun plan PM. Creez un plan pour commencer.",
+    "noPlansMatch": "Aucun plan ne correspond aux filtres.",
+    "noDue": "Aucune echeance active dans cette vue.",
+    "noVersions": "Aucune version.",
+    "noOccurrences": "Aucune occurrence pour ce plan.",
+    "noExecutions": "Aucune execution enregistree.",
+    "noArchive": "Aucun plan retire.",
+    "noReadiness": "Aucun candidat readiness pour ce plan.",
+    "noKpis": "Aucune donnee KPI de gouvernance."
   },
   "hints": {
-    "publishBlockedByLifecycle": "Pour publier cette version brouillon, passez d'abord le statut du plan a approved, active ou suspended.",
-    "publishDraftOnly": "La publication est possible uniquement pour une version en brouillon.",
-    "editVersionDraftOnly": "La modification est possible uniquement pour une version en brouillon.",
-    "deletePlanDraftOnly": "La suppression est possible uniquement pour un plan en brouillon.",
-    "deleteVersionDraftOnly": "La suppression est possible uniquement pour une version en brouillon.",
-    "lifecycleAction": "Ce bouton met a jour le statut du plan (cycle de vie). Ce statut controle les actions autorisees, y compris la publication des versions.",
-    "touchAction": "Rafraichir l'etat du plan enregistre un instantane technique (date de mise a jour + row version) sans changer le contenu metier.",
-    "generationNeedPlan": "Selectionnez d'abord un plan, puis lancez la generation previsionnelle.",
-    "generationNeedLifecycle": "La generation fonctionne quand le plan est actif et en statut active ou suspended.",
-    "generationNeedVersion": "Publiez au moins une version avant la generation.",
-    "generationReady": "Generation prete : cliquez sur Générer le Planning.",
-    "occurrenceSameStatus": "Choisissez un statut different avant d'appliquer la transition."
+    "publishBlockedByLifecycle": "Pour publier, passez le plan en approuve, actif ou suspendu.",
+    "publishDraftOnly": "La publication est reservee aux versions brouillon.",
+    "editVersionDraftOnly": "La modification est reservee aux versions brouillon.",
+    "deletePlanDraftOnly": "La suppression est reservee aux plans brouillon.",
+    "deleteVersionDraftOnly": "La suppression est reservee aux versions brouillon.",
+    "generationNeedLifecycle": "La prevision exige un cycle actif/suspendu et le drapeau actif.",
+    "generationNeedVersion": "Publiez au moins une version avant de rafraichir la prevision.",
+    "generationReady": "Pret a rafraichir la prevision.",
+    "readyCreatesWo": "Passer en pret a planifier peut creer un OT preventif lie."
   },
   "messages": {
-    "touchStarted": "Enregistrement de l'instantane du plan...",
-    "touchCompleted": "Instantane du plan enregistre.",
-    "generationStarted": "Generation des occurrences previsionnelles en cours...",
-    "generationCreated": "Generation terminee : {{count}} nouvelles occurrences creees.",
-    "generationNoNew": "Generation terminee : aucune nouvelle occurrence a creer pour les parametres actuels.",
+    "generationStarted": "Rafraichissement de la prevision…",
+    "generationCreated": "Prevision rafraichie : {{count}} nouvelle(s) occurrence(s).",
+    "generationNoNew": "Prevision rafraichie : aucune nouvelle occurrence.",
     "planDeleted": "Plan {{code}} supprime.",
-    "versionDeleted": "Version v{{version}} supprimee."
+    "versionDeleted": "Version v{{version}} supprimee.",
+    "lifecycleUpdated": "Statut du plan mis a jour.",
+    "occurrenceUpdated": "Statut de l'occurrence mis a jour.",
+    "executionLogged": "Execution enregistree."
+  },
+  "archive": {
+    "title": "Plans retires",
+    "count": "{{count}} retires",
+    "loadError": "Echec du chargement des plans retires."
+  },
+  "autopilot": {
+    "autoOn": "Auto active",
+    "autoOff": "Auto inactive",
+    "lastRun": "Derniere execution",
+    "neverRun": "Jamais",
+    "counts": "{{generated}} generee(s) · {{skipped}} ignoree(s)",
+    "settings": "Reglages auto-pilot",
+    "enabled": "Generation automatique",
+    "schedule": "Planification",
+    "cronMidnight": "Tous les jours a minuit",
+    "cronMorning": "Tous les jours a 06:00",
+    "cronCustom": "Cron personnalise",
+    "horizonDays": "Horizon (jours)"
   },
   "errors": {
-    "taskListNameRequired": "Veuillez saisir un nom de gamme avant l'enregistrement."
+    "assetRequired": "Selectionnez un actif lorsque la portee est equipement.",
+    "eventCodeRequired": "Le code evenement est requis pour les strategies evenement.",
+    "conditionCodeRequired": "Le code condition est requis pour les strategies condition."
   }
 }

@@ -74,14 +74,12 @@ export const usePersonnelStore = create<PersonnelStoreState>()((set, get) => ({
   },
 
   openPersonnel: async (id) => {
-    set({ loading: true, error: null });
+    set({ error: null });
     try {
       const detail = await getPersonnel(id);
       set({ activePersonnel: detail });
     } catch (err) {
       set({ error: toErrorMessage(err) });
-    } finally {
-      set({ loading: false });
     }
   },
 

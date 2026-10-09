@@ -14,7 +14,7 @@ use crate::commands::admin_users::{assign_role_scope_impl, AssignRoleScopeInput}
 use crate::commands::archive::evaluate_purge_eligibility_db;
 use crate::di::conversion::{convert_di_to_work_order, WoConversionInput};
 use crate::di::queries::{create_intervention_request, DiCreateInput};
-use crate::di::review::{approve_di_for_planning, screen_di, DiApproveInput, DiScreenInput};
+use crate::di::review::{approve_di, screen_di, DiApproveInput, DiScreenInput};
 use crate::notifications::delivery;
 use crate::notifications::emitter::{emit_event, NotificationEventInput};
 use crate::notifications::scheduler;
@@ -63,16 +63,16 @@ async fn admin_id(db: &DatabaseConnection) -> i64 {
 
 async fn create_user(db: &DatabaseConnection, username: &str) -> i64 {
     let now = chrono::Utc::now().to_rfc3339();
-    let sync_id = format!("{username}-sync");
+    let entity_sync_id = format!("{username}-sync");
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_accounts \
-         (sync_id, username, display_name, identity_mode, password_hash, \
+         (entity_sync_id, username, display_name, identity_mode, password_hash, \
           is_active, is_admin, force_password_change, failed_login_attempts, \
           created_at, updated_at, row_version) \
          VALUES (?, ?, ?, 'local', 'no-login-needed', 1, 0, 0, 0, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             username.to_string().into(),
             format!("{username} display").into(),
             now.clone().into(),
@@ -102,7 +102,7 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO equipment \
-         (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
+         (id, entity_sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
          VALUES (1, 'obs-eq-001', 'EQ-OBS-001', 'Obs Equipment', 'active_in_service', \
                  datetime('now'), datetime('now'));"
             .to_string(),
@@ -113,7 +113,7 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO org_structure_models \
-         (id, sync_id, version_number, status, created_at, updated_at) \
+         (id, entity_sync_id, version_number, status, created_at, updated_at) \
          VALUES (1, 'obs-model-001', 1, 'active', datetime('now'), datetime('now'));"
             .to_string(),
     ))
@@ -123,7 +123,7 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO org_node_types \
-         (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+         (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
          VALUES (1, 'obs-nt-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));"
             .to_string(),
     ))
@@ -133,7 +133,7 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
     db.execute(Statement::from_string(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO org_nodes \
-         (id, sync_id, code, name, node_type_id, status, created_at, updated_at) \
+         (id, entity_sync_id, code, name, node_type_id, status, created_at, updated_at) \
          VALUES (1, 'obs-on-001', 'SITE-OBS', 'Obs Site', 1, 'active', \
                  datetime('now'), datetime('now'));"
             .to_string(),
@@ -175,7 +175,7 @@ async fn seed_di_fk_data(db: &DatabaseConnection) {
 
 async fn di_create_input(db: &sea_orm::DatabaseConnection, submitter_id: i64) -> DiCreateInput {
     DiCreateInput {
-        asset_id: 1,
+        equipment_id: 1,
         org_node_id: 1,
         title: "Obs DI".to_string(),
         description: "Observability chain".to_string(),
@@ -220,7 +220,6 @@ async fn advance_di_to_approved(db: &DatabaseConnection, user_id: i64) -> (i64, 
             actor_id: user_id,
             expected_row_version: 2,
             validated_urgency: "high".to_string(),
-            review_team_id: Some(1),
             classification_code_id: Some(1),
             reviewer_note: Some("OK".to_string()),
         },
@@ -228,7 +227,7 @@ async fn advance_di_to_approved(db: &DatabaseConnection, user_id: i64) -> (i64, 
     .await
     .expect("screen");
 
-    let approved = approve_di_for_planning(
+    let approved = approve_di(
         db,
         DiApproveInput {
             di_id: di.id,
@@ -257,8 +256,8 @@ async fn transition_planned_assigned_in_progress_for_user(
             actor_id: actor,
             expected_row_version: start_rv,
             planner_id: actor,
-            planned_start: "2026-04-10T08:00:00Z".into(),
-            planned_end: "2026-04-10T16:00:00Z".into(),
+            planned_start: Some("2026-04-10T08:00:00Z".to_string()),
+            planned_end: Some("2026-04-10T16:00:00Z".to_string()),
             shift: None,
             expected_duration_hours: Some(8.0),
             planned_downtime_hours: None,
@@ -286,9 +285,10 @@ async fn transition_planned_assigned_in_progress_for_user(
             wo_id,
             actor_id: actor,
             expected_row_version: wo.row_version + 1,
-            assigned_group_id: None,
+            assigned_team_id: None,
             primary_responsible_id: Some(primary),
             scheduled_at: None,
+            override_reason: "test assign".to_string(),
         },
     )
     .await

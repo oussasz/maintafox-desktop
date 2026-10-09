@@ -3,9 +3,12 @@ import { create } from "zustand";
 import {
   createPmPlan,
   createPmPlanVersion,
+  deletePmPlan,
+  deletePmPlanVersion,
   executePmOccurrence,
   generatePmOccurrences,
   getPmDueMetrics,
+  getPmGenerationStatus,
   getPmGovernanceKpiReport,
   listPmExecutions,
   listPmFindings,
@@ -17,6 +20,7 @@ import {
   publishPmPlanVersion,
   transitionPmOccurrence,
   transitionPmPlanLifecycle,
+  updatePmGenerationSettings,
   updatePmPlan,
   updatePmPlanVersion,
 } from "@/services/pm-service";
@@ -27,7 +31,9 @@ import type {
   ExecutePmOccurrenceInput,
   ExecutePmOccurrenceResult,
   GeneratePmOccurrencesInput,
+  GeneratePmOccurrencesResult,
   PmDueMetrics,
+  PmGenerationStatus,
   PmGovernanceKpiInput,
   PmGovernanceKpiReport,
   PmExecution,
@@ -40,6 +46,7 @@ import type {
   PmRecurringFinding,
   TransitionPmOccurrenceInput,
   TransitionPmPlanLifecycleInput,
+  UpdatePmGenerationSettingsInput,
   UpdatePmPlanInput,
   UpdatePmPlanVersionInput,
 } from "@shared/ipc-types";
@@ -48,26 +55,34 @@ interface PmStoreState {
   plans: PmPlan[];
   versions: PmPlanVersion[];
   occurrences: PmOccurrence[];
+  dueOccurrences: PmOccurrence[];
+  calendarOccurrences: PmOccurrence[];
   executions: PmExecution[];
   findingsByExecutionId: Record<number, PmFinding[]>;
   recurringFindings: PmRecurringFinding[];
   planningReadiness: PmPlanningReadinessProjection | null;
   governanceKpis: PmGovernanceKpiReport | null;
   metrics: PmDueMetrics | null;
-  selectedPlanId: number | null;
+  generationStatus: PmGenerationStatus | null;
+  activePlanId: number | null;
   loading: boolean;
   saving: boolean;
   error: string | null;
-  loadPlans: () => Promise<void>;
-  selectPlan: (planId: number | null) => Promise<void>;
+  loadWorkspace: () => Promise<void>;
+  openPlan: (planId: number) => Promise<void>;
+  closePlan: () => void;
+  loadDueOccurrences: () => Promise<void>;
+  loadCalendarOccurrences: () => Promise<void>;
   loadOccurrences: (filter?: PmOccurrenceFilter) => Promise<void>;
   loadDueMetrics: () => Promise<void>;
+  loadGenerationStatus: () => Promise<void>;
+  updateGenerationSettings: (input: UpdatePmGenerationSettingsInput) => Promise<PmGenerationStatus>;
   loadExecutions: (pmPlanId?: number | null, occurrenceId?: number | null) => Promise<void>;
   loadFindings: (executionId: number) => Promise<void>;
   loadRecurringFindings: (pmPlanId?: number | null) => Promise<void>;
   loadPlanningReadiness: (pmPlanId?: number | null) => Promise<void>;
   loadGovernanceKpis: (input?: PmGovernanceKpiInput) => Promise<void>;
-  generateOccurrences: (input: GeneratePmOccurrencesInput) => Promise<void>;
+  generateOccurrences: (input: GeneratePmOccurrencesInput) => Promise<GeneratePmOccurrencesResult>;
   transitionOccurrence: (input: TransitionPmOccurrenceInput) => Promise<PmOccurrence>;
   executeOccurrence: (input: ExecutePmOccurrenceInput) => Promise<ExecutePmOccurrenceResult>;
   createPlan: (input: CreatePmPlanInput) => Promise<PmPlan>;
@@ -84,45 +99,54 @@ interface PmStoreState {
     input: UpdatePmPlanVersionInput,
   ) => Promise<PmPlanVersion>;
   publishVersion: (versionId: number, expectedRowVersion: number) => Promise<PmPlanVersion>;
+  deletePlan: (planId: number, expectedRowVersion: number) => Promise<void>;
+  deleteVersion: (versionId: number, expectedRowVersion: number) => Promise<void>;
+}
+
+async function refreshActivePlanDetail(get: () => PmStoreState, planId: number | null) {
+  if (planId == null) {
+    return;
+  }
+  const versions = await listPmPlanVersions(planId);
+  usePmStore.setState({ versions });
+  await get().loadOccurrences({ pm_plan_id: planId, include_completed: true });
+  await get().loadExecutions(planId, null);
+  await get().loadRecurringFindings(planId);
+  await get().loadPlanningReadiness(planId);
+  await get().loadGovernanceKpis({ pm_plan_id: planId });
 }
 
 export const usePmStore = create<PmStoreState>()((set, get) => ({
   plans: [],
   versions: [],
   occurrences: [],
+  dueOccurrences: [],
+  calendarOccurrences: [],
   executions: [],
   findingsByExecutionId: {},
   recurringFindings: [],
   planningReadiness: null,
   governanceKpis: null,
   metrics: null,
-  selectedPlanId: null,
+  generationStatus: null,
+  activePlanId: null,
   loading: false,
   saving: false,
   error: null,
 
-  loadPlans: async () => {
+  loadWorkspace: async () => {
     set({ loading: true, error: null });
     try {
       const plans = await listPmPlans({});
-      const selectedPlanId = get().selectedPlanId;
-      const nextSelected =
-        selectedPlanId && plans.some((p) => p.id === selectedPlanId)
-          ? selectedPlanId
-          : (plans[0]?.id ?? null);
-      set({ plans, selectedPlanId: nextSelected });
-      if (nextSelected !== null) {
-        const versions = await listPmPlanVersions(nextSelected);
-        set({ versions });
-      } else {
-        set({ versions: [] });
-      }
-      await get().loadOccurrences(nextSelected !== null ? { pm_plan_id: nextSelected } : {});
+      set({ plans });
+      await get().loadDueOccurrences();
+      await get().loadCalendarOccurrences();
       await get().loadDueMetrics();
-      await get().loadExecutions(nextSelected, null);
-      await get().loadRecurringFindings(nextSelected);
-      await get().loadPlanningReadiness(nextSelected);
-      await get().loadGovernanceKpis({ pm_plan_id: nextSelected ?? null });
+      await get().loadGenerationStatus();
+      const activePlanId = get().activePlanId;
+      if (activePlanId != null && plans.some((p) => p.id === activePlanId)) {
+        await refreshActivePlanDetail(get, activePlanId);
+      }
     } catch (err) {
       set({ error: toErrorMessage(err) });
     } finally {
@@ -130,18 +154,50 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
     }
   },
 
-  selectPlan: async (planId) => {
-    set({ selectedPlanId: planId, versions: [], error: null, findingsByExecutionId: {} });
+  openPlan: async (planId) => {
+    set({
+      activePlanId: planId,
+      versions: [],
+      findingsByExecutionId: {},
+      error: null,
+    });
     try {
-      if (planId !== null) {
-        const versions = await listPmPlanVersions(planId);
-        set({ versions });
-      }
-      await get().loadOccurrences(planId !== null ? { pm_plan_id: planId } : {});
-      await get().loadExecutions(planId, null);
-      await get().loadRecurringFindings(planId);
-      await get().loadPlanningReadiness(planId);
-      await get().loadGovernanceKpis({ pm_plan_id: planId ?? null });
+      await refreshActivePlanDetail(get, planId);
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+    }
+  },
+
+  closePlan: () => {
+    set({
+      activePlanId: null,
+      versions: [],
+      occurrences: [],
+      executions: [],
+      findingsByExecutionId: {},
+      recurringFindings: [],
+      planningReadiness: null,
+      governanceKpis: null,
+    });
+  },
+
+  loadDueOccurrences: async () => {
+    try {
+      const dueOccurrences = await listPmOccurrences({
+        include_completed: false,
+      });
+      set({ dueOccurrences });
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+    }
+  },
+
+  loadCalendarOccurrences: async () => {
+    try {
+      const calendarOccurrences = await listPmOccurrences({
+        include_completed: true,
+      });
+      set({ calendarOccurrences });
     } catch (err) {
       set({ error: toErrorMessage(err) });
     }
@@ -162,6 +218,29 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
       set({ metrics });
     } catch (err) {
       set({ error: toErrorMessage(err) });
+    }
+  },
+
+  loadGenerationStatus: async () => {
+    try {
+      const generationStatus = await getPmGenerationStatus();
+      set({ generationStatus });
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+    }
+  },
+
+  updateGenerationSettings: async (input) => {
+    set({ saving: true, error: null });
+    try {
+      const generationStatus = await updatePmGenerationSettings(input);
+      set({ generationStatus });
+      return generationStatus;
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    } finally {
+      set({ saving: false });
     }
   },
 
@@ -202,6 +281,7 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
       set({ error: toErrorMessage(err) });
     }
   },
+
   loadPlanningReadiness: async (pmPlanId) => {
     try {
       const planningReadiness = await listPmPlanningReadiness({
@@ -226,10 +306,16 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
   generateOccurrences: async (input) => {
     set({ saving: true, error: null });
     try {
-      await generatePmOccurrences(input);
-      const planId = get().selectedPlanId;
-      await get().loadOccurrences(planId ? { pm_plan_id: planId } : {});
+      const result = await generatePmOccurrences(input);
+      await get().loadDueOccurrences();
+      await get().loadCalendarOccurrences();
       await get().loadDueMetrics();
+      await get().loadGenerationStatus();
+      const planId = get().activePlanId;
+      if (planId != null) {
+        await refreshActivePlanDetail(get, planId);
+      }
+      return result;
     } catch (err) {
       set({ error: toErrorMessage(err) });
       throw err;
@@ -242,10 +328,11 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const occurrence = await transitionPmOccurrence(input);
-      const planId = get().selectedPlanId;
-      await get().loadOccurrences(planId ? { pm_plan_id: planId } : {});
+      await get().loadDueOccurrences();
+      await get().loadCalendarOccurrences();
       await get().loadDueMetrics();
-      await get().loadExecutions(planId, null);
+      const planId = get().activePlanId ?? occurrence.pm_plan_id;
+      await refreshActivePlanDetail(get, planId);
       return occurrence;
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -259,14 +346,12 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const result = await executePmOccurrence(input);
-      const planId = get().selectedPlanId;
-      await get().loadOccurrences(planId ? { pm_plan_id: planId } : {});
+      await get().loadDueOccurrences();
+      await get().loadCalendarOccurrences();
       await get().loadDueMetrics();
-      await get().loadExecutions(planId, null);
+      const planId = get().activePlanId ?? result.occurrence.pm_plan_id;
+      await refreshActivePlanDetail(get, planId);
       await get().loadFindings(result.execution.id);
-      await get().loadRecurringFindings(planId);
-      await get().loadPlanningReadiness(planId);
-      await get().loadGovernanceKpis({ pm_plan_id: planId ?? null });
       return result;
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -280,8 +365,8 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const plan = await createPmPlan(input);
-      await get().loadPlans();
-      await get().selectPlan(plan.id);
+      await get().loadWorkspace();
+      await get().openPlan(plan.id);
       return plan;
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -295,8 +380,8 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const plan = await updatePmPlan(planId, expectedRowVersion, input);
-      await get().loadPlans();
-      await get().selectPlan(plan.id);
+      await get().loadWorkspace();
+      await get().openPlan(plan.id);
       return plan;
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -310,8 +395,8 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const plan = await transitionPmPlanLifecycle(input);
-      await get().loadPlans();
-      await get().selectPlan(plan.id);
+      await get().loadWorkspace();
+      await get().openPlan(plan.id);
       return plan;
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -325,8 +410,7 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const version = await createPmPlanVersion(pmPlanId, input);
-      await get().loadPlans();
-      await get().selectPlan(pmPlanId);
+      await get().openPlan(pmPlanId);
       return version;
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -340,8 +424,7 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
     set({ saving: true, error: null });
     try {
       const version = await updatePmPlanVersion(versionId, expectedRowVersion, input);
-      await get().loadPlans();
-      await get().selectPlan(version.pm_plan_id);
+      await get().openPlan(version.pm_plan_id);
       return version;
     } catch (err) {
       set({ error: toErrorMessage(err) });
@@ -358,9 +441,41 @@ export const usePmStore = create<PmStoreState>()((set, get) => ({
         version_id: versionId,
         expected_row_version: expectedRowVersion,
       });
-      await get().loadPlans();
-      await get().selectPlan(version.pm_plan_id);
+      await get().loadWorkspace();
+      await get().openPlan(version.pm_plan_id);
       return version;
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  deletePlan: async (planId, expectedRowVersion) => {
+    set({ saving: true, error: null });
+    try {
+      await deletePmPlan(planId, expectedRowVersion);
+      if (get().activePlanId === planId) {
+        get().closePlan();
+      }
+      await get().loadWorkspace();
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    } finally {
+      set({ saving: false });
+    }
+  },
+
+  deleteVersion: async (versionId, expectedRowVersion) => {
+    set({ saving: true, error: null });
+    try {
+      await deletePmPlanVersion(versionId, expectedRowVersion);
+      const planId = get().activePlanId;
+      if (planId != null) {
+        await get().openPlan(planId);
+      }
     } catch (err) {
       set({ error: toErrorMessage(err) });
       throw err;

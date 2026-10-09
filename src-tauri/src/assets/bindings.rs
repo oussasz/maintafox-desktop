@@ -95,13 +95,13 @@ pub async fn get_asset_binding_summary(db: &DatabaseConnection, asset_id: i64) -
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"SELECT
-                (SELECT COUNT(*) FROM intervention_requests WHERE asset_id = ?) AS di_cnt,
+                (SELECT COUNT(*) FROM intervention_requests WHERE equipment_id = ?) AS di_cnt,
                 (SELECT COUNT(*) FROM work_orders WHERE equipment_id = ?) AS wo_cnt,
                 (SELECT COUNT(*) FROM pm_plans
                  WHERE LOWER(asset_scope_type) = 'equipment' AND asset_scope_id = ?) AS pm_cnt,
                 (SELECT COUNT(*) FROM failure_events WHERE equipment_id = ?) AS fe_cnt,
                 (SELECT COUNT(*) FROM intervention_requests
-                 WHERE asset_id = ?
+                 WHERE equipment_id = ?
                    AND closed_at IS NULL
                    AND archived_at IS NULL
                    AND status NOT IN (

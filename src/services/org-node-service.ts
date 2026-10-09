@@ -29,7 +29,7 @@ import type {
 
 export const OrgNodeSchema = z.object({
   id: z.number(),
-  sync_id: z.string(),
+  entity_sync_id: z.string(),
   code: z.string(),
   name: z.string(),
   node_type_id: z.number(),
@@ -72,6 +72,8 @@ export const OrgNodeResponsibilitySchema = z.object({
   responsibility_type: z.string(),
   person_id: z.number().nullable(),
   team_id: z.number().nullable(),
+  person_display_name: z.string().nullable().optional(),
+  team_label: z.string().nullable().optional(),
   valid_from: z.string().nullable(),
   valid_to: z.string().nullable(),
   created_at: z.string(),

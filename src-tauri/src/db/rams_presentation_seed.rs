@@ -432,8 +432,8 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             actor_id: ctx.actor_id,
             expected_row_version: wo.row_version,
             planner_id: ctx.actor_id,
-            planned_start: ctx.fail_start.clone(),
-            planned_end: ctx.fail_end.clone(),
+            planned_start: Some(ctx.fail_start.clone()),
+            planned_end: Some(ctx.fail_end.clone()),
             shift: None,
             expected_duration_hours: Some(ctx.repair_hours),
             urgency_id: None,
@@ -459,9 +459,10 @@ async fn create_and_close_corrective_wo(db: &DatabaseConnection, ctx: CreateWoSe
             wo_id: wo.id,
             actor_id: ctx.actor_id,
             expected_row_version: wo.row_version + 1,
-            assigned_group_id: None,
+            assigned_team_id: None,
             primary_responsible_id: Some(ctx.actor_id),
             scheduled_at: Some(ctx.fail_start.clone()),
+            override_reason: "rams presentation seed".to_string(),
         },
     )
     .await?;
@@ -901,7 +902,7 @@ async fn ensure_demo_verifier_user(db: &DatabaseConnection) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO user_accounts
-            (sync_id, username, display_name, identity_mode, password_hash,
+            (entity_sync_id, username, display_name, identity_mode, password_hash,
              is_active, is_admin, force_password_change, failed_login_attempts, created_at, updated_at, row_version)
            VALUES (?, ?, ?, 'local', ?, 1, 0, 0, 0, ?, ?, 1)",
         [

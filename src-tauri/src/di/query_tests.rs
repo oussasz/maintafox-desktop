@@ -48,7 +48,7 @@ mod tests {
     async fn seed_fk_data(db: &sea_orm::DatabaseConnection) {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
+            "INSERT INTO equipment (id, entity_sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
              VALUES (1, 'test-eq-001', 'EQ-TEST-001', 'Test Equipment', 'active_in_service', \
              datetime('now'), datetime('now'));"
                 .to_string(),
@@ -58,7 +58,7 @@ mod tests {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
+            "INSERT INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
              VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
                 .to_string(),
         ))
@@ -67,7 +67,7 @@ mod tests {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO org_node_types (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+            "INSERT INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
              VALUES (1, 'test-type-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));".to_string(),
         ))
         .await
@@ -75,7 +75,7 @@ mod tests {
 
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
+            "INSERT INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
              VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
              datetime('now'), datetime('now'), 1);".to_string(),
         ))
@@ -111,7 +111,7 @@ mod tests {
         description: &str,
     ) -> DiCreateInput {
         DiCreateInput {
-            asset_id: 1,
+            equipment_id: 1,
             org_node_id: 1,
             title: title.to_string(),
             description: description.to_string(),

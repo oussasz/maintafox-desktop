@@ -46,13 +46,13 @@ function renderSidebar() {
   );
 }
 
-describe("Sidebar — permission-based filtering", () => {
+describe("Sidebar ΓÇö permission-based filtering", () => {
   beforeEach(() => {
     mockCan.mockReset();
     mockCan.mockImplementation(() => true);
   });
 
-  it("V1 — Admin sees all 27 nav items", async () => {
+  it("V1 ΓÇö Admin sees all 27 nav items", async () => {
     mockCan.mockImplementation((permission: PermissionName) =>
       ALL_PERMISSIONS.includes(permission),
     );
@@ -66,38 +66,39 @@ describe("Sidebar — permission-based filtering", () => {
     expect(screen.getAllByRole("link")).toHaveLength(appRoutes.length);
   });
 
-  it("V2 — Non-admin sees only permitted modules (unauthorized hidden, not greyed)", async () => {
+  it("V2 ΓÇö Non-admin sees only permitted modules (unauthorized hidden, not greyed)", async () => {
     const allowed = new Set<PermissionName>([P.EQ_VIEW, P.DI_VIEW]);
     mockCan.mockImplementation((permission: PermissionName) => allowed.has(permission));
     renderSidebar();
 
     await waitFor(() => {
-      expect(screen.getAllByRole("link")).toHaveLength(5);
+      expect(screen.getAllByRole("link")).toHaveLength(4);
     });
 
     expect(screen.getByText("nav.dashboard")).toBeInTheDocument();
     expect(screen.getByText("nav.equipment")).toBeInTheDocument();
     expect(screen.getByText("nav.requests")).toBeInTheDocument();
-    expect(screen.getByText("nav.notifications")).toBeInTheDocument();
-    expect(screen.getByText("nav.profile")).toBeInTheDocument();
+    expect(screen.getByText("nav.settings")).toBeInTheDocument();
 
     expect(screen.queryByText("nav.workOrders")).not.toBeInTheDocument();
     expect(screen.queryByText("nav.users")).not.toBeInTheDocument();
-    expect(screen.queryByText("nav.settings")).not.toBeInTheDocument();
+    expect(screen.queryByText("nav.notifications")).not.toBeInTheDocument();
+    expect(screen.queryByText("nav.profile")).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
   });
 
-  it("Dashboard, Profile, and Notifications are always visible regardless of role", async () => {
+  it("Dashboard and Settings are always visible regardless of role", async () => {
     mockCan.mockImplementation(() => false);
     renderSidebar();
 
     await waitFor(() => {
-      expect(screen.getAllByRole("link")).toHaveLength(3);
+      expect(screen.getAllByRole("link")).toHaveLength(2);
     });
 
     expect(screen.getByText("nav.dashboard")).toBeInTheDocument();
-    expect(screen.getByText("nav.notifications")).toBeInTheDocument();
-    expect(screen.getByText("nav.profile")).toBeInTheDocument();
+    expect(screen.getByText("nav.settings")).toBeInTheDocument();
+    expect(screen.queryByText("nav.notifications")).not.toBeInTheDocument();
+    expect(screen.queryByText("nav.profile")).not.toBeInTheDocument();
   });
 
   it("empty groups are hidden when all children are filtered out", async () => {
@@ -105,7 +106,7 @@ describe("Sidebar — permission-based filtering", () => {
     renderSidebar();
 
     await waitFor(() => {
-      expect(screen.getAllByRole("link")).toHaveLength(4);
+      expect(screen.getAllByRole("link")).toHaveLength(3);
     });
 
     expect(screen.queryByText("nav.groups.planning")).not.toBeInTheDocument();

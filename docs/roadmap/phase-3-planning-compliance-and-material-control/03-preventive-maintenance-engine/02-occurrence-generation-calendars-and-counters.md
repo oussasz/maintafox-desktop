@@ -44,4 +44,6 @@ Deliver PM occurrence visibility end-to-end by replacing placeholder UI with rea
 
 ---
 
-*Completion: date, verifier, `cargo check` / `pnpm typecheck` notes.*
+*Completion: 2026-08-22 — Phase A UI overhaul (Plans | Due queue, Module chrome, SmartFilterBar, plan detail dialog) + engine honesty (insert occurrences as `generated`, regen after completed execute, session actor, `pm.approve` on approve). Verified: `pnpm typecheck`, `cargo check`.*
+
+*Phase B (2026-08-23): Desktop PM auto-pilot — `pm_generation_control` / `pm_generation_runs`, 60s scheduler spawn, meter + WO-close hooks, status IPC + PmPage Auto/Last run chrome. Command-first generation preserved; background cron added. Verified: `pnpm typecheck`, `cargo check`, `pm::tests`.*

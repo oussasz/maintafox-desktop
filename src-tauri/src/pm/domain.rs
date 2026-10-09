@@ -12,7 +12,10 @@ pub struct PmPlan {
     pub criticality_value_id: Option<i64>,
     pub criticality_code: Option<String>,
     pub criticality_label: Option<String>,
-    pub assigned_group_id: Option<i64>,
+    pub assigned_team_id: Option<i64>,
+    pub assigned_team_code: Option<String>,
+    pub assigned_team_name: Option<String>,
+    pub assigned_team_label: Option<String>,
     pub requires_shutdown: i64,
     pub requires_permit: i64,
     pub is_active: i64,
@@ -63,7 +66,7 @@ pub struct CreatePmPlanInput {
     pub asset_scope_id: Option<i64>,
     pub strategy_type: String,
     pub criticality_value_id: Option<i64>,
-    pub assigned_group_id: Option<i64>,
+    pub assigned_team_id: Option<i64>,
     pub requires_shutdown: bool,
     pub requires_permit: bool,
     pub is_active: Option<bool>,
@@ -77,7 +80,7 @@ pub struct UpdatePmPlanInput {
     pub asset_scope_id: Option<i64>,
     pub strategy_type: Option<String>,
     pub criticality_value_id: Option<i64>,
-    pub assigned_group_id: Option<i64>,
+    pub assigned_team_id: Option<i64>,
     pub requires_shutdown: Option<bool>,
     pub requires_permit: Option<bool>,
     pub is_active: Option<bool>,
@@ -164,6 +167,9 @@ pub struct GeneratePmOccurrencesInput {
     pub as_of: Option<String>,
     pub horizon_days: Option<i64>,
     pub pm_plan_id: Option<i64>,
+    /// When set, only equipment-scoped plans for this equipment id are evaluated.
+    #[serde(default)]
+    pub equipment_id: Option<i64>,
     pub event_codes: Option<Vec<String>>,
     pub condition_codes: Option<Vec<String>>,
 }
@@ -174,6 +180,48 @@ pub struct GeneratePmOccurrencesResult {
     pub skipped_count: i64,
     pub trigger_events_recorded: i64,
     pub occurrence_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmGenerationControl {
+    pub id: i64,
+    pub enabled: bool,
+    pub cron_expr: String,
+    pub horizon_days: i64,
+    pub last_run_at: Option<String>,
+    pub next_run_at: Option<String>,
+    pub last_status: Option<String>,
+    pub last_generated_count: Option<i64>,
+    pub last_skipped_count: Option<i64>,
+    pub last_error: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmGenerationStatus {
+    pub control: PmGenerationControl,
+    pub latest_run: Option<PmGenerationRun>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PmGenerationRun {
+    pub id: i64,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub trigger_source: String,
+    pub status: String,
+    pub generated_count: i64,
+    pub skipped_count: i64,
+    pub trigger_events_recorded: i64,
+    pub error_message: Option<String>,
+    pub scope_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdatePmGenerationSettingsInput {
+    pub enabled: Option<bool>,
+    pub cron_expr: Option<String>,
+    pub horizon_days: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

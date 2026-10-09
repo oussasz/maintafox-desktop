@@ -14,13 +14,14 @@ import type {
   AssetSearchFilters,
   AssetSearchResult,
   AssetSuggestion,
+  EquipmentRegistryMetricsPayload,
 } from "@shared/ipc-types";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
 export const AssetSearchResultSchema = z.object({
   id: z.number(),
-  sync_id: z.string(),
+  entity_sync_id: z.string(),
   asset_code: z.string(),
   asset_name: z.string(),
   class_code: z.string().nullable(),
@@ -62,6 +63,32 @@ export const AssetPickerSuggestionsSchema = z.object({
 export async function searchAssets(filters: AssetSearchFilters): Promise<AssetSearchResult[]> {
   const raw = await invoke<unknown>("search_assets", { filters });
   return z.array(AssetSearchResultSchema).parse(raw) as AssetSearchResult[];
+}
+
+const EquipmentRegistryMetricCellSchema = z.object({
+  semantic_key: z.string(),
+  catalog_id: z.string(),
+  value: z.number(),
+  previous_value: z.number(),
+  available: z.boolean(),
+  value_kind: z.enum(["count", "percent"]),
+  trend_sense: z.enum(["up-good", "up-bad", "neutral"]),
+  active_count: z.number().nullable().optional(),
+  down_count: z.number().nullable().optional(),
+  series: z.array(z.number()).nullable().optional(),
+});
+
+const EquipmentRegistryMetricsPayloadSchema = z.object({
+  scoped_total: z.number(),
+  cells: z.array(EquipmentRegistryMetricCellSchema),
+});
+
+/** Filter-scoped Equipment registry KPI strip metrics (same filters as search_assets). */
+export async function getEquipmentRegistryMetrics(
+  filters: AssetSearchFilters,
+): Promise<EquipmentRegistryMetricsPayload> {
+  const raw = await invoke<unknown>("get_equipment_registry_metrics", { filters });
+  return EquipmentRegistryMetricsPayloadSchema.parse(raw) as EquipmentRegistryMetricsPayload;
 }
 
 /** Empty-query recent/frequent (or typed search) for the shared AssetPicker. */

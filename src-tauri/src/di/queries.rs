@@ -20,7 +20,7 @@ use super::domain::{generate_di_code, guard_transition, map_intervention_request
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DiListFilter {
     pub status: Option<Vec<String>>,
-    pub asset_id: Option<i64>,
+    pub equipment_id: Option<i64>,
     pub org_node_id: Option<i64>,
     pub submitter_id: Option<i64>,
     pub reviewer_id: Option<i64>,
@@ -66,7 +66,7 @@ pub struct DiSummaryRow {
 /// Input for creating a new intervention request.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DiCreateInput {
-    pub asset_id: i64,
+    pub equipment_id: i64,
     pub org_node_id: i64,
     pub title: String,
     pub description: String,
@@ -122,12 +122,12 @@ pub struct DiDraftUpdateInput {
 
 /// All columns from `intervention_requests` for SELECT reuse.
 const IR_COLS: &str = "\
-    ir.id, ir.code, ir.asset_id, ir.sub_asset_ref, ir.org_node_id, \
+    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id, \
     ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
     ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
     ir.observed_at, ir.submitted_at, \
-    ir.review_team_id, ir.reviewer_id, ir.screened_at, ir.approved_at, \
+    ir.reviewer_id, ir.screened_at, ir.approved_at, \
     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
     ir.converted_to_wo_id, ir.converted_at, \
     ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
@@ -149,7 +149,7 @@ const IR_JOIN_COLS: &str = "\
     related_di.code AS related_di_code";
 
 const IR_JOINS: &str = "\
-    LEFT JOIN equipment eq ON eq.id = ir.asset_id \
+    LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
     LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
     LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
     LEFT JOIN user_accounts ur ON ur.id = ir.reviewer_id \
@@ -228,9 +228,9 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
     }
 
     // ── Scalar FK filters ─────────────────────────────────────────────────
-    if let Some(asset_id) = filter.asset_id {
-        where_clauses.push("ir.asset_id = ?".to_string());
-        binds.push(asset_id.into());
+    if let Some(equipment_id) = filter.equipment_id {
+        where_clauses.push("ir.equipment_id = ?".to_string());
+        binds.push(equipment_id.into());
     }
     if let Some(org_node_id) = filter.org_node_id {
         where_clauses.push("ir.org_node_id = ?".to_string());
@@ -370,15 +370,15 @@ pub async fn get_di_transition_log(db: &DatabaseConnection, di_id: i64) -> AppRe
 
 pub async fn get_recent_similar_dis(
     db: &DatabaseConnection,
-    asset_id: i64,
+    equipment_id: i64,
     symptom_code_id: Option<i64>,
     days: i64,
 ) -> AppResult<Vec<DiSummaryRow>> {
     let mut where_clauses = vec![
-        "asset_id = ?".to_string(),
+        "equipment_id = ?".to_string(),
         format!("submitted_at >= datetime('now', '-{} days')", days.max(1)),
     ];
-    let mut binds: Vec<sea_orm::Value> = vec![asset_id.into()];
+    let mut binds: Vec<sea_orm::Value> = vec![equipment_id.into()];
 
     if let Some(symptom_id) = symptom_code_id {
         where_clauses.push("symptom_code_id = ?".to_string());
@@ -420,18 +420,20 @@ pub async fn create_intervention_request(
 
     let code = generate_di_code(db).await?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let entity_sync_id = uuid::Uuid::new_v4().to_string();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO intervention_requests (\
-            code, asset_id, org_node_id, status, title, description, origin_type, request_type, \
+            entity_sync_id, code, equipment_id, org_node_id, status, title, description, origin_type, request_type, \
             symptom_code_id, impact_level, production_impact, safety_flag, \
             environmental_flag, quality_flag, reported_urgency, observed_at, \
             submitted_at, submitter_id, source_inspection_anomaly_id, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+         ) VALUES (?, ?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
+            entity_sync_id.into(),
             code.clone().into(),
-            input.asset_id.into(),
+            input.equipment_id.into(),
             input.org_node_id.into(),
             input.title.into(),
             input.description.into(),
@@ -464,7 +466,7 @@ pub async fn create_intervention_request(
             AppError::ValidationFailed(vec!["Un code DI en doublon a été généré. Veuillez réessayer.".into()])
         } else if e.to_string().contains("FOREIGN KEY") {
             AppError::ValidationFailed(vec![
-                "Référence invalide (asset_id, org_node_id, ou submitter_id).".into()
+                "Référence invalide (equipment_id, org_node_id, ou submitter_id).".into()
             ])
         } else {
             AppError::Database(e)
@@ -527,6 +529,10 @@ pub async fn create_intervention_request(
     ))
     .await?;
 
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
+        "di create",
+    );
     Ok(di)
 }
 
@@ -624,6 +630,10 @@ pub async fn update_di_draft_fields(
 
     if sets.is_empty() {
         // Nothing to update — return current row as-is
+        crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_intervention_request_sync(db, current.id).await,
+        "di",
+    );
         return Ok(current);
     }
 
@@ -655,12 +665,17 @@ pub async fn update_di_draft_fields(
     }
 
     // 5. Re-fetch and return updated row
-    get_intervention_request(db, input.id)
+    let di = get_intervention_request(db, input.id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InterventionRequest".into(),
             id: input.id.to_string(),
-        })
+        })?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
+        "di",
+    );
+    Ok(di)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -749,5 +764,9 @@ pub async fn triage_submitted_di(
             id: input.di_id.to_string(),
         })?;
     super::notifications::notify_entered_in_review(db, &updated).await;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_intervention_request_sync(db, updated.id).await,
+        "di",
+    );
     Ok(updated)
 }

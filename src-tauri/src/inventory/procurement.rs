@@ -249,14 +249,16 @@ async fn append_stock_event<C: ConnectionTrait>(
     source_ref: Option<&str>,
     reason: Option<&str>,
     performed_by_id: Option<i64>,
-) -> AppResult<()> {
+) -> AppResult<i64> {
+    let entity_sync_id = uuid::Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_transactions
-            (article_id, warehouse_id, location_id, reservation_id, movement_type, quantity, source_type, source_id,
-             source_ref, reason, performed_by_id, performed_at)
-         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (entity_sync_id, article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
+             source_type, source_id, source_ref, reason, performed_by_id, performed_at, row_version)
+         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
+            entity_sync_id.into(),
             article_id.into(),
             warehouse_id.into(),
             location_id.into(),
@@ -271,7 +273,16 @@ async fn append_stock_event<C: ConnectionTrait>(
         ],
     ))
     .await?;
-    Ok(())
+    let id_row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT last_insert_rowid() AS id".to_string(),
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!("failed to read inventory transaction id"))
+        })?;
+    Ok(id_row.try_get("", "id")?)
 }
 
 fn guard_transition(current: &str, next: &str, allowed: &[(&str, &[&str])], entity: &str) -> AppResult<()> {
@@ -802,6 +813,7 @@ pub async fn receive_purchase_order_goods(
     }
 
     let tx = db.begin().await?;
+    let mut staged_movement_ids: Vec<i64> = Vec::new();
     let gr_number = next_doc_number("GR");
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -928,7 +940,7 @@ pub async fn receive_purchase_order_goods(
                 before.reserved,
             )
             .await?;
-            append_stock_event(
+            let movement_id = append_stock_event(
                 &tx,
                 line.article_id,
                 warehouse_id,
@@ -942,6 +954,7 @@ pub async fn receive_purchase_order_goods(
                 input.actor_id,
             )
             .await?;
+            staged_movement_ids.push(movement_id);
         }
     }
 
@@ -979,6 +992,13 @@ pub async fn receive_purchase_order_goods(
     .await?;
 
     tx.commit().await?;
+
+    for movement_id in staged_movement_ids {
+        crate::sync::foundation_stage::warn_stage(
+            crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
+            "stock_movement",
+        );
+    }
 
     // Post-commit: handle fulfillment_action for WO-linked demand
     if let Some(ref action) = input.fulfillment_action {
@@ -1179,6 +1199,7 @@ pub async fn transition_repairable_order(
     let current_return_location_id: Option<i64> = row.try_get("", "return_location_id")?;
 
     let tx = db.begin().await?;
+    let mut staged_movement_ids: Vec<i64> = Vec::new();
     if input.next_status == "RELEASED" {
         let warehouse_id = ensure_location_active(&tx, source_location_id).await?;
         let before = get_balance_snapshot(&tx, article_id, warehouse_id, source_location_id).await?;
@@ -1196,7 +1217,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        append_stock_event(
+        let movement_id = append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1210,6 +1231,7 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
+        staged_movement_ids.push(movement_id);
     }
     if input.next_status == "RETURNED_FROM_REPAIR" {
         let target_location_id = input
@@ -1227,7 +1249,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        append_stock_event(
+        let movement_id = append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1241,6 +1263,7 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
+        staged_movement_ids.push(movement_id);
     }
 
     // Cancel / scrap stock legs branch on *current* status: the same next_status has
@@ -1261,7 +1284,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        append_stock_event(
+        let movement_id = append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1275,6 +1298,7 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
+        staged_movement_ids.push(movement_id);
     }
     if input.next_status == "SCRAPPED" && current_status == "RETURNED_FROM_REPAIR" {
         let target_location_id = input.return_location_id.or(current_return_location_id).ok_or_else(|| {
@@ -1298,7 +1322,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        append_stock_event(
+        let movement_id = append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1312,6 +1336,7 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
+        staged_movement_ids.push(movement_id);
     }
 
     // Dispatch/return timestamps are stamped once by the lifecycle so turnaround stays auditable
@@ -1361,6 +1386,12 @@ pub async fn transition_repairable_order(
     )
     .await?;
     tx.commit().await?;
+    for movement_id in staged_movement_ids {
+        crate::sync::foundation_stage::warn_stage(
+            crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
+            "stock_movement",
+        );
+    }
     get_repairable_order(db, input.order_id).await
 }
 

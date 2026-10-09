@@ -1,62 +1,242 @@
 {
+  "page": {
+    "title": "Planning"
+  },
+  "views": {
+    "gantt": "Tableau Gantt",
+    "calendar": "Vue calendrier"
+  },
+  "calendar": {
+    "today": "Aujourd'hui",
+    "loading": "Chargement…",
+    "empty": "Aucun engagement ni fenêtre verrouillée ce jour.",
+    "more": "+{{count}} de plus",
+    "mode": {
+      "month": "Mois",
+      "week": "Semaine",
+      "day": "Jour"
+    },
+    "legend": {
+      "commitment": "Engagement",
+      "frozen": "Gelé",
+      "conflict": "Conflit",
+      "freeze": "Fenêtre de gel",
+      "shutdown": "Arrêt",
+      "window": "Production / maintenance"
+    }
+  },
+  "context": {
+    "title": "Contexte planning",
+    "allCrews": "Toutes les équipes",
+    "modeAllHint": "Vue usine — une voie par équipe. L'engagement exige de choisir une équipe cible.",
+    "modeCrewHint": "Équipe unique — voies techniciens pour l'effectif de cette équipe.",
+    "crewRequired": "L'équipe du tableau est requise pour charger le calendrier et engager du travail."
+  },
   "filters": {
-    "periodStart": "Debut periode",
-    "periodEnd": "Fin periode",
-    "team": "Equipe"
+    "periodStart": "Du",
+    "periodEnd": "Au",
+    "team": "Équipe",
+    "boardCrew": "Équipe du tableau",
+    "teamNone": "Sélectionner une équipe",
+    "teamRequired": "Sélectionnez une équipe du tableau pour charger son calendrier",
+    "searchPlaceholder": "Rechercher le backlog par code ou titre",
+    "readiness": "Disponibilité",
+    "readinessReady": "Prêt",
+    "readinessBlocked": "Bloqué",
+    "sourceType": "Source",
+    "horizonDays": "{{count}} jours",
+    "sourceTypes": {
+      "work_order": "Ordre de travail",
+      "pm_occurrence": "Occurrence PM",
+      "inspection_follow_up": "Demande approuvée"
+    }
   },
   "actions": {
-    "refreshBacklog": "Rafraichir backlog",
-    "freezePeriod": "Geler la periode",
-    "exportPdf": "Exporter Gantt PDF",
-    "commit": "Creer engagement",
-    "notifyTeams": "Notifier les equipes"
+    "refreshBacklog": "Rafraîchir le backlog",
+    "freezePeriod": "Geler la période",
+    "exportPdf": "Exporter le Gantt PDF",
+    "commit": "Créer l'engagement",
+    "notifyTeams": "Notifier les équipes",
+    "plannerTools": "Outils planificateur",
+    "requiresCommitments": "Disponible une fois du travail engagé sur ce tableau"
   },
   "state": {
-    "loading": "Chargement des donnees planning..."
+    "loading": "Chargement des données planning..."
   },
   "backlog": {
-    "readyColumn": "Backlog pret",
-    "blockedColumn": "Backlog bloque",
-    "readinessScore": "Score de disponibilite",
-    "emptyReady": "Aucun candidat pret.",
-    "emptyBlocked": "Aucun candidat bloque."
+    "readyColumn": "Prêt",
+    "blockedColumn": "Bloqué",
+    "readinessScore": "Disponibilité",
+    "skillMatch": "Adéquation compétences",
+    "risk": "Risque",
+    "emptyReady": "Aucun candidat prêt.",
+    "emptyBlocked": "Aucun candidat bloqué.",
+    "readyHint": "Cliquez une carte Prêt pour l'engager au planning."
+  },
+  "blockers": {
+    "parts_missing": "Pièces",
+    "skills_missing": "Compétences",
+    "permit_missing": "Permis",
+    "window_conflict": "Fenêtre",
+    "prerequisite_blocked": "Prérequis",
+    "assignee_unavailable": "Indisponible",
+    "capacity_exceeded": "Capacité"
+  },
+  "board": {
+    "unassignedLane": "Équipe — pas encore affecté à une personne",
+    "crewPool": "Pool équipe",
+    "empty": "Aucun affecté ni engagement sur cet horizon.",
+    "emptyWithCrew": "Aucun travail planifié — choisissez une carte Prêt à gauche et engagez-la sur ce calendrier.",
+    "emptyAllCrews": "Aucun engagement usine sur cet horizon — choisissez une carte Prêt et engagez vers une équipe cible.",
+    "unknownCrew": "Équipe inconnue",
+    "noCrewTitle": "Sélectionnez une équipe du tableau",
+    "noCrewHint": "Utilisez le contexte planning ci-dessus pour choisir Toutes les équipes ou une équipe unique et la période Du–Au."
   },
   "commitment": {
-    "formTitle": "Formulaire d'engagement",
-    "selectedCandidate": "Candidat selectionne",
-    "start": "Debut engage",
-    "end": "Fin engagee",
-    "assignee": "Affecte",
-    "unassigned": "Non assigne",
-    "budgetThreshold": "Seuil budgetaire"
+    "formTitle": "Engager au planning",
+    "selectedCandidate": "Candidat",
+    "start": "Début engagé",
+    "end": "Fin engagée",
+    "assignee": "Technicien (optionnel)",
+    "unassigned": "Non affecté (équipe seule)",
+    "targetCrew": "Équipe cible",
+    "targetCrewPlaceholder": "Sélectionner une équipe",
+    "targetCrewHint": "L'équipe qui porte ce travail planifié (charge de capacité et voie du tableau).",
+    "assigneeHint": "Personne optionnelle qui exécutera le travail. Pour un OT, elle devient le responsable principal.",
+    "assigneeDisabledNoCrew": "Sélectionnez une équipe du tableau dans le contexte planning avant de choisir un affecté.",
+    "assigneeDisabledNeedTargetCrew": "Sélectionnez une équipe cible ci-dessus avant de choisir un affecté.",
+    "rosterLoading": "Chargement de l'effectif…",
+    "rosterEmpty": "Cette équipe n'a pas encore de membres.",
+    "rosterEmptyHint": "Cette équipe n'a pas de membres — ajoutez des personnes à l'équipe, ou laissez Non affecté.",
+    "budgetThreshold": "Seuil budgétaire (optionnel)",
+    "budgetThresholdPlaceholder": "ex. 500",
+    "budgetThresholdHint": "Plafond optionnel de coût main-d'œuvre. Si l'estimation calculée le dépasse, un avertissement d'écart est enregistré.",
+    "estimatedLaborCost": "Coût main-d'œuvre estimé",
+    "estimatedLaborCostValue": "{{value}}",
+    "estimatedLaborCostHint": "Calculé automatiquement (taux de l'affecté × heures engagées). La valeur définitive est confirmée par le serveur à l'engagement.",
+    "estimatedLaborCostNeedAssignee": "Choisissez un affecté avec une grille de taux, ou consultez la fourchette du candidat si disponible.",
+    "estimatedLaborCostNeedSlot": "Saisissez le début et la fin engagés pour calculer l'estimation.",
+    "estimatedLaborCostNoRate": "Pas de grille de taux pour cet affecté — estimation indisponible tant qu'un taux n'est pas configuré.",
+    "estimatedLaborCostLoading": "Chargement du taux…",
+    "durationHours": "Durée : {{hours}} h",
+    "matchingSkills": "{{count}} compétences correspondantes",
+    "costRange": "Coût main-d'œuvre estimé : {{min}} – {{max}}",
+    "capacityRemaining": "Capacité équipe ce jour : {{remaining}} h restantes sur {{available}} h.",
+    "capacityBlockedHint": "Ce créneau dépasse la capacité restante de l'équipe ({{remaining}} h). Raccourcissez la fin.",
+    "capacityDayFull": "Plus de capacité équipe ce jour",
+    "horizonHint": "Seules les dates de la période Du–Au du tableau sont sélectionnables. La durée est limitée par la capacité journalière restante de l'équipe.",
+    "horizonPrefillWarning": "La fenêtre du candidat est hors de la période du tableau — ajustez début et fin dans Du–Au avant d'engager.",
+    "previewTitle": "Aperçu calendrier équipe",
+    "previewBar": "Proposé · {{code}}",
+    "previewEmpty": "Aucun engagement ni absence sur cet horizon.",
+    "previewNeedsCrew": "Sélectionnez une équipe du tableau pour prévisualiser le calendrier.",
+    "previewNeedsTargetCrew": "Sélectionnez une équipe cible pour prévisualiser où l'engagement sera placé.",
+    "overrideDoubleBooking": "Déroger au double-booking avec motif",
+    "pickDate": "Choisir la date",
+    "prevMonth": "Mois précédent",
+    "nextMonth": "Mois suivant",
+    "time": "Heure",
+    "errors": {
+      "noCandidate": "Sélectionnez un candidat avant d'engager.",
+      "crewRequired": "Une équipe du tableau est requise pour engager.",
+      "targetCrewRequired": "Sélectionnez une équipe cible avant d'engager.",
+      "slotRequired": "Saisissez le début et la fin engagés.",
+      "slotInvalid": "Le début ou la fin engagé n'est pas une date/heure valide.",
+      "endAfterStart": "La fin engagée doit être postérieure au début.",
+      "outsideHorizon": "Le début et la fin engagés doivent être dans la période Du–Au du tableau.",
+      "assigneeNotOnCrew": "L'affecté doit être membre de l'équipe du tableau sélectionnée.",
+      "capacityExceeded": "Ce créneau dépasse la capacité restante de l'équipe pour ce jour ({{remaining}} h restantes). Choisissez un créneau plus court ou un autre jour.",
+      "budgetInvalid": "Le seuil budgétaire doit être un nombre positif ou nul."
+    }
   },
   "gantt": {
-    "capacityTitle": "Indicateurs de capacite equipe",
-    "capacityLine": "{{committed}}h engagees / {{available}}h disponibles",
-    "emptyCapacity": "Aucune donnee de capacite sur la periode.",
-    "assignmentLaneTitle": "Lignes calendrier d'affectation",
-    "laneHeader": "Affecte",
-    "overrideReasonPrompt": "Motif de derrogation double-affectation :",
-    "defaultReason": "Planning gele par le planificateur.",
-    "freezeOverlayTitle": "Fenetres gelees"
+    "capacityTitle": "Capacité équipe",
+    "capacityTitleAllCrews": "Capacité par équipe (pic sur l'horizon)",
+    "capacityLine": "{{committed}}h engagées / {{available}}h disponibles",
+    "emptyCapacity": "Aucune donnée de capacité sur la période.",
+    "assignmentLaneTitle": "Tableau d'affectation",
+    "laneHeader": "Affecté",
+    "overrideReasonPrompt": "Motif de dérogation double-affectation",
+    "defaultReason": "Planning gelé par le planificateur.",
+    "freezeOverlayTitle": "Fenêtres verrouillées"
   },
   "windows": {
-    "title": "Gestionnaire de fenetres de production",
-    "type": "Type de fenetre",
-    "start": "Debut",
+    "title": "Fenêtres de production",
+    "detailTitle": "Fenêtre verrouillée",
+    "detailEmpty": "Détails de la fenêtre indisponibles.",
+    "type": "Type de fenêtre",
+    "start": "Début",
     "end": "Fin",
     "reason": "Motif de verrouillage",
-    "add": "Ajouter fenetre verrouillee",
-    "locked": "Verrouillee"
+    "add": "Ajouter une fenêtre verrouillée",
+    "locked": "Verrouillée",
+    "empty": "Aucune fenêtre de production.",
+    "types": {
+      "production": "Production",
+      "maintenance": "Maintenance",
+      "shutdown": "Arrêt",
+      "freeze": "Gel"
+    }
   },
   "breakIns": {
-    "title": "Suivi superviseur des break-ins",
+    "title": "Break-ins",
     "commitment": "Engagement",
-    "selectCommitment": "Selectionner engagement",
+    "selectCommitment": "Sélectionner un engagement",
     "reason": "Code motif",
-    "approver": "ID utilisateur approbateur",
-    "overrideReason": "Motif de derrogation",
-    "create": "Enregistrer break-in",
-    "empty": "Aucun break-in sur la periode."
+    "approver": "Approbateur",
+    "selectApprover": "Sélectionner un approbateur",
+    "newAssignee": "Nouvel affecté",
+    "start": "Nouveau début",
+    "end": "Nouvelle fin",
+    "overrideReason": "Motif de dérogation",
+    "dangerousOverrideReason": "Motif de dérogation dangereuse",
+    "create": "Enregistrer le break-in",
+    "empty": "Aucun break-in pour la période sélectionnée.",
+    "reasons": {
+      "emergency": "Urgence",
+      "safety": "Sécurité",
+      "production_loss": "Perte de production",
+      "regulatory": "Réglementaire",
+      "other": "Autre"
+    }
+  },
+  "freeze": {
+    "title": "Geler la période de planning",
+    "summary": "Geler les engagements du {{start}} au {{end}}.",
+    "reason": "Motif de gel",
+    "reasonPlaceholder": "Expliquez pourquoi cette période doit être gelée"
+  },
+  "override": {
+    "title": "Déroger au double-booking",
+    "description": "Ce déplacement entre en conflit avec une affectation existante. Indiquez un motif d'audit pour continuer.",
+    "reason": "Motif de dérogation",
+    "confirm": "Confirmer la dérogation"
+  },
+  "inspector": {
+    "title": "Détail de l'engagement",
+    "frozen": "Gelé",
+    "blockingConflict": "Conflit bloquant",
+    "slot": "Créneau engagé",
+    "assignee": "Affecté",
+    "team": "Équipe",
+    "cost": "Coût main-d'œuvre estimé",
+    "costVariance": "Écart budgétaire",
+    "nearestWindow": "Fenêtre faisable la plus proche",
+    "auditTitle": "Journal des changements",
+    "auditEmpty": "Aucune entrée d'audit pour cet engagement.",
+    "openOnBoard": "Ouvrir sur le tableau"
+  },
+  "audit": {
+    "actions": {
+      "create_commitment": "Engagement créé",
+      "reschedule_commitment": "Replanifié",
+      "override_double_booking": "Dérogation double-booking",
+      "freeze_schedule_period": "Période gelée",
+      "create_break_in": "Break-in enregistré"
+    }
+  },
+  "dialogs": {
+    "cancel": "Annuler",
+    "close": "Fermer"
   }
 }

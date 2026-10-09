@@ -33,7 +33,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Asset {
     pub id: i64,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub asset_code: String,
     pub asset_name: String,
     pub class_id: Option<i64>,
@@ -120,7 +120,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 /// and org node names via JOINs for the read-side `Asset` struct.
 pub(crate) const ASSET_SELECT: &str = r"
     e.id,
-    e.sync_id,
+    e.entity_sync_id,
     e.asset_id_code    AS asset_code,
     e.name             AS asset_name,
     e.class_id,
@@ -167,9 +167,9 @@ pub(crate) const ASSET_FROM: &str = r"
 pub(crate) fn map_asset(row: &QueryResult) -> AppResult<Asset> {
     Ok(Asset {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
-        sync_id: row
-            .try_get::<String>("", "sync_id")
-            .map_err(|e| decode_err("sync_id", e))?,
+        entity_sync_id: row
+            .try_get::<String>("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
         asset_code: row
             .try_get::<String>("", "asset_code")
             .map_err(|e| decode_err("asset_code", e))?,
@@ -801,12 +801,12 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     // (Full class-policy enforcement deferred to File 04.)
 
     let now = Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO equipment
-          (sync_id, asset_id_code, name, class_id,
+          (entity_sync_id, asset_id_code, name, class_id,
            lifecycle_status, criticality_value_id,
            equipment_status_ref_id, equipment_criticality_ref_id, equipment_class_ref_id,
            equipment_family_ref_id, equipment_subfamily_ref_id,
@@ -816,7 +816,7 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
            created_at, updated_at, row_version)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
-            sync_id.clone().into(),
+            entity_sync_id.clone().into(),
             asset_code.into(),
             asset_name.into(),
             class_id.into(),
@@ -842,12 +842,12 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     ))
     .await?;
 
-    // Retrieve inserted id via sync_id
+    // Retrieve inserted id via entity_sync_id
     let id_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM equipment WHERE sync_id = ?",
-            [sync_id.into()],
+            "SELECT id FROM equipment WHERE entity_sync_id = ?",
+            [entity_sync_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("asset created but not found after insert")))?;
@@ -868,6 +868,10 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
     txn.commit().await?;
 
     tracing::info!(asset_id, "asset created");
+    crate::sync::foundation_stage::warn_stage(
+        crate::wo::sync_stage::stage_equipment_sync(db, asset_id).await,
+        "equipment create",
+    );
     Ok(asset)
 }
 
@@ -1123,6 +1127,10 @@ pub async fn update_asset_identity(
     txn.commit().await?;
 
     tracing::info!(asset_id, "asset identity updated");
+    crate::sync::foundation_stage::warn_stage(
+        crate::wo::sync_stage::stage_equipment_sync(db, asset_id).await,
+        "equipment update",
+    );
     Ok(asset)
 }
 

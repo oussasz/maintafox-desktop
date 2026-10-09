@@ -9,6 +9,7 @@ import type {
   ClearPinInput,
   LoginRequest,
   LoginResponse,
+  PasswordRecoveryContact,
   PinUnlockInput,
   SessionInfo,
   SetPinInput,
@@ -110,4 +111,19 @@ export async function clearPin(input: ClearPinInput): Promise<void> {
 export async function unlockSessionWithPin(input: PinUnlockInput): Promise<SessionInfo> {
   const raw = await invoke<unknown>("unlock_session_with_pin", { payload: input });
   return sessionInfoSchema.parse(raw);
+}
+
+const passwordRecoveryContactSchema = z.object({
+  display_name: z.string(),
+  email: z.string().nullable(),
+  phone: z.string().nullable(),
+});
+
+/**
+ * Pre-login list of elevated administrators for Forgot Password helpdesk contacts.
+ * Uses invokeSilent so AUTH failures never open AuthLockLayer on the login screen.
+ */
+export async function getPasswordRecoveryContacts(): Promise<PasswordRecoveryContact[]> {
+  const raw = await invokeSilent<unknown>("get_password_recovery_contacts");
+  return z.array(passwordRecoveryContactSchema).parse(raw);
 }

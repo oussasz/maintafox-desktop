@@ -18,7 +18,7 @@ function makeDiResponse(overrides: Record<string, unknown> = {}): Record<string,
   return {
     id: 1,
     code: "DI-0001",
-    asset_id: 10,
+    equipment_id: 10,
     sub_asset_ref: null,
     org_node_id: 5,
     status: "submitted",
@@ -35,7 +35,6 @@ function makeDiResponse(overrides: Record<string, unknown> = {}): Record<string,
     validated_urgency: null,
     observed_at: null,
     submitted_at: "2026-04-01T10:00:00Z",
-    review_team_id: null,
     reviewer_id: null,
     screened_at: null,
     approved_at: null,
@@ -88,7 +87,7 @@ describe("di-service — Supervisor Verification S3", () => {
 
     await expect(
       createDi({
-        asset_id: 10,
+        equipment_id: 10,
         org_node_id: 5,
         title: "Test",
         description: "Test desc",
@@ -168,7 +167,7 @@ describe("di-service — Supervisor Verification S3", () => {
     mockInvoke.mockResolvedValueOnce(makeDiResponse());
 
     const input = {
-      asset_id: 10,
+      equipment_id: 10,
       org_node_id: 5,
       title: "Test",
       description: "Desc",

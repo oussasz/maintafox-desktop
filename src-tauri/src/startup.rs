@@ -242,10 +242,22 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
 
     {
         let report_db = app_state.db.clone();
+        let report_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
         tauri::async_runtime::spawn(async move {
-            crate::reports::scheduler::start_report_scheduler(report_db).await;
+            crate::reports::scheduler::start_report_scheduler(report_db, report_dir).await;
         });
         info!("startup: report scheduler started");
+    }
+
+    {
+        let pm_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::pm::scheduler::start_pm_generation_scheduler(pm_db).await;
+        });
+        info!("startup: PM generation scheduler started");
     }
 
     // ── Budget check and ready ──────────────────────────────────────────

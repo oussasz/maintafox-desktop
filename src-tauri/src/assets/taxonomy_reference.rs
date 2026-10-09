@@ -428,14 +428,14 @@ pub async fn sync_equipment_classes_from_published_reference(db: &DatabaseConnec
             ))
             .await?;
         } else {
-            let sync_id = Uuid::new_v4().to_string();
+            let entity_sync_id = Uuid::new_v4().to_string();
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO equipment_classes \
-                 (sync_id, code, name, parent_id, level, is_active, created_at, updated_at) \
+                 (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at) \
                  VALUES (?, ?, ?, NULL, 'class', 1, ?, ?)",
                 [
-                    sync_id.into(),
+                    entity_sync_id.into(),
                     code.into(),
                     name.into(),
                     now.clone().into(),

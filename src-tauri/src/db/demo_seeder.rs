@@ -53,7 +53,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_structure_models
-            (sync_id, version_number, status, description, activated_at, created_at, updated_at)
+            (entity_sync_id, version_number, status, description, activated_at, created_at, updated_at)
           VALUES (?, 1, 'active', 'Modèle démo', ?, ?, ?)",
         [
             model_sync.clone().into(),
@@ -78,7 +78,7 @@ pub async fn seed_demo_data(db: &DatabaseConnection) -> AppResult<()> {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO org_node_types
-                (sync_id, structure_model_id, code, label, can_host_assets, can_own_work, is_root_type, created_at, updated_at)
+                (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work, is_root_type, created_at, updated_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 Uuid::new_v4().to_string().into(),
@@ -884,7 +884,7 @@ pub async fn seed_test_viewer_user(db: &DatabaseConnection) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO user_accounts
-            (sync_id, username, display_name, identity_mode, password_hash,
+            (entity_sync_id, username, display_name, identity_mode, password_hash,
              is_active, is_admin, force_password_change, failed_login_attempts,
              created_at, updated_at, row_version)
           VALUES (?, ?, ?, 'local', ?, 1, 0, 0, 0, ?, ?, 1)",
@@ -933,7 +933,7 @@ pub async fn seed_technicien_user(db: &DatabaseConnection) -> AppResult<()> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO user_accounts
-            (sync_id, username, display_name, identity_mode, password_hash,
+            (entity_sync_id, username, display_name, identity_mode, password_hash,
              is_active, is_admin, force_password_change, failed_login_attempts,
              created_at, updated_at, row_version)
           VALUES (?, ?, ?, 'local', ?, 1, 0, 0, 0, ?, ?, 1)",
@@ -1465,7 +1465,7 @@ async fn insert_org_node(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_nodes
-            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+            (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
              created_at, updated_at, row_version, structure_model_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, ?)",
         [
@@ -1496,7 +1496,7 @@ async fn insert_eq_class(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO equipment_classes
-            (sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
+            (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
         [
             Uuid::new_v4().to_string().into(),
@@ -1524,7 +1524,7 @@ async fn insert_equipment(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO equipment
-            (sync_id, asset_id_code, name, class_id, lifecycle_status, installed_at_node_id,
+            (entity_sync_id, asset_id_code, name, class_id, lifecycle_status, installed_at_node_id,
              manufacturer, created_at, updated_at, row_version)
           VALUES (?, ?, ?, ?, 'active_in_service', ?, ?, ?, ?, 1)",
         [
@@ -1561,7 +1561,7 @@ async fn insert_di(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO intervention_requests
-            (code, asset_id, org_node_id, status, title, description, origin_type,
+            (code, equipment_id, org_node_id, status, title, description, origin_type,
              impact_level, production_impact, safety_flag, environmental_flag, quality_flag,
              reported_urgency, submitted_at, submitter_id, row_version, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', 0, ?, 0, 0, ?, ?, ?, 1, ?, ?)",

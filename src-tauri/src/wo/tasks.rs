@@ -177,8 +177,8 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_tasks \
-         (work_order_id, task_description, sequence_order, is_mandatory, estimated_minutes, origin) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+         (work_order_id, task_description, sequence_order, is_mandatory, estimated_minutes, origin, entity_sync_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             input.task_description.clone().into(),
@@ -189,6 +189,7 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<i64>)),
             origin.clone().into(),
+            uuid::Uuid::new_v4().to_string().into(),
         ],
     ))
     .await?;
@@ -213,6 +214,10 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
         None,
     )
     .await;
+    crate::sync::foundation_stage::warn_stage(
+        crate::wo::sync_stage::stage_work_order_task_sync(db, task.id).await,
+        "wo_task",
+    );
     Ok(task)
 }
 
@@ -294,6 +299,10 @@ pub async fn complete_task(
         Some(actor_id),
     )
     .await;
+    crate::sync::foundation_stage::warn_stage(
+        crate::wo::sync_stage::stage_work_order_task_sync(db, task.id).await,
+        "wo_task",
+    );
     Ok(task)
 }
 
@@ -357,7 +366,12 @@ pub async fn reopen_task(db: &DatabaseConnection, task_id: i64, _actor_id: i64) 
             entity: "WoTask".into(),
             id: task_id.to_string(),
         })?;
-    map_task(&updated)
+    let task = map_task(&updated)?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::wo::sync_stage::stage_work_order_task_sync(db, task.id).await,
+        "wo_task",
+    );
+    Ok(task)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -57,6 +57,8 @@ pub const OT_VIEW: &str = "ot.view";
 pub const OT_CREATE: &str = "ot.create";
 /// Edit, plan, assign, and execute work orders
 pub const OT_EDIT: &str = "ot.edit";
+/// Emergency reassign crew/technician on a work order without Planning capacity gates
+pub const OT_EMERGENCY_ASSIGN: &str = "ot.emergency_assign";
 /// Approve work orders from draft / planning
 pub const OT_APPROVE: &str = "ot.approve";
 /// Close technically verified work orders
@@ -386,6 +388,15 @@ pub const CATALOG: &[PermissionMeta] = &[
         description: "Edit, plan, assign, and execute work orders",
         category: "ot",
         is_dangerous: false,
+        requires_step_up: false,
+        usage: "both",
+        aliases: &[],
+    },
+    PermissionMeta {
+        name: OT_EMERGENCY_ASSIGN,
+        description: "Emergency reassign crew/technician on a work order without Planning capacity gates",
+        category: "ot",
+        is_dangerous: true,
         requires_step_up: false,
         usage: "both",
         aliases: &[],
@@ -1242,6 +1253,11 @@ pub const DEPENDENCIES: &[PermissionDep] = &[
         dep_type: "hard",
     },
     PermissionDep {
+        permission: OT_EMERGENCY_ASSIGN,
+        requires: OT_EDIT,
+        dep_type: "hard",
+    },
+    PermissionDep {
         permission: OT_APPROVE,
         requires: OT_VIEW,
         dep_type: "hard",
@@ -1529,6 +1545,7 @@ pub const OPERATOR_PERMISSIONS: &[&str] = &[
     OT_VIEW,
     OT_CREATE,
     OT_EDIT,
+    OT_EMERGENCY_ASSIGN,
     OT_CLOSE,
     ORG_VIEW,
     PER_VIEW,
@@ -1562,6 +1579,7 @@ pub const PLANNER_PERMISSIONS: &[&str] = &[
     OT_VIEW,
     OT_CREATE,
     OT_EDIT,
+    OT_EMERGENCY_ASSIGN,
     DI_VIEW,
     DI_CREATE,
     DI_SCREEN,

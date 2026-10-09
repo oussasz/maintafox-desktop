@@ -16,6 +16,7 @@ import { AssetDetailPanel } from "@/components/assets/AssetDetailPanel";
 import { AssetEditForm } from "@/components/assets/AssetEditForm";
 import { AssetFilterBar } from "@/components/assets/AssetFilterBar";
 import { AssetResultTable } from "@/components/assets/AssetResultTable";
+import { EquipmentRegistryMetricCards } from "@/components/assets/EquipmentRegistryMetricCards";
 import { DiFormDialog } from "@/components/di/DiFormDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,10 @@ export function AssetRegistryPage() {
             {t("registry.refresh")}
           </Button>
         </div>
+      </div>
+
+      <div className="shrink-0 border-b border-surface-border px-6 py-3">
+        <EquipmentRegistryMetricCards />
       </div>
 
       {/* Two-pane workspace */}

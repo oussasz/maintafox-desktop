@@ -7,6 +7,11 @@
  * Phase 2 – Sub-phase 05 – File 03 – Sprint S4.
  */
 
+import {
+  DOCUMENT_HEADER_PRINT_CSS,
+  loadDocumentHeaderHtml,
+  wrapDocumentHeaderBlock,
+} from "@/export/templates/document-header";
 import { formatEntityCode, formatOrDash, formatPersonLabel } from "@/lib/display";
 import {
   getWoAnalyticsSnapshot,
@@ -65,8 +70,10 @@ function buildHtml(
   } | null,
   t: TFn,
   locale: string,
+  letterheadHtml: string,
 ): string {
   const now = new Date().toLocaleDateString(locale);
+  const letterhead = wrapDocumentHeaderBlock(letterheadHtml);
 
   const taskRows = tasks
     .map(
@@ -115,11 +122,12 @@ function buildHtml(
     .sig-box p { margin: 2px 0; font-size: 10px; }
     .footer { margin-top: 24px; font-size: 9px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 6px; }
     @media print { body { margin: 0; padding: 10px 20px; } }
+    ${DOCUMENT_HEADER_PRINT_CSS}
   </style>
 </head>
 <body>
+  ${letterhead}
   <div class="header">
-    <div class="company">Maintafox</div>
     <h1>${esc(t("print.heading"))}</h1>
     <div class="subtitle">${esc(t("print.confidential"))}</div>
   </div>
@@ -283,7 +291,7 @@ function buildHtml(
   </div>
 
   <div class="footer">
-    ${esc(t("print.reference"))} : ${esc(wo.code)} | Maintafox | ${now} — ${esc(t("print.confidential"))}
+    ${esc(t("print.reference"))} : ${esc(wo.code)} | ${now} — ${esc(t("print.confidential"))}
   </div>
 </body>
 </html>`;
@@ -296,11 +304,12 @@ export async function printWoFiche(
   t: TFn = DEFAULT_T,
   locale = "fr",
 ): Promise<void> {
-  const [tasks, labor, parts, snapshot] = await Promise.all([
+  const [tasks, labor, parts, snapshot, letterheadHtml] = await Promise.all([
     listTasks(wo.id).catch(() => [] as WoExecTask[]),
     listLabor(wo.id).catch(() => [] as WoIntervener[]),
     listParts(wo.id).catch(() => [] as WoExecPart[]),
     getWoAnalyticsSnapshot(wo.id).catch(() => null),
+    loadDocumentHeaderHtml(),
   ]);
 
   const failureDetails = snapshot?.failure_details ?? [];
@@ -324,6 +333,7 @@ export async function printWoFiche(
     costTotals,
     t,
     locale,
+    letterheadHtml,
   );
 
   // Tauri/webview can block popup windows depending on platform settings.

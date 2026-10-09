@@ -187,7 +187,7 @@ export function TopBar() {
                 <DeviceTrustBadge status={deviceTrust} />
               </div>
               <Link
-                to="/profile"
+                to="/settings?tab=profile"
                 onClick={() => setUserMenuOpen(false)}
                 className="flex items-center gap-2 px-3 py-2 text-sm text-text-secondary
                            hover:bg-surface-2 transition-colors"

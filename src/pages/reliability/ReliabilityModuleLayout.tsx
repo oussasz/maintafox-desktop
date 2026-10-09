@@ -164,7 +164,7 @@ function ReliabilityModuleLayoutBody() {
             )}
           </div>
           <NavLink
-            to="/reliability/foundation#ram-data-quality"
+            to="/analytics/rams/foundation#ram-data-quality"
             className="rounded-md border border-surface-border bg-surface-2 px-2 py-1 text-xs text-text-secondary hover:bg-surface-3"
           >
             {t("health.openDq")}
@@ -178,7 +178,7 @@ function ReliabilityModuleLayoutBody() {
             {NAV.map(({ to, key, icon: Icon }) => (
               <NavLink
                 key={to}
-                to={`/reliability/${to}`}
+                to={`/analytics/rams/${to}`}
                 className={({ isActive }) =>
                   cn(
                     "flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors",

@@ -73,8 +73,8 @@ function sortReviewQueue(items: InterventionRequest[]): InterventionRequest[] {
     if (pa !== pb) return pb - pa;
     // 2. submitted_at asc
     if (a.submitted_at !== b.submitted_at) return a.submitted_at.localeCompare(b.submitted_at);
-    // 3. equipment (asset_id) asc
-    if (a.asset_id !== b.asset_id) return a.asset_id - b.asset_id;
+    // 3. equipment (equipment_id) asc
+    if (a.equipment_id !== b.equipment_id) return a.equipment_id - b.equipment_id;
     // 4. submitter_id asc
     return a.submitter_id - b.submitter_id;
   });

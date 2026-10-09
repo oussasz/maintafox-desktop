@@ -160,6 +160,27 @@
     "noMeters": "No meters recorded.",
     "noDocuments": "No documents attached."
   },
+  "metrics": {
+    "stripAria": "Equipment registry health metrics",
+    "statusSummary": "Down assets",
+    "criticalAtRisk": "Critical at risk",
+    "healthScore": "Health score",
+    "openWork": "Open work",
+    "staleMeters": "Stale meters",
+    "contextStatus": "Assets currently out of service",
+    "contextStatusDetail": "{{active}} in service · {{down}} down",
+    "contextCriticalRisk": "Critical assets with down status or open DI/WO",
+    "contextHealth": "Average asset health in scope",
+    "contextOpenWork": "Assets with open DI or work order",
+    "contextStaleMeters": "Active meters unread > 30 days",
+    "focusFilter": "KPI focus",
+    "stable": "Stable",
+    "alertNormal": "Normal",
+    "alertAttention": "Attention",
+    "unit": {
+      "percent": "%"
+    }
+  },
   "registry": {
     "title": "Asset Registry",
     "refresh": "Refresh",

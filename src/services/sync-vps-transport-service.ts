@@ -2,8 +2,12 @@ import { z, ZodError } from "zod";
 
 import { invokeSilent } from "@/lib/ipc-invoke";
 import { controlPlaneApiBase } from "@/services/product-license-service";
-import { applySyncBatch, getSyncPushPayload } from "@/services/sync-service";
-import type { ApplySyncBatchInput, SyncPushPayload } from "@shared/ipc-types";
+import { applySyncBatch, getSyncPushPayload, materializeSyncInbox } from "@/services/sync-service";
+import type {
+  ApplySyncBatchInput,
+  MaterializeInboxResult,
+  SyncPushPayload,
+} from "@shared/ipc-types";
 
 const SYNC_OPS = new Set(["create", "update", "delete", "upsert", "archive"]);
 
@@ -32,8 +36,10 @@ function newIdempotencyKeyForExchange(): string {
 /**
  * Build JSON body for `POST /api/v1/sync/exchange`.
  * - Omit `checkpoint_token` when none yet (some Zod schemas reject explicit `null` on optional keys).
- * - Omit `tenant_config` unless the deployed API lists it in the schema; strict top-level bodies
- *   reject unknown keys on older control-plane builds.
+ * - Omit additive keys (`device_class`, `tenant_config`, `media_manifest`) on the wire until the
+ *   deployed control-plane schema accepts them. Older `.strict()` bodies return 400
+ *   `Unrecognized key(s) in object: 'device_class', 'tenant_config'`.
+ *   Local vendor-console already accepts these; re-enable after that build is live in production.
  */
 function buildSyncExchangeRequestBody(
   push: SyncPushPayload,
@@ -131,11 +137,11 @@ function formatControlPlaneHttpErrorPayload(raw: unknown): string | null {
 }
 
 /**
- * One control-plane round-trip: push pending outbox via `/api/v1/sync/exchange`, then apply the batch locally.
- * Requires product license activation JWT and an authenticated desktop session (see Tauri command).
- * No-ops when there is no stored activation bearer token (offline onboarding or inactive license).
+ * One control-plane round-trip: push pending outbox via `/api/v1/sync/exchange`, then apply + materialize.
+ * Returns materialize result so callers can detect conflicts (exchange OK ≠ domain applied).
+ * Requires product license activation JWT. No-ops (null) when no stored activation bearer.
  */
-export async function exchangeControlPlaneSyncRound(): Promise<void> {
+export async function exchangeControlPlaneSyncRound(): Promise<MaterializeInboxResult | null> {
   let bearer: string | null = null;
   try {
     // Silent: heartbeat/bootstrap must not open AuthLockLayer on transient auth gaps.
@@ -144,7 +150,7 @@ export async function exchangeControlPlaneSyncRound(): Promise<void> {
     throw decodeError("get_control_plane_activation_bearer_token", e);
   }
   if (!bearer?.trim()) {
-    return;
+    return null;
   }
 
   const push = await getSyncPushPayload(100, { silent: true });
@@ -210,4 +216,16 @@ export async function exchangeControlPlaneSyncRound(): Promise<void> {
   };
 
   await applySyncBatch(batch, { silent: true });
+  // Ingest leaves inbox as pending; materialize into domain tables (Universal Sync Standard).
+  const materialize = await materializeSyncInbox(200, { silent: true });
+  if (materialize.conflicts > 0 || materialize.errors.length > 0) {
+    const detail = [
+      materialize.conflicts > 0 ? `${materialize.conflicts} conflict(s)` : null,
+      materialize.errors.length > 0 ? materialize.errors.slice(0, 3).join("; ") : null,
+    ]
+      .filter(Boolean)
+      .join(" — ");
+    throw new Error(`SYNC_MATERIALIZE_INCOMPLETE: ${detail}`);
+  }
+  return materialize;
 }

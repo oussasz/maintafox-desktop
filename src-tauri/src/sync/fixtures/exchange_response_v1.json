@@ -1,0 +1,17 @@
+{
+  "protocol_version": "v1",
+  "server_batch_id": "srv-fixture-001",
+  "checkpoint_token": "cp-tenant-demo-2",
+  "acknowledged_items": [],
+  "rejected_items": [],
+  "inbound_items": [
+    {
+      "entity_type": "equipment",
+      "entity_sync_id": "eq-fixture-inbound-1",
+      "operation": "upsert",
+      "row_version": 1,
+      "payload_json": "{\"entity_sync_id\":\"eq-fixture-inbound-1\",\"row_version\":1,\"asset_code\":\"EQ-IN-1\",\"asset_name\":\"Inbound Fixture\",\"status_code\":\"active_in_service\"}"
+    }
+  ],
+  "policy_metadata_json": null
+}

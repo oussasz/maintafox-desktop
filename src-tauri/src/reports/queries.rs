@@ -133,9 +133,12 @@ pub async fn list_my_runs(db: &DatabaseConnection, user_id: i64, limit: i64) -> 
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, schedule_id, template_id, user_id, status, export_format, artifact_path, byte_size, \
-             error_message, started_at, finished_at \
-             FROM report_runs WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            "SELECT r.id, r.schedule_id, r.template_id, r.user_id, r.status, r.export_format, r.artifact_path, \
+             r.byte_size, r.error_message, r.started_at, r.finished_at, \
+             CASE WHEN a.id IS NOT NULL OR (r.artifact_path IS NOT NULL AND length(trim(r.artifact_path)) > 0) THEN 1 ELSE 0 END AS has_downloadable_artifact \
+             FROM report_runs r \
+             LEFT JOIN report_artifacts a ON a.run_id = r.id \
+             WHERE r.user_id = ? ORDER BY r.id DESC LIMIT ?",
             [user_id.into(), lim.into()],
         ))
         .await?;
@@ -143,6 +146,7 @@ pub async fn list_my_runs(db: &DatabaseConnection, user_id: i64, limit: i64) -> 
 }
 
 fn map_run(row: &sea_orm::QueryResult) -> AppResult<ReportRun> {
+    let has_flag: i64 = row.try_get("", "has_downloadable_artifact").unwrap_or(0);
     Ok(ReportRun {
         id: row
             .try_get("", "id")
@@ -167,6 +171,7 @@ fn map_run(row: &sea_orm::QueryResult) -> AppResult<ReportRun> {
             .try_get("", "started_at")
             .map_err(|e| AppError::Database(sea_orm::DbErr::Custom(format!("started_at: {e}"))))?,
         finished_at: row.try_get("", "finished_at").ok(),
+        has_downloadable_artifact: has_flag != 0,
     })
 }
 

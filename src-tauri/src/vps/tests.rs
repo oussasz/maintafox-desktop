@@ -1,7 +1,10 @@
 use crate::vps::domain::{
     AuthBoundary, PolicyDeliveryContract, VpsContractFamily, VpsRequestContext, VPS_API_VERSION_V1,
 };
-use crate::vps::guards::{enforce_request_context, route_contract_for_family, validate_policy_delivery};
+use crate::vps::guards::{
+    enforce_request_context, route_contract_for_family, validate_policy_delivery,
+    validate_sync_exchange_request_json,
+};
 
 fn base_tenant_context() -> VpsRequestContext {
     VpsRequestContext {
@@ -92,4 +95,35 @@ fn valid_runtime_sync_context_passes_readiness_gate() {
     let route = route_contract_for_family(VpsContractFamily::Sync).expect("sync route");
     let ctx = base_tenant_context();
     enforce_request_context(&route, &ctx).expect("valid runtime context");
+}
+
+#[test]
+fn sync_exchange_accepts_additive_device_class_and_media_manifest() {
+    let body = serde_json::json!({
+        "protocol_version": "v1",
+        "idempotency_key": "ex-1",
+        "device_class": "desktop",
+        "media_manifest": [
+            {
+                "entity_sync_id": "m1",
+                "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "object_key": "dev/media/t1/work_orders/w1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "byte_size": 12
+            }
+        ],
+        "outbox_batch": []
+    });
+    validate_sync_exchange_request_json(&body).expect("additive fields ok");
+}
+
+#[test]
+fn sync_exchange_rejects_invalid_device_class() {
+    let body = serde_json::json!({
+        "protocol_version": "v1",
+        "idempotency_key": "ex-1",
+        "device_class": "tablet",
+        "outbox_batch": []
+    });
+    let err = validate_sync_exchange_request_json(&body).expect_err("bad device_class");
+    assert_eq!(err.code, "device_class_invalid");
 }

@@ -4,13 +4,20 @@
     "description": "Gérer les paramètres de l'application",
     "noSettings": "Aucun paramètre dans cette catégorie",
     "loading": "Chargement des paramètres…",
-    "loadError": "Impossible de charger les paramètres"
+    "loadError": "Impossible de charger les paramètres",
+    "noSettingsHint": "Les clés de paramètres de base sont introuvables. Réessayez le chargement ou restaurez les valeurs par défaut.",
+    "retry": "Réessayer",
+    "restoreDefaults": "Restaurer les valeurs par défaut",
+    "restoreDefaultsSuccess": "Paramètres par défaut restaurés",
+    "restoreDefaultsError": "Échec de la restauration des paramètres par défaut"
   },
   "categories": {
     "localization": "Localisation",
     "appearance": "Apparence",
     "system": "Système",
-    "backup": "Sauvegarde"
+    "backup": "Sauvegarde",
+    "reliability": "Fiabilité",
+    "documents": "Documents et identité visuelle"
   },
   "table": {
     "key": "Clé",
@@ -28,7 +35,8 @@
     "saving": "Enregistrement…",
     "saveSuccess": "Paramètre enregistré avec succès",
     "saveError": "Erreur lors de l'enregistrement",
-    "invalidJson": "Valeur JSON invalide"
+    "invalidJson": "Valeur JSON invalide",
+    "auditUpdated": "Paramètre « {{key}} » mis à jour via l'interface Paramètres"
   },
   "risk": {
     "low": "Faible",
@@ -50,6 +58,7 @@
     "locale.date_format": "Format de date",
     "locale.number_format": "Format des nombres",
     "locale.week_start_day": "Premier jour de la semaine",
+    "locale.currency_code": "Devise",
     "appearance.color_mode": "Mode de couleur",
     "appearance.density": "Densité d'affichage",
     "appearance.text_scale": "Échelle du texte",
@@ -58,7 +67,44 @@
     "backup.retention_daily": "Rétention quotidienne (jours)",
     "backup.retention_weekly": "Rétention hebdomadaire (sem.)",
     "backup.retention_monthly": "Rétention mensuelle (mois)",
-    "diagnostics.log_retention_days": "Rétention des logs (jours)"
+    "diagnostics.log_retention_days": "Rétention des logs (jours)",
+    "ram.fmeca_rpn_critical_threshold": "Seuil RPN critique FMECA",
+    "documents.default_header": "En-tête de document par défaut"
+  },
+  "documentHeader": {
+    "title": "Documents et identité visuelle",
+    "description": "Configurez l'en-tête par défaut injecté en haut des ordres de travail, demandes d'intervention et bons de commande imprimés.",
+    "logoLabel": "Logo de l'entreprise",
+    "logoHint": "PNG, JPEG, WebP ou GIF. Max 5 Mo. Conservé pour les en-têtes de documents et le chrome applicatif futur.",
+    "uploadLogo": "Téléverser le logo",
+    "replaceLogo": "Remplacer le logo",
+    "removeLogo": "Supprimer le logo",
+    "editorLabel": "Contenu de l'en-tête",
+    "previewLabel": "Aperçu impression",
+    "previewEmpty": "Aucun en-tête configuré. Les documents imprimés n'afficheront pas d'en-tête entreprise tant que vous n'aurez pas enregistré de contenu ici.",
+    "save": "Enregistrer l'en-tête",
+    "saving": "Enregistrement…",
+    "saveSuccess": "En-tête de document enregistré",
+    "saveError": "Échec de l'enregistrement de l'en-tête",
+    "loadError": "Échec du chargement de l'en-tête",
+    "logoUploadError": "Échec du téléversement du logo",
+    "logoClearError": "Échec de la suppression du logo",
+    "invalidShape": "La valeur d'en-tête stockée est invalide. Réinitialisation vers un modèle vide.",
+    "toolbar": {
+      "bold": "Gras",
+      "italic": "Italique",
+      "underline": "Souligné",
+      "alignLeft": "Aligner à gauche",
+      "alignCenter": "Centrer",
+      "alignRight": "Aligner à droite",
+      "bulletList": "Liste à puces",
+      "orderedList": "Liste numérotée",
+      "heading": "Titre",
+      "paragraph": "Paragraphe",
+      "undo": "Annuler",
+      "redo": "Rétablir",
+      "insertImage": "Insérer une image"
+    }
   },
   "auditLog": {
     "title": "Journal des modifications",
@@ -106,12 +152,15 @@
     "historySuperseded": "Remplacé",
     "historyDraft": "Brouillon",
     "fields": {
-      "max_session_hours": "Session max (heures)",
       "idle_timeout_minutes": "Délai d'inactivité (minutes)",
-      "step_up_window_seconds": "Fenêtre d'élévation (secondes)",
+      "absolute_session_minutes": "Session absolue (minutes)",
+      "offline_grace_hours": "Grâce hors ligne (heures)",
+      "step_up_window_minutes": "Fenêtre d'élévation (minutes)",
+      "max_failed_attempts": "Tentatives échouées max",
+      "lockout_minutes": "Verrouillage (minutes)",
       "min_length": "Longueur minimale",
       "require_uppercase": "Majuscule requise",
-      "require_number": "Chiffre requis",
+      "require_digit": "Chiffre requis",
       "max_age_days": "Âge maximum (jours)",
       "history_count": "Historique des mots de passe",
       "schedule_cron": "Planification (cron)",
@@ -139,6 +188,18 @@
       "monday": "Lundi",
       "sunday": "Dimanche"
     },
+    "currency": {
+      "DZD": "Dinar algérien (DZD)",
+      "MAD": "Dirham marocain (MAD)",
+      "TND": "Dinar tunisien (TND)",
+      "EUR": "Euro (EUR)",
+      "USD": "Dollar américain (USD)",
+      "GBP": "Livre sterling (GBP)",
+      "CHF": "Franc suisse (CHF)",
+      "CAD": "Dollar canadien (CAD)",
+      "SAR": "Riyal saoudien (SAR)",
+      "AED": "Dirham des Émirats (AED)"
+    },
     "colorMode": {
       "light": "Clair",
       "dark": "Sombre"
@@ -157,6 +218,72 @@
     "channel": {
       "stable": "Stable",
       "beta": "Bêta"
+    }
+  },
+  "tabs": {
+    "profile": "Mon profil",
+    "notifications": "Notifications",
+    "general": "Général",
+    "security": "Sécurité & Logs",
+    "backup": "Sauvegarde & Ops",
+    "integrations": "Système & Sync",
+    "profileHint": "Informations du compte, mot de passe, PIN, appareils de confiance et historique de session.",
+    "notificationsHint": "Boîte de réception, accusés, reports et préférences par catégorie.",
+    "generalHint": "Langue, apparence et préférences système.",
+    "securityHint": "Politique mot de passe, session, journal d'activité et audit.",
+    "integrationsHint": "État de sync, licence, connexions et diagnostics."
+  },
+  "backupOps": {
+    "title": "Opérations de sauvegarde",
+    "description": "Lancer une sauvegarde manuelle, valider un fichier ou consulter l'historique.",
+    "loadError": "Impossible de charger l'historique des sauvegardes",
+    "chooseTarget": "Choisir la destination de sauvegarde",
+    "chooseBackup": "Choisir le fichier de sauvegarde à valider",
+    "run": "Lancer la sauvegarde",
+    "runSuccess": "Sauvegarde terminée",
+    "runError": "Échec de la sauvegarde",
+    "validate": "Valider la sauvegarde",
+    "validateOk": "Fichier de sauvegarde valide",
+    "validateMismatch": "Checksum non concordant",
+    "validateError": "Échec de la validation",
+    "checksumMatch": "Checksum concordant",
+    "computedChecksum": "Checksum calculé",
+    "yes": "Oui",
+    "no": "Non",
+    "history": "Historique des sauvegardes",
+    "historyEmpty": "Aucune sauvegarde pour le moment",
+    "colStarted": "Début",
+    "colStatus": "Statut",
+    "colPath": "Chemin",
+    "status": {
+      "success": "Succès",
+      "failed": "Échec",
+      "partial": "Partiel",
+      "running": "En cours"
+    },
+    "resetTitle": "Réinitialisation usine (stub)",
+    "resetDescription": "Valide uniquement les contrôles de sécurité. La suppression des données n'est pas implémentée dans cette phase.",
+    "resetPhraseLabel": "Phrase de confirmation",
+    "resetPhrasePlaceholder": "Saisir la phrase de confirmation",
+    "resetAction": "Exécuter le stub de réinitialisation",
+    "resetStubOk": "Stub de réinitialisation accepté",
+    "resetStubHint": "Aucune donnée n'a été supprimée. La réinitialisation complète arrivera plus tard.",
+    "resetError": "Échec du stub de réinitialisation"
+  },
+  "integrations": {
+    "profilesTitle": "Profils de connexion",
+    "profilesDescription": "Liste en lecture seule des profils d'intégration configurés.",
+    "profilesEmpty": "Aucun profil de connexion configuré pour le moment.",
+    "profilesLoadError": "Impossible de charger les profils de connexion",
+    "colName": "Nom",
+    "colType": "Type",
+    "colStatus": "Statut",
+    "colLastTest": "Dernier test",
+    "status": {
+      "active": "Actif",
+      "inactive": "Inactif",
+      "error": "Erreur",
+      "unknown": "Inconnu"
     }
   }
 }

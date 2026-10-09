@@ -243,7 +243,7 @@ pub struct InterventionRequest {
     pub id: i64,
     pub code: String,
     // Origin context
-    pub asset_id: i64,
+    pub equipment_id: i64,
     pub sub_asset_ref: Option<String>,
     pub org_node_id: i64,
     // State
@@ -268,7 +268,6 @@ pub struct InterventionRequest {
     pub observed_at: Option<String>,
     pub submitted_at: String,
     // Review / approval tracking
-    pub review_team_id: Option<i64>,
     pub reviewer_id: Option<i64>,
     pub screened_at: Option<String>,
     pub approved_at: Option<String>,
@@ -352,9 +351,9 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
     Ok(InterventionRequest {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
-        asset_id: row
-            .try_get::<i64>("", "asset_id")
-            .map_err(|e| decode_err("asset_id", e))?,
+        equipment_id: row
+            .try_get::<i64>("", "equipment_id")
+            .map_err(|e| decode_err("equipment_id", e))?,
         sub_asset_ref: row
             .try_get::<Option<String>>("", "sub_asset_ref")
             .map_err(|e| decode_err("sub_asset_ref", e))?,
@@ -408,9 +407,6 @@ pub fn map_intervention_request(row: &QueryResult) -> AppResult<InterventionRequ
         submitted_at: row
             .try_get::<String>("", "submitted_at")
             .map_err(|e| decode_err("submitted_at", e))?,
-        review_team_id: row
-            .try_get::<Option<i64>>("", "review_team_id")
-            .map_err(|e| decode_err("review_team_id", e))?,
         reviewer_id: row
             .try_get::<Option<i64>>("", "reviewer_id")
             .map_err(|e| decode_err("reviewer_id", e))?,

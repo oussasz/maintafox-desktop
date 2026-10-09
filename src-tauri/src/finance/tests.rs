@@ -28,7 +28,7 @@ async fn seed_budget_fixture_org(db: &DatabaseConnection) {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO org_structure_models
-            (sync_id, version_number, status, description, created_at, updated_at)
+            (entity_sync_id, version_number, status, description, created_at, updated_at)
          VALUES ('budget-structure', 1, 'active', 'budget test structure', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
         [],
     ))
@@ -38,11 +38,11 @@ async fn seed_budget_fixture_org(db: &DatabaseConnection) {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO org_node_types
-            (sync_id, structure_model_id, code, label, can_host_assets, can_own_work, can_carry_cost_center,
+            (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work, can_carry_cost_center,
              can_aggregate_kpis, can_receive_permits, is_root_type, is_active, created_at, updated_at)
          VALUES (
             'budget-node-type',
-            (SELECT id FROM org_structure_models WHERE sync_id = 'budget-structure'),
+            (SELECT id FROM org_structure_models WHERE entity_sync_id = 'budget-structure'),
             'SITE',
             'Site',
             1, 1, 1, 1, 1, 1, 1,
@@ -57,12 +57,12 @@ async fn seed_budget_fixture_org(db: &DatabaseConnection) {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO org_nodes
-            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, created_at, updated_at, row_version, structure_model_id)
+            (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status, created_at, updated_at, row_version, structure_model_id)
          VALUES (
             'budget-site',
             'SITE-BGT',
             'Budget Site',
-            (SELECT id FROM org_node_types WHERE sync_id = 'budget-node-type'),
+            (SELECT id FROM org_node_types WHERE entity_sync_id = 'budget-node-type'),
             NULL,
             '/',
             0,
@@ -70,7 +70,7 @@ async fn seed_budget_fixture_org(db: &DatabaseConnection) {
             '2026-01-01T00:00:00Z',
             '2026-01-01T00:00:00Z',
             1,
-            (SELECT id FROM org_structure_models WHERE sync_id = 'budget-structure')
+            (SELECT id FROM org_structure_models WHERE entity_sync_id = 'budget-structure')
          )",
         [],
     ))
@@ -82,7 +82,7 @@ async fn site_node_id(db: &DatabaseConnection) -> i64 {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM org_nodes WHERE sync_id = 'budget-site'",
+            "SELECT id FROM org_nodes WHERE entity_sync_id = 'budget-site'",
             [],
         ))
         .await

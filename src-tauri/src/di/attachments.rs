@@ -14,7 +14,7 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
@@ -115,7 +115,7 @@ fn map_attachment(row: &QueryResult) -> AppResult<DiAttachment> {
 /// - Invalid attachment type
 /// - Disk write failure
 pub async fn save_di_attachment(
-    db: &impl ConnectionTrait,
+    db: &DatabaseConnection,
     app_data_dir: &Path,
     input: DiAttachmentInput,
 ) -> AppResult<DiAttachment> {
@@ -148,7 +148,7 @@ pub async fn save_di_attachment(
     let di_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, status FROM intervention_requests WHERE id = ?",
+            "SELECT id, status, entity_sync_id FROM intervention_requests WHERE id = ?",
             [input.di_id.into()],
         ))
         .await?
@@ -165,6 +165,10 @@ pub async fn save_di_attachment(
         ]));
     }
 
+    let parent_entity_sync_id: String = di_row
+        .try_get::<String>("", "entity_sync_id")
+        .unwrap_or_default();
+
     // ── Generate unique relative path ─────────────────────────────────────
     let uuid = Uuid::new_v4();
     let relative_path = format!("di_attachments/{}/{}-{}", input.di_id, uuid, sanitized_name);
@@ -179,6 +183,8 @@ pub async fn save_di_attachment(
     // ── Insert DB record ──────────────────────────────────────────────────
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let size_bytes = input.file_bytes.len() as i64;
+    let mime_type = input.mime_type.clone();
+    let file_name = sanitized_name.to_string();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -188,9 +194,9 @@ pub async fn save_di_attachment(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             input.di_id.into(),
-            sanitized_name.to_string().into(),
+            file_name.clone().into(),
             relative_path.clone().into(),
-            input.mime_type.into(),
+            mime_type.clone().into(),
             size_bytes.into(),
             input.attachment_type.into(),
             input.uploaded_by_id.into(),
@@ -202,6 +208,41 @@ pub async fn save_di_attachment(
         ],
     ))
     .await?;
+
+    if !parent_entity_sync_id.is_empty() {
+        let env = crate::sync::media::resolve_media_deployment_env();
+        let tenant_id = crate::sync::media::resolve_media_tenant_id(db).await;
+        match crate::sync::media::stage_media_bytes(
+            db,
+            env,
+            &tenant_id,
+            "intervention_requests",
+            &parent_entity_sync_id,
+            &file_name,
+            &mime_type,
+            &input.file_bytes,
+            Some(relative_path.clone()),
+            None,
+        )
+        .await
+        {
+            Ok(payload) => {
+                crate::sync::foundation_stage::warn_stage(
+                    crate::sync::media::upsert_media_attachment_row(db, &payload).await,
+                    "media_attachments upsert (di)",
+                );
+            }
+            Err(e) => {
+                tracing::warn!(target: "maintafox", "sync stage media (di): {e}");
+            }
+        }
+    } else {
+        tracing::warn!(
+            target: "maintafox",
+            di_id = input.di_id,
+            "sync stage media skipped: DI missing entity_sync_id"
+        );
+    }
 
     // ── Re-fetch the inserted row ─────────────────────────────────────────
     let row = db
@@ -218,7 +259,7 @@ pub async fn save_di_attachment(
 
 /// Save a DI attachment by copying from a filesystem path (equipment-photo style).
 pub async fn save_di_attachment_from_path(
-    db: &impl ConnectionTrait,
+    db: &DatabaseConnection,
     app_data_dir: &Path,
     di_id: i64,
     source_path: &str,
@@ -384,7 +425,42 @@ pub async fn list_di_attachments(db: &impl ConnectionTrait, di_id: i64) -> AppRe
 
 /// Delete the attachment DB record. Does NOT delete the file from disk.
 /// The caller (command layer) must hold `di.admin` to invoke this.
-pub async fn delete_di_attachment_record(db: &impl ConnectionTrait, attachment_id: i64) -> AppResult<()> {
+pub async fn delete_di_attachment_record(db: &DatabaseConnection, attachment_id: i64) -> AppResult<()> {
+    let existing = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT a.relative_path, ir.entity_sync_id AS parent_entity_sync_id
+             FROM di_attachments a
+             JOIN intervention_requests ir ON ir.id = a.di_id
+             WHERE a.id = ?",
+            [attachment_id.into()],
+        ))
+        .await?;
+
+    if let Some(row) = existing {
+        let relative_path: String = row.try_get("", "relative_path").unwrap_or_default();
+        let parent_esid: String = row.try_get("", "parent_entity_sync_id").unwrap_or_default();
+        crate::sync::foundation_stage::warn_stage(
+            crate::sync::media::stage_media_delete_if_found(
+                db,
+                Some("intervention_requests"),
+                if parent_esid.is_empty() {
+                    None
+                } else {
+                    Some(parent_esid.as_str())
+                },
+                if relative_path.is_empty() {
+                    None
+                } else {
+                    Some(relative_path.as_str())
+                },
+                None,
+            )
+            .await,
+            "media delete (di)",
+        );
+    }
+
     let result = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,

@@ -113,8 +113,22 @@
     },
     "actions": {
       "revoke": "Révoquer",
-      "deactivate": "Désactiver"
+      "deactivate": "Désactiver",
+      "resetPassword": "Réinitialiser le mot de passe"
     },
+    "resetPassword": {
+      "confirm": "Réinitialiser le mot de passe de cet utilisateur ? Un mot de passe temporaire sera généré et affiché une seule fois. L’utilisateur devra le changer à la prochaine connexion.",
+      "success": "Mot de passe temporaire créé",
+      "failed": "Échec de la réinitialisation du mot de passe",
+      "ssoUnavailable": "Les comptes SSO uniquement n’ont pas de mot de passe local",
+      "showOnceTitle": "Mot de passe temporaire",
+      "showOnceDescription": "Copiez ce mot de passe et remettez-le à l’utilisateur de façon sécurisée. Il ne sera plus affiché.",
+      "showOnceWarning": "Ce mot de passe temporaire n’est affiché qu’une seule fois. Après fermeture de cette fenêtre, il ne pourra plus être récupéré dans l’application.",
+      "copy": "Copier le mot de passe",
+      "copied": "Copié dans le presse-papiers",
+      "close": "Fermer"
+    },
+    "unlocked": "Compte déverrouillé",
     "assignRole": {
       "title": "Assigner un rôle",
       "description": "Sélectionnez un rôle et un type de périmètre.",
@@ -157,7 +171,9 @@
     },
     "errors": {
       "loadFailed": "Erreur de chargement des utilisateurs",
-      "deactivateFailed": "Erreur lors de la désactivation"
+      "deactivateFailed": "Erreur lors de la désactivation",
+      "unlockFailed": "Erreur lors du déverrouillage",
+      "resetPasswordFailed": "Erreur lors de la réinitialisation du mot de passe"
     }
   },
   "profile": {
@@ -254,7 +270,8 @@
     "noExpiry": "Pas d'expiration",
     "save": "Enregistrer la politique",
     "saving": "Enregistrement...",
-    "saved": "Politique enregistrée avec succès."
+    "saved": "Politique enregistrée avec succès.",
+    "saveError": "Échec de l'enregistrement de la politique de mot de passe."
   },
   "permissions": {
     "domains": "Domaines",

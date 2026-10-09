@@ -16,12 +16,15 @@
     "cards": "Cartes"
   },
   "tabs": {
-    "directory": "Annuaire",
+    "directory": "Personnel",
     "skillsMatrix": "Matrice des competences",
+    "availability": "Disponibilité",
     "availabilityCalendar": "Calendrier de disponibilite",
+    "teams": "Gestion des équipes",
     "teamCapacity": "Capacite des equipes",
     "training": "Formation et certifications",
-    "positions": "Postes"
+    "positions": "Postes",
+    "analytics": "Analyses"
   },
   "training": {
     "heading": "Formation et qualifications",
@@ -85,6 +88,7 @@
   "filters": {
     "searchPlaceholder": "Recherche code, nom, e-mail, téléphone…",
     "entity": "Entité",
+    "team": "Équipe",
     "position": "Poste",
     "status": "Disponibilité",
     "employmentType": "Type d'emploi",
@@ -104,10 +108,21 @@
   },
   "detail": {
     "title": "Détail personnel",
+    "noSelection": "Sélectionnez une personne pour afficher le détail",
     "placeholder": "Le panneau détaillé sera disponible dans une version ultérieure.",
     "contractorBanner": "Profil externe lie a {{company}}.",
     "available": "disponibles",
     "blocked": "bloquees",
+    "photo": {
+      "alt": "Photo de {{name}}",
+      "loadFailed": "Photo indisponible"
+    },
+    "actions": {
+      "edit": "Modifier",
+      "close": "Fermer",
+      "deactivate": "Désactiver",
+      "more": "Plus d'actions"
+    },
     "tabs": {
       "identity": "Identite",
       "skills": "Competences",
@@ -125,6 +140,19 @@
       "pendingDi": "DI en attente",
       "di30d": "DI sur 30 jours"
     },
+    "rates": {
+      "effectiveFrom": "Effective au",
+      "labor": "Taux horaire",
+      "overtime": "Taux heures sup.",
+      "source": "Source",
+      "active": "Actif",
+      "empty": "Aucune grille de taux. Ajoutez un taux horaire pour le Planning et le coût main-d'œuvre OT.",
+      "addTitle": "Ajouter une grille de taux",
+      "add": "Ajouter",
+      "saving": "Enregistrement…",
+      "hint": "Les nouvelles grilles sont effectives aujourd'hui. L'historique est conservé.",
+      "overviewMissing": "Aucun taux horaire actif"
+    },
     "assignment": {
       "unknown": "Affectation inconnue",
       "reason": "Motif",
@@ -134,19 +162,27 @@
   },
   "create": {
     "title": "Nouveau personnel",
+    "editTitle": "Modifier le personnel",
     "submit": "Créer",
+    "save": "Enregistrer",
     "cancel": "Annuler",
     "section": {
       "identity": "Identité",
       "origin": "Origine et contrat",
       "organization": "Organisation",
+      "assignment": "Affectation organisationnelle",
       "photo": "Photo",
       "skills": "Compétences",
       "certifications": "Certifications",
+      "certs": "Certifications",
       "contact": "Contact",
+      "rates": "Tarifs horaires",
       "account": "Compte MaintaFox",
+      "access": "Accès plateforme",
       "notes": "Notes"
     },
+    "ratesHint": "Optionnel. Crée une grille de taux à compter d'aujourd'hui pour le Planning et le coût main-d'œuvre OT.",
+    "rateCardFailed": "Personnel enregistré, mais la grille de taux n'a pas pu être créée : {{msg}}. Ajoutez le taux depuis l'onglet Tarifs.",
     "photo": {
       "label": "Photo de profil",
       "hint": "Choisissez une photo (JPEG/PNG, max 5 Mo)",
@@ -205,7 +241,11 @@
     "contractStart": "Début du contrat",
     "contractEnd": "Fin du contrat",
     "notes": "Notes",
-    "photo": "Photo"
+    "photo": "Photo",
+    "laborRate": "Taux horaire",
+    "laborRatePlaceholder": "ex. 45,00",
+    "overtimeRate": "Taux heures sup.",
+    "overtimeRatePlaceholder": "Optionnel — 0 si vide"
   },
   "status": {
     "available": "Disponible",
@@ -233,7 +273,105 @@
   },
   "validation": {
     "nameRequired": "Le nom est requis",
-    "employmentTypeRequired": "Le type d'emploi est requis"
+    "employmentTypeRequired": "Le type d'emploi est requis",
+    "codeRequired": "Le code employé est requis",
+    "positionRequired": "Le poste est requis",
+    "entityRequired": "L'entité est requise",
+    "teamRequired": "L'équipe (crew) est requise",
+    "noCrewsForEntity": "Aucune équipe active pour cette entité. Créez d'abord une équipe.",
+    "teamOutOfScope": "L'équipe sélectionnée n'appartient pas au périmètre de cette entité.",
+    "scheduleRequired": "Le planning est requis",
+    "companyRequired": "La société externe est requise",
+    "laborRateRequiredForOvertime": "Le taux horaire est requis lorsque le taux heures sup. est renseigné",
+    "laborRateInvalid": "Le taux horaire doit être un nombre ≥ 0",
+    "overtimeRateInvalid": "Le taux heures sup. doit être un nombre ≥ 0"
+  },
+  "crews": {
+    "catalogTitle": "Catalogue des équipes",
+    "empty": "Aucune équipe. Créez une équipe pour affecter le personnel depuis l'annuaire.",
+    "noCapacityInHorizon": "Aucune capacité sur cet horizon.",
+    "list": {
+      "code": "Code",
+      "name": "Nom",
+      "members": "Membres",
+      "leads": "Chefs",
+      "availableMin": "Disponible (min)",
+      "blockedMin": "Bloqué (min)",
+      "availabilityPct": "Disponibilité %"
+    },
+    "detail": {
+      "title": "Détail équipe",
+      "notFound": "Équipe introuvable.",
+      "lead": "Chef",
+      "role": "Rôle",
+      "allocation": "Allocation",
+      "skill": "Compétence",
+      "proficiency": "Niveau",
+      "coverage": "Couverture",
+      "coverageStatus": {
+        "active": "Active",
+        "expired": "Expirée",
+        "missing": "Manquante"
+      },
+      "skillMapPerson": "Technicien",
+      "riskLevel": "Risque",
+      "coverageCount": "Couverture",
+      "reason": "Motif",
+      "workDate": "Date",
+      "availableHours": "Disponible (h)",
+      "committedHours": "Engagé (h)",
+      "utilization": "Utilisation",
+      "horizonKpis": "Capacité sur l'horizon",
+      "capacitySummary": "{{available}} min disponibles · {{blocked}} min bloquées · {{ratio}} % disponibilité",
+      "capacityLoadUnavailable": "La charge journalière nécessite la permission planning.",
+      "emptyRoster": "Aucun membre actif dans cette équipe.",
+      "emptySkills": "Aucune couverture de compétences pour cette équipe.",
+      "emptySuccession": "Aucun risque de succession pour cette équipe.",
+      "tabs": {
+        "overview": "Vue d'ensemble",
+        "roster": "Effectif",
+        "capacity": "Capacité",
+        "skills": "Compétences",
+        "succession": "Succession"
+      }
+    },
+    "actions": {
+      "create": "Créer une équipe",
+      "edit": "Modifier",
+      "setLead": "Définir comme chef",
+      "clearLead": "Retirer le chef"
+    },
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive",
+      "disbanded": "Dissoute"
+    },
+    "types": {
+      "maintenance": "Maintenance",
+      "inspection": "Inspection",
+      "planning": "Planning",
+      "contractor": "Sous-traitant",
+      "hse": "HSE"
+    },
+    "form": {
+      "createTitle": "Créer une équipe",
+      "editTitle": "Modifier l'équipe",
+      "code": "Code",
+      "name": "Nom",
+      "type": "Type",
+      "site": "Site / entité",
+      "status": "Statut",
+      "description": "Description",
+      "icon": "Icône (écu)",
+      "iconNone": "Monogramme",
+      "accent": "Couleur d'accent",
+      "accentNone": "Neutre",
+      "save": "Enregistrer",
+      "errors": {
+        "required": "Le code et le nom sont requis.",
+        "siteRequired": "Le site / entité est requis."
+      }
+    }
   },
   "position": {
     "panel": {
@@ -300,27 +438,136 @@
     }
   },
   "availability": {
+    "title": "Disponibilité",
     "from": "Du",
     "to": "Au",
+    "horizonPreset": "{{days}}j",
+    "ungroupedTeam": "Sans équipe",
+    "empty": "Aucun technicien ne correspond aux filtres pour cet horizon.",
+    "emptyBlocks": "Aucun bloc de disponibilité sur cet horizon.",
+    "filters": {
+      "person": "Personne",
+      "blockType": "Type de bloc",
+      "critical": "Critique",
+      "criticalOnly": "Critiques uniquement",
+      "searchPlaceholder": "Rechercher nom ou code technicien…"
+    },
+    "actions": {
+      "createBlock": "Créer un bloc",
+      "editBlock": "Modifier",
+      "endBlock": "Terminer",
+      "refresh": "Actualiser",
+      "resetFilters": "Réinitialiser",
+      "openPersonnel": "Ouvrir dans l'annuaire",
+      "closeDetail": "Fermer"
+    },
+    "summary": {
+      "available": "Techniciens disponibles",
+      "availableHint": "Personnes dont la majorité des jours de l'horizon sont libres",
+      "blocked": "Techniciens bloqués",
+      "blockedHint": "Personnes avec au moins un jour bloqué ou critique",
+      "critical": "Contraintes critiques",
+      "criticalHint": "Jours-personne avec une contrainte critique",
+      "coverageRisk": "Jours à risque de couverture",
+      "coverageRiskHint": "Jours sans technicien libre dans le périmètre filtré"
+    },
+    "views": {
+      "chronology": "Chronologie",
+      "list": "Liste"
+    },
+    "matrix": {
+      "person": "Technicien"
+    },
+    "cell": {
+      "free": "Libre",
+      "partial": "Partiel",
+      "blocked": "Bloqué",
+      "critical": "Critique",
+      "rest": "Repos"
+    },
+    "list": {
+      "minutesFree": "{{count}} min libres"
+    },
+    "badges": {
+      "certExpired": "Qualification expirée",
+      "certExpiring": "Certification bientôt expirée"
+    },
+    "detail": {
+      "blocks": "Blocs sur l'horizon",
+      "critical": "Critique"
+    },
+    "inspector": {
+      "tabs": {
+        "overview": "Vue d'ensemble",
+        "horizon": "Horizon",
+        "constraint": "Contrainte",
+        "skills": "Compétences",
+        "workload": "Charge"
+      },
+      "kpi": {
+        "freeDays": "Jours libres",
+        "partialDays": "Jours partiels",
+        "blockedDays": "Bloqués / critiques",
+        "availableMinutes": "Min disponibles"
+      },
+      "state": {
+        "available": "Disponible",
+        "assigned": "Affecté",
+        "on_leave": "En congé",
+        "in_training": "En formation",
+        "blocked": "Bloqué"
+      },
+      "overview": {
+        "identity": "Contexte planification",
+        "team": "Équipe",
+        "entity": "Entité",
+        "horizon": "Horizon",
+        "assignability": "Assignabilité maintenant",
+        "status": "Statut",
+        "noReasons": "Aucune raison de contrainte active."
+      },
+      "horizon": {
+        "title": "Bandeau jours",
+        "hint": "Cliquez un jour pour préremplir un nouveau bloc."
+      },
+      "constraint": {
+        "emptyTitle": "Aucun bloc sélectionné",
+        "empty": "Sélectionnez un bloc sur la chronologie ou dans la liste ci-dessous.",
+        "createdBy": "Créé par"
+      },
+      "skills": {
+        "title": "Compétences (lecture seule)",
+        "empty": "Aucune compétence enregistrée pour cette personne."
+      },
+      "workload": {
+        "title": "Charge"
+      }
+    },
     "form": {
-      "title": "Creer un bloc de disponibilite",
+      "title": "Créer un bloc de disponibilité",
+      "editTitle": "Modifier le bloc de disponibilité",
       "personnel": "Personnel",
       "blockType": "Type de bloc",
-      "startAt": "Debut",
+      "startAt": "Début",
       "endAt": "Fin",
       "reason": "Raison",
-      "isCritical": "Critique (declenche une notification)",
-      "submit": "Creer le bloc",
+      "isCritical": "Critique (déclenche une notification)",
+      "criticalForced": "obligatoire pour ce type",
+      "submit": "Créer le bloc",
+      "save": "Enregistrer",
+      "cancel": "Annuler",
+      "confirmOverlap": "Confirmer le chevauchement",
       "types": {
-        "medical": "Medical",
+        "medical": "Médical",
         "restriction": "Restriction",
-        "leave": "Conge",
+        "leave": "Congé",
         "training": "Formation"
       },
       "errors": {
-        "personnelRequired": "Selectionnez un personnel.",
-        "timeRequired": "Debut et fin sont obligatoires.",
-        "invalidRange": "La fin doit etre apres le debut."
+        "personnelRequired": "Sélectionnez un personnel.",
+        "timeRequired": "Début et fin sont obligatoires.",
+        "invalidRange": "La fin doit être après le début.",
+        "overlapConfirm": "Ce bloc chevauche un bloc existant. Confirmez pour enregistrer quand même."
       }
     }
   },
@@ -330,7 +577,10 @@
     "availableMinutes": "Minutes disponibles : {{count}}",
     "blockedMinutes": "Minutes bloquees : {{count}}",
     "ratio": "Taux de disponibilite : {{value}}",
-    "successionRisk": "Risque de succession"
+    "successionRisk": "Risque de succession",
+    "filters": {
+      "searchPlaceholder": "Rechercher nom ou code d'équipe…"
+    }
   },
   "import": {
     "title": "Assistant d'import du personnel",

@@ -29,7 +29,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrgStructureModel {
     pub id: i32,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub version_number: i32,
     /// "draft" | "active" | "superseded" | "archived"
     pub status: String,
@@ -57,9 +57,9 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 fn map_model(row: QueryResult) -> AppResult<OrgStructureModel> {
     Ok(OrgStructureModel {
         id: row.try_get::<i32>("", "id").map_err(|e| decode_err("id", e))?,
-        sync_id: row
-            .try_get::<String>("", "sync_id")
-            .map_err(|e| decode_err("sync_id", e))?,
+        entity_sync_id: row
+            .try_get::<String>("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
         version_number: row
             .try_get::<i32>("", "version_number")
             .map_err(|e| decode_err("version_number", e))?,
@@ -90,7 +90,7 @@ fn map_model(row: QueryResult) -> AppResult<OrgStructureModel> {
 // â”€â”€â”€ SQL constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SELECT_COLS: &str = r"
-    id, sync_id, version_number, status, description,
+    id, entity_sync_id, version_number, status, description,
     activated_at, activated_by_id, superseded_at,
     created_at, updated_at
 ";
@@ -144,7 +144,7 @@ pub async fn create_model_in_conn(
     created_by_id: i32,
 ) -> AppResult<OrgStructureModel> {
     let now = Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     let max_row = db
         .query_one(Statement::from_string(
@@ -160,10 +160,10 @@ pub async fn create_model_in_conn(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_structure_models
-          (sync_id, version_number, status, description, created_at, updated_at)
+          (entity_sync_id, version_number, status, description, created_at, updated_at)
           VALUES (?, ?, 'draft', ?, ?, ?)",
         [
-            sync_id.clone().into(),
+            entity_sync_id.clone().into(),
             next_version.into(),
             payload.description.clone().into(),
             now.clone().into(),
@@ -172,9 +172,9 @@ pub async fn create_model_in_conn(
     ))
     .await?;
 
-    let sql = format!("SELECT {SELECT_COLS} FROM org_structure_models WHERE sync_id = ?");
+    let sql = format!("SELECT {SELECT_COLS} FROM org_structure_models WHERE entity_sync_id = ?");
     let row = db
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [sync_id.into()]))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [entity_sync_id.into()]))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("structure model created but not found after insert")))?;
     let model = map_model(row)?;
@@ -306,16 +306,16 @@ pub async fn fork_draft_from_published(
             .try_get::<i64>("", "is_active")
             .map_err(|e| decode_err("is_active", e))?;
 
-        let sync_id = Uuid::new_v4().to_string();
+        let entity_sync_id = Uuid::new_v4().to_string();
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO org_node_types
-            (sync_id, structure_model_id, code, label, icon_key, color, depth_hint,
+            (entity_sync_id, structure_model_id, code, label, icon_key, color, depth_hint,
              can_host_assets, can_own_work, can_carry_cost_center, can_aggregate_kpis, can_receive_permits,
              is_root_type, is_active, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                sync_id.clone().into(),
+                entity_sync_id.clone().into(),
                 draft_id.into(),
                 code.into(),
                 label.into(),
@@ -489,7 +489,7 @@ pub async fn fork_draft_from_published(
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO org_nodes
-              (sync_id, code, name, node_type_id, parent_id,
+              (entity_sync_id, code, name, node_type_id, parent_id,
                ancestor_path, depth, description, cost_center_code,
                external_reference, status, effective_from, effective_to,
                erp_reference, notes, created_at, updated_at, row_version,
@@ -918,7 +918,7 @@ pub async fn reconcile_org_draft_lineage(
         txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO org_nodes
-              (sync_id, code, name, node_type_id, parent_id,
+              (entity_sync_id, code, name, node_type_id, parent_id,
                ancestor_path, depth, description, cost_center_code,
                external_reference, status, effective_from, effective_to,
                erp_reference, notes, created_at, updated_at, row_version,

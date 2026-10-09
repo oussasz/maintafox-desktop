@@ -1,7 +1,72 @@
 {
+  "hub": {
+    "title": "RAMS & Analytics",
+    "subtitle": "Dense industrial KPIs, Deep RAMS, report builder, schedules, and export history.",
+    "navAria": "Analytics module sections",
+    "tabs": {
+      "dashboards": "Executive Dashboards",
+      "rams": "Deep RAMS",
+      "templates": "Report Builder",
+      "schedules": "Schedules",
+      "history": "History & Audit"
+    },
+    "dashboards": {
+      "title": "Executive Dashboards",
+      "subtitle": "Role-aware dense KPI grid with horizon and organization scope. Formulas come from the Analytics projection (same SSOT as Deep RAMS snapshots).",
+      "comingSoon": "Role-aware KPI widgets and filters arrive in the next milestone. Deep RAMS and report exports remain available on the other tabs.",
+      "customize": "Customize",
+      "customizeTitle": "Dashboard layout",
+      "saveLayout": "Save layout",
+      "cancel": "Cancel",
+      "reliabilityHint": "Fleet averages from reliability KPI snapshots over the last {{days}} days (org-scoped when a site is selected). Deltas vs previous horizon.",
+      "vsPrior": "vs prior",
+      "pmEmpty": "No open PM due-queue in this scope.",
+      "sections": {
+        "ops": "Operations",
+        "pm": "PM pipeline",
+        "rams": "RAMS fleet",
+        "cost": "Cost",
+        "health": "Fleet health"
+      },
+      "filters": {
+        "horizon": "Horizon",
+        "days7": "7 days",
+        "days30": "30 days",
+        "days90": "90 days",
+        "orgScope": "Organization",
+        "allOrgs": "All organizations"
+      },
+      "widgets": {
+        "opsKpis": "Operational KPIs",
+        "pmDue": "PM due queue",
+        "reliability": "RAMS reliability",
+        "maintenanceCost": "Maintenance cost",
+        "workload": "Workload chart",
+        "diStatus": "DI status distribution"
+      },
+      "kpi": {
+        "pmOverdue": "PM overdue",
+        "pmDueToday": "PM due today",
+        "pmDueNext7d": "PM due next 7 days",
+        "mtbf": "Avg MTBF (h)",
+        "mttr": "Avg MTTR (h)",
+        "availability": "Avg availability",
+        "dataQuality": "Avg data quality",
+        "snapshots": "Snapshots",
+        "failureEvents": "Failure events",
+        "maintenanceCost": "Closed WO cost (horizon)"
+      },
+      "badActors": {
+        "title": "Top 5 bad-actor assets",
+        "empty": "No snapshots in horizon",
+        "asset": "Asset",
+        "events": "Events"
+      }
+    }
+  },
   "page": {
-    "title": "Reports & analytics",
-    "subtitle": "Template library, scheduled exports (local), and run history.",
+    "title": "RAMS & Analytics",
+    "subtitle": "Template library, scheduled exports (local archive), and run history.",
     "noAccess": "You do not have permission to view reports."
   },
   "templates": {
@@ -20,14 +85,18 @@
     "enabled": "Enabled",
     "save": "Add schedule",
     "delete": "Remove",
-    "next": "Next run"
+    "next": "Next run",
+    "noAccess": "You do not have permission to manage report schedules."
   },
   "runs": {
-    "title": "Recent runs",
+    "title": "History & audit",
     "status": "Status",
     "format": "Format",
     "started": "Started",
     "path": "Artifact / error",
+    "detail": "Detail",
+    "download": "Download",
+    "archived": "Stored in local archive",
     "statusValues": {
       "pending": "Pending",
       "running": "Running",

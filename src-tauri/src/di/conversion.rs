@@ -48,12 +48,12 @@ pub struct WoConversionResult {
 
 /// All columns from `intervention_requests` for SELECT reuse (aliased as `ir`).
 const IR_COLS: &str = "\
-    ir.id, ir.code, ir.asset_id, ir.sub_asset_ref, ir.org_node_id, \
+    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id, \
     ir.status, ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
     ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
     ir.observed_at, ir.submitted_at, \
-    ir.review_team_id, ir.reviewer_id, ir.screened_at, ir.approved_at, \
+    ir.reviewer_id, ir.screened_at, ir.approved_at, \
     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
     ir.converted_to_wo_id, ir.converted_at, \
     ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
@@ -75,7 +75,7 @@ const IR_JOIN_COLS: &str = "\
     related_di.code AS related_di_code";
 
 const IR_JOINS: &str = "\
-    LEFT JOIN equipment eq ON eq.id = ir.asset_id \
+    LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
     LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
     LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
     LEFT JOIN user_accounts urv ON urv.id = ir.reviewer_id \
@@ -106,7 +106,7 @@ fn check_concurrency(rows_affected: u64) -> AppResult<()> {
 ///
 /// The entire operation executes inside a single transaction:
 ///   1. Load DI + guard state transition
-///   2. Validate prerequisites (asset_id, classification_code_id)
+///   2. Validate prerequisites (equipment_id, classification_code_id)
 ///   3. Generate WO code and insert WO stub
 ///   4. Update DI status to `closed` with disposition `converted_to_wo`
 ///   5. Insert state transition log
@@ -155,7 +155,7 @@ pub async fn convert_di_to_work_order(
     // ── 2. Validate conversion prerequisites ──────────────────────────────
     let mut errors: Vec<String> = Vec::new();
 
-    if di.asset_id == 0 {
+    if di.equipment_id == 0 {
         errors.push("Contexte d'actif requis pour la conversion.".into());
     }
     if di.org_node_id == 0 {
@@ -232,10 +232,10 @@ pub async fn convert_di_to_work_order(
             wo_code.clone().into(),
             type_id.into(),
             planning_status_id.into(),
-            if di.asset_id == 0 {
+            if di.equipment_id == 0 {
                 sea_orm::Value::from(None::<i64>)
             } else {
-                di.asset_id.into()
+                di.equipment_id.into()
             },
             input.di_id.into(),
             if di.org_node_id == 0 {
@@ -438,6 +438,12 @@ pub async fn convert_di_to_work_order(
 
     super::notifications::notify_converted(db, &updated_di).await;
     super::notifications::notify_closed(db, &updated_di).await;
+
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_intervention_request_sync(db, updated_di.id).await,
+        "di",
+    );
+    crate::wo::sync_stage::warn_stage_wo(db, wo_id).await;
 
     Ok(WoConversionResult {
         di: updated_di,

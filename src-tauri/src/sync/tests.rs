@@ -654,3 +654,50 @@ async fn sync_observability_report_includes_alerts_runbooks_and_recovery_proofs(
         .runbook_url
         .starts_with("https://docs.maintafox.com/runbooks/sync/")));
 }
+
+#[tokio::test]
+async fn inbox_ingest_is_pending_then_materialize_applies_equipment() {
+    let db = setup_db().await;
+
+    let batch = ApplySyncBatchInput {
+        protocol_version: SYNC_PROTOCOL_VERSION_V1.to_string(),
+        server_batch_id: "srv-mat-1".to_string(),
+        checkpoint_token: "ckpt-mat-1".to_string(),
+        acknowledged_items: vec![],
+        rejected_items: vec![],
+        inbound_items: vec![SyncInboundItemInput {
+            entity_type: "equipment".to_string(),
+            entity_sync_id: "eq-sync-mat-1".to_string(),
+            operation: "upsert".to_string(),
+            row_version: 1,
+            payload_json: r#"{"entity_sync_id":"eq-sync-mat-1","row_version":1,"asset_code":"EQ-MAT-1","asset_name":"Pump","status_code":"active_in_service"}"#.to_string(),
+        }],
+        policy_metadata_json: None,
+    };
+
+    let ingest = queries::apply_sync_batch(&db, batch).await.expect("ingest");
+    assert_eq!(ingest.inbound_applied_count, 1);
+
+    let inbox = queries::list_inbox_items(&db, Some("pending".into()), Some(10))
+        .await
+        .expect("list pending");
+    assert_eq!(inbox.len(), 1);
+
+    let mat = crate::sync::materialize::materialize_inbox_batch(&db, Some(50))
+        .await
+        .expect("materialize");
+    assert_eq!(mat.applied, 1);
+    assert_eq!(mat.conflicts, 0);
+
+    let row = db
+        .query_one(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DatabaseBackend::Sqlite,
+            "SELECT asset_id_code, name FROM equipment WHERE entity_sync_id = ?",
+            ["eq-sync-mat-1".into()],
+        ))
+        .await
+        .expect("query")
+        .expect("equipment row");
+    let code: String = row.try_get("", "asset_id_code").expect("code");
+    assert_eq!(code, "EQ-MAT-1");
+}

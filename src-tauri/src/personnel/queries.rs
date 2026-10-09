@@ -24,7 +24,7 @@ const P_JOINS: &str = "\
     FROM personnel p \
     LEFT JOIN positions pos ON pos.id = p.position_id \
     LEFT JOIN org_nodes e ON e.id = p.primary_entity_id \
-    LEFT JOIN org_nodes t ON t.id = p.primary_team_id \
+    LEFT JOIN teams t ON t.id = p.primary_team_id \
     LEFT JOIN personnel s ON s.id = p.supervisor_id \
     LEFT JOIN reference_values sc ON sc.id = p.home_schedule_reference_value_id \
     LEFT JOIN external_companies ec ON ec.id = p.external_company_id";
@@ -232,6 +232,9 @@ pub async fn open_assignment_history_segment(
     changed_by_id: Option<i64>,
     created_at: &str,
 ) -> AppResult<()> {
+    if let Some(crew_id) = team_id {
+        crate::repository::team_repository::assert_active_crew_exists(db, crew_id).await?;
+    }
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO personnel_assignment_history \
@@ -291,7 +294,7 @@ async fn write_skill_draft(
 
 /// Write an initial personnel_certifications draft row.
 async fn write_cert_draft(db: &impl ConnectionTrait, personnel_id: i64, cert: &PersonnelCertDraft) -> AppResult<()> {
-    let sync_id = uuid::Uuid::new_v4().to_string();
+    let entity_sync_id = uuid::Uuid::new_v4().to_string();
     let _ = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -301,7 +304,7 @@ async fn write_cert_draft(db: &impl ConnectionTrait, personnel_id: i64, cert: &P
               verification_status, row_version) \
              VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 1)",
             [
-                sync_id.into(),
+                entity_sync_id.into(),
                 personnel_id.into(),
                 cert.certification_type_id.into(),
                 opt_string_val(cert.issued_at.clone()),
@@ -342,6 +345,80 @@ pub async fn assert_org_node_exists(db: &DatabaseConnection, id: i64) -> AppResu
             )]),
             other => other,
         })
+}
+
+/// Sync home-crew membership in `personnel_team_assignments`.
+/// Closes any open assignment for this person, then opens one for `team_id`.
+pub async fn sync_home_crew_assignment(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+    team_id: i64,
+    now: &str,
+) -> AppResult<()> {
+    crate::repository::team_repository::assert_active_crew_exists(db, team_id).await?;
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE personnel_team_assignments
+         SET valid_to = ?, updated_at = ?
+         WHERE personnel_id = ?
+           AND (valid_to IS NULL OR date(valid_to) >= date(?))
+           AND team_id <> ?",
+        [
+            now.into(),
+            now.into(),
+            personnel_id.into(),
+            now.into(),
+            team_id.into(),
+        ],
+    ))
+    .await?;
+
+    let existing = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, is_lead FROM personnel_team_assignments
+             WHERE personnel_id = ?
+               AND team_id = ?
+               AND (valid_to IS NULL OR date(valid_to) >= date(?))
+             ORDER BY is_lead DESC, id DESC
+             LIMIT 1",
+            [personnel_id.into(), team_id.into(), now.into()],
+        ))
+        .await?;
+
+    if existing.is_some() {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE personnel_team_assignments
+             SET allocation_percent = 100.0,
+                 role_code = CASE WHEN is_lead = 1 THEN role_code ELSE 'member' END,
+                 updated_at = ?
+             WHERE personnel_id = ?
+               AND team_id = ?
+               AND (valid_to IS NULL OR date(valid_to) >= date(?))",
+            [now.into(), personnel_id.into(), team_id.into(), now.into()],
+        ))
+        .await?;
+        return Ok(());
+    }
+
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO personnel_team_assignments (
+            personnel_id, team_id, role_code, allocation_percent,
+            valid_from, valid_to, is_lead, created_at, updated_at
+         ) VALUES (?, ?, 'member', 100.0, ?, NULL, 0, ?, ?)",
+        [
+            personnel_id.into(),
+            team_id.into(),
+            now.into(),
+            now.into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -563,17 +640,19 @@ pub async fn create_personnel(
     let blocked_override = input.blocked_override.unwrap_or(false);
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let started_at = input.hire_date.as_deref().unwrap_or(now.as_str()).to_string();
+    let entity_sync_id = uuid::Uuid::new_v4().to_string();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO personnel (\
-            employee_code, full_name, employment_type, employment_origin, employment_status, \
+            entity_sync_id, employee_code, full_name, employment_type, employment_origin, employment_status, \
             blocked_override, position_id, primary_entity_id, primary_team_id, supervisor_id, \
             home_schedule_reference_value_id, availability_status, hire_date, termination_date, \
             email, phone, external_company_id, contract_number, contract_start_date, contract_end_date, \
             notes, row_version, created_at, updated_at\
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, NULL, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, NULL, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
+            entity_sync_id.into(),
             code.clone().into(),
             input.full_name.clone().into(),
             input.employment_type.clone().into(),
@@ -629,6 +708,8 @@ pub async fn create_personnel(
         write_cert_draft(&txn, new_id, cert).await?;
     }
 
+    sync_home_crew_assignment(&txn, new_id, input.primary_team_id, &now).await?;
+
     // Open initial assignment history segment
     open_assignment_history_segment(
         &txn,
@@ -648,6 +729,10 @@ pub async fn create_personnel(
     txn.commit().await?;
 
     emit_personnel_event(db, "personnel.created", new_id, Some(actor_id)).await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_personnel_sync(db, new_id).await,
+        "personnel create",
+    );
 
     get_personnel(db, new_id)
         .await?
@@ -858,6 +943,12 @@ pub async fn update_personnel(
         .await?;
     }
 
+    if let Some(team_id) = input.primary_team_id {
+        if Some(team_id) != current.primary_team_id {
+            sync_home_crew_assignment(&txn, input.id, team_id, &now).await?;
+        }
+    }
+
     // Apply employee_code change (checked before SET list)
     if let Some(ref new_code) = input.employee_code {
         let trimmed = new_code.trim();
@@ -910,6 +1001,11 @@ pub async fn update_personnel(
 
     emit_personnel_event(db, "personnel.updated", input.id, Some(actor_id)).await?;
 
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_personnel_sync(db, input.id).await,
+        "personnel update",
+    );
+
     get_personnel(db, input.id).await?.ok_or_else(|| AppError::NotFound {
         entity: "Personnel".into(),
         id: input.id.to_string(),
@@ -956,6 +1052,11 @@ pub async fn deactivate_personnel(
     }
 
     emit_personnel_event(db, "personnel.deactivated", id, Some(actor_id)).await?;
+
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_personnel_sync(db, id).await,
+        "personnel deactivate",
+    );
 
     get_personnel(db, id).await?.ok_or_else(|| AppError::NotFound {
         entity: "Personnel".into(),
@@ -1313,7 +1414,7 @@ async fn sync_position_requirement_profile(
         .await?;
         pid
     } else {
-        let sync_id = uuid::Uuid::new_v4().to_string();
+        let entity_sync_id = uuid::Uuid::new_v4().to_string();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO qualification_requirement_profiles \
@@ -1321,7 +1422,7 @@ async fn sync_position_requirement_profile(
               applies_to_permit_type_codes_json, row_version) \
              VALUES (?, ?, ?, '[]', 1)",
             [
-                sync_id.into(),
+                entity_sync_id.into(),
                 rp.profile_name.clone().into(),
                 serde_json::to_string(&rp.certification_type_ids)
                     .unwrap_or_default()
@@ -1625,7 +1726,10 @@ fn map_rate_card_row(row: &sea_orm::QueryResult) -> AppResult<PersonnelRateCard>
     })
 }
 
-pub async fn get_active_rate_card(db: &DatabaseConnection, personnel_id: i64) -> AppResult<Option<PersonnelRateCard>> {
+pub async fn get_active_rate_card(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+) -> AppResult<Option<PersonnelRateCard>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1637,6 +1741,26 @@ pub async fn get_active_rate_card(db: &DatabaseConnection, personnel_id: i64) ->
         ))
         .await?;
     row.map(|r| map_rate_card_row(&r)).transpose()
+}
+
+/// Regular labor rate from the active rate card (effective_from ≤ today), if any.
+pub async fn resolve_active_labor_rate(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+) -> AppResult<Option<f64>> {
+    Ok(get_active_rate_card(db, personnel_id)
+        .await?
+        .map(|c| c.labor_rate))
+}
+
+/// Active labor + overtime rates for cost range estimates.
+pub async fn resolve_active_rate_pair(
+    db: &impl ConnectionTrait,
+    personnel_id: i64,
+) -> AppResult<Option<(f64, f64)>> {
+    Ok(get_active_rate_card(db, personnel_id)
+        .await?
+        .map(|c| (c.labor_rate, c.overtime_rate)))
 }
 
 pub async fn create_rate_card(
@@ -1956,6 +2080,177 @@ pub async fn list_personnel_team_assignments(
         .collect())
 }
 
+/// Current (open) members of an operational crew.
+pub async fn list_team_members(
+    db: &DatabaseConnection,
+    team_id: i64,
+) -> AppResult<Vec<crate::personnel::domain::TeamMemberRow>> {
+    // Ensure the crew exists (may be inactive — still allow roster inspection).
+    let _ = crate::repository::team_repository::get_team_by_id(db, team_id).await?;
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT
+                pta.id AS assignment_id,
+                p.id AS personnel_id,
+                p.employee_code,
+                p.full_name,
+                pos.name AS position_name,
+                pta.role_code,
+                pta.allocation_percent,
+                pta.valid_from,
+                pta.valid_to,
+                pta.is_lead,
+                p.availability_status,
+                (
+                  SELECT ua.id
+                  FROM user_accounts ua
+                  WHERE ua.personnel_id = p.id
+                    AND ua.deleted_at IS NULL
+                  ORDER BY ua.id
+                  LIMIT 1
+                ) AS user_account_id
+             FROM personnel_team_assignments pta
+             INNER JOIN personnel p ON p.id = pta.personnel_id
+             LEFT JOIN positions pos ON pos.id = p.position_id
+             WHERE pta.team_id = ?
+               AND (pta.valid_to IS NULL OR pta.valid_to >= strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+               AND p.employment_status = 'active'
+             ORDER BY pta.is_lead DESC, p.full_name ASC, pta.id ASC",
+            [team_id.into()],
+        ))
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| map_team_member_row(&row))
+        .collect())
+}
+
+fn map_team_member_row(row: &sea_orm::QueryResult) -> crate::personnel::domain::TeamMemberRow {
+    crate::personnel::domain::TeamMemberRow {
+        assignment_id: row.try_get("", "assignment_id").unwrap_or_default(),
+        personnel_id: row.try_get("", "personnel_id").unwrap_or_default(),
+        employee_code: row.try_get("", "employee_code").unwrap_or_default(),
+        full_name: row.try_get("", "full_name").unwrap_or_default(),
+        position_name: row.try_get("", "position_name").unwrap_or(None),
+        role_code: row.try_get("", "role_code").unwrap_or_else(|_| "member".to_string()),
+        allocation_percent: row.try_get("", "allocation_percent").unwrap_or(100.0),
+        valid_from: row.try_get("", "valid_from").unwrap_or(None),
+        valid_to: row.try_get("", "valid_to").unwrap_or(None),
+        is_lead: row.try_get("", "is_lead").unwrap_or_default(),
+        availability_status: row
+            .try_get("", "availability_status")
+            .unwrap_or_else(|_| "available".to_string()),
+        user_account_id: row.try_get("", "user_account_id").unwrap_or(None),
+    }
+}
+
+/// Promote or clear crew lead on an open assignment.
+/// Does **not** touch `personnel.primary_team_id` or call `sync_home_crew_assignment`.
+/// Enforces a single lead per crew when promoting.
+pub async fn set_team_lead(
+    db: &DatabaseConnection,
+    input: crate::personnel::domain::SetTeamLeadInput,
+) -> AppResult<crate::personnel::domain::TeamMemberRow> {
+    let _ = crate::repository::team_repository::get_team_by_id(db, input.team_id).await?;
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let txn = db.begin().await?;
+
+    let open = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM personnel_team_assignments
+             WHERE personnel_id = ?
+               AND team_id = ?
+               AND (valid_to IS NULL OR date(valid_to) >= date(?))
+             ORDER BY id DESC
+             LIMIT 1",
+            [
+                input.personnel_id.into(),
+                input.team_id.into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+
+    if open.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "Cette personne n'est pas membre actif de cette équipe.".into(),
+        ]));
+    }
+
+    if input.is_lead {
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE personnel_team_assignments
+             SET is_lead = 0,
+                 role_code = 'member',
+                 updated_at = ?
+             WHERE team_id = ?
+               AND personnel_id <> ?
+               AND is_lead = 1
+               AND (valid_to IS NULL OR date(valid_to) >= date(?))",
+            [
+                now.clone().into(),
+                input.team_id.into(),
+                input.personnel_id.into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE personnel_team_assignments
+             SET is_lead = 1,
+                 role_code = 'lead',
+                 updated_at = ?
+             WHERE personnel_id = ?
+               AND team_id = ?
+               AND (valid_to IS NULL OR date(valid_to) >= date(?))",
+            [
+                now.clone().into(),
+                input.personnel_id.into(),
+                input.team_id.into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+    } else {
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE personnel_team_assignments
+             SET is_lead = 0,
+                 role_code = 'member',
+                 updated_at = ?
+             WHERE personnel_id = ?
+               AND team_id = ?
+               AND (valid_to IS NULL OR date(valid_to) >= date(?))",
+            [
+                now.clone().into(),
+                input.personnel_id.into(),
+                input.team_id.into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
+    }
+
+    txn.commit().await?;
+
+    let members = list_team_members(db, input.team_id).await?;
+    members
+        .into_iter()
+        .find(|m| m.personnel_id == input.personnel_id)
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "Cette personne n'est pas membre actif de cette équipe.".into(),
+            ])
+        })
+}
+
 pub async fn list_personnel_availability_blocks(
     db: &DatabaseConnection,
     personnel_id: i64,
@@ -1966,18 +2261,20 @@ pub async fn list_personnel_availability_blocks(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT
-                id,
-                personnel_id,
-                block_type,
-                start_at,
-                end_at,
-                reason_note,
-                is_critical,
-                created_by_id,
-                created_at
-             FROM personnel_availability_blocks
-             WHERE personnel_id = ?
-             ORDER BY start_at DESC
+                b.id,
+                b.personnel_id,
+                b.block_type,
+                b.start_at,
+                b.end_at,
+                b.reason_note,
+                b.is_critical,
+                b.created_by_id,
+                COALESCE(NULLIF(TRIM(ua.display_name), ''), ua.username) AS created_by_label,
+                b.created_at
+             FROM personnel_availability_blocks b
+             LEFT JOIN user_accounts ua ON ua.id = b.created_by_id
+             WHERE b.personnel_id = ?
+             ORDER BY b.start_at DESC
              LIMIT ?",
             [personnel_id.into(), row_limit.into()],
         ))
@@ -1994,6 +2291,7 @@ pub async fn list_personnel_availability_blocks(
             reason_note: row.try_get("", "reason_note").unwrap_or(None),
             is_critical: row.try_get::<i64>("", "is_critical").unwrap_or(0) == 1,
             created_by_id: row.try_get("", "created_by_id").unwrap_or(None),
+            created_by_label: row.try_get("", "created_by_label").unwrap_or(None),
             created_at: row.try_get("", "created_at").unwrap_or_default(),
         })
         .collect())
@@ -2173,7 +2471,7 @@ pub async fn scan_succession_risk(
             END AS reason
          FROM personnel p
          LEFT JOIN positions pos ON pos.id = p.position_id
-         LEFT JOIN org_nodes team ON team.id = p.primary_team_id
+         LEFT JOIN teams team ON team.id = p.primary_team_id
          LEFT JOIN personnel_skills ps
            ON ps.personnel_id = p.id
           AND (ps.valid_to IS NULL OR date(ps.valid_to) >= date('now'))

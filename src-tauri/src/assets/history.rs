@@ -486,7 +486,7 @@ pub async fn list_asset_history_events(
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, code, title, status, submitted_at, closed_at \
-             FROM intervention_requests WHERE asset_id = ?",
+             FROM intervention_requests WHERE equipment_id = ?",
             [asset_id.into()],
         ))
         .await?;

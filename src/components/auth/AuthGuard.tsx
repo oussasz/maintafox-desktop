@@ -112,7 +112,7 @@ export function AuthGuard() {
                 Votre mot de passe expire dans {warnDays} {warnDays <= 1 ? "jour" : "jours"}.
               </p>
               <Link
-                to="/profile"
+                to="/settings?tab=profile"
                 className="font-semibold underline decoration-amber-700 underline-offset-2"
               >
                 Changer maintenant

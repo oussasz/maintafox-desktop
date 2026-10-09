@@ -900,6 +900,7 @@ pub async fn save_verification(
             id: input.wo_id.to_string(),
         })?;
 
+    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
     Ok((verification, wo))
 }
 
@@ -1261,16 +1262,18 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             [input.wo_id.into()],
         ))
         .await?;
+    let mut released_reservation_stages: Vec<(i64, Option<i64>)> = Vec::new();
     for row in reservation_rows {
         let reservation_id: i64 = row
             .try_get("", "reservation_id")
             .map_err(|e| decode_err("reservation_id", e))?;
-        inventory_queries::release_stock_reservation_with_connection(
+        let (released, movement_id) = inventory_queries::release_stock_reservation_with_connection(
             &txn,
             reservation_id,
             Some("WO closeout reservation release"),
         )
         .await?;
+        released_reservation_stages.push((released.id, movement_id));
     }
 
     // ── Compute final costs ───────────────────────────────────────────────
@@ -1400,6 +1403,21 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     .await?;
 
     txn.commit().await?;
+
+    for (reservation_id, movement_id) in released_reservation_stages {
+        crate::sync::foundation_stage::warn_stage(
+            crate::sync::ops_stage::stage_stock_reservation_sync(db, reservation_id).await,
+            "stock_reservation",
+        );
+        if let Some(movement_id) = movement_id {
+            crate::sync::foundation_stage::warn_stage(
+                crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
+                "stock_movement",
+            );
+        }
+    }
+
+    crate::pm::generation_control::on_work_order_closed_for_pm(db, input.wo_id, Some(input.actor_id)).await;
 
     if let Ok(Some(wo)) = queries::get_work_order(db, input.wo_id).await {
         let status_code = wo.status_code.as_deref().unwrap_or("closed");
@@ -1551,12 +1569,14 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
 
     txn.commit().await?;
 
-    queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(db, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })
+        })?;
+    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
+    Ok(wo)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

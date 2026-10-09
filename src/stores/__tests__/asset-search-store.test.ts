@@ -21,7 +21,7 @@ import { useAssetSearchStore } from "../asset-search-store";
 function makeResult(overrides: Partial<AssetSearchResult> = {}): AssetSearchResult {
   return {
     id: 1,
-    sync_id: "aaa-111",
+    entity_sync_id: "aaa-111",
     asset_code: "PMP-001",
     asset_name: "Pompe Principale",
     class_code: "PUMP",
@@ -50,7 +50,7 @@ function makeResult(overrides: Partial<AssetSearchResult> = {}): AssetSearchResu
 const pmp001 = makeResult({ id: 1, asset_code: "PMP-001", asset_name: "Pompe Principale" });
 const pmp002 = makeResult({
   id: 2,
-  sync_id: "bbb-222",
+  entity_sync_id: "bbb-222",
   asset_code: "PMP-002",
   asset_name: "Pompe Secondaire",
   status_code: "IN_STOCK",
@@ -58,7 +58,7 @@ const pmp002 = makeResult({
 });
 const vlv001 = makeResult({
   id: 3,
-  sync_id: "ccc-333",
+  entity_sync_id: "ccc-333",
   asset_code: "VLV-001",
   asset_name: "Vanne d'Isolement",
   class_code: "VALVE",
@@ -283,7 +283,7 @@ describe("Tree expand state", () => {
   const parent = makeResult({ id: 10, asset_code: "COMP", parent_asset_id: null });
   const child = makeResult({
     id: 11,
-    sync_id: "child",
+    entity_sync_id: "child",
     asset_code: "REG",
     parent_asset_id: 10,
   });

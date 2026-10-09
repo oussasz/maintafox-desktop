@@ -51,10 +51,12 @@ pub async fn mark_wo_ready(db: &DatabaseConnection, input: WoMarkReadyInput) -> 
 
     txn.commit().await?;
 
-    queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(db, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })
+        })?;
+    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
+    Ok(wo)
 }

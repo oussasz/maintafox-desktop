@@ -24,6 +24,7 @@ import { useTranslation } from "react-i18next";
 import { Timeline } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -84,24 +85,27 @@ export function partitionSettings(settings: AppSetting[]): {
 
 interface PolicyField {
   key: string;
-  type: "number" | "boolean";
+  type: "number" | "boolean" | "string";
 }
 
 const POLICY_FIELDS: Record<string, PolicyField[]> = {
   session: [
-    { key: "max_session_hours", type: "number" },
     { key: "idle_timeout_minutes", type: "number" },
-    { key: "step_up_window_seconds", type: "number" },
+    { key: "absolute_session_minutes", type: "number" },
+    { key: "offline_grace_hours", type: "number" },
+    { key: "step_up_window_minutes", type: "number" },
+    { key: "max_failed_attempts", type: "number" },
+    { key: "lockout_minutes", type: "number" },
   ],
   password: [
     { key: "min_length", type: "number" },
     { key: "require_uppercase", type: "boolean" },
-    { key: "require_number", type: "boolean" },
+    { key: "require_digit", type: "boolean" },
     { key: "max_age_days", type: "number" },
     { key: "history_count", type: "number" },
   ],
   backup: [
-    { key: "schedule_cron", type: "number" },
+    { key: "schedule_cron", type: "string" },
     { key: "retention_days", type: "number" },
     { key: "include_photos", type: "boolean" },
     { key: "compression_level", type: "number" },
@@ -124,7 +128,10 @@ function parseJson(json: string): Record<string, unknown> {
 // ── Props ───────────────────────────────────────────────────────────────────
 
 interface PolicyEditorPanelProps {
-  settings: AppSetting[];
+  /** Optional settings rows used only for display context. */
+  settings?: AppSetting[];
+  /** Explicit policy domain — preferred over inferring from settings keys. */
+  domain?: "session" | "backup" | "password";
   onToast: (msg: {
     title: string;
     description?: string;
@@ -134,7 +141,11 @@ interface PolicyEditorPanelProps {
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export function PolicyEditorPanel({ settings, onToast }: PolicyEditorPanelProps) {
+export function PolicyEditorPanel({
+  settings = [],
+  domain: domainProp,
+  onToast,
+}: PolicyEditorPanelProps) {
   const { t } = useTranslation("settings");
 
   const {
@@ -153,10 +164,13 @@ export function PolicyEditorPanel({ settings, onToast }: PolicyEditorPanelProps)
   const [discardOpen, setDiscardOpen] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
 
-  // Determine which policy domain these settings belong to
+  // Prefer explicit domain prop; fall back to inference from settings keys.
   const domain = useMemo(
-    () => settings.map((s) => getGovernedDomain(s.setting_key)).find(Boolean) ?? "session",
-    [settings],
+    () =>
+      domainProp ??
+      settings.map((s) => getGovernedDomain(s.setting_key)).find(Boolean) ??
+      "session",
+    [domainProp, settings],
   );
 
   const fields = POLICY_FIELDS[domain] ?? [];
@@ -283,6 +297,9 @@ export function PolicyEditorPanel({ settings, onToast }: PolicyEditorPanelProps)
       });
       setDraftPolicy(null);
       setTestResults(null);
+      if (domain === "session") {
+        void useSettingsStore.getState().loadSessionPolicy();
+      }
       onToast({
         title: t("policy.activated"),
         variant: "success",
@@ -400,31 +417,26 @@ export function PolicyEditorPanel({ settings, onToast }: PolicyEditorPanelProps)
         <div className="space-y-3">
           <h3 className="text-sm font-medium">{t("policy.activeConfig")}</h3>
           {hasActiveSnapshot ? (
-            <div className="rounded-md border">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-text-muted">
-                    <th className="px-3 py-2 font-medium">{t("table.key")}</th>
-                    <th className="px-3 py-2 font-medium">{t("table.value")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(activeValues).map(([key, val]) => (
-                    <tr key={key} className="border-b last:border-0">
-                      <td className="px-3 py-2 font-medium text-text-primary">
-                        {t(`policy.fields.${key}` as never, {
-                          defaultValue: key,
-                        })}
-                      </td>
-                      <td className="px-3 py-2">
-                        <code className="rounded bg-muted px-2 py-0.5 text-xs">{String(val)}</code>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="rounded-lg border border-border bg-card">
+              <ul className="divide-y divide-border px-4">
+                {Object.entries(activeValues).map(([key, val]) => (
+                  <li
+                    key={key}
+                    className="flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3"
+                  >
+                    <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
+                      {t(`policy.fields.${key}` as never, {
+                        defaultValue: key,
+                      })}
+                    </span>
+                    <span className="shrink-0 text-sm tabular-nums text-text-muted">
+                      {String(val)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
               {activeSnapshot && (
-                <p className="border-t px-3 py-2 text-xs text-text-muted">
+                <p className="border-t border-border px-4 py-2 text-xs text-text-muted">
                   {t("policy.version", {
                     version: activeSnapshot.version_no,
                   })}
@@ -436,7 +448,7 @@ export function PolicyEditorPanel({ settings, onToast }: PolicyEditorPanelProps)
               )}
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-2 rounded-md border border-dashed p-6 text-text-muted">
+            <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed p-6 text-text-muted">
               <FileText className="h-8 w-8" />
               <p className="text-sm">{t("policy.noSnapshot")}</p>
             </div>
@@ -448,35 +460,55 @@ export function PolicyEditorPanel({ settings, onToast }: PolicyEditorPanelProps)
           <h3 className="text-sm font-medium">{t("policy.draftConfig")}</h3>
           {editing ? (
             /* Edit form */
-            <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50/30 p-3">
+            <div className="space-y-1 rounded-lg border border-amber-200 bg-amber-50/30 px-4 py-1 dark:bg-amber-950/20">
               {fields.map((field) => {
                 const val = draftValues[field.key];
                 return (
-                  <div key={field.key} className="flex items-center justify-between gap-2">
-                    <Label htmlFor={`draft-${field.key}`} className="text-sm">
+                  <div
+                    key={field.key}
+                    className="flex items-center justify-between gap-4 border-b border-amber-200/60 py-3 last:border-b-0"
+                  >
+                    <Label
+                      htmlFor={`draft-${field.key}`}
+                      className="min-w-0 flex-1 text-sm font-medium leading-snug"
+                    >
                       {t(`policy.fields.${field.key}` as never, {
                         defaultValue: field.key,
                       })}
                     </Label>
-                    {field.type === "boolean" ? (
-                      <Checkbox
-                        id={`draft-${field.key}`}
-                        checked={Boolean(val)}
-                        onCheckedChange={(checked) => updateDraftField(field.key, checked === true)}
-                      />
-                    ) : (
-                      <Input
-                        id={`draft-${field.key}`}
-                        type="number"
-                        className="w-28"
-                        value={val !== undefined ? String(val) : ""}
-                        onChange={(e) => updateDraftField(field.key, Number(e.target.value))}
-                      />
-                    )}
+                    <div className="w-[min(100%,12rem)] shrink-0">
+                      {field.type === "boolean" ? (
+                        <div className="flex justify-end">
+                          <Checkbox
+                            id={`draft-${field.key}`}
+                            checked={Boolean(val)}
+                            onCheckedChange={(checked) =>
+                              updateDraftField(field.key, checked === true)
+                            }
+                          />
+                        </div>
+                      ) : field.type === "string" ? (
+                        <Input
+                          id={`draft-${field.key}`}
+                          type="text"
+                          className="h-9 w-full"
+                          value={val !== undefined ? String(val) : ""}
+                          onChange={(e) => updateDraftField(field.key, e.target.value)}
+                        />
+                      ) : (
+                        <Input
+                          id={`draft-${field.key}`}
+                          type="number"
+                          className="h-9 w-full"
+                          value={val !== undefined ? String(val) : ""}
+                          onChange={(e) => updateDraftField(field.key, Number(e.target.value))}
+                        />
+                      )}
+                    </div>
                   </div>
                 );
               })}
-              <div className="flex gap-2 pt-2">
+              <div className="flex gap-2 py-3">
                 <Button size="sm" onClick={handleSaveDraft} disabled={policyOperationLoading}>
                   {policyOperationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                   {t("editor.save")}
@@ -488,45 +520,37 @@ export function PolicyEditorPanel({ settings, onToast }: PolicyEditorPanelProps)
             </div>
           ) : draftPolicy ? (
             /* Read-only draft diff */
-            <div className="rounded-md border border-amber-200">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-text-muted">
-                    <th className="px-3 py-2 font-medium">{t("table.key")}</th>
-                    <th className="px-3 py-2 font-medium">{t("table.value")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(draftSnapshotValues).map(([key, val]) => {
-                    const changed = isValueChanged(key, val);
-                    return (
-                      <tr
-                        key={key}
-                        className={`border-b last:border-0 ${changed ? "bg-amber-50" : ""}`}
-                      >
-                        <td className="px-3 py-2 font-medium text-text-primary">
-                          {t(`policy.fields.${key}` as never, {
-                            defaultValue: key,
-                          })}
-                        </td>
-                        <td className="px-3 py-2">
-                          <code
-                            className={`rounded px-2 py-0.5 text-xs ${changed ? "bg-amber-200 text-amber-900" : "bg-muted"}`}
-                          >
-                            {String(val)}
-                          </code>
-                          {changed && (
-                            <span className="ml-1 text-xs text-amber-600">
-                              ← {String(activeValues[key] ?? "–")}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <p className="border-t px-3 py-2 text-xs text-text-muted">
+            <div className="rounded-lg border border-amber-200 bg-card">
+              <ul className="divide-y divide-border px-4">
+                {Object.entries(draftSnapshotValues).map(([key, val]) => {
+                  const changed = isValueChanged(key, val);
+                  return (
+                    <li
+                      key={key}
+                      className={`flex items-center justify-between gap-4 py-3 first:pt-3 last:pb-3 ${changed ? "bg-amber-50/80 dark:bg-amber-950/30" : ""}`}
+                    >
+                      <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
+                        {t(`policy.fields.${key}` as never, {
+                          defaultValue: key,
+                        })}
+                      </span>
+                      <div className="flex shrink-0 flex-col items-end gap-0.5">
+                        <span
+                          className={`text-sm tabular-nums ${changed ? "font-semibold text-amber-900 dark:text-amber-200" : "text-text-muted"}`}
+                        >
+                          {String(val)}
+                        </span>
+                        {changed ? (
+                          <span className="text-xs text-amber-600">
+                            {String(activeValues[key] ?? "—")}
+                          </span>
+                        ) : null}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="border-t border-amber-200 px-4 py-2 text-xs text-text-muted">
                 {t("policy.version", {
                   version: draftPolicy.version_no,
                 })}
@@ -610,17 +634,9 @@ export function PolicyEditorPanel({ settings, onToast }: PolicyEditorPanelProps)
       {settings.length > 0 && (
         <div className="space-y-3">
           <h3 className="text-sm font-medium">{t("policy.currentValues")}</h3>
-          <div className="rounded-md border">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left text-text-muted">
-                  <th className="px-3 py-2 font-medium">{t("table.key")}</th>
-                  <th className="px-3 py-2 font-medium">{t("table.value")}</th>
-                  <th className="px-3 py-2 font-medium">{t("table.risk")}</th>
-                  <th className="px-3 py-2 font-medium">{t("table.status")}</th>
-                </tr>
-              </thead>
-              <tbody>
+          <Card className="shadow-none">
+            <CardContent className="px-5 py-2">
+              <ul className="divide-y divide-border">
                 {settings.map((s) => {
                   let parsed: unknown;
                   try {
@@ -629,43 +645,31 @@ export function PolicyEditorPanel({ settings, onToast }: PolicyEditorPanelProps)
                     parsed = s.setting_value_json;
                   }
                   return (
-                    <tr key={s.id} className="border-b last:border-0">
-                      <td className="px-3 py-2">
-                        <span className="font-medium text-text-primary">
-                          {t(`keys.${s.setting_key}` as never, {
-                            defaultValue: s.setting_key,
-                          })}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <code className="rounded bg-muted px-2 py-0.5 text-xs">
+                    <li
+                      key={s.id}
+                      className="flex items-center justify-between gap-4 py-3 first:pt-2 last:pb-2"
+                    >
+                      <span className="min-w-0 flex-1 text-sm font-medium leading-snug text-text-primary">
+                        {t(`keys.${s.setting_key}` as never, {
+                          defaultValue: s.setting_key,
+                        })}
+                      </span>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="text-sm tabular-nums text-text-muted">
                           {String(parsed)}
-                        </code>
-                      </td>
-                      <td className="px-3 py-2">
-                        <Badge
-                          variant={s.setting_risk === "high" ? "destructive" : "secondary"}
-                          className="text-xs"
-                        >
-                          {t(`risk.${s.setting_risk}` as "risk.low")}
-                        </Badge>
-                      </td>
-                      <td className="px-3 py-2">
-                        <Badge variant="outline" className="text-xs">
-                          {t(`validation.${s.validation_status}` as "validation.valid")}
-                        </Badge>
+                        </span>
                         {s.validation_status === "draft" && (
-                          <Badge className="ml-1 bg-amber-100 text-xs text-amber-800">
+                          <Badge className="bg-amber-100 text-xs text-amber-800">
                             {t("policy.draftPending")}
                           </Badge>
                         )}
-                      </td>
-                    </tr>
+                      </div>
+                    </li>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
+              </ul>
+            </CardContent>
+          </Card>
         </div>
       )}
 

@@ -196,7 +196,7 @@ pub async fn refresh_inspection_reliability_signals(
             0.0
         };
 
-        let sync_id = Uuid::new_v4().to_string();
+        let entity_sync_id = Uuid::new_v4().to_string();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO inspection_reliability_signals (\
@@ -204,7 +204,7 @@ pub async fn refresh_inspection_reliability_signals(
                 warning_count, fail_count, anomaly_open_count, checkpoint_coverage_ratio, row_version\
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
             [
-                sync_id.clone().into(),
+                entity_sync_id.clone().into(),
                 equipment_id.into(),
                 period_start.clone().into(),
                 period_end.clone().into(),

@@ -134,7 +134,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO user_scope_assignments \
-             (sync_id, user_id, role_id, scope_type, created_at, updated_at) \
+             (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at) \
              VALUES ('wo-test-assign-' || ?, ?, \
                (SELECT id FROM roles WHERE name = ?), \
                'tenant', ?, ?)",
@@ -157,7 +157,7 @@ mod tests {
             .execute(Statement::from_string(
                 DbBackend::Sqlite,
                 "INSERT OR IGNORE INTO org_structure_models \
-                 (id, sync_id, version_number, status, created_at, updated_at) \
+                 (id, entity_sync_id, version_number, status, created_at, updated_at) \
                  VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
                     .to_string(),
             ))
@@ -166,7 +166,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO org_node_types \
-             (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+             (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
              VALUES (1, 'test-type-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));"
                 .to_string(),
         ))
@@ -176,7 +176,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO org_nodes \
-             (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
+             (id, entity_sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
              VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', 1, 'active', \
                      datetime('now'), datetime('now'), 1);"
                 .to_string(),
@@ -187,7 +187,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO equipment \
-             (id, sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
+             (id, entity_sync_id, asset_id_code, name, lifecycle_status, installed_at_node_id, \
               created_at, updated_at) \
              VALUES (1, 'test-eq-exec-001', 'EQ-EXEC-001', 'Exec Test Equipment', \
                      'active_in_service', 1, datetime('now'), datetime('now'));"
@@ -262,8 +262,8 @@ mod tests {
                 actor_id: actor,
                 expected_row_version: wo.row_version,
                 planner_id: actor,
-                planned_start: "2026-04-10T08:00:00Z".into(),
-                planned_end: "2026-04-10T16:00:00Z".into(),
+                planned_start: Some("2026-04-10T08:00:00Z".to_string()),
+                planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
@@ -280,9 +280,10 @@ mod tests {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
-                assigned_group_id: None,
+                assigned_team_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
+            override_reason: "test assign".to_string(),
             },
         )
         .await
@@ -712,8 +713,8 @@ mod tests {
                 actor_id: actor,
                 expected_row_version: wo.row_version,
                 planner_id: actor,
-                planned_start: "2026-04-10T08:00:00Z".into(),
-                planned_end: "2026-04-10T16:00:00Z".into(),
+                planned_start: Some("2026-04-10T08:00:00Z".to_string()),
+                planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: None,
                 expected_duration_hours: Some(8.0),
                 planned_downtime_hours: None,
@@ -731,9 +732,10 @@ mod tests {
                 wo_id,
                 actor_id: actor,
                 expected_row_version: wo.row_version,
-                assigned_group_id: None,
+                assigned_team_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
+            override_reason: "test assign".to_string(),
             },
         )
         .await
@@ -987,8 +989,8 @@ mod tests {
                 actor_id: actor,
                 expected_row_version: wo.row_version,
                 planner_id: actor,
-                planned_start: "2026-04-10T08:00:00Z".into(),
-                planned_end: "2026-04-10T16:00:00Z".into(),
+                planned_start: Some("2026-04-10T08:00:00Z".to_string()),
+                planned_end: Some("2026-04-10T16:00:00Z".to_string()),
                 shift: Some("nuit".into()),
                 expected_duration_hours: None,
                 planned_downtime_hours: None,
@@ -1074,5 +1076,129 @@ mod tests {
             }
             other => panic!("expected ValidationFailed, got: {other:?}"),
         }
+    }
+
+    /// Labor add resolves hourly_rate from linked personnel active rate card.
+    #[tokio::test]
+    async fn labor_resolves_hourly_rate_from_personnel_rate_card() {
+        let db = setup().await;
+        let (wo_id, _rv) = create_wo_in_progress(&db).await;
+        let actor = admin_id(&db).await;
+
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let sched: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM reference_values LIMIT 1".to_string(),
+            ))
+            .await
+            .expect("q")
+            .expect("any ref")
+            .try_get("", "id")
+            .unwrap();
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO personnel \
+             (employee_code, full_name, employment_type, employment_origin, employment_status, \
+              availability_status, home_schedule_reference_value_id, row_version, created_at, updated_at) \
+             VALUES ('WO-RATE-1', 'WO Rate Tech', 'employee', 'internal', 'active', \
+                     'available', ?, 1, ?, ?)",
+            [sched.into(), now.clone().into(), now.clone().into()],
+        ))
+        .await
+        .expect("insert personnel");
+
+        let personnel_id: i64 = db
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT id FROM personnel WHERE employee_code = 'WO-RATE-1'".to_string(),
+            ))
+            .await
+            .expect("q")
+            .expect("row")
+            .try_get("", "id")
+            .unwrap();
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO personnel_rate_cards \
+             (personnel_id, effective_from, labor_rate, overtime_rate, source_type, created_at) \
+             VALUES (?, ?, 37.0, 50.0, 'manual', ?)",
+            [personnel_id.into(), today.into(), now.clone().into()],
+        ))
+        .await
+        .expect("rate card");
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET personnel_id = ? WHERE id = ?",
+            [personnel_id.into(), actor.into()],
+        ))
+        .await
+        .expect("link user");
+
+        let with_card = labor::add_labor_entry(
+            &db,
+            AddLaborInput {
+                wo_id,
+                intervener_id: actor,
+                skill_id: None,
+                started_at: Some("2026-04-10T08:00:00Z".into()),
+                ended_at: Some("2026-04-10T10:00:00Z".into()),
+                hours_worked: None,
+                hourly_rate: None,
+                notes: None,
+            },
+        )
+        .await
+        .expect("add labor with rate card");
+        assert_eq!(with_card.rate_source, "rate_card");
+        assert!((with_card.hourly_rate.unwrap_or(0.0) - 37.0).abs() < f64::EPSILON);
+
+        let override_entry = labor::add_labor_entry(
+            &db,
+            AddLaborInput {
+                wo_id,
+                intervener_id: actor,
+                skill_id: None,
+                started_at: Some("2026-04-10T11:00:00Z".into()),
+                ended_at: Some("2026-04-10T12:00:00Z".into()),
+                hours_worked: None,
+                hourly_rate: Some(99.0),
+                notes: None,
+            },
+        )
+        .await
+        .expect("add labor with override");
+        assert_eq!(override_entry.rate_source, "provided");
+        assert!((override_entry.hourly_rate.unwrap_or(0.0) - 99.0).abs() < f64::EPSILON);
+
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts SET personnel_id = NULL WHERE id = ?",
+            [actor.into()],
+        ))
+        .await
+        .expect("unlink");
+
+        let missing = labor::add_labor_entry(
+            &db,
+            AddLaborInput {
+                wo_id,
+                intervener_id: actor,
+                skill_id: None,
+                started_at: Some("2026-04-10T13:00:00Z".into()),
+                ended_at: Some("2026-04-10T14:00:00Z".into()),
+                hours_worked: None,
+                hourly_rate: None,
+                notes: None,
+            },
+        )
+        .await
+        .expect("add labor without link");
+        assert_eq!(missing.rate_source, "missing");
+        assert!(missing.hourly_rate.is_none());
     }
 }

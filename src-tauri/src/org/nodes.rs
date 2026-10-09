@@ -29,7 +29,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrgNode {
     pub id: i64,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub code: String,
     pub name: String,
     pub node_type_id: i64,
@@ -120,7 +120,7 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
 const NODE_SELECT_COLS: &str = r"
-    n.id, n.sync_id, n.code, n.name, n.node_type_id,
+    n.id, n.entity_sync_id, n.code, n.name, n.node_type_id,
     n.parent_id, n.ancestor_path, n.depth,
     n.description, n.cost_center_code, n.external_reference,
     n.status, n.effective_from, n.effective_to,
@@ -133,9 +133,9 @@ const NODE_SELECT_COLS: &str = r"
 fn map_node(row: &QueryResult) -> AppResult<OrgNode> {
     Ok(OrgNode {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
-        sync_id: row
-            .try_get::<String>("", "sync_id")
-            .map_err(|e| decode_err("sync_id", e))?,
+        entity_sync_id: row
+            .try_get::<String>("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
         code: row.try_get::<String>("", "code").map_err(|e| decode_err("code", e))?,
         name: row.try_get::<String>("", "name").map_err(|e| decode_err("name", e))?,
         node_type_id: row
@@ -445,20 +445,20 @@ pub async fn create_org_node(
     };
 
     let now = Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     // Insert with a temporary ancestor_path; we'll update once we know the id
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_nodes
-          (sync_id, code, name, node_type_id, parent_id,
+          (entity_sync_id, code, name, node_type_id, parent_id,
            ancestor_path, depth, description, cost_center_code,
            external_reference, status, effective_from, effective_to,
            erp_reference, notes, created_at, updated_at, row_version,
            structure_model_id, origin_node_id)
           VALUES (?, ?, ?, ?, ?, '/', ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?, ?, 1, ?, NULL)",
         [
-            sync_id.clone().into(),
+            entity_sync_id.clone().into(),
             code.into(),
             payload.name.into(),
             payload.node_type_id.into(),
@@ -477,12 +477,12 @@ pub async fn create_org_node(
     ))
     .await?;
 
-    // Retrieve the inserted id via sync_id
+    // Retrieve the inserted id via entity_sync_id
     let id_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM org_nodes WHERE sync_id = ?",
-            [sync_id.into()],
+            "SELECT id FROM org_nodes WHERE entity_sync_id = ?",
+            [entity_sync_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("node created but not found after insert")))?;
@@ -506,6 +506,10 @@ pub async fn create_org_node(
     txn.commit().await?;
 
     tracing::info!(node_id, "org node created");
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_org_node_sync(db, node_id).await,
+        "org_node create",
+    );
 
     Ok(node)
 }
@@ -605,7 +609,12 @@ pub async fn update_org_node_metadata(
         ));
     }
 
-    fetch_node(db, payload.node_id).await
+    let updated = fetch_node(db, payload.node_id).await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_org_node_sync(db, payload.node_id).await,
+        "org_node update",
+    );
+    Ok(updated)
 }
 
 /// Move an org node to a new parent. Runs inside a transaction.
@@ -759,9 +768,23 @@ pub async fn move_org_node(
     }
 
     let moved_node = fetch_node(&txn, payload.node_id).await?;
+    let descendant_ids: Vec<i64> = descendants
+        .iter()
+        .filter_map(|r| r.try_get::<i64>("", "id").ok())
+        .collect();
     txn.commit().await?;
 
     tracing::info!(node_id = payload.node_id, "org node moved");
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_org_node_sync(db, payload.node_id).await,
+        "org_node move",
+    );
+    for desc_id in descendant_ids {
+        crate::sync::foundation_stage::warn_stage(
+            crate::sync::foundation_stage::stage_org_node_sync(db, desc_id).await,
+            "org_node move descendant",
+        );
+    }
 
     Ok(moved_node)
 }
@@ -868,6 +891,10 @@ pub async fn deactivate_org_node(
     txn.commit().await?;
 
     tracing::info!(node_id, "org node deactivated");
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_org_node_sync(db, node_id).await,
+        "org_node deactivate",
+    );
 
     Ok(deactivated)
 }

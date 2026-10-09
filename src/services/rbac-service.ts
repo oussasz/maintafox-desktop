@@ -8,6 +8,8 @@ import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
   AdminChangeEventDetail,
   AdminEventFilter,
+  AdminSetUserPasswordInput,
+  AdminSetUserPasswordResult,
   AdminStatsPayload,
   AssignableRoleSummary,
   AssignRoleScopeInput,
@@ -312,6 +314,17 @@ export async function simulateAccess(input: SimulateAccessInput): Promise<Simula
 
 export async function unlockUserAccount(userId: number): Promise<void> {
   await invoke<void>("unlock_user_account", { userId });
+}
+
+const AdminSetUserPasswordResultSchema = z.object({
+  temporary_password: z.string().min(1),
+});
+
+export async function adminSetUserPassword(
+  input: AdminSetUserPasswordInput,
+): Promise<AdminSetUserPasswordResult> {
+  const raw = await invoke<unknown>("admin_set_user_password", { input });
+  return AdminSetUserPasswordResultSchema.parse(raw);
 }
 
 // â”€â”€ RBAC settings (password policy, lockout) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

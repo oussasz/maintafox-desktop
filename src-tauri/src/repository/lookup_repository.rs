@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, FromQueryResult)]
 pub struct LookupDomainSummary {
     pub id: i32,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub domain_key: String,
     pub display_name: String,
     pub domain_type: String,
@@ -23,7 +23,7 @@ pub struct LookupDomainSummary {
 #[derive(Debug, Clone, Serialize, FromQueryResult)]
 pub struct LookupValueRecord {
     pub id: i32,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub domain_id: i32,
     pub code: String,
     pub label: String,
@@ -90,7 +90,7 @@ pub async fn list_lookup_domains(
     let list_sql = format!(
         r"
         SELECT
-            ld.id, ld.sync_id, ld.domain_key, ld.display_name, ld.domain_type,
+            ld.id, ld.entity_sync_id, ld.domain_key, ld.display_name, ld.domain_type,
             ld.is_extensible, ld.is_locked, ld.schema_version,
             (SELECT COUNT(*) FROM lookup_values lv
              WHERE lv.domain_id = ld.id AND lv.deleted_at IS NULL) AS value_count
@@ -191,7 +191,7 @@ pub async fn get_domain_values(
 /// Used at render time to convert a stored FK to a displayable label.
 pub async fn get_value_by_id(db: &DatabaseConnection, value_id: i32) -> AppResult<LookupValueRecord> {
     let sql = r"
-        SELECT id, sync_id, domain_id, code, label, fr_label, en_label,
+        SELECT id, entity_sync_id, domain_id, code, label, fr_label, en_label,
                description, sort_order, is_active, is_system, color, parent_value_id
         FROM lookup_values
         WHERE id = ? AND deleted_at IS NULL
@@ -210,7 +210,7 @@ pub async fn get_value_by_id(db: &DatabaseConnection, value_id: i32) -> AppResul
 /// Used for import mapping and controlled vocabulary enforcement.
 pub async fn get_value_by_code(db: &DatabaseConnection, domain_key: &str, code: &str) -> AppResult<LookupValueRecord> {
     let sql = r"
-        SELECT lv.id, lv.sync_id, lv.domain_id, lv.code, lv.label, lv.fr_label,
+        SELECT lv.id, lv.entity_sync_id, lv.domain_id, lv.code, lv.label, lv.fr_label,
                lv.en_label, lv.description, lv.sort_order, lv.is_active, lv.is_system,
                lv.color, lv.parent_value_id
         FROM lookup_values lv
@@ -245,12 +245,12 @@ pub async fn insert_lookup_value(
     use chrono::Utc;
     use uuid::Uuid;
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     let sql = r"
         INSERT INTO lookup_values
-            (sync_id, domain_id, code, label, fr_label, en_label,
+            (entity_sync_id, domain_id, code, label, fr_label, en_label,
              sort_order, is_active, is_system, color,
              created_at, updated_at, row_version)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, 1)
@@ -259,7 +259,7 @@ pub async fn insert_lookup_value(
         DbBackend::Sqlite,
         sql,
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             domain_id.into(),
             code.into(),
             label.into(),

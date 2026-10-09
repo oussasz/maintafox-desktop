@@ -1,41 +1,188 @@
-﻿import { useEffect, useMemo, useState } from "react";
+/**
+ * Availability tab — ResourceTimeline chronology + list secondary view.
+ * Detail inspection: split pane (not centered Dialog). Block create/edit: dialog.
+ */
+
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
+import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
+import { AvailabilityBlockDialog } from "@/components/personnel/AvailabilityBlockDialog";
+import { AvailabilityInspectorWorkspace } from "@/components/personnel/AvailabilityInspectorWorkspace";
+import {
+  addDaysLocal,
+  AVAILABILITY_BLOCK_SEED_END_LOCAL,
+  AVAILABILITY_BLOCK_SEED_START_LOCAL,
+  AVAILABILITY_DEFAULT_HORIZON_DAYS,
+  AVAILABILITY_HORIZON_PRESETS,
+  buildPersonRows,
+  CELL_STATE_CLASS,
+  deriveCellState,
+  eachDateInclusive,
+  parseBlockTimeMs,
+  toLocalIsoDate,
+  type AvailabilityViewMode,
+} from "@/components/personnel/availability-model";
+import {
+  ResourceTimeline,
+  type ResourceTimelineGroup,
+  type ResourceTimelineItem,
+} from "@/components/timeline/ResourceTimeline";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { createAvailabilityBlock, listAvailabilityCalendar } from "@/services/personnel-service";
-import type { AvailabilityCalendarEntry } from "@shared/ipc-types";
+import {
+  blockTypeToTimelineState,
+  RESOURCE_TIMELINE_BLOCK_LEGEND_STATES,
+  RESOURCE_TIMELINE_STATE_CLASS,
+} from "@/design-system/resource-timeline-tokens";
+import { mfLayout } from "@/design-system/tokens";
+import { formatPersonLabel } from "@/lib/display";
+import { cn } from "@/lib/utils";
+import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
+import {
+  listAvailabilityCalendar,
+  listPersonnelAvailabilityBlocks,
+  listTeamCapacitySummary,
+} from "@/services/personnel-service";
+import { listCertificationExpiryDrilldown } from "@/services/qualification-service";
+import type {
+  AvailabilityCalendarEntry,
+  OrgDesignerNodeRow,
+  PersonnelAvailabilityBlock,
+} from "@shared/ipc-types";
+
+export type AvailabilityCalendarHandle = {
+  refresh: () => void;
+  openCreateBlock: () => void;
+  setViewMode: (mode: AvailabilityViewMode) => void;
+  getViewMode: () => AvailabilityViewMode;
+};
 
 interface AvailabilityCalendarProps {
   entityId?: number | null;
-  teamId?: number | null;
+  onOpenPersonnel?: (personnelId: number) => void;
+  viewMode?: AvailabilityViewMode;
+  onViewModeChange?: (mode: AvailabilityViewMode) => void;
 }
 
-function toIsoDate(value: Date): string {
-  return value.toISOString().slice(0, 10);
-}
+type CertWarning = "expired" | "expiring";
 
-export function AvailabilityCalendar({ entityId, teamId }: AvailabilityCalendarProps) {
+const BLOCK_TYPES = ["medical", "restriction", "leave", "training"] as const;
+const CRITICAL_FILTER_VALUE = "critical";
+const CERT_LOOKAHEAD_DAYS = 30;
+
+export const AvailabilityCalendar = forwardRef<
+  AvailabilityCalendarHandle,
+  AvailabilityCalendarProps
+>(function AvailabilityCalendar(
+  { entityId, onOpenPersonnel, viewMode: viewModeProp, onViewModeChange },
+  ref,
+) {
   const { t } = useTranslation("personnel");
+
+  const [dateFrom, setDateFrom] = useState(() => toLocalIsoDate(new Date()));
+  const [dateTo, setDateTo] = useState(() =>
+    addDaysLocal(toLocalIsoDate(new Date()), AVAILABILITY_DEFAULT_HORIZON_DAYS - 1),
+  );
+  const [filterEntityId, setFilterEntityId] = useState<number | null>(entityId ?? null);
+  const [filterTeamId, setFilterTeamId] = useState<number | null>(null);
+  const [filterPersonId, setFilterPersonId] = useState<number | null>(null);
+  const [filterBlockType, setFilterBlockType] = useState<string | null>(null);
+  const [criticalOnly, setCriticalOnly] = useState(false);
+  const [internalViewMode, setInternalViewMode] = useState<AvailabilityViewMode>("chronology");
+  const viewMode = viewModeProp ?? internalViewMode;
+  const setViewMode = useCallback(
+    (mode: AvailabilityViewMode) => {
+      onViewModeChange?.(mode);
+      if (viewModeProp == null) setInternalViewMode(mode);
+    },
+    [onViewModeChange, viewModeProp],
+  );
+
   const [rows, setRows] = useState<AvailabilityCalendarEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
-  const [dateFrom, setDateFrom] = useState(() => toIsoDate(new Date()));
-  const [dateTo, setDateTo] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 6);
-    return toIsoDate(d);
-  });
-  const [newBlockPersonnelId, setNewBlockPersonnelId] = useState<number | null>(null);
-  const [newBlockType, setNewBlockType] = useState("medical");
-  const [newBlockStart, setNewBlockStart] = useState("");
-  const [newBlockEnd, setNewBlockEnd] = useState("");
-  const [newBlockReason, setNewBlockReason] = useState("");
-  const [newBlockCritical, setNewBlockCritical] = useState(true);
+
+  const [entityNodes, setEntityNodes] = useState<OrgDesignerNodeRow[]>([]);
+  const [teamOptions, setTeamOptions] = useState<{ id: number; label: string }[]>([]);
+  const [certWarnings, setCertWarnings] = useState<Map<number, CertWarning>>(new Map());
+
+  const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
+  const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null);
+  const [personBlocks, setPersonBlocks] = useState<PersonnelAvailabilityBlock[]>([]);
+  const [allBlocks, setAllBlocks] = useState<PersonnelAvailabilityBlock[]>([]);
+  const [blocksLoading, setBlocksLoading] = useState(false);
+  const [blocksError, setBlocksError] = useState<string | null>(null);
+
+  const [blockDialogOpen, setBlockDialogOpen] = useState(false);
+  const [blockDialogMode, setBlockDialogMode] = useState<"create" | "edit">("create");
+  const [editingBlock, setEditingBlock] = useState<PersonnelAvailabilityBlock | null>(null);
+  const [createSeedPersonnelId, setCreateSeedPersonnelId] = useState<number | null>(null);
+  const [createSeedStart, setCreateSeedStart] = useState("");
+  const [createSeedEnd, setCreateSeedEnd] = useState("");
+
+  const [visibleStart, setVisibleStart] = useState(() => Date.parse(`${dateFrom}T00:00:00`));
+  const [visibleEnd, setVisibleEnd] = useState(() => Date.parse(`${dateTo}T23:59:59`));
+
+  useEffect(() => {
+    if (entityId != null) setFilterEntityId(entityId);
+  }, [entityId]);
+
+  useEffect(() => {
+    setVisibleStart(Date.parse(`${dateFrom}T00:00:00`));
+    setVisibleEnd(Date.parse(`${dateTo}T23:59:59`));
+  }, [dateFrom, dateTo]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getOrgDesignerSnapshot()
+      .then((snap) => {
+        if (cancelled) return;
+        const nodes = snap.nodes.filter((n) => n.status === "active");
+        const entityCandidates = nodes.filter((n) => n.active_binding_count > 0);
+        setEntityNodes(
+          entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setEntityNodes([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loadCalendar = useCallback(() => {
+    setReloadToken((v) => v + 1);
+  }, []);
+
+  const openCreateDialog = useCallback((personId?: number | null, date?: string) => {
+    setBlockDialogMode("create");
+    setEditingBlock(null);
+    setCreateSeedPersonnelId(personId ?? null);
+    if (date) {
+      setCreateSeedStart(`${date}T${AVAILABILITY_BLOCK_SEED_START_LOCAL}`);
+      setCreateSeedEnd(`${date}T${AVAILABILITY_BLOCK_SEED_END_LOCAL}`);
+    } else {
+      setCreateSeedStart("");
+      setCreateSeedEnd("");
+    }
+    setBlockDialogOpen(true);
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      refresh: loadCalendar,
+      openCreateBlock: () => openCreateDialog(),
+      setViewMode,
+      getViewMode: () => viewMode,
+    }),
+    [loadCalendar, openCreateDialog, setViewMode, viewMode],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -44,8 +191,9 @@ export function AvailabilityCalendar({ entityId, teamId }: AvailabilityCalendarP
     void listAvailabilityCalendar({
       date_from: dateFrom,
       date_to: dateTo,
-      entity_id: entityId ?? null,
-      team_id: teamId ?? null,
+      entity_id: filterEntityId,
+      team_id: filterTeamId,
+      personnel_id: filterPersonId,
       include_inactive: false,
     })
       .then((data) => {
@@ -60,215 +208,501 @@ export function AvailabilityCalendar({ entityId, teamId }: AvailabilityCalendarP
     return () => {
       cancelled = true;
     };
-  }, [dateFrom, dateTo, entityId, teamId, reloadToken]);
-
-  const grouped = useMemo(() => {
-    return rows.reduce<Record<string, AvailabilityCalendarEntry[]>>((acc, row) => {
-      const bucket = acc[row.work_date] ?? [];
-      bucket.push(row);
-      acc[row.work_date] = bucket;
-      return acc;
-    }, {});
-  }, [rows]);
-
-  const personnelOptions = useMemo(() => {
-    const map = new Map<number, { id: number; label: string }>();
-    for (const row of rows) {
-      if (!map.has(row.personnel_id)) {
-        map.set(row.personnel_id, {
-          id: row.personnel_id,
-          label: `${row.full_name} (${row.employee_code})`,
-        });
-      }
-    }
-    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
-  }, [rows]);
+  }, [dateFrom, dateTo, filterEntityId, filterTeamId, filterPersonId, reloadToken]);
 
   useEffect(() => {
-    if (newBlockPersonnelId == null && personnelOptions.length > 0) {
-      const first = personnelOptions[0];
-      if (first) setNewBlockPersonnelId(first.id);
-    }
-  }, [personnelOptions, newBlockPersonnelId]);
-
-  const submitNewBlock = async () => {
-    if (newBlockPersonnelId == null) {
-      setCreateError(t("availability.form.errors.personnelRequired"));
-      return;
-    }
-    if (!newBlockStart || !newBlockEnd) {
-      setCreateError(t("availability.form.errors.timeRequired"));
-      return;
-    }
-    const startIso = new Date(newBlockStart).toISOString();
-    const endIso = new Date(newBlockEnd).toISOString();
-    if (startIso >= endIso) {
-      setCreateError(t("availability.form.errors.invalidRange"));
-      return;
-    }
-
-    setCreating(true);
-    setCreateError(null);
-    try {
-      await createAvailabilityBlock({
-        personnel_id: newBlockPersonnelId,
-        block_type: newBlockType,
-        start_at: startIso,
-        end_at: endIso,
-        reason_note: newBlockReason.trim() || null,
-        is_critical: newBlockCritical,
+    let cancelled = false;
+    void listTeamCapacitySummary({
+      date_from: dateFrom,
+      date_to: dateTo,
+      entity_id: filterEntityId,
+      include_inactive: false,
+    })
+      .then((data) => {
+        if (cancelled) return;
+        setTeamOptions(
+          data.map((row) => ({
+            id: row.team_id,
+            label: `${row.team_name} (${row.team_code})`,
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setTeamOptions([]);
       });
-      setNewBlockReason("");
-      setReloadToken((v) => v + 1);
-    } catch (err) {
-      setCreateError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setCreating(false);
+    return () => {
+      cancelled = true;
+    };
+  }, [dateFrom, dateTo, filterEntityId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listCertificationExpiryDrilldown(CERT_LOOKAHEAD_DAYS, filterEntityId ?? undefined)
+      .then((rows) => {
+        if (cancelled) return;
+        const map = new Map<number, CertWarning>();
+        const today = toLocalIsoDate(new Date());
+        for (const row of rows) {
+          const expires = row.expires_at?.slice(0, 10) ?? "";
+          if (!expires) continue;
+          map.set(row.personnel_id, expires < today ? "expired" : "expiring");
+        }
+        setCertWarnings(map);
+      })
+      .catch(() => {
+        if (!cancelled) setCertWarnings(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filterEntityId, reloadToken]);
+
+  const dates = useMemo(() => eachDateInclusive(dateFrom, dateTo), [dateFrom, dateTo]);
+  const people = useMemo(() => buildPersonRows(rows), [rows]);
+
+  const personOptions = useMemo(
+    () =>
+      people.map((p) => ({
+        id: p.personnel_id,
+        label: `${p.full_name} (${p.employee_code})`,
+      })),
+    [people],
+  );
+
+  const filteredPeople = useMemo(() => {
+    return people.filter((person) => {
+      if (criticalOnly) {
+        const hasCritical = dates.some((d) => {
+          const cell = person.cells.get(d);
+          return cell ? deriveCellState(cell) === "critical" : false;
+        });
+        if (!hasCritical) return false;
+      }
+      if (filterBlockType) {
+        // Filtered after blocks load via timeline items; keep person if any day blocked when type filter active
+        // Person-level block-type filter applied when allBlocks known
+      }
+      return true;
+    });
+  }, [people, criticalOnly, dates, filterBlockType]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (filteredPeople.length === 0) {
+      setAllBlocks([]);
+      return;
     }
+    setBlocksError(null);
+    void (async () => {
+      try {
+        const chunks = await Promise.all(
+          filteredPeople
+            .slice(0, 80)
+            .map((p) => listPersonnelAvailabilityBlocks(p.personnel_id, 100).catch(() => [])),
+        );
+        if (cancelled) return;
+        const horizonStart = Date.parse(`${dateFrom}T00:00:00`);
+        const horizonEnd = Date.parse(`${dateTo}T23:59:59`);
+        const flat = chunks.flat().filter((b) => {
+          const s = parseBlockTimeMs(b.start_at);
+          const e = parseBlockTimeMs(b.end_at);
+          if (s == null || e == null) return false;
+          return e >= horizonStart && s <= horizonEnd;
+        });
+        setAllBlocks(flat);
+      } catch (err) {
+        if (!cancelled) {
+          setAllBlocks([]);
+          setBlocksError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredPeople, dateFrom, dateTo, reloadToken]);
+
+  const peopleForView = useMemo(() => {
+    if (!filterBlockType) return filteredPeople;
+    const ids = new Set(
+      allBlocks.filter((b) => b.block_type === filterBlockType).map((b) => b.personnel_id),
+    );
+    return filteredPeople.filter((p) => ids.has(p.personnel_id));
+  }, [filteredPeople, filterBlockType, allBlocks]);
+
+  const selectedPerson = useMemo(
+    () => peopleForView.find((p) => p.personnel_id === selectedPersonId) ?? null,
+    [peopleForView, selectedPersonId],
+  );
+
+  const selectedBlock = useMemo(
+    () => allBlocks.find((b) => b.id === selectedBlockId) ?? null,
+    [allBlocks, selectedBlockId],
+  );
+
+  useEffect(() => {
+    if (selectedPersonId == null) {
+      setPersonBlocks([]);
+      return;
+    }
+    let cancelled = false;
+    setBlocksLoading(true);
+    void listPersonnelAvailabilityBlocks(selectedPersonId, 100)
+      .then((blocks) => {
+        if (cancelled) return;
+        const horizonStart = Date.parse(`${dateFrom}T00:00:00`);
+        const horizonEnd = Date.parse(`${dateTo}T23:59:59`);
+        setPersonBlocks(
+          blocks.filter((b) => {
+            const s = parseBlockTimeMs(b.start_at);
+            const e = parseBlockTimeMs(b.end_at);
+            if (s == null || e == null) return false;
+            return e >= horizonStart && s <= horizonEnd;
+          }),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setPersonBlocks([]);
+      })
+      .finally(() => {
+        if (!cancelled) setBlocksLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPersonId, dateFrom, dateTo, reloadToken]);
+
+  const groups: ResourceTimelineGroup[] = useMemo(
+    () =>
+      peopleForView.map((p) => ({
+        id: p.personnel_id,
+        title: (
+          <button
+            type="button"
+            className="flex h-full w-full min-w-0 flex-col justify-center gap-0 text-left leading-tight hover:opacity-90"
+            onClick={() => {
+              setSelectedPersonId(p.personnel_id);
+              setSelectedBlockId(null);
+            }}
+          >
+            <span className="truncate text-xs font-medium leading-4 text-text-primary">
+              {formatPersonLabel(p.full_name)}
+            </span>
+            <span className="flex min-w-0 items-center gap-1">
+              <span className="truncate font-mono text-[11px] leading-4 text-text-muted">
+                {p.employee_code}
+              </span>
+              {certWarnings.get(p.personnel_id) === "expired" ? (
+                <Badge variant="destructive" className="h-4 shrink-0 px-1 text-[10px] leading-none">
+                  {t("availability.badges.certExpired")}
+                </Badge>
+              ) : certWarnings.get(p.personnel_id) === "expiring" ? (
+                <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px] leading-none">
+                  {t("availability.badges.certExpiring")}
+                </Badge>
+              ) : null}
+            </span>
+          </button>
+        ),
+      })),
+    [peopleForView, certWarnings, t],
+  );
+
+  const items: ResourceTimelineItem[] = useMemo(() => {
+    const personIds = new Set(peopleForView.map((p) => p.personnel_id));
+    return allBlocks
+      .filter((b) => personIds.has(b.personnel_id))
+      .filter((b) => (filterBlockType ? b.block_type === filterBlockType : true))
+      .map((b) => {
+        const start = parseBlockTimeMs(b.start_at) ?? 0;
+        const end = parseBlockTimeMs(b.end_at) ?? start + 3600000;
+        return {
+          id: b.id,
+          group: b.personnel_id,
+          title: t(`availability.form.types.${b.block_type}`, b.block_type),
+          start_time: start,
+          end_time: Math.max(end, start + 30 * 60 * 1000),
+          state: blockTypeToTimelineState(b.block_type, b.is_critical),
+        };
+      });
+  }, [allBlocks, peopleForView, filterBlockType, t]);
+
+  const applyHorizonPreset = (days: number) => {
+    const from = toLocalIsoDate(new Date());
+    setDateFrom(from);
+    setDateTo(addDaysLocal(from, days - 1));
   };
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">{t("tabs.availabilityCalendar")}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap gap-3">
-          <label className="flex items-center gap-2 text-sm">
-            {t("availability.from")}
-            <Input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-44"
-            />
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            {t("availability.to")}
-            <Input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="w-44"
-            />
-          </label>
-        </div>
+  const resetFilters = () => {
+    const from = toLocalIsoDate(new Date());
+    setDateFrom(from);
+    setDateTo(addDaysLocal(from, AVAILABILITY_DEFAULT_HORIZON_DAYS - 1));
+    setFilterEntityId(entityId ?? null);
+    setFilterTeamId(null);
+    setFilterPersonId(null);
+    setFilterBlockType(null);
+    setCriticalOnly(false);
+    setSelectedPersonId(null);
+    setSelectedBlockId(null);
+  };
 
-        <div className="rounded border p-3">
-          <div className="mb-2 text-sm font-medium">{t("availability.form.title")}</div>
-          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-            <label className="text-sm">
-              <span className="mb-1 block text-text-muted">{t("availability.form.personnel")}</span>
-              <select
-                className="h-9 w-full rounded border bg-background px-2"
-                value={newBlockPersonnelId ?? ""}
-                onChange={(e) => setNewBlockPersonnelId(Number(e.target.value))}
-              >
-                {personnelOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="text-sm">
-              <span className="mb-1 block text-text-muted">{t("availability.form.blockType")}</span>
-              <select
-                className="h-9 w-full rounded border bg-background px-2"
-                value={newBlockType}
-                onChange={(e) => setNewBlockType(e.target.value)}
-              >
-                <option value="medical">{t("availability.form.types.medical")}</option>
-                <option value="restriction">{t("availability.form.types.restriction")}</option>
-                <option value="leave">{t("availability.form.types.leave")}</option>
-                <option value="training">{t("availability.form.types.training")}</option>
-              </select>
-            </label>
-
-            <label className="text-sm">
-              <span className="mb-1 block text-text-muted">{t("availability.form.startAt")}</span>
-              <Input
-                type="datetime-local"
-                value={newBlockStart}
-                onChange={(e) => setNewBlockStart(e.target.value)}
-              />
-            </label>
-
-            <label className="text-sm">
-              <span className="mb-1 block text-text-muted">{t("availability.form.endAt")}</span>
-              <Input
-                type="datetime-local"
-                value={newBlockEnd}
-                onChange={(e) => setNewBlockEnd(e.target.value)}
-              />
-            </label>
-
-            <label className="text-sm xl:col-span-2">
-              <span className="mb-1 block text-text-muted">{t("availability.form.reason")}</span>
-              <Input value={newBlockReason} onChange={(e) => setNewBlockReason(e.target.value)} />
-            </label>
-          </div>
-
-          <label className="mt-3 flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={newBlockCritical}
-              onChange={(e) => setNewBlockCritical(e.target.checked)}
-            />
-            {t("availability.form.isCritical")}
-          </label>
-
-          <div className="mt-3 flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void submitNewBlock()}
-              disabled={creating}
-            >
-              {creating ? t("common.loading") : t("availability.form.submit")}
-            </Button>
-            {createError ? <span className="text-sm text-destructive">{createError}</span> : null}
-          </div>
-        </div>
-
-        {error ? <div className="text-sm text-destructive">{error}</div> : null}
-        {loading ? <div className="text-sm text-text-muted">{t("common.loading")}</div> : null}
-
-        <div className="space-y-3">
-          {Object.entries(grouped).length === 0 && !loading ? (
-            <div className="text-sm text-text-muted">{t("common.noData")}</div>
-          ) : null}
-          {Object.entries(grouped).map(([day, dayRows]) => (
-            <div key={day} className="rounded border p-3">
-              <div className="mb-2 text-sm font-medium">{day}</div>
-              <div className="space-y-1">
-                {dayRows.map((row) => (
-                  <div
-                    key={`${row.personnel_id}-${row.work_date}`}
-                    className="grid grid-cols-12 gap-2 text-sm"
-                  >
-                    <div className="col-span-4">
-                      {row.full_name}
-                      <span className="ml-2 text-xs text-text-muted">{row.employee_code}</span>
-                    </div>
-                    <div className="col-span-3 text-text-muted">{row.team_name ?? " "}</div>
-                    <div className="col-span-2">{row.available_minutes}m</div>
-                    <div className="col-span-2 text-text-muted">{row.blocked_minutes}m blocked</div>
-                    <div className="col-span-1 text-right">
-                      {row.has_critical_block ? (
-                        <span className="rounded bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
-                          !
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+  const filterDefs: SmartFilterDef[] = useMemo(
+    () => [
+      {
+        id: "entity",
+        kind: "select",
+        label: t("filters.entity"),
+        value: filterEntityId != null ? String(filterEntityId) : null,
+        options: entityNodes.map((n) => ({
+          value: String(n.node_id),
+          label: n.code ? `${n.code} — ${n.name}` : n.name,
+        })),
+        onChange: (v) => setFilterEntityId(v ? Number(v) : null),
+      },
+      {
+        id: "team",
+        kind: "select",
+        label: t("filters.team"),
+        value: filterTeamId != null ? String(filterTeamId) : null,
+        options: teamOptions.map((o) => ({ value: String(o.id), label: o.label })),
+        onChange: (v) => setFilterTeamId(v ? Number(v) : null),
+      },
+      {
+        id: "person",
+        kind: "select",
+        label: t("availability.filters.person"),
+        value: filterPersonId != null ? String(filterPersonId) : null,
+        options: personOptions.map((o) => ({ value: String(o.id), label: o.label })),
+        onChange: (v) => setFilterPersonId(v ? Number(v) : null),
+      },
+      {
+        id: "blockType",
+        kind: "select",
+        label: t("availability.filters.blockType"),
+        value: filterBlockType,
+        options: BLOCK_TYPES.map((bt) => ({
+          value: bt,
+          label: t(`availability.form.types.${bt}`),
+        })),
+        onChange: (v) => setFilterBlockType(v || null),
+      },
+      {
+        id: "critical",
+        kind: "select",
+        label: t("availability.filters.critical"),
+        value: criticalOnly ? CRITICAL_FILTER_VALUE : null,
+        options: [{ value: CRITICAL_FILTER_VALUE, label: t("availability.filters.criticalOnly") }],
+        onChange: (v) => setCriticalOnly(v === CRITICAL_FILTER_VALUE),
+      },
+    ],
+    [
+      t,
+      filterEntityId,
+      filterTeamId,
+      filterPersonId,
+      filterBlockType,
+      criticalOnly,
+      entityNodes,
+      teamOptions,
+      personOptions,
+    ],
   );
-}
+
+  const detailOpen = selectedPerson != null;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-text-muted">{t("availability.from")}</span>
+        <Input
+          type="date"
+          className="h-8 w-auto text-sm"
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
+        />
+        <span className="text-xs text-text-muted">{t("availability.to")}</span>
+        <Input
+          type="date"
+          className="h-8 w-auto text-sm"
+          value={dateTo}
+          onChange={(e) => setDateTo(e.target.value)}
+        />
+        {AVAILABILITY_HORIZON_PRESETS.map((days) => (
+          <Button
+            key={days}
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8"
+            onClick={() => applyHorizonPreset(days)}
+          >
+            {t("availability.horizonPreset", { days })}
+          </Button>
+        ))}
+      </div>
+
+      <SmartFilterBar
+        searchPlaceholder=""
+        searchValue=""
+        onSearchChange={() => undefined}
+        showSearch={false}
+        filters={filterDefs}
+        resultCount={peopleForView.length}
+        onReset={resetFilters}
+      />
+
+      <div className="flex flex-wrap gap-1.5">
+        {viewMode === "chronology"
+          ? RESOURCE_TIMELINE_BLOCK_LEGEND_STATES.map((state) => (
+              <span
+                key={state}
+                className={cn(
+                  "rounded border px-1.5 py-0.5 text-[10px]",
+                  RESOURCE_TIMELINE_STATE_CLASS[state],
+                )}
+              >
+                {t(`availability.form.types.${state}`)}
+              </span>
+            ))
+          : (Object.keys(CELL_STATE_CLASS) as Array<keyof typeof CELL_STATE_CLASS>).map((state) => (
+              <span
+                key={state}
+                className={cn("rounded border px-1.5 py-0.5 text-[10px]", CELL_STATE_CLASS[state])}
+              >
+                {t(`availability.cell.${state}`)}
+              </span>
+            ))}
+      </div>
+
+      {error ? <div className="text-sm text-destructive">{error}</div> : null}
+      {blocksError ? <div className="text-sm text-destructive">{blocksError}</div> : null}
+
+      <div className={cn(mfLayout.moduleWorkspaceSplit, "min-h-0 flex-1")}>
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-col",
+            viewMode === "chronology" ? "overflow-hidden" : "overflow-auto",
+            detailOpen ? "w-[55%] border-r border-surface-border pr-3" : "w-full",
+          )}
+        >
+          {viewMode === "chronology" ? (
+            <ResourceTimeline
+              groups={groups}
+              items={items}
+              horizonStart={Date.parse(`${dateFrom}T00:00:00`)}
+              horizonEnd={Date.parse(`${dateTo}T23:59:59`)}
+              visibleTimeStart={visibleStart}
+              visibleTimeEnd={visibleEnd}
+              onVisibleTimeChange={(s, e) => {
+                setVisibleStart(s);
+                setVisibleEnd(e);
+              }}
+              onItemSelect={(id) => {
+                const block = allBlocks.find((b) => b.id === id);
+                if (!block) return;
+                setSelectedBlockId(block.id);
+                setSelectedPersonId(block.personnel_id);
+              }}
+              onGroupClick={(groupId) => {
+                setSelectedPersonId(Number(groupId));
+                setSelectedBlockId(null);
+              }}
+              {...(selectedBlockId != null ? { selectedItemIds: [selectedBlockId] } : {})}
+              loading={loading}
+              error={error}
+              emptyTitle={t("availability.empty")}
+              className="min-h-0 flex-1"
+            />
+          ) : (
+            <div className="space-y-2 overflow-auto text-sm">
+              {loading ? (
+                <p className="text-text-muted">{t("common.loading")}</p>
+              ) : peopleForView.length === 0 ? (
+                <p className="text-text-muted">{t("availability.empty")}</p>
+              ) : (
+                peopleForView.map((person) => (
+                  <button
+                    key={person.personnel_id}
+                    type="button"
+                    className="w-full rounded-md border border-surface-border px-3 py-2 text-left hover:bg-surface-2"
+                    onClick={() => {
+                      setSelectedPersonId(person.personnel_id);
+                      setSelectedBlockId(null);
+                    }}
+                  >
+                    <div className="font-medium">{formatPersonLabel(person.full_name)}</div>
+                    <div className="text-xs text-text-muted">{person.employee_code}</div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {dates.map((d) => {
+                        const cell = person.cells.get(d);
+                        if (!cell) return null;
+                        const state = deriveCellState(cell);
+                        return (
+                          <span
+                            key={d}
+                            className={cn(
+                              "rounded border px-1 text-[10px]",
+                              CELL_STATE_CLASS[state],
+                            )}
+                          >
+                            {d.slice(5)} · {t(`availability.cell.${state}`)}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        {detailOpen && selectedPerson ? (
+          <div className="min-w-[280px] flex-1 overflow-auto pl-3">
+            <AvailabilityInspectorWorkspace
+              person={selectedPerson}
+              selectedBlock={selectedBlock}
+              personBlocks={personBlocks}
+              blocksLoading={blocksLoading}
+              blocksError={blocksError}
+              dateFrom={dateFrom}
+              dateTo={dateTo}
+              certWarning={certWarnings.get(selectedPerson.personnel_id) ?? null}
+              onClose={() => {
+                setSelectedPersonId(null);
+                setSelectedBlockId(null);
+              }}
+              onSelectBlock={setSelectedBlockId}
+              onCreateBlock={(personnelId, date) => openCreateDialog(personnelId, date)}
+              onEditBlock={(block) => {
+                setBlockDialogMode("edit");
+                setEditingBlock(block);
+                setBlockDialogOpen(true);
+              }}
+              {...(onOpenPersonnel ? { onOpenPersonnel } : {})}
+              onBlocksChanged={loadCalendar}
+            />
+          </div>
+        ) : null}
+      </div>
+
+      <AvailabilityBlockDialog
+        open={blockDialogOpen}
+        onOpenChange={setBlockDialogOpen}
+        mode={blockDialogMode}
+        editingBlock={editingBlock}
+        initialPersonnelId={createSeedPersonnelId}
+        initialStartLocal={createSeedStart}
+        initialEndLocal={createSeedEnd}
+        personOptions={people.map((p) => ({
+          id: p.personnel_id,
+          label: `${p.full_name} (${p.employee_code})`,
+        }))}
+        onSaved={() => {
+          setBlockDialogOpen(false);
+          loadCalendar();
+        }}
+      />
+    </div>
+  );
+});

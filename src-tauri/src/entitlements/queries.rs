@@ -807,8 +807,10 @@ fn capability_from_permission(permission: &str) -> Option<&'static str> {
         Some("work_orders")
     } else if permission.starts_with("inv.") {
         Some("inventory")
-    } else if permission.starts_with("per.") || permission.starts_with("trn.") {
+    } else if permission.starts_with("per.") {
         Some("personnel")
+    } else if permission.starts_with("trn.") {
+        Some("training")
     } else if permission.starts_with("org.") {
         Some("organization")
     } else if permission.starts_with("ref.") {

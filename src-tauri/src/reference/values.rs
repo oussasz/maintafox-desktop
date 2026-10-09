@@ -548,6 +548,10 @@ pub async fn create_operational_value(
 
     let created = map_value(&row)?;
     crate::reference::schedule_patterns::seed_default_details_if_schedule_class(db, &created).await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_reference_value_sync(db, &domain_code, &created.code).await,
+        "reference_value create",
+    );
     Ok(created)
 }
 
@@ -612,7 +616,14 @@ pub async fn update_value(
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
-    get_value_by_id(db, value_id).await
+    let updated = get_value_by_id(db, value_id).await?;
+    let set = sets::get_reference_set(db, updated.set_id).await?;
+    let domain = domains::get_reference_domain(db, set.domain_id).await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_reference_value_sync(db, &domain.code, &updated.code).await,
+        "reference_value update",
+    );
+    Ok(updated)
 }
 
 /// Deactivates a reference value (soft-disable).

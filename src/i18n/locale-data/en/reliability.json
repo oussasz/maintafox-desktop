@@ -36,6 +36,8 @@
   "dashboard": {
     "title": "Operations dashboard",
     "kpiTitle": "Latest reliability snapshot",
+    "dataQuality": "Data quality",
+    "scheduleAssigned": "Assigned",
     "mtbf": "MTBF (h)",
     "mttr": "MTTR (h)",
     "availability": "Availability",

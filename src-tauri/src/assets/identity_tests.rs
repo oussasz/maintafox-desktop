@@ -137,14 +137,14 @@ mod tests {
     /// Returns the class id.
     async fn setup_equipment_class(db: &sea_orm::DatabaseConnection) -> i64 {
         let now = chrono::Utc::now().to_rfc3339();
-        let sync_id = uuid::Uuid::new_v4().to_string();
+        let entity_sync_id = uuid::Uuid::new_v4().to_string();
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO equipment_classes
-              (sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
+              (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
               VALUES (?, 'PUMP', 'Pompes', NULL, 'class', 1, ?, ?)",
-            [sync_id.into(), now.clone().into(), now.into()],
+            [entity_sync_id.into(), now.clone().into(), now.into()],
         ))
         .await
         .expect("insert equipment class");

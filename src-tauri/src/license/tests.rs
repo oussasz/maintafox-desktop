@@ -13,7 +13,7 @@ async fn setup_db() -> DatabaseConnection {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT OR IGNORE INTO user_accounts
-            (id, sync_id, username, display_name, identity_mode, password_hash, is_active, is_admin, force_password_change,
+            (id, entity_sync_id, username, display_name, identity_mode, password_hash, is_active, is_admin, force_password_change,
              failed_login_attempts, created_at, updated_at)
          VALUES
             (1, 'sync-user-1', 'tester', 'Tester', 'local', 'dummy', 1, 1, 0, 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'),

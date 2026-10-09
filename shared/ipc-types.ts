@@ -77,6 +77,23 @@ export interface LoginResponse {
   session_info: SessionInfo;
 }
 
+/** Pre-login helpdesk contact for admin-assisted password recovery (no user ids). */
+export interface PasswordRecoveryContact {
+  display_name: string;
+  email: string | null;
+  phone: string | null;
+}
+
+export interface AdminSetUserPasswordInput {
+  user_id: number;
+  /** When omitted, the backend generates a policy-compliant temporary password. */
+  temporary_password?: string | null;
+}
+
+export interface AdminSetUserPasswordResult {
+  temporary_password: string;
+}
+
 // â”€â”€â”€ RBAC â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface PermissionRecord {
@@ -1355,7 +1372,7 @@ export interface RestoreTestResult {
 
 export interface OrgStructureModel {
   id: number;
-  sync_id: string;
+  entity_sync_id: string;
   version_number: number;
   status: string;
   description: string | null;
@@ -1368,7 +1385,7 @@ export interface OrgStructureModel {
 
 export interface OrgNodeType {
   id: number;
-  sync_id: string;
+  entity_sync_id: string;
   structure_model_id: number;
   code: string;
   label: string;
@@ -1458,7 +1475,7 @@ export interface AssignEquipmentPayload {
 
 export interface OrgNode {
   id: number;
-  sync_id: string;
+  entity_sync_id: string;
   code: string;
   name: string;
   node_type_id: number;
@@ -1501,6 +1518,8 @@ export interface OrgNodeResponsibility {
   responsibility_type: string;
   person_id: number | null;
   team_id: number | null;
+  person_display_name?: string | null;
+  team_label?: string | null;
   valid_from: string | null;
   valid_to: string | null;
   created_at: string;
@@ -1966,7 +1985,7 @@ export interface ReferencePublishResult {
 
 export interface Asset {
   id: number;
-  sync_id: string;
+  entity_sync_id: string;
   asset_code: string;
   asset_name: string;
   class_id: number | null;
@@ -2069,7 +2088,7 @@ export interface LinkAssetPayload {
 
 export interface AssetLifecycleEvent {
   id: number;
-  sync_id: string;
+  entity_sync_id: string;
   asset_id: number;
   event_type: string;
   event_at: string;
@@ -2105,7 +2124,7 @@ export interface RecordLifecycleEventPayload {
 
 export interface AssetMeter {
   id: number;
-  sync_id: string;
+  entity_sync_id: string;
   asset_id: number;
   name: string;
   meter_code: string | null;
@@ -2235,11 +2254,34 @@ export interface AssetSearchFilters {
   org_node_ids?: number[] | null;
   include_decommissioned?: boolean;
   limit?: number | null;
+  /** KPI strip click-to-filter focus. */
+  registry_focus?: "status_down" | "critical_at_risk" | "open_work" | "stale_meters" | null;
+}
+
+export type EquipmentRegistryMetricValueKind = "count" | "percent";
+export type EquipmentRegistryMetricTrendSense = "up-good" | "up-bad" | "neutral";
+
+export interface EquipmentRegistryMetricCell {
+  semantic_key: string;
+  catalog_id: string;
+  value: number;
+  previous_value: number;
+  available: boolean;
+  value_kind: EquipmentRegistryMetricValueKind;
+  trend_sense: EquipmentRegistryMetricTrendSense;
+  active_count?: number | null;
+  down_count?: number | null;
+  series?: number[] | null;
+}
+
+export interface EquipmentRegistryMetricsPayload {
+  scoped_total: number;
+  cells: EquipmentRegistryMetricCell[];
 }
 
 export interface AssetSearchResult {
   id: number;
-  sync_id: string;
+  entity_sync_id: string;
   asset_code: string;
   asset_name: string;
   class_code: string | null;
@@ -3477,7 +3519,10 @@ export interface PmPlan {
   criticality_value_id: number | null;
   criticality_code: string | null;
   criticality_label: string | null;
-  assigned_group_id: number | null;
+  assigned_team_id: number | null;
+  assigned_team_code: string | null;
+  assigned_team_name: string | null;
+  assigned_team_label: string | null;
   requires_shutdown: number;
   requires_permit: number;
   is_active: number;
@@ -3525,7 +3570,7 @@ export interface CreatePmPlanInput {
   asset_scope_id?: number | null;
   strategy_type: string;
   criticality_value_id?: number | null;
-  assigned_group_id?: number | null;
+  assigned_team_id?: number | null;
   requires_shutdown: boolean;
   requires_permit: boolean;
   is_active?: boolean;
@@ -3538,7 +3583,7 @@ export interface UpdatePmPlanInput {
   asset_scope_id?: number | null;
   strategy_type?: string | null;
   criticality_value_id?: number | null;
-  assigned_group_id?: number | null;
+  assigned_team_id?: number | null;
   requires_shutdown?: boolean | null;
   requires_permit?: boolean | null;
   is_active?: boolean | null;
@@ -3617,6 +3662,7 @@ export interface GeneratePmOccurrencesInput {
   as_of?: string | null;
   horizon_days?: number | null;
   pm_plan_id?: number | null;
+  equipment_id?: number | null;
   event_codes?: string[] | null;
   condition_codes?: string[] | null;
 }
@@ -3626,6 +3672,44 @@ export interface GeneratePmOccurrencesResult {
   skipped_count: number;
   trigger_events_recorded: number;
   occurrence_ids: number[];
+}
+
+export interface PmGenerationControl {
+  id: number;
+  enabled: boolean;
+  cron_expr: string;
+  horizon_days: number;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  last_status: string | null;
+  last_generated_count: number | null;
+  last_skipped_count: number | null;
+  last_error: string | null;
+  updated_at: string;
+}
+
+export interface PmGenerationRun {
+  id: number;
+  started_at: string;
+  finished_at: string | null;
+  trigger_source: string;
+  status: string;
+  generated_count: number;
+  skipped_count: number;
+  trigger_events_recorded: number;
+  error_message: string | null;
+  scope_json: string | null;
+}
+
+export interface PmGenerationStatus {
+  control: PmGenerationControl;
+  latest_run: PmGenerationRun | null;
+}
+
+export interface UpdatePmGenerationSettingsInput {
+  enabled?: boolean | null;
+  cron_expr?: string | null;
+  horizon_days?: number | null;
 }
 
 export interface TransitionPmOccurrenceInput {
@@ -3817,7 +3901,7 @@ export type DiImpactLevel = "unknown" | "none" | "minor" | "major" | "critical";
 export interface InterventionRequest {
   id: number;
   code: string;
-  asset_id: number;
+  equipment_id: number;
   sub_asset_ref: string | null;
   org_node_id: number;
   status: DiStatus;
@@ -3836,7 +3920,6 @@ export interface InterventionRequest {
   validated_urgency: DiUrgency | null;
   observed_at: string | null;
   submitted_at: string;
-  review_team_id: number | null;
   reviewer_id: number | null;
   screened_at: string | null;
   approved_at: string | null;
@@ -3884,7 +3967,7 @@ export interface InterventionRequest {
 
 export interface DiListFilter {
   status?: string[] | null;
-  asset_id?: number | null;
+  equipment_id?: number | null;
   org_node_id?: number | null;
   submitter_id?: number | null;
   reviewer_id?: number | null;
@@ -3922,7 +4005,7 @@ export interface DiSummaryRow {
 }
 
 export interface DiCreateInput {
-  asset_id: number;
+  equipment_id: number;
   org_node_id: number;
   title: string;
   description: string;
@@ -3976,7 +4059,6 @@ export interface DiScreenInput {
   actor_id: number;
   expected_row_version: number;
   validated_urgency: string;
-  review_team_id?: number | null;
   classification_code_id?: number | null;
   reviewer_note?: string | null;
 }
@@ -4079,7 +4161,7 @@ export interface LookupValueOption {
 }
 
 export interface LookupValueRecord extends LookupValueOption {
-  sync_id: string;
+  entity_sync_id: string;
   domain_id: number;
   description: string | null;
   sort_order: number;
@@ -4222,6 +4304,25 @@ export interface AssetPhotoPreview {
   data_base64: string;
 }
 
+/** Inline personnel photo preview (same IPC/`data:` URL pattern as asset photos). */
+export interface PersonnelPhotoPreview {
+  mime_type: string;
+  data_base64: string;
+}
+
+/** Tenant document branding logo preview for Settings / print letterhead. */
+export interface DocumentBrandingLogoPreview {
+  mime_type: string;
+  data_base64: string;
+  relative_path: string;
+}
+
+export interface DocumentBrandingLogoUploadResult {
+  relative_path: string;
+  mime_type: string;
+  data_base64: string;
+}
+
 export interface UploadAssetPhotoPayload {
   asset_id: number;
   source_path: string;
@@ -4252,6 +4353,34 @@ export interface DashboardKpis {
   open_wos: KpiValue;
   total_assets: KpiValue;
   overdue_items: KpiValue;
+}
+
+export type OverviewKpiValueKind = "count" | "percent" | "hours" | "currency";
+export type OverviewKpiTrendSense = "up-good" | "up-bad" | "neutral";
+
+export interface OverviewKpiCell {
+  semantic_key: string;
+  catalog_id: string;
+  value: number;
+  previous_value: number;
+  available: boolean;
+  quality_badge?: string | null | undefined;
+  value_kind: OverviewKpiValueKind;
+  trend_sense: OverviewKpiTrendSense;
+  series?: number[] | undefined;
+}
+
+export interface OverviewKpisPayload {
+  horizon_days: number;
+  cells: OverviewKpiCell[];
+}
+
+export interface OverviewKpiLayoutPayload {
+  layout_json: string;
+}
+
+export interface SaveOverviewKpiLayoutInput {
+  overview_kpis_json: string;
 }
 
 export interface KpiSqlSample {
@@ -4330,7 +4459,7 @@ export interface DiTrendPoint {
 }
 
 export interface DiEquipmentCount {
-  asset_id: number;
+  equipment_id: number;
   asset_label: string;
   count: number;
   percentage: number;
@@ -4407,7 +4536,7 @@ export interface WorkOrder {
   entity_id: number | null;
   planner_id: number | null;
   approver_id: number | null;
-  assigned_group_id: number | null;
+  assigned_team_id: number | null;
   primary_responsible_id: number | null;
   // Urgency
   urgency_id: number | null;
@@ -4478,6 +4607,13 @@ export interface WorkOrder {
   source_di_code?: string | null;
   source_di_title?: string | null;
   source_di_status?: string | null;
+  /** Crew label (teams.code + name). Prefer over assigned_team_id in UI. */
+  assigned_team_code?: string | null;
+  assigned_team_name?: string | null;
+  assigned_team_label?: string | null;
+  /** Latest Planning commitment for this WO (source_type=work_order). */
+  schedule_commitment_id?: number | null;
+  schedule_frozen?: boolean | null;
 }
 
 export interface WoTransitionRow {
@@ -4630,8 +4766,9 @@ export interface WoPlanInput {
   actor_id: number;
   expected_row_version: number;
   planner_id: number;
-  planned_start: string;
-  planned_end: string;
+  /** Optional; ignored when a schedule commitment exists (Planning SSOT). */
+  planned_start?: string | null;
+  planned_end?: string | null;
   shift?: WoShift | null;
   expected_duration_hours?: number | null;
   planned_downtime_hours?: number | null;
@@ -4642,9 +4779,20 @@ export interface WoAssignInput {
   wo_id: number;
   actor_id: number;
   expected_row_version: number;
-  assigned_group_id?: number | null;
+  assigned_team_id?: number | null;
   primary_responsible_id?: number | null;
   scheduled_at?: string | null;
+  /** Required — unguarded assign is retired; use emergency_reassign_wo from UI. */
+  override_reason: string;
+}
+
+export interface WoEmergencyReassignInput {
+  wo_id: number;
+  actor_id: number;
+  expected_row_version: number;
+  assigned_team_id?: number | null;
+  primary_responsible_id?: number | null;
+  override_reason: string;
 }
 
 export interface WoStartInput {
@@ -4859,6 +5007,8 @@ export interface WoIntervener {
   notes: string | null;
   intervener_display_name?: string | null;
   skill_label?: string | null;
+  /** `provided` | `rate_card` | `missing` — how hourly_rate was obtained. */
+  rate_source?: string;
 }
 
 /** Part row as returned by execution commands (raw FK columns). */
@@ -5940,6 +6090,73 @@ export interface TeamCapacitySummaryRow {
   avg_availability_ratio: number;
 }
 
+export interface TeamListFilter {
+  entity_id?: number | null;
+  include_inactive?: boolean | null;
+}
+
+export interface TeamSummary {
+  id: number;
+  entity_sync_id: string;
+  code: string;
+  name: string;
+  team_type: string;
+  status: string;
+  primary_node_id: number | null;
+  node_name: string | null;
+  node_code: string | null;
+  description: string | null;
+  icon_key: string | null;
+  accent_color: string | null;
+}
+
+export interface TeamCreateInput {
+  code: string;
+  name: string;
+  team_type: string;
+  primary_node_id: number;
+  description?: string | null;
+  status?: string | null;
+  icon_key?: string | null;
+  accent_color?: string | null;
+}
+
+export interface TeamUpdateInput {
+  id: number;
+  code?: string | null;
+  name?: string | null;
+  team_type?: string | null;
+  primary_node_id?: number | null;
+  description?: string | null;
+  status?: string | null;
+  icon_key?: string | null;
+  accent_color?: string | null;
+}
+
+/** Open crew roster membership (team-scoped). */
+export interface TeamMemberRow {
+  assignment_id: number;
+  personnel_id: number;
+  employee_code: string;
+  full_name: string;
+  position_name: string | null;
+  role_code: string;
+  allocation_percent: number;
+  valid_from: string | null;
+  valid_to: string | null;
+  is_lead: number;
+  availability_status: string;
+  /** Linked login when user_accounts.personnel_id matches (WO assignment bridge). */
+  user_account_id: number | null;
+}
+
+/** Promote or clear crew lead on an existing open assignment. */
+export interface SetTeamLeadInput {
+  team_id: number;
+  personnel_id: number;
+  is_lead: boolean;
+}
+
 export interface AvailabilityBlockCreateInput {
   personnel_id: number;
   block_type: string;
@@ -5947,6 +6164,18 @@ export interface AvailabilityBlockCreateInput {
   end_at: string;
   reason_note?: string | null;
   is_critical?: boolean;
+  /** Soft-confirm when backend reports AVAILABILITY_BLOCK_OVERLAP_CONFIRM. */
+  confirm_overlap?: boolean;
+}
+
+export interface AvailabilityBlockUpdateInput {
+  id: number;
+  block_type: string;
+  start_at: string;
+  end_at: string;
+  reason_note?: string | null;
+  is_critical?: boolean;
+  confirm_overlap?: boolean;
 }
 
 export interface PersonnelAvailabilityBlock {
@@ -5958,6 +6187,7 @@ export interface PersonnelAvailabilityBlock {
   reason_note: string | null;
   is_critical: boolean;
   created_by_id: number | null;
+  created_by_label: string | null;
   created_at: string;
 }
 
@@ -7390,6 +7620,11 @@ export interface ScheduleCandidate {
   row_version: number;
   created_at: string;
   updated_at: string;
+  source_code: string | null;
+  source_title: string | null;
+  assigned_team_label: string | null;
+  assigned_personnel_name: string | null;
+  priority_label: string | null;
 }
 
 export interface SchedulingConflict {
@@ -7537,6 +7772,10 @@ export interface ScheduleCommitment {
   row_version: number;
   created_at: string;
   updated_at: string;
+  source_code: string | null;
+  source_title: string | null;
+  assigned_team_label: string | null;
+  assigned_personnel_name: string | null;
 }
 
 export interface ScheduleCommitmentFilter {
@@ -7589,6 +7828,7 @@ export interface ScheduleChangeLogEntry {
   reason: string | null;
   details_json: string | null;
   created_at: string;
+  actor_display_name: string | null;
 }
 
 export interface ScheduleBreakIn {
@@ -7609,6 +7849,10 @@ export interface ScheduleBreakIn {
   row_version: number;
   created_by_id: number | null;
   created_at: string;
+  commitment_source_code: string | null;
+  approved_by_display_name: string | null;
+  old_assignee_name: string | null;
+  new_assignee_name: string | null;
 }
 
 export interface ScheduleBreakInFilter {
@@ -7649,6 +7893,13 @@ export interface PlanningAssigneeLane {
   commitments_json: string;
 }
 
+export interface PlanningCrewLane {
+  team_id: number;
+  team_code: string;
+  team_name: string;
+  commitments_json: string;
+}
+
 export interface PlanningGanttFilter {
   period_start: string;
   period_end: string;
@@ -7662,6 +7913,8 @@ export interface PlanningGanttSnapshot {
   locked_windows: PlanningWindow[];
   capacity: TeamCapacityLoad[];
   assignee_lanes: PlanningAssigneeLane[];
+  /** Plant-wide All Crews overview; empty when filtered to a single crew. */
+  crew_lanes: PlanningCrewLane[];
 }
 
 export interface NotifyTeamsInput {
@@ -7709,6 +7962,86 @@ export interface ReportRun {
   error_message: string | null;
   started_at: string;
   finished_at: string | null;
+  has_downloadable_artifact: boolean;
+}
+
+/** Executive dashboards (Analytics hub M1). */
+export interface AnalyticsExecutiveFilter {
+  horizon_days: number;
+  org_node_id?: number | null;
+}
+
+export interface AnalyticsKpiValue {
+  key: string;
+  value: number;
+  previous_value: number;
+  available: boolean;
+  quality_badge: string | null;
+  catalog_id: string | null;
+}
+
+export interface AnalyticsWorkloadDay {
+  date: string;
+  di_created: number;
+  wo_completed: number;
+  pm_due: number;
+}
+
+export interface AnalyticsDiStatusSegment {
+  status: string;
+  count: number;
+}
+
+export interface AnalyticsReliabilitySeriesPoint {
+  date: string;
+  avg_mtbf: number | null;
+  avg_mttr: number | null;
+  avg_availability: number | null;
+  avg_data_quality: number | null;
+  maintenance_cost: number | null;
+}
+
+export interface AnalyticsBadActorAsset {
+  equipment_id: number;
+  asset_code: string;
+  asset_label: string;
+  event_count: number;
+  mtbf_hours: number | null;
+  availability: number | null;
+  maintenance_cost: number;
+  cost_available: boolean;
+}
+
+export interface AnalyticsExecutiveDashboard {
+  horizon_days: number;
+  org_node_id: number | null;
+  open_dis: AnalyticsKpiValue;
+  open_wos: AnalyticsKpiValue;
+  total_assets: AnalyticsKpiValue;
+  overdue_items: AnalyticsKpiValue;
+  pm_overdue: AnalyticsKpiValue;
+  pm_due_today: AnalyticsKpiValue;
+  pm_due_next_7d: AnalyticsKpiValue;
+  avg_mtbf_hours: AnalyticsKpiValue;
+  avg_mttr_hours: AnalyticsKpiValue;
+  avg_availability: AnalyticsKpiValue;
+  avg_data_quality: AnalyticsKpiValue;
+  maintenance_cost: AnalyticsKpiValue;
+  reliability_snapshot_count: number;
+  reliability_total_events: number;
+  workload_days: AnalyticsWorkloadDay[];
+  workload_quality_badge: string | null;
+  di_status_segments: AnalyticsDiStatusSegment[];
+  reliability_series: AnalyticsReliabilitySeriesPoint[];
+  bad_actor_assets: AnalyticsBadActorAsset[];
+}
+
+export interface AnalyticsDashboardLayoutPayload {
+  layout_json: string;
+}
+
+export interface SaveAnalyticsDashboardLayoutInput {
+  layout_json: string;
 }
 
 export interface UpsertReportScheduleInput {
@@ -8610,6 +8943,15 @@ export interface SyncPushPayload {
   outbox_batch: SyncOutboxItem[];
   /** Optional tenant metadata on sync exchange (control-plane observability / policy); ignored by mirror apply when unused. */
   tenant_config?: TenantConfigSyncPayload | null;
+  /** Additive v1 field — desktop always receives full tenant replica; mobile may filter later. */
+  device_class?: "desktop" | "mobile";
+  /** Optional media object keys pending upload/download (binaries are not in payload_json). */
+  media_manifest?: Array<{
+    entity_sync_id: string;
+    content_sha256: string;
+    object_key: string;
+    byte_size: number;
+  }> | null;
 }
 
 export interface SyncStateSummary {
@@ -8618,6 +8960,15 @@ export interface SyncStateSummary {
   pending_outbox_count: number;
   rejected_outbox_count: number;
   inbox_error_count: number;
+}
+
+/** Result of applying pending sync_inbox rows to domain tables. */
+export interface MaterializeInboxResult {
+  processed: number;
+  applied: number;
+  conflicts: number;
+  skipped: number;
+  errors: string[];
 }
 
 export interface SyncConflictFilter {

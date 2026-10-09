@@ -250,7 +250,7 @@ test_wo_06_plan_requires_dates
   Call plan_wo with planned_end < planned_start; must return validation error.
 
 test_wo_07_assign_requires_assignee
-  Call assign_wo with both assigned_group_id=None and primary_responsible_id=None;
+  Call assign_wo with both assigned_team_id=None and primary_responsible_id=None;
   must return "At least one assignee required" error.
 
 test_wo_08_pause_requires_delay_reason

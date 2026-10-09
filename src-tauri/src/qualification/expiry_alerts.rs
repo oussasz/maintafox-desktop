@@ -215,13 +215,13 @@ pub async fn scan_training_expiry_alerts(
             "info"
         };
 
-        let sync_id = Uuid::new_v4().to_string();
+        let entity_sync_id = Uuid::new_v4().to_string();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO training_expiry_alert_events (entity_sync_id, certification_id, alert_dedupe_key, \
              fired_at, severity, row_version) VALUES (?, ?, ?, ?, ?, 1)",
             [
-                sync_id.into(),
+                entity_sync_id.into(),
                 cert_id.into(),
                 dedupe.into(),
                 now_ts.clone().into(),

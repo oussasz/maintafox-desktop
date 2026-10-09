@@ -160,6 +160,27 @@
     "noMeters": "Aucun compteur enregistré.",
     "noDocuments": "Aucun document joint."
   },
+  "metrics": {
+    "stripAria": "Indicateurs de santé du registre équipements",
+    "statusSummary": "Actifs hors service",
+    "criticalAtRisk": "Critiques à risque",
+    "healthScore": "Score de santé",
+    "openWork": "Travaux ouverts",
+    "staleMeters": "Compteurs obsolètes",
+    "contextStatus": "Actifs actuellement hors service",
+    "contextStatusDetail": "{{active}} en service · {{down}} hors service",
+    "contextCriticalRisk": "Actifs critiques hors service ou avec DI/OT ouverts",
+    "contextHealth": "Santé moyenne des actifs dans le périmètre",
+    "contextOpenWork": "Actifs avec DI ou OT ouverts",
+    "contextStaleMeters": "Compteurs actifs non lus depuis > 30 jours",
+    "focusFilter": "Focus KPI",
+    "stable": "Stable",
+    "alertNormal": "Normal",
+    "alertAttention": "Attention",
+    "unit": {
+      "percent": "%"
+    }
+  },
   "registry": {
     "title": "Registre des actifs",
     "refresh": "Actualiser",

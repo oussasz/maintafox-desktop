@@ -107,7 +107,7 @@
       "analytics": "Analytique",
       "admin": "Administration"
     },
-    "dashboard": "Tableau de bord",
+    "dashboard": "Vue d'ensemble",
     "vendorConsole": "Console fournisseur",
     "equipment": "\u00c9quipements",
     "requests": "Demandes d'intervention",
@@ -119,7 +119,7 @@
     "inventory": "Pi\u00e8ces de rechange",
     "personnel": "Personnel",
     "training": "Formations & habilitations",
-    "analytics": "Tableaux de bord",
+    "analytics": "RAMS & Analytique",
     "reliability": "Fiabilit\u00e9 (RAMS)",
     "budget": "Budget & co\u00fbts",
     "archive": "Archivage",

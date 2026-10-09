@@ -29,7 +29,7 @@ This file addresses PRD §6.5 requirements for:
 - [x] Core entity `work_orders` with all PRD-listed fields:
       id, code (OT-XXXX), type_id, status_id, equipment_id, component_id (nullable),
       location_id (nullable), requester_id, source_di_id, entity_id, planner_id, approver_id,
-      assigned_group_id, primary_responsible_id, urgency_id, title, description,
+      assigned_team_id, primary_responsible_id, urgency_id, title, description,
       planned_start, planned_end, scheduled_at, actual_start, actual_end,
       mechanically_completed_at, technically_verified_at, closed_at,
       expected_duration_hours, actual_duration_hours, active_labor_hours,
@@ -86,7 +86,7 @@ This file addresses PRD §6.5 requirements for:
 ## Prerequisites
 
 - SP04 complete: `work_order_stubs` table exists from migration 019; `source_di_id` present
-- SP01 complete: `org_nodes` available for `entity_id` / `assigned_group_id` bindings
+- SP01 complete: `org_nodes` available for `entity_id`; crews via `teams` for `assigned_team_id`
 - SP02 complete: `asset_registry` for `equipment_id` lookups
 - SP03 complete: `reference_values` for failure codes (`symptom_id`, `failure_mode_id`,
   `failure_cause_id`, `failure_effect_id`) consumed in File 03
@@ -215,7 +215,7 @@ CREATE TABLE work_orders (
   entity_id                   INTEGER NULL REFERENCES org_nodes(id),
   planner_id                  INTEGER NULL REFERENCES user_accounts(id),
   approver_id                 INTEGER NULL REFERENCES user_accounts(id),
-  assigned_group_id           INTEGER NULL REFERENCES org_nodes(id),
+  assigned_team_id            INTEGER NULL REFERENCES teams(id),
   primary_responsible_id      INTEGER NULL REFERENCES user_accounts(id),
   -- Urgency
   urgency_id                  INTEGER NULL REFERENCES urgency_levels(id),

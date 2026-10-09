@@ -63,6 +63,11 @@ const ScheduleCandidateSchema = z.object({
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+  source_code: z.string().nullable(),
+  source_title: z.string().nullable(),
+  assigned_team_label: z.string().nullable(),
+  assigned_personnel_name: z.string().nullable(),
+  priority_label: z.string().nullable(),
 });
 
 const SchedulingConflictSchema = z.object({
@@ -151,6 +156,10 @@ const ScheduleCommitmentSchema = z.object({
   row_version: z.number(),
   created_at: z.string(),
   updated_at: z.string(),
+  source_code: z.string().nullable(),
+  source_title: z.string().nullable(),
+  assigned_team_label: z.string().nullable(),
+  assigned_personnel_name: z.string().nullable(),
 });
 
 const ScheduleChangeLogEntrySchema = z.object({
@@ -166,6 +175,7 @@ const ScheduleChangeLogEntrySchema = z.object({
   reason: z.string().nullable(),
   details_json: z.string().nullable(),
   created_at: z.string(),
+  actor_display_name: z.string().nullable(),
 });
 
 const ScheduleBreakInSchema = z.object({
@@ -186,6 +196,10 @@ const ScheduleBreakInSchema = z.object({
   row_version: z.number(),
   created_by_id: z.number().nullable(),
   created_at: z.string(),
+  commitment_source_code: z.string().nullable(),
+  approved_by_display_name: z.string().nullable(),
+  old_assignee_name: z.string().nullable(),
+  new_assignee_name: z.string().nullable(),
 });
 
 const TeamCapacityLoadSchema = z.object({
@@ -204,6 +218,13 @@ const PlanningAssigneeLaneSchema = z.object({
   commitments_json: z.string(),
 });
 
+const PlanningCrewLaneSchema = z.object({
+  team_id: z.number(),
+  team_code: z.string(),
+  team_name: z.string(),
+  commitments_json: z.string(),
+});
+
 const PlanningGanttSnapshotSchema = z.object({
   period_start: z.string(),
   period_end: z.string(),
@@ -211,6 +232,7 @@ const PlanningGanttSnapshotSchema = z.object({
   locked_windows: z.array(PlanningWindowSchema),
   capacity: z.array(TeamCapacityLoadSchema),
   assignee_lanes: z.array(PlanningAssigneeLaneSchema),
+  crew_lanes: z.array(PlanningCrewLaneSchema).optional(),
 });
 
 const NotifyTeamsResultSchema = z.object({
@@ -369,10 +391,18 @@ export function freezeSchedulePeriod(input: FreezeSchedulePeriodInput): Promise<
   return invokeParsed("freeze_schedule_period", { input }, z.number());
 }
 
-export function getPlanningGanttSnapshot(
+export async function getPlanningGanttSnapshot(
   filter: PlanningGanttFilter,
 ): Promise<PlanningGanttSnapshot> {
-  return invokeParsed("get_planning_gantt_snapshot", { filter }, PlanningGanttSnapshotSchema);
+  const snap = await invokeParsed(
+    "get_planning_gantt_snapshot",
+    { filter },
+    PlanningGanttSnapshotSchema,
+  );
+  return {
+    ...snap,
+    crew_lanes: snap.crew_lanes ?? [],
+  };
 }
 
 export function listTeamCapacityLoad(

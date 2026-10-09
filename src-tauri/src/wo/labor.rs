@@ -39,6 +39,13 @@ pub struct WoIntervener {
     /// Skill label from reference_values when skill_id is set.
     #[serde(default)]
     pub skill_label: Option<String>,
+    /// How `hourly_rate` was obtained: `provided` | `rate_card` | `missing`.
+    #[serde(default = "default_rate_source")]
+    pub rate_source: String,
+}
+
+fn default_rate_source() -> String {
+    "missing".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -62,6 +69,9 @@ fn decode_err(field: &str, e: sea_orm::DbErr) -> AppError {
 }
 
 fn map_intervener(row: &sea_orm::QueryResult) -> AppResult<WoIntervener> {
+    let hourly_rate = row
+        .try_get::<Option<f64>>("", "hourly_rate")
+        .map_err(|e| decode_err("hourly_rate", e))?;
     Ok(WoIntervener {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
         work_order_id: row
@@ -82,9 +92,7 @@ fn map_intervener(row: &sea_orm::QueryResult) -> AppResult<WoIntervener> {
         hours_worked: row
             .try_get::<Option<f64>>("", "hours_worked")
             .map_err(|e| decode_err("hours_worked", e))?,
-        hourly_rate: row
-            .try_get::<Option<f64>>("", "hourly_rate")
-            .map_err(|e| decode_err("hourly_rate", e))?,
+        hourly_rate,
         notes: row
             .try_get::<Option<String>>("", "notes")
             .map_err(|e| decode_err("notes", e))?,
@@ -92,6 +100,12 @@ fn map_intervener(row: &sea_orm::QueryResult) -> AppResult<WoIntervener> {
             .try_get::<Option<String>>("", "intervener_display_name")
             .unwrap_or(None),
         skill_label: row.try_get::<Option<String>>("", "skill_label").unwrap_or(None),
+        // Persisted snapshot — treat non-null as rate_card (or prior override).
+        rate_source: if hourly_rate.is_some() {
+            "rate_card".to_string()
+        } else {
+            "missing".to_string()
+        },
     })
 }
 
@@ -162,11 +176,32 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
         _ => input.hours_worked,
     };
 
+    let (resolved_rate, rate_source) = if let Some(rate) = input.hourly_rate {
+        (Some(rate), "provided".to_string())
+    } else {
+        let personnel_id = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT personnel_id FROM user_accounts WHERE id = ? AND deleted_at IS NULL",
+                [input.intervener_id.into()],
+            ))
+            .await?
+            .and_then(|row| row.try_get::<Option<i64>>("", "personnel_id").ok())
+            .flatten();
+        match personnel_id {
+            Some(pid) => match crate::personnel::queries::resolve_active_labor_rate(db, pid).await? {
+                Some(rate) => (Some(rate), "rate_card".to_string()),
+                None => (None, "missing".to_string()),
+            },
+            None => (None, "missing".to_string()),
+        }
+    };
+
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_order_interveners \
-         (work_order_id, intervener_id, skill_id, started_at, ended_at, hours_worked, hourly_rate, notes) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+         (work_order_id, intervener_id, skill_id, started_at, ended_at, hours_worked, hourly_rate, notes, entity_sync_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
             input.intervener_id.into(),
@@ -187,8 +222,7 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
             computed_hours
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<f64>)),
-            input
-                .hourly_rate
+            resolved_rate
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<f64>)),
             input
@@ -196,6 +230,7 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
                 .clone()
                 .map(sea_orm::Value::from)
                 .unwrap_or(sea_orm::Value::from(None::<String>)),
+            uuid::Uuid::new_v4().to_string().into(),
         ],
     ))
     .await?;
@@ -209,7 +244,13 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read labor entry after insert")))?;
-    map_intervener(&row)
+    let mut entry = map_intervener(&row)?;
+    entry.rate_source = rate_source;
+    crate::sync::foundation_stage::warn_stage(
+        crate::wo::sync_stage::stage_work_order_intervener_sync(db, entry.id).await,
+        "wo_labor",
+    );
+    Ok(entry)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -275,7 +316,12 @@ pub async fn close_labor_entry(
             entity: "WoIntervener".into(),
             id: intervener_id.to_string(),
         })?;
-    map_intervener(&updated)
+    let entry = map_intervener(&updated)?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::wo::sync_stage::stage_work_order_intervener_sync(db, entry.id).await,
+        "wo_labor",
+    );
+    Ok(entry)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -323,6 +369,7 @@ pub async fn remove_labor_entry(db: &DatabaseConnection, intervener_id: i64, _ac
         )]));
     }
 
+    // Universal Sync delete: skip staging (no outbox delete helper for interveners yet).
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "DELETE FROM work_order_interveners WHERE id = ?",

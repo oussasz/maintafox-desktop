@@ -1,11 +1,64 @@
-import { Bell, CalendarRange, Download, Lock, RefreshCw, Search, Siren, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+  Bell,
+  CalendarDays,
+  CalendarRange,
+  ChevronDown,
+  Download,
+  GanttChart,
+  Lock,
+  RefreshCw,
+  Siren,
+  SquareStack,
+  Wrench,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 import { PermissionGate } from "@/components/PermissionGate";
+import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
+import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
+import { BreakInDialog } from "@/components/planning/BreakInDialog";
+import { CommitDialog } from "@/components/planning/CommitDialog";
+import { CommitmentInspectorDialog } from "@/components/planning/CommitmentInspectorDialog";
+import { FreezeConfirmDialog } from "@/components/planning/FreezeConfirmDialog";
+import { OverrideReasonDialog } from "@/components/planning/OverrideReasonDialog";
+import { PlanningBacklogRail } from "@/components/planning/PlanningBacklogRail";
+import { PlanningBoard } from "@/components/planning/PlanningBoard";
+import { PlanningCalendarView } from "@/components/planning/PlanningCalendarView";
+import { PlanningWindowDetailDialog } from "@/components/planning/PlanningWindowDetailDialog";
+import { ProductionWindowDialog } from "@/components/planning/ProductionWindowDialog";
+import {
+  addDaysIso,
+  candidateDisplayCode,
+  candidateDisplayTitle,
+  clampVisibleToHorizon,
+  filterCommitmentsForBoardScope,
+  localDateEndIso,
+  localDateEndMs,
+  localDateStartIso,
+  localDateStartMs,
+  parseMs,
+  PLANNING_DEFAULT_HORIZON_DAYS,
+  PLANNING_HORIZON_PRESETS,
+  PLANNING_TIMELINE_MAX_ZOOM_MS,
+  readStoredBoardScope,
+  readStoredPageView,
+  toLocalIsoDate,
+  writeStoredBoardScope,
+  writeStoredPageView,
+  type PlanningBoardScope,
+  type PlanningPageView,
+} from "@/components/planning/planning-model";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -15,47 +68,37 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { mfInput, mfLayout } from "@/design-system/tokens";
-import { cn } from "@/lib/utils";
-import { listOrgTree } from "@/services/org-node-service";
-import { listPersonnel } from "@/services/personnel-service";
+import { mfLayout } from "@/design-system/tokens";
+import { usePermissions } from "@/hooks/use-permissions";
+import { formatPersonLabel } from "@/lib/display";
+import { listActiveTeams, listPersonnel } from "@/services/personnel-service";
+import { listUsers } from "@/services/rbac-service";
+import { useSessionStore } from "@/store/session-store";
 import { usePlanningStore } from "@/stores/planning-store";
 import { toErrorMessage } from "@/utils/errors";
+import type {
+  CreateScheduleBreakInInput,
+  CreateScheduleCommitmentInput,
+  CreatePlanningWindowInput,
+  PlanningWindow,
+  RescheduleCommitmentInput,
+  ScheduleCandidate,
+} from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
-type OrgTeamOption = { id: number; label: string };
+type CrewOption = { id: number; label: string };
 type PersonnelOption = { id: number; label: string };
+type ApproverOption = { id: number; label: string };
 
-function toDateTimeLocal(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-}
-
-function fromDateTimeLocal(local: string): string {
-  const d = new Date(local);
-  return Number.isNaN(d.getTime()) ? local : d.toISOString();
-}
-
-function buildDayBuckets(periodStartIso: string, periodEndIso: string): string[] {
-  const start = new Date(periodStartIso);
-  const end = new Date(periodEndIso);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return [];
-  const cursor = new Date(start);
-  cursor.setUTCHours(0, 0, 0, 0);
-  const final = new Date(end);
-  final.setUTCHours(0, 0, 0, 0);
-  const days: string[] = [];
-  while (cursor <= final) {
-    days.push(cursor.toISOString().slice(0, 10));
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return days;
-}
+type PendingReschedule = {
+  input: RescheduleCommitmentInput;
+  needsOverride: boolean;
+};
 
 export function PlanningPage() {
   const { t } = useTranslation("planning");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { can } = usePermissions();
 
   const backlog = usePlanningStore((s) => s.backlog);
   const commitments = usePlanningStore((s) => s.commitments);
@@ -63,6 +106,7 @@ export function PlanningPage() {
   const breakIns = usePlanningStore((s) => s.breakIns);
   const capacityLoad = usePlanningStore((s) => s.capacityLoad);
   const ganttSnapshot = usePlanningStore((s) => s.ganttSnapshot);
+  const changeLog = usePlanningStore((s) => s.changeLog);
   const loading = usePlanningStore((s) => s.loading);
   const saving = usePlanningStore((s) => s.saving);
   const storeError = usePlanningStore((s) => s.error);
@@ -74,6 +118,7 @@ export function PlanningPage() {
   const loadPlanningWindows = usePlanningStore((s) => s.loadPlanningWindows);
   const loadBreakIns = usePlanningStore((s) => s.loadBreakIns);
   const loadCapacityLoad = usePlanningStore((s) => s.loadCapacityLoad);
+  const loadChangeLog = usePlanningStore((s) => s.loadChangeLog);
   const createCommitment = usePlanningStore((s) => s.createCommitment);
   const rescheduleCommitment = usePlanningStore((s) => s.rescheduleCommitment);
   const createPlanningWindow = usePlanningStore((s) => s.createPlanningWindow);
@@ -82,303 +127,407 @@ export function PlanningPage() {
   const notifyTeams = usePlanningStore((s) => s.notifyTeams);
   const exportGanttPdf = usePlanningStore((s) => s.exportGanttPdf);
 
-  const [teams, setTeams] = useState<OrgTeamOption[]>([]);
-  const [personnel, setPersonnel] = useState<PersonnelOption[]>([]);
-  const [pageError, setPageError] = useState<string | null>(null);
-  const [dragCommitmentId, setDragCommitmentId] = useState<number | null>(null);
+  const sessionUserId = useSessionStore((s) => s.info?.user_id ?? null);
 
-  const [teamId, setTeamId] = useState<number | null>(null);
-  const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(null);
-  const [selectedPersonnelId, setSelectedPersonnelId] = useState<number | null>(null);
-  const [commitStart, setCommitStart] = useState(toDateTimeLocal(new Date().toISOString()));
-  const [commitEnd, setCommitEnd] = useState(
-    toDateTimeLocal(new Date(Date.now() + 2 * 3600_000).toISOString()),
+  const [teams, setTeams] = useState<CrewOption[]>([]);
+  const [personnel, setPersonnel] = useState<PersonnelOption[]>([]);
+  const [approvers, setApprovers] = useState<ApproverOption[]>([]);
+  const [pageError, setPageError] = useState<string | null>(null);
+
+  const [boardScope, setBoardScope] = useState<PlanningBoardScope>({ kind: "all" });
+  const teamId = boardScope.kind === "crew" ? boardScope.teamId : null;
+  const [pageView, setPageView] = useState<PlanningPageView>(() =>
+    readStoredPageView(useSessionStore.getState().info?.user_id ?? null),
   );
-  const [budgetThreshold, setBudgetThreshold] = useState("0");
-  const [periodStart, setPeriodStart] = useState(toDateTimeLocal(new Date().toISOString()));
-  const [periodEnd, setPeriodEnd] = useState(
-    toDateTimeLocal(new Date(Date.now() + 6 * 24 * 3600_000).toISOString()),
-  );
-  const [windowStart, setWindowStart] = useState(toDateTimeLocal(new Date().toISOString()));
-  const [windowEnd, setWindowEnd] = useState(
-    toDateTimeLocal(new Date(Date.now() + 24 * 3600_000).toISOString()),
-  );
-  const [windowType, setWindowType] = useState("production");
-  const [windowReason, setWindowReason] = useState("");
-  const [breakInCommitmentId, setBreakInCommitmentId] = useState<number | null>(null);
-  const [breakInReason, setBreakInReason] = useState("emergency");
-  const [breakInApproverUserId, setBreakInApproverUserId] = useState("");
-  const [breakInOverrideReason, setBreakInOverrideReason] = useState("");
+  const [calendarSessionKey, setCalendarSessionKey] = useState(0);
   const [searchInput, setSearchInput] = useState("");
+  const [readinessFilter, setReadinessFilter] = useState<string | null>(null);
+  const [sourceTypeFilter, setSourceTypeFilter] = useState<string | null>(null);
+
+  const [dateFrom, setDateFrom] = useState(() => toLocalIsoDate());
+  const [dateTo, setDateTo] = useState(() =>
+    addDaysIso(toLocalIsoDate(), PLANNING_DEFAULT_HORIZON_DAYS - 1),
+  );
+  const horizonStart = useMemo(() => localDateStartMs(dateFrom), [dateFrom]);
+  const horizonEnd = useMemo(() => localDateEndMs(dateTo), [dateTo]);
+  const [visibleStart, setVisibleStart] = useState(() => {
+    const from = toLocalIsoDate();
+    const to = addDaysIso(from, PLANNING_DEFAULT_HORIZON_DAYS - 1);
+    return clampVisibleToHorizon(
+      localDateStartMs(from),
+      localDateEndMs(to),
+      PLANNING_TIMELINE_MAX_ZOOM_MS,
+    ).start;
+  });
+  const [visibleEnd, setVisibleEnd] = useState(() => {
+    const from = toLocalIsoDate();
+    const to = addDaysIso(from, PLANNING_DEFAULT_HORIZON_DAYS - 1);
+    return clampVisibleToHorizon(
+      localDateStartMs(from),
+      localDateEndMs(to),
+      PLANNING_TIMELINE_MAX_ZOOM_MS,
+    ).end;
+  });
+
+  const [selectedCandidate, setSelectedCandidate] = useState<ScheduleCandidate | null>(null);
+  const [selectedCommitmentId, setSelectedCommitmentId] = useState<number | null>(null);
+  const [selectedWindow, setSelectedWindow] = useState<PlanningWindow | null>(null);
+
+  const [commitOpen, setCommitOpen] = useState(false);
+  const [windowOpen, setWindowOpen] = useState(false);
+  const [windowDetailOpen, setWindowDetailOpen] = useState(false);
+  const [breakInOpen, setBreakInOpen] = useState(false);
+  const [freezeOpen, setFreezeOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const pendingRescheduleRef = useRef<PendingReschedule | null>(null);
+
+  // Board IPC period — derived strictly from DU/AU, not from pan/zoom viewport.
+  const periodStartIso = useMemo(() => localDateStartIso(dateFrom), [dateFrom]);
+  const periodEndIso = useMemo(() => localDateEndIso(dateTo), [dateTo]);
+
+  useEffect(() => {
+    const next = clampVisibleToHorizon(horizonStart, horizonEnd, PLANNING_TIMELINE_MAX_ZOOM_MS);
+    setVisibleStart(next.start);
+    setVisibleEnd(next.end);
+  }, [horizonStart, horizonEnd]);
 
   useEffect(() => {
     void loadBacklog();
   }, [loadBacklog]);
 
+  /** Deep-link from WO Plan tab: `/planning?woId=<id>` */
+  const deepLinkHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    const raw = searchParams.get("woId");
+    if (!raw) {
+      deepLinkHandledRef.current = null;
+      return;
+    }
+    if (!backlog?.candidates?.length) return;
+    if (deepLinkHandledRef.current === raw) return;
+
+    const woId = Number(raw);
+    if (!Number.isFinite(woId) || woId <= 0) return;
+
+    const match = backlog.candidates.find(
+      (c) => c.source_type === "work_order" && c.source_id === woId,
+    );
+    if (!match) {
+      deepLinkHandledRef.current = raw;
+      return;
+    }
+
+    deepLinkHandledRef.current = raw;
+    setSelectedCandidate(match);
+    if (match.readiness_status === "ready" && can(P.PLAN_CONFIRM)) {
+      setCommitOpen(true);
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("woId");
+    setSearchParams(next, { replace: true });
+  }, [backlog, searchParams, setSearchParams, can]);
+
   useEffect(() => {
     void (async () => {
       try {
-        const [orgRows, peoplePage] = await Promise.all([
-          listOrgTree(),
+        const [crewRows, peoplePage, users] = await Promise.all([
+          listActiveTeams({}),
           listPersonnel({ limit: 250, offset: 0 }),
+          listUsers({}),
         ]);
-        setTeams(
-          orgRows.map((row) => ({
-            id: row.node.id,
-            label: row.node.code ? `${row.node.name} (${row.node.code})` : row.node.name,
-          })),
-        );
+        const crewOptions = crewRows.map((row) => ({
+          id: row.id,
+          label: `${row.name} (${row.code})`,
+        }));
+        setTeams(crewOptions);
         setPersonnel(
           peoplePage.items.map((row) => ({
             id: row.id,
             label: row.employee_code ? `${row.full_name} (${row.employee_code})` : row.full_name,
           })),
         );
-        const firstTeam = orgRows[0];
-        if (firstTeam) setTeamId((prev) => prev ?? firstTeam.node.id);
+        setApprovers(
+          users.map((user) => ({
+            id: user.id,
+            label: formatPersonLabel(user.display_name, user.username),
+          })),
+        );
+
+        const crewIds = new Set(crewOptions.map((c) => c.id));
+        const userId = useSessionStore.getState().info?.user_id ?? null;
+        const stored = readStoredBoardScope(userId);
+        if (stored.kind === "crew" && crewIds.has(stored.teamId)) {
+          setBoardScope(stored);
+          return;
+        }
+        // Invalid stored crew (or All) → plant-wide All Crews.
+        setBoardScope({ kind: "all" });
+        writeStoredBoardScope(userId, { kind: "all" });
       } catch (err) {
         setPageError(toErrorMessage(err));
       }
     })();
   }, []);
 
-  useEffect(() => {
-    if (!teamId) return;
-    const startIso = fromDateTimeLocal(periodStart);
-    const endIso = fromDateTimeLocal(periodEnd);
-    void loadCommitments({
-      period_start: startIso,
-      period_end: endIso,
-      team_id: teamId,
-    });
-    void loadCapacityLoad(startIso, endIso, teamId);
-    void loadPlanningWindows({ include_locked: true });
-    void loadBreakIns({
-      period_start: startIso,
-      period_end: endIso,
-    });
-    void loadGantt({
-      period_start: startIso,
-      period_end: endIso,
-      team_id: teamId,
-    });
+  function selectBoardScope(next: PlanningBoardScope) {
+    setBoardScope(next);
+    writeStoredBoardScope(sessionUserId, next);
+  }
+
+  function selectPageView(next: PlanningPageView) {
+    setPageView(next);
+    writeStoredPageView(sessionUserId, next);
+    if (next === "calendar") {
+      setCalendarSessionKey((key) => key + 1);
+    }
+  }
+
+  const handleCalendarVisibleRangeChange = useCallback((from: string, to: string) => {
+    setDateFrom((prev) => (prev === from ? prev : from));
+    setDateTo((prev) => (prev === to ? prev : to));
+  }, []);
+
+  const calendarCommitments = useMemo(
+    () => filterCommitmentsForBoardScope(commitments, boardScope),
+    [commitments, boardScope],
+  );
+
+  const calendarWindows = ganttSnapshot?.locked_windows ?? planningWindows;
+
+  function handleOpenOnBoard(commitmentId: number) {
+    const commitment = commitments.find((entry) => entry.id === commitmentId);
+    selectPageView("gantt");
+    setSelectedCommitmentId(commitmentId);
+    setInspectorOpen(true);
+    if (!commitment) return;
+    const start = parseMs(commitment.committed_start);
+    const end = parseMs(commitment.committed_end);
+    if (!start || !end || end <= start) return;
+    const span = Math.min(end - start, PLANNING_TIMELINE_MAX_ZOOM_MS);
+    const focusStart = Math.max(horizonStart, Math.min(start, horizonEnd - span));
+    const focusEnd = Math.min(horizonEnd, Math.max(end, focusStart + Math.min(span, 3_600_000)));
+    if (focusEnd > focusStart) {
+      setVisibleStart(focusStart);
+      setVisibleEnd(focusEnd);
+    }
+  }
+
+  const reloadBoard = useCallback(async () => {
+    const scopeTeamId = boardScope.kind === "crew" ? boardScope.teamId : null;
+    const boardTasks: Array<Promise<unknown>> = [
+      loadPlanningWindows({ include_locked: true }),
+      loadBreakIns({
+        period_start: periodStartIso,
+        period_end: periodEndIso,
+      }),
+      loadGantt({
+        period_start: periodStartIso,
+        period_end: periodEndIso,
+        team_id: scopeTeamId,
+      }),
+    ];
+    if (scopeTeamId != null) {
+      boardTasks.push(
+        loadCommitments({
+          period_start: periodStartIso,
+          period_end: periodEndIso,
+          team_id: scopeTeamId,
+        }),
+        loadCapacityLoad(periodStartIso, periodEndIso, scopeTeamId),
+      );
+    }
+    await Promise.all(boardTasks);
   }, [
-    teamId,
-    periodStart,
-    periodEnd,
+    boardScope,
+    periodStartIso,
+    periodEndIso,
     loadCommitments,
     loadCapacityLoad,
-    loadGantt,
     loadPlanningWindows,
     loadBreakIns,
+    loadGantt,
   ]);
 
+  useEffect(() => {
+    void reloadBoard();
+  }, [reloadBoard]);
+
   const readyCandidates = useMemo(
-    () =>
-      backlog?.candidates.filter(
-        (candidate: (typeof backlog.candidates)[number]) => candidate.readiness_status === "ready",
-      ) ?? [],
+    () => backlog?.candidates.filter((c) => c.readiness_status === "ready") ?? [],
     [backlog],
   );
   const blockedCandidates = useMemo(
-    () =>
-      backlog?.candidates.filter(
-        (candidate: (typeof backlog.candidates)[number]) => candidate.readiness_status !== "ready",
-      ) ?? [],
+    () => backlog?.candidates.filter((c) => c.readiness_status !== "ready") ?? [],
     [backlog],
   );
-  const normalizedSearch = searchInput.trim().toLowerCase();
-  const filteredReadyCandidates = useMemo(
-    () =>
-      readyCandidates.filter((candidate) => {
-        if (!normalizedSearch) return true;
-        return `${candidate.source_type}:${candidate.source_id}`
-          .toLowerCase()
-          .includes(normalizedSearch);
-      }),
-    [readyCandidates, normalizedSearch],
-  );
-  const filteredBlockedCandidates = useMemo(
-    () =>
-      blockedCandidates.filter((candidate) => {
-        if (!normalizedSearch) return true;
-        return `${candidate.source_type}:${candidate.source_id}`
-          .toLowerCase()
-          .includes(normalizedSearch);
-      }),
-    [blockedCandidates, normalizedSearch],
-  );
-  const dayBuckets = useMemo(
-    () => buildDayBuckets(fromDateTimeLocal(periodStart), fromDateTimeLocal(periodEnd)),
-    [periodStart, periodEnd],
-  );
-  const teamValue = teamId ? String(teamId) : "__none__";
-  const personnelValue = selectedPersonnelId ? String(selectedPersonnelId) : "__unassigned__";
-  const breakInCommitmentValue = breakInCommitmentId ? String(breakInCommitmentId) : "__none__";
 
-  async function handleCreateCommitment() {
-    if (!selectedCandidateId || !teamId) return;
+  const filterCandidate = useCallback(
+    (candidate: ScheduleCandidate) => {
+      // Board crew (teamId) intentionally does NOT filter the backlog rail.
+      // Unassigned + any-crew candidates stay visible so planners can commit
+      // them onto the selected board crew. Team only scopes the timeline.
+      if (sourceTypeFilter && candidate.source_type !== sourceTypeFilter) return false;
+      if (readinessFilter && candidate.readiness_status !== readinessFilter) return false;
+      const q = searchInput.trim().toLowerCase();
+      if (!q) return true;
+      const haystack = [
+        candidateDisplayCode(candidate),
+        candidateDisplayTitle(candidate),
+        candidate.source_type,
+        candidate.assigned_personnel_name ?? "",
+        candidate.assigned_team_label ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    },
+    [searchInput, sourceTypeFilter, readinessFilter],
+  );
+
+  const filteredReady = useMemo(
+    () => readyCandidates.filter(filterCandidate),
+    [readyCandidates, filterCandidate],
+  );
+  const filteredBlocked = useMemo(
+    () => blockedCandidates.filter(filterCandidate),
+    [blockedCandidates, filterCandidate],
+  );
+
+  const selectedCommitment = commitments.find((c) => c.id === selectedCommitmentId) ?? null;
+
+  const sourceTypeOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of backlog?.candidates ?? []) set.add(c.source_type);
+    return [...set].map((value) => ({
+      value,
+      label: t(`filters.sourceTypes.${value}`, { defaultValue: value }),
+    }));
+  }, [backlog?.candidates, t]);
+
+  const filterDefs = useMemo<SmartFilterDef[]>(
+    () => [
+      {
+        id: "readiness",
+        kind: "select",
+        label: t("filters.readiness"),
+        value: readinessFilter,
+        options: [
+          { value: "ready", label: t("filters.readinessReady") },
+          { value: "blocked", label: t("filters.readinessBlocked") },
+        ],
+        onChange: (v) => setReadinessFilter(v),
+      },
+      {
+        id: "sourceType",
+        kind: "select",
+        label: t("filters.sourceType"),
+        value: sourceTypeFilter,
+        options: sourceTypeOptions,
+        onChange: (v) => setSourceTypeFilter(v),
+      },
+    ],
+    [t, readinessFilter, sourceTypeFilter, sourceTypeOptions],
+  );
+
+  function resetFilters() {
+    setSearchInput("");
+    setReadinessFilter(null);
+    setSourceTypeFilter(null);
+  }
+
+  async function handleCreateCommitment(input: CreateScheduleCommitmentInput) {
     setPageError(null);
     try {
-      await createCommitment({
-        schedule_candidate_id: selectedCandidateId,
-        committed_start: fromDateTimeLocal(commitStart),
-        committed_end: fromDateTimeLocal(commitEnd),
-        assigned_team_id: teamId,
-        assigned_personnel_id: selectedPersonnelId,
-        allow_double_booking_override: false,
-        budget_threshold: Number.isFinite(Number(budgetThreshold)) ? Number(budgetThreshold) : null,
-      });
+      await createCommitment(input);
       await refreshBacklog();
-      await loadCommitments({
-        period_start: fromDateTimeLocal(periodStart),
-        period_end: fromDateTimeLocal(periodEnd),
-        team_id: teamId,
-      });
-      await loadGantt({
-        period_start: fromDateTimeLocal(periodStart),
-        period_end: fromDateTimeLocal(periodEnd),
-        team_id: teamId,
-      });
+      await reloadBoard();
     } catch (err) {
       setPageError(toErrorMessage(err));
+      throw err;
     }
   }
 
-  async function handleDropCommitment(day: string, personnelId: number | null) {
-    if (!dragCommitmentId || !teamId) return;
-    const commitment = commitments.find((entry) => entry.id === dragCommitmentId);
-    if (!commitment) return;
+  async function applyReschedule(input: RescheduleCommitmentInput) {
     setPageError(null);
     try {
-      const oldStart = new Date(commitment.committed_start);
-      const oldEnd = new Date(commitment.committed_end);
-      const durationMs = oldEnd.getTime() - oldStart.getTime();
-      const nextStart = new Date(`${day}T${oldStart.toISOString().slice(11, 19)}Z`);
-      const nextEnd = new Date(nextStart.getTime() + durationMs);
-
-      try {
-        await rescheduleCommitment({
-          commitment_id: commitment.id,
-          expected_row_version: commitment.row_version,
-          committed_start: nextStart.toISOString(),
-          committed_end: nextEnd.toISOString(),
-          assigned_team_id: teamId,
-          assigned_personnel_id: personnelId,
-          allow_double_booking_override: false,
-          budget_threshold: commitment.budget_threshold,
-        });
-      } catch (firstErr) {
-        const text = toErrorMessage(firstErr);
-        if (!text.toLowerCase().includes("double-booking")) throw firstErr;
-        const reason = window.prompt(t("gantt.overrideReasonPrompt"));
-        if (!reason) throw firstErr;
-        await rescheduleCommitment({
-          commitment_id: commitment.id,
-          expected_row_version: commitment.row_version,
-          committed_start: nextStart.toISOString(),
-          committed_end: nextEnd.toISOString(),
-          assigned_team_id: teamId,
-          assigned_personnel_id: personnelId,
-          allow_double_booking_override: true,
-          override_reason: reason,
-          budget_threshold: commitment.budget_threshold,
-        });
-      }
-
-      await loadCommitments({
-        period_start: fromDateTimeLocal(periodStart),
-        period_end: fromDateTimeLocal(periodEnd),
-        team_id: teamId,
-      });
-      await loadGantt({
-        period_start: fromDateTimeLocal(periodStart),
-        period_end: fromDateTimeLocal(periodEnd),
-        team_id: teamId,
-      });
+      await rescheduleCommitment(input);
+      await reloadBoard();
     } catch (err) {
-      setPageError(toErrorMessage(err));
-    } finally {
-      setDragCommitmentId(null);
+      const text = toErrorMessage(err);
+      if (text.toLowerCase().includes("double-booking") && !input.allow_double_booking_override) {
+        pendingRescheduleRef.current = { input, needsOverride: true };
+        setOverrideOpen(true);
+        return;
+      }
+      setPageError(text);
     }
   }
 
-  async function handleFreeze() {
+  function handleBoardReschedule(
+    commitmentId: number,
+    newStartMs: number,
+    personnelId: number | null,
+    dropTeamId: number | null,
+  ) {
+    const commitment = commitments.find((entry) => entry.id === commitmentId);
+    if (!commitment) return;
+    const oldStart = Date.parse(commitment.committed_start);
+    const oldEnd = Date.parse(commitment.committed_end);
+    if (!oldStart || !oldEnd) return;
+    const durationMs = oldEnd - oldStart;
+    const nextStart = new Date(newStartMs);
+    const nextEnd = new Date(newStartMs + durationMs);
+    const nextTeamId =
+      dropTeamId ?? (boardScope.kind === "crew" ? boardScope.teamId : commitment.assigned_team_id);
+    void applyReschedule({
+      commitment_id: commitment.id,
+      expected_row_version: commitment.row_version,
+      committed_start: nextStart.toISOString(),
+      committed_end: nextEnd.toISOString(),
+      assigned_team_id: nextTeamId,
+      assigned_personnel_id:
+        boardScope.kind === "all" ? commitment.assigned_personnel_id : personnelId,
+      allow_double_booking_override: false,
+      budget_threshold: commitment.budget_threshold,
+    });
+  }
+
+  async function handleCreateWindow(input: CreatePlanningWindowInput) {
+    setPageError(null);
+    try {
+      await createPlanningWindow(input);
+      await reloadBoard();
+    } catch (err) {
+      setPageError(toErrorMessage(err));
+      throw err;
+    }
+  }
+
+  async function handleCreateBreakIn(input: CreateScheduleBreakInInput) {
+    setPageError(null);
+    try {
+      await createBreakIn(input);
+      await reloadBoard();
+    } catch (err) {
+      setPageError(toErrorMessage(err));
+      throw err;
+    }
+  }
+
+  async function handleFreeze(reason: string) {
     setPageError(null);
     try {
       await freezeSchedule({
-        period_start: fromDateTimeLocal(periodStart),
-        period_end: fromDateTimeLocal(periodEnd),
-        reason: t("freeze.defaultReason"),
+        period_start: periodStartIso,
+        period_end: periodEndIso,
+        reason,
       });
-      await loadCommitments({
-        period_start: fromDateTimeLocal(periodStart),
-        period_end: fromDateTimeLocal(periodEnd),
-        team_id: teamId,
-      });
-      await loadGantt({
-        period_start: fromDateTimeLocal(periodStart),
-        period_end: fromDateTimeLocal(periodEnd),
-        team_id: teamId,
-      });
+      await reloadBoard();
     } catch (err) {
       setPageError(toErrorMessage(err));
-    }
-  }
-
-  async function handleCreateWindow() {
-    setPageError(null);
-    try {
-      await createPlanningWindow({
-        entity_id: teamId,
-        window_type: windowType,
-        start_datetime: fromDateTimeLocal(windowStart),
-        end_datetime: fromDateTimeLocal(windowEnd),
-        is_locked: true,
-        lock_reason: windowReason || null,
-      });
-      await loadPlanningWindows({ include_locked: true });
-      await loadGantt({
-        period_start: fromDateTimeLocal(periodStart),
-        period_end: fromDateTimeLocal(periodEnd),
-        team_id: teamId,
-      });
-    } catch (err) {
-      setPageError(toErrorMessage(err));
-    }
-  }
-
-  async function handleCreateBreakIn() {
-    if (!breakInCommitmentId) return;
-    const sourceCommitment = commitments.find((entry) => entry.id === breakInCommitmentId);
-    if (!sourceCommitment) return;
-    setPageError(null);
-    try {
-      await createBreakIn({
-        schedule_commitment_id: sourceCommitment.id,
-        expected_commitment_row_version: sourceCommitment.row_version,
-        break_in_reason: breakInReason,
-        approved_by_user_id: breakInApproverUserId ? Number(breakInApproverUserId) : null,
-        new_slot_start: sourceCommitment.committed_start,
-        new_slot_end: sourceCommitment.committed_end,
-        new_assigned_team_id: teamId,
-        new_assigned_personnel_id: sourceCommitment.assigned_personnel_id,
-        bypass_availability: false,
-        bypass_qualification: false,
-        override_reason: breakInOverrideReason || null,
-        dangerous_override_reason: breakInOverrideReason || null,
-      });
-      await loadBreakIns({
-        period_start: fromDateTimeLocal(periodStart),
-        period_end: fromDateTimeLocal(periodEnd),
-      });
-      await loadCommitments({
-        period_start: fromDateTimeLocal(periodStart),
-        period_end: fromDateTimeLocal(periodEnd),
-        team_id: teamId,
-      });
-    } catch (err) {
-      setPageError(toErrorMessage(err));
+      throw err;
     }
   }
 
@@ -386,18 +535,14 @@ export function PlanningPage() {
     setPageError(null);
     try {
       await notifyTeams({
-        period_start: fromDateTimeLocal(periodStart),
-        period_end: fromDateTimeLocal(periodEnd),
+        period_start: periodStartIso,
+        period_end: periodEndIso,
         team_id: teamId,
         include_break_ins: true,
       });
     } catch (err) {
       setPageError(toErrorMessage(err));
     }
-  }
-
-  function clearSearch() {
-    setSearchInput("");
   }
 
   return (
@@ -424,40 +569,88 @@ export function PlanningPage() {
               {t("actions.refreshBacklog")}
             </Button>
           </PermissionGate>
-          <PermissionGate permission={P.PLAN_CONFIRM}>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" className="gap-1.5">
+                <Wrench className="h-3.5 w-3.5" />
+                {t("actions.plannerTools")}
+                <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[220px]">
+              <PermissionGate permission={P.PLAN_WINDOWS}>
+                <DropdownMenuItem onClick={() => setWindowOpen(true)}>
+                  <SquareStack className="mr-2 h-3.5 w-3.5" />
+                  {t("windows.title")}
+                </DropdownMenuItem>
+              </PermissionGate>
+              <PermissionGate permission={P.PLAN_CONFIRM}>
+                <DropdownMenuItem
+                  disabled={commitments.length === 0 || saving}
+                  title={commitments.length === 0 ? t("actions.requiresCommitments") : undefined}
+                  onClick={() => setFreezeOpen(true)}
+                >
+                  <Lock className="mr-2 h-3.5 w-3.5" />
+                  {t("actions.freezePeriod")}
+                </DropdownMenuItem>
+              </PermissionGate>
+              <PermissionGate permission={P.PLAN_CONFIRM}>
+                <DropdownMenuItem
+                  disabled={commitments.length === 0 || saving}
+                  title={commitments.length === 0 ? t("actions.requiresCommitments") : undefined}
+                  onClick={() => setBreakInOpen(true)}
+                >
+                  <Siren className="mr-2 h-3.5 w-3.5" />
+                  {t("breakIns.title")}
+                </DropdownMenuItem>
+              </PermissionGate>
+              <PermissionGate permission={P.PLAN_CONFIRM}>
+                <DropdownMenuItem
+                  disabled={commitments.length === 0 || saving}
+                  title={commitments.length === 0 ? t("actions.requiresCommitments") : undefined}
+                  onClick={() => void handleNotifyTeams()}
+                >
+                  <Bell className="mr-2 h-3.5 w-3.5" />
+                  {t("actions.notifyTeams")}
+                </DropdownMenuItem>
+              </PermissionGate>
+              {commitments.length === 0 ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <div className="px-2 py-1.5 text-[11px] text-text-muted">
+                    {t("actions.requiresCommitments")}
+                  </div>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <div className={mfLayout.viewToggleGroup}>
             <Button
+              variant={pageView === "gantt" ? "default" : "ghost"}
               size="sm"
-              variant="outline"
-              onClick={() => void handleFreeze()}
-              disabled={saving}
-              className="gap-1.5"
+              className={mfLayout.viewToggleButton}
+              onClick={() => selectPageView("gantt")}
+              title={t("views.gantt")}
             >
-              <Lock className="h-3.5 w-3.5" />
-              {t("actions.freezePeriod")}
+              <GanttChart className="h-3.5 w-3.5" />
             </Button>
-          </PermissionGate>
-          <PermissionGate permission={P.PLAN_CONFIRM}>
             <Button
+              variant={pageView === "calendar" ? "default" : "ghost"}
               size="sm"
-              variant="outline"
-              onClick={() => void handleNotifyTeams()}
-              disabled={saving}
-              className="gap-1.5"
+              className={mfLayout.viewToggleButton}
+              onClick={() => selectPageView("calendar")}
+              title={t("views.calendar")}
             >
-              <Bell className="h-3.5 w-3.5" />
-              {t("actions.notifyTeams")}
+              <CalendarDays className="h-3.5 w-3.5" />
             </Button>
-          </PermissionGate>
+          </div>
+
           <Button
             size="sm"
             variant="outline"
-            onClick={() =>
-              void exportGanttPdf(
-                fromDateTimeLocal(periodStart),
-                fromDateTimeLocal(periodEnd),
-                teamId,
-              )
-            }
+            onClick={() => void exportGanttPdf(periodStartIso, periodEndIso, teamId)}
             className="gap-1.5"
           >
             <Download className="h-3.5 w-3.5" />
@@ -466,65 +659,106 @@ export function PlanningPage() {
         </div>
       </div>
 
-      <div className={mfLayout.moduleFilterBar}>
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-text-muted" />
-          <Input
-            className={cn(mfInput.filterSearch, "pr-8")}
-            placeholder={t("filters.searchPlaceholder", "Search planning backlog")}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-          {searchInput ? (
-            <button
-              type="button"
-              className="absolute right-2 top-2 text-text-muted hover:text-text-primary"
-              onClick={clearSearch}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
+      <div className="flex flex-col gap-2 border-b border-surface-border bg-surface-1/60 px-6 py-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-text-primary">
+            {t("context.title")}
+          </p>
+          {!teamId ? (
+            <p className="text-[11px] text-text-muted">{t("context.modeAllHint")}</p>
+          ) : (
+            <p className="text-[11px] text-text-muted">{t("context.modeCrewHint")}</p>
+          )}
         </div>
-
-        <Select
-          value={teamValue}
-          onValueChange={(value) => setTeamId(value === "__none__" ? null : Number(value))}
-        >
-          <SelectTrigger className={cn(mfInput.filterSelect, "w-[220px]")}>
-            <SelectValue placeholder={t("filters.team")} />
-          </SelectTrigger>
-          <SelectContent>
-            {teams.map((team) => (
-              <SelectItem key={team.id} value={String(team.id)}>
-                {team.label}
-              </SelectItem>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[220px] space-y-1">
+            <Label htmlFor="planning-board-crew" className="text-[10px] uppercase tracking-wide">
+              {t("filters.boardCrew")}
+            </Label>
+            <Select
+              value={boardScope.kind === "all" ? "__all__" : String(boardScope.teamId)}
+              onValueChange={(v) => {
+                if (v === "__all__") {
+                  selectBoardScope({ kind: "all" });
+                  return;
+                }
+                const id = Number(v);
+                if (Number.isFinite(id)) selectBoardScope({ kind: "crew", teamId: id });
+              }}
+            >
+              <SelectTrigger id="planning-board-crew" className="h-8 w-full min-w-[220px] text-sm">
+                <SelectValue placeholder={t("context.allCrews")} />
+              </SelectTrigger>
+              <SelectContent className="z-[200]">
+                <SelectItem value="__all__">{t("context.allCrews")}</SelectItem>
+                {teams.map((team) => (
+                  <SelectItem key={team.id} value={String(team.id)}>
+                    {team.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="planning-date-from" className="text-[10px] uppercase tracking-wide">
+              {t("filters.periodStart")}
+              <span className="ml-0.5 text-destructive" aria-hidden>
+                *
+              </span>
+            </Label>
+            <Input
+              id="planning-date-from"
+              className="h-8 w-[150px] text-sm"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="planning-date-to" className="text-[10px] uppercase tracking-wide">
+              {t("filters.periodEnd")}
+              <span className="ml-0.5 text-destructive" aria-hidden>
+                *
+              </span>
+            </Label>
+            <Input
+              id="planning-date-to"
+              className="h-8 w-[150px] text-sm"
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-wrap gap-1 pb-0.5">
+            {PLANNING_HORIZON_PRESETS.map((days) => (
+              <Button
+                key={days}
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs"
+                onClick={() => {
+                  const from = toLocalIsoDate();
+                  setDateFrom(from);
+                  setDateTo(addDaysIso(from, days - 1));
+                }}
+              >
+                {t("filters.horizonDays", { count: days })}
+              </Button>
             ))}
-          </SelectContent>
-        </Select>
-
-        <Input
-          className="h-8 w-[200px] text-sm"
-          type="datetime-local"
-          value={periodStart}
-          onChange={(e) => setPeriodStart(e.target.value)}
-        />
-        <Input
-          className="h-8 w-[200px] text-sm"
-          type="datetime-local"
-          value={periodEnd}
-          onChange={(e) => setPeriodEnd(e.target.value)}
-        />
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 text-sm"
-          onClick={clearSearch}
-        >
-          {t("filters.clearAll", "Clear")}
-        </Button>
+          </div>
+        </div>
       </div>
+
+      <SmartFilterBar
+        searchPlaceholder={t("filters.searchPlaceholder")}
+        searchValue={searchInput}
+        onSearchInputChange={setSearchInput}
+        onSearchChange={setSearchInput}
+        filters={filterDefs}
+        resultCount={filteredReady.length + filteredBlocked.length}
+        onReset={resetFilters}
+      />
 
       {(pageError || storeError) && (
         <div className="border-b border-destructive/20 bg-destructive/5 px-6 py-2 text-sm text-destructive">
@@ -533,391 +767,168 @@ export function PlanningPage() {
       )}
 
       <div className={mfLayout.moduleWorkspace}>
-        <div className={mfLayout.moduleWorkspaceInner}>
-          <div className={mfLayout.moduleWorkspaceBody}>
-            <div className="grid gap-4 xl:grid-cols-2">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm">{t("backlog.readyColumn")}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {filteredReadyCandidates.map(
-                    (candidate: (typeof filteredReadyCandidates)[number]) => (
-                      <button
-                        key={candidate.id}
-                        type="button"
-                        className={`w-full rounded-lg border p-3 text-left text-sm transition-colors hover:bg-muted/40 ${selectedCandidateId === candidate.id ? "border-primary bg-muted/30" : "border-surface-border"}`}
-                        onClick={() => {
-                          setSelectedCandidateId(candidate.id);
-                          setSelectedPersonnelId(candidate.assigned_personnel_id);
-                        }}
-                      >
-                        <div className="font-medium text-text-primary">
-                          {candidate.source_type}:{candidate.source_id}
-                        </div>
-                        <div className="text-xs text-text-muted">
-                          {t("backlog.readinessScore")}: {candidate.readiness_score.toFixed(1)}
-                        </div>
-                      </button>
-                    ),
-                  )}
-                  {filteredReadyCandidates.length === 0 && (
-                    <p className="text-xs text-text-muted">{t("backlog.emptyReady")}</p>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm">{t("backlog.blockedColumn")}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {filteredBlockedCandidates
-                    .slice(0, 10)
-                    .map((candidate: (typeof filteredBlockedCandidates)[number]) => (
-                      <div
-                        key={candidate.id}
-                        className="rounded-lg border border-surface-border p-3 text-sm"
-                      >
-                        <div className="font-medium text-text-primary">
-                          {candidate.source_type}:{candidate.source_id}
-                        </div>
-                        <div className="text-xs text-text-muted">
-                          {t("backlog.readinessScore")}: {candidate.readiness_score.toFixed(1)}
-                        </div>
-                      </div>
-                    ))}
-                  {filteredBlockedCandidates.length === 0 && (
-                    <p className="text-xs text-text-muted">{t("backlog.emptyBlocked")}</p>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="mt-4 grid gap-4 2xl:grid-cols-[1.1fr_1fr]">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm">{t("commitment.formTitle")}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-3 md:grid-cols-5">
-                    <div>
-                      <Label>{t("commitment.selectedCandidate")}</Label>
-                      <Input className="h-8 text-sm" value={selectedCandidateId ?? ""} readOnly />
-                    </div>
-                    <div>
-                      <Label>{t("commitment.start")}</Label>
-                      <Input
-                        className="h-8 text-sm"
-                        type="datetime-local"
-                        value={commitStart}
-                        onChange={(e) => setCommitStart(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label>{t("commitment.end")}</Label>
-                      <Input
-                        className="h-8 text-sm"
-                        type="datetime-local"
-                        value={commitEnd}
-                        onChange={(e) => setCommitEnd(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label>{t("commitment.assignee")}</Label>
-                      <Select
-                        value={personnelValue}
-                        onValueChange={(value) =>
-                          setSelectedPersonnelId(value === "__unassigned__" ? null : Number(value))
-                        }
-                      >
-                        <SelectTrigger className="h-8 text-sm">
-                          <SelectValue placeholder={t("commitment.assignee")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__unassigned__">
-                            {t("commitment.unassigned")}
-                          </SelectItem>
-                          {personnel.map((person) => (
-                            <SelectItem key={person.id} value={String(person.id)}>
-                              {person.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>{t("commitment.budgetThreshold")}</Label>
-                      <Input
-                        className="h-8 text-sm"
-                        value={budgetThreshold}
-                        onChange={(e) => setBudgetThreshold(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <PermissionGate permission={P.PLAN_CONFIRM}>
-                    <Button
-                      className="mt-3"
-                      size="sm"
-                      onClick={() => void handleCreateCommitment()}
-                      disabled={!selectedCandidateId || !teamId || saving}
-                    >
-                      {t("actions.commit")}
-                    </Button>
-                  </PermissionGate>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm">{t("windows.title")}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-3 md:grid-cols-5">
-                    <div>
-                      <Label>{t("windows.type")}</Label>
-                      <Input
-                        className="h-8 text-sm"
-                        value={windowType}
-                        onChange={(e) => setWindowType(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label>{t("windows.start")}</Label>
-                      <Input
-                        className="h-8 text-sm"
-                        type="datetime-local"
-                        value={windowStart}
-                        onChange={(e) => setWindowStart(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label>{t("windows.end")}</Label>
-                      <Input
-                        className="h-8 text-sm"
-                        type="datetime-local"
-                        value={windowEnd}
-                        onChange={(e) => setWindowEnd(e.target.value)}
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <Label>{t("windows.reason")}</Label>
-                      <Input
-                        className="h-8 text-sm"
-                        value={windowReason}
-                        onChange={(e) => setWindowReason(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <PermissionGate permission={P.PLAN_WINDOWS}>
-                    <Button
-                      className="mt-3"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void handleCreateWindow()}
-                      disabled={saving}
-                    >
-                      {t("windows.add")}
-                    </Button>
-                  </PermissionGate>
-                  <div className="mt-3 space-y-1 text-xs">
-                    {planningWindows.map((window) => (
-                      <div key={window.id} className="rounded-lg border border-surface-border p-2">
-                        <span className="font-medium">{window.window_type}</span>{" "}
-                        {window.start_datetime} - {window.end_datetime}
-                        {window.is_locked === 1 && (
-                          <Badge className="ml-2">{t("windows.locked")}</Badge>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            <Card className="mt-4">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm">{t("gantt.capacityTitle")}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-2 md:grid-cols-3">
-                  {capacityLoad.map((row) => {
-                    const tone =
-                      row.utilization_ratio > 1
-                        ? "destructive"
-                        : row.utilization_ratio > 0.8
-                          ? "secondary"
-                          : "default";
-                    return (
-                      <div
-                        key={`${row.team_id}-${row.work_date}`}
-                        className="rounded-lg border border-surface-border p-2 text-xs"
-                      >
-                        <div className="font-medium">{row.work_date}</div>
-                        <div>
-                          {t("gantt.capacityLine", {
-                            committed: row.committed_hours.toFixed(1),
-                            available: (row.available_hours + row.overtime_hours).toFixed(1),
-                          })}
-                        </div>
-                        <Badge variant={tone as "default" | "secondary" | "destructive"}>
-                          {(row.utilization_ratio * 100).toFixed(0)}%
-                        </Badge>
-                      </div>
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <PlanningBacklogRail
+            ready={filteredReady}
+            blocked={filteredBlocked}
+            conflictSummary={backlog?.conflict_summary ?? []}
+            selectedCandidateId={selectedCandidate?.id ?? null}
+            onSelectReady={(candidate) => {
+              setSelectedCandidate(candidate);
+              setCommitOpen(true);
+            }}
+          />
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col p-3">
+            {pageView === "gantt" ? (
+              <PlanningBoard
+                gantt={ganttSnapshot}
+                commitments={commitments}
+                capacityLoad={capacityLoad}
+                lockedWindows={ganttSnapshot?.locked_windows ?? planningWindows}
+                visibleStart={visibleStart}
+                visibleEnd={visibleEnd}
+                horizonStart={horizonStart}
+                horizonEnd={horizonEnd}
+                onVisibleTimeChange={(start, end) => {
+                  // Keep pan/zoom inside the selected DU/AU horizon.
+                  const clampedStart = Math.max(horizonStart, start);
+                  const clampedEnd = Math.min(horizonEnd, end);
+                  if (clampedEnd > clampedStart) {
+                    setVisibleStart(clampedStart);
+                    setVisibleEnd(clampedEnd);
+                  } else {
+                    const next = clampVisibleToHorizon(
+                      horizonStart,
+                      horizonEnd,
+                      PLANNING_TIMELINE_MAX_ZOOM_MS,
                     );
-                  })}
-                  {capacityLoad.length === 0 && (
-                    <p className="text-xs text-text-muted">{t("gantt.emptyCapacity")}</p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="mt-4">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm">{t("gantt.assignmentLaneTitle")}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {(ganttSnapshot?.locked_windows ?? []).length > 0 && (
-                  <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs">
-                    <div className="mb-1 font-medium">{t("gantt.freezeOverlayTitle")}</div>
-                    {(ganttSnapshot?.locked_windows ?? []).map((window) => (
-                      <div key={window.id}>
-                        {window.start_datetime} - {window.end_datetime} (
-                        {window.lock_reason ?? window.window_type})
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="overflow-x-auto">
-                  <div className="min-w-[980px] space-y-2">
-                    <div className="grid grid-cols-[220px_repeat(8,minmax(100px,1fr))] gap-1 text-xs font-semibold">
-                      <div>{t("gantt.laneHeader")}</div>
-                      {dayBuckets.slice(0, 8).map((day) => (
-                        <div key={day}>{day}</div>
-                      ))}
-                    </div>
-                    {(ganttSnapshot?.assignee_lanes ?? []).map((lane) => {
-                      const laneCommitments = commitments.filter(
-                        (entry) => entry.assigned_personnel_id === lane.personnel_id,
-                      );
-                      return (
-                        <div
-                          key={lane.personnel_id}
-                          className="grid grid-cols-[220px_repeat(8,minmax(100px,1fr))] gap-1"
-                        >
-                          <div className="rounded border px-2 py-1 text-xs">{lane.full_name}</div>
-                          {dayBuckets.slice(0, 8).map((day) => (
-                            <div
-                              key={`${lane.personnel_id}-${day}`}
-                              className="min-h-[64px] rounded-lg border border-surface-border p-1"
-                              onDragOver={(e) => e.preventDefault()}
-                              onDrop={() => void handleDropCommitment(day, lane.personnel_id)}
-                            >
-                              {laneCommitments
-                                .filter((entry) => entry.schedule_period_start === day)
-                                .map((entry) => (
-                                  <div
-                                    key={entry.id}
-                                    draggable
-                                    onDragStart={() => setDragCommitmentId(entry.id)}
-                                    className="mb-1 cursor-move rounded-md bg-blue-100 px-1 py-0.5 text-[11px]"
-                                  >
-                                    #{entry.id} {entry.source_type}:{entry.source_id}
-                                  </div>
-                                ))}
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="mt-4">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm">{t("breakIns.title")}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-3 md:grid-cols-5">
-                  <div>
-                    <Label>{t("breakIns.commitment")}</Label>
-                    <Select
-                      value={breakInCommitmentValue}
-                      onValueChange={(value) =>
-                        setBreakInCommitmentId(value === "__none__" ? null : Number(value))
-                      }
-                    >
-                      <SelectTrigger className="h-8 text-sm">
-                        <SelectValue placeholder={t("breakIns.selectCommitment")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">{t("breakIns.selectCommitment")}</SelectItem>
-                        {commitments.map((commitment) => (
-                          <SelectItem key={commitment.id} value={String(commitment.id)}>
-                            #{commitment.id} {commitment.source_type}:{commitment.source_id}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>{t("breakIns.reason")}</Label>
-                    <Input
-                      className="h-8 text-sm"
-                      value={breakInReason}
-                      onChange={(e) => setBreakInReason(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label>{t("breakIns.approver")}</Label>
-                    <Input
-                      className="h-8 text-sm"
-                      value={breakInApproverUserId}
-                      onChange={(e) => setBreakInApproverUserId(e.target.value)}
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <Label>{t("breakIns.overrideReason")}</Label>
-                    <Input
-                      className="h-8 text-sm"
-                      value={breakInOverrideReason}
-                      onChange={(e) => setBreakInOverrideReason(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <PermissionGate permission={P.PLAN_CONFIRM}>
-                  <Button
-                    className="mt-3"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void handleCreateBreakIn()}
-                    disabled={!breakInCommitmentId || saving}
-                  >
-                    <Siren className="mr-2 h-3.5 w-3.5" />
-                    {t("breakIns.create")}
-                  </Button>
-                </PermissionGate>
-                <div className="mt-3 space-y-1 text-xs">
-                  {breakIns.map((entry) => (
-                    <div key={entry.id} className="rounded-lg border border-surface-border p-2">
-                      #{entry.id} {entry.break_in_reason} - {entry.old_slot_start} {"->"}{" "}
-                      {entry.new_slot_start} ({entry.cost_impact_delta?.toFixed(2) ?? "0.00"})
-                    </div>
-                  ))}
-                  {breakIns.length === 0 && (
-                    <p className="text-text-muted">{t("breakIns.empty")}</p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {loading && <p className="mt-4 text-xs text-text-muted">{t("state.loading")}</p>}
+                    setVisibleStart(next.start);
+                    setVisibleEnd(next.end);
+                  }
+                }}
+                selectedCommitmentId={selectedCommitmentId}
+                onSelectCommitment={(id) => {
+                  setSelectedCommitmentId(id);
+                  setInspectorOpen(true);
+                }}
+                onReschedule={handleBoardReschedule}
+                loading={loading && !ganttSnapshot}
+                error={null}
+                canDrag
+                laneMode={boardScope.kind === "all" ? "crew" : "technician"}
+                remountKey={`${dateFrom}_${dateTo}_${boardScope.kind === "all" ? "all" : boardScope.teamId}`}
+                maxZoom={PLANNING_TIMELINE_MAX_ZOOM_MS}
+              />
+            ) : (
+              <PlanningCalendarView
+                key={`planning-calendar-${calendarSessionKey}`}
+                commitments={calendarCommitments}
+                windows={calendarWindows}
+                loading={loading}
+                initialDateIso={dateFrom}
+                onVisibleRangeChange={handleCalendarVisibleRangeChange}
+                onCommitmentClick={(commitment) => {
+                  setSelectedCommitmentId(commitment.id);
+                  setInspectorOpen(true);
+                }}
+                onWindowClick={(window) => {
+                  setSelectedWindow(window);
+                  setWindowDetailOpen(true);
+                }}
+              />
+            )}
           </div>
         </div>
       </div>
+
+      <CommitDialog
+        open={commitOpen}
+        onOpenChange={setCommitOpen}
+        candidate={selectedCandidate}
+        boardScope={boardScope}
+        teams={teams}
+        teamId={teamId}
+        conflictSummary={
+          selectedCandidate
+            ? ((backlog?.conflict_summary ?? []).find(
+                (row) => row.candidate_id === selectedCandidate.id,
+              ) ?? null)
+            : null
+        }
+        gantt={ganttSnapshot}
+        commitments={commitments}
+        lockedWindows={ganttSnapshot?.locked_windows ?? planningWindows}
+        horizonStart={horizonStart}
+        horizonEnd={horizonEnd}
+        visibleStart={visibleStart}
+        visibleEnd={visibleEnd}
+        saving={saving}
+        onSubmit={handleCreateCommitment}
+      />
+      <ProductionWindowDialog
+        open={windowOpen}
+        onOpenChange={setWindowOpen}
+        teamId={teamId}
+        windows={planningWindows}
+        saving={saving}
+        onSubmit={handleCreateWindow}
+      />
+      <BreakInDialog
+        open={breakInOpen}
+        onOpenChange={setBreakInOpen}
+        commitments={commitments}
+        breakIns={breakIns}
+        teamId={teamId}
+        approvers={approvers}
+        personnel={personnel}
+        saving={saving}
+        onSubmit={handleCreateBreakIn}
+      />
+      <FreezeConfirmDialog
+        open={freezeOpen}
+        onOpenChange={setFreezeOpen}
+        periodStartLabel={new Date(periodStartIso).toLocaleString()}
+        periodEndLabel={new Date(periodEndIso).toLocaleString()}
+        saving={saving}
+        onConfirm={handleFreeze}
+      />
+      <CommitmentInspectorDialog
+        open={inspectorOpen}
+        onOpenChange={setInspectorOpen}
+        commitment={selectedCommitment}
+        changeLog={changeLog}
+        loadingChangeLog={loading}
+        onLoadChangeLog={(id) => {
+          void loadChangeLog(id);
+        }}
+        onRequestBreakIn={() => {
+          setInspectorOpen(false);
+          setBreakInOpen(true);
+        }}
+        {...(pageView === "calendar" ? { onOpenOnBoard: handleOpenOnBoard } : {})}
+      />
+      <PlanningWindowDetailDialog
+        open={windowDetailOpen}
+        onOpenChange={(open) => {
+          setWindowDetailOpen(open);
+          if (!open) setSelectedWindow(null);
+        }}
+        window={selectedWindow}
+      />
+      <OverrideReasonDialog
+        open={overrideOpen}
+        onOpenChange={setOverrideOpen}
+        onConfirm={(reason) => {
+          const pending = pendingRescheduleRef.current;
+          if (!pending) return;
+          pendingRescheduleRef.current = null;
+          void applyReschedule({
+            ...pending.input,
+            allow_double_booking_override: true,
+            override_reason: reason,
+          });
+        }}
+      />
     </div>
   );
 }

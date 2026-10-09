@@ -49,6 +49,32 @@ pub struct PersonnelTeamAssignment {
     pub updated_at: String,
 }
 
+/// Open assignment row for a crew roster (team-scoped).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberRow {
+    pub assignment_id: i64,
+    pub personnel_id: i64,
+    pub employee_code: String,
+    pub full_name: String,
+    pub position_name: Option<String>,
+    pub role_code: String,
+    pub allocation_percent: f64,
+    pub valid_from: Option<String>,
+    pub valid_to: Option<String>,
+    pub is_lead: i64,
+    pub availability_status: String,
+    /// Linked login account when `user_accounts.personnel_id` matches (WO assignment bridge).
+    pub user_account_id: Option<i64>,
+}
+
+/// Set or clear crew lead on an existing open assignment (does not touch membership sync).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetTeamLeadInput {
+    pub team_id: i64,
+    pub personnel_id: i64,
+    pub is_lead: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonnelAvailabilityBlock {
     pub id: i64,
@@ -59,6 +85,7 @@ pub struct PersonnelAvailabilityBlock {
     pub reason_note: Option<String>,
     pub is_critical: bool,
     pub created_by_id: Option<i64>,
+    pub created_by_label: Option<String>,
     pub created_at: String,
 }
 

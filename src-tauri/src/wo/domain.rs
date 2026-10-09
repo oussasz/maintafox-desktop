@@ -81,7 +81,7 @@ pub struct WorkOrder {
     pub entity_id: Option<i64>,
     pub planner_id: Option<i64>,
     pub approver_id: Option<i64>,
-    pub assigned_group_id: Option<i64>,
+    pub assigned_team_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
     // Urgency
     pub urgency_id: Option<i64>,
@@ -169,6 +169,16 @@ pub struct WorkOrder {
     pub source_di_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_di_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_team_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_team_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_team_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule_commitment_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule_frozen: Option<bool>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -309,9 +319,9 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         approver_id: row
             .try_get::<Option<i64>>("", "approver_id")
             .map_err(|e| decode_err("approver_id", e))?,
-        assigned_group_id: row
-            .try_get::<Option<i64>>("", "assigned_group_id")
-            .map_err(|e| decode_err("assigned_group_id", e))?,
+        assigned_team_id: row
+            .try_get::<Option<i64>>("", "assigned_team_id")
+            .map_err(|e| decode_err("assigned_team_id", e))?,
         primary_responsible_id: row
             .try_get::<Option<i64>>("", "primary_responsible_id")
             .map_err(|e| decode_err("primary_responsible_id", e))?,
@@ -468,6 +478,24 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         source_di_code: row.try_get::<Option<String>>("", "source_di_code").unwrap_or(None),
         source_di_title: row.try_get::<Option<String>>("", "source_di_title").unwrap_or(None),
         source_di_status: row.try_get::<Option<String>>("", "source_di_status").unwrap_or(None),
+        assigned_team_code: row.try_get::<Option<String>>("", "assigned_team_code").unwrap_or(None),
+        assigned_team_name: row.try_get::<Option<String>>("", "assigned_team_name").unwrap_or(None),
+        assigned_team_label: row
+            .try_get::<Option<String>>("", "assigned_team_label")
+            .unwrap_or(None),
+        schedule_commitment_id: row
+            .try_get::<Option<i64>>("", "schedule_commitment_id")
+            .unwrap_or(None),
+        schedule_frozen: row
+            .try_get::<Option<i64>>("", "schedule_frozen")
+            .ok()
+            .flatten()
+            .map(|v| v != 0)
+            .or_else(|| {
+                row.try_get::<i64>("", "schedule_frozen")
+                    .ok()
+                    .map(|v| v != 0)
+            }),
     })
 }
 

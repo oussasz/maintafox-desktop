@@ -809,7 +809,7 @@ pub async fn bootstrap_initial_tenant_admin(
 
     let password_hash = crate::auth::password::hash_password(&input.password)?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     let display_name = input
         .display_name
         .as_ref()
@@ -823,12 +823,12 @@ pub async fn bootstrap_initial_tenant_admin(
         .execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             r"INSERT INTO user_accounts
-                (sync_id, username, display_name, identity_mode, password_hash,
+                (entity_sync_id, username, display_name, identity_mode, password_hash,
                  is_active, is_admin, force_password_change, failed_login_attempts,
                  created_at, updated_at, row_version)
              VALUES (?, ?, ?, 'local', ?, 1, 1, 1, 0, ?, ?, 1)",
             vec![
-                sync_id.into(),
+                entity_sync_id.into(),
                 username.to_string().into(),
                 display_name.into(),
                 password_hash.into(),
@@ -855,7 +855,7 @@ pub async fn bootstrap_initial_tenant_admin(
         .execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             r"INSERT INTO user_scope_assignments
-                (sync_id, user_id, role_id, scope_type, scope_reference,
+                (entity_sync_id, user_id, role_id, scope_type, scope_reference,
                  valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version)
              VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, NULL, ?, ?, ?, 1)",
             vec![

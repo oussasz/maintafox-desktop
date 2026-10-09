@@ -9,6 +9,7 @@ import type {
   GeneratePmOccurrencesInput,
   GeneratePmOccurrencesResult,
   PmDueMetrics,
+  PmGenerationStatus,
   PmGovernanceKpiInput,
   PmGovernanceKpiReport,
   PmPlanningReadinessInput,
@@ -26,6 +27,7 @@ import type {
   PublishPmPlanVersionInput,
   TransitionPmOccurrenceInput,
   TransitionPmPlanLifecycleInput,
+  UpdatePmGenerationSettingsInput,
   UpdatePmPlanInput,
   UpdatePmPlanVersionInput,
 } from "@shared/ipc-types";
@@ -41,7 +43,10 @@ const PmPlanSchema = z.object({
   criticality_value_id: z.number().nullable(),
   criticality_code: z.string().nullable(),
   criticality_label: z.string().nullable(),
-  assigned_group_id: z.number().nullable(),
+  assigned_team_id: z.number().nullable(),
+  assigned_team_code: z.string().nullable(),
+  assigned_team_name: z.string().nullable(),
+  assigned_team_label: z.string().nullable(),
   requires_shutdown: z.number(),
   requires_permit: z.number(),
   is_active: z.number(),
@@ -158,6 +163,38 @@ const GeneratePmOccurrencesResultSchema = z.object({
   skipped_count: z.number(),
   trigger_events_recorded: z.number(),
   occurrence_ids: z.array(z.number()),
+});
+
+const PmGenerationControlSchema = z.object({
+  id: z.number(),
+  enabled: z.boolean(),
+  cron_expr: z.string(),
+  horizon_days: z.number(),
+  last_run_at: z.string().nullable(),
+  next_run_at: z.string().nullable(),
+  last_status: z.string().nullable(),
+  last_generated_count: z.number().nullable(),
+  last_skipped_count: z.number().nullable(),
+  last_error: z.string().nullable(),
+  updated_at: z.string(),
+});
+
+const PmGenerationRunSchema = z.object({
+  id: z.number(),
+  started_at: z.string(),
+  finished_at: z.string().nullable(),
+  trigger_source: z.string(),
+  status: z.string(),
+  generated_count: z.number(),
+  skipped_count: z.number(),
+  trigger_events_recorded: z.number(),
+  error_message: z.string().nullable(),
+  scope_json: z.string().nullable(),
+});
+
+const PmGenerationStatusSchema = z.object({
+  control: PmGenerationControlSchema,
+  latest_run: PmGenerationRunSchema.nullable(),
 });
 
 const PmExecutionSchema = z.object({
@@ -302,6 +339,16 @@ export function generatePmOccurrences(
   return invokeParsed("generate_pm_occurrences", { input }, GeneratePmOccurrencesResultSchema);
 }
 
+export function getPmGenerationStatus(): Promise<PmGenerationStatus> {
+  return invokeParsed("get_pm_generation_status", undefined, PmGenerationStatusSchema);
+}
+
+export function updatePmGenerationSettings(
+  input: UpdatePmGenerationSettingsInput,
+): Promise<PmGenerationStatus> {
+  return invokeParsed("update_pm_generation_settings", { input }, PmGenerationStatusSchema);
+}
+
 export function transitionPmOccurrence(input: TransitionPmOccurrenceInput): Promise<PmOccurrence> {
   return invokeParsed("transition_pm_occurrence", { input }, PmOccurrenceSchema);
 }
@@ -339,4 +386,12 @@ export function listPmRecurringFindings(
   input: PmRecurringFindingsInput,
 ): Promise<PmRecurringFinding[]> {
   return invokeParsed("list_pm_recurring_findings", { input }, z.array(PmRecurringFindingSchema));
+}
+
+export function deletePmPlan(planId: number, expectedRowVersion: number): Promise<void> {
+  return invoke("delete_pm_plan", { planId, expectedRowVersion });
+}
+
+export function deletePmPlanVersion(versionId: number, expectedRowVersion: number): Promise<void> {
+  return invoke("delete_pm_plan_version", { versionId, expectedRowVersion });
 }

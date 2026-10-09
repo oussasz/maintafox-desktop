@@ -417,7 +417,7 @@ pub async fn create_inventory_tax_category(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO lookup_values (
-            sync_id, domain_id, code, label, fr_label, en_label, description,
+            entity_sync_id, domain_id, code, label, fr_label, en_label, description,
             sort_order, is_active, is_system, color, parent_value_id, metadata_json,
             created_at, updated_at, row_version
          )
@@ -713,8 +713,8 @@ pub async fn create_warehouse(db: &DatabaseConnection, input: CreateWarehouseInp
     }
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO warehouses (code, name, is_active) VALUES (?, ?, 1)",
-        [code.into(), name.into()],
+        "INSERT INTO warehouses (entity_sync_id, code, name, is_active, row_version) VALUES (?, ?, ?, 1, 1)",
+        [uuid::Uuid::new_v4().to_string().into(), code.into(), name.into()],
     ))
     .await?;
     let row = db
@@ -724,13 +724,18 @@ pub async fn create_warehouse(db: &DatabaseConnection, input: CreateWarehouseInp
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("warehouse insert")))?;
-    Ok(Warehouse {
+    let warehouse = Warehouse {
         id: row.try_get("", "id")?,
         code: row.try_get("", "code")?,
         name: row.try_get("", "name")?,
         is_active: row.try_get("", "is_active")?,
         created_at: row.try_get("", "created_at")?,
-    })
+    };
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_warehouse_sync(db, warehouse.id).await,
+        "warehouse create",
+    );
+    Ok(warehouse)
 }
 
 pub async fn update_warehouse(
@@ -781,13 +786,18 @@ pub async fn update_warehouse(
             entity: "Warehouse".to_string(),
             id: warehouse_id.to_string(),
         })?;
-    Ok(Warehouse {
+    let warehouse = Warehouse {
         id: row.try_get("", "id")?,
         code: row.try_get("", "code")?,
         name: row.try_get("", "name")?,
         is_active: row.try_get("", "is_active")?,
         created_at: row.try_get("", "created_at")?,
-    })
+    };
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_warehouse_sync(db, warehouse.id).await,
+        "warehouse",
+    );
+    Ok(warehouse)
 }
 
 pub async fn create_stock_location(
@@ -841,11 +851,13 @@ pub async fn create_stock_location(
         ))
         .await?;
     }
+    let entity_sync_id = uuid::Uuid::new_v4().to_string();
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO stock_locations (warehouse_id, code, name, is_default, is_active, row_version)
-         VALUES (?, ?, ?, ?, 1, 1)",
+        "INSERT INTO stock_locations (entity_sync_id, warehouse_id, code, name, is_default, is_active, row_version)
+         VALUES (?, ?, ?, ?, ?, 1, 1)",
         [
+            entity_sync_id.into(),
             input.warehouse_id.into(),
             code.into(),
             name.into(),
@@ -853,16 +865,21 @@ pub async fn create_stock_location(
         ],
     ))
     .await?;
-    tx.commit().await?;
-
-    let id_row = db
+    let id_row = tx
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            "SELECT id FROM stock_locations WHERE rowid = last_insert_rowid()".to_string(),
+            "SELECT last_insert_rowid() AS id".to_string(),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("location insert")))?;
     let new_id: i64 = id_row.try_get("", "id")?;
+    tx.commit().await?;
+
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_location_sync(db, new_id).await,
+        "stock_location",
+    );
+
     list_locations(db, Some(input.warehouse_id))
         .await?
         .into_iter()
@@ -971,6 +988,11 @@ pub async fn update_stock_location(
         ]));
     }
     tx.commit().await?;
+
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_location_sync(db, location_id).await,
+        "stock_location",
+    );
 
     list_locations(db, Some(warehouse_id))
         .await?
@@ -1184,10 +1206,11 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
     }
 
     let tx = db.begin().await?;
+    let entity_sync_id = uuid::Uuid::new_v4().to_string();
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO articles (
-            article_code, article_name, family_id, unit_value_id, criticality_value_id,
+            entity_sync_id, article_code, article_name, family_id, unit_value_id, criticality_value_id,
             stocking_type_value_id, tax_category_value_id, procurement_category_value_id,
             preferred_warehouse_id, preferred_location_id,
             min_stock, max_stock, reorder_point, safety_stock,
@@ -1196,9 +1219,10 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
             order_multiple_qty, lead_time_days, review_period_days,
             abc_class_code, xyz_class_code,
             is_critical_spare, requires_expiration, shelf_life_days, requires_batch_tracking,
-            is_active
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            is_active, row_version
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
+            entity_sync_id.into(),
             code.clone().into(),
             name.into(),
             input.family_id.map_or(Value::BigInt(None), Value::from),
@@ -1264,6 +1288,11 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
     .await?;
 
     tx.commit().await?;
+
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_article_sync(db, article_id).await,
+        "article create",
+    );
 
     let mut rows = list_articles(
         db,
@@ -1460,6 +1489,11 @@ pub async fn update_article(
     record_article_field_changes(&tx, article_id, &before, &input, &code, &name, is_active).await?;
 
     tx.commit().await?;
+
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_article_sync(db, article_id).await,
+        "article",
+    );
 
     let rows = list_articles(
         db,
@@ -1799,7 +1833,7 @@ pub async fn adjust_stock(
     )
     .await?;
 
-    insert_inventory_transaction(
+    let movement_id = insert_inventory_transaction(
         &tx,
         input.article_id,
         warehouse_id,
@@ -1816,10 +1850,15 @@ pub async fn adjust_stock(
         input.source_ref.as_deref(),
         input.reason_code.as_deref(),
         input.notes.as_deref(),
+        None,
     )
     .await?;
 
     tx.commit().await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
+        "stock_movement",
+    );
     load_balance(db, input.article_id, input.location_id).await
 }
 
@@ -1966,14 +2005,20 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
     source_ref: Option<&str>,
     reason_code: Option<&str>,
     notes: Option<&str>,
-) -> AppResult<()> {
+    entity_sync_id: Option<uuid::Uuid>,
+) -> AppResult<i64> {
+    let entity_sync_id = entity_sync_id
+        .unwrap_or_else(uuid::Uuid::new_v4)
+        .to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_transactions (
-             article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
-             source_type, source_id, source_ref, reason_code, reason, performed_by_id, performed_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+             entity_sync_id, article_id, warehouse_id, location_id, reservation_id, movement_type, quantity,
+             source_type, source_id, source_ref, reason_code, reason, performed_by_id, performed_at,
+             row_version
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1)",
         [
+            entity_sync_id.into(),
             article_id.into(),
             warehouse_id.into(),
             location_id.into(),
@@ -1988,7 +2033,16 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
         ],
     ))
     .await?;
-    Ok(())
+    let id_row = db
+        .query_one(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT last_insert_rowid() AS id".to_string(),
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!("failed to read inventory transaction id"))
+        })?;
+    Ok(id_row.try_get("", "id")?)
 }
 
 async fn load_balance(db: &DatabaseConnection, article_id: i64, location_id: i64) -> AppResult<InventoryStockBalance> {
@@ -2109,10 +2163,11 @@ pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO stock_reservations (
-             article_id, warehouse_id, location_id, source_type, source_id, source_ref,
-             quantity_reserved, quantity_issued, status, notes, created_by_id
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, NULL)",
+             entity_sync_id, article_id, warehouse_id, location_id, source_type, source_id, source_ref,
+             quantity_reserved, quantity_issued, status, notes, created_by_id, row_version
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, NULL, 1)",
         [
+            uuid::Uuid::new_v4().to_string().into(),
             input.article_id.into(),
             warehouse_id.into(),
             input.location_id.into(),
@@ -2134,7 +2189,7 @@ pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to load reservation id")))?;
     let reservation_id: i64 = reservation_id_row.try_get("", "id")?;
 
-    insert_inventory_transaction(
+    let movement_id = insert_inventory_transaction(
         &tx,
         input.article_id,
         warehouse_id,
@@ -2147,10 +2202,19 @@ pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput
         input.source_ref.as_deref(),
         None,
         input.notes.as_deref(),
+        None,
     )
     .await?;
 
     tx.commit().await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_reservation_sync(db, reservation_id).await,
+        "stock_reservation",
+    );
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
+        "stock_movement",
+    );
     load_reservation_by_id(db, reservation_id).await
 }
 
@@ -2217,7 +2281,7 @@ pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssue
         .source_type
         .clone()
         .unwrap_or_else(|| reservation.source_type.clone());
-    insert_inventory_transaction(
+    let movement_id = insert_inventory_transaction(
         &tx,
         reservation.article_id,
         reservation.warehouse_id,
@@ -2230,10 +2294,19 @@ pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssue
         input.source_ref.as_deref().or(reservation.source_ref.as_deref()),
         None,
         input.notes.as_deref(),
+        None,
     )
     .await?;
 
     tx.commit().await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_reservation_sync(db, reservation.id).await,
+        "stock_reservation",
+    );
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
+        "stock_movement",
+    );
     load_reservation_by_id(db, reservation.id).await
 }
 
@@ -2292,7 +2365,7 @@ pub async fn return_reserved_stock(
         ],
     ))
     .await?;
-    insert_inventory_transaction(
+    let movement_id = insert_inventory_transaction(
         &tx,
         reservation.article_id,
         reservation.warehouse_id,
@@ -2305,9 +2378,18 @@ pub async fn return_reserved_stock(
         reservation.source_ref.as_deref(),
         None,
         input.notes.as_deref(),
+        None,
     )
     .await?;
     tx.commit().await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_reservation_sync(db, reservation.id).await,
+        "stock_reservation",
+    );
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
+        "stock_movement",
+    );
     load_reservation_by_id(db, reservation.id).await
 }
 
@@ -2315,12 +2397,12 @@ pub(crate) async fn release_stock_reservation_with_connection<C: ConnectionTrait
     db: &C,
     reservation_id: i64,
     notes: Option<&str>,
-) -> AppResult<StockReservation> {
+) -> AppResult<(StockReservation, Option<i64>)> {
     let reservation = load_reservation_by_id(db, reservation_id).await?;
     ensure_reservation_invariants(&reservation)?;
     ensure_active_mutation_context(db, reservation.article_id, reservation.location_id).await?;
     if reservation.status == "released" {
-        return Ok(reservation);
+        return Ok((reservation, None));
     }
     let remaining_reserved = (reservation.quantity_reserved - reservation.quantity_issued).max(0.0);
 
@@ -2350,24 +2432,30 @@ pub(crate) async fn release_stock_reservation_with_connection<C: ConnectionTrait
         [reservation.id.into()],
     ))
     .await?;
-    if remaining_reserved > 0.0 {
-        insert_inventory_transaction(
-            db,
-            reservation.article_id,
-            reservation.warehouse_id,
-            reservation.location_id,
-            Some(reservation.id),
-            "RELEASE",
-            remaining_reserved,
-            &reservation.source_type,
-            reservation.source_id,
-            reservation.source_ref.as_deref(),
-            None,
-            notes,
+    let movement_id = if remaining_reserved > 0.0 {
+        Some(
+            insert_inventory_transaction(
+                db,
+                reservation.article_id,
+                reservation.warehouse_id,
+                reservation.location_id,
+                Some(reservation.id),
+                "RELEASE",
+                remaining_reserved,
+                &reservation.source_type,
+                reservation.source_id,
+                reservation.source_ref.as_deref(),
+                None,
+                notes,
+                None,
+            )
+            .await?,
         )
-        .await?;
-    }
-    load_reservation_by_id(db, reservation.id).await
+    } else {
+        None
+    };
+    let released = load_reservation_by_id(db, reservation.id).await?;
+    Ok((released, movement_id))
 }
 
 pub async fn release_stock_reservation(
@@ -2375,8 +2463,20 @@ pub async fn release_stock_reservation(
     input: InventoryReleaseReservationInput,
 ) -> AppResult<StockReservation> {
     let tx = db.begin().await?;
-    let released = release_stock_reservation_with_connection(&tx, input.reservation_id, input.notes.as_deref()).await?;
+    let (released, movement_id) =
+        release_stock_reservation_with_connection(&tx, input.reservation_id, input.notes.as_deref())
+            .await?;
     tx.commit().await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_reservation_sync(db, released.id).await,
+        "stock_reservation",
+    );
+    if let Some(movement_id) = movement_id {
+        crate::sync::foundation_stage::warn_stage(
+            crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
+            "stock_movement",
+        );
+    }
     Ok(released)
 }
 
@@ -2433,7 +2533,7 @@ pub async fn transfer_stock(
         .source_type
         .clone()
         .unwrap_or_else(|| "INTERNAL_TRANSFER".to_string());
-    insert_inventory_transaction(
+    let out_movement_id = insert_inventory_transaction(
         &tx,
         input.article_id,
         from_warehouse,
@@ -2446,9 +2546,10 @@ pub async fn transfer_stock(
         input.source_ref.as_deref(),
         None,
         input.notes.as_deref(),
+        None,
     )
     .await?;
-    insert_inventory_transaction(
+    let in_movement_id = insert_inventory_transaction(
         &tx,
         input.article_id,
         to_warehouse,
@@ -2461,10 +2562,19 @@ pub async fn transfer_stock(
         input.source_ref.as_deref(),
         None,
         input.notes.as_deref(),
+        None,
     )
     .await?;
 
     tx.commit().await?;
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_movement_sync(db, out_movement_id).await,
+        "stock_movement",
+    );
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::ops_stage::stage_stock_movement_sync(db, in_movement_id).await,
+        "stock_movement",
+    );
     let from = load_balance(db, input.article_id, input.from_location_id).await?;
     let to = load_balance(db, input.article_id, input.to_location_id).await?;
     Ok(vec![from, to])

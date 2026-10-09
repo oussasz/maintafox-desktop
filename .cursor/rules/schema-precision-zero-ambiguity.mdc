@@ -1,0 +1,58 @@
+---
+description: Schema/DTO/IPC field names must match target entity; no ambiguous or duplicate FKs
+alwaysApply: true
+---
+
+# Schema Precision & Zero Domain Ambiguity
+
+Prevent technical debt, domain drift, and broken FK assumptions. Database schemas, Rust domain types, `shared/ipc-types`, Zod services, and UI models must use **one name per relation**.
+
+## 1. One entity, one name
+
+A foreign key that points at table `T` must use the same field name across **all** modules and layers.
+
+| Target | Required FK name(s) | Forbidden |
+|---|---|---|
+| `equipment.id` | `equipment_id` | `asset_id` (as FK to equipment) |
+| `teams.id` (crew) | `team_id` / `assigned_team_id` | `group_id` / `assigned_group_id` |
+| `org_nodes.id` | `org_node_id` / `entity_id` (when that is the product term) | `*_team_id` when it is not `teams.id` |
+| `user_accounts.id` | `*_user_id` / established names (`planner_id`, `primary_responsible_id`) | Naming them as personnel/team |
+
+Display enrichment may stay product-facing (`asset_code` / `asset_label` for equipment rows) — that is **not** a second FK.
+
+```text
+❌ BAD — DI.asset_id and WO.equipment_id both → equipment.id
+✅ GOOD — equipment_id everywhere (DI, WO, PM scope, inventory links)
+
+❌ BAD — WO/PM assigned_group_id storing teams.id
+✅ GOOD — assigned_team_id → teams.id
+```
+
+## 2. Strict FK semantics
+
+- Column name MUST match the target table and meaning. Never name a column `*_team_id` if it stores `org_nodes.id`, `user_accounts.id`, or free text.
+- Prefer a real FK (or app-level `assert_*_exists`) over a bare integer with undocumented target.
+- If the name and target disagree, **rename or drop** — do not paper over with comments.
+
+## 3. SSOT — no parallel relations
+
+Do not keep two columns for the same routing/scope concept (e.g. `org_node_id` + unused `review_team_id`). One well-defined FK is enough.
+
+## 4. Boy Scout — fix on discovery
+
+When you hit a legacy, ambiguous, or unused relation while doing **any** feature:
+
+1. Do **not** add aliases, dual-reads, or “compatibility” DTO fields.
+2. Queue or ship a migration: rename/drop → update Rust/TS/IPC → fix i18n + docs (`docs/PRD.md`, roadmap).
+3. Mirror patterns already cleaned: WO/PM `assigned_team_id`, DI `equipment_id`, DI drop of `review_team_id`.
+
+## 5. Pre-commit checklist (schema / IPC)
+
+- [ ] No duplicate or legacy aliases in TS interfaces, Rust DTOs, or SQL
+- [ ] FK names match target PK semantics
+- [ ] DB ↔ IPC ↔ UI ↔ docs stay in sync in the same change set
+
+```text
+❌ BAD — leave assigned_group_id and map it in the UI as “crew”
+✅ GOOD — migrate to assigned_team_id; update notifications/emit keys; update PRD
+```

@@ -139,8 +139,8 @@ pub fn control_plane_tables() -> Vec<&'static str> {
 
 pub fn mirror_table_blueprint() -> Vec<&'static str> {
     vec![
-        "mirror_records(sync_id, row_version, origin_machine_id, checkpoint_token, payload_hash)",
-        "mirror_change_log(sync_id, operation, row_version, applied_at, idempotency_key)",
+        "mirror_records(entity_sync_id, row_version, origin_machine_id, checkpoint_token, payload_hash)",
+        "mirror_change_log(entity_sync_id, operation, row_version, applied_at, idempotency_key)",
         "mirror_conflicts(conflict_key, local_payload_hash, remote_payload_hash, authority_side, checkpoint_token)",
     ]
 }

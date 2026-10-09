@@ -43,6 +43,7 @@ const ReportRunSchema = z.object({
   error_message: z.string().nullable(),
   started_at: z.string(),
   finished_at: z.string().nullable(),
+  has_downloadable_artifact: z.boolean(),
 });
 
 const ExportedBinaryDocumentSchema = z.object({
@@ -77,6 +78,11 @@ export async function listMyReportRuns(limit?: number): Promise<ReportRun[]> {
 
 export async function exportReportNow(input: ExportReportInput): Promise<ExportedBinaryDocument> {
   const raw = await invoke<unknown>("export_report_now", { input });
+  return ExportedBinaryDocumentSchema.parse(raw);
+}
+
+export async function downloadReportRunArtifact(runId: number): Promise<ExportedBinaryDocument> {
+  const raw = await invoke<unknown>("download_report_run_artifact", { runId });
   return ExportedBinaryDocumentSchema.parse(raw);
 }
 

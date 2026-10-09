@@ -184,7 +184,7 @@ mod tests {
             .await
             .expect("should fetch by id");
         assert_eq!(fetched.code, "SITE");
-        assert_eq!(fetched.sync_id, created.sync_id);
+        assert_eq!(fetched.entity_sync_id, created.entity_sync_id);
     }
 
     #[tokio::test]

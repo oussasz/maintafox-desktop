@@ -24,8 +24,8 @@ pub struct WoPlanInput {
     pub actor_id: i64,
     pub expected_row_version: i64,
     pub planner_id: i64,
-    pub planned_start: String,
-    pub planned_end: String,
+    pub planned_start: Option<String>,
+    pub planned_end: Option<String>,
     pub shift: Option<String>,
     pub expected_duration_hours: Option<f64>,
     pub urgency_id: Option<i64>,
@@ -37,9 +37,20 @@ pub struct WoAssignInput {
     pub wo_id: i64,
     pub actor_id: i64,
     pub expected_row_version: i64,
-    pub assigned_group_id: Option<i64>,
+    pub assigned_team_id: Option<i64>,
     pub primary_responsible_id: Option<i64>,
     pub scheduled_at: Option<String>,
+    pub override_reason: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WoEmergencyReassignInput {
+    pub wo_id: i64,
+    pub actor_id: i64,
+    pub expected_row_version: i64,
+    pub assigned_team_id: Option<i64>,
+    pub primary_responsible_id: Option<i64>,
+    pub override_reason: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -207,7 +218,7 @@ pub async fn plan_wo(db: &DatabaseConnection, input: WoPlanInput) -> AppResult<W
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// B) assign_wo — assignment save (no status change; Planning / Ready)
+// B) assign_wo / emergency_reassign_wo — assignment save (no status change)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn assign_wo(db: &DatabaseConnection, input: WoAssignInput) -> AppResult<WorkOrder> {
@@ -217,9 +228,28 @@ pub async fn assign_wo(db: &DatabaseConnection, input: WoAssignInput) -> AppResu
             wo_id: input.wo_id,
             actor_id: input.actor_id,
             expected_row_version: input.expected_row_version,
-            assigned_group_id: input.assigned_group_id,
+            assigned_team_id: input.assigned_team_id,
             primary_responsible_id: input.primary_responsible_id,
             scheduled_at: input.scheduled_at,
+            override_reason: input.override_reason,
+        },
+    )
+    .await
+}
+
+pub async fn emergency_reassign_wo(
+    db: &DatabaseConnection,
+    input: WoEmergencyReassignInput,
+) -> AppResult<WorkOrder> {
+    crate::wo::workflow::actions::emergency_reassign(
+        db,
+        crate::wo::workflow::actions::WoEmergencyReassignInput {
+            wo_id: input.wo_id,
+            actor_id: input.actor_id,
+            expected_row_version: input.expected_row_version,
+            assigned_team_id: input.assigned_team_id,
+            primary_responsible_id: input.primary_responsible_id,
+            override_reason: input.override_reason,
         },
     )
     .await
@@ -315,6 +345,7 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
         crate::permit::wo_gate::stage_wo_in_progress_sync_pair(db, &wo, &permit, &Uuid::new_v4().to_string()).await?;
     }
 
+    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
     Ok(wo)
 }
 
@@ -423,12 +454,14 @@ pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult
 
     txn.commit().await?;
 
-    queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(db, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })
+        })?;
+    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
+    Ok(wo)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -537,6 +570,7 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
         crate::permit::wo_gate::stage_wo_in_progress_sync_pair(db, &wo, &permit, &Uuid::new_v4().to_string()).await?;
     }
 
+    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
     Ok(wo)
 }
 
@@ -930,10 +964,12 @@ pub async fn complete_wo_mechanically(db: &DatabaseConnection, input: WoMechComp
 
     txn.commit().await?;
 
-    queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(db, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
-        })
+        })?;
+    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
+    Ok(wo)
 }

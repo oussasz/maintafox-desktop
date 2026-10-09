@@ -1,0 +1,418 @@
+/**
+ * ResourceTimeline Design System skin.
+ * Library CSS (react-calendar-timeline/style.css) is a structural base only.
+ * Visual language: theme surface/text/status tokens — never hsl(wrap) of hex surfaces.
+ */
+
+/* ── Dark (app default) ─────────────────────────────────────────────────── */
+:root,
+.dark {
+  --rt-state-free: color-mix(in srgb, var(--color-success) 32%, var(--surface-1));
+  --rt-state-free-fg: var(--text-success);
+  --rt-state-free-border: color-mix(in srgb, var(--color-success) 55%, transparent);
+
+  --rt-state-partial: color-mix(in srgb, var(--color-warning) 28%, var(--surface-1));
+  --rt-state-partial-fg: var(--text-warning);
+  --rt-state-partial-border: color-mix(in srgb, var(--color-warning) 50%, transparent);
+
+  --rt-state-blocked: color-mix(in srgb, var(--surface-3) 80%, var(--surface-1));
+  --rt-state-blocked-fg: var(--text-secondary);
+  --rt-state-blocked-border: var(--surface-border);
+
+  --rt-state-critical: color-mix(in srgb, var(--color-danger) 35%, var(--surface-1));
+  --rt-state-critical-fg: var(--text-danger);
+  --rt-state-critical-border: color-mix(in srgb, var(--color-danger) 55%, transparent);
+
+  --rt-state-rest: var(--surface-2);
+  --rt-state-rest-fg: var(--text-muted);
+  --rt-state-rest-border: transparent;
+
+  --rt-state-shift: color-mix(in srgb, var(--color-primary-light) 28%, var(--surface-1));
+  --rt-state-shift-fg: var(--text-primary);
+  --rt-state-shift-border: color-mix(in srgb, var(--color-primary-light) 45%, transparent);
+
+  --rt-state-commitment: color-mix(in srgb, var(--color-info) 28%, var(--surface-1));
+  --rt-state-commitment-fg: var(--text-primary);
+  --rt-state-commitment-border: color-mix(in srgb, var(--color-info) 45%, transparent);
+
+  --rt-state-leave: color-mix(in srgb, var(--surface-3) 70%, var(--surface-1));
+  --rt-state-leave-fg: var(--text-secondary);
+  --rt-state-leave-border: var(--surface-border);
+
+  --rt-state-medical: color-mix(in srgb, var(--color-danger) 40%, var(--surface-1));
+  --rt-state-medical-fg: var(--text-danger);
+  --rt-state-medical-border: color-mix(in srgb, var(--color-danger) 60%, transparent);
+
+  --rt-state-restriction: color-mix(in srgb, var(--color-accent) 32%, var(--surface-1));
+  --rt-state-restriction-fg: var(--text-warning);
+  --rt-state-restriction-border: color-mix(in srgb, var(--color-accent) 55%, transparent);
+
+  --rt-state-training: color-mix(in srgb, var(--color-primary-light) 32%, var(--surface-1));
+  --rt-state-training-fg: var(--text-primary);
+  --rt-state-training-border: color-mix(in srgb, var(--color-primary-light) 50%, transparent);
+}
+
+/* ── Light ──────────────────────────────────────────────────────────────── */
+.light {
+  --rt-state-free: color-mix(in srgb, var(--color-success) 16%, var(--surface-1));
+  --rt-state-free-fg: var(--text-success);
+  --rt-state-free-border: color-mix(in srgb, var(--color-success) 35%, transparent);
+
+  --rt-state-partial: color-mix(in srgb, var(--color-warning) 22%, var(--surface-1));
+  --rt-state-partial-fg: var(--text-warning);
+  --rt-state-partial-border: color-mix(in srgb, var(--color-warning) 40%, transparent);
+
+  --rt-state-blocked: var(--surface-2);
+  --rt-state-blocked-fg: var(--text-secondary);
+  --rt-state-blocked-border: var(--surface-border);
+
+  --rt-state-critical: color-mix(in srgb, var(--color-danger) 14%, var(--surface-1));
+  --rt-state-critical-fg: var(--text-danger);
+  --rt-state-critical-border: color-mix(in srgb, var(--color-danger) 35%, transparent);
+
+  --rt-state-rest: var(--surface-2);
+  --rt-state-rest-fg: var(--text-muted);
+  --rt-state-rest-border: transparent;
+
+  --rt-state-shift: color-mix(in srgb, var(--color-primary-light) 18%, var(--surface-1));
+  --rt-state-shift-fg: var(--color-primary-dark);
+  --rt-state-shift-border: color-mix(in srgb, var(--color-primary-light) 40%, transparent);
+
+  --rt-state-commitment: color-mix(in srgb, var(--color-info) 18%, var(--surface-1));
+  --rt-state-commitment-fg: var(--color-primary-dark);
+  --rt-state-commitment-border: color-mix(in srgb, var(--color-info) 40%, transparent);
+
+  --rt-state-leave: var(--surface-2);
+  --rt-state-leave-fg: var(--text-secondary);
+  --rt-state-leave-border: var(--surface-border);
+
+  --rt-state-medical: color-mix(in srgb, var(--color-danger) 16%, var(--surface-1));
+  --rt-state-medical-fg: var(--text-danger);
+  --rt-state-medical-border: color-mix(in srgb, var(--color-danger) 40%, transparent);
+
+  --rt-state-restriction: color-mix(in srgb, var(--color-accent) 20%, var(--surface-1));
+  --rt-state-restriction-fg: var(--text-warning);
+  --rt-state-restriction-border: color-mix(in srgb, var(--color-accent) 45%, transparent);
+
+  --rt-state-training: color-mix(in srgb, var(--color-primary-light) 18%, var(--surface-1));
+  --rt-state-training-fg: var(--color-primary-dark);
+  --rt-state-training-border: color-mix(in srgb, var(--color-primary-light) 40%, transparent);
+}
+
+/* ── Chrome + density (direct surface vars — not hsl()) ─────────────────── */
+.mf-resource-timeline {
+  --rt-sidebar-bg: var(--surface-1);
+  --rt-header-bg: var(--surface-2);
+  --rt-canvas-bg: var(--surface-0);
+  --rt-border: var(--surface-border);
+  --rt-grid-line: color-mix(in srgb, var(--surface-border) 85%, transparent);
+  --rt-row-odd: var(--surface-0);
+  --rt-row-even: var(--surface-1);
+  --rt-weekend: color-mix(in srgb, var(--color-accent) 10%, var(--surface-0));
+  --rt-today: var(--color-primary);
+  --rt-item-radius: 4px;
+  --rt-sidebar-width: 220px;
+  --rt-line-height: 52px;
+  --rt-header-height: 52px;
+  --rt-min-height: 240px;
+
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.mf-resource-timeline .mf-rt-frame {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--rt-border);
+  border-radius: var(--radius, 0.375rem);
+  background: var(--rt-canvas-bg);
+}
+
+.mf-resource-timeline .mf-rt-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--rt-border);
+  background: var(--rt-header-bg);
+  padding: 0.375rem 0.5rem;
+}
+
+.mf-resource-timeline .mf-rt-canvas {
+  position: relative;
+  min-height: var(--rt-min-height);
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.mf-resource-timeline .mf-rt-status {
+  display: flex;
+  min-height: var(--rt-min-height);
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  font-size: 0.875rem;
+}
+
+.mf-resource-timeline .mf-rt-status--error {
+  color: var(--text-danger);
+}
+
+.mf-resource-timeline .mf-rt-status--loading {
+  color: var(--text-muted);
+}
+
+/* ── Override library defaults (0.30 selectors) ─────────────────────────── */
+.mf-resource-timeline .react-calendar-timeline {
+  height: 100%;
+  background: var(--rt-canvas-bg);
+  color: var(--text-primary);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-outer {
+  height: 100%;
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-scroll {
+  background: var(--rt-canvas-bg);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-header-root {
+  background: var(--rt-header-bg);
+  border-bottom: 1px solid var(--rt-border);
+  color: var(--text-primary);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-calendar-header {
+  background: var(--rt-header-bg);
+  border: none;
+  border-bottom: 1px solid var(--rt-border);
+  color: var(--text-primary);
+}
+
+/* Library sets .rct-dateHeader-primary { color: #fff } for a red header — never inherit that. */
+.mf-resource-timeline .react-calendar-timeline .rct-dateHeader {
+  background-color: var(--rt-header-bg);
+  border-bottom: 1px solid var(--rt-border);
+  border-left: 1px solid var(--rt-grid-line);
+  color: var(--text-secondary);
+  cursor: default;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-dateHeader-primary {
+  background-color: var(--rt-header-bg);
+  border-left: 1px solid var(--rt-border);
+  border-right: 1px solid var(--rt-border);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-header-root .mf-rt-sidebar-header {
+  background: var(--rt-header-bg);
+  color: var(--text-secondary);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-sidebar {
+  background: var(--rt-sidebar-bg);
+  border-right: 1px solid var(--rt-border);
+  color: var(--text-primary);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-sidebar .rct-sidebar-row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: normal;
+  text-overflow: unset;
+  border-bottom: 1px solid var(--rt-grid-line);
+  color: var(--text-primary);
+  padding: 0 8px;
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-sidebar .rct-sidebar-row > * {
+  min-width: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-sidebar .rct-sidebar-row.rct-sidebar-row-odd {
+  background: var(--rt-row-odd);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-sidebar .rct-sidebar-row.rct-sidebar-row-even {
+  background: var(--rt-row-even);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-horizontal-lines .rct-hl-odd {
+  background: var(--rt-row-odd);
+  border-bottom: 1px solid var(--rt-grid-line);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-horizontal-lines .rct-hl-even {
+  background: var(--rt-row-even);
+  border-bottom: 1px solid var(--rt-grid-line);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-vertical-lines .rct-vl {
+  border-left: 1px solid var(--rt-grid-line);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-vertical-lines .rct-vl.rct-vl-first {
+  border-left-width: 1px;
+  border-left-color: var(--rt-border);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-vertical-lines .rct-vl.rct-day-0,
+.mf-resource-timeline .react-calendar-timeline .rct-vertical-lines .rct-vl.rct-day-6 {
+  background: var(--rt-weekend);
+}
+
+/* Freeze / lock column highlights (token states only) */
+.mf-resource-timeline .react-calendar-timeline .rct-vertical-lines .rct-vl.mf-rt-col--blocked {
+  background: color-mix(in srgb, var(--rt-state-blocked) 55%, transparent);
+}
+.mf-resource-timeline .react-calendar-timeline .rct-vertical-lines .rct-vl.mf-rt-col--critical {
+  background: color-mix(in srgb, var(--rt-state-critical) 45%, transparent);
+}
+.mf-resource-timeline .react-calendar-timeline .rct-vertical-lines .rct-vl.mf-rt-col--partial {
+  background: color-mix(in srgb, var(--rt-state-partial) 45%, transparent);
+}
+.mf-resource-timeline .react-calendar-timeline .rct-vertical-lines .rct-vl.mf-rt-col--restriction {
+  background: color-mix(in srgb, var(--rt-state-restriction) 45%, transparent);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-cursor-line {
+  background: var(--rt-today);
+  width: 2px;
+  z-index: 51;
+}
+
+/* Items — semantic classes from ResourceTimeline (no inline color-mix / #000) */
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item {
+  border-radius: var(--rt-item-radius);
+  border-style: solid;
+  border-width: 1px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+  overflow: hidden;
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item .rct-item-content {
+  border-radius: calc(var(--rt-item-radius) - 1px);
+  padding: 0 6px;
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--free {
+  background: var(--rt-state-free);
+  border-color: var(--rt-state-free-border);
+  color: var(--rt-state-free-fg);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--partial {
+  background: var(--rt-state-partial);
+  border-color: var(--rt-state-partial-border);
+  color: var(--rt-state-partial-fg);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--blocked {
+  background: var(--rt-state-blocked);
+  border-color: var(--rt-state-blocked-border);
+  color: var(--rt-state-blocked-fg);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--critical {
+  background: var(--rt-state-critical);
+  border-color: var(--rt-state-critical-border);
+  color: var(--rt-state-critical-fg);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--rest {
+  background: var(--rt-state-rest);
+  border-color: var(--rt-state-rest-border);
+  color: var(--rt-state-rest-fg);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--shift {
+  background: var(--rt-state-shift);
+  border-color: var(--rt-state-shift-border);
+  color: var(--rt-state-shift-fg);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--commitment {
+  background: var(--rt-state-commitment);
+  border-color: var(--rt-state-commitment-border);
+  color: var(--rt-state-commitment-fg);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--leave {
+  background: var(--rt-state-leave);
+  border-color: var(--rt-state-leave-border);
+  color: var(--rt-state-leave-fg);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--medical {
+  background: var(--rt-state-medical);
+  border-color: var(--rt-state-medical-border);
+  color: var(--rt-state-medical-fg);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--restriction {
+  background: var(--rt-state-restriction);
+  border-color: var(--rt-state-restriction-border);
+  color: var(--rt-state-restriction-fg);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--training {
+  background: var(--rt-state-training);
+  border-color: var(--rt-state-training-border);
+  color: var(--rt-state-training-fg);
+}
+
+/* Adapter omitted state — chrome only (not semantic blocked) */
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--unset {
+  background: var(--surface-2);
+  border-color: var(--rt-border);
+  color: var(--text-secondary);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item.mf-rt-item--selected {
+  box-shadow: 0 0 0 2px var(--ring);
+  z-index: 90;
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-item:hover {
+  z-index: 91;
+  filter: brightness(1.05);
+}
+
+/* Scrollbars — match app surfaces */
+.mf-resource-timeline .react-calendar-timeline .rct-scroll {
+  scrollbar-color: var(--surface-border) var(--surface-0);
+  scrollbar-width: thin;
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-scroll::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-scroll::-webkit-scrollbar-track {
+  background: var(--surface-0);
+}
+
+.mf-resource-timeline .react-calendar-timeline .rct-scroll::-webkit-scrollbar-thumb {
+  background: var(--surface-border);
+  border-radius: 4px;
+}

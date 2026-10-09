@@ -150,6 +150,14 @@
   "kanban": {
     "emptyColumn": "—"
   },
+  "resourceTimeline": {
+    "loading": "Loading timeline…",
+    "empty": "No resources in this horizon.",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "fitHorizon": "Fit horizon",
+    "sidebarLabel": "Resource"
+  },
   "linkedEntity": {
     "work_order": "{{code}}",
     "di": "{{code}}",

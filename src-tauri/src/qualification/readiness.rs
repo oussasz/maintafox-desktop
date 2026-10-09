@@ -380,12 +380,12 @@ pub async fn upsert_personnel_readiness_snapshot(
         return Ok(updated);
     }
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO personnel_readiness_snapshots (entity_sync_id, period, payload_json, row_version) \
          VALUES (?, ?, ?, 1)",
-        [sync_id.into(), input.period.into(), input.payload_json.into()],
+        [entity_sync_id.into(), input.period.into(), input.payload_json.into()],
     ))
     .await?;
     let id_row = db

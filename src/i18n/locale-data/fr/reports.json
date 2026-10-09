@@ -1,7 +1,72 @@
 {
+  "hub": {
+    "title": "RAMS & Analytique",
+    "subtitle": "KPIs industriels denses, RAMS approfondi, générateur de rapports, planifications et historique d’exports.",
+    "navAria": "Sections du module Analytique",
+    "tabs": {
+      "dashboards": "Tableaux de bord",
+      "rams": "RAMS approfondi",
+      "templates": "Générateur de rapports",
+      "schedules": "Planifications",
+      "history": "Historique & audit"
+    },
+    "dashboards": {
+      "title": "Tableaux de bord exécutifs",
+      "subtitle": "Grille KPI dense selon le rôle, avec horizon et périmètre organisationnel. Les formules viennent de la projection Analytique (même SSOT que les snapshots RAMS).",
+      "comingSoon": "Les widgets KPI et filtres par rôle arriveront au prochain jalon. Le RAMS approfondi et les exports restent disponibles sur les autres onglets.",
+      "customize": "Personnaliser",
+      "customizeTitle": "Disposition du tableau de bord",
+      "saveLayout": "Enregistrer",
+      "cancel": "Annuler",
+      "reliabilityHint": "Moyennes flotte des snapshots KPI de fiabilité sur les {{days}} derniers jours (périmètre org. si un site est sélectionné). Écart vs horizon précédent.",
+      "vsPrior": "vs préc.",
+      "pmEmpty": "Aucune PM ouverte dans la file d’échéance pour ce périmètre.",
+      "sections": {
+        "ops": "Opérations",
+        "pm": "Pipeline PM",
+        "rams": "RAMS flotte",
+        "cost": "Coût",
+        "health": "Santé flotte"
+      },
+      "filters": {
+        "horizon": "Horizon",
+        "days7": "7 jours",
+        "days30": "30 jours",
+        "days90": "90 jours",
+        "orgScope": "Organisation",
+        "allOrgs": "Toutes les organisations"
+      },
+      "widgets": {
+        "opsKpis": "KPIs opérationnels",
+        "pmDue": "File PM à échéance",
+        "reliability": "Fiabilité RAMS",
+        "maintenanceCost": "Coût de maintenance",
+        "workload": "Charge de travail",
+        "diStatus": "Répartition des statuts DI"
+      },
+      "kpi": {
+        "pmOverdue": "PM en retard",
+        "pmDueToday": "PM dues aujourd’hui",
+        "pmDueNext7d": "PM dues sous 7 jours",
+        "mtbf": "MTBF moy. (h)",
+        "mttr": "MTTR moy. (h)",
+        "availability": "Disponibilité moy.",
+        "dataQuality": "Qualité des données",
+        "snapshots": "Snapshots",
+        "failureEvents": "Événements de défaillance",
+        "maintenanceCost": "Coût OT clôturés (horizon)"
+      },
+      "badActors": {
+        "title": "Top 5 équipements à risque",
+        "empty": "Aucun snapshot sur l’horizon",
+        "asset": "Équipement",
+        "events": "Événements"
+      }
+    }
+  },
   "page": {
-    "title": "Rapports et analytique",
-    "subtitle": "Bibliothèque de modèles, exports planifiés (local) et historique d’exécutions.",
+    "title": "RAMS & Analytique",
+    "subtitle": "Bibliothèque de modèles, exports planifiés (archive locale) et historique d’exécutions.",
     "noAccess": "Permission insuffisante pour les rapports."
   },
   "templates": {
@@ -20,14 +85,18 @@
     "enabled": "Actif",
     "save": "Ajouter",
     "delete": "Supprimer",
-    "next": "Prochaine exécution"
+    "next": "Prochaine exécution",
+    "noAccess": "Permission insuffisante pour gérer les planifications de rapports."
   },
   "runs": {
-    "title": "Exécutions récentes",
+    "title": "Historique & audit",
     "status": "Statut",
     "format": "Format",
     "started": "Début",
     "path": "Fichier / erreur",
+    "detail": "Détail",
+    "download": "Télécharger",
+    "archived": "Stocké dans l’archive locale",
     "statusValues": {
       "pending": "En attente",
       "running": "En cours",

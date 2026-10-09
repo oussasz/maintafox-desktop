@@ -5,8 +5,7 @@ use crate::errors::{AppError, AppResult};
 use crate::inspection::domain::InspectionAnomaly;
 use crate::inspection::queries::get_inspection_checkpoint_by_id;
 use crate::inspection::results::{map_anomaly, stage_inspection_anomaly};
-use crate::sync::domain::{InterventionRequestSyncPayload, StageOutboxItemInput, SYNC_ENTITY_INTERVENTION_REQUESTS};
-use crate::sync::queries::stage_outbox_item;
+use crate::sync::ops_stage::stage_intervention_request_sync;
 use crate::wo::domain::WoCreateInput;
 use crate::wo::queries::create_work_order;
 use crate::wo::sync_stage::stage_work_order_sync;
@@ -34,32 +33,6 @@ fn assert_routable(a: &InspectionAnomaly) -> AppResult<()> {
             "Cette anomalie est déjà liée à un DI ou un OT.".into(),
         ]));
     }
-    Ok(())
-}
-
-async fn stage_intervention_request_sync(
-    db: &DatabaseConnection,
-    di: &crate::di::domain::InterventionRequest,
-) -> AppResult<()> {
-    let payload = InterventionRequestSyncPayload {
-        id: di.id,
-        row_version: di.row_version,
-        source_inspection_anomaly_id: di.source_inspection_anomaly_id,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            idempotency_key: format!("intervention_requests:{}:v{}", di.code, di.row_version),
-            entity_type: SYNC_ENTITY_INTERVENTION_REQUESTS.to_string(),
-            entity_sync_id: di.code.clone(),
-            operation: "upsert".to_string(),
-            row_version: di.row_version,
-            payload_json,
-            origin_machine_id: None,
-        },
-    )
-    .await?;
     Ok(())
 }
 
@@ -151,7 +124,7 @@ pub async fn route_inspection_anomaly_to_di(
     let symptom_code_id = crate::di::reference_catalog::resolve_system_di_symptom_id(db, &a.anomaly_type).await?;
 
     let di_in = DiCreateInput {
-        asset_id,
+        equipment_id: asset_id,
         org_node_id,
         title,
         description,
@@ -170,7 +143,7 @@ pub async fn route_inspection_anomaly_to_di(
     };
 
     let di = create_intervention_request(db, di_in).await?;
-    stage_intervention_request_sync(db, &di).await?;
+    stage_intervention_request_sync(db, di.id).await?;
 
     let new_rv = a.row_version + 1;
     db.execute(Statement::from_sql_and_values(

@@ -41,7 +41,7 @@ pub struct WoReadinessContext {
     pub planned_start: Option<String>,
     pub planned_end: Option<String>,
     pub primary_responsible_id: Option<i64>,
-    pub assigned_group_id: Option<i64>,
+    pub assigned_team_id: Option<i64>,
     pub requires_permit: bool,
     pub planning_approved_at: Option<String>,
     pub approval_policy_required: bool,
@@ -61,7 +61,7 @@ impl WoReadinessContext {
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT wo.equipment_id, wo.title, wo.type_id, wo.planned_start, wo.planned_end, \
-                        wo.primary_responsible_id, wo.assigned_group_id, wo.requires_permit, \
+                        wo.primary_responsible_id, wo.assigned_team_id, wo.requires_permit, \
                         wo.planning_approved_at \
                  FROM work_orders wo WHERE wo.id = ?",
                 [wo_id.into()],
@@ -94,7 +94,7 @@ impl WoReadinessContext {
             planned_start: row.try_get("", "planned_start").ok().flatten(),
             planned_end: row.try_get("", "planned_end").ok().flatten(),
             primary_responsible_id: row.try_get("", "primary_responsible_id").ok().flatten(),
-            assigned_group_id: row.try_get("", "assigned_group_id").ok().flatten(),
+            assigned_team_id: row.try_get("", "assigned_team_id").ok().flatten(),
             requires_permit: row
                 .try_get::<i64>("", "requires_permit")
                 .map(|v| v != 0)

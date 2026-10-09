@@ -255,3 +255,28 @@ pub async fn get_sync_observability_report(state: State<'_, AppState>) -> AppRes
     );
     Ok(result)
 }
+
+#[tauri::command]
+pub async fn materialize_sync_inbox(
+    limit: Option<i64>,
+    state: State<'_, AppState>,
+) -> AppResult<crate::sync::materialize::MaterializeInboxResult> {
+    let user = require_session!(state);
+    require_permission_allowing_system_admin!(
+        state,
+        &user,
+        crate::rbac::permissions::SYNC_VIEW,
+        PermissionScope::Global
+    );
+    let result = crate::sync::materialize::materialize_inbox_batch(&state.db, limit).await?;
+    tracing::info!(
+        event = "desktop_sync_materialize_inbox",
+        user_id = user.user_id,
+        processed = result.processed,
+        applied = result.applied,
+        conflicts = result.conflicts,
+        skipped = result.skipped,
+        "Sync inbox materialization completed"
+    );
+    Ok(result)
+}

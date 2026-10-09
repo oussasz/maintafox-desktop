@@ -197,17 +197,19 @@ pub async fn upload_asset_photo(
     let exists = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM equipment WHERE id = ? AND deleted_at IS NULL",
+            "SELECT id, entity_sync_id FROM equipment WHERE id = ? AND deleted_at IS NULL",
             [payload.asset_id.into()],
         ))
-        .await?
-        .is_some();
-    if !exists {
+        .await?;
+    let Some(equip_row) = exists else {
         return Err(AppError::NotFound {
             entity: "equipment".into(),
             id: payload.asset_id.to_string(),
         });
-    }
+    };
+    let parent_entity_sync_id: String = equip_row
+        .try_get::<String>("", "entity_sync_id")
+        .unwrap_or_default();
 
     let src = Path::new(&payload.source_path);
     let file_name = sanitize_file_name(src)?;
@@ -245,6 +247,7 @@ pub async fn upload_asset_photo(
     };
 
     let uuid = Uuid::new_v4();
+    let photo_entity_sync_id = Uuid::new_v4().to_string();
     let relative_path = format!("asset_photos/{}/{}.{}", payload.asset_id, uuid, safe_ext);
 
     let absolute_path = app_data_dir.join(&relative_path);
@@ -270,12 +273,12 @@ pub async fn upload_asset_photo(
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO asset_photos (asset_id, file_name, relative_path, mime_type, file_size_bytes, caption, created_by_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO asset_photos (asset_id, file_name, relative_path, mime_type, file_size_bytes, caption, created_by_id, created_at, entity_sync_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             payload.asset_id.into(),
             file_name.clone().into(),
-            relative_path.into(),
+            relative_path.clone().into(),
             mime_type.to_string().into(),
             size_bytes.into(),
             caption
@@ -284,9 +287,47 @@ pub async fn upload_asset_photo(
                 .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
             created_by_id.into(),
             now.clone().into(),
+            photo_entity_sync_id.into(),
         ],
     ))
     .await?;
+
+    if !parent_entity_sync_id.is_empty() {
+        let env = crate::sync::media::resolve_media_deployment_env();
+        let tenant_id = crate::sync::media::resolve_media_tenant_id(db).await;
+        match crate::sync::media::stage_media_bytes(
+            db,
+            env,
+            &tenant_id,
+            "equipment",
+            &parent_entity_sync_id,
+            &file_name,
+            mime_type,
+            &bytes,
+            Some(relative_path.clone()),
+            caption
+                .as_ref()
+                .map(|c| serde_json::json!({ "caption": c }).to_string()),
+        )
+        .await
+        {
+            Ok(media_payload) => {
+                crate::sync::foundation_stage::warn_stage(
+                    crate::sync::media::upsert_media_attachment_row(db, &media_payload).await,
+                    "media_attachments upsert (asset photo)",
+                );
+            }
+            Err(e) => {
+                tracing::warn!(target: "maintafox", "sync stage media (asset photo): {e}");
+            }
+        }
+    } else {
+        tracing::warn!(
+            target: "maintafox",
+            asset_id = payload.asset_id,
+            "sync stage media skipped: equipment missing entity_sync_id"
+        );
+    }
 
     let id = last_insert_id(db).await?;
     let row = db
@@ -307,7 +348,10 @@ pub async fn delete_asset_photo(db: &DatabaseConnection, app_data_dir: &Path, ph
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT relative_path FROM asset_photos WHERE id = ?",
+            "SELECT ap.relative_path, e.entity_sync_id AS parent_entity_sync_id
+             FROM asset_photos ap
+             JOIN equipment e ON e.id = ap.asset_id
+             WHERE ap.id = ?",
             [photo_id.into()],
         ))
         .await?
@@ -319,6 +363,23 @@ pub async fn delete_asset_photo(db: &DatabaseConnection, app_data_dir: &Path, ph
     let relative_path: String = row
         .try_get("", "relative_path")
         .map_err(|e| decode_err("relative_path", e))?;
+    let parent_esid: String = row.try_get("", "parent_entity_sync_id").unwrap_or_default();
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::media::stage_media_delete_if_found(
+            db,
+            Some("equipment"),
+            if parent_esid.is_empty() {
+                None
+            } else {
+                Some(parent_esid.as_str())
+            },
+            Some(relative_path.as_str()),
+            None,
+        )
+        .await,
+        "media delete (asset photo)",
+    );
+
     let abs = app_data_dir.join(&relative_path);
     let _ = std::fs::remove_file(&abs);
 

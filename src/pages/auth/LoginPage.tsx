@@ -3,6 +3,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { ForgotPasswordDialog } from "@/components/auth/ForgotPasswordDialog";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +37,7 @@ export function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
   const [postActivationHint, setPostActivationHint] = useState(false);
   const [showLicenseMeta, setShowLicenseMeta] = useState(false);
   const [licenseMeta, setLicenseMeta] = useState<ActivationLicenseMetadata | null>(null);
@@ -309,7 +311,20 @@ export function LoginPage() {
               </>
             )}
           </Button>
+
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={() => setForgotOpen(true)}
+              disabled={credentialsDisabled}
+              className="text-sm font-medium text-primary underline-offset-2 hover:underline disabled:opacity-50"
+            >
+              {t("login.forgotPassword.link")}
+            </button>
+          </div>
         </form>
+
+        <ForgotPasswordDialog open={forgotOpen} onOpenChange={setForgotOpen} />
 
         <div className="mt-5 border-t border-surface-border pt-5 text-center">
           <p className="mb-2 text-xs text-text-muted">{t("login.resetActivation.hint")}</p>

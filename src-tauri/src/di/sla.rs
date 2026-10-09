@@ -181,7 +181,7 @@ fn criticality_codes_match(rule_class: &str, asset_class: &str) -> bool {
 }
 
 /// Resolve asset criticality from production `equipment` + reference/lookup JOINs.
-pub async fn lookup_asset_criticality(db: &impl ConnectionTrait, asset_id: i64) -> AppResult<Option<String>> {
+pub async fn lookup_asset_criticality(db: &impl ConnectionTrait, equipment_id: i64) -> AppResult<Option<String>> {
     let raw: Option<String> = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -190,7 +190,7 @@ pub async fn lookup_asset_criticality(db: &impl ConnectionTrait, asset_id: i64) 
              LEFT JOIN lookup_values lv ON lv.id = e.criticality_value_id \
              LEFT JOIN reference_values rs_crit ON rs_crit.id = e.equipment_criticality_ref_id \
              WHERE e.id = ? AND e.deleted_at IS NULL",
-            [asset_id.into()],
+            [equipment_id.into()],
         ))
         .await?
         .and_then(|row| row.try_get::<Option<String>>("", "criticality_code").ok().flatten());
@@ -431,7 +431,7 @@ pub async fn freeze_sla_on_di(db: &impl ConnectionTrait, di: &InterventionReques
         return Ok(di.clone());
     }
 
-    let criticality_class = lookup_asset_criticality(db, di.asset_id).await?;
+    let criticality_class = lookup_asset_criticality(db, di.equipment_id).await?;
     let rule = resolve_sla_rule(db, &di.reported_urgency, &di.origin_type, criticality_class.as_deref()).await?;
 
     let Some(rule) = rule else {
@@ -498,7 +498,7 @@ pub async fn compute_sla_status(db: &impl ConnectionTrait, di: &InterventionRequ
         return status_from_frozen(di);
     }
 
-    let criticality_class = lookup_asset_criticality(db, di.asset_id).await?;
+    let criticality_class = lookup_asset_criticality(db, di.equipment_id).await?;
     let rule = resolve_sla_rule(db, &di.reported_urgency, &di.origin_type, criticality_class.as_deref()).await?;
 
     let Some(rule) = rule else {

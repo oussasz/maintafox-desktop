@@ -679,7 +679,7 @@ pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsert
         return Ok(updated);
     }
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO permit_types (entity_sync_id, code, name, description, \
@@ -687,7 +687,7 @@ pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsert
          max_duration_hours, mandatory_ppe_ids_json, mandatory_control_rules_json, row_version) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             input.code.into(),
             input.name.into(),
             desc.into(),
@@ -762,7 +762,7 @@ pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreate
     let _ = permit_type_code(db, input.permit_type_id).await?;
     ensure_wo_asset_aligned(db, input.linked_work_order_id, input.asset_id).await?;
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     let requested = now_ts();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -770,7 +770,7 @@ pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreate
          asset_id, entity_id, status, requested_at, expires_at, row_version) \
          VALUES (?, '', ?, ?, ?, ?, 'draft', ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             opt_i64(input.linked_work_order_id),
             input.permit_type_id.into(),
             input.asset_id.into(),
@@ -961,7 +961,7 @@ pub async fn suspend_work_permit(
         ]));
     }
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     let suspended_at = now_ts();
     let react = input.reactivation_conditions.unwrap_or_default();
 
@@ -971,7 +971,7 @@ pub async fn suspend_work_permit(
         "INSERT INTO permit_suspensions (entity_sync_id, permit_id, reason, suspended_by_id, suspended_at, \
          reactivation_conditions, row_version) VALUES (?, ?, ?, ?, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             input.permit_id.into(),
             input.reason.into(),
             input.suspended_by_id.into(),
@@ -1039,13 +1039,13 @@ pub async fn append_permit_handover_log(
         return Err(AppError::ValidationFailed(vec!["Roles are required.".into()]));
     }
     let signed = input.signed_at.unwrap_or_else(now_ts);
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
          confirmation_note, signed_at, row_version) VALUES (?, ?, ?, ?, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             input.permit_id.into(),
             input.handed_from_role.into(),
             input.handed_to_role.into(),
@@ -1206,14 +1206,14 @@ pub async fn upsert_permit_isolation(
         return Ok(out);
     }
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, \
          isolation_method, lock_number, applied_by_id, verified_by_id, applied_at, verified_at, removal_verified_at, row_version) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             input.permit_id.into(),
             input.isolation_point.into(),
             input.energy_type.into(),
@@ -1371,7 +1371,7 @@ pub async fn record_loto_card_print(db: &DatabaseConnection, input: LotoCardPrin
             "Isolation must be verified before LOTO card print.".into(),
         ]));
     }
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     let printed_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -1382,7 +1382,7 @@ pub async fn record_loto_card_print(db: &DatabaseConnection, input: LotoCardPrin
             input.isolation_id.into(),
             printed_at.clone().into(),
             input.printed_by_id.into(),
-            sync_id.clone().into(),
+            entity_sync_id.clone().into(),
         ],
     ))
     .await?;

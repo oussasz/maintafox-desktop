@@ -975,7 +975,7 @@ async fn insert_equipment_from_import(
     status_code: &str,
 ) -> AppResult<i64> {
     let now = Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     let decommissioned_at: Option<String> = if status_code == "DECOMMISSIONED" {
         Some(now.clone())
@@ -986,14 +986,14 @@ async fn insert_equipment_from_import(
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO equipment
-          (sync_id, asset_id_code, name, class_id,
+          (entity_sync_id, asset_id_code, name, class_id,
            lifecycle_status, criticality_value_id,
            installed_at_node_id, manufacturer, model, serial_number,
            maintainable_boundary, commissioning_date, decommissioned_at,
            created_at, updated_at, row_version)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
-            sync_id.clone().into(),
+            entity_sync_id.clone().into(),
             asset_code.into(),
             n.asset_name.clone().unwrap_or_default().into(),
             class_id.into(),
@@ -1017,8 +1017,8 @@ async fn insert_equipment_from_import(
     let id_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id FROM equipment WHERE sync_id = ?",
-            [sync_id.into()],
+            "SELECT id FROM equipment WHERE entity_sync_id = ?",
+            [entity_sync_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("import insert succeeded but row not found")))?;

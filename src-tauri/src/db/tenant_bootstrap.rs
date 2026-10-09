@@ -124,7 +124,7 @@ async fn ensure_root_organization(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_nodes
-            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+            (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
              created_at, updated_at, row_version, structure_model_id)
           VALUES (?, ?, ?, ?, NULL, '/', 0, 'active', ?, ?, 1, ?)",
         [
@@ -164,7 +164,7 @@ async fn ensure_active_org_model(db: &DatabaseConnection, now: &str) -> AppResul
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_structure_models
-            (sync_id, version_number, status, description, activated_at, created_at, updated_at)
+            (entity_sync_id, version_number, status, description, activated_at, created_at, updated_at)
           VALUES (?, 1, 'active', ?, ?, ?, ?)",
         [
             Uuid::new_v4().to_string().into(),
@@ -193,7 +193,7 @@ async fn ensure_root_node_type(db: &DatabaseConnection, model_id: i64, now: &str
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_node_types
-            (sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+            (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
              can_carry_cost_center, can_aggregate_kpis, can_receive_permits,
              is_root_type, is_active, created_at, updated_at)
           VALUES (?, ?, 'ROOT', 'Root Organization', 1, 1, 1, 1, 1, 1, 1, ?, ?)",
@@ -331,7 +331,7 @@ async fn ensure_node_type(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_node_types
-            (sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
+            (entity_sync_id, structure_model_id, code, label, can_host_assets, can_own_work,
              can_carry_cost_center, can_aggregate_kpis, can_receive_permits,
              is_root_type, is_active, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, 0, 1, 0, ?, 1, ?, ?)",
@@ -388,7 +388,7 @@ async fn ensure_org_node(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO org_nodes
-            (sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
+            (entity_sync_id, code, name, node_type_id, parent_id, ancestor_path, depth, status,
              created_at, updated_at, row_version, structure_model_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, ?)",
         [
@@ -442,7 +442,7 @@ async fn ensure_equipment_class(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO equipment_classes
-            (sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
+            (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
         [
             Uuid::new_v4().to_string().into(),
@@ -481,7 +481,7 @@ async fn ensure_equipment(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO equipment
-            (sync_id, asset_id_code, name, class_id, lifecycle_status, installed_at_node_id,
+            (entity_sync_id, asset_id_code, name, class_id, lifecycle_status, installed_at_node_id,
              manufacturer, created_at, updated_at, row_version)
           VALUES (?, ?, ?, ?, 'active_in_service', ?, ?, ?, ?, 1)",
         [
@@ -524,7 +524,7 @@ async fn ensure_di(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO intervention_requests
-            (code, asset_id, org_node_id, status, title, description, origin_type,
+            (code, equipment_id, org_node_id, status, title, description, origin_type,
              impact_level, production_impact, safety_flag, environmental_flag, quality_flag,
              reported_urgency, submitted_at, submitter_id, row_version, created_at, updated_at)
           VALUES (?, ?, ?, 'submitted', ?, ?, 'operator', 'unknown', 0, 0, 0, 0, ?, ?, ?, 1, ?, ?)",

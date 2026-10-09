@@ -23,12 +23,12 @@ const OPEN_STATUSES: &str = "(\
 )";
 
 const IR_COLS: &str = "\
-    ir.id, ir.code, ir.asset_id, ir.sub_asset_ref, ir.org_node_id, ir.status, \
+    ir.id, ir.code, ir.equipment_id, ir.sub_asset_ref, ir.org_node_id, ir.status, \
     ir.title, ir.description, ir.origin_type, ir.request_type, ir.symptom_code_id, \
     ir.impact_level, ir.production_impact, ir.safety_flag, ir.environmental_flag, \
     ir.quality_flag, ir.reported_urgency, ir.validated_urgency, \
     ir.observed_at, ir.submitted_at, \
-    ir.review_team_id, ir.reviewer_id, ir.screened_at, ir.approved_at, \
+    ir.reviewer_id, ir.screened_at, ir.approved_at, \
     ir.deferred_until, ir.declined_at, ir.closed_at, ir.archived_at, \
     ir.converted_to_wo_id, ir.converted_at, \
     ir.sla_rule_id, ir.sla_target_response_hours, ir.sla_target_resolution_hours, \
@@ -48,7 +48,7 @@ const IR_JOIN_COLS: &str = "\
     related_di.code AS related_di_code";
 
 const IR_JOINS: &str = "\
-    LEFT JOIN equipment eq ON eq.id = ir.asset_id \
+    LEFT JOIN equipment eq ON eq.id = ir.equipment_id \
     LEFT JOIN org_nodes org ON org.id = ir.org_node_id \
     LEFT JOIN user_accounts us ON us.id = ir.submitter_id \
     LEFT JOIN user_accounts ur ON ur.id = ir.reviewer_id \

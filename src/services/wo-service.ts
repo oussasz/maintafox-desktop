@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  WoEmergencyReassignInput,
   WoApprovePlanningInput,
   WoAssignInput,
   WoCancelInput,
@@ -75,7 +76,7 @@ export const WorkOrderSchema = z.object({
   entity_id: z.number().nullable(),
   planner_id: z.number().nullable(),
   approver_id: z.number().nullable(),
-  assigned_group_id: z.number().nullable(),
+  assigned_team_id: z.number().nullable(),
   primary_responsible_id: z.number().nullable(),
   urgency_id: z.number().nullable(),
   title: z.string(),
@@ -138,6 +139,11 @@ export const WorkOrderSchema = z.object({
   source_di_code: z.string().nullable().optional(),
   source_di_title: z.string().nullable().optional(),
   source_di_status: z.string().nullable().optional(),
+  assigned_team_code: z.string().nullable().optional(),
+  assigned_team_name: z.string().nullable().optional(),
+  assigned_team_label: z.string().nullable().optional(),
+  schedule_commitment_id: z.number().nullable().optional(),
+  schedule_frozen: z.boolean().nullable().optional(),
 });
 
 export const WoTransitionRowSchema = z.object({
@@ -356,6 +362,15 @@ export async function planWo(input: WoPlanInput): Promise<WorkOrder> {
 export async function assignWo(input: WoAssignInput): Promise<WorkOrder> {
   try {
     const raw = await invoke<unknown>("assign_wo", { input });
+    return WorkOrderSchema.parse(raw) as WorkOrder;
+  } catch (err) {
+    rethrowIfVersionConflict(err);
+  }
+}
+
+export async function emergencyReassignWo(input: WoEmergencyReassignInput): Promise<WorkOrder> {
+  try {
+    const raw = await invoke<unknown>("emergency_reassign_wo", { input });
     return WorkOrderSchema.parse(raw) as WorkOrder;
   } catch (err) {
     rethrowIfVersionConflict(err);

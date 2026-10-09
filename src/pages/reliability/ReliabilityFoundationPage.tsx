@@ -448,7 +448,7 @@ export function ReliabilityFoundationPage() {
                   </p>
                   <button
                     type="button"
-                    onClick={() => void navigate("/reliability/lab")}
+                    onClick={() => void navigate("/analytics/rams/lab")}
                     className="inline-flex items-center gap-1 rounded border border-surface-border px-2 py-1 text-[11px] hover:bg-surface-2"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
@@ -475,7 +475,7 @@ export function ReliabilityFoundationPage() {
                   </p>
                   <button
                     type="button"
-                    onClick={() => void navigate("/reliability/lab")}
+                    onClick={() => void navigate("/analytics/rams/lab")}
                     className="inline-flex items-center gap-1 rounded border border-surface-border px-2 py-1 text-[11px] hover:bg-surface-2"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
@@ -500,7 +500,7 @@ export function ReliabilityFoundationPage() {
                   <p className="text-xs uppercase tracking-wide text-text-muted">Monte Carlo</p>
                   <button
                     type="button"
-                    onClick={() => void navigate("/reliability/advanced")}
+                    onClick={() => void navigate("/analytics/rams/advanced")}
                     className="inline-flex items-center gap-1 rounded border border-surface-border px-2 py-1 text-[11px] hover:bg-surface-2"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
@@ -536,7 +536,7 @@ export function ReliabilityFoundationPage() {
                   </p>
                   <button
                     type="button"
-                    onClick={() => void navigate("/reliability/advanced")}
+                    onClick={() => void navigate("/analytics/rams/advanced")}
                     className="inline-flex items-center gap-1 rounded border border-surface-border px-2 py-1 text-[11px] hover:bg-surface-2"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />

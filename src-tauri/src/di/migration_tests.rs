@@ -93,7 +93,7 @@ mod tests {
         let expected_columns = [
             "id",
             "code",
-            "asset_id",
+            "equipment_id",
             "sub_asset_ref",
             "org_node_id",
             "status",
@@ -111,7 +111,6 @@ mod tests {
             "validated_urgency",
             "observed_at",
             "submitted_at",
-            "review_team_id",
             "reviewer_id",
             "screened_at",
             "approved_at",
@@ -432,7 +431,7 @@ mod tests {
         if equipment_exists.is_none() {
             db.execute(Statement::from_string(
                 DbBackend::Sqlite,
-                "INSERT INTO equipment (id, sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
+                "INSERT INTO equipment (id, entity_sync_id, asset_id_code, name, lifecycle_status, created_at, updated_at) \
                  VALUES (1, 'test-eq-001', 'EQ-TEST-001', 'Test Equipment', 'active_in_service', \
                  datetime('now'), datetime('now'));"
                     .to_string(),
@@ -456,7 +455,7 @@ mod tests {
             // Need a structure model first (FK for org_node_types)
             db.execute(Statement::from_string(
                 DbBackend::Sqlite,
-                "INSERT INTO org_structure_models (id, sync_id, version_number, status, created_at, updated_at) \
+                "INSERT INTO org_structure_models (id, entity_sync_id, version_number, status, created_at, updated_at) \
                  VALUES (1, 'test-model-001', 1, 'active', datetime('now'), datetime('now'));"
                     .to_string(),
             ))
@@ -465,7 +464,7 @@ mod tests {
 
             db.execute(Statement::from_string(
                 DbBackend::Sqlite,
-                "INSERT INTO org_node_types (id, sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
+                "INSERT INTO org_node_types (id, entity_sync_id, structure_model_id, code, label, is_active, created_at, updated_at) \
                  VALUES (1, 'test-type-001', 1, 'SITE', 'Site', 1, datetime('now'), datetime('now'));".to_string(),
             ))
             .await
@@ -485,7 +484,7 @@ mod tests {
         if org_exists.is_none() {
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "INSERT INTO org_nodes (id, sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
+                "INSERT INTO org_nodes (id, entity_sync_id, code, name, node_type_id, status, created_at, updated_at, structure_model_id) \
                  VALUES (1, 'test-org-001', 'SITE-001', 'Test Site', ?, 'active', \
                  datetime('now'), datetime('now'), 1)",
                 [type_id.into()],
@@ -534,7 +533,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO intervention_requests \
-             (code, asset_id, org_node_id, status, title, description, origin_type, \
+             (code, equipment_id, org_node_id, status, title, description, origin_type, \
               impact_level, reported_urgency, submitted_at, submitter_id, created_at, updated_at) \
              VALUES (?, ?, ?, 'submitted', 'Test DI', 'Test description', 'operator', \
               'unknown', 'medium', datetime('now'), ?, datetime('now'), datetime('now'))",

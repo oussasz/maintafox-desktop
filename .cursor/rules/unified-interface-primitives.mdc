@@ -14,6 +14,16 @@ The Design System owns rendering. Modules may only provide typed presentation ad
 - All timeline-like, chronological, audit-rail, history, activity, and process-step interfaces must use `src/components/timeline/Timeline.tsx`.
 - Modules may map domain data to `TimelineEntry`; they must not render their own rails, connectors, markers, cards, grouping, or timeline empty states.
 - Reject any change that introduces a second timeline renderer.
+- Do **not** use Timeline for resource-vs-time / Gantt-style boards — use **ResourceTimeline**.
+
+## ResourceTimeline
+
+- ResourceTimeline is a Design System primitive for **resource rows × time axis** (Availability, Planning load, etc.).
+- Canonical renderer: `src/components/timeline/ResourceTimeline.tsx` (wraps `react-calendar-timeline`).
+- Modules may only provide typed groups, items, visible range, and selection callbacks; they must not import `react-calendar-timeline` directly or invent a second Gantt/calendar renderer.
+- Horizon presets, zoom chrome, and semantic bar colors come from `src/design-system/resource-timeline-tokens.ts` (+ CSS vars). Adapters must not hardcode Tailwind hex for states.
+- Reject any change that introduces a parallel resource×time library (`gantt-task-react`, Vis.js Timeline, custom CSS Gantt) outside this wrapper.
+- See also `.cursor/rules/resource-timeline-horizon-colors.mdc`.
 
 ## Kanban
 
@@ -53,6 +63,58 @@ Fixed card anatomy (board-owned): accent → code → title → subtitle → des
 | Longer body text | `description` |
 
 Missing optional fields omit the node; they must never invent an alternate layout.
+
+## VisualMetricCard (unified KPI)
+
+- VisualMetricCard is the Design System primitive for **all KPI / metric cards** (Overview, Executive Dashboards, Deep RAMS, PM, Planning, and later modules).
+- Canonical renderer: `src/components/metrics/VisualMetricCard.tsx`.
+- Tokens: `mfVisualMetric` in `src/design-system/tokens.ts`.
+- Modules may only map domain values (title, context, formatted value, unit, trend, optional series, click). They must not restyle the card.
+- Reject any change that introduces a second KPI card (`KpiCard` clones, ISA-101 scalar tiles used as page KPIs, marketing metric cards).
+
+### Required layout (owned by the primitive)
+
+Horizontal split, compact (`flex` row, `py-3`):
+
+| Column | Content |
+|--------|---------|
+| Left (data) | Uppercase title + optional sub-label (`context`). Value + unit inline (`2 DI`) + compact trend chip (`+33%` / `Stable`) on the value row. |
+| Right (viz) | Typed micro-visualization from `vizKind` (`areaWave` \| `waterfall` \| `gauge` \| `histogram` \| `alert`). |
+
+- Flat glass container: `border border-surface-border`, `bg-surface-1/80`, `backdrop-blur-md` — **no** `shadow-*`. No left accent bar.
+- Values and chrome: `text-*` / `surface-*`. Status color **only** on the trend chip and alert micro-viz (`up-good` / `up-bad` / `neutral` / status tokens).
+- Series-backed kinds (`areaWave`, `waterfall`, `histogram`): pass `series` only when there are **≥ 4 points and real variation**. If omitted or unusable, **do not** render a chart or empty right column — the data block spans naturally.
+- Scalar kinds (`gauge`, `alert`): always render the right column when `available`.
+- Interactive cards use the primitive `onClick` (button). Do not wrap in a second clickable chrome.
+- Viz renderers live inside the primitive (or a colocated file imported only by it). Modules map `vizKind` from the Overview registry — they must not invent alternate chart chrome.
+
+Reference adapter: `src/components/dashboard/OverviewMetricCards.tsx`. Registry: `shared/overview-kpi-registry.ts`.
+
+### Forbidden
+
+- Left accent strips (`border-l-*`, colored rails)
+- Boxed / tiled icons
+- Drop shadows on metric cards (`shadow-panel`, `shadow-*`)
+- 2-point “fake” lines, dashed strips, or any placeholder series when data is missing / flat
+- Giant stacked vertical layout (viz under the value) as the default KPI card
+- Hardcoded hex, extra Tailwind on adapter-mapped data, or a parallel `KpiCard` / metric tile
+- Duplicate fleet RAMS KPIs on Home outside the catalog Overview strip — Analytics owns deep RAMS boards
+
+## CompactMetricGrid
+
+- CompactMetricGrid is a Design System primitive for **high-density industrial HMI boards** (ISA-101), not for page KPI cards.
+- Canonical renderer: `src/components/metrics/CompactMetricGrid.tsx`.
+- Composite packing: `HealthStrip` and `StackedStatusBar` in `src/components/metrics/`.
+- Chart chrome beside an HMI grid must use `CompactChartPanel` from the same module.
+- Tokens: `mfMetric` in `src/design-system/tokens.ts`.
+- Page-level KPIs must use **VisualMetricCard**, not CompactMetricGrid cells or `KpiCard`.
+- Values and chrome stay `text-primary` / `surface-*`. Status color only on chips and stacked-bar segments (warn/danger/ok).
+
+### Forbidden in CompactMetricGrid adapters
+
+- Using CompactMetricGrid / HealthStrip as a substitute for VisualMetricCard on Overview, Executive Dashboards, or Deep RAMS
+- Status color on in-range / healthy values
+- Duplicate RAMS fleet KPIs on Home when Analytics owns them
 
 ## Extending the registry
 

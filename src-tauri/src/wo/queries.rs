@@ -112,7 +112,7 @@ const WO_COLS: &str = "\
     wo.requester_id, wo.source_di_id, wo.source_inspection_anomaly_id, \
     wo.source_ram_ishikawa_diagram_id, wo.source_ishikawa_flow_node_id, wo.source_rca_cause_text, \
     wo.entity_id, \
-    wo.planner_id, wo.approver_id, wo.assigned_group_id, wo.primary_responsible_id, \
+    wo.planner_id, wo.approver_id, wo.assigned_team_id, wo.primary_responsible_id, \
     wo.urgency_id, wo.title, wo.description, \
     wo.planned_start, wo.planned_end, wo.shift, wo.scheduled_at, \
     wo.actual_start, wo.actual_end, \
@@ -140,7 +140,18 @@ const WO_JOIN_COLS: &str = "\
     COALESCE(ur.display_name, ur.username) AS responsible_username, \
     COALESCE(up.display_name, up.username) AS planner_display_name, \
     COALESCE(ur.display_name, ur.username) AS responsible_display_name, \
-    irdi.code AS source_di_code, irdi.title AS source_di_title, irdi.status AS source_di_status";
+    irdi.code AS source_di_code, irdi.title AS source_di_title, irdi.status AS source_di_status, \
+    tm.code AS assigned_team_code, tm.name AS assigned_team_name, \
+    CASE \
+      WHEN tm.code IS NOT NULL AND tm.name IS NOT NULL THEN tm.code || ' — ' || tm.name \
+      ELSE COALESCE(tm.name, tm.code) \
+    END AS assigned_team_label, \
+    (SELECT sc.id FROM schedule_commitments sc \
+      WHERE sc.source_type = 'work_order' AND sc.source_id = wo.id \
+      ORDER BY sc.id DESC LIMIT 1) AS schedule_commitment_id, \
+    CASE WHEN (SELECT sc.frozen_at FROM schedule_commitments sc \
+      WHERE sc.source_type = 'work_order' AND sc.source_id = wo.id \
+      ORDER BY sc.id DESC LIMIT 1) IS NOT NULL THEN 1 ELSE 0 END AS schedule_frozen";
 
 /// JOIN clause used by list and get queries.
 const WO_JOINS: &str = "\
@@ -150,7 +161,8 @@ const WO_JOINS: &str = "\
     LEFT JOIN equipment           ar  ON ar.id  = wo.equipment_id \
     LEFT JOIN user_accounts       up  ON up.id  = wo.planner_id \
     LEFT JOIN user_accounts       ur  ON ur.id  = wo.primary_responsible_id \
-    LEFT JOIN intervention_requests irdi ON irdi.id = wo.source_di_id";
+    LEFT JOIN intervention_requests irdi ON irdi.id = wo.source_di_id \
+    LEFT JOIN teams tm ON tm.id = wo.assigned_team_id AND tm.deleted_at IS NULL";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) list_work_orders — paginated, filtered
@@ -647,6 +659,7 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
     ))
     .await?;
 
+    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
     Ok(wo)
 }
 
@@ -729,6 +742,7 @@ pub async fn update_wo_draft_fields(
 
     if sets.is_empty() {
         // Nothing to update — return current row
+        crate::wo::sync_stage::warn_stage_wo(db, current.id).await;
         return Ok(current);
     }
 
@@ -760,10 +774,12 @@ pub async fn update_wo_draft_fields(
     }
 
     // 5. Re-fetch and return updated row
-    get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
+    let wo = get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
         entity: "WorkOrder".into(),
         id: input.id.to_string(),
-    })
+    })?;
+    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
+    Ok(wo)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -849,8 +865,10 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
     .await?;
 
     // 6. Re-fetch and return
-    get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
+    let wo = get_work_order(db, input.id).await?.ok_or_else(|| AppError::NotFound {
         entity: "WorkOrder".into(),
         id: input.id.to_string(),
-    })
+    })?;
+    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
+    Ok(wo)
 }

@@ -1,16 +1,17 @@
 /**
  * use-formatters.ts
  *
- * React hook that binds the current active locale (from the locale store)
- * to all pure formatter functions. Components MUST use this hook — they
- * must NOT import and call the raw formatters with a hardcoded locale string.
+ * React hook that binds the current active locale and tenant currency
+ * (from the locale store / Settings) to all pure formatter functions.
+ * Components MUST use this hook — they must NOT import and call the raw
+ * formatters with a hardcoded locale or currency string.
  *
- * When the user switches locale, all components using this hook automatically
- * re-render with correctly formatted values.
+ * When the user switches language or currency in Settings, components
+ * using this hook re-render with correctly formatted values.
  *
  * Usage:
  *   const { formatDate, formatNumber, formatCurrency } = useFormatters();
- *   return <td>{formatNumber(equipment.costPerHour)}</td>;
+ *   return <td>{formatCurrency(line.cost)}</td>;
  */
 
 import { useMemo } from "react";
@@ -43,16 +44,22 @@ export interface Formatters {
   formatNumber: (value: number, options?: Intl.NumberFormatOptions) => string;
   /** Fixed decimal places: "1 234,56" (fr) */
   formatDecimal: (value: number, decimalPlaces?: number) => string;
-  /** "1 234,56 €" (fr) or "$1,234.56" (en) */
-  formatCurrency: (value: number, currency?: string) => string;
+  /**
+   * Money using tenant `locale.currency_code` from Settings.
+   * Optional override only for rare multi-currency displays (e.g. FX line).
+   */
+  formatCurrency: (value: number, currencyOverride?: string) => string;
   /** "45,5 %" (fr) or "45.5%" (en) */
   formatPercent: (value: number) => string;
   /** Current locale code ("fr" or "en") */
   locale: string;
+  /** Active tenant ISO 4217 currency code */
+  currencyCode: string;
 }
 
 export function useFormatters(): Formatters {
   const locale = useLocaleStore((s) => s.activeLocale);
+  const currencyCode = useLocaleStore((s) => s.activeCurrencyCode);
 
   return useMemo(
     () => ({
@@ -63,10 +70,11 @@ export function useFormatters(): Formatters {
       formatRelativeTime: (v) => formatRelativeTime(v, locale),
       formatNumber: (v, opts) => formatNumber(v, locale, opts),
       formatDecimal: (v, dp) => formatDecimal(v, locale, dp),
-      formatCurrency: (v, cur) => formatCurrency(v, locale, cur),
+      formatCurrency: (v, cur) => formatCurrency(v, locale, cur ?? currencyCode),
       formatPercent: (v) => formatPercent(v, locale),
       locale,
+      currencyCode,
     }),
-    [locale],
+    [locale, currencyCode],
   );
 }

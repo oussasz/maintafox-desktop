@@ -73,6 +73,19 @@ async fn emit_event_inner(pool: &SqlitePool, input: NotificationEventInput) -> R
             }
             return Ok(());
         }
+
+        // Event-level dedupe: freeze-breach (and similar) may emit with no recipients
+        // when team scope resolves empty — still must not insert duplicate events.
+        let existing_event = pool
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT id FROM notification_events WHERE dedupe_key = ? LIMIT 1",
+                [dedupe_key.into()],
+            ))
+            .await?;
+        if existing_event.is_some() {
+            return Ok(());
+        }
     }
 
     let event_insert = pool
@@ -221,7 +234,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO user_accounts
-                (sync_id, username, display_name, is_active, is_admin, force_password_change, created_at, updated_at)
+                (entity_sync_id, username, display_name, is_active, is_admin, force_password_change, created_at, updated_at)
              VALUES (?, ?, ?, 1, 0, 0, ?, ?)",
             [
                 uuid::Uuid::new_v4().to_string().into(),

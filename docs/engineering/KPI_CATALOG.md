@@ -38,6 +38,21 @@ Inputs:
 Required fields:
 - …
 
+Semantic key:
+`UPPER_SNAKE` registry id for Vue d'ensemble / shared adapters (omit when not on Overview strip)
+
+Permission:
+Canonical RBAC permission gating display and IPC (`di.view`, `fin.view`, …)
+
+Default roles:
+Capability-based Overview defaults (not role name strings): Reliability | Storekeeper | Supervisor | General
+
+Trend sense:
+`up-good` | `up-bad` | `neutral` — delta interpretation on Overview VisualMetricCard
+
+Default target:
+Prior-horizon comparison only when persisted; never invent numeric SLA targets in UI
+
 Displayed:
 - …
 
@@ -156,6 +171,11 @@ Partial
 Derived metrics:
 - Time variance hours = Actual − Planned (signed)
 - Cost variance % (labor + parts planned vs actual)
+
+Cost variance inputs (Partial — not yet a first-class queryable KPI):
+- `personnel_rate_cards.labor_rate` (active card: effective_from ≤ today)
+- Snapshot on labor capture: `work_order_interveners.hourly_rate` (resolved from rate card or explicit override; null when missing)
+- Planning estimate: `schedule_commitments.estimated_labor_cost` (= duration × active labor_rate)
 
 Future dashboards:
 - Efficiency distribution by WO type / urgency / crew
@@ -1225,6 +1245,891 @@ Required fields:
 
 Displayed:
 - DI dashboard backlog / Kanban counters
+
+Status:
+Partial
+
+---
+
+# KPI-032
+
+Nom:
+Emergency Reassign Ratio
+
+Module:
+Work Orders / Planning
+
+Description:
+Share of schedule-committed work orders that received an emergency reassignment (shop-floor override that skips Planning capacity/lock/double-booking gates) within a period. Measures how often the plant bypasses the gated scheduler for night/emergency dispatch.
+
+Formula:
+(COUNT distinct WO with at least one `emergency_reassigned` event in period
+ / COUNT distinct WO with an active or historical `schedule_commitments` row for source_type=work_order overlapping the period)
+ × 100
+
+Inputs:
+- WO change / action events with action = `emergency_reassigned` (and override_reason in details)
+- `schedule_commitments` where source_type = 'work_order'
+- Optional: `schedule_change_log` with reason_code = `emergency_reassign`
+
+Required fields:
+- Event action code `emergency_reassigned` persisted on emergency reassign
+- `work_orders.assigned_team_id` / `primary_responsible_id` after rename
+- `schedule_commitments.source_type`, `source_id`, `frozen_at` (frozen WOs must use Planning break-in, not emergency)
+
+Displayed:
+- Not yet (no dashboard tile this pass)
+
+Status:
+Partial
+
+Derived metrics:
+- Emergency reassigns without a prior commitment (dispatch-before-board)
+- Frozen-block rejection count (attempts that must use break-in)
+
+Future dashboards:
+- Weekly emergency vs board-committed assignment mix by crew
+- Night-shift emergency density
+
+Reports:
+- Emergency reassign audit export (actor, reason, before/after crew/person)
+
+Audit:
+- WO event `emergency_reassigned` + change-log details_json with override_reason
+- Planning `schedule_change_log` reason_code `emergency_reassign` when a commitment assignee is updated
+
+AI opportunities:
+- Flag crews with chronic emergency reassign rates vs capacity gaps
+
+---
+
+# KPI-033
+
+Nom:
+Mean Time Between Failures (MTBF)
+
+Module:
+Reliability / RAMS & Analytics
+
+Description:
+Average operating exposure hours between eligible failure events for an equipment (or fleet aggregate of snapshot MTBF values). Core RAMS reliability indicator for the Analytics hub.
+
+Formula:
+MTBF_hours = t_exp_hours / eligible_failure_count
+(Fleet hub widget may average non-null positive snapshot MTBF over a horizon)
+
+Inputs:
+- `runtime_exposure_logs` / inferred exposure hours
+- `failure_events` eligible for reliability denominators
+- `reliability_kpi_snapshots.mtbf`
+
+Required fields:
+- exposure hours denominator
+- eligible failure count
+- `reliability_kpi_snapshots.mtbf`, `period_start`, `period_end`, `equipment_id`
+
+Displayed:
+- Deep RAMS KPI snapshots; Executive Dashboards fleet health strip (horizon average + vs-prior Δ + sparkline from snapshot dates); Top 5 bad-actor ranking by event_count with MTBF / availability / closed-WO cost
+
+Status:
+Partial
+
+---
+
+# KPI-034
+
+Nom:
+Mean Time To Repair (MTTR)
+
+Module:
+Reliability / RAMS & Analytics
+
+Description:
+Average active repair hours per repair-eligible failure event.
+
+Formula:
+MTTR_hours = sum(active_repair_hours) / repair_event_count
+
+Inputs:
+- Repair duration on eligible failure / WO closeout events
+- `reliability_kpi_snapshots.mttr`
+
+Required fields:
+- Active repair hours per event
+- `reliability_kpi_snapshots.mttr`
+
+Displayed:
+- Deep RAMS KPI snapshots; planned Executive Dashboards (M1)
+
+Status:
+Partial
+
+---
+
+# KPI-035
+
+Nom:
+Operational Availability %
+
+Module:
+Reliability / RAMS & Analytics
+
+Description:
+Share of exposure time that the asset was available (not in counted downtime) over the analysis window.
+
+Formula:
+Availability = (t_exp_hours - downtime_hours) / t_exp_hours
+
+Inputs:
+- Exposure hours and downtime hours used by `reliability/compute.rs`
+- `reliability_kpi_snapshots.availability`
+
+Required fields:
+- `t_exp_hours`, downtime hours
+- `reliability_kpi_snapshots.availability`
+
+Displayed:
+- Deep RAMS KPI snapshots; planned Executive Dashboards (M1)
+
+Status:
+Partial
+
+---
+
+# KPI-036
+
+Nom:
+PM Adherence (Compliance) Rate
+
+Module:
+Preventive Maintenance / RAMS & Analytics
+
+Description:
+Share of PM occurrences completed on or before due within a horizon (or complementary overdue ratio from due-queue metrics). Hub executive KPI for planners and managers.
+
+Formula:
+PM_adherence_% = (COUNT occurrences completed on/before due in horizon
+ / COUNT occurrences that were due in horizon) × 100
+(Interim Partial: may surface overdue / due-today / next-7d counts from `get_pm_due_metrics` until on-time completion fields are queryable end-to-end)
+
+Inputs:
+- `pm_occurrences.due_at`, `status`, completion timestamps
+- `get_pm_due_metrics` buckets
+
+Required fields:
+- `pm_occurrences.due_at`, `status`, completion / closed timestamps
+
+Displayed:
+- Executive Dashboards PM pipeline stacked bar (overdue / due today / next 7d counts); not a completion % until on-time fields are queryable
+
+Status:
+Partial
+
+---
+
+# KPI-037
+
+Nom:
+Maintenance Cost (period)
+
+Module:
+Work Orders / Finance / RAMS & Analytics
+
+Description:
+Sum of maintenance costs over a selected horizon, breakable by equipment and org node for cost distribution analytics.
+
+Formula:
+SUM(work_order / budget cost lines in period)
+(Group by equipment_id or org_node_id for breakdowns)
+
+Inputs:
+- WO actual / plan cost fields
+- Budget variance / cost center lines where applicable
+
+Required fields:
+- Queryable cost amounts on closed or costed WOs (and/or budget actuals)
+- Equipment and org foreign keys for breakdowns
+
+Displayed:
+- Executive Dashboards (`/analytics/dashboards`) — closed WO `total_cost` on the fleet health strip and per-asset in the bad-actor table; org-scoped via WO `entity_id`
+- Vue d'ensemble Overview strip when semantic key `TOTAL_COST` is enabled (`fin.view`)
+
+Semantic key:
+`TOTAL_COST`
+
+Permission:
+`fin.view`
+
+Default roles:
+Reliability, Storekeeper (when `fin.view`)
+
+Trend sense:
+up-bad
+
+Default target:
+Prior 30-day horizon total (not a numeric budget target)
+
+Status:
+Partial
+
+---
+
+## Overview strip (Vue d'ensemble)
+
+Home Overview metric cards are driven by **semantic keys** persisted in `user_analytics_dashboard_layouts.overview_kpis` (namespaced beside Executive `widgets`). Missing `overview_kpis` → capability-based defaults below. Values are computed SSOT in Rust (`get_overview_kpis`); frontend does not recompute formulas.
+
+| Semantic key | Catalog | Permission | Trend | Default roles |
+|---|---|---|---|---|
+| `DI_OPEN` | KPI-038 | `di.view` | up-bad | Supervisor, General |
+| `OT_IN_PROGRESS` | KPI-039 | `ot.view` | up-bad | Storekeeper, General |
+| `OT_OVERDUE` | KPI-040 | `ot.view` | up-bad | Supervisor, General |
+| `MTTR` | KPI-034 | `rep.view` | up-bad | — |
+| `PM_COMPLIANCE` | KPI-036 | `pm.view` | up-good | Supervisor |
+| `PM_DUE_TODAY` | KPI-041 | `pm.view` | up-bad | General |
+| `MAINT_BACKLOG` | KPI-042 | `ot.view` | up-bad | — |
+| `AVAILABILITY` | KPI-035 | `rep.view` | up-good | Reliability, Supervisor |
+| `MTBF` | KPI-033 | `rep.view` | up-good | Reliability |
+| `CRITICAL_DOWN` | KPI-043 | `eq.view` | up-bad | — |
+| `DATA_QUALITY` | KPI-044 | `rep.view` | up-good | Reliability |
+| `STOCK_OUT` | KPI-045 | `inv.view` | up-bad | Storekeeper |
+| `REORDER_ALERT` | KPI-046 | `inv.view` | up-bad | Storekeeper |
+| `TOTAL_COST` | KPI-037 | `fin.view` | up-bad | Reliability, Storekeeper (when `fin.view`) |
+
+**Role default sets (first match):**
+
+1. **Reliability** (`ram.view` or `rep.view`): MTBF, AVAILABILITY, TOTAL_COST (if `fin.view`), DATA_QUALITY
+2. **Storekeeper** (`inv.view`, not supervisor/reliability): STOCK_OUT, REORDER_ALERT, OT_IN_PROGRESS, TOTAL_COST (if `fin.view`)
+3. **Supervisor** (`di.review` or `ot.close`): DI_OPEN, OT_OVERDUE, PM_COMPLIANCE, AVAILABILITY
+4. **General** (else): DI_OPEN, OT_IN_PROGRESS, OT_OVERDUE, PM_DUE_TODAY (permission-filtered)
+
+Drill targets: operational modules (`/requests`, `/work-orders`, `/pm`, `/inventory`, …) and Deep RAMS under `/analytics/rams/*` for fleet metrics.
+
+---
+
+# KPI-038
+
+Nom:
+Open Intervention Requests (DI)
+
+Module:
+Intervention Requests / Overview
+
+Description:
+Count of DIs in non-terminal operational states (open pipeline).
+
+Formula:
+COUNT intervention_requests WHERE status NOT IN (rejected, converted, closed non-executable, archived)
+
+Inputs:
+- `intervention_requests.status`, `created_at`
+
+Required fields:
+- DI status, created_at
+
+Semantic key:
+`DI_OPEN`
+
+Permission:
+`di.view`
+
+Default roles:
+Supervisor, General
+
+Trend sense:
+up-bad
+
+Default target:
+Count 7 days ago (same status filter)
+
+Displayed:
+- Vue d'ensemble Overview strip (`VisualMetricCard`)
+
+Status:
+Implemented
+
+---
+
+# KPI-039
+
+Nom:
+Work Orders In Progress
+
+Module:
+Work Orders / Overview
+
+Description:
+Count of WOs actively in execution (`in_progress` status only — not all open WOs).
+
+Formula:
+COUNT work_orders WHERE status.code = 'in_progress'
+
+Inputs:
+- `work_orders.status_id` → `work_order_statuses.code`
+
+Required fields:
+- WO status reference
+
+Semantic key:
+`OT_IN_PROGRESS`
+
+Permission:
+`ot.view`
+
+Default roles:
+Storekeeper, General
+
+Trend sense:
+up-bad
+
+Default target:
+Count with same filter at prior horizon (7d)
+
+Displayed:
+- Vue d'ensemble Overview strip
+
+Status:
+Implemented
+
+---
+
+# KPI-040
+
+Nom:
+Overdue Work Orders
+
+Module:
+Work Orders / Overview
+
+Description:
+Count of non-terminal WOs whose planned end is before now. **WO-only** — not combined DI+PM overdue.
+
+Formula:
+COUNT work_orders WHERE planned_end < now AND status NOT IN (closed, cancelled)
+
+Inputs:
+- `work_orders.planned_end`, status
+
+Required fields:
+- planned_end, status_id
+
+Semantic key:
+`OT_OVERDUE`
+
+Permission:
+`ot.view`
+
+Default roles:
+Supervisor, General
+
+Trend sense:
+up-bad
+
+Default target:
+Same query with prior-window proxy (7d)
+
+Displayed:
+- Vue d'ensemble Overview strip
+
+Status:
+Implemented
+
+---
+
+# KPI-041
+
+Nom:
+PM Due Today
+
+Module:
+Preventive Maintenance / Overview
+
+Description:
+Open PM occurrences due on the current calendar day.
+
+Formula:
+COUNT pm_occurrences WHERE status in active pipeline AND date(due_at) = date('now')
+
+Inputs:
+- `pm_occurrences.due_at`, `status`
+
+Required fields:
+- due_at, status
+
+Semantic key:
+`PM_DUE_TODAY`
+
+Permission:
+`pm.view`
+
+Default roles:
+General
+
+Trend sense:
+up-bad
+
+Default target:
+Prior-day bucket proxy
+
+Displayed:
+- Vue d'ensemble Overview strip
+
+Status:
+Implemented
+
+---
+
+# KPI-042
+
+Nom:
+Maintenance Backlog (planned hours)
+
+Module:
+Work Orders / Planning / Overview
+
+Description:
+Sum of planned/expected labor hours on open (non-terminal) work orders — backlog pressure proxy.
+
+Formula:
+SUM(expected_duration_hours) on open WOs
+
+Inputs:
+- `work_orders.expected_duration_hours`, status
+
+Required fields:
+- expected_duration_hours (Partial when many WOs lack plan hours)
+
+Semantic key:
+`MAINT_BACKLOG`
+
+Permission:
+`ot.view`
+
+Default roles:
+—
+
+Trend sense:
+up-bad
+
+Default target:
+Prior horizon sum (7d)
+
+Displayed:
+- Vue d'ensemble Overview strip (when enabled in Personnaliser)
+
+Status:
+Partial
+
+---
+
+# KPI-043
+
+Nom:
+Critical Equipment Down
+
+Module:
+Assets / Overview
+
+Description:
+Count of criticality-A (or equivalent) equipment in down / out-of-service lifecycle states.
+
+Formula:
+COUNT equipment WHERE criticality = critical AND lifecycle_status indicates down/out-of-service
+
+Inputs:
+- Equipment criticality reference, lifecycle_status
+
+Required fields:
+- criticality_code / ref, lifecycle_status
+
+Semantic key:
+`CRITICAL_DOWN`
+
+Permission:
+`eq.view`
+
+Default roles:
+—
+
+Trend sense:
+up-bad
+
+Default target:
+Prior count (7d)
+
+Displayed:
+- Vue d'ensemble Overview strip (when enabled)
+
+Status:
+Partial
+
+---
+
+# KPI-044
+
+Nom:
+Fleet Data Quality Score (avg)
+
+Module:
+Reliability / Overview
+
+Description:
+Average reliability snapshot data quality score over recent horizon.
+
+Formula:
+AVG(reliability_kpi_snapshots.data_quality_score) over horizon
+
+Inputs:
+- Snapshot rows in period
+
+Required fields:
+- data_quality_score on snapshots
+
+Semantic key:
+`DATA_QUALITY`
+
+Permission:
+`rep.view`
+
+Default roles:
+Reliability
+
+Trend sense:
+up-good
+
+Default target:
+Prior horizon average
+
+Displayed:
+- Vue d'ensemble Overview strip; drill `/analytics/rams/data-quality`
+
+Status:
+Partial
+
+---
+
+# KPI-045
+
+Nom:
+Stock-Out (critical articles)
+
+Module:
+Inventory / Overview
+
+Description:
+Count of active articles with zero or negative available quantity across stock balances.
+
+Formula:
+COUNT DISTINCT articles WHERE is_active AND available_qty <= 0
+
+Inputs:
+- stock_balances.available_qty, articles.is_active
+
+Required fields:
+- available_qty, article identity
+
+Semantic key:
+`STOCK_OUT`
+
+Permission:
+`inv.view`
+
+Default roles:
+Storekeeper
+
+Trend sense:
+up-bad
+
+Default target:
+Prior count
+
+Displayed:
+- Vue d'ensemble Overview strip
+
+Status:
+Partial
+
+---
+
+# KPI-046
+
+Nom:
+Reorder Alerts
+
+Module:
+Inventory / Overview
+
+Description:
+Count of article/warehouse combinations at or below reorder point requiring replenishment.
+
+Formula:
+COUNT evaluate_reorder recommendations (reorder_point or min_stock trigger)
+
+Inputs:
+- reorder_point, min_stock, available_qty
+
+Required fields:
+- Article stock parameters, balances
+
+Semantic key:
+`REORDER_ALERT`
+
+Permission:
+`inv.view`
+
+Default roles:
+Storekeeper
+
+Trend sense:
+up-bad
+
+Default target:
+Prior count
+
+Displayed:
+- Vue d'ensemble Overview strip
+
+Status:
+Partial
+
+---
+
+## Equipment registry strip (AssetRegistryPage)
+
+Filter-scoped metrics for the Equipment page health/risk monitor. Layout (later) is separate from Overview `overview_kpis`. Values computed by `get_equipment_registry_metrics` under the active SmartFilterBar scope (class, family, status, org, search).
+
+| Semantic key | Catalog | Permission | Viz | Trend |
+|---|---|---|---|---|
+| `EQUIP_STATUS_SUMMARY` | KPI-047 | `eq.view` | alert | up-bad |
+| `EQUIP_CRITICAL_AT_RISK` | KPI-048 | `eq.view` | alert | up-bad |
+| `EQUIP_HEALTH_SCORE` | KPI-049 | `eq.view` | gauge | up-good |
+| `EQUIP_OPEN_WORK` | KPI-050 | `eq.view` | histogram | up-bad |
+| `EQUIP_STALE_METERS` | KPI-051 | `eq.view` | alert | up-bad |
+
+Registry SSOT: `shared/equipment-kpi-registry.ts` (not the Overview strip registry).
+
+---
+
+# KPI-047
+
+Nom:
+Equipment Status Summary (active vs down)
+
+Module:
+Assets / Equipment Registry
+
+Description:
+Within the current registry filter scope, count assets in active/in-service (or standby) states versus out-of-service / down states. Primary strip value is the down count for alert attention; active count is returned alongside for display.
+
+Formula:
+active_count = COUNT scoped WHERE status IN (IN_SERVICE, STANDBY, active_in_service, …)
+down_count = COUNT scoped WHERE status IN (OUT_OF_SERVICE, down, out_of_service, inactive, …)
+value = down_count
+
+Inputs:
+- equipment lifecycle / EQUIPMENT.STATUS reference
+- SmartFilterBar scope
+
+Required fields:
+- lifecycle_status / equipment_status_ref_id
+- deleted_at
+
+Semantic key:
+`EQUIP_STATUS_SUMMARY`
+
+Permission:
+`eq.view`
+
+Default roles:
+Equipment operators / planners with `eq.view`
+
+Trend sense:
+up-bad
+
+Default target:
+Prior 7d down count in same filter (when available)
+
+Displayed:
+- Equipment registry KPI strip (`VisualMetricCard`, alert viz)
+
+Status:
+Partial
+
+---
+
+# KPI-048
+
+Nom:
+Critical Assets at Risk
+
+Module:
+Assets / Equipment Registry
+
+Description:
+Count of criticality-A (or equivalent) assets in the filtered scope that are down/out-of-service OR have at least one open DI or open WO.
+
+Formula:
+COUNT distinct equipment WHERE criticality IN (A, critical, CRITICAL)
+  AND (status is down/out-of-service OR EXISTS open DI OR EXISTS open WO)
+
+Inputs:
+- criticality reference
+- status
+- open intervention_requests / work_orders
+
+Required fields:
+- equipment_criticality_ref_id / criticality_value_id
+- status
+- DI/WO equipment_id + status
+
+Semantic key:
+`EQUIP_CRITICAL_AT_RISK`
+
+Permission:
+`eq.view`
+
+Default roles:
+—
+
+Trend sense:
+up-bad
+
+Default target:
+Prior 7d count
+
+Displayed:
+- Equipment registry KPI strip (alert / pulsing when > 0)
+
+Status:
+Partial
+
+---
+
+# KPI-049
+
+Nom:
+Average Asset Health Index
+
+Module:
+Assets / Equipment Registry
+
+Description:
+Mean composite health score (0–100) across filtered assets that have enough lifecycle/meter evidence to score — same formula family as `get_asset_health_score`.
+
+Formula:
+AVG(health_score) WHERE score IS NOT NULL over filtered scope (capped population for performance)
+
+Inputs:
+- lifecycle event recency
+- meter last_read_at
+- open DI/WO counts
+
+Required fields:
+- equipment_lifecycle_events, equipment_meters, DI/WO links
+
+Semantic key:
+`EQUIP_HEALTH_SCORE`
+
+Permission:
+`eq.view`
+
+Default roles:
+—
+
+Trend sense:
+up-good
+
+Default target:
+Prior horizon average when available
+
+Displayed:
+- Equipment registry KPI strip (gauge)
+
+Status:
+Partial
+
+---
+
+# KPI-050
+
+Nom:
+Assets with Active Work
+
+Module:
+Assets / Equipment Registry
+
+Description:
+Count of filtered assets that have at least one open DI and/or non-terminal WO.
+
+Formula:
+COUNT DISTINCT equipment_id with open DI OR open WO within filtered equipment set
+
+Inputs:
+- intervention_requests, work_orders, statuses
+
+Required fields:
+- equipment_id on DI/WO
+- status codes
+
+Semantic key:
+`EQUIP_OPEN_WORK`
+
+Permission:
+`eq.view`
+
+Default roles:
+—
+
+Trend sense:
+up-bad
+
+Default target:
+Prior count / 30d daily series for histogram
+
+Displayed:
+- Equipment registry KPI strip (histogram)
+
+Status:
+Partial
+
+---
+
+# KPI-051
+
+Nom:
+Stale Counter Readings
+
+Module:
+Assets / Equipment Registry
+
+Description:
+Count of filtered assets that have at least one active meter with no reading or last_read_at older than the stale threshold (30 days), aligned with health meter recency bands.
+
+Formula:
+COUNT DISTINCT equipment WHERE EXISTS active meter AND (last_read_at IS NULL OR last_read_at < now - 30d)
+
+Inputs:
+- equipment_meters.is_active, last_read_at
+
+Required fields:
+- equipment_meters
+
+Semantic key:
+`EQUIP_STALE_METERS`
+
+Permission:
+`eq.view`
+
+Default roles:
+—
+
+Trend sense:
+up-bad
+
+Default target:
+Prior count
+
+Displayed:
+- Equipment registry KPI strip (amber alert)
 
 Status:
 Partial

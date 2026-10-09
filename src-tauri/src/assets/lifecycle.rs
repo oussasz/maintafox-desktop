@@ -39,7 +39,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetLifecycleEvent {
     pub id: i64,
-    pub sync_id: String,
+    pub entity_sync_id: String,
     pub asset_id: i64,
     pub event_type: String,
     pub event_at: String,
@@ -93,9 +93,9 @@ fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
 fn map_lifecycle_event(row: &QueryResult) -> AppResult<AssetLifecycleEvent> {
     Ok(AssetLifecycleEvent {
         id: row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?,
-        sync_id: row
-            .try_get::<String>("", "sync_id")
-            .map_err(|e| decode_err("sync_id", e))?,
+        entity_sync_id: row
+            .try_get::<String>("", "entity_sync_id")
+            .map_err(|e| decode_err("entity_sync_id", e))?,
         asset_id: row
             .try_get::<i64>("", "equipment_id")
             .map_err(|e| decode_err("equipment_id", e))?,
@@ -258,7 +258,7 @@ fn validate_payload_for_event_type(payload: &RecordLifecycleEventPayload) -> App
 
 /// SELECT columns for lifecycle event queries.
 const EVENT_SELECT: &str = r"
-    id, sync_id, equipment_id, event_type, occurred_at,
+    id, entity_sync_id, equipment_id, event_type, occurred_at,
     from_node_id, to_node_id, from_status, to_status,
     from_class_code, to_class_code, related_asset_id,
     reason_code, notes, approved_by_id, performed_by_id, created_at
@@ -419,18 +419,18 @@ pub async fn record_lifecycle_event(
     }
 
     // ── 6. Insert the lifecycle event row ────────────────────────────────
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO equipment_lifecycle_events \
-         (sync_id, equipment_id, event_type, occurred_at, \
+         (entity_sync_id, equipment_id, event_type, occurred_at, \
           from_node_id, to_node_id, from_status, to_status, \
           from_class_code, to_class_code, related_asset_id, \
           reason_code, notes, approved_by_id, performed_by_id, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            sync_id.clone().into(),
+            entity_sync_id.clone().into(),
             payload.asset_id.into(),
             payload.event_type.into(),
             event_at.into(),
@@ -456,9 +456,9 @@ pub async fn record_lifecycle_event(
             DbBackend::Sqlite,
             &format!(
                 "SELECT {EVENT_SELECT} \
-                 FROM equipment_lifecycle_events WHERE sync_id = ?"
+                 FROM equipment_lifecycle_events WHERE entity_sync_id = ?"
             ),
-            [sync_id.into()],
+            [entity_sync_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("lifecycle event created but not found after insert")))?;

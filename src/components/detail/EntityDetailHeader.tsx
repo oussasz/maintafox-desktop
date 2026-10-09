@@ -16,8 +16,11 @@ export interface EntityDetailHeaderProps {
 const HEADER_ACTION_ROW = "flex flex-wrap items-center gap-2 pt-1";
 
 /**
- * Identity header — CODE, designation, status, QR, primary actions, overflow.
+ * Identity header — CODE, designation, status, identity visual (QR / portrait),
+ * primary actions, overflow.
  * Do not place technical specifications here.
+ *
+ * `qrSlot` is the right-hand identity visual slot (equipment/article QR, personnel photo, etc.).
  */
 export function EntityDetailHeader({
   code,

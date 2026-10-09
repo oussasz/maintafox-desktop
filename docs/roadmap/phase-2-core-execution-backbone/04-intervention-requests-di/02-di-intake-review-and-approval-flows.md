@@ -45,9 +45,9 @@ This file addresses PRD §6.4 requirements for:
 - **Transition commands are separate from CRUD commands.** `screen_di`, `return_di`,
   `reject_di`, `approve_di`, `defer_di` each call `guard_transition` from `domain.rs`
   before writing any data. No raw status string updates bypass the state machine.
-- **Review queue uses org_node scoping.** A reviewer sees all DIs whose `review_team_id`
-  matches one of their assigned org nodes. Global reviewers (`di.review` global scope) see
-  all queues.
+- **Review queue uses org_node scoping.** A reviewer sees DIs for their org scope via
+  `org_node_id` (SSOT for org-level routing; `review_team_id` removed).
+  Global reviewers (`di.review` global scope) see all queues.
 - **Repeat-issue context is non-blocking.** `get_recent_similar_dis` runs as a read-only
   enrichment when a reviewer opens a DI detail. Similar DIs are surfaced as information; they
   do not block any transition.
@@ -149,7 +149,6 @@ Input: DiScreenInput {
   actor_id: i64,
   expected_row_version: i64,
   validated_urgency: String,          // must be valid DiUrgency
-  review_team_id: Option<i64>,        // org node responsible for approval
   classification_code_id: i64,        // required — reference_values FK
   reviewer_note: Option<String>,
 }
@@ -163,7 +162,6 @@ Logic:
 5. UPDATE intervention_requests SET
      status = 'awaiting_approval',        -- final persisted state (auto-advanced)
      validated_urgency = ?,
-     review_team_id = COALESCE(?, review_team_id),
      classification_code_id = ?,
      reviewer_note = COALESCE(?, reviewer_note),
      reviewer_id = ?,

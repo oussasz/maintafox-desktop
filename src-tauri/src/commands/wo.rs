@@ -509,7 +509,7 @@ pub async fn approve_planning(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// G) assign_wo — ot.edit
+// G) assign_wo — ot.edit (requires override_reason; prefer emergency_reassign_wo)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tauri::command]
@@ -518,16 +518,56 @@ pub async fn assign_wo(
     state: State<'_, AppState>,
 ) -> AppResult<crate::wo::domain::WorkOrder> {
     let user = require_session!(state);
-    require_permission!(state, &user, crate::rbac::permissions::OT_EDIT, PermissionScope::Global);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_EMERGENCY_ASSIGN,
+        PermissionScope::Global
+    );
+    let reason = input.override_reason.clone();
     let wo = execution::assign_wo(&state.db, input).await?;
     audit::record_wo_change_event(
         &state.db,
         audit::WoAuditInput {
             wo_id: Some(wo.id),
-            action: "assigned".into(),
+            action: "emergency_reassigned".into(),
             actor_id: Some(i64::from(user.user_id)),
-            summary: Some("Work order assigned".into()),
-            details_json: None,
+            summary: Some("Work order emergency reassigned".into()),
+            details_json: Some(serde_json::json!({ "override_reason": reason }).to_string()),
+            requires_step_up: false,
+            apply_result: "applied".into(),
+        },
+    )
+    .await;
+    Ok(wo)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G2) emergency_reassign_wo — ot.emergency_assign
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn emergency_reassign_wo(
+    input: execution::WoEmergencyReassignInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::wo::domain::WorkOrder> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_EMERGENCY_ASSIGN,
+        PermissionScope::Global
+    );
+    let reason = input.override_reason.clone();
+    let wo = execution::emergency_reassign_wo(&state.db, input).await?;
+    audit::record_wo_change_event(
+        &state.db,
+        audit::WoAuditInput {
+            wo_id: Some(wo.id),
+            action: "emergency_reassigned".into(),
+            actor_id: Some(i64::from(user.user_id)),
+            summary: Some("Work order emergency reassigned".into()),
+            details_json: Some(serde_json::json!({ "override_reason": reason }).to_string()),
             requires_step_up: false,
             apply_result: "applied".into(),
         },

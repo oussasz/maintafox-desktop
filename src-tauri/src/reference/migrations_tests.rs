@@ -48,7 +48,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO user_scope_assignments \
-             (sync_id, user_id, role_id, scope_type, created_at, updated_at) \
+             (entity_sync_id, user_id, role_id, scope_type, created_at, updated_at) \
              VALUES ('ref-s3-assign-' || ?, ?, \
                (SELECT id FROM roles WHERE name = ?), \
                'tenant', ?, ?)",
@@ -111,7 +111,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO equipment_classes \
-                 (sync_id, code, name, level, is_active, created_at, updated_at) \
+                 (entity_sync_id, code, name, level, is_active, created_at, updated_at) \
              VALUES (?, ?, ?, 'family', 1, ?, ?)",
             [
                 format!("merge-test-{code}").into(),

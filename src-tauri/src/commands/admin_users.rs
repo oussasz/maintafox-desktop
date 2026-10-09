@@ -2,7 +2,8 @@
 //!
 //! Permission gates:
 //!   adm.users  — list_users, get_user, list_assignable_roles, create_user, update_user, deactivate_user,
-//!                assign_role_scope, revoke_role_scope, simulate_access
+//!                assign_role_scope, revoke_role_scope, simulate_access, unlock_user_account,
+//!                admin_set_user_password
 //!   adm.roles  — list_roles, get_role, create_role, update_role, delete_role,
 //!                list_role_templates
 
@@ -584,7 +585,7 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
     }
 
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     let assignment_sync_id = Uuid::new_v4().to_string();
     // Capture before move into SQL params
     let username_for_audit = input.username.clone();
@@ -600,12 +601,12 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_accounts \
-                (sync_id, username, identity_mode, password_hash, personnel_id, \
+                (entity_sync_id, username, identity_mode, password_hash, personnel_id, \
                  is_active, is_admin, force_password_change, \
                  failed_login_attempts, created_at, updated_at, row_version) \
              VALUES (?, ?, ?, ?, ?, 1, 0, ?, 0, ?, ?, 1)",
         vec![
-            sync_id.into(),
+            entity_sync_id.into(),
             input.username.into(),
             input.identity_mode.into(),
             password_hash.map_or(sea_orm::Value::String(None), |h| h.into()),
@@ -635,7 +636,7 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_scope_assignments \
-            (sync_id, user_id, role_id, scope_type, scope_reference, \
+            (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
              valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version) \
          VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, ?, ?, ?, ?, 1)",
         vec![
@@ -656,6 +657,10 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
     tx.commit().await?;
 
     notify_rbac_user_change(&app, &state, new_id, "user_created");
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_user_account_sync(&state.db, new_id).await,
+        "user_account create",
+    );
 
     {
         let new_id_str = new_id.to_string();
@@ -731,7 +736,7 @@ pub async fn backfill_users_missing_tenant_scope(state: State<'_, AppState>) -> 
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT OR IGNORE INTO user_scope_assignments \
-                    (sync_id, user_id, role_id, scope_type, scope_reference, \
+                    (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
                      valid_from, valid_to, assigned_by_id, notes, created_at, updated_at, row_version) \
                  VALUES (?, ?, ?, 'tenant', ?, NULL, NULL, ?, ?, ?, ?, 1)",
                 vec![
@@ -873,6 +878,11 @@ pub async fn update_user(input: UpdateUserInput, state: State<'_, AppState>) -> 
         .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_user_account_sync(&state.db, input.user_id).await,
+        "user_account update",
+    );
+
     Ok(())
 }
 
@@ -978,7 +988,7 @@ pub(crate) async fn assign_role_scope_impl(
     }
 
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     // Capture before move into SQL params
     let role_id_for_audit = input.role_id;
     let user_id_for_audit = input.user_id;
@@ -1016,12 +1026,12 @@ pub(crate) async fn assign_role_scope_impl(
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO user_scope_assignments \
-                (sync_id, user_id, role_id, scope_type, scope_reference, \
+                (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
                  valid_from, valid_to, assigned_by_id, \
                  created_at, updated_at, row_version) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
             vec![
-                sync_id.into(),
+                entity_sync_id.into(),
                 input.user_id.into(),
                 input.role_id.into(),
                 input.scope_type.into(),
@@ -1334,17 +1344,17 @@ pub async fn create_role(input: CreateRoleInput, state: State<'_, AppState>) -> 
 
     // Insert role
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     state
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO roles (sync_id, name, description, role_type, status, is_system, \
+            "INSERT INTO roles (entity_sync_id, name, description, role_type, status, is_system, \
                                 created_at, updated_at, row_version) \
              VALUES (?, ?, ?, 'custom', 'active', 0, ?, ?, 1)",
             vec![
-                sync_id.into(),
+                entity_sync_id.into(),
                 input.name.into(),
                 input.description.map_or(sea_orm::Value::String(None), |d| d.into()),
                 now.clone().into(),
@@ -1382,6 +1392,11 @@ pub async fn create_role(input: CreateRoleInput, state: State<'_, AppState>) -> 
             ))
             .await?;
     }
+
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_role_sync(&state.db, new_role_id).await,
+        "role create",
+    );
 
     Ok(IdPayload { id: new_role_id })
 }
@@ -1486,6 +1501,11 @@ pub async fn update_role(input: UpdateRoleInput, app: AppHandle, state: State<'_
     if has_perm_changes {
         notify_rbac_global_change(&app, &state, "role_updated");
     }
+
+    crate::sync::foundation_stage::warn_stage(
+        crate::sync::foundation_stage::stage_role_sync(&state.db, input.role_id).await,
+        "role update",
+    );
 
     Ok(())
 }
@@ -1674,19 +1694,19 @@ pub async fn grant_emergency_elevation(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
 
     state
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO user_scope_assignments \
-             (sync_id, user_id, role_id, scope_type, scope_reference, \
+             (entity_sync_id, user_id, role_id, scope_type, scope_reference, \
               is_emergency, emergency_reason, emergency_expires_at, \
               assigned_by_id, notes, created_at, updated_at) \
              VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
             [
-                sync_id.into(),
+                entity_sync_id.into(),
                 input.user_id.into(),
                 input.role_id.into(),
                 input.scope_type.into(),
@@ -1865,6 +1885,167 @@ pub async fn unlock_user_account(user_id: i64, state: State<'_, AppState>) -> Ap
         .await;
 
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ADMIN PASSWORD RESET (existing users)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Deserialize)]
+pub struct AdminSetUserPasswordInput {
+    pub user_id: i64,
+    /// When omitted/null, a policy-compliant temporary password is generated.
+    pub temporary_password: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminSetUserPasswordResult {
+    pub temporary_password: String,
+}
+
+fn generate_temporary_password() -> String {
+    use rand::Rng;
+    const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const LOWER: &[u8] = b"abcdefghijkmnopqrstuvwxyz";
+    const DIGIT: &[u8] = b"23456789";
+    const SPECIAL: &[u8] = b"!@#$%&*";
+    let mut rng = rand::thread_rng();
+    let mut chars: Vec<u8> = Vec::with_capacity(16);
+    chars.push(UPPER[rng.gen_range(0..UPPER.len())]);
+    chars.push(LOWER[rng.gen_range(0..LOWER.len())]);
+    chars.push(DIGIT[rng.gen_range(0..DIGIT.len())]);
+    chars.push(SPECIAL[rng.gen_range(0..SPECIAL.len())]);
+    let alphabet: Vec<u8> = UPPER
+        .iter()
+        .chain(LOWER.iter())
+        .chain(DIGIT.iter())
+        .chain(SPECIAL.iter())
+        .copied()
+        .collect();
+    for _ in 0..12 {
+        chars.push(alphabet[rng.gen_range(0..alphabet.len())]);
+    }
+    // Fisher–Yates shuffle
+    for i in (1..chars.len()).rev() {
+        let j = rng.gen_range(0..=i);
+        chars.swap(i, j);
+    }
+    String::from_utf8(chars).expect("temporary password is ASCII")
+}
+
+/// Set a temporary password for an existing local/hybrid user. Returns the plaintext
+/// password once for admin show-once UI. Requires `adm.users` + step-up.
+#[tauri::command]
+pub async fn admin_set_user_password(
+    input: AdminSetUserPasswordInput,
+    state: State<'_, AppState>,
+) -> AppResult<AdminSetUserPasswordResult> {
+    let admin = require_session!(state);
+    require_permission!(
+        state,
+        &admin,
+        crate::rbac::permissions::ADM_USERS,
+        PermissionScope::Global
+    );
+    require_step_up!(state);
+
+    let row = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id, username, identity_mode, is_active, deleted_at \
+             FROM user_accounts WHERE id = ?",
+            [input.user_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "user_accounts".into(),
+            id: input.user_id.to_string(),
+        })?;
+
+    let deleted_at: Option<String> = row.try_get("", "deleted_at").ok().flatten();
+    if deleted_at.is_some() {
+        return Err(AppError::ValidationFailed(vec![
+            "Cannot reset password for a deleted user account.".into(),
+        ]));
+    }
+
+    let is_active: i32 = row.try_get("", "is_active").unwrap_or(0);
+    if is_active != 1 {
+        return Err(AppError::ValidationFailed(vec![
+            "Cannot reset password for an inactive user account.".into(),
+        ]));
+    }
+
+    let identity_mode: String = row.try_get("", "identity_mode").unwrap_or_else(|_| "local".into());
+    if identity_mode == "sso" {
+        return Err(AppError::ValidationFailed(vec![
+            "SSO-only accounts do not have a local password to reset.".into(),
+        ]));
+    }
+
+    let plaintext = match input.temporary_password.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(pw) => {
+            validate_password_strength(pw)?;
+            pw.to_string()
+        }
+        None => {
+            let generated = generate_temporary_password();
+            validate_password_strength(&generated)?;
+            generated
+        }
+    };
+
+    let password_hash = crate::auth::password::hash_password(&plaintext)?;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    state
+        .db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE user_accounts \
+             SET password_hash = ?, \
+                 force_password_change = 1, \
+                 password_changed_at = ?, \
+                 failed_login_attempts = 0, \
+                 locked_until = NULL, \
+                 consecutive_lockouts = 0, \
+                 updated_at = ? \
+             WHERE id = ?",
+            [
+                password_hash.into(),
+                now.clone().into(),
+                now.into(),
+                input.user_id.into(),
+            ],
+        ))
+        .await?;
+
+    let username: String = row.try_get("", "username").unwrap_or_default();
+    let _ = state
+        .db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO admin_change_events \
+             (action, actor_id, target_user_id, summary, step_up_used) \
+             VALUES ('password_reset_by_admin', ?, ?, ?, 1)",
+            [
+                i64::from(admin.user_id).into(),
+                input.user_id.into(),
+                format!("Admin reset local password for user '{username}'").into(),
+            ],
+        ))
+        .await;
+
+    tracing::info!(
+        actor_id = admin.user_id,
+        target_user_id = input.user_id,
+        "admin_set_user_password completed"
+    );
+
+    Ok(AdminSetUserPasswordResult {
+        temporary_password: plaintext,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2267,5 +2448,35 @@ pub(crate) fn validate_password_strength(password: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::ValidationFailed(errors))
+    }
+}
+
+#[cfg(test)]
+mod admin_set_password_tests {
+    use super::{generate_temporary_password, validate_password_strength};
+
+    #[test]
+    fn generated_temporary_password_meets_strength_policy() {
+        for _ in 0..20 {
+            let pw = generate_temporary_password();
+            assert!(pw.len() >= 8, "len={}", pw.len());
+            assert!(
+                validate_password_strength(&pw).is_ok(),
+                "generated password failed policy: {pw}"
+            );
+            assert!(pw.chars().any(|c| c.is_uppercase()));
+            assert!(pw.chars().any(|c| c.is_lowercase()));
+            assert!(pw.chars().any(|c| c.is_ascii_digit()));
+            assert!(pw.chars().any(|c| "!@#$%&*".contains(c)));
+        }
+    }
+
+    #[test]
+    fn validate_password_strength_rejects_weak_passwords() {
+        assert!(validate_password_strength("short").is_err());
+        assert!(validate_password_strength("alllowercase1").is_err());
+        assert!(validate_password_strength("ALLUPPERCASE1").is_err());
+        assert!(validate_password_strength("NoDigitsHere").is_err());
+        assert!(validate_password_strength("ValidPass1").is_ok());
     }
 }

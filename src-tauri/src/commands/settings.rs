@@ -4,7 +4,7 @@
 //! require an active step-up verification.
 
 use serde::Deserialize;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::AppResult;
@@ -135,4 +135,201 @@ pub async fn list_setting_change_events(
         PermissionScope::Global
     );
     settings::list_change_events(&state.db, limit.unwrap_or(50)).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SavePolicyDraftPayload {
+    pub domain: String,
+    pub snapshot_json: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ActivatePolicyPayload {
+    pub domain: String,
+    pub snapshot_id: i64,
+}
+
+/// List all policy snapshots for a domain (active + drafts + history).
+#[tauri::command]
+pub async fn list_policy_snapshots(
+    domain: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<PolicySnapshot>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    settings::list_policy_snapshots(&state.db, &domain).await
+}
+
+/// Create or update the draft policy snapshot for a domain.
+#[tauri::command]
+pub async fn save_policy_draft(
+    payload: SavePolicyDraftPayload,
+    state: State<'_, AppState>,
+) -> AppResult<PolicySnapshot> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    settings::save_policy_draft(
+        &state.db,
+        &payload.domain,
+        &payload.snapshot_json,
+        user.user_id,
+    )
+    .await
+}
+
+/// Run validation rules against the current draft.
+#[tauri::command]
+pub async fn test_policy_draft(
+    domain: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<settings::PolicyTestResult>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    settings::test_policy_draft(&state.db, &domain).await
+}
+
+/// Promote a draft snapshot to active. Security domains require step-up.
+#[tauri::command]
+pub async fn activate_policy(
+    payload: ActivatePolicyPayload,
+    state: State<'_, AppState>,
+) -> AppResult<PolicySnapshot> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    if matches!(payload.domain.as_str(), "session" | "password") {
+        require_step_up!(state);
+    }
+    settings::activate_policy(
+        &state.db,
+        &payload.domain,
+        payload.snapshot_id,
+        user.user_id,
+    )
+    .await
+}
+
+/// Discard the current draft for a domain.
+#[tauri::command]
+pub async fn discard_policy_draft(domain: String, state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    settings::discard_policy_draft(&state.db, &domain, user.user_id).await
+}
+
+/// List connection profiles (read-only) for the Integrations tab.
+#[tauri::command]
+pub async fn list_connection_profiles(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<settings::ConnectionProfile>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    settings::list_connection_profiles(&state.db).await
+}
+
+/// Ensure baseline `app_settings` rows and default policy snapshots exist.
+/// Idempotent — safe when Settings loads and finds an empty catalog.
+#[tauri::command]
+pub async fn ensure_settings_defaults(state: State<'_, AppState>) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    crate::db::seeder::seed_default_settings(&state.db).await?;
+    settings::ensure_default_policies(&state.db).await?;
+    Ok(())
+}
+
+/// Upload / replace the tenant document branding logo. Requires `adm.settings`.
+#[tauri::command]
+pub async fn upload_document_branding_logo(
+    app: AppHandle,
+    source_path: String,
+    state: State<'_, AppState>,
+) -> AppResult<settings::branding::DocumentBrandingLogoUploadResult> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    settings::branding::upload_document_branding_logo(
+        &state.db,
+        &app_data_dir,
+        &source_path,
+        user.user_id,
+    )
+    .await
+}
+
+/// Clear the tenant document branding logo. Requires `adm.settings`.
+#[tauri::command]
+pub async fn clear_document_branding_logo(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    settings::branding::clear_document_branding_logo(&state.db, &app_data_dir, user.user_id).await
+}
+
+/// Read the tenant document branding logo preview (`data:` URL payload).
+/// Any authenticated session may read (print consumers inject the header).
+#[tauri::command]
+pub async fn read_document_branding_logo_preview(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<Option<settings::branding::DocumentBrandingLogoPreview>> {
+    let _user = require_session!(state);
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
+    settings::branding::read_document_branding_logo_preview(&state.db, &app_data_dir).await
 }

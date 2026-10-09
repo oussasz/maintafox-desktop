@@ -55,7 +55,7 @@ export function WoConversionModal({ di, onConverted, onClose }: WoConversionModa
     () => [
       {
         label: t("woConversion.checkAsset"),
-        passed: di.asset_id != null && di.asset_id > 0,
+        passed: di.equipment_id != null && di.equipment_id > 0,
       },
       {
         label: t("woConversion.checkClassif"),
@@ -66,7 +66,7 @@ export function WoConversionModal({ di, onConverted, onClose }: WoConversionModa
         passed: di.validated_urgency != null,
       },
     ],
-    [di.asset_id, di.classification_code_id, di.validated_urgency, t],
+    [di.equipment_id, di.classification_code_id, di.validated_urgency, t],
   );
 
   const allPassed = useMemo(() => checklist.every((item) => item.passed), [checklist]);

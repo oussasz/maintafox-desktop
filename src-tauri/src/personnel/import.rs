@@ -11,6 +11,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, State
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{AppError, AppResult};
+use crate::personnel::queries;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonnelImportBatchSummary {
@@ -311,6 +312,17 @@ pub async fn apply_import_batch(
                     ],
                 ))
                 .await?;
+                let new_id: i64 = txn
+                    .query_one(Statement::from_string(
+                        DbBackend::Sqlite,
+                        "SELECT last_insert_rowid() AS id".to_string(),
+                    ))
+                    .await?
+                    .and_then(|r| r.try_get::<i64>("", "id").ok())
+                    .unwrap_or_default();
+                if let Some(team_id) = mapped.team_id {
+                    queries::sync_home_crew_assignment(&txn, new_id, team_id, &now).await?;
+                }
                 created += 1;
             }
             Some("update") => {
@@ -361,6 +373,9 @@ pub async fn apply_import_batch(
                     return Err(AppError::ValidationFailed(vec![format!(
                         "Concurrency conflict on personnel id={personnel_id}. Import was prepared with stale row_version."
                     )]));
+                }
+                if let Some(team_id) = mapped.team_id {
+                    queries::sync_home_crew_assignment(&txn, personnel_id, team_id, &now).await?;
                 }
                 updated += 1;
             }
@@ -659,7 +674,9 @@ async fn validate_mapped_fields(
         }
     }
     if let Some(team_code) = normalized.team_code.as_deref() {
-        let found = crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, team_code).await?;
+        let found =
+            crate::repository::team_repository::try_resolve_active_team_id_by_code(db, team_code)
+                .await?;
         if found.is_none() {
             push_message(
                 messages,
@@ -720,7 +737,9 @@ async fn resolve_mapped_fields(db: &impl ConnectionTrait, normalized: &Normalize
         None => None,
     };
     let team_id = match normalized.team_code.as_deref() {
-        Some(code) => crate::org::model_scope::try_resolve_active_org_node_id_by_code(db, code).await?,
+        Some(code) => {
+            crate::repository::team_repository::try_resolve_active_team_id_by_code(db, code).await?
+        }
         None => None,
     };
     Ok(MappedIds {

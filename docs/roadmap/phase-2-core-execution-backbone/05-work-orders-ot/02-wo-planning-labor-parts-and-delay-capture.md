@@ -200,10 +200,10 @@ Return updated WorkOrder.
 
 --- B) assign_wo ---
 Input: WoAssignInput { wo_id, actor_id, expected_row_version,
-  assigned_group_id?, primary_responsible_id?, scheduled_at? }
+  assigned_team_id?, primary_responsible_id?, scheduled_at? }
 Guard: current_status must be ready_to_schedule → transition to 'assigned'.
-Validates: at least one of assigned_group_id or primary_responsible_id must be provided.
-UPDATE: status=(assigned), assigned_group_id=?, primary_responsible_id=?,
+Validates: at least one of assigned_team_id or primary_responsible_id must be provided.
+UPDATE: status=(assigned), assigned_team_id=?, primary_responsible_id=?,
   scheduled_at=COALESCE(?,scheduled_at), row_version+1, updated_at=now
 Write wo_state_transition_log: action='assign', notes includes assignee id.
 
@@ -486,7 +486,7 @@ Props: wo: WorkOrder; canEdit: boolean
 Sections:
 1. Timing — planned_start/planned_end date pickers; expected_duration_hours input
 2. Urgency — urgency level selector (5 levels with color swatches)
-3. Assignment — assigned_group_id org node picker; primary_responsible_id user picker;
+3. Assignment — assigned_team_id crew picker; primary_responsible_id user picker;
    scheduled_at datetime picker
 4. Prerequisites checklist — editable list of tasks; add/remove; mandatory toggle
 5. Parts plan — table of planned parts with quantity and estimated cost; add row button;
@@ -495,7 +495,7 @@ Sections:
 All fields disabled if !canEdit or WO is past planned status.
 "Move to Ready to Schedule" button: active only when planWo requirements are met
   (planner_id set, planned_start set, planned_end set).
-"Assign" button: active only when assigned_group_id or primary_responsible_id set.
+"Assign" button: active only when assigned_team_id or primary_responsible_id set.
 
 CREATE src/components/wo/WoExecutionControls.tsx
 

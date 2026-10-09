@@ -1,62 +1,242 @@
-{
+﻿{
+  "page": {
+    "title": "Planning"
+  },
+  "views": {
+    "gantt": "Gantt board",
+    "calendar": "Calendar view"
+  },
+  "calendar": {
+    "today": "Today",
+    "loading": "Loading…",
+    "empty": "No commitments or locked windows on this day.",
+    "more": "+{{count}} more",
+    "mode": {
+      "month": "Month",
+      "week": "Week",
+      "day": "Day"
+    },
+    "legend": {
+      "commitment": "Commitment",
+      "frozen": "Frozen",
+      "conflict": "Conflict",
+      "freeze": "Freeze window",
+      "shutdown": "Shutdown",
+      "window": "Production / maintenance"
+    }
+  },
+  "context": {
+    "title": "Planning context",
+    "allCrews": "All crews",
+    "modeAllHint": "Plant-wide overview — one lane per crew. Commit requires choosing a target crew.",
+    "modeCrewHint": "Single crew — technician lanes for this crew's roster.",
+    "crewRequired": "Board crew is required to load the calendar and commit work."
+  },
   "filters": {
-    "periodStart": "Period start",
-    "periodEnd": "Period end",
-    "team": "Team"
+    "periodStart": "From",
+    "periodEnd": "To",
+    "team": "Crew",
+    "boardCrew": "Board crew",
+    "teamNone": "Select a crew",
+    "teamRequired": "Select a board crew to load its calendar",
+    "searchPlaceholder": "Search backlog by code or title",
+    "readiness": "Readiness",
+    "readinessReady": "Ready",
+    "readinessBlocked": "Blocked",
+    "sourceType": "Source",
+    "horizonDays": "{{count}} days",
+    "sourceTypes": {
+      "work_order": "Work order",
+      "pm_occurrence": "PM occurrence",
+      "inspection_follow_up": "Approved request"
+    }
   },
   "actions": {
     "refreshBacklog": "Refresh backlog",
     "freezePeriod": "Freeze period",
     "exportPdf": "Export Gantt PDF",
     "commit": "Create commitment",
-    "notifyTeams": "Notify teams"
+    "notifyTeams": "Notify teams",
+    "plannerTools": "Planner tools",
+    "requiresCommitments": "Available once work is committed on this board"
   },
   "state": {
     "loading": "Loading planning data..."
   },
   "backlog": {
-    "readyColumn": "Ready backlog",
-    "blockedColumn": "Blocked backlog",
-    "readinessScore": "Readiness score",
+    "readyColumn": "Ready",
+    "blockedColumn": "Blocked",
+    "readinessScore": "Readiness",
+    "skillMatch": "Skill match",
+    "risk": "Risk",
     "emptyReady": "No ready candidates.",
-    "emptyBlocked": "No blocked candidates."
+    "emptyBlocked": "No blocked candidates.",
+    "readyHint": "Click a Ready card to commit it to the schedule."
+  },
+  "blockers": {
+    "parts_missing": "Parts",
+    "skills_missing": "Skills",
+    "permit_missing": "Permits",
+    "window_conflict": "Window",
+    "prerequisite_blocked": "Prerequisites",
+    "assignee_unavailable": "Unavailable",
+    "capacity_exceeded": "Capacity"
+  },
+  "board": {
+    "unassignedLane": "Team — not yet assigned to a person",
+    "crewPool": "Crew pool",
+    "empty": "No assignees or commitments in this horizon.",
+    "emptyWithCrew": "No scheduled work yet — pick a Ready card on the left and commit it to this calendar.",
+    "emptyAllCrews": "No plant commitments in this horizon — pick a Ready card and commit to a target crew.",
+    "unknownCrew": "Unknown crew",
+    "noCrewTitle": "Select a board crew",
+    "noCrewHint": "Use Planning context above to choose All crews or a single crew and the From–To period."
   },
   "commitment": {
-    "formTitle": "Commitment form",
-    "selectedCandidate": "Selected candidate",
+    "formTitle": "Commit to schedule",
+    "selectedCandidate": "Candidate",
     "start": "Committed start",
     "end": "Committed end",
-    "assignee": "Assignee",
-    "unassigned": "Unassigned",
-    "budgetThreshold": "Budget threshold"
+    "assignee": "Technician (optional)",
+    "unassigned": "Unassigned (crew only)",
+    "targetCrew": "Target crew",
+    "targetCrewPlaceholder": "Select a crew",
+    "targetCrewHint": "The crew that owns this scheduled work (capacity load and board lane).",
+    "assigneeHint": "Optional person who will execute the work. For work orders, they become the primary responsible.",
+    "assigneeDisabledNoCrew": "Select a board crew in Planning context before choosing an assignee.",
+    "assigneeDisabledNeedTargetCrew": "Select a target crew above before choosing an assignee.",
+    "rosterLoading": "Loading crew roster…",
+    "rosterEmpty": "This crew has no members yet.",
+    "rosterEmptyHint": "This crew has no members — add people on the crew, or leave Unassigned.",
+    "budgetThreshold": "Budget threshold (optional)",
+    "budgetThresholdPlaceholder": "e.g. 500",
+    "budgetThresholdHint": "Optional ceiling for labor cost. If the calculated estimate exceeds it, a variance warning is recorded.",
+    "estimatedLaborCost": "Estimated labor cost",
+    "estimatedLaborCostValue": "{{value}}",
+    "estimatedLaborCostHint": "Calculated automatically from assignee rate × committed hours. Final value is confirmed by the server on commit.",
+    "estimatedLaborCostNeedAssignee": "Select an assignee with a rate card, or see the candidate cost range when available.",
+    "estimatedLaborCostNeedSlot": "Enter committed start and end to calculate the estimate.",
+    "estimatedLaborCostNoRate": "No rate card for this assignee — estimate unavailable until a rate is configured.",
+    "estimatedLaborCostLoading": "Loading rate…",
+    "durationHours": "Duration: {{hours}} h",
+    "matchingSkills": "{{count}} matching skills",
+    "costRange": "Estimated labor cost: {{min}} – {{max}}",
+    "capacityRemaining": "Crew capacity this day: {{remaining}} h remaining of {{available}} h.",
+    "capacityBlockedHint": "This slot is longer than remaining crew capacity ({{remaining}} h). Shorten the end time.",
+    "capacityDayFull": "No remaining crew capacity on this day",
+    "horizonHint": "Only dates inside the board From–To period can be selected. Slot length is limited by remaining daily crew capacity.",
+    "horizonPrefillWarning": "The candidate window is outside the board period — adjust start and end into From–To before committing.",
+    "previewTitle": "Crew calendar preview",
+    "previewBar": "Proposed · {{code}}",
+    "previewEmpty": "No commitments or leave in this horizon yet.",
+    "previewNeedsCrew": "Select a board crew to preview the calendar.",
+    "previewNeedsTargetCrew": "Select a target crew to preview where the commitment will land.",
+    "overrideDoubleBooking": "Override double-booking with reason",
+    "pickDate": "Pick date",
+    "prevMonth": "Previous month",
+    "nextMonth": "Next month",
+    "time": "Time",
+    "errors": {
+      "noCandidate": "Select a candidate before committing.",
+      "crewRequired": "Board crew is required to commit.",
+      "targetCrewRequired": "Select a target crew before committing.",
+      "slotRequired": "Enter both committed start and end.",
+      "slotInvalid": "Committed start or end is not a valid date/time.",
+      "endAfterStart": "Committed end must be after start.",
+      "outsideHorizon": "Committed start and end must fall inside the board From–To period.",
+      "assigneeNotOnCrew": "Assignee must be a member of the selected board crew.",
+      "capacityExceeded": "This slot exceeds remaining crew capacity for that day ({{remaining}} h left). Choose a shorter slot or another day.",
+      "budgetInvalid": "Budget threshold must be a non-negative number."
+    }
   },
   "gantt": {
-    "capacityTitle": "Team capacity indicators",
+    "capacityTitle": "Team capacity",
+    "capacityTitleAllCrews": "Crew capacity (horizon peak)",
     "capacityLine": "{{committed}}h committed / {{available}}h available",
     "emptyCapacity": "No capacity data in selected period.",
-    "assignmentLaneTitle": "Assignment calendar lanes",
+    "assignmentLaneTitle": "Assignment board",
     "laneHeader": "Assignee",
-    "overrideReasonPrompt": "Double-booking override reason:",
+    "overrideReasonPrompt": "Double-booking override reason",
     "defaultReason": "Schedule frozen by planner.",
-    "freezeOverlayTitle": "Frozen windows"
+    "freezeOverlayTitle": "Locked windows"
   },
   "windows": {
-    "title": "Production window manager",
+    "title": "Production windows",
+    "detailTitle": "Locked window",
+    "detailEmpty": "Window details are unavailable.",
     "type": "Window type",
     "start": "Start",
     "end": "End",
     "reason": "Lock reason",
     "add": "Add locked window",
-    "locked": "Locked"
+    "locked": "Locked",
+    "empty": "No production windows yet.",
+    "types": {
+      "production": "Production",
+      "maintenance": "Maintenance",
+      "shutdown": "Shutdown",
+      "freeze": "Freeze"
+    }
   },
   "breakIns": {
-    "title": "Supervisor break-in tracking",
+    "title": "Break-ins",
     "commitment": "Commitment",
     "selectCommitment": "Select commitment",
     "reason": "Reason code",
-    "approver": "Approver user id",
+    "approver": "Approver",
+    "selectApprover": "Select approver",
+    "newAssignee": "New assignee",
+    "start": "New start",
+    "end": "New end",
     "overrideReason": "Override reason",
+    "dangerousOverrideReason": "Dangerous override reason",
     "create": "Register break-in",
-    "empty": "No break-ins for selected period."
+    "empty": "No break-ins for selected period.",
+    "reasons": {
+      "emergency": "Emergency",
+      "safety": "Safety",
+      "production_loss": "Production loss",
+      "regulatory": "Regulatory",
+      "other": "Other"
+    }
+  },
+  "freeze": {
+    "title": "Freeze schedule period",
+    "summary": "Freeze commitments from {{start}} to {{end}}.",
+    "reason": "Freeze reason",
+    "reasonPlaceholder": "Explain why this period must be frozen"
+  },
+  "override": {
+    "title": "Override double-booking",
+    "description": "This move conflicts with an existing assignment. Provide an audit reason to continue.",
+    "reason": "Override reason",
+    "confirm": "Confirm override"
+  },
+  "inspector": {
+    "title": "Commitment detail",
+    "frozen": "Frozen",
+    "blockingConflict": "Blocking conflict",
+    "slot": "Committed slot",
+    "assignee": "Assignee",
+    "team": "Crew",
+    "cost": "Estimated labor cost",
+    "costVariance": "Budget variance",
+    "nearestWindow": "Nearest feasible window",
+    "auditTitle": "Schedule change log",
+    "auditEmpty": "No audit entries for this commitment.",
+    "openOnBoard": "Open on board"
+  },
+  "audit": {
+    "actions": {
+      "create_commitment": "Commitment created",
+      "reschedule_commitment": "Rescheduled",
+      "override_double_booking": "Double-booking override",
+      "freeze_schedule_period": "Period frozen",
+      "create_break_in": "Break-in registered"
+    }
+  },
+  "dialogs": {
+    "cancel": "Cancel",
+    "close": "Close"
   }
 }

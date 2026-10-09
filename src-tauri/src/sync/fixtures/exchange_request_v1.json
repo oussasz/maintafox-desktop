@@ -1,0 +1,18 @@
+{
+  "protocol_version": "v1",
+  "idempotency_key": "ex-fixture-001",
+  "device_class": "desktop",
+  "checkpoint_token": "cp-tenant-demo-1",
+  "outbox_batch": [
+    {
+      "idempotency_key": "equipment:eq-fixture-1:v1",
+      "entity_type": "equipment",
+      "entity_sync_id": "eq-fixture-1",
+      "operation": "upsert",
+      "row_version": 1,
+      "payload_json": "{\"entity_sync_id\":\"eq-fixture-1\",\"row_version\":1,\"asset_code\":\"EQ-FX-1\",\"asset_name\":\"Fixture Pump\",\"status_code\":\"active_in_service\"}",
+      "payload_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+  ],
+  "media_manifest": []
+}

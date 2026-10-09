@@ -2,15 +2,16 @@
 
 use cron::Schedule;
 use std::str::FromStr;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
 use crate::planning::domain::ExportedBinaryDocument;
+use crate::reports::artifacts::{persist_run_artifact, read_run_document};
 use crate::reports::domain::{ExportReportInput, ReportRun, ReportSchedule, ReportTemplate, UpsertReportScheduleInput};
 use crate::reports::export::export_report_document;
 use crate::reports::queries::{
-    delete_schedule, get_template_by_code, get_template_by_id, list_my_runs, list_my_schedules,
+    delete_schedule, get_template_by_code, get_template_by_id, insert_run, list_my_runs, list_my_schedules,
     list_report_templates as query_list_report_templates, upsert_schedule,
 };
 use crate::reports::scheduler::next_run_rfc3339;
@@ -26,6 +27,12 @@ fn validate_export_format(s: &str) -> AppResult<()> {
             "export_format must be pdf or xlsx.".into()
         ]))
     }
+}
+
+fn app_data_dir(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))
 }
 
 #[tauri::command]
@@ -111,6 +118,7 @@ pub async fn list_my_report_runs(limit: Option<i64>, state: State<'_, AppState>)
 #[tauri::command]
 pub async fn export_report_now(
     input: ExportReportInput,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<ExportedBinaryDocument> {
     let user = require_session!(state);
@@ -130,5 +138,47 @@ pub async fn export_report_now(
     if !t.is_active {
         return Err(AppError::ValidationFailed(vec!["template inactive.".into()]));
     }
-    export_report_document(&state.db, &t.code, &input.export_format.to_ascii_lowercase()).await
+    let fmt = input.export_format.to_ascii_lowercase();
+    let doc = export_report_document(&state.db, &t.code, &fmt).await?;
+    let run_id = insert_run(
+        &state.db,
+        None,
+        t.id,
+        i64::from(user.user_id),
+        "running",
+        &fmt,
+    )
+    .await?;
+    let data_dir = app_data_dir(&app)?;
+    if let Err(e) = persist_run_artifact(
+        &state.db,
+        &data_dir,
+        run_id,
+        &fmt,
+        &doc.file_name,
+        &doc.bytes,
+    )
+    .await
+    {
+        let _ = crate::reports::queries::finish_run_failed(&state.db, run_id, &e.to_string()).await;
+        return Err(e);
+    }
+    Ok(doc)
+}
+
+#[tauri::command]
+pub async fn download_report_run_artifact(
+    run_id: i64,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<ExportedBinaryDocument> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::REP_EXPORT,
+        PermissionScope::Global
+    );
+    let data_dir = app_data_dir(&app)?;
+    read_run_document(&state.db, &data_dir, run_id, i64::from(user.user_id)).await
 }

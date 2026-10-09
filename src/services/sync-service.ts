@@ -22,6 +22,7 @@ import type {
   SyncRepairPreviewInput,
   SyncReplayRun,
   SyncStateSummary,
+  MaterializeInboxResult,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -277,6 +278,30 @@ export async function applySyncBatch(
     return ApplySyncBatchResultSchema.parse(result) as ApplySyncBatchResult;
   } catch (err) {
     throw formatDecodeError("apply_sync_batch", err);
+  }
+}
+
+const MaterializeInboxResultSchema = z.object({
+  processed: z.number(),
+  applied: z.number(),
+  conflicts: z.number(),
+  skipped: z.number(),
+  errors: z.array(z.string()),
+});
+
+/** Apply pending sync_inbox envelopes into domain tables (Universal Sync Standard). */
+export async function materializeSyncInbox(
+  limit?: number,
+  options?: { silent?: boolean },
+): Promise<MaterializeInboxResult> {
+  try {
+    const inv = options?.silent ? invokeSilent : invoke;
+    const result = await inv<unknown>("materialize_sync_inbox", {
+      limit: limit ?? null,
+    });
+    return MaterializeInboxResultSchema.parse(result) as MaterializeInboxResult;
+  } catch (err) {
+    throw formatDecodeError("materialize_sync_inbox", err);
   }
 }
 

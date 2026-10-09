@@ -12,6 +12,11 @@ import {
   resolveDiOriginLabel,
 } from "@/components/di/di-reference-labels";
 import { diStatusToI18nKey } from "@/components/di/status-meta";
+import {
+  DOCUMENT_HEADER_PRINT_CSS,
+  loadDocumentHeaderHtml,
+  wrapDocumentHeaderBlock,
+} from "@/export/templates/document-header";
 import { i18n } from "@/i18n";
 import {
   formatAssetLabel,
@@ -41,7 +46,9 @@ function buildHtml(
   locale: string,
   originText: string,
   symptomText: string,
+  letterheadHtml: string,
 ): string {
+  const letterhead = wrapDocumentHeaderBlock(letterheadHtml);
   const fmt = (iso: string | null | undefined) => {
     if (!iso) return "—";
     try {
@@ -105,11 +112,12 @@ function buildHtml(
     .sig-box p { margin: 2px 0; font-size: 10px; }
     .footer { margin-top: 24px; font-size: 9px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 6px; }
     @media print { body { margin: 0; padding: 10px 20px; } }
+    ${DOCUMENT_HEADER_PRINT_CSS}
   </style>
 </head>
 <body>
+  ${letterhead}
   <div class="header">
-    <div class="company">Maintafox</div>
     <h1>${t("print.ficheTitle")}</h1>
     <div class="subtitle">${t("print.headerSubtitle")}</div>
   </div>
@@ -216,7 +224,7 @@ function buildHtml(
   </div>
 
   <div class="footer">
-    ${t("print.footer", { code: esc(di.code), product: "Maintafox", date: now })}
+    ${t("print.footer", { code: esc(di.code), date: now })}
   </div>
 </body>
 </html>`;
@@ -229,12 +237,13 @@ export async function printDiFiche(di: InterventionRequest): Promise<void> {
   try {
     const t = i18n.getFixedT(i18n.language, "di");
     const locale = intlLocaleForLanguage(i18n.language);
-    const [originMap, symptomText] = await Promise.all([
+    const [originMap, symptomText, letterheadHtml] = await Promise.all([
       loadDiOriginLabelMap(),
       fetchDiSymptomLabel(di.symptom_code_id),
+      loadDocumentHeaderHtml(),
     ]);
     const originText = resolveDiOriginLabel(originMap, di.origin_type);
-    html = buildHtml(di, t, locale, originText, symptomText);
+    html = buildHtml(di, t, locale, originText, symptomText, letterheadHtml);
   } catch {
     // Last-resort fallback so the print action still works even if i18n/template generation fails.
     html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(di.code)}</title></head><body><h1>${esc(di.code)}</h1><p>${esc(di.title)}</p><pre>${esc(di.description)}</pre></body></html>`;

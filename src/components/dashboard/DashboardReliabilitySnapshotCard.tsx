@@ -58,7 +58,7 @@ export function DashboardReliabilitySnapshotCard() {
         <button
           type="button"
           className="text-xs font-medium text-primary underline-offset-2 hover:underline"
-          onClick={() => navigate(`/reliability/foundation${RELIABILITY_RAM_EVIDENCE_HASH}`)}
+          onClick={() => navigate(`/analytics/rams/foundation${RELIABILITY_RAM_EVIDENCE_HASH}`)}
         >
           {t("widgets.reliability.openEvidence")}
         </button>

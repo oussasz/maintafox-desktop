@@ -32,6 +32,7 @@ const DEFAULT_FILTERS: AssetSearchFilters = {
   org_node_ids: null,
   include_decommissioned: false,
   limit: 100,
+  registry_focus: null,
 };
 
 function applyResultsToExpandState(

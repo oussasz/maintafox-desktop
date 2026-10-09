@@ -49,7 +49,7 @@ export function PasswordPolicyPanel() {
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save error");
+      setError(err instanceof Error ? err.message : t("passwordPolicy.saveError"));
     } finally {
       setSaving(false);
     }
@@ -68,97 +68,80 @@ export function PasswordPolicyPanel() {
 
   return (
     <div className="rounded-lg border border-surface-border bg-surface-1 p-6">
-      <h2 className="text-lg font-semibold text-text-primary">
-        {t("passwordPolicy.title", "Politique de mot de passe")}
-      </h2>
+      <h2 className="text-lg font-semibold text-text-primary">{t("passwordPolicy.title")}</h2>
 
-      <form onSubmit={handleSubmit} className="mt-4 space-y-4 max-w-md">
-        {/* Expiry */}
+      <form onSubmit={handleSubmit} className="mt-4 max-w-md space-y-4">
         <NumberField
-          label={t("passwordPolicy.maxAgeDays", "Expiration (jours)")}
-          hint={t("passwordPolicy.maxAgeDaysHint", "0 = pas d'expiration")}
+          label={t("passwordPolicy.maxAgeDays")}
+          hint={t("passwordPolicy.maxAgeDaysHint")}
           value={policy.max_age_days}
           onChange={(v) => update("max_age_days", v)}
           min={0}
           max={365}
         />
         <NumberField
-          label={t("passwordPolicy.warnDays", "Avertissement (jours avant expiration)")}
+          label={t("passwordPolicy.warnDays")}
           value={policy.warn_days_before_expiry}
           onChange={(v) => update("warn_days_before_expiry", v)}
           min={0}
           max={90}
         />
         <NumberField
-          label={t("passwordPolicy.minLength", "Longueur minimale")}
+          label={t("passwordPolicy.minLength")}
           value={policy.min_length}
           onChange={(v) => update("min_length", v)}
           min={4}
           max={64}
         />
 
-        {/* Complexity toggles */}
         <div className="space-y-2">
-          <p className="text-sm font-medium text-text-primary">
-            {t("passwordPolicy.complexity", "Exigences de complexité")}
-          </p>
+          <p className="text-sm font-medium text-text-primary">{t("passwordPolicy.complexity")}</p>
           <Toggle
-            label={t("passwordPolicy.requireUppercase", "Majuscule requise")}
+            label={t("passwordPolicy.requireUppercase")}
             checked={policy.require_uppercase}
             onChange={(v) => update("require_uppercase", v)}
           />
           <Toggle
-            label={t("passwordPolicy.requireLowercase", "Minuscule requise")}
+            label={t("passwordPolicy.requireLowercase")}
             checked={policy.require_lowercase}
             onChange={(v) => update("require_lowercase", v)}
           />
           <Toggle
-            label={t("passwordPolicy.requireDigit", "Chiffre requis")}
+            label={t("passwordPolicy.requireDigit")}
             checked={policy.require_digit}
             onChange={(v) => update("require_digit", v)}
           />
           <Toggle
-            label={t("passwordPolicy.requireSpecial", "Caractère spécial requis")}
+            label={t("passwordPolicy.requireSpecial")}
             checked={policy.require_special}
             onChange={(v) => update("require_special", v)}
           />
         </div>
 
-        {/* Live preview */}
         <div className="rounded-md bg-surface-2 p-3">
-          <p className="text-xs font-medium text-text-muted mb-1">
-            {t("passwordPolicy.preview", "Aperçu de la politique :")}
-          </p>
+          <p className="mb-1 text-xs font-medium text-text-muted">{t("passwordPolicy.preview")}</p>
           <p className="text-sm text-text-secondary">
-            {t("passwordPolicy.previewText", "Min {{len}} car.", { len: policy.min_length })}
-            {policy.require_uppercase ? ` + ${t("passwordPolicy.upper", "MAJ")}` : ""}
-            {policy.require_lowercase ? ` + ${t("passwordPolicy.lower", "min")}` : ""}
-            {policy.require_digit ? ` + ${t("passwordPolicy.digit", "chiffre")}` : ""}
-            {policy.require_special ? ` + ${t("passwordPolicy.special", "spécial")}` : ""}
+            {t("passwordPolicy.previewText", { len: policy.min_length })}
+            {policy.require_uppercase ? ` + ${t("passwordPolicy.upper")}` : ""}
+            {policy.require_lowercase ? ` + ${t("passwordPolicy.lower")}` : ""}
+            {policy.require_digit ? ` + ${t("passwordPolicy.digit")}` : ""}
+            {policy.require_special ? ` + ${t("passwordPolicy.special")}` : ""}
             {policy.max_age_days > 0
-              ? `. ${t("passwordPolicy.expiresEvery", "Expire tous les {{days}} jours", { days: policy.max_age_days })}`
-              : `. ${t("passwordPolicy.noExpiry", "Pas d'expiration")}`}
+              ? `. ${t("passwordPolicy.expiresEvery", { days: policy.max_age_days })}`
+              : `. ${t("passwordPolicy.noExpiry")}`}
           </p>
         </div>
 
         {error && <p className="text-sm text-status-danger">{error}</p>}
-        {success && (
-          <p className="text-sm text-emerald-600">
-            {t("passwordPolicy.saved", "Politique enregistrée avec succès.")}
-          </p>
-        )}
+        {success && <p className="text-sm text-emerald-600">{t("passwordPolicy.saved")}</p>}
 
         <button type="submit" disabled={saving} className="btn-primary text-sm">
-          {saving
-            ? t("passwordPolicy.saving", "Enregistrement...")
-            : t("passwordPolicy.save", "Enregistrer la politique")}
+          {saving ? t("passwordPolicy.saving") : t("passwordPolicy.save")}
         </button>
       </form>
     </div>
   );
 }
-
-// ── Sub-components ────────────────────────────────────────────────────────
 
 function NumberField({
   label,
@@ -186,11 +169,11 @@ function NumberField({
           min={min}
           max={max}
           className="w-20 rounded-md border border-surface-border bg-surface-0
-                     px-2 py-1 text-sm text-text-primary text-right
+                     px-2 py-1 text-right text-sm text-text-primary
                      focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
         />
       </label>
-      {hint && <p className="text-xs text-text-muted mt-0.5">{hint}</p>}
+      {hint && <p className="mt-0.5 text-xs text-text-muted">{hint}</p>}
     </div>
   );
 }
@@ -205,7 +188,7 @@ function Toggle({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <label className="flex items-center gap-2 cursor-pointer">
+    <label className="flex cursor-pointer items-center gap-2">
       <input
         type="checkbox"
         checked={checked}

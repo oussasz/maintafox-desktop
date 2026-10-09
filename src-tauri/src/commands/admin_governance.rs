@@ -957,18 +957,18 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
 
         // ── Insert role ──────────────────────────────────────────────────
         let now = chrono::Utc::now().to_rfc3339();
-        let sync_id = Uuid::new_v4().to_string();
+        let entity_sync_id = Uuid::new_v4().to_string();
 
         state
             .db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO roles \
-                 (sync_id, name, description, role_type, status, is_system, \
+                 (entity_sync_id, name, description, role_type, status, is_system, \
                   created_at, updated_at, row_version) \
                  VALUES (?, ?, ?, 'custom', 'active', 0, ?, ?, 1)",
                 [
-                    sync_id.into(),
+                    entity_sync_id.into(),
                     entry.name.clone().into(),
                     entry
                         .description

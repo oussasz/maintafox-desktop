@@ -919,3 +919,200 @@ pub async fn force_change_password(
     let info = sm.session_info();
     Ok(ForceChangePasswordResponse { session_info: info })
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Password recovery contacts (pre-login, unauthenticated)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Public contact row for admin-assisted password recovery. No internal user ids.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PasswordRecoveryContact {
+    pub display_name: String,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+}
+
+/// List active elevated administrators for the Forgot Password dialog.
+///
+/// Elevation matches `user_has_elevated_admin_access`: `is_admin = 1` or an active
+/// Administrator / Superadmin role assignment. Callable without a session.
+#[tauri::command]
+pub async fn get_password_recovery_contacts(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<PasswordRecoveryContact>> {
+    query_password_recovery_contacts(&state.db).await
+}
+
+/// Query elevated admin contacts for password recovery (shared with unit tests).
+pub(crate) async fn query_password_recovery_contacts(
+    db: &sea_orm::DatabaseConnection,
+) -> AppResult<Vec<PasswordRecoveryContact>> {
+    let rows = db
+        .query_all(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Sqlite,
+            r"SELECT DISTINCT
+                ua.username,
+                ua.display_name,
+                ua.email,
+                ua.phone
+              FROM user_accounts ua
+              WHERE ua.is_active = 1
+                AND ua.deleted_at IS NULL
+                AND (
+                  ua.is_admin = 1
+                  OR EXISTS (
+                    SELECT 1
+                      FROM user_scope_assignments usa
+                      INNER JOIN roles r ON r.id = usa.role_id
+                     WHERE usa.user_id = ua.id
+                       AND usa.deleted_at IS NULL
+                       AND r.deleted_at IS NULL
+                       AND r.name IN ('Administrator', 'Superadmin')
+                  )
+                )
+              ORDER BY COALESCE(ua.display_name, ua.username) COLLATE NOCASE",
+            [],
+        ))
+        .await?;
+
+    let mut contacts = Vec::with_capacity(rows.len());
+    for row in rows {
+        let username: String = row.try_get("", "username").unwrap_or_default();
+        let display_name: Option<String> = row.try_get("", "display_name").ok().flatten();
+        let email: Option<String> = row
+            .try_get::<Option<String>>("", "email")
+            .ok()
+            .flatten()
+            .map(|e| e.trim().to_string())
+            .filter(|e| !e.is_empty());
+        let phone: Option<String> = row
+            .try_get::<Option<String>>("", "phone")
+            .ok()
+            .flatten()
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty());
+
+        let name = display_name
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty())
+            .unwrap_or(username);
+
+        if name.is_empty() {
+            continue;
+        }
+
+        contacts.push(PasswordRecoveryContact {
+            display_name: name,
+            email,
+            phone,
+        });
+    }
+
+    Ok(contacts)
+}
+
+#[cfg(test)]
+mod password_recovery_contacts_tests {
+    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+
+    use super::{query_password_recovery_contacts, PasswordRecoveryContact};
+
+    async fn setup_db() -> sea_orm::DatabaseConnection {
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite");
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            r"CREATE TABLE user_accounts (
+                id INTEGER PRIMARY KEY,
+                username TEXT NOT NULL,
+                display_name TEXT,
+                email TEXT,
+                phone TEXT,
+                is_admin INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                deleted_at TEXT
+              );
+              CREATE TABLE roles (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                deleted_at TEXT
+              );
+              CREATE TABLE user_scope_assignments (
+                id INTEGER PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                role_id INTEGER NOT NULL,
+                deleted_at TEXT
+              );",
+        ))
+        .await
+        .expect("schema");
+        db
+    }
+
+    #[tokio::test]
+    async fn includes_is_admin_flag_and_excludes_inactive() {
+        let db = setup_db().await;
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            r"INSERT INTO user_accounts (id, username, display_name, email, phone, is_admin, is_active)
+              VALUES
+                (1, 'alice', 'Alice Admin', 'alice@example.com', NULL, 1, 1),
+                (2, 'bob', 'Bob Inactive', 'bob@example.com', NULL, 1, 0),
+                (3, 'carol', 'Carol User', NULL, NULL, 0, 1);",
+        ))
+        .await
+        .unwrap();
+
+        let contacts = query_password_recovery_contacts(&db).await.unwrap();
+        assert_eq!(contacts.len(), 1);
+        assert_eq!(
+            contacts[0],
+            PasswordRecoveryContact {
+                display_name: "Alice Admin".into(),
+                email: Some("alice@example.com".into()),
+                phone: None,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn includes_administrator_role_without_is_admin_flag() {
+        let db = setup_db().await;
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            r"INSERT INTO user_accounts (id, username, display_name, email, phone, is_admin, is_active)
+              VALUES (10, 'dave', 'Dave RoleAdmin', NULL, '+33123456789', 0, 1);
+              INSERT INTO roles (id, name) VALUES (1, 'Administrator');
+              INSERT INTO user_scope_assignments (id, user_id, role_id) VALUES (1, 10, 1);",
+        ))
+        .await
+        .unwrap();
+
+        let contacts = query_password_recovery_contacts(&db).await.unwrap();
+        assert_eq!(contacts.len(), 1);
+        assert_eq!(contacts[0].display_name, "Dave RoleAdmin");
+        assert_eq!(contacts[0].phone.as_deref(), Some("+33123456789"));
+        assert!(contacts[0].email.is_none());
+    }
+
+    #[tokio::test]
+    async fn excludes_deleted_accounts_and_falls_back_to_username() {
+        let db = setup_db().await;
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
+            r"INSERT INTO user_accounts (id, username, display_name, email, phone, is_admin, is_active, deleted_at)
+              VALUES
+                (1, 'gone', 'Gone Admin', 'gone@example.com', NULL, 1, 1, '2026-01-01T00:00:00Z'),
+                (2, 'nameless_admin', NULL, NULL, NULL, 1, 1, NULL);",
+        ))
+        .await
+        .unwrap();
+
+        let contacts = query_password_recovery_contacts(&db).await.unwrap();
+        assert_eq!(contacts.len(), 1);
+        assert_eq!(contacts[0].display_name, "nameless_admin");
+        assert!(contacts[0].email.is_none());
+        assert!(contacts[0].phone.is_none());
+    }
+}

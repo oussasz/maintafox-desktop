@@ -10,6 +10,9 @@ import type {
   DashboardLayoutPayload,
   DashboardReliabilitySnapshotSummary,
   DashboardWorkloadChart,
+  OverviewKpiLayoutPayload,
+  OverviewKpisPayload,
+  SaveOverviewKpiLayoutInput,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -76,6 +79,23 @@ const DashboardKpiValidationSchema = z.object({
   overdue_items_total: z.number(),
 });
 
+const OverviewKpiCellSchema = z.object({
+  semantic_key: z.string(),
+  catalog_id: z.string(),
+  value: z.number(),
+  previous_value: z.number(),
+  available: z.boolean(),
+  quality_badge: z.string().nullable().optional(),
+  value_kind: z.enum(["count", "percent", "hours", "currency"]),
+  trend_sense: z.enum(["up-good", "up-bad", "neutral"]),
+  series: z.array(z.number()).optional(),
+});
+
+const OverviewKpisPayloadSchema = z.object({
+  horizon_days: z.number(),
+  cells: z.array(OverviewKpiCellSchema),
+});
+
 // â”€â”€ Service functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getDashboardKpis(): Promise<DashboardKpis> {
@@ -117,4 +137,18 @@ export async function getDashboardReliabilitySnapshotSummary(): Promise<Dashboar
 export async function getDashboardKpiValidation(): Promise<DashboardKpiValidation> {
   const raw = await invoke<unknown>("get_dashboard_kpi_validation");
   return DashboardKpiValidationSchema.parse(raw);
+}
+
+export async function getOverviewKpis(): Promise<OverviewKpisPayload> {
+  const raw = await invokeSilent<unknown>("get_overview_kpis");
+  return OverviewKpisPayloadSchema.parse(raw);
+}
+
+export async function getOverviewKpiLayout(): Promise<OverviewKpiLayoutPayload> {
+  const raw = await invoke<unknown>("get_overview_kpi_layout");
+  return z.object({ layout_json: z.string() }).parse(raw);
+}
+
+export async function saveOverviewKpiLayout(input: SaveOverviewKpiLayoutInput): Promise<void> {
+  await invoke("save_overview_kpi_layout", { input });
 }

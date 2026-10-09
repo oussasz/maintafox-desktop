@@ -3,26 +3,30 @@
  */
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { LayoutGrid, List, Plus, RefreshCw, Users } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { GanttChart, LayoutGrid, List, Plus, RefreshCw, Users } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PermissionGate } from "@/components/PermissionGate";
 import { DataTable } from "@/components/data/DataTable";
 import { SmartFilterBar } from "@/components/filters/SmartFilterBar";
 import type { SmartFilterDef } from "@/components/filters/smart-filter-types";
-import { AvailabilityCalendar } from "@/components/personnel/AvailabilityCalendar";
+import {
+  AvailabilityCalendar,
+  type AvailabilityCalendarHandle,
+} from "@/components/personnel/AvailabilityCalendar";
 import { PersonnelArchivePanel } from "@/components/personnel/PersonnelArchivePanel";
 import { PersonnelCard } from "@/components/personnel/PersonnelCard";
 import { PersonnelCreateDialog } from "@/components/personnel/PersonnelCreateDialog";
-import { PersonnelDetailDialog } from "@/components/personnel/PersonnelDetailDialog";
+import { PersonnelDetailWorkspace } from "@/components/personnel/PersonnelDetailWorkspace";
 import { PersonnelExportMenu } from "@/components/personnel/PersonnelExportMenu";
 import { PersonnelImportWizard } from "@/components/personnel/PersonnelImportWizard";
-import { PositionsPanel } from "@/components/personnel/PositionsPanel";
-import { SkillsMatrixPanel } from "@/components/personnel/SkillsMatrixPanel";
-import { TeamCapacityBoard } from "@/components/personnel/TeamCapacityBoard";
-import { TrainingQualificationPanel } from "@/components/personnel/TrainingQualificationPanel";
+import {
+  TeamCapacityBoard,
+  type TeamCapacityBoardHandle,
+} from "@/components/personnel/TeamCapacityBoard";
 import { WorkforceReportPanel } from "@/components/personnel/WorkforceReportPanel";
+import type { AvailabilityViewMode } from "@/components/personnel/availability-model";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -36,6 +40,7 @@ import type { Personnel } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
 type PersonnelViewMode = "list" | "cards";
+type PersonnelTab = "directory" | "availability" | "teams" | "analytics";
 
 const AVAILABILITY_CODES = [
   "available",
@@ -74,11 +79,19 @@ export function PersonnelPage() {
   const loadPersonnel = usePersonnelStore((s) => s.loadPersonnel);
   const openPersonnel = usePersonnelStore((s) => s.openPersonnel);
   const openCreateForm = usePersonnelStore((s) => s.openCreateForm);
+  const activePersonnel = usePersonnelStore((s) => s.activePersonnel);
 
   const [view, setView] = useState<PersonnelViewMode>(
     () => (localStorage.getItem(VIEW_STORAGE_KEY) as PersonnelViewMode) || "list",
   );
+  const [availabilityView, setAvailabilityView] = useState<AvailabilityViewMode>("chronology");
+  const [activeTab, setActiveTab] = useState<PersonnelTab>("directory");
   const [searchInput, setSearchInput] = useState("");
+  const isDirectoryTab = activeTab === "directory";
+  const isAvailabilityTab = activeTab === "availability";
+  const isTeamsTab = activeTab === "teams";
+  const availabilityRef = useRef<AvailabilityCalendarHandle>(null);
+  const teamsRef = useRef<TeamCapacityBoardHandle>(null);
 
   const [positions, setPositions] = useState<{ id: number; code: string; name: string }[]>([]);
   const [entityNodes, setEntityNodes] = useState<OrgDesignerNodeRow[]>([]);
@@ -370,58 +383,124 @@ export function PersonnelPage() {
         </div>
 
         <div className={mfLayout.moduleHeaderActions}>
-          <PermissionGate permission={P.PER_MANAGE}>
-            <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
-              <Plus className="h-3.5 w-3.5" />
-              {t("action.create")}
-            </Button>
-          </PermissionGate>
-          <PersonnelImportWizard />
-          <PersonnelExportMenu />
+          {isDirectoryTab ? (
+            <>
+              <PermissionGate permission={P.PER_MANAGE}>
+                <Button size="sm" onClick={() => openCreateForm()} className="gap-1.5">
+                  <Plus className="h-3.5 w-3.5" />
+                  {t("action.create")}
+                </Button>
+              </PermissionGate>
+              <PersonnelImportWizard />
+              <PersonnelExportMenu />
 
-          <div className={mfLayout.viewToggleGroup}>
-            <Button
-              variant={view === "list" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("list")}
-              title={t("view.list")}
-            >
-              <List className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "cards" ? "default" : "ghost"}
-              size="sm"
-              className={mfLayout.viewToggleButton}
-              onClick={() => switchView("cards")}
-              title={t("view.cards")}
-            >
-              <LayoutGrid className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+              <div className={mfLayout.viewToggleGroup}>
+                <Button
+                  variant={view === "list" ? "default" : "ghost"}
+                  size="sm"
+                  className={mfLayout.viewToggleButton}
+                  onClick={() => switchView("list")}
+                  title={t("view.list")}
+                >
+                  <List className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant={view === "cards" ? "default" : "ghost"}
+                  size="sm"
+                  className={mfLayout.viewToggleButton}
+                  onClick={() => switchView("cards")}
+                  title={t("view.cards")}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </>
+          ) : null}
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void loadPersonnel()}
-            disabled={loading}
-            className="gap-1.5"
-            title={t("action.refresh")}
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-          </Button>
+          {isAvailabilityTab ? (
+            <>
+              <PermissionGate permission={P.PER_MANAGE}>
+                <Button
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => availabilityRef.current?.openCreateBlock()}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t("availability.actions.createBlock")}
+                </Button>
+              </PermissionGate>
+              <div className={mfLayout.viewToggleGroup}>
+                <Button
+                  variant={availabilityView === "chronology" ? "default" : "ghost"}
+                  size="sm"
+                  className={mfLayout.viewToggleButton}
+                  onClick={() => setAvailabilityView("chronology")}
+                  title={t("availability.views.chronology")}
+                  aria-label={t("availability.views.chronology")}
+                >
+                  <GanttChart className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant={availabilityView === "list" ? "default" : "ghost"}
+                  size="sm"
+                  className={mfLayout.viewToggleButton}
+                  onClick={() => setAvailabilityView("list")}
+                  title={t("availability.views.list")}
+                  aria-label={t("availability.views.list")}
+                >
+                  <List className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </>
+          ) : null}
+
+          {isDirectoryTab ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void loadPersonnel()}
+              disabled={loading}
+              className="gap-1.5"
+              title={t("action.refresh")}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+            </Button>
+          ) : null}
+
+          {isAvailabilityTab ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => availabilityRef.current?.refresh()}
+              className="gap-1.5"
+              title={t("availability.actions.refresh")}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
+
+          {isTeamsTab ? (
+            <PermissionGate permission={P.PER_MANAGE}>
+              <Button size="sm" className="gap-1.5" onClick={() => teamsRef.current?.openCreate()}>
+                <Plus className="h-3.5 w-3.5" />
+                {t("crews.actions.create")}
+              </Button>
+            </PermissionGate>
+          ) : null}
+
+          {isTeamsTab ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => teamsRef.current?.refresh()}
+              className="gap-1.5"
+              title={t("action.refresh")}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
         </div>
       </div>
-
-      <SmartFilterBar
-        searchPlaceholder={t("filters.searchPlaceholder")}
-        searchValue={searchInput}
-        onSearchInputChange={setSearchInput}
-        onSearchChange={onSearchChange}
-        filters={filterDefs}
-        resultCount={total}
-        onReset={clearAllFilters}
-      />
 
       {error ? (
         <div className="border-b border-destructive/20 bg-destructive/5 px-6 py-2 text-sm text-destructive">
@@ -429,79 +508,109 @@ export function PersonnelPage() {
         </div>
       ) : null}
 
-      {/* ── Main workspace ───────────────────────────────────────────── */}
+      {/* ── Main workspace: Header → Tabs → tab-owned filters/content ─ */}
       <div className={mfLayout.moduleWorkspace}>
         <div className={mfLayout.moduleWorkspaceInner}>
           <div className={mfLayout.moduleWorkspaceBody}>
-            <Tabs defaultValue="directory" className="w-full">
-              <TabsList className="grid w-full max-w-5xl grid-cols-3 sm:grid-cols-3 lg:grid-cols-6">
+            <Tabs
+              value={activeTab}
+              onValueChange={(v) => setActiveTab(v as PersonnelTab)}
+              className="flex min-h-0 w-full flex-1 flex-col"
+            >
+              <TabsList className="grid w-full max-w-3xl grid-cols-2 sm:grid-cols-4">
                 <TabsTrigger value="directory">{t("tabs.directory")}</TabsTrigger>
-                <TabsTrigger value="skills">{t("tabs.skillsMatrix")}</TabsTrigger>
-                <TabsTrigger value="availability">{t("tabs.availabilityCalendar")}</TabsTrigger>
-                <TabsTrigger value="capacity">{t("tabs.teamCapacity")}</TabsTrigger>
-                <TabsTrigger value="training">{t("tabs.training")}</TabsTrigger>
-                <TabsTrigger value="positions">{t("tabs.positions", "Positions")}</TabsTrigger>
+                <TabsTrigger value="availability">{t("tabs.availability")}</TabsTrigger>
+                <TabsTrigger value="teams">{t("tabs.teams")}</TabsTrigger>
+                <TabsTrigger value="analytics">{t("tabs.analytics")}</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="directory" className="mt-4">
-                <div className="mb-4">
+              <TabsContent
+                value="directory"
+                className="mt-4 flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden"
+              >
+                <SmartFilterBar
+                  searchPlaceholder={t("filters.searchPlaceholder")}
+                  searchValue={searchInput}
+                  onSearchInputChange={setSearchInput}
+                  onSearchChange={onSearchChange}
+                  filters={filterDefs}
+                  resultCount={total}
+                  onReset={clearAllFilters}
+                />
+                <div className={mfLayout.moduleWorkspaceSplit}>
+                  <div className="flex w-[55%] min-w-[400px] flex-col border-r border-surface-border">
+                    <div className="min-h-0 flex-1 overflow-auto p-1">
+                      {view === "list" && (
+                        <DataTable
+                          columns={columns}
+                          data={items}
+                          searchable={false}
+                          pageSize={20}
+                          isLoading={loading}
+                          skeletonRows={8}
+                          onRowClick={(row) => void openPersonnel(row.id)}
+                          isRowSelected={(row) => row.id === activePersonnel?.personnel.id}
+                        />
+                      )}
+                      {view === "cards" && (
+                        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                          {loading
+                            ? Array.from({ length: 6 }, (_, i) => (
+                                <div
+                                  key={i}
+                                  className="h-48 animate-pulse rounded-lg border border-surface-border bg-muted/40"
+                                />
+                              ))
+                            : items.map((p) => (
+                                <PersonnelCard
+                                  key={p.id}
+                                  personnel={p}
+                                  onViewDetails={() => void openPersonnel(p.id)}
+                                />
+                              ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="min-w-[300px] flex-1 overflow-hidden">
+                    {activePersonnel ? (
+                      <PersonnelDetailWorkspace detail={activePersonnel} />
+                    ) : (
+                      <div className="flex h-full items-center justify-center p-6">
+                        <p className="text-sm text-text-muted">{t("detail.noSelection")}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="availability" className="mt-4 flex min-h-0 flex-1 flex-col">
+                <AvailabilityCalendar
+                  ref={availabilityRef}
+                  entityId={filter.entity_id ?? null}
+                  viewMode={availabilityView}
+                  onViewModeChange={setAvailabilityView}
+                  onOpenPersonnel={(personnelId) => {
+                    setActiveTab("directory");
+                    void openPersonnel(personnelId);
+                  }}
+                />
+              </TabsContent>
+
+              <TabsContent value="teams" className="mt-4">
+                <TeamCapacityBoard
+                  ref={teamsRef}
+                  entityId={filter.entity_id ?? null}
+                  onOpenPersonnel={(personnelId) => {
+                    void openPersonnel(personnelId);
+                  }}
+                />
+              </TabsContent>
+
+              <TabsContent value="analytics" className="mt-4">
+                <div className="flex flex-col gap-4">
                   <WorkforceReportPanel />
                 </div>
-                {view === "list" && (
-                  <DataTable
-                    columns={columns}
-                    data={items}
-                    searchable={false}
-                    pageSize={20}
-                    isLoading={loading}
-                    skeletonRows={8}
-                    onRowClick={(row) => void openPersonnel(row.id)}
-                  />
-                )}
-                {view === "cards" && (
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                    {loading
-                      ? Array.from({ length: 6 }, (_, i) => (
-                          <div
-                            key={i}
-                            className="h-48 animate-pulse rounded-lg border border-surface-border bg-muted/40"
-                          />
-                        ))
-                      : items.map((p) => (
-                          <PersonnelCard
-                            key={p.id}
-                            personnel={p}
-                            onViewDetails={() => void openPersonnel(p.id)}
-                          />
-                        ))}
-                  </div>
-                )}
-              </TabsContent>
-
-              <TabsContent value="skills" className="mt-4">
-                <SkillsMatrixPanel
-                  entityId={filter.entity_id ?? null}
-                  teamId={filter.team_id ?? null}
-                />
-              </TabsContent>
-
-              <TabsContent value="availability" className="mt-4">
-                <AvailabilityCalendar
-                  entityId={filter.entity_id ?? null}
-                  teamId={filter.team_id ?? null}
-                />
-              </TabsContent>
-
-              <TabsContent value="capacity" className="mt-4">
-                <TeamCapacityBoard entityId={filter.entity_id ?? null} />
-              </TabsContent>
-
-              <TabsContent value="training" className="mt-4">
-                <TrainingQualificationPanel />
-              </TabsContent>
-
-              <TabsContent value="positions" className="mt-4">
-                <PositionsPanel />
               </TabsContent>
             </Tabs>
           </div>
@@ -511,7 +620,6 @@ export function PersonnelPage() {
       <PersonnelArchivePanel />
 
       <PersonnelCreateDialog />
-      <PersonnelDetailDialog />
     </div>
   );
 }

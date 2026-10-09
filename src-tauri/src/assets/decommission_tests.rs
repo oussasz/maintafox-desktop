@@ -130,13 +130,13 @@ mod tests {
 
     async fn setup_equipment_class(db: &sea_orm::DatabaseConnection) {
         let now = chrono::Utc::now().to_rfc3339();
-        let sync_id = uuid::Uuid::new_v4().to_string();
+        let entity_sync_id = uuid::Uuid::new_v4().to_string();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO equipment_classes
-              (sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
+              (entity_sync_id, code, name, parent_id, level, is_active, created_at, updated_at)
               VALUES (?, 'PUMP', 'Pompes', NULL, 'class', 1, ?, ?)",
-            [sync_id.into(), now.clone().into(), now.into()],
+            [entity_sync_id.into(), now.clone().into(), now.into()],
         ))
         .await
         .expect("insert equipment class");
@@ -183,7 +183,7 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO intervention_requests \
-             (code, asset_id, org_node_id, status, title, description, origin_type, \
+             (code, equipment_id, org_node_id, status, title, description, origin_type, \
               impact_level, reported_urgency, submitted_at, submitter_id, created_at, updated_at) \
              VALUES ('DI-DEC-OPEN', ?, ?, 'submitted', 'Open DI', 'blocker', 'operator', \
               'unknown', 'medium', datetime('now'), ?, datetime('now'), datetime('now'))",

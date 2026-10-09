@@ -29,10 +29,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/hooks/use-permissions";
 import { getOrgDesignerSnapshot } from "@/services/org-designer-service";
 import {
+  listActiveTeams,
   listExternalCompanies,
   listPersonnel,
   getPositionRequirementSeed,
   uploadPersonnelPhoto,
+  createRateCard,
 } from "@/services/personnel-service";
 import { listCertificationTypes } from "@/services/qualification-service";
 import { usePersonnelStore } from "@/stores/personnel-store";
@@ -43,6 +45,8 @@ import type {
   PersonnelCreateInput,
   PersonnelSkillDraft,
   PersonnelCertDraft,
+  PersonnelUpdateInput,
+  TeamSummary,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -75,9 +79,13 @@ export function PersonnelCreateDialog() {
   const { t } = useTranslation("personnel");
   const { can } = usePermissions();
   const showCreateForm = usePersonnelStore((s) => s.showCreateForm);
+  const editingPersonnel = usePersonnelStore((s) => s.editingPersonnel);
   const saving = usePersonnelStore((s) => s.saving);
+  const storeError = usePersonnelStore((s) => s.error);
   const submitNewPersonnel = usePersonnelStore((s) => s.submitNewPersonnel);
+  const updateExisting = usePersonnelStore((s) => s.updateExisting);
   const closeCreateForm = usePersonnelStore((s) => s.closeCreateForm);
+  const isEdit = editingPersonnel != null;
 
   // ── Identity ──────────────────────────────────────────────────────────────
   const [fullName, setFullName] = useState("");
@@ -113,6 +121,10 @@ export function PersonnelCreateDialog() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
 
+  // ── Labor rates (optional → creates personnel_rate_cards row) ─────────────
+  const [laborRateInput, setLaborRateInput] = useState("");
+  const [overtimeRateInput, setOvertimeRateInput] = useState("");
+
   // ── Access ────────────────────────────────────────────────────────────────
   const [createAccount, setCreateAccount] = useState(false);
   const [pendingPersonnelId, setPendingPersonnelId] = useState<number | null>(null);
@@ -122,7 +134,8 @@ export function PersonnelCreateDialog() {
 
   // ── Lookups ───────────────────────────────────────────────────────────────
   const [entityNodes, setEntityNodes] = useState<OrgDesignerNodeRow[]>([]);
-  const [teamNodes, setTeamNodes] = useState<OrgDesignerNodeRow[]>([]);
+  const [crewOptions, setCrewOptions] = useState<TeamSummary[]>([]);
+  const [crewsLoading, setCrewsLoading] = useState(false);
   const [companies, setCompanies] = useState<{ id: number; name: string }[]>([]);
   const [personnelList, setPersonnelList] = useState<Personnel[]>([]);
   const [certTypes, setCertTypes] = useState<CertificationType[]>([]);
@@ -148,12 +161,34 @@ export function PersonnelCreateDialog() {
       setEntityNodes(
         entityCandidates.length > 0 ? entityCandidates : nodes.filter((n) => n.can_own_work),
       );
-      setTeamNodes(nodes);
       setCompanies(ext.filter((c) => c.is_active !== 0).map((c) => ({ id: c.id, name: c.name })));
       setPersonnelList(personnel.items);
       setCertTypes(certList);
     } catch {
       // partial failures are OK — just leave empty lists
+    }
+  }, []);
+
+  const handleEntityChange = useCallback(async (nextEntityId: number | null) => {
+    setEntityId(nextEntityId);
+    if (nextEntityId == null) {
+      setTeamId(null);
+      setCrewOptions([]);
+      return;
+    }
+    setCrewsLoading(true);
+    try {
+      const crews = await listActiveTeams({ entity_id: nextEntityId });
+      setCrewOptions(crews);
+      setTeamId((prev) => {
+        if (prev == null) return null;
+        return crews.some((c) => c.id === prev) ? prev : null;
+      });
+    } catch {
+      setCrewOptions([]);
+      setTeamId(null);
+    } finally {
+      setCrewsLoading(false);
     }
   }, []);
 
@@ -178,6 +213,8 @@ export function PersonnelCreateDialog() {
     setCerts([]);
     setEmail("");
     setPhone("");
+    setLaborRateInput("");
+    setOvertimeRateInput("");
     setCreateAccount(false);
     setNotes("");
     setLocalError(null);
@@ -186,7 +223,52 @@ export function PersonnelCreateDialog() {
   useEffect(() => {
     if (!showCreateForm) return;
     resetForm();
-    void loadLookups();
+    void (async () => {
+      await loadLookups();
+      const editing = usePersonnelStore.getState().editingPersonnel;
+      if (!editing) return;
+      setFullName(editing.full_name);
+      setEmployeeCode(editing.employee_code);
+      setEmploymentType(editing.employment_type);
+      setPositionId(editing.position_id);
+      setEmploymentOrigin(editing.employment_origin || "internal");
+      setExternalCompanyId(editing.external_company_id);
+      setContractNumber(editing.contract_number ?? "");
+      setContractStart(editing.contract_start_date ?? "");
+      setContractEnd(editing.contract_end_date ?? "");
+      setHomeScheduleRefId(
+        editing.home_schedule_reference_value_id != null
+          ? String(editing.home_schedule_reference_value_id)
+          : null,
+      );
+      setSupervisorId(editing.supervisor_id);
+      setEmploymentStatus(editing.employment_status || "active");
+      setHireDate(editing.hire_date ?? "");
+      setEmail(editing.email ?? "");
+      setPhone(editing.phone ?? "");
+      setNotes(editing.notes ?? "");
+      setEntityId(editing.primary_entity_id);
+      if (editing.primary_entity_id == null) {
+        setCrewOptions([]);
+        setTeamId(null);
+        return;
+      }
+      setCrewsLoading(true);
+      try {
+        const crews = await listActiveTeams({ entity_id: editing.primary_entity_id });
+        setCrewOptions(crews);
+        setTeamId(
+          editing.primary_team_id != null && crews.some((c) => c.id === editing.primary_team_id)
+            ? editing.primary_team_id
+            : null,
+        );
+      } catch {
+        setCrewOptions([]);
+        setTeamId(null);
+      } finally {
+        setCrewsLoading(false);
+      }
+    })();
   }, [showCreateForm, resetForm, loadLookups]);
 
   // Seed skills/certs when position changes
@@ -280,10 +362,40 @@ export function PersonnelCreateDialog() {
     if (!code) errors.push(t("validation.codeRequired", "Employee code is required"));
     if (!positionId) errors.push(t("validation.positionRequired", "Position is required"));
     if (!entityId) errors.push(t("validation.entityRequired", "Entity is required"));
-    if (!teamId) errors.push(t("validation.teamRequired", "Team is required"));
+    if (!teamId) errors.push(t("validation.teamRequired", "Crew is required"));
+    if (entityId && teamId && !crewsLoading && crewOptions.length === 0) {
+      errors.push(t("validation.noCrewsForEntity"));
+    }
+    if (entityId && teamId && crewOptions.length > 0 && !crewOptions.some((c) => c.id === teamId)) {
+      errors.push(t("validation.teamOutOfScope"));
+    }
     if (!homeScheduleRefId) errors.push(t("validation.scheduleRequired", "Schedule is required"));
     if (isExternal && !externalCompanyId)
       errors.push(t("validation.companyRequired", "External company is required"));
+
+    const laborTrim = laborRateInput.trim();
+    const overtimeTrim = overtimeRateInput.trim();
+    let parsedLabor: number | null = null;
+    let parsedOvertime = 0;
+    if (overtimeTrim && !laborTrim) {
+      errors.push(t("validation.laborRateRequiredForOvertime"));
+    }
+    if (laborTrim) {
+      const laborNum = Number(laborTrim.replace(",", "."));
+      if (!Number.isFinite(laborNum) || laborNum < 0) {
+        errors.push(t("validation.laborRateInvalid"));
+      } else {
+        parsedLabor = laborNum;
+      }
+      if (overtimeTrim) {
+        const otNum = Number(overtimeTrim.replace(",", "."));
+        if (!Number.isFinite(otNum) || otNum < 0) {
+          errors.push(t("validation.overtimeRateInvalid"));
+        } else {
+          parsedOvertime = otNum;
+        }
+      }
+    }
 
     if (errors.length > 0) {
       setLocalError(errors.join(" · "));
@@ -330,8 +442,61 @@ export function PersonnelCreateDialog() {
       ...(certDrafts.length > 0 ? { certifications: certDrafts } : {}),
     };
 
+    const persistRateCard = async (personnelId: number) => {
+      if (parsedLabor == null) return;
+      await createRateCard(personnelId, parsedLabor, parsedOvertime, null, "manual");
+    };
+
     try {
+      if (isEdit && editingPersonnel) {
+        const update: PersonnelUpdateInput = {
+          id: editingPersonnel.id,
+          expected_row_version: editingPersonnel.row_version,
+          full_name: name,
+          employment_type: employmentType,
+          employment_origin: employmentOrigin,
+          employment_status: employmentStatus,
+          position_id: positionId,
+          primary_entity_id: entityId,
+          primary_team_id: teamId,
+          home_schedule_reference_value_id: Number(homeScheduleRefId),
+          supervisor_id: supervisorId ?? null,
+          hire_date: hireDate || null,
+          email: email.trim() || null,
+          phone: phone.trim() || null,
+          external_company_id: isExternal ? (externalCompanyId ?? null) : null,
+          contract_number: isExternal && contractNumber.trim() ? contractNumber.trim() : null,
+          contract_start_date: isExternal && contractStart ? contractStart : null,
+          contract_end_date: isExternal && contractEnd ? contractEnd : null,
+          notes: notes.trim() || null,
+        };
+        await updateExisting(update);
+        try {
+          await persistRateCard(editingPersonnel.id);
+          closeCreateForm();
+        } catch (rateErr) {
+          setLocalError(
+            t("create.rateCardFailed", {
+              msg: rateErr instanceof Error ? rateErr.message : String(rateErr),
+            }),
+          );
+        }
+        return;
+      }
+
       const created = await submitNewPersonnel(input);
+
+      try {
+        await persistRateCard(created.id);
+      } catch (rateErr) {
+        await usePersonnelStore.getState().openPersonnel(created.id);
+        usePersonnelStore.setState({
+          error: t("create.rateCardFailed", {
+            msg: rateErr instanceof Error ? rateErr.message : String(rateErr),
+          }),
+        });
+        return;
+      }
 
       // Upload photo if staged
       const stagedPhoto = photoItems[0];
@@ -383,13 +548,13 @@ export function PersonnelCreateDialog() {
       <Dialog open={showCreateForm} onOpenChange={(open) => !open && closeCreateForm()}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{t("create.title")}</DialogTitle>
+            <DialogTitle>{isEdit ? t("create.editTitle") : t("create.title")}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-3 py-2">
-            {localError ? (
+            {localError || storeError ? (
               <p className="rounded border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                {localError}
+                {localError ?? storeError}
               </p>
             ) : null}
 
@@ -414,6 +579,7 @@ export function PersonnelCreateDialog() {
                   onChange={(e) => setEmployeeCode(e.target.value)}
                   placeholder="EMP-001"
                   autoComplete="off"
+                  disabled={isEdit}
                 />
               </div>
             </div>
@@ -535,7 +701,9 @@ export function PersonnelCreateDialog() {
                 <select
                   className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
                   value={entityId ?? ""}
-                  onChange={(e) => setEntityId(e.target.value ? Number(e.target.value) : null)}
+                  onChange={(e) =>
+                    void handleEntityChange(e.target.value ? Number(e.target.value) : null)
+                  }
                 >
                   <option value="">—</option>
                   {entityNodes.map((n) => (
@@ -550,15 +718,19 @@ export function PersonnelCreateDialog() {
                 <select
                   className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
                   value={teamId ?? ""}
+                  disabled={entityId == null || crewsLoading}
                   onChange={(e) => setTeamId(e.target.value ? Number(e.target.value) : null)}
                 >
                   <option value="">—</option>
-                  {teamNodes.map((n) => (
-                    <option key={n.node_id} value={n.node_id}>
-                      {n.code} — {n.name}
+                  {crewOptions.map((crew) => (
+                    <option key={crew.id} value={crew.id}>
+                      {crew.code} — {crew.name}
                     </option>
                   ))}
                 </select>
+                {entityId != null && !crewsLoading && crewOptions.length === 0 ? (
+                  <p className="text-xs text-destructive">{t("validation.noCrewsForEntity")}</p>
+                ) : null}
               </div>
             </div>
 
@@ -763,6 +935,38 @@ export function PersonnelCreateDialog() {
               </div>
             </div>
 
+            {/* ── Labor rates ─────────────────────────────────────────── */}
+            <SectionLabel>{t("create.section.rates")}</SectionLabel>
+            <p className="text-[11px] text-text-muted">{t("create.ratesHint")}</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="per-labor-rate">{t("field.laborRate")}</Label>
+                <Input
+                  id="per-labor-rate"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  inputMode="decimal"
+                  value={laborRateInput}
+                  onChange={(e) => setLaborRateInput(e.target.value)}
+                  placeholder={t("field.laborRatePlaceholder")}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="per-overtime-rate">{t("field.overtimeRate")}</Label>
+                <Input
+                  id="per-overtime-rate"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  inputMode="decimal"
+                  value={overtimeRateInput}
+                  onChange={(e) => setOvertimeRateInput(e.target.value)}
+                  placeholder={t("field.overtimeRatePlaceholder")}
+                />
+              </div>
+            </div>
+
             {/* ── MaintaFox Account ────────────────────────────────────── */}
             {canCreateUsers ? (
               <>
@@ -809,7 +1013,7 @@ export function PersonnelCreateDialog() {
               onClick={() => void handleSubmit()}
               disabled={saving || photoUploading}
             >
-              {saving ? t("common.loading") : t("create.submit")}
+              {saving ? t("common.loading") : isEdit ? t("create.save") : t("create.submit")}
             </Button>
           </DialogFooter>
         </DialogContent>

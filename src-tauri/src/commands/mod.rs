@@ -7,6 +7,7 @@ pub mod admin_stats;
 pub mod admin_users;
 pub mod advanced_rams;
 pub mod analytics_contract;
+pub mod analytics_dashboard;
 pub mod app;
 pub mod archive;
 pub mod assets;

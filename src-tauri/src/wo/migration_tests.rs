@@ -116,7 +116,7 @@ mod tests {
             "entity_id",
             "planner_id",
             "approver_id",
-            "assigned_group_id",
+            "assigned_team_id",
             "primary_responsible_id",
             "urgency_id",
             "title",

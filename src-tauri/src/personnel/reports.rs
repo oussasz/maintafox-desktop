@@ -104,7 +104,7 @@ pub async fn workforce_skills_gap(
                 END AS gap_score
              FROM personnel p
              LEFT JOIN positions pos ON pos.id = p.position_id
-             LEFT JOIN org_nodes t ON t.id = p.primary_team_id
+             LEFT JOIN teams t ON t.id = p.primary_team_id
              LEFT JOIN personnel_skills ps
                 ON ps.personnel_id = p.id
                AND (ps.valid_to IS NULL OR date(ps.valid_to) >= date('now'))

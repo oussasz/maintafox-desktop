@@ -58,6 +58,7 @@
 ### Documentation alignment (always on)
 - Treat **`docs/PRD.md`** and **`docs/roadmap/`** as authoritative alongside the repository; keep implementation, terminology, and module boundaries consistent with them.
 - When they conflict with code, prefer **updating code toward PRD/roadmap** after calling out the mismatch; do not silently invent product behavior that contradicts them.
+- Cross-device sync follows **`docs/engineering/SYNC_STRATEGY.md`** and `.cursor/rules/universal-entity-sync.mdc` (entity_sync_id, outbox, inbox materialization).
 
 ### System continuity
 - This is an **evolving system** built across prior stages: **extend, refine, and integrate** with what exists—do not restart arbitrarily, reinterpret without evidence, or invent missing modules.

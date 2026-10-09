@@ -1,5 +1,3 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -9,6 +7,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { Personnel } from "@shared/ipc-types";
 
+import { PersonnelPortrait } from "./PersonnelPortrait";
 import {
   personnelAvailabilityBadgeClass,
   personnelAvailabilityDotClass,
@@ -30,16 +29,13 @@ export function PersonnelCard({ personnel, onViewDetails }: PersonnelCardProps) 
   return (
     <Card className="flex flex-col overflow-hidden border-surface-border shadow-sm">
       <CardHeader className="flex flex-row items-start gap-3 space-y-0 pb-2">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-muted">
-          {personnel.photo_path ? (
-            <img
-              src={convertFileSrc(personnel.photo_path)}
-              className="h-12 w-12 rounded-full object-cover"
-              alt=""
-            />
-          ) : (
-            <UserRound className="h-7 w-7 text-muted-foreground" aria-hidden />
-          )}
+        <div className="shrink-0 overflow-hidden rounded-full">
+          <PersonnelPortrait
+            personnelId={personnel.id}
+            photoPath={personnel.photo_path}
+            fullName={personnel.full_name}
+            sizePx={48}
+          />
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate font-semibold leading-tight">{personnel.full_name}</div>

@@ -36,6 +36,8 @@
   "dashboard": {
     "title": "Tableau opérationnel",
     "kpiTitle": "Dernier instantané fiabilité",
+    "dataQuality": "Qualité des données",
+    "scheduleAssigned": "Attribuée",
     "mtbf": "MTBF (h)",
     "mttr": "MTTR (h)",
     "availability": "Disponibilité",

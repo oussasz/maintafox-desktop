@@ -107,7 +107,7 @@
       "analytics": "Analytics",
       "admin": "Administration"
     },
-    "dashboard": "Dashboard",
+    "dashboard": "Overview",
     "vendorConsole": "Vendor console",
     "equipment": "Equipment",
     "requests": "Intervention Requests",
@@ -119,7 +119,7 @@
     "inventory": "Spare Parts",
     "personnel": "Personnel",
     "training": "Training & Habilitation",
-    "analytics": "Dashboards",
+    "analytics": "RAMS & Analytics",
     "reliability": "Reliability (RAMS)",
     "budget": "Budget & Costs",
     "archive": "Archive",

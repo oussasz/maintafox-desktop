@@ -100,7 +100,7 @@ mod tests {
 
         for required in &[
             "id",
-            "sync_id",
+            "entity_sync_id",
             "asset_id_code",
             "created_at",
             "updated_at",
@@ -153,7 +153,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn default_settings_seed_populates_14_rows_and_keeps_settings_audit_empty() {
+    async fn default_settings_seed_populates_baseline_and_keeps_settings_audit_empty() {
         let db = sea_orm::Database::connect("sqlite::memory:")
             .await
             .expect("In-memory DB");
@@ -167,17 +167,41 @@ mod tests {
 
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
-        let settings_row = db
+        // Migrations may also INSERT OR IGNORE into app_settings; assert baseline keys, not a brittle total.
+        for key in [
+            "locale.primary_language",
+            "locale.currency_code",
+            "appearance.color_mode",
+            "backup.retention_daily",
+            "updater.release_channel",
+        ] {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT setting_key FROM app_settings WHERE setting_key = ? LIMIT 1",
+                    [key.into()],
+                ))
+                .await
+                .expect("lookup")
+                .unwrap_or_else(|| panic!("baseline setting `{key}` must exist after seed"));
+            let found: String = row.try_get("", "setting_key").expect("setting_key");
+            assert_eq!(found, key);
+        }
+
+        let currency_row = db
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM app_settings;".to_string(),
+                "SELECT setting_value_json AS v FROM app_settings WHERE setting_key = 'locale.currency_code' LIMIT 1"
+                    .to_string(),
             ))
             .await
-            .expect("Count query for app_settings should succeed")
-            .expect("Count query for app_settings should return one row");
-        let settings_count = settings_row
-            .try_get::<i64>("", "cnt")
-            .expect("Count column should be readable");
+            .expect("currency lookup")
+            .expect("locale.currency_code must exist");
+        let currency_json: String = currency_row.try_get("", "v").expect("v");
+        assert_eq!(
+            currency_json, r#""DZD""#,
+            "tenant currency seed default must be DZD (customizable in Settings)"
+        );
 
         let events_row = db
             .query_one(Statement::from_string(
@@ -191,10 +215,6 @@ mod tests {
             .try_get::<i64>("", "cnt")
             .expect("Count column should be readable");
 
-        assert_eq!(
-            settings_count, 14,
-            "Default settings seed should insert exactly 14 rows"
-        );
         assert_eq!(
             events_count, 0,
             "settings_change_events must remain empty during read-only seeding"
@@ -235,18 +255,22 @@ mod tests {
             .await
             .expect("Default settings seeding should succeed");
 
-        let settings_count = db
-            .query_one(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT COUNT(*) AS cnt FROM app_settings;".to_string(),
-            ))
-            .await
-            .expect("count")
-            .expect("row")
-            .try_get::<i64>("", "cnt")
-            .expect("cnt");
-
-        assert_eq!(settings_count, 14, "all baseline rows should exist");
+        for key in [
+            "locale.currency_code",
+            "locale.primary_language",
+            "appearance.color_mode",
+            "backup.retention_daily",
+        ] {
+            let exists = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT 1 AS ok FROM app_settings WHERE setting_key = ? LIMIT 1",
+                    [key.into()],
+                ))
+                .await
+                .expect("lookup");
+            assert!(exists.is_some(), "missing baseline setting `{key}` after backfill seed");
+        }
 
         let cat_rows = db
             .query_all(Statement::from_string(
@@ -261,10 +285,11 @@ mod tests {
             .map(|r| r.try_get::<String>("", "category").expect("category"))
             .collect();
 
-        assert_eq!(
-            cats,
-            vec!["appearance", "backup", "localization", "system"],
-            "tenant categories must be present alongside system"
-        );
+        for required in ["appearance", "backup", "localization", "system"] {
+            assert!(
+                cats.iter().any(|c| c == required),
+                "tenant category `{required}` must be present alongside system (got {cats:?})"
+            );
+        }
     }
 }

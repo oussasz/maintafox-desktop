@@ -9,7 +9,7 @@ const PERMISSION_PREFIX_TO_MODULE: Array<{ prefix: string; module: string }> = [
   { prefix: "ot.", module: "work_orders" },
   { prefix: "inv.", module: "inventory" },
   { prefix: "per.", module: "personnel" },
-  { prefix: "trn.", module: "personnel" },
+  { prefix: "trn.", module: "training" },
   { prefix: "org.", module: "organization" },
   { prefix: "ref.", module: "reference" },
   { prefix: "plan.", module: "planning" },

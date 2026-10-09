@@ -343,13 +343,13 @@ pub async fn upsert_certification_type(
         return Ok(updated);
     }
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO certification_types (entity_sync_id, code, name, default_validity_months, renewal_lead_days, \
          row_version) VALUES (?, ?, ?, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             input.code.into(),
             input.name.into(),
             opt_i64(input.default_validity_months),
@@ -496,7 +496,7 @@ pub async fn upsert_qualification_requirement_profile(
         return Ok(updated);
     }
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     let skill_ids_snap = input.skill_reference_value_ids.clone();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -504,7 +504,7 @@ pub async fn upsert_qualification_requirement_profile(
          required_certification_type_ids_json, applies_to_permit_type_codes_json, row_version) \
          VALUES (?, ?, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             input.profile_name.into(),
             input.required_certification_type_ids_json.into(),
             input.applies_to_permit_type_codes_json.into(),
@@ -639,14 +639,14 @@ pub async fn upsert_personnel_certification(
         return Ok(updated);
     }
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO personnel_certifications (entity_sync_id, personnel_id, certification_type_id, \
          issued_at, expires_at, issuing_body, certificate_ref, verification_status, row_version) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             input.personnel_id.into(),
             input.certification_type_id.into(),
             opt_string(input.issued_at),

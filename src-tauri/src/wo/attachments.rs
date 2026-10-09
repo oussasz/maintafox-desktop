@@ -13,7 +13,7 @@
 
 use crate::errors::{AppError, AppResult};
 use crate::wo::time::now_utc_z;
-use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
@@ -113,7 +113,7 @@ fn map_attachment(row: &QueryResult) -> AppResult<WoAttachment> {
 /// - Invalid file name
 /// - Disk write failure
 pub async fn save_wo_attachment(
-    db: &impl ConnectionTrait,
+    db: &DatabaseConnection,
     app_data_dir: &Path,
     input: WoAttachmentInput,
 ) -> AppResult<WoAttachment> {
@@ -147,7 +147,7 @@ pub async fn save_wo_attachment(
     let wo_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wo.id, wos.code AS status_code \
+            "SELECT wo.id, wo.entity_sync_id, wos.code AS status_code \
              FROM work_orders wo \
              JOIN work_order_statuses wos ON wos.id = wo.status_id \
              WHERE wo.id = ?",
@@ -169,6 +169,10 @@ pub async fn save_wo_attachment(
         ]));
     }
 
+    let parent_entity_sync_id: String = wo_row
+        .try_get::<String>("", "entity_sync_id")
+        .unwrap_or_default();
+
     // ── Generate unique relative path ─────────────────────────────────────
     let uuid = Uuid::new_v4();
     let relative_path = format!("wo_attachments/{}/{}-{}", input.wo_id, uuid, sanitized_name);
@@ -183,6 +187,8 @@ pub async fn save_wo_attachment(
     // ── Insert DB record ──────────────────────────────────────────────────
     let now = now_utc_z();
     let size_bytes = input.file_bytes.len() as i64;
+    let mime_type = input.mime_type.clone();
+    let file_name = sanitized_name.to_string();
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -192,9 +198,9 @@ pub async fn save_wo_attachment(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             input.wo_id.into(),
-            sanitized_name.to_string().into(),
+            file_name.clone().into(),
             relative_path.clone().into(),
-            input.mime_type.into(),
+            mime_type.clone().into(),
             size_bytes.into(),
             input.uploaded_by_id.into(),
             now.into(),
@@ -209,6 +215,41 @@ pub async fn save_wo_attachment(
         ],
     ))
     .await?;
+
+    if !parent_entity_sync_id.is_empty() {
+        let env = crate::sync::media::resolve_media_deployment_env();
+        let tenant_id = crate::sync::media::resolve_media_tenant_id(db).await;
+        match crate::sync::media::stage_media_bytes(
+            db,
+            env,
+            &tenant_id,
+            "work_orders",
+            &parent_entity_sync_id,
+            &file_name,
+            &mime_type,
+            &input.file_bytes,
+            Some(relative_path.clone()),
+            None,
+        )
+        .await
+        {
+            Ok(payload) => {
+                crate::sync::foundation_stage::warn_stage(
+                    crate::sync::media::upsert_media_attachment_row(db, &payload).await,
+                    "media_attachments upsert (wo)",
+                );
+            }
+            Err(e) => {
+                tracing::warn!(target: "maintafox", "sync stage media (wo): {e}");
+            }
+        }
+    } else {
+        tracing::warn!(
+            target: "maintafox",
+            wo_id = input.wo_id,
+            "sync stage media skipped: WO missing entity_sync_id"
+        );
+    }
 
     // ── Re-fetch the inserted row ─────────────────────────────────────────
     let row = db
@@ -251,11 +292,11 @@ pub async fn list_wo_attachments(db: &impl ConnectionTrait, wo_id: i64) -> AppRe
 
 /// Delete the attachment DB record. Does NOT delete the file from disk.
 /// The caller (command layer) must hold `ot.admin` to invoke this.
-pub async fn delete_wo_attachment_record(db: &impl ConnectionTrait, attachment_id: i64) -> AppResult<()> {
+pub async fn delete_wo_attachment_record(db: &DatabaseConnection, attachment_id: i64) -> AppResult<()> {
     let state_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT wos.code AS status_code \
+            "SELECT wos.code AS status_code, wa.relative_path, wo.entity_sync_id AS parent_entity_sync_id \
              FROM work_order_attachments wa \
              JOIN work_orders wo ON wo.id = wa.work_order_id \
              JOIN work_order_statuses wos ON wos.id = wo.status_id \
@@ -272,6 +313,27 @@ pub async fn delete_wo_attachment_record(db: &impl ConnectionTrait, attachment_i
                 "Suppression interdite: OT cloture/annule (audit trail verrouille).".into(),
             ]));
         }
+        let relative_path: String = row.try_get("", "relative_path").unwrap_or_default();
+        let parent_esid: String = row.try_get("", "parent_entity_sync_id").unwrap_or_default();
+        crate::sync::foundation_stage::warn_stage(
+            crate::sync::media::stage_media_delete_if_found(
+                db,
+                Some("work_orders"),
+                if parent_esid.is_empty() {
+                    None
+                } else {
+                    Some(parent_esid.as_str())
+                },
+                if relative_path.is_empty() {
+                    None
+                } else {
+                    Some(relative_path.as_str())
+                },
+                None,
+            )
+            .await,
+            "media delete (wo)",
+        );
     }
 
     let result = db

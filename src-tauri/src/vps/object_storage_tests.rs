@@ -1,10 +1,10 @@
 use crate::vps::object_storage::{
-    aggregate_parts_payload_sha256, backup_allowed_for_queue_health, build_object_key, canonical_manifest_json,
-    emergency_corrupted_snapshot_runbook_steps, emergency_expired_credentials_runbook_steps,
-    emergency_rollout_deletion_runbook_steps, manifest_integrity_hash, platform_restore_runbook,
-    tenant_restore_runbook, verify_manifest_against_parts, BackupManifestPart, BackupManifestV1, BackupScope,
-    DeploymentEnvironment, IntegrityVerificationJobResult, ObjectCategory, PostRestoreValidationChecklist,
-    QueueHealthSnapshot, StorageDataClass,
+    aggregate_parts_payload_sha256, backup_allowed_for_queue_health, build_object_key,
+    build_tenant_media_object_key, canonical_manifest_json, emergency_corrupted_snapshot_runbook_steps,
+    emergency_expired_credentials_runbook_steps, emergency_rollout_deletion_runbook_steps,
+    manifest_integrity_hash, platform_restore_runbook, tenant_restore_runbook, verify_manifest_against_parts,
+    BackupManifestPart, BackupManifestV1, BackupScope, DeploymentEnvironment, IntegrityVerificationJobResult,
+    ObjectCategory, PostRestoreValidationChecklist, QueueHealthSnapshot, StorageDataClass,
 };
 
 #[test]
@@ -18,6 +18,21 @@ fn object_key_enforces_env_and_tenant_boundary() {
     .expect("key");
     assert!(k.full_key.starts_with("prod/backups/acme-corp/"));
     assert_eq!(k.data_class, StorageDataClass::BackupOperational);
+}
+
+#[test]
+fn tenant_media_object_key_is_hash_addressed() {
+    let sha = "a".repeat(64);
+    let k = build_tenant_media_object_key(
+        DeploymentEnvironment::Production,
+        "tenant-1",
+        "work_orders",
+        "wo-sync-1",
+        &sha,
+    )
+    .expect("media key");
+    assert!(k.full_key.starts_with("prod/media/tenant-1/work_orders/wo-sync-1/"));
+    assert_eq!(k.category, ObjectCategory::TenantMedia);
 }
 
 #[test]

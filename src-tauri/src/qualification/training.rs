@@ -362,14 +362,14 @@ pub async fn upsert_training_session(
         return Ok(updated);
     }
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO training_sessions (entity_sync_id, course_code, scheduled_start, scheduled_end, \
          location, instructor_id, certification_type_id, min_pass_score, row_version) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             input.course_code.into(),
             input.scheduled_start.into(),
             input.scheduled_end.into(),
@@ -497,13 +497,13 @@ pub async fn upsert_training_attendance(
         return Ok(updated);
     }
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO training_attendance (entity_sync_id, session_id, personnel_id, attendance_status, \
          completed_at, score, row_version) VALUES (?, ?, ?, ?, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             input.session_id.into(),
             input.personnel_id.into(),
             input.attendance_status.clone().into(),
@@ -615,13 +615,13 @@ pub async fn upsert_document_acknowledgement(
         return Ok(get_ack_by_id(db, id).await?.expect("row"));
     }
 
-    let sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO document_acknowledgements (entity_sync_id, personnel_id, document_version_id, \
          acknowledged_at, row_version) VALUES (?, ?, ?, ?, 1)",
         [
-            sync_id.into(),
+            entity_sync_id.into(),
             input.personnel_id.into(),
             input.document_version_id.into(),
             input.acknowledged_at.into(),

@@ -209,10 +209,11 @@ const PopoverContent = React.forwardRef<HTMLDivElement, PopoverContentProps>(
       <div
         {...props}
         ref={setRefs}
-        role="dialog"
+        role="presentation"
+        data-mf-popover-content=""
         data-side={side}
         className={cn(
-          "z-50 w-auto rounded-md border border-surface-border bg-surface-1 p-4 text-text-primary shadow-md outline-none",
+          "z-[200] w-auto rounded-md border border-surface-border bg-surface-1 p-4 text-text-primary shadow-md outline-none",
           className,
         )}
         style={{
@@ -220,7 +221,17 @@ const PopoverContent = React.forwardRef<HTMLDivElement, PopoverContentProps>(
           top: coords?.top ?? -9999,
           left: coords?.left ?? -9999,
           visibility: coords ? "visible" : "hidden",
+          pointerEvents: "auto",
           ...style,
+        }}
+        onPointerDown={(event) => {
+          // Keep Radix Dialog dismissable-layer from treating popover as "outside".
+          event.stopPropagation();
+          props.onPointerDown?.(event);
+        }}
+        onMouseDown={(event) => {
+          event.stopPropagation();
+          props.onMouseDown?.(event);
         }}
       >
         {children}
