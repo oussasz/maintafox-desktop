@@ -226,8 +226,8 @@ pub async fn convert_di_to_work_order(
         "INSERT INTO work_orders (\
             code, type_id, status_id, equipment_id, \
             source_di_id, entity_id, requester_id, \
-            title, description, row_version, created_at, updated_at\
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            title, description, entity_sync_id, row_version, created_at, updated_at\
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
             wo_code.clone().into(),
             type_id.into(),
@@ -246,6 +246,7 @@ pub async fn convert_di_to_work_order(
             input.actor_id.into(),
             di.title.clone().into(),
             di.description.clone().into(),
+            crate::sync::identity::new_entity_sync_id().into(),
             now.clone().into(),
             now.clone().into(),
         ],
@@ -434,16 +435,15 @@ pub async fn convert_di_to_work_order(
         })?;
 
     let updated_di = map_intervention_request(&updated_row)?;
+
+    // ── 9. Stage the new WO and the closed DI in the same transaction ─────
+    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo_id).await?;
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated_di.id).await?;
+
     txn.commit().await?;
 
     super::notifications::notify_converted(db, &updated_di).await;
     super::notifications::notify_closed(db, &updated_di).await;
-
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, updated_di.id).await,
-        "di",
-    );
-    crate::wo::sync_stage::warn_stage_wo(db, wo_id).await;
 
     Ok(WoConversionResult {
         di: updated_di,

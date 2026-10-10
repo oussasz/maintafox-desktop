@@ -11,10 +11,9 @@
 
 use std::collections::HashSet;
 
-use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use tauri::State;
-use uuid::Uuid;
 
 use crate::auth::rbac::PermissionScope;
 use crate::errors::{AppError, AppResult};
@@ -957,32 +956,29 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
 
         // ── Insert role ──────────────────────────────────────────────────
         let now = chrono::Utc::now().to_rfc3339();
-        let entity_sync_id = Uuid::new_v4().to_string();
+        let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
-        state
-            .db
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO roles \
-                 (entity_sync_id, name, description, role_type, status, is_system, \
+        let tx = state.db.begin().await?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO roles (entity_sync_id, name, description, role_type, status, is_system, \
                   created_at, updated_at, row_version) \
                  VALUES (?, ?, ?, 'custom', 'active', 0, ?, ?, 1)",
-                [
-                    entity_sync_id.into(),
-                    entry.name.clone().into(),
-                    entry
-                        .description
-                        .clone()
-                        .map(sea_orm::Value::from)
-                        .unwrap_or(sea_orm::Value::from(None::<String>)),
-                    now.clone().into(),
-                    now.clone().into(),
-                ],
-            ))
-            .await?;
+            [
+                entity_sync_id.into(),
+                entry.name.clone().into(),
+                entry
+                    .description
+                    .clone()
+                    .map(sea_orm::Value::from)
+                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                now.clone().into(),
+                now.clone().into(),
+            ],
+        ))
+        .await?;
 
-        let role_id_row = state
-            .db
+        let role_id_row = tx
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
                 "SELECT last_insert_rowid() AS id".to_string(),
@@ -993,16 +989,17 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
 
         // ── Insert role_permissions ───────────────────────────────────────
         for perm_name in &entry.permissions {
-            state
-                .db
-                .execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) \
-                     SELECT ?, p.id FROM permissions p WHERE p.name = ?",
-                    [new_role_id.into(), perm_name.clone().into()],
-                ))
-                .await?;
+            tx.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) \
+                 SELECT ?, p.id FROM permissions p WHERE p.name = ?",
+                [new_role_id.into(), perm_name.clone().into()],
+            ))
+            .await?;
         }
+
+        crate::sync::foundation_stage::stage_role_sync(&tx, new_role_id).await?;
+        tx.commit().await?;
 
         // ── Audit event ──────────────────────────────────────────────────
         let diff_json = serde_json::to_string(&entry.permissions)?;

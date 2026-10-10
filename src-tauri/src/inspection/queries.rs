@@ -399,7 +399,7 @@ pub async fn list_inspection_rounds(db: &DatabaseConnection) -> AppResult<Vec<In
     Ok(out)
 }
 
-async fn get_template(db: &DatabaseConnection, id: i64) -> AppResult<Option<InspectionTemplate>> {
+async fn get_template(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<InspectionTemplate>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -538,10 +538,8 @@ pub async fn create_inspection_template(
             [version_id.into(), template_id.into()],
         ))
         .await?;
-    txn.commit().await?;
-
-    let template = get_template(db, template_id).await?.expect("row");
-    let version_row = db
+    let template = get_template(&txn, template_id).await?.expect("row");
+    let version_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, template_id, version_no, effective_from, checkpoint_package_json, \
@@ -553,11 +551,12 @@ pub async fn create_inspection_template(
         .expect("row");
     let version = map_version(&version_row)?;
 
-    stage_inspection_template(db, &template).await?;
-    stage_inspection_template_version(db, &version).await?;
+    stage_inspection_template(&txn, &template).await?;
+    stage_inspection_template_version(&txn, &version).await?;
     for c in &checkpoints_out {
-        stage_inspection_checkpoint(db, c).await?;
+        stage_inspection_checkpoint(&txn, c).await?;
     }
+    txn.commit().await?;
     Ok((template, version, checkpoints_out))
 }
 
@@ -694,10 +693,8 @@ pub async fn publish_inspection_template_version(
             "Concurrent update on inspection_templates.".into(),
         ]));
     }
-    txn.commit().await?;
-
-    let template = get_template(db, input.template_id).await?.expect("row");
-    let version_row = db
+    let template = get_template(&txn, input.template_id).await?.expect("row");
+    let version_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, template_id, version_no, effective_from, checkpoint_package_json, \
@@ -709,11 +706,12 @@ pub async fn publish_inspection_template_version(
         .expect("row");
     let version = map_version(&version_row)?;
 
-    stage_inspection_template(db, &template).await?;
-    stage_inspection_template_version(db, &version).await?;
+    stage_inspection_template(&txn, &template).await?;
+    stage_inspection_template_version(&txn, &version).await?;
     for c in &checkpoints_out {
-        stage_inspection_checkpoint(db, c).await?;
+        stage_inspection_checkpoint(&txn, c).await?;
     }
+    txn.commit().await?;
     Ok((template, version, checkpoints_out))
 }
 
@@ -721,7 +719,8 @@ pub async fn schedule_inspection_round(
     db: &DatabaseConnection,
     input: ScheduleInspectionRoundInput,
 ) -> AppResult<InspectionRound> {
-    let tpl = get_template(db, input.template_id)
+    let txn = db.begin().await?;
+    let tpl = get_template(&txn, input.template_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InspectionTemplate".into(),
@@ -734,7 +733,7 @@ pub async fn schedule_inspection_round(
             AppError::ValidationFailed(vec!["Template has no current_version_id; cannot schedule.".into()])
         })?
     };
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM inspection_template_versions WHERE id = ? AND template_id = ?",
@@ -747,7 +746,7 @@ pub async fn schedule_inspection_round(
         ]));
     }
     let rs = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inspection_rounds (entity_sync_id, template_id, template_version_id, scheduled_at, \
          assigned_to_id, status, row_version) VALUES (?, ?, ?, ?, ?, 'scheduled', 1)",
@@ -760,7 +759,7 @@ pub async fn schedule_inspection_round(
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -768,7 +767,7 @@ pub async fn schedule_inspection_round(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let rid: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let out_row = db
+    let out_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, template_id, template_version_id, scheduled_at, assigned_to_id, status, \
@@ -778,11 +777,12 @@ pub async fn schedule_inspection_round(
         .await?
         .expect("row");
     let round = map_round(&out_row)?;
-    stage_inspection_round(db, &round).await?;
+    stage_inspection_round(&txn, &round).await?;
+    txn.commit().await?;
     Ok(round)
 }
 
-pub async fn get_inspection_round_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option<InspectionRound>> {
+pub async fn get_inspection_round_by_id(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<InspectionRound>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -795,7 +795,7 @@ pub async fn get_inspection_round_by_id(db: &DatabaseConnection, id: i64) -> App
 }
 
 pub async fn get_inspection_checkpoint_by_id(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     id: i64,
 ) -> AppResult<Option<InspectionCheckpoint>> {
     let row = db
@@ -812,7 +812,7 @@ pub async fn get_inspection_checkpoint_by_id(
 }
 
 pub async fn get_inspection_template_version_by_id(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     id: i64,
 ) -> AppResult<Option<InspectionTemplateVersion>> {
     let row = db

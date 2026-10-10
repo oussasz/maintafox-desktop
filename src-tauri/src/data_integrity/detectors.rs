@@ -27,8 +27,8 @@ async fn insert_finding(
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO data_integrity_findings \
-         (entity_sync_id, row_version, severity, domain, record_class, record_id, finding_code, details_json, detected_at, status) \
+        "INSERT INTO data_integrity_findings (entity_sync_id, row_version, severity, domain, \
+         record_class, record_id, finding_code, details_json, detected_at, status) \
          VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, 'open')",
         [
             esid.clone().into(),

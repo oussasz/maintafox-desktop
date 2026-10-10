@@ -177,7 +177,7 @@ pub async fn user_has_permission_at_node(
 /// Load all `PermissionDependency` rows whose `permission_name` appears in a
 /// given set.  Used by role-editing commands to check for missing hard deps.
 pub async fn dependency_warnings_for(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     permission_names: &HashSet<String>,
 ) -> AppResult<Vec<super::model::PermissionDependency>> {
     if permission_names.is_empty() {
@@ -215,7 +215,7 @@ pub async fn dependency_warnings_for(
 /// Validate that all hard dependencies are satisfied within `names`.
 /// Returns an `Err` listing the missing required permissions if any hard
 /// dependency is unsatisfied.
-pub async fn validate_hard_dependencies(db: &DatabaseConnection, names: &HashSet<String>) -> AppResult<()> {
+pub async fn validate_hard_dependencies(db: &impl ConnectionTrait, names: &HashSet<String>) -> AppResult<()> {
     let deps = dependency_warnings_for(db, names).await?;
 
     let missing: Vec<String> = deps

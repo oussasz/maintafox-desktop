@@ -288,11 +288,12 @@ pub async fn apply_import_batch(
                 txn.execute(Statement::from_sql_and_values(
                     DbBackend::Sqlite,
                     "INSERT INTO personnel (
-                        employee_code, full_name, employment_type, position_id, primary_entity_id, primary_team_id,
+                        entity_sync_id, employee_code, full_name, employment_type, position_id, primary_entity_id, primary_team_id,
                         supervisor_id, availability_status, hire_date, email, phone, hr_external_id, external_company_id,
                         notes, row_version, created_at, updated_at
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
                     [
+                        crate::sync::identity::new_entity_sync_id().into(),
                         generated_code.into(),
                         full_name.into(),
                         employment_type.into(),

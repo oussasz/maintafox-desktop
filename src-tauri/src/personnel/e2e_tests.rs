@@ -95,8 +95,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             format!(
-                "INSERT OR IGNORE INTO org_nodes \
-                 (entity_sync_id, code, name, node_type_id, structure_model_id, \
+                "INSERT OR IGNORE INTO org_nodes (entity_sync_id, code, name, node_type_id, structure_model_id, \
                   ancestor_path, depth, status, created_at, updated_at) \
                  VALUES ('test-entity-001', 'ENT-TEST', 'Test Entity', \
                   {type_id}, {model_id}, '/', 0, 'active', '{now}', '{now}')"
@@ -119,8 +118,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             format!(
-                "INSERT OR IGNORE INTO teams \
-                 (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
+                "INSERT OR IGNORE INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
                  VALUES ('test-crew-pad', 'CREW-PAD', 'Pad Crew', 'maintenance', \
                   NULL, 'active', '{now}', '{now}')"
             ),
@@ -131,8 +129,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             format!(
-                "INSERT OR IGNORE INTO teams \
-                 (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
+                "INSERT OR IGNORE INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
                  VALUES ('test-crew-001', 'CREW-TEST', 'Test Crew', 'maintenance', \
                   {entity_id}, 'active', '{now}', '{now}')"
             ),
@@ -400,8 +397,7 @@ mod tests {
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             format!(
-                "INSERT INTO teams \
-                 (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
+                "INSERT INTO teams (entity_sync_id, code, name, team_type, primary_node_id, status, created_at, updated_at) \
                  VALUES ('test-crew-002', 'CREW-ALT', 'Alt Crew', 'maintenance', \
                   {entity_id}, 'active', '{now}', '{now}')"
             ),

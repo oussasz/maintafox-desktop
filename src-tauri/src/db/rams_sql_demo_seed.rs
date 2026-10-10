@@ -221,20 +221,19 @@ async fn sql_ensure_default_schedule_class(db: &DatabaseConnection) -> AppResult
     }
 
     // Domain/set should already exist via system catalog; insert DAY_SHIFT baseline if missing.
-    db.execute(Statement::from_string(
+    db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT OR IGNORE INTO reference_values \
-           (set_id, parent_id, code, label, description, sort_order, \
+        "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, \
             color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-         SELECT rs.id, NULL, 'DAY_SHIFT', 'Journée normale', NULL, 1, \
+         SELECT ?, rs.id, NULL, 'DAY_SHIFT', 'Journée normale', NULL, 1, \
                 NULL, NULL, 'schedule_class', NULL, 1, \
                 '{\"shift_pattern_code\":\"DAY_SHIFT\",\"is_continuous\":false,\"nominal_hours_per_day\":8.0}' \
            FROM reference_domains d \
            JOIN reference_sets rs ON rs.domain_id = d.id AND rs.status = 'published' \
           WHERE UPPER(TRIM(d.code)) = 'ORG.SCHEDULE_CLASS' \
           ORDER BY rs.version_no DESC \
-          LIMIT 1"
-            .to_string(),
+          LIMIT 1",
+        [crate::sync::identity::seeded_entity_sync_id("reference_values", "ORG.SCHEDULE_CLASS:DAY_SHIFT").into()],
     ))
     .await?;
 
@@ -356,12 +355,13 @@ async fn sql_ensure_anchor_work_order(db: &DatabaseConnection, equipment_id: i64
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT INTO work_orders (
-                code, type_id, status_id, equipment_id, entity_id,
+                entity_sync_id, code, type_id, status_id, equipment_id, entity_id,
                 requester_id, planner_id, urgency_id, title, description,
                 actual_start, actual_end, closed_at,
                 row_version, created_at, updated_at, closeout_validation_passed
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 1)",
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 1)",
             [
+                crate::sync::identity::new_entity_sync_id().into(),
                 code.into(),
                 corrective_type_id.into(),
                 closed_status_id.into(),

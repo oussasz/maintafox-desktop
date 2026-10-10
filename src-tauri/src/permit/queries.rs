@@ -202,7 +202,7 @@ pub(crate) async fn stage_work_permit(db: &impl ConnectionTrait, row: &WorkPermi
 }
 
 pub async fn get_work_permit_linked_to_work_order(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     work_order_id: i64,
 ) -> AppResult<Option<WorkPermit>> {
     let row = db
@@ -356,7 +356,7 @@ fn validate_wp_status(s: &str) -> AppResult<()> {
 }
 
 async fn ensure_wo_asset_aligned(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     linked_work_order_id: Option<i64>,
     asset_id: i64,
 ) -> AppResult<()> {
@@ -390,7 +390,7 @@ async fn ensure_wo_asset_aligned(
     Ok(())
 }
 
-async fn permit_type_code(db: &DatabaseConnection, permit_type_id: i64) -> AppResult<String> {
+async fn permit_type_code(db: &impl ConnectionTrait, permit_type_id: i64) -> AppResult<String> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -405,7 +405,7 @@ async fn permit_type_code(db: &DatabaseConnection, permit_type_id: i64) -> AppRe
     row.try_get("", "code").map_err(|e| decode_err("code", e))
 }
 
-async fn count_isolations(db: &DatabaseConnection, permit_id: i64) -> AppResult<i64> {
+async fn count_isolations(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -417,7 +417,7 @@ async fn count_isolations(db: &DatabaseConnection, permit_id: i64) -> AppResult<
     row.try_get("", "c").map_err(|e| decode_err("c", e))
 }
 
-async fn count_verified_isolations(db: &DatabaseConnection, permit_id: i64) -> AppResult<i64> {
+async fn count_verified_isolations(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -429,7 +429,7 @@ async fn count_verified_isolations(db: &DatabaseConnection, permit_id: i64) -> A
     row.try_get("", "c").map_err(|e| decode_err("c", e))
 }
 
-async fn count_handover_logs(db: &DatabaseConnection, permit_id: i64) -> AppResult<i64> {
+async fn count_handover_logs(db: &impl ConnectionTrait, permit_id: i64) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -445,7 +445,7 @@ fn draft_fields_complete(wp: &WorkPermit) -> bool {
     !wp.code.trim().is_empty() && wp.asset_id > 0
 }
 
-pub(crate) async fn activation_ready(db: &DatabaseConnection, permit_id: i64, permit_type_id: i64) -> AppResult<()> {
+pub(crate) async fn activation_ready(db: &impl ConnectionTrait, permit_id: i64, permit_type_id: i64) -> AppResult<()> {
     let code = permit_type_code(db, permit_type_id).await?;
     let n = count_isolations(db, permit_id).await?;
     if code == "loto" && n < 1 {
@@ -505,7 +505,7 @@ fn assert_transition_set_status(from: &str, to: &str) -> AppResult<()> {
 }
 
 async fn finalize_open_suspension(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     permit_id: i64,
     reinstated_by_id: i64,
     require_row: bool,
@@ -580,7 +580,7 @@ pub async fn list_permit_types(db: &DatabaseConnection) -> AppResult<Vec<PermitT
     Ok(out)
 }
 
-pub async fn get_permit_type(db: &DatabaseConnection, id: i64) -> AppResult<Option<PermitType>> {
+pub async fn get_permit_type(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<PermitType>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -602,17 +602,18 @@ pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsert
     if input.code.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec!["code is required.".into()]));
     }
+    let txn = db.begin().await?;
 
     if let Some(id) = input.id {
         if id <= 0 {
             return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
         }
-        let current = get_permit_type(db, id).await?.ok_or_else(|| AppError::NotFound {
+        let current = get_permit_type(&txn, id).await?.ok_or_else(|| AppError::NotFound {
             entity: "PermitType".into(),
             id: id.to_string(),
         })?;
         let new_rv = current.row_version + 1;
-        let affected = db
+        let affected = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE permit_types SET code = ?, name = ?, description = ?, \
@@ -641,13 +642,14 @@ pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsert
                 "Concurrent update on permit_types.".into()
             ]));
         }
-        let updated = get_permit_type(db, id).await?.expect("row");
-        stage_permit_type(db, &updated).await?;
+        let updated = get_permit_type(&txn, id).await?.expect("row");
+        stage_permit_type(&txn, &updated).await?;
+        txn.commit().await?;
         return Ok(updated);
     }
 
     let entity_sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO permit_types (entity_sync_id, code, name, description, \
          requires_hse_approval, requires_operations_approval, requires_atmospheric_test, \
@@ -667,7 +669,7 @@ pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsert
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -675,8 +677,9 @@ pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsert
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let created = get_permit_type(db, new_id).await?.expect("row");
-    stage_permit_type(db, &created).await?;
+    let created = get_permit_type(&txn, new_id).await?.expect("row");
+    stage_permit_type(&txn, &created).await?;
+    txn.commit().await?;
     Ok(created)
 }
 
@@ -712,7 +715,7 @@ pub async fn list_work_permits(db: &DatabaseConnection, filter: WorkPermitListFi
     Ok(out)
 }
 
-pub async fn get_work_permit(db: &DatabaseConnection, id: i64) -> AppResult<Option<WorkPermit>> {
+pub async fn get_work_permit(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<WorkPermit>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -726,12 +729,13 @@ pub async fn get_work_permit(db: &DatabaseConnection, id: i64) -> AppResult<Opti
 }
 
 pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreateInput) -> AppResult<WorkPermit> {
-    let _ = permit_type_code(db, input.permit_type_id).await?;
-    ensure_wo_asset_aligned(db, input.linked_work_order_id, input.asset_id).await?;
+    let txn = db.begin().await?;
+    let _ = permit_type_code(&txn, input.permit_type_id).await?;
+    ensure_wo_asset_aligned(&txn, input.linked_work_order_id, input.asset_id).await?;
 
     let entity_sync_id = Uuid::new_v4().to_string();
     let requested = now_ts();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, \
          asset_id, entity_id, status, requested_at, expires_at, row_version) \
@@ -747,7 +751,7 @@ pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreate
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -756,22 +760,26 @@ pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreate
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
     let code = format!("PTW-{}-{:06}", Utc::now().format("%Y"), new_id);
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_permits SET code = ? WHERE id = ?",
         [code.into(), new_id.into()],
     ))
     .await?;
-    let created = get_work_permit(db, new_id).await?.expect("row");
-    stage_work_permit(db, &created).await?;
+    let created = get_work_permit(&txn, new_id).await?.expect("row");
+    stage_work_permit(&txn, &created).await?;
+    txn.commit().await?;
     Ok(created)
 }
 
 pub async fn update_work_permit(db: &DatabaseConnection, input: WorkPermitUpdateInput) -> AppResult<WorkPermit> {
-    let current = get_work_permit(db, input.id).await?.ok_or_else(|| AppError::NotFound {
-        entity: "WorkPermit".into(),
-        id: input.id.to_string(),
-    })?;
+    let txn = db.begin().await?;
+    let current = get_work_permit(&txn, input.id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkPermit".into(),
+            id: input.id.to_string(),
+        })?;
     if input.expected_row_version != current.row_version {
         return Err(AppError::ValidationFailed(vec![
             "row_version mismatch on work_permits.".into(),
@@ -780,11 +788,11 @@ pub async fn update_work_permit(db: &DatabaseConnection, input: WorkPermitUpdate
     let asset_id = input.asset_id.unwrap_or(current.asset_id);
     let entity_id = input.entity_id.unwrap_or(current.entity_id);
     let linked = input.linked_work_order_id.or(current.linked_work_order_id);
-    ensure_wo_asset_aligned(db, linked, asset_id).await?;
+    ensure_wo_asset_aligned(&txn, linked, asset_id).await?;
 
     let new_rv = current.row_version + 1;
     let expires = input.expires_at.or(current.expires_at);
-    let affected = db
+    let affected = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_permits SET linked_work_order_id = ?, asset_id = ?, entity_id = ?, \
@@ -806,17 +814,21 @@ pub async fn update_work_permit(db: &DatabaseConnection, input: WorkPermitUpdate
             "Concurrent update on work_permits.".into()
         ]));
     }
-    let updated = get_work_permit(db, input.id).await?.expect("row");
-    stage_work_permit(db, &updated).await?;
+    let updated = get_work_permit(&txn, input.id).await?.expect("row");
+    stage_work_permit(&txn, &updated).await?;
+    txn.commit().await?;
     Ok(updated)
 }
 
 pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitStatusInput) -> AppResult<WorkPermit> {
     validate_wp_status(&input.status)?;
-    let current = get_work_permit(db, input.id).await?.ok_or_else(|| AppError::NotFound {
-        entity: "WorkPermit".into(),
-        id: input.id.to_string(),
-    })?;
+    let txn = db.begin().await?;
+    let current = get_work_permit(&txn, input.id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkPermit".into(),
+            id: input.id.to_string(),
+        })?;
     if input.expected_row_version != current.row_version {
         return Err(AppError::ValidationFailed(vec![
             "row_version mismatch on work_permits.".into(),
@@ -836,16 +848,16 @@ pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitSt
             }
         }
         ("issued", "active") => {
-            activation_ready(db, input.id, current.permit_type_id).await?;
+            activation_ready(&txn, input.id, current.permit_type_id).await?;
         }
         ("revalidation_required", "active") => {
-            activation_ready(db, input.id, current.permit_type_id).await?;
+            activation_ready(&txn, input.id, current.permit_type_id).await?;
             let rid = input.reinstated_by_id.ok_or_else(|| {
                 AppError::ValidationFailed(vec!["reinstated_by_id is required when returning to active.".into()])
             })?;
-            finalize_open_suspension(db, input.id, rid, true).await?;
+            finalize_open_suspension(&txn, input.id, rid, true).await?;
         }
-        ("closed", "handed_back") if count_handover_logs(db, input.id).await? < 1 => {
+        ("closed", "handed_back") if count_handover_logs(&txn, input.id).await? < 1 => {
             return Err(AppError::ValidationFailed(vec![
                 "At least one permit_handover_logs row is required before handed_back.".into(),
             ]));
@@ -872,7 +884,7 @@ pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitSt
         handed_back_at = Some(now.clone());
     }
 
-    let affected = db
+    let affected = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE work_permits SET status = ?, issued_at = ?, activated_at = ?, closed_at = ?, \
@@ -895,8 +907,9 @@ pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitSt
             "Concurrent update on work_permits.".into()
         ]));
     }
-    let updated = get_work_permit(db, input.id).await?.expect("row");
-    stage_work_permit(db, &updated).await?;
+    let updated = get_work_permit(&txn, input.id).await?.expect("row");
+    stage_work_permit(&txn, &updated).await?;
+    txn.commit().await?;
     Ok(updated)
 }
 
@@ -966,9 +979,7 @@ pub async fn suspend_work_permit(
             "Concurrent update on work_permits.".into()
         ]));
     }
-    txn.commit().await?;
-
-    let susp_row = db
+    let susp_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, permit_id, reason, suspended_by_id, suspended_at, \
@@ -979,9 +990,10 @@ pub async fn suspend_work_permit(
         .await?
         .expect("row");
     let suspension = map_permit_suspension(&susp_row)?;
-    let wp = get_work_permit(db, input.permit_id).await?.expect("row");
-    stage_permit_suspension(db, &suspension).await?;
-    stage_work_permit(db, &wp).await?;
+    let wp = get_work_permit(&txn, input.permit_id).await?.expect("row");
+    stage_permit_suspension(&txn, &suspension).await?;
+    stage_work_permit(&txn, &wp).await?;
+    txn.commit().await?;
     Ok((wp, suspension))
 }
 
@@ -989,7 +1001,8 @@ pub async fn append_permit_handover_log(
     db: &DatabaseConnection,
     input: PermitHandoverLogInput,
 ) -> AppResult<PermitHandoverLog> {
-    let current = get_work_permit(db, input.permit_id)
+    let txn = db.begin().await?;
+    let current = get_work_permit(&txn, input.permit_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkPermit".into(),
@@ -1005,7 +1018,7 @@ pub async fn append_permit_handover_log(
     }
     let signed = input.signed_at.unwrap_or_else(now_ts);
     let entity_sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO permit_handover_logs (entity_sync_id, permit_id, handed_from_role, handed_to_role, \
          confirmation_note, signed_at, row_version) VALUES (?, ?, ?, ?, ?, ?, 1)",
@@ -1019,7 +1032,7 @@ pub async fn append_permit_handover_log(
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -1027,7 +1040,7 @@ pub async fn append_permit_handover_log(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, permit_id, handed_from_role, handed_to_role, confirmation_note, \
@@ -1037,7 +1050,8 @@ pub async fn append_permit_handover_log(
         .await?
         .expect("row");
     let log = map_permit_handover_log(&row)?;
-    stage_permit_handover_log(db, &log).await?;
+    stage_permit_handover_log(&txn, &log).await?;
+    txn.commit().await?;
     Ok(log)
 }
 
@@ -1095,7 +1109,8 @@ pub async fn upsert_permit_isolation(
     db: &DatabaseConnection,
     input: PermitIsolationUpsertInput,
 ) -> AppResult<PermitIsolation> {
-    let _ = get_work_permit(db, input.permit_id)
+    let txn = db.begin().await?;
+    let _ = get_work_permit(&txn, input.permit_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkPermit".into(),
@@ -1110,7 +1125,7 @@ pub async fn upsert_permit_isolation(
         if id <= 0 {
             return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
         }
-        let row = db
+        let row = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT id, entity_sync_id, permit_id, isolation_point, energy_type, isolation_method, lock_number, \
@@ -1125,7 +1140,7 @@ pub async fn upsert_permit_isolation(
             })?;
         let current = map_permit_isolation(&row)?;
         let new_rv = current.row_version + 1;
-        let affected = db
+        let affected = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE permit_isolations SET isolation_point = ?, energy_type = ?, isolation_method = ?, lock_number = ?, \
@@ -1153,7 +1168,7 @@ pub async fn upsert_permit_isolation(
                 "Concurrent update on permit_isolations.".into(),
             ]));
         }
-        let updated = db
+        let updated = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT id, entity_sync_id, permit_id, isolation_point, energy_type, isolation_method, lock_number, \
@@ -1167,12 +1182,13 @@ pub async fn upsert_permit_isolation(
                 id: id.to_string(),
             })?;
         let out = map_permit_isolation(&updated)?;
-        stage_permit_isolation(db, &out).await?;
+        stage_permit_isolation(&txn, &out).await?;
+        txn.commit().await?;
         return Ok(out);
     }
 
     let entity_sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, \
          isolation_method, lock_number, applied_by_id, verified_by_id, applied_at, verified_at, removal_verified_at, row_version) \
@@ -1192,7 +1208,7 @@ pub async fn upsert_permit_isolation(
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -1200,7 +1216,7 @@ pub async fn upsert_permit_isolation(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, permit_id, isolation_point, energy_type, isolation_method, lock_number, \
@@ -1211,7 +1227,8 @@ pub async fn upsert_permit_isolation(
         .await?
         .expect("row");
     let created = map_permit_isolation(&row)?;
-    stage_permit_isolation(db, &created).await?;
+    stage_permit_isolation(&txn, &created).await?;
+    txn.commit().await?;
     Ok(created)
 }
 
@@ -1316,7 +1333,8 @@ pub async fn get_loto_card_view(db: &DatabaseConnection, permit_id: i64, isolati
 }
 
 pub async fn record_loto_card_print(db: &DatabaseConnection, input: LotoCardPrintInput) -> AppResult<LotoCardPrintJob> {
-    let iso = db
+    let txn = db.begin().await?;
+    let iso = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT verified_at FROM permit_isolations WHERE id = ? AND permit_id = ?",
@@ -1335,7 +1353,7 @@ pub async fn record_loto_card_print(db: &DatabaseConnection, input: LotoCardPrin
     }
     let entity_sync_id = Uuid::new_v4().to_string();
     let printed_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO loto_card_print_jobs (permit_id, isolation_id, printed_at, printed_by_id, entity_sync_id, \
          row_version) VALUES (?, ?, ?, ?, ?, 1)",
@@ -1348,7 +1366,7 @@ pub async fn record_loto_card_print(db: &DatabaseConnection, input: LotoCardPrin
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -1356,7 +1374,7 @@ pub async fn record_loto_card_print(db: &DatabaseConnection, input: LotoCardPrin
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, permit_id, isolation_id, printed_at, printed_by_id, entity_sync_id, row_version \
@@ -1366,7 +1384,8 @@ pub async fn record_loto_card_print(db: &DatabaseConnection, input: LotoCardPrin
         .await?
         .expect("row");
     let job = map_loto_card_print_job(&row)?;
-    stage_loto_card_print_job(db, &job).await?;
+    stage_loto_card_print_job(&txn, &job).await?;
+    txn.commit().await?;
     Ok(job)
 }
 

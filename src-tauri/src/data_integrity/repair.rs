@@ -112,8 +112,8 @@ async fn insert_repair_audit(
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO data_integrity_repair_actions \
-         (entity_sync_id, row_version, finding_id, action, actor_id, performed_at, before_json, after_json) \
+        "INSERT INTO data_integrity_repair_actions (entity_sync_id, row_version, finding_id, action, \
+         actor_id, performed_at, before_json, after_json) \
          VALUES (?, 1, ?, ?, ?, ?, ?, ?)",
         [
             esid.clone().into(),

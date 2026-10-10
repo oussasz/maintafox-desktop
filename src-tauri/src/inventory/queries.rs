@@ -699,7 +699,8 @@ pub async fn create_warehouse(db: &DatabaseConnection, input: CreateWarehouseInp
             "Warehouse code and name are required.".to_string(),
         ]));
     }
-    let dup = db
+    let tx = db.begin().await?;
+    let dup = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM warehouses WHERE code = ? COLLATE NOCASE",
@@ -711,13 +712,17 @@ pub async fn create_warehouse(db: &DatabaseConnection, input: CreateWarehouseInp
             "Warehouse code '{code}' already exists."
         )]));
     }
-    db.execute(Statement::from_sql_and_values(
+    tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO warehouses (entity_sync_id, code, name, is_active, row_version) VALUES (?, ?, ?, 1, 1)",
-        [uuid::Uuid::new_v4().to_string().into(), code.into(), name.into()],
+        [
+            crate::sync::identity::new_entity_sync_id().into(),
+            code.into(),
+            name.into(),
+        ],
     ))
     .await?;
-    let row = db
+    let row = tx
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT id, code, name, is_active, created_at FROM warehouses WHERE id = last_insert_rowid()".to_string(),
@@ -731,10 +736,8 @@ pub async fn create_warehouse(db: &DatabaseConnection, input: CreateWarehouseInp
         is_active: row.try_get("", "is_active")?,
         created_at: row.try_get("", "created_at")?,
     };
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_warehouse_sync(db, warehouse.id).await,
-        "warehouse create",
-    );
+    crate::sync::ops_stage::stage_warehouse_sync(&tx, warehouse.id).await?;
+    tx.commit().await?;
     Ok(warehouse)
 }
 
@@ -766,7 +769,8 @@ pub async fn update_warehouse(
     }
     vals.push(warehouse_id.into());
     let sql = format!("UPDATE warehouses SET {} WHERE id = ?", sets.join(", "));
-    let result = db
+    let tx = db.begin().await?;
+    let result = tx
         .execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, vals))
         .await?;
     if result.rows_affected() == 0 {
@@ -775,7 +779,7 @@ pub async fn update_warehouse(
             id: warehouse_id.to_string(),
         });
     }
-    let row = db
+    let row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, code, name, is_active, created_at FROM warehouses WHERE id = ?",
@@ -793,10 +797,8 @@ pub async fn update_warehouse(
         is_active: row.try_get("", "is_active")?,
         created_at: row.try_get("", "created_at")?,
     };
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_warehouse_sync(db, warehouse.id).await,
-        "warehouse",
-    );
+    crate::sync::ops_stage::stage_warehouse_sync(&tx, warehouse.id).await?;
+    tx.commit().await?;
     Ok(warehouse)
 }
 
@@ -851,7 +853,7 @@ pub async fn create_stock_location(
         ))
         .await?;
     }
-    let entity_sync_id = uuid::Uuid::new_v4().to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO stock_locations (entity_sync_id, warehouse_id, code, name, is_default, is_active, row_version)
@@ -873,12 +875,8 @@ pub async fn create_stock_location(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("location insert")))?;
     let new_id: i64 = id_row.try_get("", "id")?;
+    crate::sync::ops_stage::stage_stock_location_sync(&tx, new_id).await?;
     tx.commit().await?;
-
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_location_sync(db, new_id).await,
-        "stock_location",
-    );
 
     list_locations(db, Some(input.warehouse_id))
         .await?
@@ -987,12 +985,8 @@ pub async fn update_stock_location(
             "Location update failed (not found or stale row_version).".to_string(),
         ]));
     }
+    crate::sync::ops_stage::stage_stock_location_sync(&tx, location_id).await?;
     tx.commit().await?;
-
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_location_sync(db, location_id).await,
-        "stock_location",
-    );
 
     list_locations(db, Some(warehouse_id))
         .await?
@@ -1206,7 +1200,7 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
     }
 
     let tx = db.begin().await?;
-    let entity_sync_id = uuid::Uuid::new_v4().to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO articles (
@@ -1287,12 +1281,8 @@ pub async fn create_article(db: &DatabaseConnection, input: InventoryArticleInpu
     )
     .await?;
 
+    crate::sync::ops_stage::stage_article_sync(&tx, article_id).await?;
     tx.commit().await?;
-
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_article_sync(db, article_id).await,
-        "article create",
-    );
 
     let mut rows = list_articles(
         db,
@@ -1488,12 +1478,8 @@ pub async fn update_article(
 
     record_article_field_changes(&tx, article_id, &before, &input, &code, &name, is_active).await?;
 
+    crate::sync::ops_stage::stage_article_sync(&tx, article_id).await?;
     tx.commit().await?;
-
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_article_sync(db, article_id).await,
-        "article",
-    );
 
     let rows = list_articles(
         db,
@@ -1854,11 +1840,8 @@ pub async fn adjust_stock(
     )
     .await?;
 
+    crate::sync::ops_stage::stage_stock_movement_sync(&tx, movement_id).await?;
     tx.commit().await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-        "stock_movement",
-    );
     load_balance(db, input.article_id, input.location_id).await
 }
 
@@ -2202,15 +2185,9 @@ pub async fn reserve_stock(db: &DatabaseConnection, input: InventoryReserveInput
     )
     .await?;
 
+    crate::sync::ops_stage::stage_stock_reservation_sync(&tx, reservation_id).await?;
+    crate::sync::ops_stage::stage_stock_movement_sync(&tx, movement_id).await?;
     tx.commit().await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_reservation_sync(db, reservation_id).await,
-        "stock_reservation",
-    );
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-        "stock_movement",
-    );
     load_reservation_by_id(db, reservation_id).await
 }
 
@@ -2294,15 +2271,9 @@ pub async fn issue_reserved_stock(db: &DatabaseConnection, input: InventoryIssue
     )
     .await?;
 
+    crate::sync::ops_stage::stage_stock_reservation_sync(&tx, reservation.id).await?;
+    crate::sync::ops_stage::stage_stock_movement_sync(&tx, movement_id).await?;
     tx.commit().await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_reservation_sync(db, reservation.id).await,
-        "stock_reservation",
-    );
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-        "stock_movement",
-    );
     load_reservation_by_id(db, reservation.id).await
 }
 
@@ -2377,15 +2348,9 @@ pub async fn return_reserved_stock(
         None,
     )
     .await?;
+    crate::sync::ops_stage::stage_stock_reservation_sync(&tx, reservation.id).await?;
+    crate::sync::ops_stage::stage_stock_movement_sync(&tx, movement_id).await?;
     tx.commit().await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_reservation_sync(db, reservation.id).await,
-        "stock_reservation",
-    );
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-        "stock_movement",
-    );
     load_reservation_by_id(db, reservation.id).await
 }
 
@@ -2461,17 +2426,11 @@ pub async fn release_stock_reservation(
     let tx = db.begin().await?;
     let (released, movement_id) =
         release_stock_reservation_with_connection(&tx, input.reservation_id, input.notes.as_deref()).await?;
-    tx.commit().await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_reservation_sync(db, released.id).await,
-        "stock_reservation",
-    );
+    crate::sync::ops_stage::stage_stock_reservation_sync(&tx, released.id).await?;
     if let Some(movement_id) = movement_id {
-        crate::sync::foundation_stage::warn_stage(
-            crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-            "stock_movement",
-        );
+        crate::sync::ops_stage::stage_stock_movement_sync(&tx, movement_id).await?;
     }
+    tx.commit().await?;
     Ok(released)
 }
 
@@ -2561,15 +2520,9 @@ pub async fn transfer_stock(
     )
     .await?;
 
+    crate::sync::ops_stage::stage_stock_movement_sync(&tx, out_movement_id).await?;
+    crate::sync::ops_stage::stage_stock_movement_sync(&tx, in_movement_id).await?;
     tx.commit().await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_movement_sync(db, out_movement_id).await,
-        "stock_movement",
-    );
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_stock_movement_sync(db, in_movement_id).await,
-        "stock_movement",
-    );
     let from = load_balance(db, input.article_id, input.from_location_id).await?;
     let to = load_balance(db, input.article_id, input.to_location_id).await?;
     Ok(vec![from, to])

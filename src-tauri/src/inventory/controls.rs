@@ -457,13 +457,10 @@ pub async fn post_count_session(
         ],
     ))
     .await?;
-    tx.commit().await?;
     for movement_id in staged_movement_ids {
-        crate::sync::foundation_stage::warn_stage(
-            crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-            "stock_movement",
-        );
+        crate::sync::ops_stage::stage_stock_movement_sync(&tx, movement_id).await?;
     }
+    tx.commit().await?;
     ensure_count_session(db, input.session_id).await
 }
 
@@ -538,13 +535,10 @@ pub async fn reverse_count_session(
         ],
     ))
     .await?;
-    tx.commit().await?;
     for movement_id in staged_movement_ids {
-        crate::sync::foundation_stage::warn_stage(
-            crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-            "stock_movement",
-        );
+        crate::sync::ops_stage::stage_stock_movement_sync(&tx, movement_id).await?;
     }
+    tx.commit().await?;
     ensure_count_session(db, input.session_id).await
 }
 

@@ -261,12 +261,13 @@ mod tests {
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO work_orders
-                (code, type_id, status_id, primary_responsible_id, title, created_at, updated_at)
-             VALUES (?, 1, 1, ?, ?, ?, ?)",
+                (code, type_id, status_id, primary_responsible_id, title, entity_sync_id, created_at, updated_at)
+             VALUES (?, 1, 1, ?, ?, ?, ?, ?)",
             [
                 "WO-NOTIF-001".into(),
                 user_id.into(),
                 "Original WO".into(),
+                crate::sync::identity::new_entity_sync_id().into(),
                 now.clone().into(),
                 now.clone().into(),
             ],

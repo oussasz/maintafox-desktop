@@ -4,10 +4,9 @@ use crate::sync::domain::{
     WorkOrderTaskSyncPayload, SYNC_ENTITY_EQUIPMENT, SYNC_ENTITY_WORK_ORDERS, SYNC_ENTITY_WORK_ORDER_INTERVENERS,
     SYNC_ENTITY_WORK_ORDER_TASKS,
 };
-use crate::sync::foundation_stage::warn_stage;
 use crate::sync::identity::{parent_entity_sync_id, require_entity_sync_id, require_parent_sync_id};
 use crate::sync::queries::stage_outbox_item;
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
 use super::domain::WorkOrder;
 
@@ -98,10 +97,6 @@ pub async fn stage_work_order_by_id(db: &impl ConnectionTrait, wo_id: i64) -> Ap
         wo.closeout_validation_passed,
     )
     .await
-}
-
-pub async fn warn_stage_wo(db: &DatabaseConnection, wo_id: i64) {
-    warn_stage(stage_work_order_by_id(db, wo_id).await, "work_order");
 }
 
 pub async fn stage_work_order_task_sync(db: &impl ConnectionTrait, task_id: i64) -> AppResult<()> {

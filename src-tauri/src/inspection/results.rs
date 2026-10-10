@@ -2,7 +2,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
 use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{
@@ -183,7 +183,7 @@ pub(crate) fn map_anomaly(row: &sea_orm::QueryResult) -> AppResult<InspectionAno
     })
 }
 
-async fn count_evidence(db: &DatabaseConnection, result_id: i64) -> AppResult<i64> {
+async fn count_evidence(db: &impl ConnectionTrait, result_id: i64) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -278,7 +278,7 @@ pub(crate) async fn stage_inspection_anomaly(db: &impl ConnectionTrait, row: &In
     Ok(())
 }
 
-async fn maybe_bump_round(db: &DatabaseConnection, round: &InspectionRound) -> AppResult<()> {
+async fn maybe_bump_round(db: &impl ConnectionTrait, round: &InspectionRound) -> AppResult<()> {
     if round.status != "scheduled" && round.status != "released" {
         return Ok(());
     }
@@ -394,13 +394,14 @@ pub async fn record_inspection_result(
     input: RecordInspectionResultInput,
     recorded_by_id: i64,
 ) -> AppResult<InspectionResult> {
-    let round = get_inspection_round_by_id(db, input.round_id)
+    let txn = db.begin().await?;
+    let round = get_inspection_round_by_id(&txn, input.round_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InspectionRound".into(),
             id: input.round_id.to_string(),
         })?;
-    let cp = get_inspection_checkpoint_by_id(db, input.checkpoint_id)
+    let cp = get_inspection_checkpoint_by_id(&txn, input.checkpoint_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InspectionCheckpoint".into(),
@@ -431,7 +432,7 @@ pub async fn record_inspection_result(
     };
     validate_result_status(&status)?;
 
-    let existing = db
+    let existing = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id FROM inspection_results WHERE round_id = ? AND checkpoint_id = ?",
@@ -440,7 +441,7 @@ pub async fn record_inspection_result(
         .await?;
     let existing_id: Option<i64> = existing.and_then(|r| r.try_get("", "id").ok());
     let ev_before = if let Some(eid) = existing_id {
-        count_evidence(db, eid).await?
+        count_evidence(&txn, eid).await?
     } else {
         0
     };
@@ -458,7 +459,7 @@ pub async fn record_inspection_result(
     let entity_sync_id = Uuid::new_v4().to_string();
 
     let row = if let Some(eid) = existing_id {
-        let cur_row = db
+        let cur_row = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT row_version FROM inspection_results WHERE id = ?",
@@ -480,7 +481,7 @@ pub async fn record_inspection_result(
             }
         }
         let new_rv = cur_rv + 1;
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE inspection_results SET result_status = ?, numeric_value = ?, text_value = ?, boolean_value = ?, \
              comment = ?, recorded_at = ?, recorded_by_id = ?, row_version = ? WHERE id = ?",
@@ -497,7 +498,7 @@ pub async fn record_inspection_result(
             ],
         ))
         .await?;
-        db.query_one(Statement::from_sql_and_values(
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, round_id, checkpoint_id, result_status, numeric_value, text_value, boolean_value, \
              comment, recorded_at, recorded_by_id, row_version FROM inspection_results WHERE id = ?",
@@ -506,7 +507,7 @@ pub async fn record_inspection_result(
         .await?
         .expect("row")
     } else {
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO inspection_results (entity_sync_id, round_id, checkpoint_id, result_status, numeric_value, \
              text_value, boolean_value, comment, recorded_at, recorded_by_id, row_version) \
@@ -525,7 +526,7 @@ pub async fn record_inspection_result(
             ],
         ))
         .await?;
-        let id_row = db
+        let id_row = txn
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
                 "SELECT last_insert_rowid() AS id".to_string(),
@@ -533,7 +534,7 @@ pub async fn record_inspection_result(
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
         let nid: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-        db.query_one(Statement::from_sql_and_values(
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, round_id, checkpoint_id, result_status, numeric_value, text_value, boolean_value, \
              comment, recorded_at, recorded_by_id, row_version FROM inspection_results WHERE id = ?",
@@ -544,17 +545,17 @@ pub async fn record_inspection_result(
     };
 
     let result = map_result(&row)?;
-    stage_inspection_result(db, &result).await?;
+    stage_inspection_result(&txn, &result).await?;
 
-    let ev_after = count_evidence(db, result.id).await?;
-    let version = get_inspection_template_version_by_id(db, round.template_version_id)
+    let ev_after = count_evidence(&txn, result.id).await?;
+    let version = get_inspection_template_version_by_id(&txn, round.template_version_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("template version")))?;
     let esc = parse_escalation(version.escalation_rules_json.as_deref());
 
     if cp.requires_photo && ev_after == 0 {
         insert_auto_anomaly(
-            db,
+            &txn,
             round.id,
             Some(result.id),
             "missing_mandatory_photo",
@@ -566,7 +567,7 @@ pub async fn record_inspection_result(
 
     if (status == "warning" || status == "fail") && escalation_allows(&status, &esc) {
         insert_auto_anomaly(
-            db,
+            &txn,
             round.id,
             Some(result.id),
             "threshold_breach",
@@ -576,16 +577,18 @@ pub async fn record_inspection_result(
         .await?;
     }
 
-    let round_refresh = get_inspection_round_by_id(db, round.id).await?.expect("row");
-    maybe_bump_round(db, &round_refresh).await?;
+    let round_refresh = get_inspection_round_by_id(&txn, round.id).await?.expect("row");
+    maybe_bump_round(&txn, &round_refresh).await?;
 
-    get_inspection_result_by_id(db, result.id)
+    let out = get_inspection_result_by_id(&txn, result.id)
         .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("result")))
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("result")))?;
+    txn.commit().await?;
+    Ok(out)
 }
 
 async fn insert_auto_anomaly(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     round_id: i64,
     result_id: Option<i64>,
     anomaly_type: &str,
@@ -639,7 +642,7 @@ async fn insert_auto_anomaly(
     Ok(())
 }
 
-async fn get_inspection_result_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option<InspectionResult>> {
+async fn get_inspection_result_by_id(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<InspectionResult>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -675,8 +678,9 @@ pub async fn add_inspection_evidence(
         }
     }
     let cap = input.captured_at.unwrap_or_else(|| Utc::now().to_rfc3339());
+    let txn = db.begin().await?;
     let entity_sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inspection_evidence (result_id, evidence_type, file_path_or_value, captured_at, entity_sync_id, \
          row_version) VALUES (?, ?, ?, ?, ?, 1)",
@@ -689,7 +693,7 @@ pub async fn add_inspection_evidence(
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -697,7 +701,7 @@ pub async fn add_inspection_evidence(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let eid: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, result_id, evidence_type, file_path_or_value, captured_at, entity_sync_id, row_version \
@@ -707,15 +711,16 @@ pub async fn add_inspection_evidence(
         .await?
         .expect("row");
     let ev = map_evidence(&row)?;
-    stage_inspection_evidence(db, &ev).await?;
+    stage_inspection_evidence(&txn, &ev).await?;
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "DELETE FROM inspection_anomalies WHERE result_id = ? AND anomaly_type = 'missing_mandatory_photo'",
         [res.id.into()],
     ))
     .await?;
 
+    txn.commit().await?;
     Ok(ev)
 }
 
@@ -723,7 +728,8 @@ pub async fn update_inspection_anomaly(
     db: &DatabaseConnection,
     input: UpdateInspectionAnomalyInput,
 ) -> AppResult<InspectionAnomaly> {
-    let cur = db
+    let txn = db.begin().await?;
+    let cur = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT row_version FROM inspection_anomalies WHERE id = ?",
@@ -744,7 +750,7 @@ pub async fn update_inspection_anomaly(
     }
     let new_rv = rv + 1;
     let rpr = input.requires_permit_review.unwrap_or(false);
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE inspection_anomalies SET resolution_status = ?, linked_di_id = ?, linked_work_order_id = ?, \
          requires_permit_review = ?, row_version = ? WHERE id = ?",
@@ -758,7 +764,7 @@ pub async fn update_inspection_anomaly(
         ],
     ))
     .await?;
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, round_id, result_id, anomaly_type, severity, description, linked_di_id, linked_work_order_id, \
@@ -768,7 +774,8 @@ pub async fn update_inspection_anomaly(
         .await?
         .expect("row");
     let an = map_anomaly(&row)?;
-    stage_inspection_anomaly(db, &an).await?;
+    stage_inspection_anomaly(&txn, &an).await?;
+    txn.commit().await?;
     Ok(an)
 }
 

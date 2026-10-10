@@ -2,9 +2,8 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 const TEAM_TYPES: &[&str] = &["maintenance", "inspection", "planning", "contractor", "hse"];
 const TEAM_STATUSES: &[&str] = &["active", "inactive", "disbanded"];
@@ -216,7 +215,7 @@ pub async fn list_all_skills(db: &DatabaseConnection) -> AppResult<Vec<SkillDefi
 }
 
 /// Gets a single team by id.
-pub async fn get_team_by_id(db: &DatabaseConnection, team_id: i64) -> AppResult<TeamSummary> {
+pub async fn get_team_by_id(db: &impl ConnectionTrait, team_id: i64) -> AppResult<TeamSummary> {
     let sql = r"
         SELECT t.id, t.entity_sync_id, t.code, t.name, t.team_type, t.status,
                t.primary_node_id, n.name AS node_name, n.code AS node_code,
@@ -252,9 +251,10 @@ pub async fn create_team(db: &DatabaseConnection, input: TeamCreateInput) -> App
     crate::org::model_scope::assert_org_node_active(db, input.primary_node_id).await?;
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
-    db.execute(Statement::from_sql_and_values(
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO teams (
             entity_sync_id, code, name, team_type, primary_node_id, description, status,
@@ -284,7 +284,7 @@ pub async fn create_team(db: &DatabaseConnection, input: TeamCreateInput) -> App
         }
     })?;
 
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -292,11 +292,9 @@ pub async fn create_team(db: &DatabaseConnection, input: TeamCreateInput) -> App
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("team insert missing id")))?;
     let id: i64 = id_row.try_get("", "id").unwrap_or_default();
-    let team = get_team_by_id(db, id).await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_team_sync(db, id).await,
-        "team create",
-    );
+    let team = get_team_by_id(&txn, id).await?;
+    crate::sync::foundation_stage::stage_team_sync(&txn, id).await?;
+    txn.commit().await?;
     Ok(team)
 }
 
@@ -365,7 +363,8 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
         "UPDATE teams SET {} WHERE id = ? AND deleted_at IS NULL",
         sets.join(", ")
     );
-    db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await
         .map_err(|e| {
             if e.to_string().contains("UNIQUE") {
@@ -375,11 +374,9 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
             }
         })?;
 
-    let team = get_team_by_id(db, input.id).await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_team_sync(db, input.id).await,
-        "team update",
-    );
+    let team = get_team_by_id(&txn, input.id).await?;
+    crate::sync::foundation_stage::stage_team_sync(&txn, input.id).await?;
+    txn.commit().await?;
     Ok(team)
 }
 

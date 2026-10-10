@@ -496,14 +496,9 @@ pub async fn screen_di(db: &DatabaseConnection, input: DiScreenInput) -> AppResu
 
     // 8. Re-fetch and commit
     let updated = refetch_di(&txn, input.di_id).await?;
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated.id).await?;
     txn.commit().await?;
-
-    let di = updated;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
-        "di",
-    );
-    Ok(di)
+    Ok(updated)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -587,14 +582,10 @@ pub async fn return_di_for_clarification(
     .await?;
 
     let updated = refetch_di(&txn, input.di_id).await?;
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated.id).await?;
     txn.commit().await?;
     super::notifications::notify_returned(db, &updated).await;
-    let di = updated;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
-        "di",
-    );
-    Ok(di)
+    Ok(updated)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -721,14 +712,10 @@ pub async fn close_di(db: &DatabaseConnection, input: DiCloseInput) -> AppResult
     .await?;
 
     let updated = refetch_di(&txn, input.di_id).await?;
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated.id).await?;
     txn.commit().await?;
     super::notifications::notify_closed(db, &updated).await;
-    let di = updated;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
-        "di",
-    );
-    Ok(di)
+    Ok(updated)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -827,14 +814,10 @@ pub async fn cancel_own_di(db: &DatabaseConnection, input: DiCancelOwnInput) -> 
     .await?;
 
     let updated = refetch_di(&txn, input.di_id).await?;
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated.id).await?;
     txn.commit().await?;
     super::notifications::notify_closed(db, &updated).await;
-    let di = updated;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
-        "di",
-    );
-    Ok(di)
+    Ok(updated)
 }
 
 // Compat: reject_di → close with rejected_invalid (or duplicate if reason says so)
@@ -952,14 +935,10 @@ pub async fn approve_di(db: &DatabaseConnection, input: DiApproveInput) -> AppRe
     .await?;
 
     let updated = refetch_di(&txn, input.di_id).await?;
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated.id).await?;
     txn.commit().await?;
     super::notifications::notify_approved(db, &updated).await;
-    let di = updated;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
-        "di",
-    );
-    Ok(di)
+    Ok(updated)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1074,14 +1053,10 @@ pub async fn defer_di(db: &DatabaseConnection, input: DiDeferInput) -> AppResult
     .await?;
 
     let updated = refetch_di(&txn, input.di_id).await?;
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated.id).await?;
     txn.commit().await?;
     super::notifications::notify_deferred(db, &updated).await;
-    let di = updated;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
-        "di",
-    );
-    Ok(di)
+    Ok(updated)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1169,13 +1144,9 @@ pub async fn reactivate_deferred_di(
     .await?;
 
     let updated = refetch_di(&txn, input.di_id).await?;
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated.id).await?;
     txn.commit().await?;
-    let di = updated;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
-        "di",
-    );
-    Ok(di)
+    Ok(updated)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1253,13 +1224,9 @@ pub async fn archive_di(db: &DatabaseConnection, input: DiArchiveInput) -> AppRe
     .await?;
 
     let updated = refetch_di(&txn, input.di_id).await?;
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated.id).await?;
     txn.commit().await?;
-    let di = updated;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
-        "di",
-    );
-    Ok(di)
+    Ok(updated)
 }
 
 pub async fn get_review_events(db: &DatabaseConnection, di_id: i64) -> AppResult<Vec<DiReviewEvent>> {

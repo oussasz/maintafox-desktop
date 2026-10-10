@@ -1,5 +1,5 @@
 use chrono::{Months, NaiveDate, Utc};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
@@ -184,7 +184,7 @@ fn map_ack(row: &sea_orm::QueryResult) -> AppResult<DocumentAcknowledgement> {
     })
 }
 
-async fn get_session_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option<TrainingSession>> {
+async fn get_session_by_id(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<TrainingSession>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -201,7 +201,7 @@ async fn get_session_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option
 }
 
 async fn maybe_issue_cert_from_pass(
-    db: &DatabaseConnection,
+    db: &(impl ConnectionTrait + TransactionTrait),
     session: &TrainingSession,
     personnel_id: i64,
     completed_at: &Option<String>,
@@ -310,6 +310,7 @@ pub async fn upsert_training_session(
         return Err(AppError::ValidationFailed(vec!["course_code is required.".into()]));
     }
     let min_pass = input.min_pass_score.unwrap_or(70).clamp(0, 100);
+    let txn = db.begin().await?;
 
     if let Some(id) = input.id {
         if id <= 0 {
@@ -318,7 +319,7 @@ pub async fn upsert_training_session(
         let ev = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
-        let current = get_session_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+        let current = get_session_by_id(&txn, id).await?.ok_or_else(|| AppError::NotFound {
             entity: "TrainingSession".into(),
             id: id.to_string(),
         })?;
@@ -326,7 +327,7 @@ pub async fn upsert_training_session(
             return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
         }
         let new_rv = current.row_version + 1;
-        let affected = db
+        let affected = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE training_sessions SET course_code = ?, scheduled_start = ?, scheduled_end = ?, \
@@ -351,13 +352,14 @@ pub async fn upsert_training_session(
                 "Concurrent update on training_sessions.".into(),
             ]));
         }
-        let updated = get_session_by_id(db, id).await?.expect("row");
-        stage_training_session(db, &updated).await?;
+        let updated = get_session_by_id(&txn, id).await?.expect("row");
+        stage_training_session(&txn, &updated).await?;
+        txn.commit().await?;
         return Ok(updated);
     }
 
     let entity_sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO training_sessions (entity_sync_id, course_code, scheduled_start, scheduled_end, \
          location, instructor_id, certification_type_id, min_pass_score, row_version) \
@@ -374,7 +376,7 @@ pub async fn upsert_training_session(
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -382,12 +384,13 @@ pub async fn upsert_training_session(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let created = get_session_by_id(db, new_id).await?.expect("row");
-    stage_training_session(db, &created).await?;
+    let created = get_session_by_id(&txn, new_id).await?.expect("row");
+    stage_training_session(&txn, &created).await?;
+    txn.commit().await?;
     Ok(created)
 }
 
-async fn get_attendance_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option<TrainingAttendance>> {
+async fn get_attendance_by_id(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<TrainingAttendance>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -438,7 +441,8 @@ pub async fn upsert_training_attendance(
     input: TrainingAttendanceUpsertInput,
 ) -> AppResult<TrainingAttendance> {
     validate_attendance_status(&input.attendance_status)?;
-    let session = get_session_by_id(db, input.session_id)
+    let txn = db.begin().await?;
+    let session = get_session_by_id(&txn, input.session_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "TrainingSession".into(),
@@ -452,15 +456,17 @@ pub async fn upsert_training_attendance(
         let ev = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
-        let current = get_attendance_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
-            entity: "TrainingAttendance".into(),
-            id: id.to_string(),
-        })?;
+        let current = get_attendance_by_id(&txn, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound {
+                entity: "TrainingAttendance".into(),
+                id: id.to_string(),
+            })?;
         if current.row_version != ev {
             return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
         }
         let new_rv = current.row_version + 1;
-        let affected = db
+        let affected = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE training_attendance SET session_id = ?, personnel_id = ?, attendance_status = ?, \
@@ -483,16 +489,17 @@ pub async fn upsert_training_attendance(
                 "Concurrent update on training_attendance.".into(),
             ]));
         }
-        let updated = get_attendance_by_id(db, id).await?.expect("row");
-        stage_training_attendance(db, &updated).await?;
+        let updated = get_attendance_by_id(&txn, id).await?.expect("row");
+        stage_training_attendance(&txn, &updated).await?;
         if input.attendance_status == "passed" {
-            maybe_issue_cert_from_pass(db, &session, input.personnel_id, &input.completed_at, input.score).await?;
+            maybe_issue_cert_from_pass(&txn, &session, input.personnel_id, &input.completed_at, input.score).await?;
         }
+        txn.commit().await?;
         return Ok(updated);
     }
 
     let entity_sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO training_attendance (entity_sync_id, session_id, personnel_id, attendance_status, \
          completed_at, score, row_version) VALUES (?, ?, ?, ?, ?, ?, 1)",
@@ -506,7 +513,7 @@ pub async fn upsert_training_attendance(
         ],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -514,11 +521,12 @@ pub async fn upsert_training_attendance(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let created = get_attendance_by_id(db, new_id).await?.expect("row");
-    stage_training_attendance(db, &created).await?;
+    let created = get_attendance_by_id(&txn, new_id).await?.expect("row");
+    stage_training_attendance(&txn, &created).await?;
     if input.attendance_status == "passed" {
-        maybe_issue_cert_from_pass(db, &session, input.personnel_id, &input.completed_at, input.score).await?;
+        maybe_issue_cert_from_pass(&txn, &session, input.personnel_id, &input.completed_at, input.score).await?;
     }
+    txn.commit().await?;
     Ok(created)
 }
 

@@ -53,8 +53,7 @@ mod tests {
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO user_accounts \
-             (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
+            "INSERT INTO user_accounts (entity_sync_id, username, display_name, identity_mode, is_active, is_admin, \
               force_password_change, failed_login_attempts, created_at, updated_at, row_version) \
              VALUES (?, ?, ?, 'local', 1, 0, 0, 0, ?, ?, 1)",
             [

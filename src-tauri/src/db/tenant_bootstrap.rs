@@ -524,11 +524,12 @@ async fn ensure_di(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO intervention_requests
-            (code, equipment_id, org_node_id, status, title, description, origin_type,
+            (entity_sync_id, code, equipment_id, org_node_id, status, title, description, origin_type,
              impact_level, production_impact, safety_flag, environmental_flag, quality_flag,
              reported_urgency, submitted_at, submitter_id, row_version, created_at, updated_at)
-          VALUES (?, ?, ?, 'submitted', ?, ?, 'operator', 'unknown', 0, 0, 0, 0, ?, ?, ?, 1, ?, ?)",
+          VALUES (?, ?, ?, ?, 'submitted', ?, ?, 'operator', 'unknown', 0, 0, 0, 0, ?, ?, ?, 1, ?, ?)",
         [
+            crate::sync::identity::new_entity_sync_id().into(),
             code.into(),
             asset_id.into(),
             org_node_id.into(),
@@ -574,11 +575,12 @@ async fn ensure_work_order(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT INTO work_orders (
-            code, type_id, status_id, equipment_id, entity_id,
+            entity_sync_id, code, type_id, status_id, equipment_id, entity_id,
             requester_id, planner_id, urgency_id, title, description,
             row_version, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         [
+            crate::sync::identity::new_entity_sync_id().into(),
             code.into(),
             type_id.into(),
             status_id.into(),

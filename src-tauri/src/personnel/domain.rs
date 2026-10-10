@@ -890,17 +890,19 @@ pub async fn generate_personnel_code(db: &impl ConnectionTrait) -> AppResult<Str
 /// Uses a single `INSERT … SELECT … RETURNING` statement so allocation is atomic under
 /// concurrent writers (unlike calling [`generate_personnel_code`] and inserting in two steps).
 pub async fn insert_personnel_with_auto_code(db: &DatabaseConnection, full_name: &str) -> AppResult<String> {
-    let name_esc = full_name.replace('\'', "''");
-    let sql = format!(
-        "INSERT INTO personnel (employee_code, full_name, employment_type, availability_status, row_version) \
-         SELECT \
-           'PER-' || printf('%04d', COALESCE((SELECT MAX(CAST(SUBSTR(employee_code, 5) AS INTEGER)) \
-             FROM personnel WHERE employee_code LIKE 'PER-%'), 0) + 1), \
-           '{name_esc}', 'employee', 'available', 1 \
-         RETURNING employee_code"
-    );
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
     let row = db
-        .query_one(Statement::from_string(DbBackend::Sqlite, sql))
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO personnel (entity_sync_id, employee_code, full_name, employment_type, availability_status, row_version) \
+             SELECT \
+               ?, \
+               'PER-' || printf('%04d', COALESCE((SELECT MAX(CAST(SUBSTR(employee_code, 5) AS INTEGER)) \
+                 FROM personnel WHERE employee_code LIKE 'PER-%'), 0) + 1), \
+               ?, 'employee', 'available', 1 \
+             RETURNING employee_code",
+            [entity_sync_id.into(), full_name.into()],
+        ))
         .await?
         .ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!(
@@ -1069,8 +1071,8 @@ mod tests {
         let db = setup_migrated_db().await;
 
         db.execute_unprepared(
-            "INSERT INTO personnel (employee_code, full_name, employment_type, availability_status, row_version) \
-             VALUES ('PER-0001', 'Test User', 'employee', 'available', 1)",
+            "INSERT INTO personnel (entity_sync_id, employee_code, full_name, employment_type, availability_status, row_version) \
+             VALUES ('test-personnel-per-0001', 'PER-0001', 'Test User', 'employee', 'available', 1)",
         )
         .await
         .expect("insert personnel");

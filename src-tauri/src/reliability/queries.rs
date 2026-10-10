@@ -1,5 +1,5 @@
 use chrono::{Duration, SecondsFormat, Utc};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
@@ -21,6 +21,7 @@ use crate::reliability::sync_stage::{
     stage_failure_code, stage_failure_event, stage_failure_hierarchy, stage_reliability_kpi_snapshot,
     stage_runtime_exposure_log, stage_user_dismissal,
 };
+use crate::sync::identity::new_entity_sync_id;
 
 const FAILURE_MODES_DOMAIN_CODE: &str = "WORK.FAILURE_MODES";
 const SYNTHETIC_FAILURE_HIERARCHY_ID: i64 = 1;
@@ -108,7 +109,7 @@ fn validate_asset_scope_json(raw: &str) -> AppResult<()> {
     Ok(())
 }
 
-async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
+async fn last_insert_id(db: &impl ConnectionTrait) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -194,11 +195,12 @@ pub async fn upsert_failure_hierarchy(
         return Err(AppError::ValidationFailed(vec!["name required.".into()]));
     }
 
+    let txn = db.begin().await?;
     let row = if let Some(id) = input.id {
         let exp = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required.".into()]))?;
-        let n = db
+        let n = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE failure_hierarchies SET name = ?, asset_scope = ?, version_no = ?, is_active = ?,
@@ -220,7 +222,7 @@ pub async fn upsert_failure_hierarchy(
                 "failure_hierarchies update conflict or not found.".into(),
             ]));
         }
-        db.query_one(Statement::from_sql_and_values(
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, name, asset_scope, version_no, is_active, row_version
              FROM failure_hierarchies WHERE id = ?",
@@ -229,7 +231,7 @@ pub async fn upsert_failure_hierarchy(
         .await?
     } else {
         let eid = format!("failure_hierarchy:{}", Uuid::new_v4());
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO failure_hierarchies (entity_sync_id, name, asset_scope, version_no, is_active, row_version)
              VALUES (?, ?, ?, ?, ?, 1)",
@@ -242,8 +244,8 @@ pub async fn upsert_failure_hierarchy(
             ],
         ))
         .await?;
-        let new_id = last_insert_id(db).await?;
-        db.query_one(Statement::from_sql_and_values(
+        let new_id = last_insert_id(&txn).await?;
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, name, asset_scope, version_no, is_active, row_version
              FROM failure_hierarchies WHERE id = ?",
@@ -254,7 +256,8 @@ pub async fn upsert_failure_hierarchy(
     .ok_or_else(|| AppError::SyncError("failure_hierarchies row missing after upsert.".into()))?;
 
     let mapped = map_hierarchy(&row)?;
-    stage_failure_hierarchy(db, &mapped).await?;
+    stage_failure_hierarchy(&txn, &mapped).await?;
+    txn.commit().await?;
     Ok(mapped)
 }
 
@@ -292,13 +295,15 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
             "Only unified WORK.FAILURE_MODES hierarchy is supported.".into(),
         ]));
     }
+
+    let txn = db.begin().await?;
     let ct = input.code_type.trim().to_string();
     if ct != "mode" {
         return Err(AppError::ValidationFailed(vec![
             "Only code_type='mode' is supported in unified failure modes.".into(),
         ]));
     }
-    verify_parent_hierarchy(db, input.hierarchy_id, input.parent_id).await?;
+    verify_parent_hierarchy(&txn, input.hierarchy_id, input.parent_id).await?;
 
     let code = input.code.trim().to_string();
     let label = input.label.trim().to_string();
@@ -310,7 +315,7 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
         let exp = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required.".into()]))?;
-        let n = db
+        let n = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE reference_values
@@ -340,7 +345,7 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
                 "failure_codes update conflict or not found.".into(),
             ]));
         }
-        db.query_one(Statement::from_sql_and_values(
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT
                 rv.id AS id,
@@ -365,7 +370,7 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
         ))
         .await?
     } else {
-        let target_set = db
+        let target_set = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT rs.id AS set_id
@@ -388,12 +393,13 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
                 ])
             })?;
         let set_id: i64 = target_set.try_get("", "set_id").map_err(|e| decode_err("set_id", e))?;
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO reference_values (
-                set_id, parent_id, code, label, sort_order, is_active
-            ) VALUES (?, ?, ?, ?, COALESCE((SELECT MAX(sort_order) + 1 FROM reference_values WHERE set_id = ?), 1), ?)",
+                entity_sync_id, set_id, parent_id, code, label, sort_order, is_active
+            ) VALUES (?, ?, ?, ?, ?, COALESCE((SELECT MAX(sort_order) + 1 FROM reference_values WHERE set_id = ?), 1), ?)",
             [
+                new_entity_sync_id().into(),
                 set_id.into(),
                 opt_i64(input.parent_id),
                 code.into(),
@@ -411,8 +417,8 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
                 AppError::SyncError(msg)
             }
         })?;
-        let new_id = last_insert_id(db).await?;
-        db.query_one(Statement::from_sql_and_values(
+        let new_id = last_insert_id(&txn).await?;
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT
                 rv.id AS id,
@@ -440,7 +446,8 @@ pub async fn upsert_failure_code(db: &DatabaseConnection, input: FailureCodeUpse
     .ok_or_else(|| AppError::SyncError("reference_values row missing after failure mode upsert.".into()))?;
 
     let mapped = map_code(&row)?;
-    stage_failure_code(db, &mapped).await?;
+    stage_failure_code(&txn, &mapped).await?;
+    txn.commit().await?;
     Ok(mapped)
 }
 
@@ -448,7 +455,8 @@ pub async fn deactivate_failure_code(
     db: &DatabaseConnection,
     input: DeactivateFailureCodeInput,
 ) -> AppResult<FailureCode> {
-    let row = db
+    let txn = db.begin().await?;
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT
@@ -486,10 +494,11 @@ pub async fn deactivate_failure_code(
     }
 
     if !current.is_active {
+        txn.commit().await?;
         return Ok(current);
     }
 
-    let n = db
+    let n = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE reference_values
@@ -514,7 +523,7 @@ pub async fn deactivate_failure_code(
         return Err(AppError::ValidationFailed(vec!["deactivate conflict.".into()]));
     }
 
-    let updated = db
+    let updated = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT
@@ -541,7 +550,8 @@ pub async fn deactivate_failure_code(
         .await?
         .ok_or_else(|| AppError::SyncError("reference failure mode missing after deactivate.".into()))?;
     let mapped = map_code(&updated)?;
-    stage_failure_code(db, &mapped).await?;
+    stage_failure_code(&txn, &mapped).await?;
+    txn.commit().await?;
     Ok(mapped)
 }
 
@@ -647,7 +657,7 @@ fn map_cost_of_failure(row: &sea_orm::QueryResult) -> AppResult<CostOfFailureRow
     })
 }
 
-async fn assert_equipment_exists(db: &DatabaseConnection, equipment_id: i64) -> AppResult<()> {
+async fn assert_equipment_exists(db: &impl ConnectionTrait, equipment_id: i64) -> AppResult<()> {
     let n: i64 = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -698,18 +708,20 @@ pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureE
     if st.is_empty() {
         return Err(AppError::ValidationFailed(vec!["source_type required.".into()]));
     }
+
+    let txn = db.begin().await?;
     let mut vs = input.verification_status.trim().to_string();
     if vs.is_empty() {
         vs = "recorded".to_string();
     }
-    assert_equipment_exists(db, input.equipment_id).await?;
+    assert_equipment_exists(&txn, input.equipment_id).await?;
 
     let row = if let Some(id) = input.id {
         let exp = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required.".into()]))?;
         let now = utc_now_rfc3339();
-        let n = db
+        let n = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE failure_events SET source_type = ?, source_id = ?, equipment_id = ?, component_id = ?,
@@ -756,7 +768,7 @@ pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureE
                 "failure_events update conflict or not found.".into(),
             ]));
         }
-        db.query_one(Statement::from_sql_and_values(
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, source_type, source_id, equipment_id, component_id,
                     detected_at, failed_at, restored_at,
@@ -772,7 +784,7 @@ pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureE
     } else {
         let eid = format!("failure_event:{}", Uuid::new_v4());
         let ts = utc_now_rfc3339();
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO failure_events (
                 entity_sync_id, source_type, source_id, equipment_id, component_id,
@@ -813,8 +825,8 @@ pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureE
             ],
         ))
         .await?;
-        let new_id = last_insert_id(db).await?;
-        db.query_one(Statement::from_sql_and_values(
+        let new_id = last_insert_id(&txn).await?;
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, source_type, source_id, equipment_id, component_id,
                     detected_at, failed_at, restored_at,
@@ -831,11 +843,12 @@ pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureE
     .ok_or_else(|| AppError::SyncError("failure_events row missing after upsert.".into()))?;
 
     let mapped = map_failure_event(&row)?;
-    stage_failure_event(db, &mapped).await?;
+    stage_failure_event(&txn, &mapped).await?;
+    txn.commit().await?;
     Ok(mapped)
 }
 
-async fn is_failure_mode_active_mode(db: &DatabaseConnection, mode_id: Option<i64>) -> AppResult<bool> {
+async fn is_failure_mode_active_mode(db: &impl ConnectionTrait, mode_id: Option<i64>) -> AppResult<bool> {
     let Some(mid) = mode_id else {
         return Ok(false);
     };
@@ -855,8 +868,12 @@ async fn is_failure_mode_active_mode(db: &DatabaseConnection, mode_id: Option<i6
     Ok(row.is_some())
 }
 
-pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id: i64, actor_id: i64) -> AppResult<()> {
-    let wo_row = db
+pub async fn ingest_failure_event_from_closed_wo<C>(db: &C, wo_id: i64, actor_id: i64) -> AppResult<()>
+where
+    C: ConnectionTrait + TransactionTrait,
+{
+    let txn = db.begin().await?;
+    let wo_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT wo.equipment_id, wo.closed_at, wo.actual_start, wo.created_at, wot.code AS type_code \
@@ -875,6 +892,7 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         .try_get("", "type_code")
         .map_err(|e| decode_err("type_code", e))?;
     if !INGEST_WO_TYPE_CODES.contains(&type_code.as_str()) {
+        txn.commit().await?;
         return Ok(());
     }
 
@@ -882,6 +900,7 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         .try_get::<Option<i64>>("", "equipment_id")
         .map_err(|e| decode_err("equipment_id", e))?;
     let Some(equipment_id) = equipment_id else {
+        txn.commit().await?;
         return Ok(());
     };
 
@@ -897,7 +916,7 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
 
     let t_detect = actual_start.clone().or_else(|| Some(created_at.clone()));
 
-    let fd_row = db
+    let fd_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT failure_mode_id, failure_cause_id, failure_effect_id, cause_not_determined \
@@ -919,7 +938,7 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
 
     let cause_nd = cause_not_determined_i != 0;
 
-    let dt_row = db
+    let dt_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COALESCE(SUM( \
@@ -934,7 +953,7 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         .ok_or_else(|| AppError::SyncError("downtime sum missing.".into()))?;
     let downtime_h: f64 = dt_row.try_get("", "h").map_err(|e| decode_err("h", e))?;
 
-    let wh_row = db
+    let wh_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COALESCE(SUM( \
@@ -949,7 +968,7 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         .ok_or_else(|| AppError::SyncError("waiting sum missing.".into()))?;
     let waiting_h: f64 = wh_row.try_get("", "h").map_err(|e| decode_err("h", e))?;
 
-    let lab_row = db
+    let lab_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COALESCE(SUM(hours_worked), 0.0) AS h FROM work_order_interveners WHERE work_order_id = ?",
@@ -959,7 +978,7 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         .ok_or_else(|| AppError::SyncError("labor sum missing.".into()))?;
     let labor_h: f64 = lab_row.try_get("", "h").map_err(|e| decode_err("h", e))?;
 
-    let ver_row = db
+    let ver_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT result FROM work_order_verifications WHERE work_order_id = ? ORDER BY verified_at DESC LIMIT 1",
@@ -971,7 +990,7 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "recorded".to_string());
 
-    let mode_ok = is_failure_mode_active_mode(db, failure_mode_id).await?;
+    let mode_ok = is_failure_mode_active_mode(&txn, failure_mode_id).await?;
     let is_planned = false;
     let eligible_unplanned = !is_planned && mode_ok && !cause_nd;
     let eligible_json = serde_json::json!({
@@ -983,7 +1002,7 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
     let entity_sync_id = format!("failure_event:{}", Uuid::new_v4());
     let ts = utc_now_rfc3339();
 
-    let ins = db
+    let ins = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT OR IGNORE INTO failure_events (
@@ -1030,10 +1049,11 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         ))
         .await?;
     if ins.rows_affected() == 0 {
+        txn.commit().await?;
         return Ok(());
     }
 
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, source_type, source_id, equipment_id, component_id,
@@ -1050,7 +1070,8 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         .ok_or_else(|| AppError::SyncError("failure_events row missing after ingest.".into()))?;
 
     let mapped = map_failure_event(&row)?;
-    stage_failure_event(db, &mapped).await?;
+    stage_failure_event(&txn, &mapped).await?;
+    txn.commit().await?;
     Ok(())
 }
 
@@ -1204,11 +1225,12 @@ pub async fn upsert_runtime_exposure_log(
         return Err(AppError::ValidationFailed(vec!["value must be finite.".into()]));
     }
 
+    let txn = db.begin().await?;
     let row = if let Some(id) = input.id {
         let exp = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required.".into()]))?;
-        let n = db
+        let n = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE runtime_exposure_logs SET equipment_id = ?, exposure_type = ?, value = ?,
@@ -1231,7 +1253,7 @@ pub async fn upsert_runtime_exposure_log(
                 "runtime_exposure_logs update conflict or not found.".into(),
             ]));
         }
-        db.query_one(Statement::from_sql_and_values(
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, equipment_id, exposure_type, value, recorded_at, source_type, row_version
              FROM runtime_exposure_logs WHERE id = ?",
@@ -1240,7 +1262,7 @@ pub async fn upsert_runtime_exposure_log(
         .await?
     } else {
         let eid = format!("runtime_exposure:{}", Uuid::new_v4());
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO runtime_exposure_logs (entity_sync_id, equipment_id, exposure_type, value, recorded_at, source_type, row_version)
              VALUES (?, ?, ?, ?, ?, ?, 1)",
@@ -1254,8 +1276,8 @@ pub async fn upsert_runtime_exposure_log(
             ],
         ))
         .await?;
-        let new_id = last_insert_id(db).await?;
-        db.query_one(Statement::from_sql_and_values(
+        let new_id = last_insert_id(&txn).await?;
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, equipment_id, exposure_type, value, recorded_at, source_type, row_version
              FROM runtime_exposure_logs WHERE id = ?",
@@ -1266,7 +1288,8 @@ pub async fn upsert_runtime_exposure_log(
     .ok_or_else(|| AppError::SyncError("runtime_exposure_logs row missing after upsert.".into()))?;
 
     let mapped = map_runtime_exposure_log(&row)?;
-    stage_runtime_exposure_log(db, &mapped).await?;
+    stage_runtime_exposure_log(&txn, &mapped).await?;
+    txn.commit().await?;
     Ok(mapped)
 }
 
@@ -1520,6 +1543,7 @@ pub async fn refresh_reliability_kpi_snapshot(
     input: RefreshReliabilityKpiSnapshotInput,
 ) -> AppResult<ReliabilityKpiSnapshot> {
     let core = kpi_refresh_core(db, &input).await?;
+    let txn = db.begin().await?;
     let p0s = core.p0s.clone();
     let p1s = core.p1s.clone();
     let mtbf = core.mtbf;
@@ -1533,7 +1557,7 @@ pub async fn refresh_reliability_kpi_snapshot(
     let input_spec_json = core.input_spec_json.clone();
     let plot_payload_json = core.plot_payload_json.clone();
 
-    let sig_row = db
+    let sig_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT warning_count, fail_count, anomaly_open_count, checkpoint_coverage_ratio
@@ -1567,7 +1591,7 @@ pub async fn refresh_reliability_kpi_snapshot(
         None
     };
 
-    let existing = db
+    let existing = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, row_version FROM reliability_kpi_snapshots
@@ -1578,7 +1602,7 @@ pub async fn refresh_reliability_kpi_snapshot(
 
     let out = if let Some(ex) = existing {
         let ex_id: i64 = ex.try_get("", "id").map_err(|e| decode_err("id", e))?;
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE reliability_kpi_snapshots SET
                 mtbf = ?, mttr = ?, availability = ?, failure_rate = ?, repeat_failure_rate = ?,
@@ -1602,7 +1626,7 @@ pub async fn refresh_reliability_kpi_snapshot(
             ],
         ))
         .await?;
-        db.query_one(Statement::from_sql_and_values(
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, equipment_id, asset_group_id, period_start, period_end,
                     mtbf, mttr, availability, failure_rate, repeat_failure_rate,
@@ -1614,7 +1638,7 @@ pub async fn refresh_reliability_kpi_snapshot(
         .await?
     } else {
         let eid = format!("kpi_snapshot:{}", Uuid::new_v4());
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO reliability_kpi_snapshots (
                 entity_sync_id, equipment_id, asset_group_id, period_start, period_end,
@@ -1641,8 +1665,8 @@ pub async fn refresh_reliability_kpi_snapshot(
             ],
         ))
         .await?;
-        let nid = last_insert_id(db).await?;
-        db.query_one(Statement::from_sql_and_values(
+        let nid = last_insert_id(&txn).await?;
+        txn.query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, equipment_id, asset_group_id, period_start, period_end,
                     mtbf, mttr, availability, failure_rate, repeat_failure_rate,
@@ -1656,7 +1680,8 @@ pub async fn refresh_reliability_kpi_snapshot(
     .ok_or_else(|| AppError::SyncError("reliability_kpi_snapshots row missing after refresh.".into()))?;
 
     let mapped = map_kpi_snapshot(&out)?;
-    stage_reliability_kpi_snapshot(db, &mapped).await?;
+    stage_reliability_kpi_snapshot(&txn, &mapped).await?;
+    txn.commit().await?;
     Ok(mapped)
 }
 
@@ -1979,13 +2004,13 @@ pub async fn dismiss_ram_data_quality_issue(
     let scope_key = ram_scope_key(issue_code, input.equipment_id);
     let eid = format!("user_dismissal:{}", Uuid::new_v4());
     let ts = utc_now_rfc3339();
-    db.execute(Statement::from_sql_and_values(
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO user_dismissals (entity_sync_id, user_id, equipment_id, issue_code, scope_key, dismissed_at, row_version)
          VALUES (?, ?, ?, ?, ?, ?, 1)
          ON CONFLICT(user_id, scope_key) DO UPDATE SET
            dismissed_at = excluded.dismissed_at,
-           entity_sync_id = excluded.entity_sync_id,
            row_version = user_dismissals.row_version + 1",
         [
             eid.clone().into(),
@@ -1997,7 +2022,7 @@ pub async fn dismiss_ram_data_quality_issue(
         ],
     ))
     .await?;
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id, user_id, equipment_id, issue_code, scope_key, dismissed_at, row_version
@@ -2007,6 +2032,7 @@ pub async fn dismiss_ram_data_quality_issue(
         .await?
         .ok_or_else(|| AppError::SyncError("user_dismissals row missing after upsert.".into()))?;
     let mapped = map_user_dismissal_row(&row)?;
-    stage_user_dismissal(db, &mapped).await?;
+    stage_user_dismissal(&txn, &mapped).await?;
+    txn.commit().await?;
     Ok(mapped)
 }

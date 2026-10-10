@@ -1552,8 +1552,8 @@ mod tests {
         .expect("ref_set");
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
-            "INSERT OR IGNORE INTO reference_values (id, set_id, code, label, is_active) \
-             VALUES (900001, 900001, 'MECH', 'Mécanique', 1)"
+            "INSERT OR IGNORE INTO reference_values (id, entity_sync_id, set_id, code, label, is_active) \
+             VALUES (900001, 'test-rv-di-class-mech', 900001, 'MECH', 'Mécanique', 1)"
                 .to_string(),
         ))
         .await

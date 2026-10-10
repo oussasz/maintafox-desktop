@@ -1,5 +1,5 @@
 use chrono::{Datelike, NaiveDate, Utc};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -35,7 +35,7 @@ fn today() -> NaiveDate {
     Utc::now().date_naive()
 }
 
-async fn has_active_work_order_for_personnel(db: &DatabaseConnection, personnel_id: i64) -> AppResult<bool> {
+async fn has_active_work_order_for_personnel(db: &impl ConnectionTrait, personnel_id: i64) -> AppResult<bool> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -97,7 +97,7 @@ async fn stage_event(db: &impl ConnectionTrait, row: &TrainingExpiryAlertEvent) 
     Ok(())
 }
 
-async fn get_event_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option<TrainingExpiryAlertEvent>> {
+async fn get_event_by_id(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<TrainingExpiryAlertEvent>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -145,8 +145,9 @@ pub async fn scan_training_expiry_alerts(
 ) -> AppResult<Vec<TrainingExpiryAlertEvent>> {
     let lookahead = lookahead_days.clamp(1, 730);
     let horizon = today() + chrono::Duration::days(lookahead);
+    let txn = db.begin().await?;
 
-    let rows = db
+    let rows = txn
         .query_all(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT pc.id, pc.personnel_id, pc.certification_type_id, pc.expires_at, pc.verification_status \
@@ -187,7 +188,7 @@ pub async fn scan_training_expiry_alerts(
 
         let dedupe = hash_dedupe(personnel_id, cert_type_id, &wb);
 
-        let exists = db
+        let exists = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT 1 AS x FROM training_expiry_alert_events WHERE alert_dedupe_key = ? LIMIT 1",
@@ -199,7 +200,7 @@ pub async fn scan_training_expiry_alerts(
         }
 
         let expired = exp_d < today();
-        let active_wo = has_active_work_order_for_personnel(db, personnel_id).await?;
+        let active_wo = has_active_work_order_for_personnel(&txn, personnel_id).await?;
 
         let severity = if expired && active_wo {
             "critical"
@@ -210,7 +211,7 @@ pub async fn scan_training_expiry_alerts(
         };
 
         let entity_sync_id = Uuid::new_v4().to_string();
-        db.execute(Statement::from_sql_and_values(
+        txn.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO training_expiry_alert_events (entity_sync_id, certification_id, alert_dedupe_key, \
              fired_at, severity, row_version) VALUES (?, ?, ?, ?, ?, 1)",
@@ -224,7 +225,7 @@ pub async fn scan_training_expiry_alerts(
         ))
         .await?;
 
-        let id_row = db
+        let id_row = txn
             .query_one(Statement::from_string(
                 DbBackend::Sqlite,
                 "SELECT last_insert_rowid() AS id".to_string(),
@@ -232,11 +233,12 @@ pub async fn scan_training_expiry_alerts(
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
         let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-        let row = get_event_by_id(db, new_id).await?.expect("row");
-        stage_event(db, &row).await?;
+        let row = get_event_by_id(&txn, new_id).await?.expect("row");
+        stage_event(&txn, &row).await?;
         created.push(row);
     }
 
+    txn.commit().await?;
     Ok(created)
 }
 

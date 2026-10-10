@@ -1,5 +1,5 @@
 use chrono::{NaiveDate, Utc};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
@@ -253,7 +253,7 @@ pub async fn evaluate_crew_permit_skill_gaps(
     })
 }
 
-async fn get_snapshot_by_id(db: &DatabaseConnection, id: i64) -> AppResult<Option<PersonnelReadinessSnapshot>> {
+async fn get_snapshot_by_id(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<PersonnelReadinessSnapshot>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -337,12 +337,13 @@ pub async fn upsert_personnel_readiness_snapshot(
     }
     serde_json::from_str::<serde_json::Value>(&input.payload_json)
         .map_err(|e| AppError::ValidationFailed(vec![format!("payload_json must be valid JSON: {e}")]))?;
+    let txn = db.begin().await?;
 
     if let Some(id) = input.id {
         let ev = input
             .expected_row_version
             .ok_or_else(|| AppError::ValidationFailed(vec!["expected_row_version required for update.".into()]))?;
-        let current = get_snapshot_by_id(db, id).await?.ok_or_else(|| AppError::NotFound {
+        let current = get_snapshot_by_id(&txn, id).await?.ok_or_else(|| AppError::NotFound {
             entity: "PersonnelReadinessSnapshot".into(),
             id: id.to_string(),
         })?;
@@ -350,7 +351,7 @@ pub async fn upsert_personnel_readiness_snapshot(
             return Err(AppError::ValidationFailed(vec!["Row version mismatch.".into()]));
         }
         let new_rv = current.row_version + 1;
-        let affected = db
+        let affected = txn
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "UPDATE personnel_readiness_snapshots SET period = ?, payload_json = ?, row_version = ? \
@@ -369,20 +370,21 @@ pub async fn upsert_personnel_readiness_snapshot(
                 "Concurrent update on personnel_readiness_snapshots.".into(),
             ]));
         }
-        let updated = get_snapshot_by_id(db, id).await?.expect("row");
-        stage_snapshot(db, &updated).await?;
+        let updated = get_snapshot_by_id(&txn, id).await?.expect("row");
+        stage_snapshot(&txn, &updated).await?;
+        txn.commit().await?;
         return Ok(updated);
     }
 
     let entity_sync_id = Uuid::new_v4().to_string();
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO personnel_readiness_snapshots (entity_sync_id, period, payload_json, row_version) \
          VALUES (?, ?, ?, 1)",
         [entity_sync_id.into(), input.period.into(), input.payload_json.into()],
     ))
     .await?;
-    let id_row = db
+    let id_row = txn
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() AS id".to_string(),
@@ -390,8 +392,9 @@ pub async fn upsert_personnel_readiness_snapshot(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let created = get_snapshot_by_id(db, new_id).await?.expect("row");
-    stage_snapshot(db, &created).await?;
+    let created = get_snapshot_by_id(&txn, new_id).await?.expect("row");
+    stage_snapshot(&txn, &created).await?;
+    txn.commit().await?;
     Ok(created)
 }
 

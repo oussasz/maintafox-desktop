@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD as B64_ENGINE, Engine as _};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -84,7 +84,7 @@ fn map_row(row: &QueryResult, app_data_dir: &Path) -> AppResult<AssetPhoto> {
     })
 }
 
-async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
+async fn last_insert_id(db: &impl ConnectionTrait) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -194,7 +194,12 @@ pub async fn upload_asset_photo(
     payload: UploadAssetPhotoPayload,
     created_by_id: i64,
 ) -> AppResult<AssetPhoto> {
-    let exists = db
+    // Read before the transaction: the tenant lookup runs on the pool connection.
+    let tenant_id = crate::sync::media::resolve_media_tenant_id(db).await;
+
+    // The photo row and its media sync entry commit together.
+    let txn = db.begin().await?;
+    let exists = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, entity_sync_id FROM equipment WHERE id = ? AND deleted_at IS NULL",
@@ -207,7 +212,7 @@ pub async fn upload_asset_photo(
             id: payload.asset_id.to_string(),
         });
     };
-    let parent_entity_sync_id: String = equip_row.try_get::<String>("", "entity_sync_id").unwrap_or_default();
+    let parent_entity_sync_id = crate::sync::identity::require_parent_sync_id(&equip_row, "entity_sync_id")?;
 
     let src = Path::new(&payload.source_path);
     let file_name = sanitize_file_name(src)?;
@@ -245,7 +250,7 @@ pub async fn upload_asset_photo(
     };
 
     let uuid = Uuid::new_v4();
-    let photo_entity_sync_id = Uuid::new_v4().to_string();
+    let photo_entity_sync_id = crate::sync::identity::new_entity_sync_id();
     let relative_path = format!("asset_photos/{}/{}.{}", payload.asset_id, uuid, safe_ext);
 
     let absolute_path = app_data_dir.join(&relative_path);
@@ -269,7 +274,7 @@ pub async fn upload_asset_photo(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO asset_photos (asset_id, file_name, relative_path, mime_type, file_size_bytes, caption, created_by_id, created_at, entity_sync_id) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -290,45 +295,25 @@ pub async fn upload_asset_photo(
     ))
     .await?;
 
-    if !parent_entity_sync_id.is_empty() {
-        let env = crate::sync::media::resolve_media_deployment_env();
-        let tenant_id = crate::sync::media::resolve_media_tenant_id(db).await;
-        match crate::sync::media::stage_media_bytes(
-            db,
-            env,
-            &tenant_id,
-            "equipment",
-            &parent_entity_sync_id,
-            &file_name,
-            mime_type,
-            &bytes,
-            Some(relative_path.clone()),
-            caption
-                .as_ref()
-                .map(|c| serde_json::json!({ "caption": c }).to_string()),
-        )
-        .await
-        {
-            Ok(media_payload) => {
-                crate::sync::foundation_stage::warn_stage(
-                    crate::sync::media::upsert_media_attachment_row(db, &media_payload).await,
-                    "media_attachments upsert (asset photo)",
-                );
-            }
-            Err(e) => {
-                tracing::warn!(target: "maintafox", "sync stage media (asset photo): {e}");
-            }
-        }
-    } else {
-        tracing::warn!(
-            target: "maintafox",
-            asset_id = payload.asset_id,
-            "sync stage media skipped: equipment missing entity_sync_id"
-        );
-    }
+    let media_payload = crate::sync::media::stage_media_bytes(
+        &txn,
+        crate::sync::media::resolve_media_deployment_env(),
+        &tenant_id,
+        "equipment",
+        &parent_entity_sync_id,
+        &file_name,
+        mime_type,
+        &bytes,
+        Some(relative_path.clone()),
+        caption
+            .as_ref()
+            .map(|c| serde_json::json!({ "caption": c }).to_string()),
+    )
+    .await?;
+    crate::sync::media::upsert_media_attachment_row(&txn, &media_payload).await?;
 
-    let id = last_insert_id(db).await?;
-    let row = db
+    let id = last_insert_id(&txn).await?;
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, asset_id, file_name, relative_path, mime_type, file_size_bytes, \
@@ -338,12 +323,16 @@ pub async fn upload_asset_photo(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("asset_photos insert not found")))?;
+    let photo = map_row(&row, app_data_dir)?;
 
-    map_row(&row, app_data_dir)
+    txn.commit().await?;
+    Ok(photo)
 }
 
 pub async fn delete_asset_photo(db: &DatabaseConnection, app_data_dir: &Path, photo_id: i64) -> AppResult<()> {
-    let row = db
+    // The delete and its media sync entry commit together.
+    let txn = db.begin().await?;
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT ap.relative_path, e.entity_sync_id AS parent_entity_sync_id
@@ -361,32 +350,27 @@ pub async fn delete_asset_photo(db: &DatabaseConnection, app_data_dir: &Path, ph
     let relative_path: String = row
         .try_get("", "relative_path")
         .map_err(|e| decode_err("relative_path", e))?;
-    let parent_esid: String = row.try_get("", "parent_entity_sync_id").unwrap_or_default();
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::media::stage_media_delete_if_found(
-            db,
-            Some("equipment"),
-            if parent_esid.is_empty() {
-                None
-            } else {
-                Some(parent_esid.as_str())
-            },
-            Some(relative_path.as_str()),
-            None,
-        )
-        .await,
-        "media delete (asset photo)",
-    );
+    let parent_esid = crate::sync::identity::require_parent_sync_id(&row, "parent_entity_sync_id")?;
+    crate::sync::media::stage_media_delete_if_found(
+        &txn,
+        Some("equipment"),
+        Some(parent_esid.as_str()),
+        Some(relative_path.as_str()),
+        None,
+    )
+    .await?;
 
-    let abs = app_data_dir.join(&relative_path);
-    let _ = std::fs::remove_file(&abs);
-
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "DELETE FROM asset_photos WHERE id = ?",
         [photo_id.into()],
     ))
     .await?;
+    txn.commit().await?;
+
+    // Remove the file only once the row is gone, so a failed delete keeps the photo intact.
+    let abs = app_data_dir.join(&relative_path);
+    let _ = std::fs::remove_file(&abs);
 
     Ok(())
 }

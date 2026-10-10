@@ -715,9 +715,9 @@ async fn ensure_failure_reference_prerequisites(db: &DatabaseConnection) -> AppR
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT OR IGNORE INTO reference_values (set_id, parent_id, code, label, sort_order, is_active, created_at) \
-         VALUES (?, NULL, 'MECH.BEARING', 'Roulement défectueux', 1, 1, ?)",
-        [set_id.into(), now.into()],
+        "INSERT OR IGNORE INTO reference_values (entity_sync_id, set_id, parent_id, code, label, sort_order, is_active, created_at) \
+         VALUES (?, ?, NULL, 'MECH.BEARING', 'Roulement défectueux', 1, 1, ?)",
+        [crate::sync::identity::seeded_entity_sync_id("reference_values", "WORK.FAILURE_MODES:MECH.BEARING").into(), set_id.into(), now.into()],
     ))
     .await?;
 

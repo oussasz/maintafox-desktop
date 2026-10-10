@@ -22,7 +22,6 @@ use crate::org::model_scope;
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -445,7 +444,7 @@ pub async fn create_org_node(
     };
 
     let now = Utc::now().to_rfc3339();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
     // Insert with a temporary ancestor_path; we'll update once we know the id
     txn.execute(Statement::from_sql_and_values(
@@ -503,13 +502,10 @@ pub async fn create_org_node(
     .await?;
 
     let node = fetch_node(&txn, node_id).await?;
+    crate::sync::foundation_stage::stage_org_node_sync(&txn, node_id).await?;
     txn.commit().await?;
 
     tracing::info!(node_id, "org node created");
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_org_node_sync(db, node_id).await,
-        "org_node create",
-    );
 
     Ok(node)
 }
@@ -520,7 +516,9 @@ pub async fn update_org_node_metadata(
     db: &DatabaseConnection,
     payload: UpdateOrgNodeMetadataPayload,
 ) -> AppResult<OrgNode> {
-    let node = fetch_node(db, payload.node_id).await?;
+    let txn = db.begin().await?;
+
+    let node = fetch_node(&txn, payload.node_id).await?;
     if node.row_version != payload.expected_row_version {
         return Err(fail_params(
             "ORG_VERSION_CONFLICT",
@@ -538,7 +536,7 @@ pub async fn update_org_node_metadata(
     // If cost_center_code is being set, verify the node type allows it
     // Use the node's own structure_model_id (not always the active model)
     if let Some(Some(_)) = &payload.cost_center_code {
-        let flags = fetch_node_type_flags(db, node.structure_model_id, node.node_type_id).await?;
+        let flags = fetch_node_type_flags(&txn, node.structure_model_id, node.node_type_id).await?;
         if !flags.can_carry_cost_center {
             return Err(fail(
                 "ORG_NODE_TYPE_NO_COST_CENTER",
@@ -581,6 +579,7 @@ pub async fn update_org_node_metadata(
     }
 
     if sets.is_empty() {
+        txn.commit().await?;
         return Ok(node);
     }
 
@@ -598,7 +597,7 @@ pub async fn update_org_node_metadata(
         sets.join(", ")
     );
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, vals))
         .await?;
 
@@ -609,11 +608,9 @@ pub async fn update_org_node_metadata(
         ));
     }
 
-    let updated = fetch_node(db, payload.node_id).await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_org_node_sync(db, payload.node_id).await,
-        "org_node update",
-    );
+    let updated = fetch_node(&txn, payload.node_id).await?;
+    crate::sync::foundation_stage::stage_org_node_sync(&txn, payload.node_id).await?;
+    txn.commit().await?;
     Ok(updated)
 }
 
@@ -768,23 +765,14 @@ pub async fn move_org_node(
     }
 
     let moved_node = fetch_node(&txn, payload.node_id).await?;
-    let descendant_ids: Vec<i64> = descendants
-        .iter()
-        .filter_map(|r| r.try_get::<i64>("", "id").ok())
-        .collect();
+    crate::sync::foundation_stage::stage_org_node_sync(&txn, payload.node_id).await?;
+    for desc_row in &descendants {
+        let desc_id: i64 = desc_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
+        crate::sync::foundation_stage::stage_org_node_sync(&txn, desc_id).await?;
+    }
     txn.commit().await?;
 
     tracing::info!(node_id = payload.node_id, "org node moved");
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_org_node_sync(db, payload.node_id).await,
-        "org_node move",
-    );
-    for desc_id in descendant_ids {
-        crate::sync::foundation_stage::warn_stage(
-            crate::sync::foundation_stage::stage_org_node_sync(db, desc_id).await,
-            "org_node move descendant",
-        );
-    }
 
     Ok(moved_node)
 }
@@ -888,13 +876,10 @@ pub async fn deactivate_org_node(
     }
 
     let deactivated = fetch_node(&txn, node_id).await?;
+    crate::sync::foundation_stage::stage_org_node_sync(&txn, node_id).await?;
     txn.commit().await?;
 
     tracing::info!(node_id, "org node deactivated");
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_org_node_sync(db, node_id).await,
-        "org_node deactivate",
-    );
 
     Ok(deactivated)
 }

@@ -295,12 +295,11 @@ async fn write_skill_draft(
 
 /// Write an initial personnel_certifications draft row.
 async fn write_cert_draft(db: &impl ConnectionTrait, personnel_id: i64, cert: &PersonnelCertDraft) -> AppResult<()> {
-    let entity_sync_id = uuid::Uuid::new_v4().to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
     let _ = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT OR IGNORE INTO personnel_certifications \
-             (entity_sync_id, personnel_id, certification_type_id, \
+            "INSERT OR IGNORE INTO personnel_certifications (entity_sync_id, personnel_id, certification_type_id, \
               issued_at, expires_at, issuing_body, certificate_ref, \
               verification_status, row_version) \
              VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 1)",
@@ -629,7 +628,7 @@ pub async fn create_personnel(
     let blocked_override = input.blocked_override.unwrap_or(false);
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let started_at = input.hire_date.as_deref().unwrap_or(now.as_str()).to_string();
-    let entity_sync_id = uuid::Uuid::new_v4().to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -715,13 +714,10 @@ pub async fn create_personnel(
     )
     .await?;
 
+    crate::sync::foundation_stage::stage_personnel_sync(&txn, new_id).await?;
     txn.commit().await?;
 
     emit_personnel_event(db, "personnel.created", new_id, Some(actor_id)).await?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_personnel_sync(db, new_id).await,
-        "personnel create",
-    );
 
     get_personnel(db, new_id)
         .await?
@@ -986,14 +982,10 @@ pub async fn update_personnel(
         ]));
     }
 
+    crate::sync::foundation_stage::stage_personnel_sync(&txn, input.id).await?;
     txn.commit().await?;
 
     emit_personnel_event(db, "personnel.updated", input.id, Some(actor_id)).await?;
-
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_personnel_sync(db, input.id).await,
-        "personnel update",
-    );
 
     get_personnel(db, input.id).await?.ok_or_else(|| AppError::NotFound {
         entity: "Personnel".into(),
@@ -1019,7 +1011,8 @@ pub async fn deactivate_personnel(
     let today = Utc::now().format("%Y-%m-%d").to_string();
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-    let result = db
+    let txn = db.begin().await?;
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE personnel SET \
@@ -1040,12 +1033,10 @@ pub async fn deactivate_personnel(
         ]));
     }
 
-    emit_personnel_event(db, "personnel.deactivated", id, Some(actor_id)).await?;
+    crate::sync::foundation_stage::stage_personnel_sync(&txn, id).await?;
+    txn.commit().await?;
 
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_personnel_sync(db, id).await,
-        "personnel deactivate",
-    );
+    emit_personnel_event(db, "personnel.deactivated", id, Some(actor_id)).await?;
 
     get_personnel(db, id).await?.ok_or_else(|| AppError::NotFound {
         entity: "Personnel".into(),
@@ -1403,11 +1394,10 @@ async fn sync_position_requirement_profile(
         .await?;
         pid
     } else {
-        let entity_sync_id = uuid::Uuid::new_v4().to_string();
+        let entity_sync_id = crate::sync::identity::new_entity_sync_id();
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO qualification_requirement_profiles \
-             (entity_sync_id, profile_name, required_certification_type_ids_json, \
+            "INSERT INTO qualification_requirement_profiles (entity_sync_id, profile_name, required_certification_type_ids_json, \
               applies_to_permit_type_codes_json, row_version) \
              VALUES (?, ?, ?, '[]', 1)",
             [

@@ -1443,11 +1443,11 @@ async fn wo_close_hook_completes_linked_occurrence_and_regens() {
     // Minimal WO row for execute validation + link.
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO work_orders (code, type_id, status_id, title, row_version, created_at, updated_at)
-         SELECT 'WO-PM-CLOSE-1', (SELECT id FROM work_order_types LIMIT 1),
+        "INSERT INTO work_orders (entity_sync_id, code, type_id, status_id, title, row_version, created_at, updated_at)
+         SELECT ?, 'WO-PM-CLOSE-1', (SELECT id FROM work_order_types LIMIT 1),
                 (SELECT id FROM work_order_statuses WHERE code = 'closed' LIMIT 1),
                 'PM close hook', 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')",
-        [],
+        [crate::sync::identity::new_entity_sync_id().into()],
     ))
     .await
     .expect("insert wo");

@@ -2593,7 +2593,9 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
     ];
 
     for (name, desc, is_system, role_type) in baseline_roles {
-        let entity_sync_id = Uuid::new_v4().to_string();
+        // Every device seeds these roles on its own: the id is derived from the role name
+        // so the same baseline role has the same sync identity on every device.
+        let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("roles", name);
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"INSERT OR IGNORE INTO roles

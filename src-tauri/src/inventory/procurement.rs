@@ -989,14 +989,10 @@ pub async fn receive_purchase_order_goods(
     )
     .await?;
 
-    tx.commit().await?;
-
     for movement_id in staged_movement_ids {
-        crate::sync::foundation_stage::warn_stage(
-            crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-            "stock_movement",
-        );
+        crate::sync::ops_stage::stage_stock_movement_sync(&tx, movement_id).await?;
     }
+    tx.commit().await?;
 
     // Post-commit: handle fulfillment_action for WO-linked demand
     if let Some(ref action) = input.fulfillment_action {
@@ -1385,13 +1381,10 @@ pub async fn transition_repairable_order(
         input.note.as_deref(),
     )
     .await?;
-    tx.commit().await?;
     for movement_id in staged_movement_ids {
-        crate::sync::foundation_stage::warn_stage(
-            crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-            "stock_movement",
-        );
+        crate::sync::ops_stage::stage_stock_movement_sync(&tx, movement_id).await?;
     }
+    tx.commit().await?;
     get_repairable_order(db, input.order_id).await
 }
 

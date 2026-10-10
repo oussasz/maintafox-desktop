@@ -879,10 +879,8 @@ pub async fn save_verification(
     )
     .await?;
 
-    txn.commit().await?;
-
     // ── Re-fetch verification and WO ──────────────────────────────────────
-    let ver_row = db
+    let ver_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT * FROM work_order_verifications \
@@ -893,14 +891,15 @@ pub async fn save_verification(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-fetch verification after insert")))?;
     let verification = map_verification(&ver_row)?;
 
-    let wo = queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(&txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
 
-    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
+    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
+    txn.commit().await?;
     Ok((verification, wo))
 }
 
@@ -1402,40 +1401,19 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     )
     .await?;
 
+    for (reservation_id, movement_id) in released_reservation_stages {
+        crate::sync::ops_stage::stage_stock_reservation_sync(&txn, reservation_id).await?;
+        if let Some(movement_id) = movement_id {
+            crate::sync::ops_stage::stage_stock_movement_sync(&txn, movement_id).await?;
+        }
+    }
+
+    // The UPDATE above set closeout_validation_profile_id, so the staged row carries the profile.
+    sync_stage::stage_work_order_by_id(&txn, input.wo_id).await?;
+
     txn.commit().await?;
 
-    for (reservation_id, movement_id) in released_reservation_stages {
-        crate::sync::foundation_stage::warn_stage(
-            crate::sync::ops_stage::stage_stock_reservation_sync(db, reservation_id).await,
-            "stock_reservation",
-        );
-        if let Some(movement_id) = movement_id {
-            crate::sync::foundation_stage::warn_stage(
-                crate::sync::ops_stage::stage_stock_movement_sync(db, movement_id).await,
-                "stock_movement",
-            );
-        }
-    }
-
     crate::pm::generation_control::on_work_order_closed_for_pm(db, input.wo_id, Some(input.actor_id)).await;
-
-    if let Ok(Some(wo)) = queries::get_work_order(db, input.wo_id).await {
-        let status_code = wo.status_code.as_deref().unwrap_or("closed");
-        let type_code = wo.type_code.as_deref().unwrap_or("corrective");
-        if let Err(e) = sync_stage::stage_work_order_sync(
-            db,
-            &wo,
-            status_code,
-            type_code,
-            wo.closed_at.as_deref(),
-            wo.closeout_validation_profile_id.or(Some(profile_id)),
-            wo.closeout_validation_passed,
-        )
-        .await
-        {
-            tracing::warn!(target: "maintafox", "stage_work_order_sync after close: {e}");
-        }
-    }
 
     if let Err(e) = reliability_queries::ingest_failure_event_from_closed_wo(db, input.wo_id, input.actor_id).await {
         tracing::warn!(target: "maintafox", "ingest_failure_event_from_closed_wo: {e}");
@@ -1567,15 +1545,14 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
     )
     .await?;
 
-    txn.commit().await?;
-
-    let wo = queries::get_work_order(db, input.wo_id)
+    let wo = queries::get_work_order(&txn, input.wo_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
-    crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
+    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
+    txn.commit().await?;
     Ok(wo)
 }
 

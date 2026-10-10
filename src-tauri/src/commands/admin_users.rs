@@ -585,7 +585,7 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
     }
 
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
     let assignment_sync_id = Uuid::new_v4().to_string();
     // Capture before move into SQL params
     let username_for_audit = input.username.clone();
@@ -600,8 +600,7 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
 
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        "INSERT INTO user_accounts \
-                (entity_sync_id, username, identity_mode, password_hash, personnel_id, \
+        "INSERT INTO user_accounts (entity_sync_id, username, identity_mode, password_hash, personnel_id, \
                  is_active, is_admin, force_password_change, \
                  failed_login_attempts, created_at, updated_at, row_version) \
              VALUES (?, ?, ?, ?, ?, 1, 0, ?, 0, ?, ?, 1)",
@@ -654,13 +653,10 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
     ))
     .await?;
 
+    crate::sync::foundation_stage::stage_user_account_sync(&tx, new_id).await?;
     tx.commit().await?;
 
     notify_rbac_user_change(&app, &state, new_id, "user_created");
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_user_account_sync(&state.db, new_id).await,
-        "user_account create",
-    );
 
     {
         let new_id_str = new_id.to_string();
@@ -873,15 +869,12 @@ pub async fn update_user(input: UpdateUserInput, state: State<'_, AppState>) -> 
     let set_clause = sets.join(", ");
     let sql = format!("UPDATE user_accounts SET {set_clause} WHERE id = ? AND deleted_at IS NULL");
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
+    let tx = state.db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_user_account_sync(&state.db, input.user_id).await,
-        "user_account update",
-    );
+    crate::sync::foundation_stage::stage_user_account_sync(&tx, input.user_id).await?;
+    tx.commit().await?;
 
     Ok(())
 }
@@ -1344,27 +1337,25 @@ pub async fn create_role(input: CreateRoleInput, state: State<'_, AppState>) -> 
 
     // Insert role
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO roles (entity_sync_id, name, description, role_type, status, is_system, \
+    let tx = state.db.begin().await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO roles (entity_sync_id, name, description, role_type, status, is_system, \
                                 created_at, updated_at, row_version) \
              VALUES (?, ?, ?, 'custom', 'active', 0, ?, ?, 1)",
-            vec![
-                entity_sync_id.into(),
-                input.name.into(),
-                input.description.map_or(sea_orm::Value::String(None), |d| d.into()),
-                now.clone().into(),
-                now.clone().into(),
-            ],
-        ))
-        .await?;
+        vec![
+            entity_sync_id.into(),
+            input.name.into(),
+            input.description.map_or(sea_orm::Value::String(None), |d| d.into()),
+            now.clone().into(),
+            now.clone().into(),
+        ],
+    ))
+    .await?;
 
-    let id_row = state
-        .db
+    let id_row = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT last_insert_rowid() as id",
@@ -1377,26 +1368,22 @@ pub async fn create_role(input: CreateRoleInput, state: State<'_, AppState>) -> 
 
     // Link permissions
     for perm_name in &perm_set {
-        state
-            .db
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO role_permissions (role_id, permission_id, granted_at, granted_by_id) \
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO role_permissions (role_id, permission_id, granted_at, granted_by_id) \
                  SELECT ?, p.id, ?, ? FROM permissions p WHERE p.name = ?",
-                vec![
-                    new_role_id.into(),
-                    now.clone().into(),
-                    i64::from(user.user_id).into(),
-                    perm_name.clone().into(),
-                ],
-            ))
-            .await?;
+            vec![
+                new_role_id.into(),
+                now.clone().into(),
+                i64::from(user.user_id).into(),
+                perm_name.clone().into(),
+            ],
+        ))
+        .await?;
     }
 
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_role_sync(&state.db, new_role_id).await,
-        "role create",
-    );
+    crate::sync::foundation_stage::stage_role_sync(&tx, new_role_id).await?;
+    tx.commit().await?;
 
     Ok(IdPayload { id: new_role_id })
 }
@@ -1436,17 +1423,17 @@ pub async fn update_role(input: UpdateRoleInput, app: AppHandle, state: State<'_
         ));
     }
 
+    let tx = state.db.begin().await?;
+
     // Update description if provided
     if let Some(ref desc) = input.description {
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        state
-            .db
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE roles SET description = ?, updated_at = ? WHERE id = ?",
-                [desc.clone().into(), now.into(), input.role_id.into()],
-            ))
-            .await?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "UPDATE roles SET description = ?, updated_at = ? WHERE id = ?",
+            [desc.clone().into(), now.into(), input.role_id.into()],
+        ))
+        .await?;
     }
 
     // Apply permission changes
@@ -1456,56 +1443,50 @@ pub async fn update_role(input: UpdateRoleInput, app: AppHandle, state: State<'_
         // Remove permissions
         if let Some(ref remove) = input.remove_permissions {
             for perm_name in remove {
-                state
-                    .db
-                    .execute(Statement::from_sql_and_values(
-                        DbBackend::Sqlite,
-                        "DELETE FROM role_permissions WHERE role_id = ? \
+                tx.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "DELETE FROM role_permissions WHERE role_id = ? \
                          AND permission_id = (SELECT id FROM permissions WHERE name = ?)",
-                        [input.role_id.into(), perm_name.clone().into()],
-                    ))
-                    .await?;
+                    [input.role_id.into(), perm_name.clone().into()],
+                ))
+                .await?;
             }
         }
 
         // Add permissions
         if let Some(ref add) = input.add_permissions {
             let add_set: HashSet<String> = add.iter().cloned().collect();
-            validate_permission_names_exist(&state.db, &add_set).await?;
+            validate_permission_names_exist(&tx, &add_set).await?;
 
             for perm_name in add {
-                state
-                    .db
-                    .execute(Statement::from_sql_and_values(
-                        DbBackend::Sqlite,
-                        "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at, granted_by_id) \
+                tx.execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT OR IGNORE INTO role_permissions (role_id, permission_id, granted_at, granted_by_id) \
                          SELECT ?, p.id, ?, ? FROM permissions p WHERE p.name = ?",
-                        vec![
-                            input.role_id.into(),
-                            now.clone().into(),
-                            i64::from(user.user_id).into(),
-                            perm_name.clone().into(),
-                        ],
-                    ))
-                    .await?;
+                    vec![
+                        input.role_id.into(),
+                        now.clone().into(),
+                        i64::from(user.user_id).into(),
+                        perm_name.clone().into(),
+                    ],
+                ))
+                .await?;
             }
         }
 
         // Re-check dependencies on final permission set
-        let final_perms = load_role_permission_names(&state.db, input.role_id).await?;
+        let final_perms = load_role_permission_names(&tx, input.role_id).await?;
         let final_set: HashSet<String> = final_perms.into_iter().collect();
-        resolver::validate_hard_dependencies(&state.db, &final_set).await?;
+        resolver::validate_hard_dependencies(&tx, &final_set).await?;
     }
+
+    crate::sync::foundation_stage::stage_role_sync(&tx, input.role_id).await?;
+    tx.commit().await?;
 
     // Role permissions changed → invalidate all cached entries (any user may hold this role)
     if has_perm_changes {
         notify_rbac_global_change(&app, &state, "role_updated");
     }
-
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::foundation_stage::stage_role_sync(&state.db, input.role_id).await,
-        "role update",
-    );
 
     Ok(())
 }
@@ -2297,7 +2278,7 @@ async fn load_scope_assignments(
 }
 
 /// Load permission names for a role.
-async fn load_role_permission_names(db: &sea_orm::DatabaseConnection, role_id: i64) -> AppResult<Vec<String>> {
+async fn load_role_permission_names(db: &impl ConnectionTrait, role_id: i64) -> AppResult<Vec<String>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -2318,7 +2299,7 @@ async fn load_role_permission_names(db: &sea_orm::DatabaseConnection, role_id: i
 }
 
 /// Validate that all permission names exist in the permissions table.
-async fn validate_permission_names_exist(db: &sea_orm::DatabaseConnection, names: &HashSet<String>) -> AppResult<()> {
+async fn validate_permission_names_exist(db: &impl ConnectionTrait, names: &HashSet<String>) -> AppResult<()> {
     if names.is_empty() {
         return Ok(());
     }

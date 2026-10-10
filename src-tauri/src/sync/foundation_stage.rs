@@ -305,10 +305,3 @@ pub async fn stage_reference_value_by_id(db: &impl ConnectionTrait, value_id: i6
     .await?;
     Ok(())
 }
-
-/// Best-effort staging after a durable mutation (never fails the write path).
-pub fn warn_stage(result: AppResult<()>, context: &str) {
-    if let Err(e) = result {
-        tracing::warn!(target: "maintafox", "sync stage {context}: {e}");
-    }
-}

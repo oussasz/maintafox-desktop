@@ -7,7 +7,7 @@
 
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use super::domain::{generate_di_code, guard_transition, map_intervention_request, DiStatus, InterventionRequest};
@@ -322,7 +322,7 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
 // B) get_intervention_request — single row by id
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn get_intervention_request(db: &DatabaseConnection, id: i64) -> AppResult<Option<InterventionRequest>> {
+pub async fn get_intervention_request(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<InterventionRequest>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -420,9 +420,11 @@ pub async fn create_intervention_request(
 
     let code = generate_di_code(db).await?;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let entity_sync_id = uuid::Uuid::new_v4().to_string();
+    let entity_sync_id = crate::sync::identity::new_entity_sync_id();
 
-    db.execute(Statement::from_sql_and_values(
+    // The DI row, its logs and its sync outbox entry commit together.
+    let txn = db.begin().await?;
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO intervention_requests (\
             entity_sync_id, code, equipment_id, org_node_id, status, title, description, origin_type, request_type, \
@@ -474,7 +476,7 @@ pub async fn create_intervention_request(
     })?;
 
     // Fetch the inserted row by code (code is UNIQUE)
-    let row = db
+    let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             format!(
@@ -491,7 +493,7 @@ pub async fn create_intervention_request(
     let di = map_intervention_request(&row)?;
 
     // Write initial transition log entry
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_state_transition_log (di_id, from_status, to_status, action, actor_id, acted_at) \
          VALUES (?, 'none', 'submitted', 'intake_submitted', ?, ?)",
@@ -500,9 +502,9 @@ pub async fn create_intervention_request(
     .await?;
 
     // Freeze immutable SLA on the DI, then persist full audit snapshot.
-    let di = super::sla::freeze_sla_on_di(db, &di).await?;
+    let di = super::sla::freeze_sla_on_di(&txn, &di).await?;
     let snap = super::sla::snapshot_sla_for_review_event(&di);
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_review_events \
             (di_id, event_type, actor_id, acted_at, from_status, to_status, \
@@ -529,10 +531,8 @@ pub async fn create_intervention_request(
     ))
     .await?;
 
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
-        "di create",
-    );
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, di.id).await?;
+    txn.commit().await?;
     Ok(di)
 }
 
@@ -544,8 +544,10 @@ pub async fn update_di_draft_fields(
     db: &DatabaseConnection,
     input: DiDraftUpdateInput,
 ) -> AppResult<InterventionRequest> {
+    let txn = db.begin().await?;
+
     // 1. Fetch current row to validate status
-    let current = get_intervention_request(db, input.id)
+    let current = get_intervention_request(&txn, input.id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InterventionRequest".into(),
@@ -577,7 +579,7 @@ pub async fn update_di_draft_fields(
         values.push(description.clone().into());
     }
     if let Some(ref request_type) = input.request_type {
-        let validated = crate::di::reference_catalog::validate_di_request_type(db, request_type).await?;
+        let validated = crate::di::reference_catalog::validate_di_request_type(&txn, request_type).await?;
         sets.push("request_type = ?".into());
         values.push(validated.into());
     }
@@ -588,7 +590,7 @@ pub async fn update_di_draft_fields(
             }
             Some(id) => {
                 // Validate only when writing a new value (legacy rows keep existing id until changed).
-                crate::di::reference_catalog::validate_di_symptom_id(db, *id).await?;
+                crate::di::reference_catalog::validate_di_symptom_id(&txn, *id).await?;
                 sets.push("symptom_code_id = ?".into());
                 values.push((*id).into());
             }
@@ -630,10 +632,8 @@ pub async fn update_di_draft_fields(
 
     if sets.is_empty() {
         // Nothing to update — return current row as-is
-        crate::sync::foundation_stage::warn_stage(
-            crate::sync::ops_stage::stage_intervention_request_sync(db, current.id).await,
-            "di",
-        );
+        crate::sync::ops_stage::stage_intervention_request_sync(&txn, current.id).await?;
+        txn.commit().await?;
         return Ok(current);
     }
 
@@ -652,7 +652,7 @@ pub async fn update_di_draft_fields(
         sets.join(", ")
     );
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
@@ -665,16 +665,14 @@ pub async fn update_di_draft_fields(
     }
 
     // 5. Re-fetch and return updated row
-    let di = get_intervention_request(db, input.id)
+    let di = get_intervention_request(&txn, input.id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InterventionRequest".into(),
             id: input.id.to_string(),
         })?;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, di.id).await,
-        "di",
-    );
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, di.id).await?;
+    txn.commit().await?;
     Ok(di)
 }
 
@@ -688,7 +686,8 @@ pub async fn triage_submitted_di(
     input: DiTriageSubmittedInput,
     actor_id: i64,
 ) -> AppResult<InterventionRequest> {
-    let current = get_intervention_request(db, input.di_id)
+    let txn = db.begin().await?;
+    let current = get_intervention_request(&txn, input.di_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InterventionRequest".into(),
@@ -711,7 +710,7 @@ pub async fn triage_submitted_di(
 
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-    let result = db
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "UPDATE intervention_requests SET \
@@ -735,7 +734,7 @@ pub async fn triage_submitted_di(
         ]));
     }
 
-    db.execute(Statement::from_sql_and_values(
+    txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO di_state_transition_log \
             (di_id, from_status, to_status, action, actor_id, reason_code, notes, acted_at) \
@@ -757,16 +756,14 @@ pub async fn triage_submitted_di(
     ))
     .await?;
 
-    let updated = get_intervention_request(db, input.di_id)
+    let updated = get_intervention_request(&txn, input.di_id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "InterventionRequest".into(),
             id: input.di_id.to_string(),
         })?;
+    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated.id).await?;
+    txn.commit().await?;
     super::notifications::notify_entered_in_review(db, &updated).await;
-    crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, updated.id).await,
-        "di",
-    );
     Ok(updated)
 }

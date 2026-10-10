@@ -201,11 +201,13 @@ async fn clone_published_values_into_draft(
 
         db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "INSERT INTO reference_values \
-                 (set_id, parent_id, code, label, description, sort_order, \
+            "INSERT INTO reference_values (entity_sync_id, set_id, parent_id, code, label, description, sort_order, \
                   color_hex, icon_name, semantic_tag, external_code, is_active, metadata_json) \
-             VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
+                // The draft copy is a new row (entity_sync_id is unique), created by the user's
+                // "new draft" action.
+                crate::sync::identity::new_entity_sync_id().into(),
                 draft_set_id.into(),
                 code.clone().into(),
                 label.into(),
