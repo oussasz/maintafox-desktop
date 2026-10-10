@@ -50,6 +50,7 @@ interface Registry {
     supervisor_exclusions: string[];
     operator: string[];
     planner: string[];
+    finance_manager: string[];
   };
   role_templates: Record<string, string[]>;
 }
@@ -179,6 +180,13 @@ function generateRust(registry: Registry): string {
   lines.push("/// Default Planner/Scheduler permission set.");
   lines.push(
     `pub const PLANNER_PERMISSIONS: &[&str] = &[${pl.map((n) => constName(n)).join(", ")}];`,
+  );
+  lines.push("");
+
+  const fm = registry.role_defaults.finance_manager;
+  lines.push("/// Default Finance Manager permission set (budget preparation and approval).");
+  lines.push(
+    `pub const FINANCE_MANAGER_PERMISSIONS: &[&str] = &[${fm.map((n) => constName(n)).join(", ")}];`,
   );
   lines.push("");
 

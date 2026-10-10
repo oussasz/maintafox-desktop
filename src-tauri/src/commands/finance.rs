@@ -82,6 +82,39 @@ async fn require_fin_post(state: &State<'_, AppState>, user_id: i32) -> AppResul
     Err(AppError::PermissionDenied("Required permission: fin.post.".to_string()))
 }
 
+/// Approval decisions (budget version → `approved`, variance review → `accepted`/`closed`) need
+/// `fin.approve` plus a fresh step-up, so preparing a budget and approving it are separate rights.
+async fn require_fin_approve(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
+    if !check_permission(
+        &state.db,
+        user_id,
+        crate::rbac::permissions::FIN_APPROVE,
+        &PermissionScope::Global,
+    )
+    .await?
+    {
+        return Err(AppError::PermissionDenied(
+            "Required permission: fin.approve.".to_string(),
+        ));
+    }
+    crate::entitlements::queries::enforce_capability_for_permission(&state.db, crate::rbac::permissions::FIN_APPROVE)
+        .await?;
+    crate::license::queries::enforce_permission_matrix(&state.db, user_id, crate::rbac::permissions::FIN_APPROVE)
+        .await?;
+    crate::require_step_up!(state);
+    Ok(())
+}
+
+/// Budget version transitions that are approval decisions.
+pub(crate) fn is_budget_approval_transition(next_status: &str) -> bool {
+    next_status == "approved"
+}
+
+/// Variance review transitions that are approval decisions.
+pub(crate) fn is_variance_approval_transition(next_status: &str) -> bool {
+    matches!(next_status, "accepted" | "closed")
+}
+
 async fn require_fin_report(state: &State<'_, AppState>, user_id: i32) -> AppResult<()> {
     if check_permission(
         &state.db,
@@ -189,7 +222,11 @@ pub async fn transition_budget_version_lifecycle(
     state: State<'_, AppState>,
 ) -> AppResult<BudgetVersion> {
     let user = require_session!(state);
-    require_fin_budget_or_legacy_manage(&state, user.user_id).await?;
+    if is_budget_approval_transition(input.next_status.trim()) {
+        require_fin_approve(&state, user.user_id).await?;
+    } else {
+        require_fin_budget_or_legacy_manage(&state, user.user_id).await?;
+    }
     queries::transition_budget_version_lifecycle(&state.db, i64::from(user.user_id), input).await
 }
 
@@ -369,7 +406,11 @@ pub async fn transition_budget_variance_review(
     state: State<'_, AppState>,
 ) -> AppResult<BudgetVarianceReview> {
     let user = require_session!(state);
-    require_fin_budget_or_legacy_manage(&state, user.user_id).await?;
+    if is_variance_approval_transition(input.next_status.trim()) {
+        require_fin_approve(&state, user.user_id).await?;
+    } else {
+        require_fin_budget_or_legacy_manage(&state, user.user_id).await?;
+    }
     queries::transition_budget_variance_review(&state.db, input).await
 }
 

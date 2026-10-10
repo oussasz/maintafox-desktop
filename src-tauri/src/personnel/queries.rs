@@ -123,6 +123,7 @@ fn map_personnel_row(row: &sea_orm::QueryResult) -> AppResult<Personnel> {
         supervisor_name: row.try_get::<Option<String>>("", "supervisor_name").unwrap_or(None),
         schedule_name: row.try_get::<Option<String>>("", "schedule_name").unwrap_or(None),
         company_name: row.try_get::<Option<String>>("", "company_name").unwrap_or(None),
+        sensitive_masked: false,
     })
 }
 
@@ -2264,6 +2265,7 @@ pub async fn list_personnel_availability_blocks(
             created_by_id: row.try_get("", "created_by_id").unwrap_or(None),
             created_by_label: row.try_get("", "created_by_label").unwrap_or(None),
             created_at: row.try_get("", "created_at").unwrap_or_default(),
+            reason_masked: false,
         })
         .collect())
 }

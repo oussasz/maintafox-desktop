@@ -5746,6 +5746,8 @@ export interface Personnel {
   supervisor_name: string | null;
   schedule_name: string | null;
   company_name: string | null;
+  /** Contact, contract and HR fields withheld (no per.sensitiveview, not own record). */
+  sensitive_masked?: boolean;
 }
 
 export interface PersonnelListFilter {

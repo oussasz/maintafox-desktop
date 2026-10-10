@@ -878,7 +878,7 @@ pub async fn bootstrap_initial_tenant_admin(
 
 async fn persist_state_record(
     state: &State<'_, AppState>,
-    user_id: i32,
+    user_id: Option<i32>,
     record: &ProductLicenseStateRecord,
     summary: &str,
 ) -> AppResult<()> {
@@ -970,8 +970,7 @@ pub async fn submit_product_license_key(
         .await
         .current
         .as_ref()
-        .map(|session| session.user.user_id)
-        .unwrap_or(0);
+        .map(|session| session.user.user_id);
     let trimmed = key.trim();
     if trimmed.len() < 8 {
         return Err(AppError::ValidationFailed(vec![
@@ -1041,7 +1040,7 @@ pub async fn submit_product_license_key(
     }
     tracing::info!(
         event = "desktop_activation_submit",
-        user_id = changed_by_id,
+        user_id = ?changed_by_id,
         pending_online_validation = record.pending_online_validation,
         status = ?record.status,
         has_claim = record.activation_claim.is_some(),
@@ -1090,8 +1089,7 @@ pub async fn apply_product_license_reconciliation(
         .await
         .current
         .as_ref()
-        .map(|session| session.user.user_id)
-        .unwrap_or(0);
+        .map(|session| session.user.user_id);
     let mut record = load_state_record(&state)
         .await?
         .ok_or_else(|| AppError::ValidationFailed(vec!["No local product license state found.".into()]))?;
@@ -1221,7 +1219,7 @@ pub async fn apply_product_license_reconciliation(
 
     tracing::info!(
         event = "desktop_activation_reconciliation",
-        user_id = changed_by_id,
+        user_id = ?changed_by_id,
         status = ?record.status,
         pending_online_validation = record.pending_online_validation,
         retry_attempt = record.reconciliation.retry_attempt,
@@ -1318,8 +1316,7 @@ pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str
         .await
         .current
         .as_ref()
-        .map(|session| session.user.user_id)
-        .unwrap_or(0);
+        .map(|session| session.user.user_id);
     let wiped_rows = reset_local_tenant_runtime_data_impl(state).await?;
     let _ = settings::delete_setting(
         &state.db,

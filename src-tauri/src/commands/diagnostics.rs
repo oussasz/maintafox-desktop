@@ -42,7 +42,7 @@ pub async fn seed_demo_data(state: State<'_, AppState>) -> AppResult<String> {
     }
     // Prefer authenticated admin path; allow activation-only bootstrap when no session.
     let has_session = state.session.read().await.current.is_some();
-    if has_session {
+    let actor = if has_session {
         let user = require_session!(state);
         require_permission!(
             state,
@@ -50,8 +50,11 @@ pub async fn seed_demo_data(state: State<'_, AppState>) -> AppResult<String> {
             crate::rbac::permissions::ADM_SETTINGS,
             PermissionScope::Global
         );
-    }
-    crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, 0).await?;
+        Some(user.user_id)
+    } else {
+        None
+    };
+    crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&state.db, actor).await?;
     Ok("Tenant bootstrap completed from activation claim.".into())
 }
 

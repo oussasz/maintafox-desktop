@@ -208,7 +208,7 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Clean-by-default policy:
     // - always ensure a single root organization from activated tenant name
     // - only seed neutral demo sandbox when claim.has_demo_data = true
-    if let Err(e) = crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&app_state.db, 0).await {
+    if let Err(e) = crate::db::tenant_bootstrap::bootstrap_from_activation_claim(&app_state.db, None).await {
         warn!("startup: tenant bootstrap returned error (non-fatal): {e}");
     }
     // Idempotent heal + fail-closed check for DBs that still have NULL-scoped org nodes.

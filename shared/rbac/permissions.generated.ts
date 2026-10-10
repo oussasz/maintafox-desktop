@@ -389,8 +389,7 @@ export const PERMISSION_CATALOG: readonly PermissionMeta[] = [
     category: "per",
     isDangerous: false,
     requiresStepUp: false,
-    usage: "catalog-only",
-    usageJustification: "Reserved for field-level masking; not yet enforced",
+    usage: "backend",
     aliases: [] as const,
   },
   {
@@ -854,8 +853,7 @@ export const PERMISSION_CATALOG: readonly PermissionMeta[] = [
     category: "fin",
     isDangerous: true,
     requiresStepUp: true,
-    usage: "catalog-only",
-    usageJustification: "Reserved for finance approval workflow; not yet enforced",
+    usage: "both",
     aliases: [] as const,
   },
   {
@@ -1180,5 +1178,6 @@ export const ROLE_TEMPLATES: Readonly<Record<string, readonly PermissionName[]>>
   "Technician Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.DI_VIEW, P.DI_CREATE, P.DI_CREATE_OWN, P.EQ_VIEW, P.EQ_MANAGE],
   "Planner Template": [P.OT_VIEW, P.OT_CREATE, P.OT_EDIT, P.OT_EMERGENCY_ASSIGN, P.DI_VIEW, P.DI_CREATE, P.DI_SCREEN, P.PM_VIEW, P.PM_CREATE, P.PM_EDIT, P.PLAN_VIEW, P.PLAN_EDIT, P.PLAN_CONFIRM, P.PLAN_WINDOWS, P.INV_VIEW, P.INV_MANAGE, P.INV_PROCURE],
   "Observer Template": [P.OT_VIEW, P.DI_VIEW, P.PM_VIEW, P.EQ_VIEW],
+  "Finance Manager Template": [P.FIN_VIEW, P.FIN_BUDGET, P.FIN_REPORT, P.FIN_POST, P.FIN_APPROVE, P.ORG_VIEW, P.REF_VIEW, P.EQ_VIEW, P.OT_VIEW, P.INV_VIEW, P.PM_VIEW, P.PLAN_VIEW, P.REP_VIEW, P.REP_EXPORT, P.DOC_VIEW],
 };
 

@@ -146,6 +146,7 @@ mod m20260826_000149_report_artifacts;
 mod m20260826_000150_user_analytics_dashboard_layouts;
 mod m20260901_000034_notification_core;
 mod m20261001_000035_archive_core;
+mod m20261010_000151_finance_approval_rights;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -304,6 +305,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260825_000148_universal_sync_identity::Migration),
             Box::new(m20260826_000149_report_artifacts::Migration),
             Box::new(m20260826_000150_user_analytics_dashboard_layouts::Migration),
+            Box::new(m20261010_000151_finance_approval_rights::Migration),
             Box::new(m_test::Migration),
         ]
     }

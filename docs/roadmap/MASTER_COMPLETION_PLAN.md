@@ -359,6 +359,44 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
 - Not yet verified: an admin console login plus step-up with real credentials (the owner does this).
   The API runs Node 20; the AWS SDK warns that its updates after January 2027 require Node 22.
 
+### Phase 1.5 — Permission enforcement (2026-10-10)
+
+- **`fin.approve` (owner decision: Administrator + finance managers).**
+  - A budget version moving to `approved`, or a variance review moving to `accepted`/`closed`,
+    now needs `fin.approve` and a fresh step-up. Other transitions keep `fin.budget`.
+  - BudgetPage: Approve, Accept and Close are enabled only with `P.FIN_APPROVE` and ask for the
+    password again.
+  - New editable role **Finance Manager**, created by the seeder with `role_defaults.finance_manager`
+    (fin.view, budget, report, post, approve, plus read access to org, ref, eq, ot, inv, pm, plan,
+    rep and doc). There is also a matching role template.
+  - `fin.approve` is added to `supervisor_exclusions`. Migration 151 removes the existing
+    Supervisor and Maintenance Supervisor grants and records `fin.approve → fin.view`.
+- **`per.sensitiveview`, enforced in the backend.**
+  - `list_personnel` and `get_personnel` withhold email, phone, HR id, contract number and dates,
+    and notes (`sensitive_masked = true`, values `None`) unless the caller holds the permission or
+    the record is their own.
+  - `get_personnel` drops rate cards in the same case. `list_rate_cards` and
+    `get_active_rate_card` refuse, and the planning commit dialog already handles a missing
+    rate. Availability-block `reason_note` is withheld (`reason_masked`).
+  - The detail screen shows "Restricted" instead of empty values. Planning and WO cost
+    calculations read rates server-side and are unaffected.
+  - Default holders: Administrator, Supervisor and Maintenance Supervisor. Operator, Planner and
+    Readonly don't hold it.
+- **Settings actor:** `set_setting` and `delete_setting` take `Option<i32>`. Licence, startup and
+  bootstrap writes record NULL instead of a fake user 0. Diagnostics bootstrap records the real
+  admin.
+- **Not done, on purpose — lookups stay "any signed-in user", not `ref.view`.** The registry role
+  templates (Supervisor, Technician, Planner, Observer) don't include `ref.view`, so gating would
+  empty the dropdowns on every form for roles built from them. The values are non-sensitive
+  vocabularies, and editing still needs `ref.manage`.
+- **Known gaps:**
+  - `create_personnel` and `update_personnel` return the full record to `per.manage` holders
+    (Supervisors, who hold `per.sensitiveview` by default).
+  - Workforce report exports were not reviewed for sensitive fields.
+  - The variance review commentary sent by BudgetPage is a fixed string (pre-existing).
+  - `fin.post` is marked `requires_step_up` but `require_fin_post` doesn't enforce step-up
+    (pre-existing).
+
 ## 6. Risks and open points
 
 - **D2 departs from the PRD.** The server would use a generic current-state table instead of typed per-entity tables, so the PRD needs an update if you approve it.

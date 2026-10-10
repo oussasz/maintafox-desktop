@@ -261,8 +261,7 @@
       "category": "per",
       "is_dangerous": false,
       "requires_step_up": false,
-      "usage": "catalog-only",
-      "usage_justification": "Reserved for field-level masking; not yet enforced",
+      "usage": "backend",
       "aliases": []
     },
     {
@@ -726,8 +725,7 @@
       "category": "fin",
       "is_dangerous": true,
       "requires_step_up": true,
-      "usage": "catalog-only",
-      "usage_justification": "Reserved for finance approval workflow; not yet enforced",
+      "usage": "both",
       "aliases": []
     },
     {
@@ -1045,6 +1043,7 @@
     { "permission": "integrity.repair", "requires": "sync.manage", "dep_type": "hard" },
     { "permission": "ent.manage", "requires": "ent.view", "dep_type": "hard" },
     { "permission": "act.manage", "requires": "act.view", "dep_type": "hard" },
+    { "permission": "fin.approve", "requires": "fin.view", "dep_type": "hard" },
     { "permission": "lic.manage", "requires": "lic.view", "dep_type": "hard" },
     { "permission": "log.export", "requires": "log.view", "dep_type": "hard" },
     { "permission": "arc.restore", "requires": "arc.view", "dep_type": "hard" },
@@ -1070,7 +1069,8 @@
       "audit.view",
       "lic.manage",
       "ent.manage",
-      "act.manage"
+      "act.manage",
+      "fin.approve"
     ],
     "operator": [
       "eq.view",
@@ -1142,6 +1142,23 @@
       "ram.view",
       "sync.view",
       "cfg.view"
+    ],
+    "finance_manager": [
+      "fin.view",
+      "fin.budget",
+      "fin.report",
+      "fin.post",
+      "fin.approve",
+      "org.view",
+      "ref.view",
+      "eq.view",
+      "ot.view",
+      "inv.view",
+      "pm.view",
+      "plan.view",
+      "rep.view",
+      "rep.export",
+      "doc.view"
     ]
   },
   "role_templates": {
@@ -1203,6 +1220,23 @@
       "inv.manage",
       "inv.procure"
     ],
-    "Observer Template": ["ot.view", "di.view", "pm.view", "eq.view"]
+    "Observer Template": ["ot.view", "di.view", "pm.view", "eq.view"],
+    "Finance Manager Template": [
+      "fin.view",
+      "fin.budget",
+      "fin.report",
+      "fin.post",
+      "fin.approve",
+      "org.view",
+      "ref.view",
+      "eq.view",
+      "ot.view",
+      "inv.view",
+      "pm.view",
+      "plan.view",
+      "rep.view",
+      "rep.export",
+      "doc.view"
+    ]
   }
 }

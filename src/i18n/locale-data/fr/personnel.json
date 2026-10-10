@@ -151,14 +151,16 @@
       "add": "Ajouter",
       "saving": "Enregistrement…",
       "hint": "Les nouvelles grilles sont effectives aujourd'hui. L'historique est conservé.",
-      "overviewMissing": "Aucun taux horaire actif"
+      "overviewMissing": "Aucun taux horaire actif",
+      "restricted": "Les taux de rémunération sont réservés aux utilisateurs disposant de la permission données personnelles sensibles."
     },
     "assignment": {
       "unknown": "Affectation inconnue",
       "reason": "Motif",
       "to": "Jusqu'au",
       "current": "En cours"
-    }
+    },
+    "restricted": "Restreint"
   },
   "create": {
     "title": "Nouveau personnel",

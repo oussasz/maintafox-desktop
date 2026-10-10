@@ -87,6 +87,16 @@ pub struct PersonnelAvailabilityBlock {
     pub created_by_id: Option<i64>,
     pub created_by_label: Option<String>,
     pub created_at: String,
+    /// True when `reason_note` was withheld (caller lacks `per.sensitiveview`, not own record).
+    #[serde(default)]
+    pub reason_masked: bool,
+}
+
+impl PersonnelAvailabilityBlock {
+    pub fn mask_sensitive(&mut self) {
+        self.reason_note = None;
+        self.reason_masked = true;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -644,6 +654,24 @@ pub struct Personnel {
     pub supervisor_name: Option<String>,
     pub schedule_name: Option<String>,
     pub company_name: Option<String>,
+    /// True when contact, contract and HR fields were withheld (caller lacks `per.sensitiveview`
+    /// and this is not their own record). Withheld fields are `None`, not empty values.
+    #[serde(default)]
+    pub sensitive_masked: bool,
+}
+
+impl Personnel {
+    /// Withholds the fields covered by `per.sensitiveview`.
+    pub fn mask_sensitive(&mut self) {
+        self.email = None;
+        self.phone = None;
+        self.hr_external_id = None;
+        self.contract_number = None;
+        self.contract_start_date = None;
+        self.contract_end_date = None;
+        self.notes = None;
+        self.sensitive_masked = true;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -883,6 +911,39 @@ pub async fn insert_personnel_with_auto_code(db: &DatabaseConnection, full_name:
         .try_get::<String>("", "employee_code")
         .map_err(|e| AppError::Internal(anyhow::anyhow!("employee_code decode: {e}")))?;
     Ok(code)
+}
+
+#[cfg(test)]
+mod masking_tests {
+    use super::*;
+
+    #[test]
+    fn mask_sensitive_withholds_contact_contract_and_hr_fields_only() {
+        let mut p: Personnel = serde_json::from_value(serde_json::json!({
+            "id": 7, "employee_code": "PER-0007", "full_name": "A. Tech",
+            "employment_type": "employee", "employment_origin": "internal", "employment_status": "active",
+            "blocked_override": false, "position_id": null, "primary_entity_id": null,
+            "primary_team_id": null, "supervisor_id": null, "home_schedule_reference_value_id": null,
+            "availability_status": "available", "hire_date": "2020-01-01", "termination_date": null,
+            "email": "a@example.com", "phone": "+213 555", "photo_path": null, "hr_external_id": "HR-1",
+            "external_company_id": null, "contract_number": "C-1", "contract_start_date": "2020-01-01",
+            "contract_end_date": "2030-01-01", "notes": "private", "row_version": 1,
+            "created_at": "2020-01-01", "updated_at": "2020-01-01", "position_name": null,
+            "position_code": null, "position_category": null, "entity_name": null, "team_name": "Crew A",
+            "supervisor_name": null, "schedule_name": null, "company_name": null
+        }))
+        .expect("fixture");
+        assert!(!p.sensitive_masked, "defaults to unmasked when absent");
+
+        p.mask_sensitive();
+        assert!(p.sensitive_masked);
+        for field in [&p.email, &p.phone, &p.hr_external_id, &p.contract_number, &p.notes] {
+            assert!(field.is_none());
+        }
+        assert!(p.contract_start_date.is_none() && p.contract_end_date.is_none());
+        assert_eq!(p.full_name, "A. Tech", "operational identity stays visible");
+        assert_eq!(p.team_name.as_deref(), Some("Crew A"));
+    }
 }
 
 #[cfg(test)]

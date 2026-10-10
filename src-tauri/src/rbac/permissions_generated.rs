@@ -506,7 +506,7 @@ pub const CATALOG: &[PermissionMeta] = &[
         category: "per",
         is_dangerous: false,
         requires_step_up: false,
-        usage: "catalog-only",
+        usage: "backend",
         aliases: &[],
     },
     PermissionMeta {
@@ -965,7 +965,7 @@ pub const CATALOG: &[PermissionMeta] = &[
         category: "fin",
         is_dangerous: true,
         requires_step_up: true,
-        usage: "catalog-only",
+        usage: "both",
         aliases: &[],
     },
     PermissionMeta {
@@ -1448,6 +1448,11 @@ pub const DEPENDENCIES: &[PermissionDep] = &[
         dep_type: "hard",
     },
     PermissionDep {
+        permission: FIN_APPROVE,
+        requires: FIN_VIEW,
+        dep_type: "hard",
+    },
+    PermissionDep {
         permission: LIC_MANAGE,
         requires: LIC_VIEW,
         dep_type: "hard",
@@ -1533,6 +1538,7 @@ pub const SUPERVISOR_EXCLUSIONS: &[&str] = &[
     LIC_MANAGE,
     ENT_MANAGE,
     ACT_MANAGE,
+    FIN_APPROVE,
 ];
 
 /// Default Operator / Maintenance Technician permission set.
@@ -1608,6 +1614,25 @@ pub const PLANNER_PERMISSIONS: &[&str] = &[
     RAM_VIEW,
     SYNC_VIEW,
     CFG_VIEW,
+];
+
+/// Default Finance Manager permission set (budget preparation and approval).
+pub const FINANCE_MANAGER_PERMISSIONS: &[&str] = &[
+    FIN_VIEW,
+    FIN_BUDGET,
+    FIN_REPORT,
+    FIN_POST,
+    FIN_APPROVE,
+    ORG_VIEW,
+    REF_VIEW,
+    EQ_VIEW,
+    OT_VIEW,
+    INV_VIEW,
+    PM_VIEW,
+    PLAN_VIEW,
+    REP_VIEW,
+    REP_EXPORT,
+    DOC_VIEW,
 ];
 
 /// Resolve a permission or alias to its canonical name.

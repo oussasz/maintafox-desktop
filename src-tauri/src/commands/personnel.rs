@@ -53,6 +53,39 @@ async fn can_read_personnel_record(
     Ok(linked_personnel_id(state, user.user_id).await? == Some(personnel_id))
 }
 
+/// Who may see `per.sensitiveview` fields (contact, contract/HR data, pay rates, absence reasons):
+/// holders of the permission see every record; everyone else sees only their own record.
+struct SensitiveAccess {
+    has_permission: bool,
+    own_personnel_id: Option<i64>,
+}
+
+impl SensitiveAccess {
+    async fn load(state: &State<'_, AppState>, user_id: i32) -> AppResult<Self> {
+        let has_permission = crate::auth::rbac::check_permission_cached(
+            &state.db,
+            &state.permission_cache,
+            user_id,
+            crate::rbac::permissions::PER_SENSITIVEVIEW,
+            &PermissionScope::Global,
+        )
+        .await?;
+        let own_personnel_id = if has_permission {
+            None
+        } else {
+            linked_personnel_id(state, user_id).await?
+        };
+        Ok(Self {
+            has_permission,
+            own_personnel_id,
+        })
+    }
+
+    fn can_view(&self, personnel_id: i64) -> bool {
+        self.has_permission || self.own_personnel_id == Some(personnel_id)
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // A) list_personnel — per.view
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -66,7 +99,14 @@ pub async fn list_personnel(filter: PersonnelListFilter, state: State<'_, AppSta
         crate::rbac::permissions::PER_VIEW,
         PermissionScope::Global
     );
-    queries::list_personnel(&state.db, filter).await
+    let mut page = queries::list_personnel(&state.db, filter).await?;
+    let access = SensitiveAccess::load(&state, user.user_id).await?;
+    for person in &mut page.items {
+        if !access.can_view(person.id) {
+            person.mask_sensitive();
+        }
+    }
+    Ok(page)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -80,12 +120,22 @@ pub async fn get_personnel(id: i64, state: State<'_, AppState>) -> AppResult<Per
         return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
     }
 
-    queries::get_personnel_detail(&state.db, id)
+    let mut detail = queries::get_personnel_detail(&state.db, id)
         .await?
         .ok_or_else(|| AppError::NotFound {
             entity: "Personnel".into(),
             id: id.to_string(),
-        })
+        })?;
+    if !SensitiveAccess::load(&state, user.user_id).await?.can_view(id) {
+        // `sensitive_masked` on the record also tells the UI that pay rates were withheld.
+        detail.personnel.mask_sensitive();
+        detail.rate_cards.clear();
+    }
+    Ok(detail)
+}
+
+fn sensitive_denied() -> AppError {
+    AppError::PermissionDenied("Permission requise : per.sensitiveview".to_string())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -359,6 +409,12 @@ pub async fn list_rate_cards(personnel_id: i64, state: State<'_, AppState>) -> A
     if !can_read_personnel_record(&state, &user, personnel_id).await? {
         return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
     }
+    if !SensitiveAccess::load(&state, user.user_id)
+        .await?
+        .can_view(personnel_id)
+    {
+        return Err(sensitive_denied());
+    }
     queries::list_rate_cards(&state.db, personnel_id).await
 }
 
@@ -370,6 +426,12 @@ pub async fn get_active_rate_card(
     let user = require_session!(state);
     if !can_read_personnel_record(&state, &user, personnel_id).await? {
         return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
+    }
+    if !SensitiveAccess::load(&state, user.user_id)
+        .await?
+        .can_view(personnel_id)
+    {
+        return Err(sensitive_denied());
     }
     queries::get_active_rate_card(&state.db, personnel_id).await
 }
@@ -743,7 +805,16 @@ pub async fn list_personnel_availability_blocks(
     if !can_read_personnel_record(&state, &user, personnel_id).await? {
         return Err(AppError::PermissionDenied("Permission requise : per.view".to_string()));
     }
-    queries::list_personnel_availability_blocks(&state.db, personnel_id, limit.unwrap_or(50)).await
+    let mut blocks = queries::list_personnel_availability_blocks(&state.db, personnel_id, limit.unwrap_or(50)).await?;
+    if !SensitiveAccess::load(&state, user.user_id)
+        .await?
+        .can_view(personnel_id)
+    {
+        for block in &mut blocks {
+            block.mask_sensitive();
+        }
+    }
+    Ok(blocks)
 }
 
 #[tauri::command]

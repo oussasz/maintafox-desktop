@@ -134,6 +134,10 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
   const deactivate = usePersonnelStore((s) => s.deactivate);
 
   const p = detail.personnel;
+  /** Server withheld per.sensitiveview fields; show them as restricted, never as empty. */
+  const restricted = p.sensitive_masked === true;
+  const sensitive = (value: string | null | undefined): string | null =>
+    restricted ? t("detail.restricted") : (value ?? null);
   const [activeView, setActiveView] = useState<PersonnelDetailView>("identity");
   const [skills, setSkills] = useState<SkillMatrixRow[]>([]);
   const [calendarRows, setCalendarRows] = useState<AvailabilityCalendarEntry[]>([]);
@@ -358,17 +362,30 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
           {isExternal ? (
             <>
               <DetailFieldRow label={t("field.company")} value={p.company_name} />
-              <DetailFieldRow label={t("field.contractNumber")} value={p.contract_number} />
-              <DetailFieldRow label={t("field.contractStart")} value={fmt(p.contract_start_date)} />
-              <DetailFieldRow label={t("field.contractEnd")} value={fmt(p.contract_end_date)} />
+              <DetailFieldRow
+                label={t("field.contractNumber")}
+                value={sensitive(p.contract_number)}
+              />
+              <DetailFieldRow
+                label={t("field.contractStart")}
+                value={sensitive(fmt(p.contract_start_date))}
+              />
+              <DetailFieldRow
+                label={t("field.contractEnd")}
+                value={sensitive(fmt(p.contract_end_date))}
+              />
             </>
           ) : null}
-          <DetailFieldRow label={t("field.email")} value={p.email} />
-          <DetailFieldRow label={t("field.phone")} value={p.phone} />
+          <DetailFieldRow label={t("field.email")} value={sensitive(p.email)} />
+          <DetailFieldRow label={t("field.phone")} value={sensitive(p.phone)} />
           <DetailFieldRow
             label={t("field.laborRate")}
             value={
-              activeRate ? formatCurrency(activeRate.labor_rate) : t("detail.rates.overviewMissing")
+              restricted
+                ? t("detail.restricted")
+                : activeRate
+                  ? formatCurrency(activeRate.labor_rate)
+                  : t("detail.rates.overviewMissing")
             }
           />
         </DetailSectionCard>
@@ -437,7 +454,10 @@ export function PersonnelDetailWorkspace({ detail }: PersonnelDetailWorkspacePro
       {activeView === "rates" ? (
         <DetailSectionCard title={t("detail.tabs.rates")}>
           <p className="mb-2 text-[11px] text-text-muted">{t("detail.rates.hint")}</p>
-          {rateCards.length === 0 ? <EmptyMsg msg={t("detail.rates.empty")} /> : null}
+          {restricted ? <EmptyMsg msg={t("detail.rates.restricted")} /> : null}
+          {!restricted && rateCards.length === 0 ? (
+            <EmptyMsg msg={t("detail.rates.empty")} />
+          ) : null}
           <div className="space-y-2">
             {rateCards.map((rc) => {
               const isActive = activeRate?.id === rc.id;

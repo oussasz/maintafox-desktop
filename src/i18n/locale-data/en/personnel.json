@@ -151,14 +151,16 @@
       "add": "Add rate",
       "saving": "Saving…",
       "hint": "New cards are effective today. Historical cards are kept for audit.",
-      "overviewMissing": "No active hourly rate"
+      "overviewMissing": "No active hourly rate",
+      "restricted": "Pay rates are restricted to users with the sensitive personnel data permission."
     },
     "assignment": {
       "unknown": "Unknown assignment",
       "reason": "Reason",
       "to": "Until",
       "current": "Current"
-    }
+    },
+    "restricted": "Restricted"
   },
   "create": {
     "title": "New personnel",

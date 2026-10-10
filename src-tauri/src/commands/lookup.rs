@@ -24,6 +24,10 @@ pub async fn list_lookup_domains(
 
 /// Returns all active values for a given domain key.
 ///
+/// Access: any signed-in user, deliberately not `ref.view`. These governed vocabularies feed the
+/// dropdowns of every module, and roles created from the registry role templates do not carry
+/// `ref.view`; gating here would empty those forms. Editing reference data stays `ref.manage`.
+///
 /// This is the primary call for populating dropdowns, filter chips, and badge resolvers.
 /// Pass `domainKey` as the stable programmatic key (e.g. "equipment.criticality").
 #[tauri::command]

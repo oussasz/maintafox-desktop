@@ -123,6 +123,7 @@ fn map_block_row(row: sea_orm::QueryResult) -> PersonnelAvailabilityBlock {
         created_by_id: row.try_get("", "created_by_id").unwrap_or(None),
         created_by_label: row.try_get("", "created_by_label").unwrap_or(None),
         created_at: row.try_get("", "created_at").unwrap_or_default(),
+        reason_masked: false,
     }
 }
 

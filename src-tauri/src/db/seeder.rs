@@ -2584,6 +2584,12 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
             "custom",
         ),
         ("Readonly", "Read-only access to all operational modules.", 1, "system"),
+        (
+            "Finance Manager",
+            "Budget preparation, reporting and approval (fin.approve).",
+            0,
+            "custom",
+        ),
     ];
 
     for (name, desc, is_system, role_type) in baseline_roles {
@@ -2636,6 +2642,14 @@ async fn seed_system_roles(db: &DatabaseConnection) -> AppResult<()> {
             .filter(|p| p.ends_with(".view"))
             .collect();
         for perm_name in view_perms {
+            assign_permission_by_name(db, rid, perm_name, &now).await?;
+        }
+    }
+
+    // Finance Manager -> budgets end to end, including approval (with Administrator, the only
+    // default holders of fin.approve)
+    if let Some(rid) = get_role_id_by_name(db, "Finance Manager").await? {
+        for perm_name in crate::rbac::permissions::FINANCE_MANAGER_PERMISSIONS {
             assign_permission_by_name(db, rid, perm_name, &now).await?;
         }
     }

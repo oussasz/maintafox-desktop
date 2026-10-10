@@ -97,7 +97,7 @@ async fn persist_header_json(
         DOCUMENT_HEADER_SETTING_KEY,
         DOCUMENT_HEADER_SCOPE,
         &value_json,
-        changed_by_id,
+        Some(changed_by_id),
         summary,
     )
     .await

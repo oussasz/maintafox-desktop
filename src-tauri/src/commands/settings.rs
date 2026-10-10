@@ -101,7 +101,7 @@ pub async fn set_setting(payload: SetSettingPayload, state: State<'_, AppState>)
         &payload.key,
         &scope,
         &payload.value_json,
-        user.user_id,
+        Some(user.user_id),
         &summary,
     )
     .await

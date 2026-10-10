@@ -120,6 +120,8 @@ export const PersonnelSchema = z.object({
   supervisor_name: z.string().nullable(),
   schedule_name: z.string().nullable(),
   company_name: z.string().nullable(),
+  /** Contact, contract and HR fields withheld (no per.sensitiveview, not own record). */
+  sensitive_masked: z.boolean().optional().default(false),
 });
 export const PersonnelListPageSchema = z.object({
   items: z.array(PersonnelSchema),
@@ -247,6 +249,8 @@ export const PersonnelAvailabilityBlockSchema = z.object({
   created_by_id: z.number().nullable(),
   created_by_label: z.string().nullable(),
   created_at: z.string(),
+  /** `reason_note` withheld (no per.sensitiveview, not own record). */
+  reason_masked: z.boolean().optional().default(false),
 });
 
 /** Backend ValidationFailed payload fragment for soft overlap confirm. */

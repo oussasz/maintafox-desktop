@@ -19,7 +19,7 @@ struct TenantBootstrapState {
     bootstrapped_at: String,
 }
 
-pub async fn bootstrap_from_activation_claim(db: &DatabaseConnection, changed_by_id: i32) -> AppResult<()> {
+pub async fn bootstrap_from_activation_claim(db: &DatabaseConnection, changed_by_id: Option<i32>) -> AppResult<()> {
     let Some(claim) = crate::commands::product_license::get_activation_claim_record(db).await? else {
         return Ok(());
     };

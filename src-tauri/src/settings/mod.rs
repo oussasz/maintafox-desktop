@@ -220,7 +220,7 @@ pub async fn set_setting(
     key: &str,
     scope: &str,
     value_json: &str,
-    changed_by_id: i32,
+    changed_by_id: Option<i32>,
     change_summary: &str,
 ) -> AppResult<()> {
     if value_json.trim().is_empty() {
@@ -255,7 +255,7 @@ pub async fn set_setting(
             key.into(),
             scope.into(),
             value_json.into(),
-            i64::from(changed_by_id).into(),
+            changed_by_id.map(i64::from).into(),
             now.clone().into(),
         ],
     ))
@@ -272,7 +272,7 @@ pub async fn set_setting(
             change_summary.into(),
             old_hash.into(),
             new_hash.into(),
-            i64::from(changed_by_id).into(),
+            changed_by_id.map(i64::from).into(),
             now.into(),
         ],
     ))
@@ -281,7 +281,7 @@ pub async fn set_setting(
     tracing::info!(
         setting_key = key,
         scope = scope,
-        actor = changed_by_id,
+        actor = ?changed_by_id,
         "setting updated"
     );
 
@@ -293,7 +293,7 @@ pub async fn delete_setting(
     db: &DatabaseConnection,
     key: &str,
     scope: &str,
-    changed_by_id: i32,
+    changed_by_id: Option<i32>,
     change_summary: &str,
 ) -> AppResult<bool> {
     let old = get_setting(db, key, scope).await?;
@@ -320,7 +320,7 @@ pub async fn delete_setting(
             key.into(),
             change_summary.into(),
             old_hash.into(),
-            i64::from(changed_by_id).into(),
+            changed_by_id.map(i64::from).into(),
             now.into(),
         ],
     ))
@@ -329,7 +329,7 @@ pub async fn delete_setting(
     tracing::info!(
         setting_key = key,
         scope = scope,
-        actor = changed_by_id,
+        actor = ?changed_by_id,
         "setting deleted"
     );
 
@@ -983,7 +983,7 @@ mod tests {
             "appearance.color_mode",
             "tenant",
             r#""dark""#,
-            1,
+            Some(1),
             "Changed color mode",
         )
         .await
@@ -1023,9 +1023,16 @@ mod tests {
             .await
             .expect("Migrations should apply");
 
-        let err = set_setting(&db, "appearance.color_mode", "tenant", "not-json", 1, "Invalid update")
-            .await
-            .expect_err("invalid JSON should be rejected");
+        let err = set_setting(
+            &db,
+            "appearance.color_mode",
+            "tenant",
+            "not-json",
+            Some(1),
+            "Invalid update",
+        )
+        .await
+        .expect_err("invalid JSON should be rejected");
 
         assert!(matches!(err, AppError::ValidationFailed(_)));
     }
