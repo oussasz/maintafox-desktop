@@ -16,17 +16,27 @@ Every primary domain entity MUST carry:
 
 | Column | Type | Rules |
 |---|---|---|
-| `entity_sync_id` | TEXT UUID | UNIQUE, never reused, merge key across machines |
-| `row_version` | INTEGER | Monotonic; increment on every durable mutation |
+| `entity_sync_id` | TEXT UUID | UNIQUE, never reused, merge key across machines. **Set in the INSERT that creates the row** (`sync::identity::new_entity_sync_id()`, or `seeded_entity_sync_id(entity_type, natural_key)` for rows every device seeds itself). Stagers never invent or derive it. |
+| `row_version` | INTEGER | Monotonic; increment on every durable mutation (local optimistic concurrency) |
 | `updated_at` | TEXT RFC3339 UTC | Always set on mutation |
 
-Every durable mutation MUST call `stage_outbox_item` with a typed payload.
+Every durable mutation MUST stage its change **inside the same database transaction** (pass the
+transaction to the stager). A failed stage fails the write; there is no post-commit or
+"best effort" staging.
 
 No domain may ship without:
 
-1. `SYNC_ENTITY_*` registry key
+1. An entry in the sync entity registry (`src-tauri/src/sync/registry.rs`): table, scope
+   (`tenant` | `user` with owner column), stager, materializer, conflict policy, parents. A table
+   that must not replicate is listed in `LOCAL_ONLY_TABLES` with a category. The CI test
+   `registry_covers_every_table` fails on any table in neither list.
 2. Versioned payload with **`entity_sync_id` FKs only** (never local `i64`)
 3. Inbox materialization handler that upserts the real domain table
+
+The registry is exported to `shared/sync/entity-registry.json` (test
+`registry_export_matches_shared_file`; regenerate with `MAINTAFOX_WRITE_SYNC_REGISTRY=1`). The
+control-plane allowlist is vendored in `shared/sync/server-entity-allowlist.v2.json`; every staged
+entity must be in it (test `staged_entities_are_in_the_server_allowlist`).
 
 Local INTEGER PKs are device-local. Rename legacy `sync_id` → `entity_sync_id` (no dual-read aliases).
 
@@ -37,35 +47,59 @@ Local INTEGER PKs are device-local. Rename legacy `sync_id` → `entity_sync_id`
 - **Envelope:** `entity_type`, `entity_sync_id`, `operation` (`create`\|`update`\|`delete`\|`upsert`\|`archive`), `row_version`, `payload_json`, `payload_hash` (SHA-256 hex)
 - **Checkpoint:** Replay-safe `checkpoint_token`; do not advance when materialize conflicts remain unresolved
 
+### Outbox versioning (protocol v2 rules, applied locally since Phase 2.2)
+
+`stage_outbox_item` assigns, for every new envelope:
+
+- `idempotency_key`: a fresh UUID (unique per tenant forever; retries resend the same envelope);
+- `base_row_version`: the version of the previous unsent change of the entity, else the version the
+  server is known to hold (`sync_entity_state`, updated on ack and on inbound apply), else `NULL`
+  (the row is created here);
+- `row_version` = `base_row_version + 1`, or `1` for a create;
+- `owner_user_sync_id` for user-scoped entities (from the registry owner column);
+- `origin_machine_id` = `sync_replica_identity.replica_id` (one id per local database).
+
+Restaging an unchanged payload while the previous change is unsent returns that change.
+Outbox status: `pending` → `in_flight` (sent, not acknowledged; sent again on the next exchange) →
+`acked` | `rejected` | `conflict` (v2 server conflict, waits for a person) | `dead_letter` (after
+`OUTBOX_MAX_DELIVERY_ATTEMPTS` transport failures, listed as a conflict) | `superseded` (replaced by
+a person's conflict decision).
+
 ### Ingest vs apply
 
 1. Exchange inserts inbound items into `sync_inbox` with `apply_status = 'pending'`
-2. `materialize_inbox_batch` upserts domain tables, then sets `applied` / `conflict`
-3. Never mark `applied` on insert alone
+2. `materialize_inbox_batch` applies them in registry order and sets:
+   - `applied`: written, or already current (own change echoed back, same version and content);
+   - `deferred`: unknown entity type, entity without materializer yet, or parent not received yet;
+     deferred rows are retried on every run and applied once possible;
+   - `conflict`: concurrent edit, stale or divergent version, or materializer error; a
+     `sync_conflicts` record is written in the same transaction.
+3. Never mark `applied` on insert alone, and never for a row that was not applied.
 
 ## 4. Apply order
 
-Dependency-safe materialization order:
-
-1. Org structure / node types
-2. Users / RBAC (roles, permissions bindings, scope)
-3. Personnel / teams
-4. Equipment (+ meters)
-5. Reference catalogs (by code)
-6. Inventory (articles, locations, movements)
-7. Intervention requests (DI)
-8. PM plans / versions / occurrences
-9. Work orders + children (tasks, labor, attachments metadata)
-10. Inspection / permits / budget / reliability events
-11. Media attachment metadata (binaries via object store)
+The apply order is computed from the registry `parents` (an entity is applied after all of its
+parents; `registry::apply_priority`). The CI tests check that the parent graph has no cycle and that
+every declared SQLite foreign key between replicated tables is listed as a parent. A child whose
+parent has not arrived yet is deferred and retried, so cross-batch order does not lose links.
 
 ## 5. Conflict policy
 
-| Class | Policy |
+Owner decision (2026-10-10): a person always decides; last-write-wins is never applied silently.
+
+| Class (`ConflictPolicy`) | Policy |
 |---|---|
-| Mutable operational (WO status, DI fields) | Higher `row_version` wins when checkpoint is newer; equal version → operator review via `sync_conflicts` |
-| Append-only (labor, attachments, execution events, stock movements) | Never merge-overwrite; insert by `entity_sync_id` |
-| Authority mismatch | Route to Sync Center for operator resolution |
+| `operator_review` (mutable rows) | Inbound change while a local change is unsent → `CONCURRENT_EDIT`; older than applied → `STALE_INBOUND`; same version, other content → `EQUAL_VERSION_DIVERGENCE`; v2 server refusal → `SERVER_CONFLICT`. All go to the Sync Center. |
+| `append_only` (history rows, stock movements, attachments) | Never overwritten; a replayed row is a no-op |
+
+Resolution acts on data in the same transaction that closes the conflict:
+
+- **Keep mine** (`accept_local`): the server version becomes the base, unsent local changes are
+  superseded, and the current local row is staged again (`base_row_version` = server version).
+- **Take theirs** (`accept_remote`): unsent local changes are superseded and the server payload is
+  applied through the materializer. Not available when the conflict carries no server payload
+  (v1 rejections) or the entity has no materializer yet.
+- `dismiss`, `retry_later`, `escalate` only change the conflict status.
 
 ## 6. Media
 
@@ -119,7 +153,9 @@ See also: [`VPS_SYNC_EXCHANGE.md`](./VPS_SYNC_EXCHANGE.md) for the frozen Fastif
 
 ## 11. Staging coverage matrix (Phase 1)
 
-Prefer post-commit `warn_stage` / `foundation_stage::warn_stage` — never fail the business write on staging errors.
+Since Phase 2.2 staging runs inside the business transaction and a failed stage fails the write
+(the old post-commit `warn_stage` helpers are removed). The authoritative coverage per entity is
+`sync_status` in `shared/sync/entity-registry.json` (`synced`, `staged_only`, `not_staged`).
 
 | Entity | Stage helper | Primary mutation entry points | Materializer |
 |---|---|---|---|

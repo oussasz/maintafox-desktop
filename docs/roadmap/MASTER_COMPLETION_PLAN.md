@@ -492,6 +492,29 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
   - `fin.post` is marked `requires_step_up` but `require_fin_post` doesn't enforce step-up
     (pre-existing).
 
+### Phase 2.2 — Desktop sync foundations (2026-10-10)
+
+- **Registry:** `src-tauri/src/sync/registry.rs` lists 201 replicated tables (scope, stager,
+  materializer, conflict policy, parents → apply order) and 46 local-only tables. Exported to
+  `shared/sync/entity-registry.json` for the server allowlist. CI tests fail on a table in neither
+  list, a parent cycle, an undeclared FK parent, a staged type missing from the server allowlist
+  copy, and any raw INSERT into a synchronised table without `entity_sync_id`.
+- **Identity:** every insert sets `entity_sync_id`; seeded system rows (roles) use a deterministic
+  id; stagers never invent ids. Migration 160 backfills missing ids.
+- **Transactional staging:** `warn_stage` is gone; every stager runs in the business transaction and
+  a failed stage fails the write (≈90 call sites, incl. finance, permits, inspections,
+  qualification, reliability).
+- **Outbox/inbox model (migration 160):** base_row_version, owner, origin replica id, attempts,
+  in_flight / dead_letter / superseded; inbox deferred state; per-entity server version.
+- **Inbound:** unknown or not-yet-applied types stay `deferred` (rows wrongly marked applied before
+  were re-flagged); children wait for parents; conflicts (concurrent edit, stale, equal-version
+  divergence, materialize error) are written to `sync_conflicts` and counted in the summary.
+- **Conflicts:** keep mine re-stages on the server version; take theirs applies the server payload.
+  Sync Center shows the kind and versions (FR/EN).
+- **Open for 2.3/2.4:** see `docs/engineering/SYNC_STRATEGY.md` and the session notes: seeded
+  catalog rows created by old migrations still have per-database ids; delivery-failure hook not
+  wired to the transport; deletes mostly not staged; legacy payloads keep local integer FKs.
+
 ## 6. Risks and open points
 
 - **D2 departs from the PRD.** The server would use a generic current-state table instead of typed per-entity tables, so the PRD needs an update if you approve it.
