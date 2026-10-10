@@ -108,6 +108,14 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Phase 1: database integrity and connection
     info!("startup: initialising database");
     let db_path = resolve_db_path(&app)?;
+    // A restore staged by `restore_from_backup` is swapped in before the database is opened.
+    if let Err(e) = crate::backup::restore::apply_pending_restore(std::path::Path::new(&db_path)) {
+        let reason = format!("Restore from backup failed: {e}");
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason });
+        window.show().ok();
+        return Err(e);
+    }
     match crate::db::init_db(&db_path).await {
         Ok(conn) => {
             let state = crate::state::AppState::new(conn);
@@ -267,6 +275,15 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
             crate::pm::scheduler::start_pm_generation_scheduler(pm_db).await;
         });
         info!("startup: PM generation scheduler started");
+    }
+
+    {
+        let backup_db = app_state.db.clone();
+        let backup_dir = crate::commands::backup::app_backup_dir(&app)?;
+        tauri::async_runtime::spawn(async move {
+            crate::backup::scheduler::start_backup_scheduler(backup_db, backup_dir).await;
+        });
+        info!("startup: backup scheduler started");
     }
 
     // ── Budget check and ready ──────────────────────────────────────────

@@ -20,8 +20,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+pub mod restore;
+pub mod scheduler;
 #[cfg(test)]
 mod tests;
+
+/// `backup_runs.trigger` values.
+pub const TRIGGER_MANUAL: &str = "manual";
+pub const TRIGGER_SCHEDULED: &str = "scheduled";
+pub const TRIGGER_PRE_RESTORE: &str = "pre_restore";
+pub const TRIGGER_PRE_FACTORY_RESET: &str = "pre_factory_reset";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -128,7 +136,7 @@ fn map_backup_run(row: sea_orm::QueryResult) -> AppResult<BackupRunRecord> {
 
 // ─── Manual Backup ────────────────────────────────────────────────────────────
 
-/// Execute a manual backup of the `SQLite` database.
+/// Execute a backup of the `SQLite` database (`trigger` is one of the `TRIGGER_*` constants).
 ///
 /// Algorithm:
 /// 1. Execute `VACUUM INTO '<target_path>'` on the live connection (WAL-safe)
@@ -141,15 +149,17 @@ fn map_backup_run(row: sea_orm::QueryResult) -> AppResult<BackupRunRecord> {
 pub async fn run_manual_backup(
     db: &DatabaseConnection,
     target_path: &str,
-    initiated_by_id: i32,
+    trigger: &str,
+    initiated_by_id: Option<i32>,
 ) -> AppResult<BackupRunResult> {
     use std::fs;
 
     let started_at = chrono::Utc::now().to_rfc3339();
     tracing::info!(
         target_path = target_path,
-        actor = initiated_by_id,
-        "manual backup started"
+        trigger = trigger,
+        actor = ?initiated_by_id,
+        "backup started"
     );
 
     let target = Path::new(target_path);
@@ -204,8 +214,9 @@ pub async fn run_manual_backup(
                (trigger, status, output_path, file_size_bytes, sha256_checksum,
                 encryption_mode, db_schema_version, started_at, completed_at,
                 initiated_by_id)
-               VALUES ('manual', 'success', ?, ?, ?, ?, ?, ?, ?, ?)",
+               VALUES (?, 'success', ?, ?, ?, ?, ?, ?, ?, ?)",
             [
+                trigger.into(),
                 target_path.into(),
                 file_size_i64.into(),
                 checksum.clone().into(),
@@ -213,7 +224,7 @@ pub async fn run_manual_backup(
                 db_schema_version.into(),
                 started_at.into(),
                 completed_at.into(),
-                i64::from(initiated_by_id).into(),
+                initiated_by_id.map(i64::from).into(),
             ],
         ))
         .await?;
@@ -224,7 +235,7 @@ pub async fn run_manual_backup(
         run_id = run_id,
         checksum = %checksum,
         file_size_bytes = file_size,
-        "manual backup completed successfully"
+        "backup completed successfully"
     );
 
     Ok(BackupRunResult {

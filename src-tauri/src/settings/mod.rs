@@ -706,11 +706,17 @@ fn validate_policy_json(domain: &str, snapshot_json: &str) -> Vec<PolicyTestResu
                         severity: "fail".into(),
                         message: "Backup schedule cron must not be empty".into(),
                     });
+                } else if let Err(e) = crate::backup::scheduler::parse_backup_schedule(&p.schedule_cron) {
+                    results.push(PolicyTestResult {
+                        rule_name: "schedule_cron".into(),
+                        severity: "fail".into(),
+                        message: e,
+                    });
                 } else {
                     results.push(PolicyTestResult {
                         rule_name: "schedule_cron".into(),
                         severity: "pass".into(),
-                        message: "Backup schedule cron is present".into(),
+                        message: "Backup schedule cron is valid".into(),
                     });
                 }
                 results.push(range_rule("retention_days", p.retention_days, 1, 3650));

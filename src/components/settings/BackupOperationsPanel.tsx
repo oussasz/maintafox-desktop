@@ -1,15 +1,31 @@
-import { HardDriveDownload, History, Loader2, RotateCcw, Search } from "lucide-react";
+import {
+  ArchiveRestore,
+  HardDriveDownload,
+  History,
+  Loader2,
+  RotateCcw,
+  Search,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useFormatters } from "@/hooks/use-formatters";
 import { useStepUp } from "@/hooks/use-step-up";
 import {
-  factoryResetStub,
+  factoryReset,
   listBackupRuns,
+  restoreFromBackup,
   runManualBackup,
   validateBackupFile,
 } from "@/services/backup-service";
@@ -37,11 +53,21 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
     [t],
   );
 
+  const formatTrigger = useCallback(
+    (trigger: string) => {
+      const key = `backupOps.trigger.${trigger}` as "backupOps.trigger.manual";
+      const translated = t(key);
+      return translated === key ? trigger : translated;
+    },
+    [t],
+  );
+
   const [runs, setRuns] = useState<BackupRunRecord[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(true);
   const [busy, setBusy] = useState(false);
   const [validation, setValidation] = useState<RestoreTestResult | null>(null);
   const [resetPhrase, setResetPhrase] = useState("");
+  const [restorePath, setRestorePath] = useState<string | null>(null);
 
   const reloadRuns = useCallback(async () => {
     setLoadingRuns(true);
@@ -121,16 +147,49 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
     }
   }, [onToast, t]);
 
+  const handleChooseRestore = useCallback(async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        title: t("backupOps.chooseRestore"),
+        multiple: false,
+        filters: [{ name: "SQLite", extensions: ["db", "sqlite"] }],
+      });
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      if (path && typeof path === "string") setRestorePath(path);
+    } catch (err) {
+      onToast({
+        title: t("backupOps.restoreError"),
+        description: String(err),
+        variant: "destructive",
+      });
+    }
+  }, [onToast, t]);
+
+  const handleConfirmRestore = useCallback(async () => {
+    if (!restorePath) return;
+    const path = restorePath;
+    setRestorePath(null);
+    setBusy(true);
+    try {
+      // On success the application restarts; this call does not return.
+      await withStepUp(() => restoreFromBackup(path));
+    } catch (err) {
+      onToast({
+        title: t("backupOps.restoreError"),
+        description: String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }, [onToast, restorePath, t, withStepUp]);
+
   const handleFactoryReset = useCallback(async () => {
     setBusy(true);
     try {
-      await withStepUp(() => factoryResetStub(resetPhrase.trim()));
-      onToast({
-        title: t("backupOps.resetStubOk"),
-        description: t("backupOps.resetStubHint"),
-        variant: "success",
-      });
-      setResetPhrase("");
+      // On success the application restarts; this call does not return.
+      await withStepUp(() => factoryReset(resetPhrase.trim()));
     } catch (err) {
       onToast({
         title: t("backupOps.resetError"),
@@ -166,6 +225,15 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
         >
           <Search className="mr-2 h-4 w-4" />
           {t("backupOps.validate")}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void handleChooseRestore()}
+          disabled={busy}
+        >
+          <ArchiveRestore className="mr-2 h-4 w-4" />
+          {t("backupOps.restore")}
         </Button>
       </div>
 
@@ -203,6 +271,7 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
               <thead className="bg-muted/50 text-left text-text-muted">
                 <tr>
                   <th className="px-3 py-2">{t("backupOps.colStarted")}</th>
+                  <th className="px-3 py-2">{t("backupOps.colTrigger")}</th>
                   <th className="px-3 py-2">{t("backupOps.colStatus")}</th>
                   <th className="px-3 py-2">{t("backupOps.colPath")}</th>
                 </tr>
@@ -213,7 +282,10 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
                     <td className="whitespace-nowrap px-3 py-2">
                       {formatDateTime(run.started_at)}
                     </td>
-                    <td className="px-3 py-2">{formatRunStatus(run.status)}</td>
+                    <td className="px-3 py-2">{formatTrigger(run.trigger)}</td>
+                    <td className="px-3 py-2" title={run.error_message ?? undefined}>
+                      {formatRunStatus(run.status)}
+                    </td>
                     <td className="max-w-[14rem] truncate px-3 py-2" title={run.output_path}>
                       {run.output_path}
                     </td>
@@ -251,6 +323,24 @@ export function BackupOperationsPanel({ onToast }: BackupOperationsPanelProps) {
           </Button>
         </div>
       </div>
+
+      <Dialog open={restorePath !== null} onOpenChange={(o) => !o && setRestorePath(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("backupOps.restoreConfirmTitle")}</DialogTitle>
+            <DialogDescription>{t("backupOps.restoreConfirmBody")}</DialogDescription>
+          </DialogHeader>
+          <p className="break-all text-sm text-text-muted">{restorePath}</p>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setRestorePath(null)}>
+              {t("backupOps.cancel")}
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => void handleConfirmRestore()}>
+              {t("backupOps.restoreConfirmAction")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {StepUpDialogElement}
     </div>

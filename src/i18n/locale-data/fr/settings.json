@@ -235,7 +235,7 @@
   },
   "backupOps": {
     "title": "Opérations de sauvegarde",
-    "description": "Lancer une sauvegarde manuelle, valider un fichier ou consulter l'historique.",
+    "description": "Sauvegarder, valider ou restaurer la base de données, et consulter l'historique. Les sauvegardes planifiées suivent la politique de sauvegarde et sont conservées dans le dossier « backups » de l'application.",
     "loadError": "Impossible de charger l'historique des sauvegardes",
     "chooseTarget": "Choisir la destination de sauvegarde",
     "chooseBackup": "Choisir le fichier de sauvegarde à valider",
@@ -261,14 +261,26 @@
       "partial": "Partiel",
       "running": "En cours"
     },
-    "resetTitle": "Réinitialisation usine (stub)",
-    "resetDescription": "Valide uniquement les contrôles de sécurité. La suppression des données n'est pas implémentée dans cette phase.",
+    "resetTitle": "Réinitialisation usine",
+    "resetDescription": "Efface toutes les données de cet appareil et redémarre sur la configuration initiale. Une dernière sauvegarde est d'abord enregistrée dans le dossier « backups ». Les données non encore synchronisées avec le serveur n'existent que dans cette sauvegarde.",
     "resetPhraseLabel": "Phrase de confirmation",
     "resetPhrasePlaceholder": "Saisir la phrase de confirmation",
-    "resetAction": "Exécuter le stub de réinitialisation",
-    "resetStubOk": "Stub de réinitialisation accepté",
-    "resetStubHint": "Aucune donnée n'a été supprimée. La réinitialisation complète arrivera plus tard.",
-    "resetError": "Échec du stub de réinitialisation"
+    "resetAction": "Tout effacer et redémarrer",
+    "resetError": "Échec de la réinitialisation",
+    "chooseRestore": "Choisir la sauvegarde à restaurer",
+    "restore": "Restaurer une sauvegarde…",
+    "restoreConfirmTitle": "Restaurer cette sauvegarde ?",
+    "restoreConfirmBody": "Toutes les données saisies depuis cette sauvegarde seront remplacées. La base actuelle est d'abord enregistrée comme sauvegarde de sécurité, puis l'application redémarre.",
+    "restoreConfirmAction": "Restaurer et redémarrer",
+    "cancel": "Annuler",
+    "restoreError": "Échec de la restauration",
+    "colTrigger": "Type",
+    "trigger": {
+      "manual": "Manuelle",
+      "scheduled": "Planifiée",
+      "pre_restore": "Avant restauration",
+      "pre_factory_reset": "Avant réinitialisation"
+    }
   },
   "integrations": {
     "profilesTitle": "Profils de connexion",

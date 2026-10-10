@@ -1245,6 +1245,18 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
         }
     }
 
+    let wiped_rows = reset_to_first_run(&state, "recovery").await?;
+    tracing::warn!(
+        event = "desktop_activation_reset",
+        wiped_rows,
+        "Product activation state reset and tenant runtime wiped"
+    );
+    Ok(())
+}
+
+/// Returns the device to its first-run state: wipes tenant runtime data, forgets the product
+/// license onboarding and tenant bootstrap, and ends the session. Callers enforce authorization.
+pub(crate) async fn reset_to_first_run(state: &State<'_, AppState>, reason: &str) -> AppResult<u64> {
     let changed_by_id = state
         .session
         .read()
@@ -1253,13 +1265,13 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
         .as_ref()
         .map(|session| session.user.user_id)
         .unwrap_or(0);
-    let wiped_rows = reset_local_tenant_runtime_data_impl(&state).await?;
+    let wiped_rows = reset_local_tenant_runtime_data_impl(state).await?;
     let _ = settings::delete_setting(
         &state.db,
         PRODUCT_LICENSE_ONBOARDING_KEY,
         PRODUCT_LICENSE_SCOPE,
         changed_by_id,
-        "product license activation reset (recovery)",
+        &format!("product license activation reset ({reason})"),
     )
     .await?;
     let _ = settings::delete_setting(
@@ -1267,19 +1279,14 @@ pub async fn reset_product_license_activation(state: State<'_, AppState>) -> App
         TENANT_BOOTSTRAP_KEY,
         TENANT_BOOTSTRAP_SCOPE,
         changed_by_id,
-        "tenant bootstrap reset (recovery)",
+        &format!("tenant bootstrap reset ({reason})"),
     )
     .await?;
     {
         let mut session_guard = state.session.write().await;
         session_guard.clear_session();
     }
-    tracing::warn!(
-        event = "desktop_activation_reset",
-        wiped_rows,
-        "Product activation state reset and tenant runtime wiped"
-    );
-    Ok(())
+    Ok(wiped_rows)
 }
 
 #[tauri::command]

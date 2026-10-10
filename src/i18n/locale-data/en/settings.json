@@ -235,7 +235,7 @@
   },
   "backupOps": {
     "title": "Backup operations",
-    "description": "Run a manual backup, validate a backup file, or review recent runs.",
+    "description": "Back up, validate or restore the database, and review recent runs. Scheduled backups follow the backup policy and are kept in the application's backups folder.",
     "loadError": "Failed to load backup history",
     "chooseTarget": "Choose backup destination",
     "chooseBackup": "Choose backup file to validate",
@@ -261,14 +261,26 @@
       "partial": "Partial",
       "running": "Running"
     },
-    "resetTitle": "Factory reset (stub)",
-    "resetDescription": "Validates security gates only. Data deletion is not implemented in this phase.",
+    "resetTitle": "Factory reset",
+    "resetDescription": "Erases all data on this device and restarts into first-time setup. A final backup is saved to the backups folder first. Data not yet synchronized to the server exists only in that backup.",
     "resetPhraseLabel": "Confirmation phrase",
     "resetPhrasePlaceholder": "Type the confirmation phrase",
-    "resetAction": "Run factory reset stub",
-    "resetStubOk": "Factory reset stub accepted",
-    "resetStubHint": "No data was deleted. Full reset arrives in a later phase.",
-    "resetError": "Factory reset stub failed"
+    "resetAction": "Erase all data and restart",
+    "resetError": "Factory reset failed",
+    "chooseRestore": "Choose the backup to restore",
+    "restore": "Restore from backup…",
+    "restoreConfirmTitle": "Restore this backup?",
+    "restoreConfirmBody": "All data entered since this backup was made will be replaced. The current database is saved first as a safety backup, then the application restarts.",
+    "restoreConfirmAction": "Restore and restart",
+    "cancel": "Cancel",
+    "restoreError": "Restore failed",
+    "colTrigger": "Type",
+    "trigger": {
+      "manual": "Manual",
+      "scheduled": "Scheduled",
+      "pre_restore": "Before restore",
+      "pre_factory_reset": "Before factory reset"
+    }
   },
   "integrations": {
     "profilesTitle": "Connection profiles",

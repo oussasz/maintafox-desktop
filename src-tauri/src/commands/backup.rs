@@ -2,13 +2,15 @@
 //!
 //! All commands require `adm.settings` permission.
 //! `run_manual_backup` additionally requires step-up authentication.
-//! `factory_reset_stub` requires step-up + explicit confirmation string.
+//! `restore_from_backup` and `factory_reset` require step-up; factory reset also requires an
+//! explicit confirmation phrase. Both restart the application.
 
 use serde::Deserialize;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::auth::rbac::PermissionScope;
 use crate::backup::{self, BackupRunRecord, BackupRunResult, RestoreTestResult};
+use crate::db::encryption;
 use crate::errors::{AppError, AppResult};
 use crate::state::AppState;
 use crate::{require_permission, require_session, require_step_up};
@@ -42,7 +44,7 @@ pub async fn run_manual_backup(
         ]));
     }
 
-    backup::run_manual_backup(&state.db, target, user.user_id).await
+    backup::run_manual_backup(&state.db, target, backup::TRIGGER_MANUAL, Some(user.user_id)).await
 }
 
 /// List recent backup runs for the audit/history UI.
@@ -74,23 +76,30 @@ pub async fn validate_backup_file(state: State<'_, AppState>, backup_path: Strin
     backup::validate_backup_file(&state.db, &backup_path, key.as_ref()).await
 }
 
-/// Factory reset stub — security gates are in place but data deletion is NOT
-/// implemented in Phase 1.
-///
-/// Phase 2 will implement the actual deletion after:
-/// 1. VPS sync drain (all unsynced data is uploaded)
-/// 2. Audit trail archive (audit events are exported)
-/// 3. Secure wipe of all DB tables in dependency order
-///
-/// In Phase 1 this command validates all security gates and then returns an
-/// informational error explaining that factory reset is a Phase 2 feature.
-#[derive(Debug, Deserialize)]
-pub struct FactoryResetPayload {
-    pub confirmation_phrase: String,
+/// Directory for backups the application writes on its own (scheduled, pre-restore, pre-reset).
+pub(crate) fn app_backup_dir(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?
+        .join("backups");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
+fn require_database_key() -> AppResult<encryption::DatabaseKey> {
+    encryption::load_stored_key()?
+        .ok_or_else(|| AppError::DatabaseKeyUnavailable("no database key is stored in the OS credential store".into()))
+}
+
+/// Restores the database from `backup_path` and restarts the application.
+///
+/// The backup is validated (integrity, this installation's key, schema not newer than this
+/// build) and the current database is first saved as a `pre_restore` backup. The swap happens at
+/// the next startup, before the database is opened (see `backup::restore`).
+/// Requires: active session + adm.settings + recent step-up
 #[tauri::command]
-pub async fn factory_reset_stub(state: State<'_, AppState>, payload: FactoryResetPayload) -> AppResult<()> {
+pub async fn restore_from_backup(app: AppHandle, state: State<'_, AppState>, backup_path: String) -> AppResult<()> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -100,26 +109,79 @@ pub async fn factory_reset_stub(state: State<'_, AppState>, payload: FactoryRese
     );
     require_step_up!(state);
 
-    // Validate confirmation phrase (accept both FR and EN)
-    const FR_PHRASE: &str = "EFFACER TOUTES LES DONNÉES";
-    const EN_PHRASE: &str = "ERASE ALL DATA";
-    if payload.confirmation_phrase.trim() != FR_PHRASE && payload.confirmation_phrase.trim() != EN_PHRASE {
+    let backup_path = backup_path.trim();
+    if backup_path.is_empty() {
+        return Err(AppError::ValidationFailed(vec![
+            "backup_path must not be empty".to_string()
+        ]));
+    }
+    let key = require_database_key()?;
+    let db_path = crate::startup::resolve_db_path(&app)?;
+    backup::restore::stage_restore(
+        &state.db,
+        std::path::Path::new(&db_path),
+        std::path::Path::new(backup_path),
+        &key,
+        &app_backup_dir(&app)?,
+        Some(user.user_id),
+    )
+    .await?;
+    app.restart()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FactoryResetPayload {
+    pub confirmation_phrase: String,
+}
+
+const FACTORY_RESET_PHRASE_FR: &str = "EFFACER TOUTES LES DONNÉES";
+const FACTORY_RESET_PHRASE_EN: &str = "ERASE ALL DATA";
+
+fn factory_reset_phrase_matches(phrase: &str) -> bool {
+    let phrase = phrase.trim();
+    phrase == FACTORY_RESET_PHRASE_FR || phrase == FACTORY_RESET_PHRASE_EN
+}
+
+/// Erases all tenant data on this device and restarts into first-run setup.
+///
+/// A final `pre_factory_reset` backup is written to the application backup folder first; if it
+/// fails, nothing is erased. Data not yet synchronized to the server exists only in that backup.
+/// Requires: active session + adm.settings + recent step-up + confirmation phrase (FR or EN)
+#[tauri::command]
+pub async fn factory_reset(app: AppHandle, state: State<'_, AppState>, payload: FactoryResetPayload) -> AppResult<()> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        PermissionScope::Global
+    );
+    require_step_up!(state);
+    if !factory_reset_phrase_matches(&payload.confirmation_phrase) {
         return Err(AppError::ValidationFailed(vec![
             "factory_reset confirmation phrase does not match".to_string(),
         ]));
     }
 
-    tracing::warn!(
-        actor = user.user_id,
-        "factory_reset_stub: all security gates passed — \
-         data deletion deferred to Phase 2 implementation"
-    );
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let final_backup = app_backup_dir(&app)?.join(format!("maintafox-pre-factory-reset-{stamp}.db"));
+    backup::run_manual_backup(
+        &state.db,
+        &final_backup.to_string_lossy(),
+        backup::TRIGGER_PRE_FACTORY_RESET,
+        Some(user.user_id),
+    )
+    .await?;
 
-    // Return an explicit "not yet implemented" error so the frontend can show
-    // a "this feature is coming in a future version" message.
-    Err(AppError::Internal(anyhow::anyhow!(
-        "factory_reset: data deletion is implemented in Phase 2 (VPS sync drain required)"
-    )))
+    let wiped_rows = crate::commands::product_license::reset_to_first_run(&state, "factory reset").await?;
+    tracing::warn!(
+        event = "factory_reset",
+        actor = user.user_id,
+        wiped_rows,
+        final_backup = %final_backup.display(),
+        "factory reset completed; restarting"
+    );
+    app.restart()
 }
 
 #[cfg(test)]
@@ -149,30 +211,23 @@ mod tests {
         );
     }
 
-    /// S2-V3 — Factory reset stub rejects wrong confirmation phrase.
-    /// The command returns `AppError::ValidationFailed` when the phrase is wrong.
+    /// Factory reset rejects any phrase other than the exact FR/EN confirmation.
     #[test]
     fn v3_wrong_confirmation_phrase_is_rejected() {
-        const FR_PHRASE: &str = "EFFACER TOUTES LES DONNÉES";
-        const EN_PHRASE: &str = "ERASE ALL DATA";
-
-        let wrong_phrases = ["yes please", "DELETE ALL", "effacer toutes les données", ""];
-        for phrase in &wrong_phrases {
-            assert_ne!(phrase.trim(), FR_PHRASE, "phrase '{}' should not match FR", phrase);
-            assert_ne!(phrase.trim(), EN_PHRASE, "phrase '{}' should not match EN", phrase);
+        for phrase in ["yes please", "DELETE ALL", "effacer toutes les données", ""] {
+            assert!(
+                !factory_reset_phrase_matches(phrase),
+                "phrase '{phrase}' must be rejected"
+            );
         }
     }
 
-    /// S2-V3 — Factory reset accepts both FR and EN confirmation phrases.
+    /// Factory reset accepts both FR and EN phrases, ignoring surrounding whitespace.
     #[test]
     fn v3_correct_confirmation_phrases_accepted() {
-        const FR_PHRASE: &str = "EFFACER TOUTES LES DONNÉES";
-        const EN_PHRASE: &str = "ERASE ALL DATA";
-
-        assert_eq!("EFFACER TOUTES LES DONNÉES".trim(), FR_PHRASE);
-        assert_eq!("ERASE ALL DATA".trim(), EN_PHRASE);
-        // Leading/trailing whitespace should be trimmed
-        assert_eq!("  ERASE ALL DATA  ".trim(), EN_PHRASE);
+        assert!(factory_reset_phrase_matches("EFFACER TOUTES LES DONNÉES"));
+        assert!(factory_reset_phrase_matches("ERASE ALL DATA"));
+        assert!(factory_reset_phrase_matches("  ERASE ALL DATA  "));
     }
 
     /// S2-V3 — FactoryResetPayload deserializes correctly from IPC JSON.
@@ -197,13 +252,6 @@ mod tests {
                 RunManualBackupPayload,
             )
                 -> std::pin::Pin<Box<dyn std::future::Future<Output = AppResult<BackupRunResult>> + Send>> =
-                |_, _| Box::pin(async { unreachable!() });
-        }
-        fn _assert_factory_reset_stub_exists() {
-            let _: fn(
-                State<'_, AppState>,
-                FactoryResetPayload,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AppResult<()>> + Send>> =
                 |_, _| Box::pin(async { unreachable!() });
         }
     }

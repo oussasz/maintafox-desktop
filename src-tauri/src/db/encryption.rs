@@ -138,7 +138,7 @@ fn sql_quote_path(path: &Path) -> String {
     path.to_string_lossy().replace('\'', "''")
 }
 
-fn sibling(path: &Path, suffix: &str) -> PathBuf {
+pub(crate) fn sibling(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.file_name().map(std::ffi::OsStr::to_os_string).unwrap_or_default();
     name.push(suffix);
     path.with_file_name(name)

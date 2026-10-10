@@ -192,7 +192,7 @@ mod tests {
 
         // Run the manual backup
         let backup_path_str = backup_path.to_string_lossy().to_string();
-        let result = backup::run_manual_backup(&db, &backup_path_str, 1)
+        let result = backup::run_manual_backup(&db, &backup_path_str, backup::TRIGGER_MANUAL, Some(1))
             .await
             .expect("run_manual_backup should succeed");
 

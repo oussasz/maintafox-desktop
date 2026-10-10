@@ -277,6 +277,28 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
 
 **Speeding up local Rust checks:** run clippy plus the tests of the touched modules with `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0` (no debug info, so compile and link are much faster). Open a draft PR into `develop` so GitHub runs the full suite.
 
+### Phase 1.3 — Backups: restore, scheduled backups, factory reset (2026-10-10)
+
+- **Restore** (`restore_from_backup`, `backup/restore.rs`): the backup must pass the integrity check
+  with this installation's key and must not carry migrations unknown to this build. The current
+  database is saved first (`trigger = pre_restore`), the backup is staged as
+  `maintafox.db.restore-pending`, and the app restarts. At startup the file is swapped in before the
+  database opens, with rollback if the rename fails; stale `-wal`/`-shm` files are removed and
+  migrations then upgrade an older schema.
+- **Scheduled backups** (`backup/scheduler.rs`): they follow the backup policy `schedule_cron` in
+  local time, and 5-field cron expressions are normalised. A run missed while the app was closed
+  runs at the next tick. Output goes to `<app_data_dir>/backups/maintafox-YYYYMMDD-HHMMSS.db`.
+  Failures are recorded as `failed` runs and retried after 1 h. Retention is
+  grandfather-father-son from `backup.retention_daily/weekly/monthly` and only deletes scheduled
+  files inside the backups folder. Policy validation now rejects an unparseable cron.
+- **Factory reset** (`factory_reset` replaces `factory_reset_stub`): it writes a final
+  `pre_factory_reset` backup, then reuses the activation-reset wipe (`reset_to_first_run`, now
+  shared with `reset_product_license_activation`) and restarts into first-run setup.
+- `backup_runs.trigger` is now set by the caller (`manual`, `scheduled`, `pre_restore`,
+  `pre_factory_reset`), and system runs record `initiated_by_id = NULL`.
+- **Open point:** the backup policy's `retention_days` field is not used. Retention comes from the
+  three `backup.retention_*` settings. Remove the field or map it in a later settings cleanup.
+
 ## 6. Risks and open points
 
 - **D2 departs from the PRD.** The server would use a generic current-state table instead of typed per-entity tables, so the PRD needs an update if you approve it.
