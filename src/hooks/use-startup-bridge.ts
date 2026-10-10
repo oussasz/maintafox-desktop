@@ -40,6 +40,9 @@ export function useStartupBridge(): void {
             case "failed":
               setAppStatus("error", payload.reason ?? "Erreur de démarrage");
               break;
+            case "database_key_required":
+              setAppStatus("database_key_required", payload.reason ?? "");
+              break;
             default:
               break;
           }

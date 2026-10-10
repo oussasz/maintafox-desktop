@@ -130,6 +130,11 @@ pub enum AppError {
     #[error("Session locked: {0}")]
     SessionLocked(String),
 
+    /// Encrypted database cannot be opened: key missing from the OS credential store or wrong.
+    /// The UI offers recovery-key entry (`DATABASE_KEY_UNAVAILABLE`).
+    #[error("Database key unavailable: {0}")]
+    DatabaseKeyUnavailable(String),
+
     #[error("Internal error: {0}")]
     Internal(#[from] anyhow::Error),
 }
@@ -172,6 +177,7 @@ impl Serialize for AppError {
             Self::PermissionDenied(_) => "PERMISSION_DENIED",
             Self::LicenseDenied { .. } => "LICENSE_DENIED",
             Self::StepUpRequired => "STEP_UP_REQUIRED",
+            Self::DatabaseKeyUnavailable(_) => "DATABASE_KEY_UNAVAILABLE",
             Self::AccountLocked { .. } => "ACCOUNT_LOCKED",
             Self::SessionLocked(_) => "SESSION_LOCKED",
             Self::Internal(_) => "INTERNAL_ERROR",

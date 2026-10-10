@@ -176,8 +176,11 @@ mod tests {
         let db_path = temp_dir.path().join("test_live.db");
         let backup_path = temp_dir.path().join("test_backup.db");
 
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let db = Database::connect(&db_url).await.expect("create file-based DB");
+        // Production databases are SQLCipher-encrypted; backups must stay encrypted too.
+        let key = crate::db::encryption::DatabaseKey::generate();
+        let db = crate::db::connect_sqlcipher(&db_path, Some(&key), true)
+            .await
+            .expect("create encrypted file-based DB");
 
         // Apply WAL mode + all migrations
         db.execute_unprepared("PRAGMA journal_mode=WAL;")
@@ -239,7 +242,12 @@ mod tests {
         );
 
         // V3 bonus: validate_backup_file confirms integrity and checksum match
-        let validation = backup::validate_backup_file(&db, &backup_path_str)
+        let runs = backup::list_backup_runs(&db, 1).await.expect("list runs");
+        assert_eq!(
+            runs[0].encryption_mode, "aes256",
+            "backup must be recorded as encrypted"
+        );
+        let validation = backup::validate_backup_file(&db, &backup_path_str, Some(&key))
             .await
             .expect("validate_backup_file should succeed");
 
@@ -270,7 +278,7 @@ mod tests {
             .await
             .expect("Migrations should apply");
 
-        let err = backup::validate_backup_file(&db, "/nonexistent/path/does_not_exist.db")
+        let err = backup::validate_backup_file(&db, "/nonexistent/path/does_not_exist.db", None)
             .await
             .expect_err("should fail for non-existent file");
 

@@ -15,10 +15,18 @@ const COLD_START_BUDGET_MS: u64 = 4_000;
 #[serde(tag = "stage", rename_all = "snake_case")]
 pub enum StartupEvent {
     DbReady,
-    MigrationsComplete { applied: u32 },
+    MigrationsComplete {
+        applied: u32,
+    },
     EntitlementCacheLoaded,
     Ready,
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
+    /// Encrypted database cannot be opened (key missing/wrong): UI asks for the recovery key.
+    DatabaseKeyRequired {
+        reason: String,
+    },
 }
 
 // ── Pure helpers (unit-testable without Tauri runtime) ──────────────────────
@@ -113,7 +121,11 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         Err(e) => {
             let reason = format!("Database initialisation failed: {e}");
             error!("{reason}");
-            emit_event(&app, StartupEvent::Failed { reason });
+            if matches!(e, crate::errors::AppError::DatabaseKeyUnavailable(_)) {
+                emit_event(&app, StartupEvent::DatabaseKeyRequired { reason });
+            } else {
+                emit_event(&app, StartupEvent::Failed { reason });
+            }
             window.show().ok();
             return Err(e);
         }
@@ -280,7 +292,7 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
 
 /// Resolve the database file path inside the Tauri app data directory.
 /// Creates the directory if it does not already exist.
-fn resolve_db_path(app: &AppHandle) -> AppResult<String> {
+pub(crate) fn resolve_db_path(app: &AppHandle) -> AppResult<String> {
     let dir = app
         .path()
         .app_data_dir()

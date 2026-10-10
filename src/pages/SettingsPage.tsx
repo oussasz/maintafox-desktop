@@ -10,6 +10,7 @@ import { LicenseEnforcementPanel } from "@/components/license/LicenseEnforcement
 import { ActivityLogSettingsSection } from "@/components/settings/ActivityLogSettingsSection";
 import { BackupOperationsPanel } from "@/components/settings/BackupOperationsPanel";
 import { ConnectionProfilesPanel } from "@/components/settings/ConnectionProfilesPanel";
+import { DatabaseRecoveryKeyPanel } from "@/components/settings/DatabaseRecoveryKeyPanel";
 import { DocumentHeaderSettingsPanel } from "@/components/settings/DocumentHeaderSettingsPanel";
 import { NotificationsSettingsPanel } from "@/components/settings/NotificationsSettingsPanel";
 import { PolicyEditorPanel } from "@/components/settings/PolicyEditorPanel";
@@ -390,6 +391,7 @@ export function SettingsPage() {
                           emptyState
                         )}
                         <BackupOperationsPanel onToast={onToast} />
+                        <DatabaseRecoveryKeyPanel onToast={onToast} />
                         <PolicyEditorPanel domain="backup" onToast={onToast} />
                       </section>
                     ) : null}

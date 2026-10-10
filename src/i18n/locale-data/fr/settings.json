@@ -285,5 +285,17 @@
       "error": "Erreur",
       "unknown": "Inconnu"
     }
+  },
+  "dbEncryption": {
+    "title": "Chiffrement de la base de données",
+    "description": "Les données locales sont chiffrées (AES-256). La clé est conservée dans le coffre d’identifiants Windows. Conservez la clé de récupération hors ligne : sans elle, la base ne peut pas être rouverte si cette clé est perdue.",
+    "reveal": "Afficher la clé de récupération",
+    "warning": "Toute personne disposant de cette clé peut lire une copie de la base. Ne la stockez pas sur cet ordinateur.",
+    "keyLabel": "Clé de récupération",
+    "copy": "Copier",
+    "hide": "Masquer",
+    "copied": "Clé copiée dans le presse-papiers",
+    "copyError": "Copie impossible",
+    "revealError": "Impossible d’afficher la clé de récupération"
   }
 }

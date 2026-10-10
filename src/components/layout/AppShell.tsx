@@ -2,6 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AppToastHost } from "@/components/shell/AppToastHost";
+import { DatabaseRecoveryScreen } from "@/components/startup/DatabaseRecoveryScreen";
 import { useStartupBridge } from "@/hooks/use-startup-bridge";
 import { invokeSilent } from "@/lib/ipc-invoke";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
@@ -78,6 +79,10 @@ export function AppShell({ children }: AppShellProps) {
         <p className="text-sm text-text-secondary">{startupMsg || t("startup.loading")}</p>
       </div>
     );
+  }
+
+  if (appStatus === "database_key_required") {
+    return <DatabaseRecoveryScreen reason={startupMsg ?? ""} />;
   }
 
   if (appStatus === "error") {

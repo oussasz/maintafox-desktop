@@ -16,13 +16,15 @@ export type StartupStage =
   | "migrations_complete"
   | "entitlement_cache_loaded"
   | "ready"
-  | "failed";
+  | "failed"
+  /** Encrypted database key missing/wrong: UI asks for the recovery key. */
+  | "database_key_required";
 
 export interface StartupEvent {
   stage: StartupStage;
   /** Present only for stage = "migrations_complete" */
   applied?: number;
-  /** Present only for stage = "failed" */
+  /** Present for stage = "failed" and "database_key_required" */
   reason?: string;
 }
 

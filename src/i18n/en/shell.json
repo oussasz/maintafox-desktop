@@ -31,7 +31,7 @@
   },
   "sync": {
     "offline": "Offline",
-    "syncing": "Syncing\u2026",
+    "syncing": "Syncing…",
     "error": "Sync error",
     "offlineChangesSaved": "Offline mode active—your changes are saved locally and will sync when the connection is restored.",
     "syncCenter": "Sync center",
@@ -75,9 +75,16 @@
     "untrusted": "Unverified device"
   },
   "startup": {
-    "loading": "Starting up\u2026",
+    "loading": "Starting up…",
     "errorTitle": "Startup error",
-    "retry": "Retry"
+    "retry": "Retry",
+    "dbRecovery": {
+      "title": "Encryption key required",
+      "body": "This device’s database is encrypted, but its key is missing from the Windows credential store (reinstall, profile change…). Enter the recovery key to reopen it. Nothing is created or erased here.",
+      "label": "Recovery key",
+      "submit": "Unlock database",
+      "help": "An administrator can display the recovery key in Settings › Backup. Without it, local data cannot be read."
+    }
   },
   "placeholder": {
     "notYetImplemented": "This module will be implemented in {{phase}}."
@@ -85,8 +92,8 @@
   "diagnostics": {
     "title": "Diagnostics",
     "subtitle": "Seed data integrity check and automatic repair.",
-    "checking": "Checking integrity\u2026",
-    "repairing": "Repairing seed data\u2026",
+    "checking": "Checking integrity…",
+    "repairing": "Repairing seed data…",
     "errorTitle": "Diagnostic error",
     "healthy": "All checks passed.",
     "unhealthy": "Issues detected.",

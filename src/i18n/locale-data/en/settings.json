@@ -285,5 +285,17 @@
       "error": "Error",
       "unknown": "Unknown"
     }
+  },
+  "dbEncryption": {
+    "title": "Database encryption",
+    "description": "Local data is encrypted (AES-256). The key is kept in the Windows credential store. Keep the recovery key offline: without it the database cannot be reopened if that key is lost.",
+    "reveal": "Show recovery key",
+    "warning": "Anyone with this key can read a copy of the database. Do not store it on this computer.",
+    "keyLabel": "Recovery key",
+    "copy": "Copy",
+    "hide": "Hide",
+    "copied": "Key copied to clipboard",
+    "copyError": "Copy failed",
+    "revealError": "Could not display the recovery key"
   }
 }

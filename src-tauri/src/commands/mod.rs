@@ -17,6 +17,7 @@ pub mod backup;
 pub mod computation_jobs;
 pub mod dashboard;
 pub mod data_integrity;
+pub mod database_security;
 pub mod di;
 pub mod diagnostics;
 pub mod entitlements;

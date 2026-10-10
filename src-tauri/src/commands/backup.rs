@@ -70,7 +70,8 @@ pub async fn validate_backup_file(state: State<'_, AppState>, backup_path: Strin
         crate::rbac::permissions::ADM_SETTINGS,
         PermissionScope::Global
     );
-    backup::validate_backup_file(&state.db, &backup_path).await
+    let key = crate::db::encryption::load_stored_key()?;
+    backup::validate_backup_file(&state.db, &backup_path, key.as_ref()).await
 }
 
 /// Factory reset stub — security gates are in place but data deletion is NOT
