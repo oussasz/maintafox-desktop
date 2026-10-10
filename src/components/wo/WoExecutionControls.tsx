@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { WoPermitGateCard } from "@/components/permits/WoPermitGateCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,8 +14,11 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useSession } from "@/hooks/use-session";
+import {
+  listInventoryReservations,
+  releaseInventoryReservation,
+} from "@/services/inventory-service";
 import { getLookupValues } from "@/services/lookup-service";
-import { listInventoryReservations, releaseInventoryReservation } from "@/services/inventory-service";
 import {
   addLabor,
   closeDowntime,
@@ -443,6 +447,10 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
         </div>
       )}
 
+      {wo.requires_permit && !["closed", "cancelled"].includes(statusCode) ? (
+        <WoPermitGateCard workOrderId={wo.id} refreshKey={rowVersion} />
+      ) : null}
+
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">{t("execution.controls")}</h3>
         <div className="flex flex-wrap items-center gap-2">
@@ -614,7 +622,8 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
               className="grid gap-2 rounded-md border p-2 md:grid-cols-[2fr_130px_130px_auto]"
             >
               <div className="text-sm">
-                {part.article_ref || (part.article_id != null ? `Article #${part.article_id}` : `Part #${part.id}`)}
+                {part.article_ref ||
+                  (part.article_id != null ? `Article #${part.article_id}` : `Part #${part.id}`)}
               </div>
               <div className="text-sm">
                 {t("execution.planned")}: {part.quantity_planned}
@@ -667,12 +676,8 @@ export function WoExecutionControls({ wo, canEdit }: WoExecutionControlsProps) {
                   {reservation.warehouse_code}/{reservation.location_code}
                 </div>
               </div>
-              <div className="text-sm">
-                Reserved: {reservation.quantity_reserved}
-              </div>
-              <div className="text-sm">
-                Issued: {reservation.quantity_issued}
-              </div>
+              <div className="text-sm">Reserved: {reservation.quantity_reserved}</div>
+              <div className="text-sm">Issued: {reservation.quantity_issued}</div>
               <div className="text-sm capitalize">{reservation.status}</div>
               <Button
                 size="sm"

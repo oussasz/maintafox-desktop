@@ -13,9 +13,9 @@ use crate::sync::queries::stage_outbox_item;
 
 use super::domain::{
     LotoCardPrintInput, LotoCardPrintJob, LotoCardView, PermitComplianceKpi30d, PermitHandoverLog,
-    PermitHandoverLogInput, PermitIsolation, PermitIsolationUpsertInput, PermitSuspendInput, PermitSuspension,
-    PermitType, PermitTypeUpsertInput, WorkPermit, WorkPermitCreateInput, WorkPermitListFilter,
-    WorkPermitStatusInput, WorkPermitUpdateInput,
+    PermitHandoverLogInput, PermitIsolation, PermitIsolationActionInput, PermitIsolationUpsertInput,
+    PermitSuspendInput, PermitSuspension, PermitType, PermitTypeUpsertInput, WorkPermit, WorkPermitCreateInput,
+    WorkPermitListFilter, WorkPermitStatusInput, WorkPermitUpdateInput,
 };
 
 const WP_STATUSES: &[&str] = &[
@@ -32,31 +32,103 @@ const WP_STATUSES: &[&str] = &[
     "expired",
 ];
 
+/// Statuses after which a permit no longer protects work (no further lifecycle edits).
+const WP_TERMINAL_STATUSES: &[&str] = &["closed", "handed_back", "cancelled", "expired"];
+
+/// Statuses in which isolation points may be defined, applied and verified. An `active`
+/// permit must be suspended first so new energy sources are never added under live work.
+const ISOLATION_SETUP_STATUSES: &[&str] = &[
+    "draft",
+    "pending_review",
+    "approved",
+    "issued",
+    "suspended",
+    "revalidation_required",
+];
+
+/// Statuses in which lock removal may be verified: at the end of work (`active`, before
+/// close) or when a permit was abandoned with locks still fitted.
+const ISOLATION_REMOVAL_STATUSES: &[&str] = &["active", "cancelled", "expired"];
+
+/// Header fields (asset, WO link, expiry) are frozen once the permit is active.
+const WP_EDITABLE_STATUSES: &[&str] = &["draft", "pending_review", "approved", "issued"];
+
+const WORK_PERMIT_SELECT: &str = "SELECT wp.id, wp.entity_sync_id, wp.code, wp.linked_work_order_id, \
+     wp.permit_type_id, wp.asset_id, wp.entity_id, wp.status, wp.requested_at, wp.issued_at, \
+     wp.activated_at, wp.expires_at, wp.closed_at, wp.handed_back_at, wp.row_version, \
+     pt.code AS permit_type_code, pt.name AS permit_type_name, \
+     e.asset_id_code AS asset_code, e.name AS asset_label, wo.code AS linked_work_order_code \
+     FROM work_permits wp \
+     LEFT JOIN permit_types pt ON pt.id = wp.permit_type_id \
+     LEFT JOIN equipment e ON e.id = wp.asset_id \
+     LEFT JOIN work_orders wo ON wo.id = wp.linked_work_order_id";
+
+const PERMIT_ISOLATION_SELECT: &str = "SELECT pi.id, pi.entity_sync_id, pi.permit_id, pi.isolation_point, \
+     pi.energy_type, pi.isolation_method, pi.lock_number, pi.applied_by_id, pi.verified_by_id, \
+     pi.applied_at, pi.verified_at, pi.removal_verified_at, pi.removal_verified_by_id, pi.row_version, \
+     COALESCE(ua.display_name, ua.username) AS applied_by_name, \
+     COALESCE(uv.display_name, uv.username) AS verified_by_name, \
+     COALESCE(ur.display_name, ur.username) AS removal_verified_by_name \
+     FROM permit_isolations pi \
+     LEFT JOIN user_accounts ua ON ua.id = pi.applied_by_id \
+     LEFT JOIN user_accounts uv ON uv.id = pi.verified_by_id \
+     LEFT JOIN user_accounts ur ON ur.id = pi.removal_verified_by_id";
+
+const PERMIT_SUSPENSION_SELECT: &str = "SELECT ps.id, ps.entity_sync_id, ps.permit_id, ps.reason, \
+     ps.suspended_by_id, ps.suspended_at, ps.reinstated_by_id, ps.reinstated_at, \
+     ps.reactivation_conditions, ps.row_version, \
+     COALESCE(us.display_name, us.username) AS suspended_by_name, \
+     COALESCE(ur.display_name, ur.username) AS reinstated_by_name \
+     FROM permit_suspensions ps \
+     LEFT JOIN user_accounts us ON us.id = ps.suspended_by_id \
+     LEFT JOIN user_accounts ur ON ur.id = ps.reinstated_by_id";
+
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
     AppError::SyncError(format!("Failed to decode permit field '{field}': {err}"))
 }
 
 fn opt_i64(v: Option<i64>) -> sea_orm::Value {
-    v.map(sea_orm::Value::from)
-        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>))
+    v.map_or_else(|| sea_orm::Value::from(None::<i64>), sea_orm::Value::from)
 }
 
 fn opt_f64(v: Option<f64>) -> sea_orm::Value {
-    v.map(sea_orm::Value::from)
-        .unwrap_or_else(|| sea_orm::Value::from(None::<f64>))
+    v.map_or_else(|| sea_orm::Value::from(None::<f64>), sea_orm::Value::from)
 }
 
 fn opt_string(v: Option<String>) -> sea_orm::Value {
-    v.map(sea_orm::Value::from)
-        .unwrap_or_else(|| sea_orm::Value::from(None::<String>))
+    v.map_or_else(|| sea_orm::Value::from(None::<String>), sea_orm::Value::from)
 }
 
-fn i64_to_bool(v: i64) -> bool {
+const fn i64_to_bool(v: i64) -> bool {
     v != 0
 }
 
 fn now_ts() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// Parses an RFC 3339 timestamp and returns it in the canonical stored form
+/// (`%Y-%m-%dT%H:%M:%SZ`, UTC) so lexical comparisons against `now_ts()` are valid.
+fn normalize_ts(field: &str, value: &str) -> AppResult<String> {
+    chrono::DateTime::parse_from_rfc3339(value.trim())
+        .map(|dt| dt.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .map_err(|_| AppError::ValidationFailed(vec![format!("{field} must be an RFC 3339 timestamp.")]))
+}
+
+/// Normalizes an optional expiry and rejects expiries that are already past.
+fn normalize_future_expiry(value: Option<String>) -> AppResult<Option<String>> {
+    let Some(raw) = value.filter(|v| !v.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let ts = normalize_ts("expires_at", &raw)?;
+    if ts <= now_ts() {
+        return Err(AppError::ValidationFailed(vec!["expires_at must be in the future.".into()]));
+    }
+    Ok(Some(ts))
+}
+
+fn is_expired(wp: &WorkPermit) -> bool {
+    wp.expires_at.as_deref().is_some_and(|e| e <= now_ts().as_str())
 }
 
 fn map_permit_type(row: &sea_orm::QueryResult) -> AppResult<PermitType> {
@@ -110,6 +182,11 @@ fn map_work_permit(row: &sea_orm::QueryResult) -> AppResult<WorkPermit> {
         closed_at: row.try_get("", "closed_at").ok(),
         handed_back_at: row.try_get("", "handed_back_at").ok(),
         row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        permit_type_code: row.try_get("", "permit_type_code").ok(),
+        permit_type_name: row.try_get("", "permit_type_name").ok(),
+        asset_code: row.try_get("", "asset_code").ok(),
+        asset_label: row.try_get("", "asset_label").ok(),
+        linked_work_order_code: row.try_get("", "linked_work_order_code").ok(),
     })
 }
 
@@ -131,7 +208,11 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
         applied_at: row.try_get("", "applied_at").ok(),
         verified_at: row.try_get("", "verified_at").ok(),
         removal_verified_at: row.try_get("", "removal_verified_at").ok(),
+        removal_verified_by_id: row.try_get("", "removal_verified_by_id").ok(),
         row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        applied_by_name: row.try_get("", "applied_by_name").ok(),
+        verified_by_name: row.try_get("", "verified_by_name").ok(),
+        removal_verified_by_name: row.try_get("", "removal_verified_by_name").ok(),
     })
 }
 
@@ -222,14 +303,15 @@ pub async fn get_work_permit_linked_to_work_order(
     db: &DatabaseConnection,
     work_order_id: i64,
 ) -> AppResult<Option<WorkPermit>> {
+    // A WO may accumulate cancelled/closed permits; the gate must see the live one.
+    let sql = format!(
+        "{WORK_PERMIT_SELECT} WHERE wp.linked_work_order_id = ? \
+         ORDER BY CASE WHEN wp.status = 'active' THEN 0 \
+                       WHEN wp.status IN ('closed', 'handed_back', 'cancelled', 'expired') THEN 2 \
+                       ELSE 1 END, wp.id DESC LIMIT 1"
+    );
     let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, \
-             status, requested_at, issued_at, activated_at, expires_at, closed_at, handed_back_at, row_version \
-             FROM work_permits WHERE linked_work_order_id = ? ORDER BY id DESC LIMIT 1",
-            [work_order_id.into()],
-        ))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, [work_order_id.into()]))
         .await?;
     match row {
         Some(r) => Ok(Some(map_work_permit(&r)?)),
@@ -247,6 +329,12 @@ async fn stage_permit_isolation(db: &DatabaseConnection, row: &PermitIsolation) 
         energy_type: row.energy_type.clone(),
         lock_number: row.lock_number.clone(),
         verified_at: row.verified_at.clone(),
+        isolation_method: Some(row.isolation_method.clone()),
+        applied_by_id: row.applied_by_id,
+        applied_at: row.applied_at.clone(),
+        verified_by_id: row.verified_by_id,
+        removal_verified_at: row.removal_verified_at.clone(),
+        removal_verified_by_id: row.removal_verified_by_id,
     };
     let payload_json = serde_json::to_string(&payload)?;
     stage_outbox_item(
@@ -339,6 +427,8 @@ fn map_permit_suspension(row: &sea_orm::QueryResult) -> AppResult<PermitSuspensi
             .try_get("", "reactivation_conditions")
             .map_err(|e| decode_err("reactivation_conditions", e))?,
         row_version: row.try_get("", "row_version").map_err(|e| decode_err("row_version", e))?,
+        suspended_by_name: row.try_get("", "suspended_by_name").ok(),
+        reinstated_by_name: row.try_get("", "reinstated_by_name").ok(),
     })
 }
 
@@ -451,29 +541,62 @@ async fn count_handover_logs(db: &DatabaseConnection, permit_id: i64) -> AppResu
     row.try_get("", "c").map_err(|e| decode_err("c", e))
 }
 
+async fn count_isolations_where(db: &DatabaseConnection, permit_id: i64, condition: &str) -> AppResult<i64> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("SELECT COUNT(*) AS c FROM permit_isolations WHERE permit_id = ? AND {condition}"),
+            [permit_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::SyncError("Failed to count isolations.".into()))?;
+    row.try_get("", "c").map_err(|e| decode_err("c", e))
+}
+
 fn draft_fields_complete(wp: &WorkPermit) -> bool {
     !wp.code.trim().is_empty() && wp.asset_id > 0
 }
 
-pub(crate) async fn activation_ready(
-    db: &DatabaseConnection,
-    permit_id: i64,
-    permit_type_id: i64,
-) -> AppResult<()> {
-    let code = permit_type_code(db, permit_type_id).await?;
-    let n = count_isolations(db, permit_id).await?;
+/// Gate for any transition into `active` and for starting/resuming a linked WO:
+/// the permit must not be expired, LOTO permits need at least one isolation, every
+/// isolation must be verified (two-person) and no lock may already be removed.
+pub(crate) async fn activation_ready(db: &DatabaseConnection, wp: &WorkPermit) -> AppResult<()> {
+    if is_expired(wp) {
+        return Err(AppError::ValidationFailed(vec![
+            "The permit has expired; it cannot be activated or used to start work.".into(),
+        ]));
+    }
+    let code = permit_type_code(db, wp.permit_type_id).await?;
+    let n = count_isolations(db, wp.id).await?;
     if code == "loto" && n < 1 {
         return Err(AppError::ValidationFailed(vec![
             "LOTO permit types require at least one isolation before activation.".into(),
         ]));
     }
     if n > 0 {
-        let v = count_verified_isolations(db, permit_id).await?;
+        let v = count_verified_isolations(db, wp.id).await?;
         if v != n {
             return Err(AppError::ValidationFailed(vec![
                 "All isolation points must have verified_at set before activation.".into(),
             ]));
         }
+        let removed = count_isolations_where(db, wp.id, "removal_verified_at IS NOT NULL").await?;
+        if removed > 0 {
+            return Err(AppError::ValidationFailed(vec![
+                "One or more isolations have already been removed; the permit cannot protect work.".into(),
+            ]));
+        }
+    }
+    Ok(())
+}
+
+/// Close gate (P0-8): every isolation must have its lock removal verified.
+async fn close_ready(db: &DatabaseConnection, permit_id: i64) -> AppResult<()> {
+    let pending = count_isolations_where(db, permit_id, "removal_verified_at IS NULL").await?;
+    if pending > 0 {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "{pending} isolation(s) still need verified lock removal before the permit can be closed."
+        )]));
     }
     Ok(())
 }
@@ -501,6 +624,7 @@ fn assert_transition_set_status(from: &str, to: &str) -> AppResult<()> {
         }
         return Ok(());
     }
+    #[allow(clippy::unnested_or_patterns)] // one (from, to) pair per line reads as a transition table
     let ok = matches!(
         (from, to),
         ("draft", "pending_review")
@@ -519,6 +643,21 @@ fn assert_transition_set_status(from: &str, to: &str) -> AppResult<()> {
             "Transition {from} -> {to} is not allowed for set_work_permit_status (use suspend_work_permit for active -> suspended)."
         )]))
     }
+}
+
+async fn get_permit_suspension(db: &DatabaseConnection, id: i64) -> AppResult<PermitSuspension> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("{PERMIT_SUSPENSION_SELECT} WHERE ps.id = ?"),
+            [id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "PermitSuspension".into(),
+            id: id.to_string(),
+        })?;
+    map_permit_suspension(&row)
 }
 
 async fn finalize_open_suspension(
@@ -565,20 +704,7 @@ async fn finalize_open_suspension(
     if affected.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec!["Concurrent update on permit_suspensions.".into()]));
     }
-    let updated = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, permit_id, reason, suspended_by_id, suspended_at, \
-             reinstated_by_id, reinstated_at, reactivation_conditions, row_version \
-             FROM permit_suspensions WHERE id = ?",
-            [sid.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "PermitSuspension".into(),
-            id: sid.to_string(),
-        })?;
-    let susp = map_permit_suspension(&updated)?;
+    let susp = get_permit_suspension(db, sid).await?;
     stage_permit_suspension(db, &susp).await?;
     Ok(())
 }
@@ -706,25 +832,25 @@ pub async fn list_work_permits(
     filter: WorkPermitListFilter,
 ) -> AppResult<Vec<WorkPermit>> {
     let limit = filter.limit.unwrap_or(200).clamp(1, 2000);
-    let mut sql = String::from(
-        "SELECT id, entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, \
-         status, requested_at, issued_at, activated_at, expires_at, closed_at, handed_back_at, row_version \
-         FROM work_permits WHERE 1=1",
-    );
+    let mut sql = format!("{WORK_PERMIT_SELECT} WHERE 1=1");
     let mut params: Vec<sea_orm::Value> = Vec::new();
     if let Some(ref s) = filter.status {
-        sql.push_str(" AND status = ?");
+        sql.push_str(" AND wp.status = ?");
         params.push(s.clone().into());
     }
     if let Some(t) = filter.permit_type_id {
-        sql.push_str(" AND permit_type_id = ?");
+        sql.push_str(" AND wp.permit_type_id = ?");
         params.push(t.into());
     }
     if let Some(a) = filter.asset_id {
-        sql.push_str(" AND asset_id = ?");
+        sql.push_str(" AND wp.asset_id = ?");
         params.push(a.into());
     }
-    sql.push_str(" ORDER BY id DESC LIMIT ?");
+    if let Some(w) = filter.linked_work_order_id {
+        sql.push_str(" AND wp.linked_work_order_id = ?");
+        params.push(w.into());
+    }
+    sql.push_str(" ORDER BY wp.id DESC LIMIT ?");
     params.push(limit.into());
 
     let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, &sql, params);
@@ -740,18 +866,88 @@ pub async fn get_work_permit(db: &DatabaseConnection, id: i64) -> AppResult<Opti
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, \
-             status, requested_at, issued_at, activated_at, expires_at, closed_at, handed_back_at, row_version \
-             FROM work_permits WHERE id = ?",
+            format!("{WORK_PERMIT_SELECT} WHERE wp.id = ?"),
             [id.into()],
         ))
         .await?;
     row.as_ref().map(map_work_permit).transpose()
 }
 
+async fn require_work_permit(db: &DatabaseConnection, id: i64) -> AppResult<WorkPermit> {
+    get_work_permit(db, id).await?.ok_or_else(|| AppError::NotFound {
+        entity: "WorkPermit".into(),
+        id: id.to_string(),
+    })
+}
+
+/// Resolves `(asset_id, entity_id)` for a new permit: explicit values win, then the
+/// linked WO (equipment + entity), then the asset's installation node for the entity.
+async fn resolve_permit_scope(
+    db: &DatabaseConnection,
+    input: &WorkPermitCreateInput,
+) -> AppResult<(i64, i64)> {
+    let mut asset_id = input.asset_id;
+    let mut entity_id = input.entity_id;
+    if let Some(wo_id) = input.linked_work_order_id {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT equipment_id, entity_id FROM work_orders WHERE id = ?",
+                [wo_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::NotFound {
+                entity: "WorkOrder".into(),
+                id: wo_id.to_string(),
+            })?;
+        let wo_equipment: Option<i64> = row.try_get("", "equipment_id").ok();
+        let wo_entity: Option<i64> = row.try_get("", "entity_id").ok();
+        asset_id = asset_id.or(wo_equipment);
+        entity_id = entity_id.or(wo_entity);
+    }
+    let asset_id = asset_id.ok_or_else(|| {
+        AppError::ValidationFailed(vec![
+            "An asset is required (the linked work order has no equipment).".into(),
+        ])
+    })?;
+    if entity_id.is_none() {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT installed_at_node_id FROM equipment WHERE id = ?",
+                [asset_id.into()],
+            ))
+            .await?
+            .ok_or_else(|| AppError::NotFound {
+                entity: "Equipment".into(),
+                id: asset_id.to_string(),
+            })?;
+        entity_id = row.try_get("", "installed_at_node_id").ok();
+    }
+    let entity_id = entity_id.ok_or_else(|| {
+        AppError::ValidationFailed(vec![
+            "The permit's organisational entity could not be determined from the work order or asset.".into(),
+        ])
+    })?;
+    Ok((asset_id, entity_id))
+}
+
 pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreateInput) -> AppResult<WorkPermit> {
     let _ = permit_type_code(db, input.permit_type_id).await?;
-    ensure_wo_asset_aligned(db, input.linked_work_order_id, input.asset_id).await?;
+    let (asset_id, entity_id) = resolve_permit_scope(db, &input).await?;
+    ensure_wo_asset_aligned(db, input.linked_work_order_id, asset_id).await?;
+    let expires_at = normalize_future_expiry(input.expires_at.clone())?;
+
+    if let Some(wo_id) = input.linked_work_order_id {
+        if let Some(existing) = get_work_permit_linked_to_work_order(db, wo_id).await? {
+            if !WP_TERMINAL_STATUSES.contains(&existing.status.as_str()) {
+                return Err(AppError::ValidationFailed(vec![format!(
+                    "Work order already has an open permit ({}).",
+                    existing.code
+                )]));
+            }
+        }
+    }
 
     let sync_id = Uuid::new_v4().to_string();
     let requested = now_ts();
@@ -759,15 +955,17 @@ pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreate
         DbBackend::Sqlite,
         "INSERT INTO work_permits (entity_sync_id, code, linked_work_order_id, permit_type_id, \
          asset_id, entity_id, status, requested_at, expires_at, row_version) \
-         VALUES (?, '', ?, ?, ?, ?, 'draft', ?, ?, 1)",
+         VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, 1)",
         [
-            sync_id.into(),
+            sync_id.clone().into(),
+            // Temporary unique code; replaced below once the row id is known.
+            format!("PTW-TMP-{sync_id}").into(),
             opt_i64(input.linked_work_order_id),
             input.permit_type_id.into(),
-            input.asset_id.into(),
-            input.entity_id.into(),
+            asset_id.into(),
+            entity_id.into(),
             requested.into(),
-            opt_string(input.expires_at),
+            opt_string(expires_at),
         ],
     ))
     .await?;
@@ -786,28 +984,32 @@ pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreate
         [code.into(), new_id.into()],
     ))
     .await?;
-    let created = get_work_permit(db, new_id).await?.expect("row");
+    let created = require_work_permit(db, new_id).await?;
     stage_work_permit(db, &created).await?;
     Ok(created)
 }
 
 pub async fn update_work_permit(db: &DatabaseConnection, input: WorkPermitUpdateInput) -> AppResult<WorkPermit> {
-    let current = get_work_permit(db, input.id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkPermit".into(),
-            id: input.id.to_string(),
-        })?;
+    let current = require_work_permit(db, input.id).await?;
     if input.expected_row_version != current.row_version {
         return Err(AppError::ValidationFailed(vec!["row_version mismatch on work_permits.".into()]));
+    }
+    if !WP_EDITABLE_STATUSES.contains(&current.status.as_str()) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Permit details cannot be edited in status '{}'.",
+            current.status
+        )]));
     }
     let asset_id = input.asset_id.unwrap_or(current.asset_id);
     let entity_id = input.entity_id.unwrap_or(current.entity_id);
     let linked = input.linked_work_order_id.or(current.linked_work_order_id);
     ensure_wo_asset_aligned(db, linked, asset_id).await?;
+    let expires = match input.expires_at {
+        Some(e) => normalize_future_expiry(Some(e))?,
+        None => current.expires_at.clone(),
+    };
 
     let new_rv = current.row_version + 1;
-    let expires = input.expires_at.or(current.expires_at);
     let affected = db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -828,19 +1030,20 @@ pub async fn update_work_permit(db: &DatabaseConnection, input: WorkPermitUpdate
     if affected.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec!["Concurrent update on work_permits.".into()]));
     }
-    let updated = get_work_permit(db, input.id).await?.expect("row");
+    let updated = require_work_permit(db, input.id).await?;
     stage_work_permit(db, &updated).await?;
     Ok(updated)
 }
 
-pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitStatusInput) -> AppResult<WorkPermit> {
+/// `actor_id` is the session user; it is recorded as the reinstating person when a
+/// suspended permit returns to `active`.
+pub async fn set_work_permit_status(
+    db: &DatabaseConnection,
+    input: WorkPermitStatusInput,
+    actor_id: i64,
+) -> AppResult<WorkPermit> {
     validate_wp_status(&input.status)?;
-    let current = get_work_permit(db, input.id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkPermit".into(),
-            id: input.id.to_string(),
-        })?;
+    let current = require_work_permit(db, input.id).await?;
     if input.expected_row_version != current.row_version {
         return Err(AppError::ValidationFailed(vec!["row_version mismatch on work_permits.".into()]));
     }
@@ -858,14 +1061,14 @@ pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitSt
             }
         }
         ("issued", "active") => {
-            activation_ready(db, input.id, current.permit_type_id).await?;
+            activation_ready(db, &current).await?;
         }
         ("revalidation_required", "active") => {
-            activation_ready(db, input.id, current.permit_type_id).await?;
-            let rid = input.reinstated_by_id.ok_or_else(|| {
-                AppError::ValidationFailed(vec!["reinstated_by_id is required when returning to active.".into()])
-            })?;
-            finalize_open_suspension(db, input.id, rid, true).await?;
+            activation_ready(db, &current).await?;
+            finalize_open_suspension(db, input.id, actor_id, true).await?;
+        }
+        ("active", "closed") => {
+            close_ready(db, input.id).await?;
         }
         ("closed", "handed_back") => {
             if count_handover_logs(db, input.id).await? < 1 {
@@ -879,21 +1082,16 @@ pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitSt
 
     let new_rv = current.row_version + 1;
     let now = now_ts();
-    let mut issued_at = input.issued_at.or(current.issued_at.clone());
-    let mut activated_at = input.activated_at.or(current.activated_at.clone());
-    let mut closed_at = input.closed_at.or(current.closed_at.clone());
-    let mut handed_back_at = input.handed_back_at.or(current.handed_back_at.clone());
-    if to == "issued" && issued_at.is_none() {
-        issued_at = Some(now.clone());
-    }
-    if to == "active" && activated_at.is_none() {
-        activated_at = Some(now.clone());
-    }
-    if to == "closed" && closed_at.is_none() {
-        closed_at = Some(now.clone());
-    }
-    if to == "handed_back" && handed_back_at.is_none() {
-        handed_back_at = Some(now.clone());
+    let mut issued_at = current.issued_at.clone();
+    let mut activated_at = current.activated_at.clone();
+    let mut closed_at = current.closed_at.clone();
+    let mut handed_back_at = current.handed_back_at.clone();
+    match to {
+        "issued" => issued_at = issued_at.or(Some(now)),
+        "active" => activated_at = activated_at.or(Some(now)),
+        "closed" => closed_at = Some(now),
+        "handed_back" => handed_back_at = Some(now),
+        _ => {}
     }
 
     let affected = db
@@ -917,21 +1115,20 @@ pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitSt
     if affected.rows_affected() == 0 {
         return Err(AppError::ValidationFailed(vec!["Concurrent update on work_permits.".into()]));
     }
-    let updated = get_work_permit(db, input.id).await?.expect("row");
+    let updated = require_work_permit(db, input.id).await?;
     stage_work_permit(db, &updated).await?;
     Ok(updated)
 }
 
-pub async fn suspend_work_permit(db: &DatabaseConnection, input: PermitSuspendInput) -> AppResult<(WorkPermit, PermitSuspension)> {
+pub async fn suspend_work_permit(
+    db: &DatabaseConnection,
+    input: PermitSuspendInput,
+    actor_id: i64,
+) -> AppResult<(WorkPermit, PermitSuspension)> {
     if input.reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec!["Suspension reason is required.".into()]));
     }
-    let current = get_work_permit(db, input.permit_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkPermit".into(),
-            id: input.permit_id.to_string(),
-        })?;
+    let current = require_work_permit(db, input.permit_id).await?;
     if current.status != "active" {
         return Err(AppError::ValidationFailed(vec![
             "Only active permits can be suspended.".into(),
@@ -954,7 +1151,7 @@ pub async fn suspend_work_permit(db: &DatabaseConnection, input: PermitSuspendIn
             sync_id.into(),
             input.permit_id.into(),
             input.reason.into(),
-            input.suspended_by_id.into(),
+            actor_id.into(),
             suspended_at.clone().into(),
             react.into(),
         ],
@@ -981,18 +1178,8 @@ pub async fn suspend_work_permit(db: &DatabaseConnection, input: PermitSuspendIn
     }
     txn.commit().await?;
 
-    let susp_row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, permit_id, reason, suspended_by_id, suspended_at, \
-             reinstated_by_id, reinstated_at, reactivation_conditions, row_version \
-             FROM permit_suspensions WHERE id = ?",
-            [sid.into()],
-        ))
-        .await?
-        .expect("row");
-    let suspension = map_permit_suspension(&susp_row)?;
-    let wp = get_work_permit(db, input.permit_id).await?.expect("row");
+    let suspension = get_permit_suspension(db, sid).await?;
+    let wp = require_work_permit(db, input.permit_id).await?;
     stage_permit_suspension(db, &suspension).await?;
     stage_work_permit(db, &wp).await?;
     Ok((wp, suspension))
@@ -1002,12 +1189,7 @@ pub async fn append_permit_handover_log(
     db: &DatabaseConnection,
     input: PermitHandoverLogInput,
 ) -> AppResult<PermitHandoverLog> {
-    let current = get_work_permit(db, input.permit_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkPermit".into(),
-            id: input.permit_id.to_string(),
-        })?;
+    let current = require_work_permit(db, input.permit_id).await?;
     if current.status != "closed" {
         return Err(AppError::ValidationFailed(vec![
             "Handover logs can only be recorded when permit status is closed.".into(),
@@ -1016,7 +1198,7 @@ pub async fn append_permit_handover_log(
     if input.handed_from_role.trim().is_empty() || input.handed_to_role.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec!["Roles are required.".into()]));
     }
-    let signed = input.signed_at.unwrap_or_else(now_ts);
+    let signed = now_ts();
     let sync_id = Uuid::new_v4().to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -1025,8 +1207,8 @@ pub async fn append_permit_handover_log(
         [
             sync_id.into(),
             input.permit_id.into(),
-            input.handed_from_role.into(),
-            input.handed_to_role.into(),
+            input.handed_from_role.trim().to_string().into(),
+            input.handed_to_role.trim().to_string().into(),
             input.confirmation_note.into(),
             signed.into(),
         ],
@@ -1048,7 +1230,10 @@ pub async fn append_permit_handover_log(
             [new_id.into()],
         ))
         .await?
-        .expect("row");
+        .ok_or_else(|| AppError::NotFound {
+            entity: "PermitHandoverLog".into(),
+            id: new_id.to_string(),
+        })?;
     let log = map_permit_handover_log(&row)?;
     stage_permit_handover_log(db, &log).await?;
     Ok(log)
@@ -1058,9 +1243,7 @@ pub async fn list_permit_suspensions(db: &DatabaseConnection, permit_id: i64) ->
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, permit_id, reason, suspended_by_id, suspended_at, \
-             reinstated_by_id, reinstated_at, reactivation_conditions, row_version \
-             FROM permit_suspensions WHERE permit_id = ? ORDER BY id ASC",
+            format!("{PERMIT_SUSPENSION_SELECT} WHERE ps.permit_id = ? ORDER BY ps.id ASC"),
             [permit_id.into()],
         ))
         .await?;
@@ -1091,9 +1274,7 @@ pub async fn list_permit_isolations(db: &DatabaseConnection, permit_id: i64) -> 
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, permit_id, isolation_point, energy_type, isolation_method, lock_number, \
-             applied_by_id, verified_by_id, applied_at, verified_at, removal_verified_at, row_version \
-             FROM permit_isolations WHERE permit_id = ? ORDER BY id ASC",
+            format!("{PERMIT_ISOLATION_SELECT} WHERE pi.permit_id = ? ORDER BY pi.id ASC"),
             [permit_id.into()],
         ))
         .await?;
@@ -1104,57 +1285,80 @@ pub async fn list_permit_isolations(db: &DatabaseConnection, permit_id: i64) -> 
     Ok(out)
 }
 
+async fn get_permit_isolation(db: &DatabaseConnection, id: i64) -> AppResult<PermitIsolation> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("{PERMIT_ISOLATION_SELECT} WHERE pi.id = ?"),
+            [id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "PermitIsolation".into(),
+            id: id.to_string(),
+        })?;
+    map_permit_isolation(&row)
+}
+
+fn ensure_permit_status_in(wp: &WorkPermit, allowed: &[&str], action: &str) -> AppResult<()> {
+    if allowed.contains(&wp.status.as_str()) {
+        Ok(())
+    } else {
+        Err(AppError::ValidationFailed(vec![format!(
+            "Cannot {action} while the permit is '{}'.",
+            wp.status
+        )]))
+    }
+}
+
+/// Defines a new isolation point or edits one that has not been applied yet.
+/// Application / verification state is never written here.
 pub async fn upsert_permit_isolation(
     db: &DatabaseConnection,
     input: PermitIsolationUpsertInput,
 ) -> AppResult<PermitIsolation> {
-    let _ = get_work_permit(db, input.permit_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "WorkPermit".into(),
-            id: input.permit_id.to_string(),
-        })?;
+    let permit = require_work_permit(db, input.permit_id).await?;
+    ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "define isolations")?;
 
-    if input.isolation_point.trim().is_empty() {
+    let point = input.isolation_point.trim().to_string();
+    let energy = input.energy_type.trim().to_string();
+    let method = input.isolation_method.trim().to_string();
+    if point.is_empty() {
         return Err(AppError::ValidationFailed(vec!["isolation_point is required.".into()]));
     }
+    if energy.is_empty() {
+        return Err(AppError::ValidationFailed(vec!["energy_type is required.".into()]));
+    }
+    if method.is_empty() {
+        return Err(AppError::ValidationFailed(vec!["isolation_method is required.".into()]));
+    }
+    let lock_number = input.lock_number.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
 
     if let Some(id) = input.id {
-        if id <= 0 {
-            return Err(AppError::ValidationFailed(vec!["id must be positive.".into()]));
-        }
-        let row = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id, entity_sync_id, permit_id, isolation_point, energy_type, isolation_method, lock_number, \
-                 applied_by_id, verified_by_id, applied_at, verified_at, removal_verified_at, row_version \
-                 FROM permit_isolations WHERE id = ? AND permit_id = ?",
-                [id.into(), input.permit_id.into()],
-            ))
-            .await?
-            .ok_or_else(|| AppError::NotFound {
+        let current = get_permit_isolation(db, id).await?;
+        if current.permit_id != input.permit_id {
+            return Err(AppError::NotFound {
                 entity: "PermitIsolation".into(),
                 id: id.to_string(),
-            })?;
-        let current = map_permit_isolation(&row)?;
+            });
+        }
+        if current.applied_at.is_some() {
+            return Err(AppError::ValidationFailed(vec![
+                "An applied isolation cannot be edited.".into(),
+            ]));
+        }
         let new_rv = current.row_version + 1;
         let affected = db
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "UPDATE permit_isolations SET isolation_point = ?, energy_type = ?, isolation_method = ?, lock_number = ?, \
-                 applied_by_id = ?, verified_by_id = ?, applied_at = ?, verified_at = ?, removal_verified_at = ?, \
-                 row_version = ? \
-                 WHERE id = ? AND row_version = ?",
+                "UPDATE permit_isolations SET isolation_point = ?, energy_type = ?, isolation_method = ?, \
+                 lock_number = ?, row_version = ? \
+                 WHERE id = ? AND row_version = ? AND applied_at IS NULL",
                 [
-                    input.isolation_point.into(),
-                    input.energy_type.into(),
-                    input.isolation_method.into(),
-                    opt_string(input.lock_number),
-                    opt_i64(input.applied_by_id),
-                    opt_i64(input.verified_by_id),
-                    opt_string(input.applied_at),
-                    opt_string(input.verified_at),
-                    opt_string(input.removal_verified_at),
+                    point.into(),
+                    energy.into(),
+                    method.into(),
+                    opt_string(lock_number),
                     new_rv.into(),
                     id.into(),
                     current.row_version.into(),
@@ -1164,20 +1368,7 @@ pub async fn upsert_permit_isolation(
         if affected.rows_affected() == 0 {
             return Err(AppError::ValidationFailed(vec!["Concurrent update on permit_isolations.".into()]));
         }
-        let updated = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT id, entity_sync_id, permit_id, isolation_point, energy_type, isolation_method, lock_number, \
-                 applied_by_id, verified_by_id, applied_at, verified_at, removal_verified_at, row_version \
-                 FROM permit_isolations WHERE id = ?",
-                [id.into()],
-            ))
-            .await?
-            .ok_or_else(|| AppError::NotFound {
-                entity: "PermitIsolation".into(),
-                id: id.to_string(),
-            })?;
-        let out = map_permit_isolation(&updated)?;
+        let out = get_permit_isolation(db, id).await?;
         stage_permit_isolation(db, &out).await?;
         return Ok(out);
     }
@@ -1186,20 +1377,15 @@ pub async fn upsert_permit_isolation(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO permit_isolations (entity_sync_id, permit_id, isolation_point, energy_type, \
-         isolation_method, lock_number, applied_by_id, verified_by_id, applied_at, verified_at, removal_verified_at, row_version) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+         isolation_method, lock_number, row_version) \
+         VALUES (?, ?, ?, ?, ?, ?, 1)",
         [
             sync_id.into(),
             input.permit_id.into(),
-            input.isolation_point.into(),
-            input.energy_type.into(),
-            input.isolation_method.into(),
-            opt_string(input.lock_number),
-            opt_i64(input.applied_by_id),
-            opt_i64(input.verified_by_id),
-            opt_string(input.applied_at),
-            opt_string(input.verified_at),
-            opt_string(input.removal_verified_at),
+            point.into(),
+            energy.into(),
+            method.into(),
+            opt_string(lock_number),
         ],
     ))
     .await?;
@@ -1211,19 +1397,133 @@ pub async fn upsert_permit_isolation(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, permit_id, isolation_point, energy_type, isolation_method, lock_number, \
-             applied_by_id, verified_by_id, applied_at, verified_at, removal_verified_at, row_version \
-             FROM permit_isolations WHERE id = ?",
-            [new_id.into()],
-        ))
-        .await?
-        .expect("row");
-    let created = map_permit_isolation(&row)?;
+    let created = get_permit_isolation(db, new_id).await?;
     stage_permit_isolation(db, &created).await?;
     Ok(created)
+}
+
+/// Loads an isolation and its permit for a lifecycle action, checking optimistic locking.
+async fn load_isolation_for_action(
+    db: &DatabaseConnection,
+    input: &PermitIsolationActionInput,
+) -> AppResult<(PermitIsolation, WorkPermit)> {
+    let iso = get_permit_isolation(db, input.isolation_id).await?;
+    if iso.row_version != input.expected_row_version {
+        return Err(AppError::ValidationFailed(vec!["row_version mismatch on permit_isolations.".into()]));
+    }
+    let permit = require_work_permit(db, iso.permit_id).await?;
+    Ok((iso, permit))
+}
+
+async fn write_isolation_action(
+    db: &DatabaseConnection,
+    iso: &PermitIsolation,
+    set_clause: &str,
+    mut values: Vec<sea_orm::Value>,
+) -> AppResult<PermitIsolation> {
+    let new_rv = iso.row_version + 1;
+    values.push(new_rv.into());
+    values.push(iso.id.into());
+    values.push(iso.row_version.into());
+    let affected = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!("UPDATE permit_isolations SET {set_clause}, row_version = ? WHERE id = ? AND row_version = ?"),
+            values,
+        ))
+        .await?;
+    if affected.rows_affected() == 0 {
+        return Err(AppError::ValidationFailed(vec!["Concurrent update on permit_isolations.".into()]));
+    }
+    let out = get_permit_isolation(db, iso.id).await?;
+    stage_permit_isolation(db, &out).await?;
+    Ok(out)
+}
+
+/// Records that `actor_id` (the session user) fitted the lock / isolation.
+pub async fn apply_permit_isolation(
+    db: &DatabaseConnection,
+    input: PermitIsolationActionInput,
+    actor_id: i64,
+) -> AppResult<PermitIsolation> {
+    let (iso, permit) = load_isolation_for_action(db, &input).await?;
+    ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "apply isolations")?;
+    if iso.applied_at.is_some() {
+        return Err(AppError::ValidationFailed(vec!["Isolation is already applied.".into()]));
+    }
+    let lock_number = input
+        .lock_number
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .or_else(|| iso.lock_number.clone());
+    write_isolation_action(
+        db,
+        &iso,
+        "applied_by_id = ?, applied_at = ?, lock_number = ?",
+        vec![actor_id.into(), now_ts().into(), opt_string(lock_number)],
+    )
+    .await
+}
+
+/// Two-person rule (P0-8): the verifier (session user) must differ from the applier.
+pub async fn verify_permit_isolation(
+    db: &DatabaseConnection,
+    input: PermitIsolationActionInput,
+    actor_id: i64,
+) -> AppResult<PermitIsolation> {
+    let (iso, permit) = load_isolation_for_action(db, &input).await?;
+    ensure_permit_status_in(&permit, ISOLATION_SETUP_STATUSES, "verify isolations")?;
+    let Some(applied_by) = iso.applied_by_id.filter(|_| iso.applied_at.is_some()) else {
+        return Err(AppError::ValidationFailed(vec![
+            "Isolation must be applied before it can be verified.".into(),
+        ]));
+    };
+    if iso.verified_at.is_some() {
+        return Err(AppError::ValidationFailed(vec!["Isolation is already verified.".into()]));
+    }
+    if applied_by == actor_id {
+        return Err(AppError::ValidationFailed(vec![
+            "Two-person rule: the person who applied an isolation cannot verify it.".into(),
+        ]));
+    }
+    write_isolation_action(
+        db,
+        &iso,
+        "verified_by_id = ?, verified_at = ?",
+        vec![actor_id.into(), now_ts().into()],
+    )
+    .await
+}
+
+/// Records verified lock removal. Same two-person rule as verification: the person
+/// confirming removal must not be the person who applied the isolation.
+pub async fn verify_permit_isolation_removal(
+    db: &DatabaseConnection,
+    input: PermitIsolationActionInput,
+    actor_id: i64,
+) -> AppResult<PermitIsolation> {
+    let (iso, permit) = load_isolation_for_action(db, &input).await?;
+    ensure_permit_status_in(&permit, ISOLATION_REMOVAL_STATUSES, "verify isolation removal")?;
+    if iso.verified_at.is_none() {
+        return Err(AppError::ValidationFailed(vec![
+            "Only a verified isolation can have its removal verified.".into(),
+        ]));
+    }
+    if iso.removal_verified_at.is_some() {
+        return Err(AppError::ValidationFailed(vec!["Isolation removal is already verified.".into()]));
+    }
+    if iso.applied_by_id == Some(actor_id) {
+        return Err(AppError::ValidationFailed(vec![
+            "Two-person rule: the person who applied an isolation cannot verify its removal.".into(),
+        ]));
+    }
+    write_isolation_action(
+        db,
+        &iso,
+        "removal_verified_by_id = ?, removal_verified_at = ?",
+        vec![actor_id.into(), now_ts().into()],
+    )
+    .await
 }
 
 async fn stage_loto_card_print_job(db: &DatabaseConnection, row: &LotoCardPrintJob) -> AppResult<()> {
@@ -1326,6 +1626,7 @@ pub async fn get_loto_card_view(
 pub async fn record_loto_card_print(
     db: &DatabaseConnection,
     input: LotoCardPrintInput,
+    actor_id: i64,
 ) -> AppResult<LotoCardPrintJob> {
     let iso = db
         .query_one(Statement::from_sql_and_values(
@@ -1354,7 +1655,7 @@ pub async fn record_loto_card_print(
             input.permit_id.into(),
             input.isolation_id.into(),
             printed_at.clone().into(),
-            input.printed_by_id.into(),
+            actor_id.into(),
             sync_id.clone().into(),
         ],
     ))
@@ -1386,12 +1687,12 @@ pub async fn list_open_permits_report(db: &DatabaseConnection) -> AppResult<Vec<
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, code, linked_work_order_id, permit_type_id, asset_id, entity_id, \
-             status, requested_at, issued_at, activated_at, expires_at, closed_at, handed_back_at, row_version \
-             FROM work_permits \
-             WHERE status IN ('issued', 'active', 'suspended') \
-             AND (expires_at IS NULL OR expires_at > ?) \
-             ORDER BY id DESC",
+            format!(
+                "{WORK_PERMIT_SELECT} \
+                 WHERE wp.status IN ('issued', 'active', 'suspended') \
+                 AND (wp.expires_at IS NULL OR wp.expires_at > ?) \
+                 ORDER BY wp.id DESC"
+            ),
             [now.into()],
         ))
         .await?;
@@ -1426,6 +1727,7 @@ pub async fn permit_compliance_kpi_30d(db: &DatabaseConnection) -> AppResult<Per
         .await?
         .expect("c");
     let handed_back_on_time_count: i64 = on_time_row.try_get("", "c").map_err(|e| decode_err("c", e))?;
+    #[allow(clippy::cast_precision_loss)] // permit counts are far below 2^52
     let rate = if activated_count > 0 {
         Some(handed_back_on_time_count as f64 / activated_count as f64)
     } else {

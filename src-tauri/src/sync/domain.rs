@@ -541,6 +541,18 @@ pub struct PermitIsolationSyncPayload {
     pub energy_type: String,
     pub lock_number: Option<String>,
     pub verified_at: Option<String>,
+    #[serde(default)]
+    pub isolation_method: Option<String>,
+    #[serde(default)]
+    pub applied_by_id: Option<i64>,
+    #[serde(default)]
+    pub applied_at: Option<String>,
+    #[serde(default)]
+    pub verified_by_id: Option<i64>,
+    #[serde(default)]
+    pub removal_verified_at: Option<String>,
+    #[serde(default)]
+    pub removal_verified_by_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

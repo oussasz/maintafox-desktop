@@ -1,1 +1,183 @@
-{}
+{
+  "page": {
+    "title": "Permis de travail",
+    "description": "PRD §6.23 — cycle de vie, isolations LOTO, suspensions et mainlevées."
+  },
+  "actions": {
+    "refresh": "Actualiser",
+    "newPermit": "Nouveau permis",
+    "manageTypes": "Types de permis",
+    "edit": "Modifier",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "close": "Fermer",
+    "select": "Sélectionner {{code}}"
+  },
+  "kpi": {
+    "title": "Conformité LOTO (30 j.)",
+    "summary": "Activations : {{activated}} · Mainlevées à temps : {{onTime}}",
+    "rate": "Taux : {{rate}} %"
+  },
+  "open": {
+    "title": "Permis ouverts (non expirés)",
+    "empty": "Aucun permis ouvert."
+  },
+  "list": {
+    "title": "Permis",
+    "empty": "Aucun permis pour le moment."
+  },
+  "columns": {
+    "code": "Code",
+    "status": "Statut",
+    "type": "Type",
+    "asset": "Équipement",
+    "workOrder": "Ordre de travail",
+    "expires": "Expire"
+  },
+  "status": {
+    "draft": "Brouillon",
+    "pending_review": "En revue",
+    "approved": "Approuvé",
+    "issued": "Délivré",
+    "active": "Actif",
+    "suspended": "Suspendu",
+    "revalidation_required": "Revalidation requise",
+    "closed": "Clôturé",
+    "handed_back": "Mainlevée faite",
+    "cancelled": "Annulé",
+    "expired": "Expiré"
+  },
+  "detail": {
+    "title": "Permis {{code}}",
+    "empty": "Sélectionnez un permis pour le gérer.",
+    "type": "Type",
+    "asset": "Équipement",
+    "workOrder": "Ordre de travail",
+    "requestedAt": "Demandé",
+    "issuedAt": "Délivré",
+    "activatedAt": "Activé",
+    "expiresAt": "Expire",
+    "closedAt": "Clôturé",
+    "handedBackAt": "Mainlevée",
+    "none": "—"
+  },
+  "transition": {
+    "submitReview": "Soumettre en revue",
+    "approve": "Approuver",
+    "issue": "Délivrer",
+    "activate": "Activer",
+    "revalidate": "Demander la revalidation",
+    "reinstate": "Réactiver",
+    "close": "Clôturer le permis",
+    "handBack": "Faire la mainlevée",
+    "cancel": "Annuler le permis",
+    "suspend": "Suspendre",
+    "confirmCancel": "Annuler ce permis ? Cette action est irréversible."
+  },
+  "gate": {
+    "noIsolation": "Un permis LOTO exige au moins une isolation avant activation.",
+    "unverified": "Chaque isolation doit être posée puis vérifiée par une seconde personne avant activation.",
+    "removed": "Un cadenas a déjà été retiré : ce permis ne protège plus l'intervention.",
+    "expired": "Ce permis a expiré.",
+    "pendingRemoval": "Chaque retrait de cadenas doit être vérifié avant de clôturer le permis.",
+    "handoverRequired": "Enregistrez une passation avant la mainlevée."
+  },
+  "isolation": {
+    "title": "Points d'isolation LOTO",
+    "empty": "Aucun point d'isolation.",
+    "add": "Ajouter une isolation",
+    "point": "Point d'isolation",
+    "energy": "Type d'énergie",
+    "method": "Méthode d'isolation",
+    "lock": "N° de cadenas",
+    "apply": "Marquer posée",
+    "verify": "Vérifier",
+    "verifyRemoval": "Vérifier le retrait",
+    "appliedBy": "Posée par {{name}}",
+    "verifiedBy": "Vérifiée par {{name}}",
+    "removalVerifiedBy": "Retrait vérifié par {{name}}",
+    "twoPersonHint": "Règle des deux personnes : la personne qui a posé une isolation ne peut ni la vérifier ni vérifier son retrait.",
+    "selfBlocked": "Vous avez posé cette isolation — une autre personne doit vérifier.",
+    "state": {
+      "pending": "Non posée",
+      "applied": "Posée",
+      "verified": "Vérifiée",
+      "removed": "Retirée"
+    },
+    "editLocked": "Les isolations ne peuvent être ajoutées que si le permis n'est pas actif."
+  },
+  "card": {
+    "title": "Fiche LOTO",
+    "permit": "Permis",
+    "equipment": "Équipement",
+    "energy": "Énergie",
+    "point": "Point",
+    "lock": "Cadenas",
+    "verifier": "Vérificateur",
+    "expiry": "Expiration",
+    "show": "Afficher la fiche",
+    "recordPrint": "Enregistrer l'impression"
+  },
+  "suspension": {
+    "title": "Suspensions",
+    "empty": "Aucune suspension.",
+    "dialogTitle": "Suspendre le permis",
+    "reason": "Motif",
+    "conditions": "Conditions de réactivation",
+    "suspendedBy": "Suspendu par {{name}}",
+    "reinstated": "Réactivé le {{at}} par {{name}}",
+    "submit": "Suspendre"
+  },
+  "handover": {
+    "title": "Mainlevées / passations",
+    "empty": "Aucune passation enregistrée.",
+    "add": "Enregistrer une passation",
+    "from": "Remis par (rôle)",
+    "to": "Remis à (rôle)",
+    "note": "Note de confirmation",
+    "submit": "Enregistrer"
+  },
+  "create": {
+    "title": "Nouveau permis de travail",
+    "type": "Type de permis",
+    "typePlaceholder": "Choisir un type",
+    "workOrder": "Ordre de travail",
+    "asset": "Équipement",
+    "assetSearch": "Rechercher un équipement (code ou nom)",
+    "assetChange": "Changer",
+    "expiresAt": "Expire le",
+    "expiresHint": "Par défaut : durée maximale du type de permis.",
+    "submit": "Créer le permis"
+  },
+  "edit": {
+    "title": "Modifier le permis",
+    "submit": "Enregistrer"
+  },
+  "types": {
+    "title": "Types de permis",
+    "new": "Nouveau type",
+    "code": "Code",
+    "name": "Nom",
+    "description": "Description",
+    "hse": "Approbation HSE requise",
+    "operations": "Approbation exploitation requise",
+    "atmospheric": "Test atmosphérique requis",
+    "maxHours": "Durée max (h)",
+    "version": "Version",
+    "save": "Enregistrer le type",
+    "empty": "Aucun type de permis."
+  },
+  "woGate": {
+    "title": "Permis de travail",
+    "required": "Cet ordre de travail exige un permis de travail actif avant de démarrer.",
+    "none": "Aucun permis lié pour le moment.",
+    "linked": "Permis {{code}} — {{status}}",
+    "ready": "Le permis est actif : l'intervention peut démarrer.",
+    "create": "Créer le permis",
+    "open": "Ouvrir le permis"
+  },
+  "errors": {
+    "required": "Ce champ est obligatoire.",
+    "invalidNumber": "Saisissez un nombre valide."
+  }
+}

@@ -1,1 +1,183 @@
-{}
+{
+  "page": {
+    "title": "Work permits",
+    "description": "PRD §6.23 — permit lifecycle, LOTO isolations, suspensions and handback."
+  },
+  "actions": {
+    "refresh": "Refresh",
+    "newPermit": "New permit",
+    "manageTypes": "Permit types",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "select": "Select {{code}}"
+  },
+  "kpi": {
+    "title": "LOTO compliance (30 days)",
+    "summary": "Activations: {{activated}} · Handed back on time: {{onTime}}",
+    "rate": "Rate: {{rate}} %"
+  },
+  "open": {
+    "title": "Open permits (not expired)",
+    "empty": "No open permits."
+  },
+  "list": {
+    "title": "Permits",
+    "empty": "No permits yet."
+  },
+  "columns": {
+    "code": "Code",
+    "status": "Status",
+    "type": "Type",
+    "asset": "Asset",
+    "workOrder": "Work order",
+    "expires": "Expires"
+  },
+  "status": {
+    "draft": "Draft",
+    "pending_review": "Pending review",
+    "approved": "Approved",
+    "issued": "Issued",
+    "active": "Active",
+    "suspended": "Suspended",
+    "revalidation_required": "Revalidation required",
+    "closed": "Closed",
+    "handed_back": "Handed back",
+    "cancelled": "Cancelled",
+    "expired": "Expired"
+  },
+  "detail": {
+    "title": "Permit {{code}}",
+    "empty": "Select a permit to manage it.",
+    "type": "Type",
+    "asset": "Asset",
+    "workOrder": "Work order",
+    "requestedAt": "Requested",
+    "issuedAt": "Issued",
+    "activatedAt": "Activated",
+    "expiresAt": "Expires",
+    "closedAt": "Closed",
+    "handedBackAt": "Handed back",
+    "none": "—"
+  },
+  "transition": {
+    "submitReview": "Submit for review",
+    "approve": "Approve",
+    "issue": "Issue",
+    "activate": "Activate",
+    "revalidate": "Request revalidation",
+    "reinstate": "Reinstate",
+    "close": "Close permit",
+    "handBack": "Hand back",
+    "cancel": "Cancel permit",
+    "suspend": "Suspend",
+    "confirmCancel": "Cancel this permit? This cannot be undone."
+  },
+  "gate": {
+    "noIsolation": "LOTO permits need at least one isolation before activation.",
+    "unverified": "Every isolation must be applied and verified by a second person before activation.",
+    "removed": "A lock has already been removed; this permit can no longer protect work.",
+    "expired": "This permit has expired.",
+    "pendingRemoval": "Every lock removal must be verified before the permit can be closed.",
+    "handoverRequired": "Record a handover before handing back."
+  },
+  "isolation": {
+    "title": "LOTO isolation points",
+    "empty": "No isolation points.",
+    "add": "Add isolation",
+    "point": "Isolation point",
+    "energy": "Energy type",
+    "method": "Isolation method",
+    "lock": "Lock number",
+    "apply": "Mark applied",
+    "verify": "Verify",
+    "verifyRemoval": "Verify removal",
+    "appliedBy": "Applied by {{name}}",
+    "verifiedBy": "Verified by {{name}}",
+    "removalVerifiedBy": "Removal verified by {{name}}",
+    "twoPersonHint": "Two-person rule: the person who applied an isolation cannot verify it or its removal.",
+    "selfBlocked": "You applied this isolation — another person must verify.",
+    "state": {
+      "pending": "Not applied",
+      "applied": "Applied",
+      "verified": "Verified",
+      "removed": "Removed"
+    },
+    "editLocked": "Isolations can only be added while the permit is not active."
+  },
+  "card": {
+    "title": "LOTO card",
+    "permit": "Permit",
+    "equipment": "Equipment",
+    "energy": "Energy",
+    "point": "Point",
+    "lock": "Lock",
+    "verifier": "Verifier",
+    "expiry": "Expiry",
+    "show": "Show card",
+    "recordPrint": "Record print"
+  },
+  "suspension": {
+    "title": "Suspensions",
+    "empty": "No suspensions.",
+    "dialogTitle": "Suspend permit",
+    "reason": "Reason",
+    "conditions": "Reactivation conditions",
+    "suspendedBy": "Suspended by {{name}}",
+    "reinstated": "Reinstated {{at}} by {{name}}",
+    "submit": "Suspend"
+  },
+  "handover": {
+    "title": "Handovers",
+    "empty": "No handover recorded.",
+    "add": "Record handover",
+    "from": "Handed from (role)",
+    "to": "Handed to (role)",
+    "note": "Confirmation note",
+    "submit": "Record"
+  },
+  "create": {
+    "title": "New work permit",
+    "type": "Permit type",
+    "typePlaceholder": "Choose a type",
+    "workOrder": "Work order",
+    "asset": "Asset",
+    "assetSearch": "Search an asset (code or name)",
+    "assetChange": "Change",
+    "expiresAt": "Expires at",
+    "expiresHint": "Defaults to the permit type's maximum duration.",
+    "submit": "Create permit"
+  },
+  "edit": {
+    "title": "Edit permit",
+    "submit": "Save"
+  },
+  "types": {
+    "title": "Permit types",
+    "new": "New type",
+    "code": "Code",
+    "name": "Name",
+    "description": "Description",
+    "hse": "HSE approval required",
+    "operations": "Operations approval required",
+    "atmospheric": "Atmospheric test required",
+    "maxHours": "Max duration (h)",
+    "version": "Version",
+    "save": "Save type",
+    "empty": "No permit types."
+  },
+  "woGate": {
+    "title": "Work permit",
+    "required": "This work order requires an active work permit before it can start.",
+    "none": "No permit linked yet.",
+    "linked": "Permit {{code}} — {{status}}",
+    "ready": "Permit is active: work can start.",
+    "create": "Create permit",
+    "open": "Open permit"
+  },
+  "errors": {
+    "required": "This field is required.",
+    "invalidNumber": "Enter a valid number."
+  }
+}
