@@ -11,6 +11,7 @@ pub mod media;
 pub mod ops_stage;
 pub mod queries;
 pub mod registry;
+pub mod transport;
 
 #[cfg(test)]
 mod convergence_tests;

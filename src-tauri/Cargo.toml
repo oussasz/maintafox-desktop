@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+serde_json = "1"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
@@ -59,6 +60,11 @@ cron = "0.12.1"
 rust_xlsxwriter = "0.79.4"
 clap = { version = "4", features = ["derive"] }
 toml = "0.8"
+# Sync worker HTTP transport (Phase 2.3). Same reqwest/rustls(ring) build as tauri-plugin-updater
+# plus `system-proxy` (Windows/macOS proxy settings, as the webview transport had):
+# no native-tls/OpenSSL, no aws-lc. The ring provider is installed in `sync::transport::client`.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [[bin]]
 name = "rams-readiness-eval"

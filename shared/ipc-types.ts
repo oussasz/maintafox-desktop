@@ -8895,114 +8895,6 @@ export interface ListOutboxFilter {
   limit?: number | null;
 }
 
-export interface SyncAckInput {
-  idempotency_key: string;
-  entity_sync_id: string;
-  operation: "create" | "update" | "delete" | "upsert" | "archive";
-  /** v2 only. */
-  server_seq?: number | null;
-  /** v2 only. */
-  duplicate?: boolean;
-}
-
-export interface SyncRejectedItemInput {
-  idempotency_key: string;
-  entity_sync_id: string;
-  operation: "create" | "update" | "delete" | "upsert" | "archive";
-  rejection_code: string;
-  rejection_message: string;
-}
-
-export interface SyncInboundItemInput {
-  entity_type: string;
-  entity_sync_id: string;
-  operation: "create" | "update" | "delete" | "upsert" | "archive";
-  row_version: number;
-  payload_json: string;
-  /** v2 only. */
-  server_seq?: number | null;
-  /** v2 only; checked against payload_json when present. */
-  payload_hash?: string | null;
-  /** v2 only. */
-  owner_user_sync_id?: string | null;
-  /** v2 only; tombstone. */
-  deleted?: boolean;
-}
-
-/** v2: an outbox item the server refused because the row changed there meanwhile. */
-export interface SyncServerConflictInput {
-  idempotency_key: string;
-  entity_type: string;
-  entity_sync_id: string;
-  local_row_version: number;
-  local_base_row_version: number | null;
-  server_row_version: number;
-  server_operation: string;
-  server_payload_json: string | null;
-  server_payload_hash?: string | null;
-  server_owner_user_sync_id?: string | null;
-  server_deleted?: boolean;
-}
-
-export interface ApplySyncBatchInput {
-  protocol_version: string;
-  server_batch_id: string;
-  checkpoint_token: string;
-  acknowledged_items: SyncAckInput[];
-  rejected_items: SyncRejectedItemInput[];
-  inbound_items: SyncInboundItemInput[];
-  /** v2 only. */
-  conflict_items?: SyncServerConflictInput[];
-  policy_metadata_json?: string | null;
-}
-
-export interface SyncTypedRejection {
-  scope: string;
-  entity_sync_id: string;
-  operation: string;
-  rejection_code: string;
-  rejection_message: string;
-}
-
-export interface ApplySyncBatchResult {
-  protocol_version: string;
-  checkpoint_token: string | null;
-  checkpoint_advanced: boolean;
-  acknowledged_count: number;
-  rejected_count: number;
-  inbound_applied_count: number;
-  inbound_duplicate_count: number;
-  /** v2 server conflicts recorded for a person to resolve. */
-  conflict_count: number;
-  typed_rejections: SyncTypedRejection[];
-}
-
-/** Device tenant context echoed with sync exchange for isolation auditing (optional). */
-export interface TenantConfigSyncPayload {
-  tenant_id: string;
-  is_activated: boolean;
-  company_display_name: string | null;
-}
-
-export interface SyncPushPayload {
-  protocol_version: string;
-  checkpoint_token: string | null;
-  outbox_batch: SyncOutboxItem[];
-  /** Optional tenant metadata on sync exchange (control-plane observability / policy); ignored by mirror apply when unused. */
-  tenant_config?: TenantConfigSyncPayload | null;
-  /** Additive v1 field — desktop always receives full tenant replica; mobile may filter later. */
-  device_class?: "desktop" | "mobile";
-  /** Optional media object keys pending upload/download (binaries are not in payload_json). */
-  media_manifest?: Array<{
-    entity_sync_id: string;
-    content_sha256: string;
-    object_key: string;
-    byte_size: number;
-  }> | null;
-  /** v2: users known on this device; their personal rows are delivered here. */
-  current_user_sync_ids: string[];
-}
-
 export interface SyncStateSummary {
   protocol_version: string;
   checkpoint: SyncCheckpoint | null;
@@ -9021,16 +8913,41 @@ export interface SyncStateSummary {
   unresolved_conflict_count: number;
 }
 
-/** Result of applying pending sync_inbox rows to domain tables. */
-export interface MaterializeInboxResult {
-  processed: number;
-  applied: number;
-  conflicts: number;
-  /** Already current on this device. */
-  skipped: number;
-  /** Waiting for a parent row or a newer app version; retried automatically. */
-  deferred: number;
-  errors: string[];
+/** Sync worker state (Rust background task `sync`, protocol v2). */
+export type SyncWorkerState =
+  | "starting"
+  | "idle"
+  | "running"
+  | "paused"
+  | "offline"
+  | "retrying"
+  | "blocked"
+  | "error";
+
+export interface SyncWorkerError {
+  /** Server error code (e.g. `rate_limited`), `offline`, `interrupted` or `local_error`. */
+  code: string;
+  message: string;
+  http_status: number | null;
+  at: string;
+}
+
+/** `get_sync_worker_status` and the `sync-worker-status` event. */
+export interface SyncWorkerStatus {
+  state: SyncWorkerState;
+  /** `not_licensed` | `not_activated` | `activation_refused` | `tenant_config_mismatch` | `not_configured`. */
+  blocker: string | null;
+  paused_until: string | null;
+  last_success_at: string | null;
+  last_attempt_at: string | null;
+  next_attempt_at: string | null;
+  pending_outbox_count: number;
+  dead_letter_outbox_count: number;
+  unresolved_conflict_count: number;
+  media_pending_count: number;
+  media_failed_count: number;
+  consecutive_failures: number;
+  last_error: SyncWorkerError | null;
 }
 
 export interface SyncConflictFilter {

@@ -663,6 +663,8 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
     let wiped_rows_total = wipe_result?;
 
     crate::db::seeder::seed_system_data(&state.db).await?;
+    // Without these rows every outbox staging (so every business write) and the sync worker fail.
+    crate::sync::queries::ensure_sync_control_rows(&state.db).await?;
     // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
     // reference_* catalogs that seed_system_data does not cover (lookup_* only).
     crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db).await?;
@@ -1386,13 +1388,11 @@ pub async fn reset_local_tenant_runtime_data(state: State<'_, AppState>) -> AppR
     Ok(wiped_rows)
 }
 
-/// Bearer token from the last successful activation claim (`/api/v1/activation/claim`).
-/// Used by the control-plane sync transport; requires an authenticated desktop session.
-#[tauri::command]
-pub async fn get_control_plane_activation_bearer_token(state: State<'_, AppState>) -> AppResult<Option<String>> {
-    let _session = require_session!(state);
-    let record = load_state_record(&state).await?;
-    let Some(rec) = record else {
+/// Bearer token from the last successful activation claim (`/api/v1/activation/claim`) for the
+/// Rust sync worker. Never exposed as a command: the sync token stays in Rust. `None` unless the
+/// activation is currently active.
+pub async fn sync_activation_bearer_token(db: &DatabaseConnection) -> AppResult<Option<String>> {
+    let Some(rec) = load_state_record_from_db(db).await? else {
         return Ok(None);
     };
     if effective_status(&rec, Utc::now()) != ProductLicenseActivationStatus::Active {

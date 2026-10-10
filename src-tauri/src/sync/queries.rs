@@ -118,7 +118,12 @@ fn parse_checkpoint_sequence(token: &str) -> Option<i64> {
     last.parse::<i64>().ok()
 }
 
+/// v1 tokens end in `-<sequence>`. v2 tokens (`v2.<payload>.<signature>`) are opaque and signed;
+/// the server checks them, so they are never compared here.
 fn is_stale_checkpoint(current: &str, incoming: &str) -> bool {
+    if current.starts_with("v2.") || incoming.starts_with("v2.") {
+        return false;
+    }
     match (parse_checkpoint_sequence(current), parse_checkpoint_sequence(incoming)) {
         (Some(current_seq), Some(incoming_seq)) => incoming_seq < current_seq,
         _ => false,
@@ -415,6 +420,26 @@ pub async fn local_replica_id(db: &impl ConnectionTrait) -> AppResult<String> {
             AppError::SyncError("sync_replica_identity is missing; database migrations are incomplete.".into())
         })?;
     row.try_get("", "replica_id").map_err(|e| decode_err("replica_id", e))
+}
+
+/// Recreate the one-row sync control records after the local tenant data was wiped
+/// (`reset_local_tenant_runtime_data` deletes every table outside its keep-list): a new replica id
+/// (the wiped database is a new replica) and an empty transport state. On a new database the
+/// migrations (160, 161) create them.
+pub async fn ensure_sync_control_rows(db: &impl ConnectionTrait) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "INSERT OR IGNORE INTO sync_replica_identity (id, replica_id) VALUES (1, ?)",
+        [uuid::Uuid::new_v4().to_string().into()],
+    ))
+    .await?;
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "INSERT OR IGNORE INTO sync_transport_state (id) VALUES (1)",
+        [],
+    ))
+    .await?;
+    Ok(())
 }
 
 /// Last row version the server is known to hold for an entity (acknowledged or applied inbound).
@@ -725,7 +750,7 @@ pub async fn list_outbox_items(db: &DatabaseConnection, filter: ListOutboxFilter
 }
 
 /// Users signed in or trusted on this device; the server delivers their personal rows here.
-async fn current_user_sync_ids(db: &impl ConnectionTrait) -> AppResult<Vec<String>> {
+pub(crate) async fn current_user_sync_ids(db: &impl ConnectionTrait) -> AppResult<Vec<String>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -826,7 +851,7 @@ pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) 
     let media_manifest = build_media_manifest_from_outbox(&outbox_batch);
 
     Ok(SyncPushPayload {
-        protocol_version: SYNC_PROTOCOL_VERSION_V1.to_string(),
+        protocol_version: SYNC_PROTOCOL_VERSION_V2.to_string(),
         checkpoint_token,
         outbox_batch,
         tenant_config,
@@ -976,6 +1001,103 @@ fn strip_hash_prefix(hash: &str) -> &str {
     hash.strip_prefix("sha256:").unwrap_or(hash)
 }
 
+/// Store inbound envelopes in the inbox as `pending` (materialized later), in dependency order.
+/// An invalid envelope is recorded as a conflict for a person and returned as a typed rejection.
+/// Returns `(inserted, duplicates)`.
+async fn ingest_inbound_items(
+    tx: &impl ConnectionTrait,
+    server_batch_id: &str,
+    checkpoint_label: &str,
+    items: &[SyncInboundItemInput],
+    typed_rejections: &mut Vec<SyncTypedRejection>,
+) -> AppResult<(i64, i64)> {
+    let mut inbound_applied_count: i64 = 0;
+    let mut inbound_duplicate_count: i64 = 0;
+    let mut inbound_work: Vec<SyncInboundItemInput> = items.to_vec();
+    // Stable sort: dependency order first, server order within an entity type.
+    inbound_work.sort_by_key(|item| registry::apply_priority(&item.entity_type));
+    for inbound in &inbound_work {
+        let mut inbound_errors = Vec::new();
+        validate_non_empty("entity_type", &inbound.entity_type, &mut inbound_errors);
+        validate_non_empty("entity_sync_id", &inbound.entity_sync_id, &mut inbound_errors);
+        validate_non_empty("operation", &inbound.operation, &mut inbound_errors);
+        validate_operation(&inbound.operation, &mut inbound_errors);
+        if serde_json::from_str::<serde_json::Value>(&inbound.payload_json).is_err() {
+            inbound_errors.push("payload_json must be a valid JSON document.".to_string());
+        }
+        let payload_hash = hash_payload(&inbound.payload_json);
+        if let Some(server_hash) = &inbound.payload_hash {
+            if !strip_hash_prefix(server_hash).eq_ignore_ascii_case(&payload_hash) {
+                inbound_errors.push("payload_hash does not match payload_json.".to_string());
+            }
+        }
+        if !inbound_errors.is_empty() {
+            typed_rejections.push(SyncTypedRejection {
+                scope: "inbound".to_string(),
+                entity_sync_id: inbound.entity_sync_id.clone(),
+                operation: inbound.operation.clone(),
+                rejection_code: "INVALID_INBOUND_PAYLOAD".to_string(),
+                rejection_message: inbound_errors.join(" "),
+            });
+            record_sync_conflict(
+                tx,
+                NewSyncConflict {
+                    source_scope: "inbound",
+                    source_batch_id: Some(server_batch_id.to_string()),
+                    linked_outbox_id: None,
+                    linked_inbox_id: None,
+                    entity_type: inbound.entity_type.clone(),
+                    entity_sync_id: inbound.entity_sync_id.clone(),
+                    operation: inbound.operation.clone(),
+                    conflict_type: "INVALID_INBOUND_PAYLOAD".to_string(),
+                    local_payload_json: None,
+                    inbound_payload_json: Some(inbound.payload_json.clone()),
+                    checkpoint_token: Some(checkpoint_label.to_string()),
+                    local_row_version: None,
+                    inbound_row_version: Some(inbound.row_version),
+                },
+            )
+            .await?;
+            continue;
+        }
+
+        let operation = if inbound.deleted {
+            "delete".to_string()
+        } else {
+            inbound.operation.clone()
+        };
+        let insert_result = tx
+            .execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "INSERT INTO sync_inbox (
+                    server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                    row_version, payload_json, payload_hash, apply_status, server_seq, owner_user_sync_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                [
+                    server_batch_id.to_string().into(),
+                    checkpoint_label.to_string().into(),
+                    inbound.entity_type.clone().into(),
+                    inbound.entity_sync_id.clone().into(),
+                    operation.into(),
+                    inbound.row_version.into(),
+                    inbound.payload_json.clone().into(),
+                    payload_hash.into(),
+                    inbound.server_seq.into(),
+                    inbound.owner_user_sync_id.clone().into(),
+                ],
+            ))
+            .await;
+
+        match insert_result {
+            Ok(_) => inbound_applied_count += 1,
+            Err(err) if is_unique_constraint_error(&err) => inbound_duplicate_count += 1,
+            Err(err) => return Err(err.into()),
+        }
+    }
+
+    Ok((inbound_applied_count, inbound_duplicate_count))
+}
+
 pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInput) -> AppResult<ApplySyncBatchResult> {
     validate_protocol_version(&input.protocol_version)?;
     let mut validation_errors = Vec::new();
@@ -1047,12 +1169,16 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
                  SET status = 'acked',
                      acknowledged_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
                      last_error = NULL,
+                     server_seq = ?,
+                     ack_duplicate = ?,
                      updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
                  WHERE idempotency_key = ?
                    AND entity_sync_id = ?
                    AND operation = ?
                    AND status IN ('pending', 'in_flight')",
                 [
+                    ack.server_seq.into(),
+                    i64::from(ack.duplicate).into(),
                     ack.idempotency_key.clone().into(),
                     ack.entity_sync_id.clone().into(),
                     ack.operation.clone().into(),
@@ -1260,91 +1386,19 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
         conflict_count += 1;
     }
 
-    let mut inbound_applied_count: i64 = 0;
-    let mut inbound_duplicate_count: i64 = 0;
-    let mut inbound_work: Vec<SyncInboundItemInput> = input.inbound_items.clone();
-    // Stable sort: dependency order first, server order within an entity type.
-    inbound_work.sort_by_key(|item| registry::apply_priority(&item.entity_type));
-    for inbound in &inbound_work {
-        let mut inbound_errors = Vec::new();
-        validate_non_empty("entity_type", &inbound.entity_type, &mut inbound_errors);
-        validate_non_empty("entity_sync_id", &inbound.entity_sync_id, &mut inbound_errors);
-        validate_non_empty("operation", &inbound.operation, &mut inbound_errors);
-        validate_operation(&inbound.operation, &mut inbound_errors);
-        if serde_json::from_str::<serde_json::Value>(&inbound.payload_json).is_err() {
-            inbound_errors.push("payload_json must be a valid JSON document.".to_string());
-        }
-        let payload_hash = hash_payload(&inbound.payload_json);
-        if let Some(server_hash) = &inbound.payload_hash {
-            if !strip_hash_prefix(server_hash).eq_ignore_ascii_case(&payload_hash) {
-                inbound_errors.push("payload_hash does not match payload_json.".to_string());
-            }
-        }
-        if !inbound_errors.is_empty() {
-            typed_rejections.push(SyncTypedRejection {
-                scope: "inbound".to_string(),
-                entity_sync_id: inbound.entity_sync_id.clone(),
-                operation: inbound.operation.clone(),
-                rejection_code: "INVALID_INBOUND_PAYLOAD".to_string(),
-                rejection_message: inbound_errors.join(" "),
-            });
-            record_sync_conflict(
-                &tx,
-                NewSyncConflict {
-                    source_scope: "inbound",
-                    source_batch_id: Some(input.server_batch_id.clone()),
-                    linked_outbox_id: None,
-                    linked_inbox_id: None,
-                    entity_type: inbound.entity_type.clone(),
-                    entity_sync_id: inbound.entity_sync_id.clone(),
-                    operation: inbound.operation.clone(),
-                    conflict_type: "INVALID_INBOUND_PAYLOAD".to_string(),
-                    local_payload_json: None,
-                    inbound_payload_json: Some(inbound.payload_json.clone()),
-                    checkpoint_token: Some(input.checkpoint_token.clone()),
-                    local_row_version: None,
-                    inbound_row_version: Some(inbound.row_version),
-                },
-            )
-            .await?;
-            continue;
-        }
+    let (inbound_applied_count, inbound_duplicate_count) = ingest_inbound_items(
+        &tx,
+        &input.server_batch_id,
+        &input.checkpoint_token,
+        &input.inbound_items,
+        &mut typed_rejections,
+    )
+    .await?;
 
-        let operation = if inbound.deleted {
-            "delete".to_string()
-        } else {
-            inbound.operation.clone()
-        };
-        let insert_result = tx
-            .execute(Statement::from_sql_and_values(
-                DatabaseBackend::Sqlite,
-                "INSERT INTO sync_inbox (
-                    server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
-                    row_version, payload_json, payload_hash, apply_status, server_seq, owner_user_sync_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
-                [
-                    input.server_batch_id.clone().into(),
-                    input.checkpoint_token.clone().into(),
-                    inbound.entity_type.clone().into(),
-                    inbound.entity_sync_id.clone().into(),
-                    operation.into(),
-                    inbound.row_version.into(),
-                    inbound.payload_json.clone().into(),
-                    payload_hash.into(),
-                    inbound.server_seq.into(),
-                    inbound.owner_user_sync_id.clone().into(),
-                ],
-            ))
-            .await;
-
-        match insert_result {
-            Ok(_) => inbound_applied_count += 1,
-            Err(err) if is_unique_constraint_error(&err) => inbound_duplicate_count += 1,
-            Err(err) => return Err(err.into()),
-        }
-    }
-
-    let checkpoint_advanced = typed_rejections.is_empty();
+    // v1: an invalid inbound envelope holds the checkpoint so it is fetched again. v2: item failures
+    // never block the cursor (SYNC_PROTOCOL_V2.md §3.1); the envelope is already a conflict for a
+    // person, and holding the token would make the worker fetch the same page forever.
+    let checkpoint_advanced = input.protocol_version == SYNC_PROTOCOL_VERSION_V2 || typed_rejections.is_empty();
     if checkpoint_advanced {
         tx.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -1398,6 +1452,116 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
         conflict_count,
         typed_rejections,
     })
+}
+
+/// Ingest one page of a protocol v2 snapshot (`POST /api/v1/sync/snapshot`). Rows go to the inbox
+/// as `pending`, like exchange inbound items, under `snapshot_id` (one id per snapshot run, so a
+/// restarted snapshot is applied again instead of being dropped as a duplicate).
+///
+/// `checkpoint_token` is given only for the last page of a scope `all` snapshot; it is stored in
+/// the same transaction as the page, so the delta never starts before the snapshot is in the inbox.
+pub async fn apply_snapshot_page(
+    db: &DatabaseConnection,
+    snapshot_id: &str,
+    items: &[SyncInboundItemInput],
+    checkpoint_token: Option<&str>,
+) -> AppResult<ApplySyncBatchResult> {
+    if snapshot_id.trim().is_empty() {
+        return Err(AppError::ValidationFailed(vec!["snapshot_id is required.".to_string()]));
+    }
+    let tx = db.begin().await?;
+    let mut typed_rejections = Vec::new();
+    let (inbound_applied_count, inbound_duplicate_count) =
+        ingest_inbound_items(&tx, snapshot_id, snapshot_id, items, &mut typed_rejections).await?;
+    let checkpoint = checkpoint_token.map(str::trim).filter(|t| !t.is_empty());
+    if let Some(token) = checkpoint {
+        tx.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "INSERT INTO sync_checkpoint (
+                id, checkpoint_token, last_idempotency_key, protocol_version, policy_metadata_json,
+                last_sync_at, updated_at
+            ) VALUES (
+                1, ?, NULL, ?, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
+            )
+            ON CONFLICT(id) DO UPDATE SET
+                checkpoint_token = excluded.checkpoint_token,
+                protocol_version = excluded.protocol_version,
+                policy_metadata_json = NULL,
+                last_sync_at = excluded.last_sync_at,
+                updated_at = excluded.updated_at",
+            [token.into(), SYNC_PROTOCOL_VERSION_V2.into()],
+        ))
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(ApplySyncBatchResult {
+        protocol_version: SYNC_PROTOCOL_VERSION_V2.to_string(),
+        checkpoint_token: checkpoint.map(str::to_string),
+        checkpoint_advanced: checkpoint.is_some(),
+        acknowledged_count: 0,
+        rejected_count: 0,
+        inbound_applied_count,
+        inbound_duplicate_count,
+        conflict_count: 0,
+        typed_rejections,
+    })
+}
+
+/// Forget the delta checkpoint (the server refused it: `invalid_checkpoint_token` or
+/// `checkpoint_ahead_of_server`). The next sync bootstraps with a snapshot.
+pub async fn clear_sync_checkpoint(db: &DatabaseConnection) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "UPDATE sync_checkpoint
+         SET checkpoint_token = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         WHERE id = 1",
+        [],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Put in-flight items back to `pending` without counting a delivery attempt: the request never
+/// reached the server (no connection) or the server refused it before looking at the items
+/// (rate limit, activation, checkpoint). Delivery attempts that may have reached the server go
+/// through `record_outbox_delivery_failure` instead.
+pub async fn return_unsent_outbox_items(db: &DatabaseConnection, outbox_ids: &[i64]) -> AppResult<()> {
+    if outbox_ids.is_empty() {
+        return Ok(());
+    }
+    let ids_json = serde_json::to_string(outbox_ids)?;
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "UPDATE sync_outbox
+         SET status = 'pending',
+             attempt_count = MAX(attempt_count - 1, 0),
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         WHERE status = 'in_flight' AND id IN (SELECT value FROM json_each(?))",
+        [ids_json.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Mark the items of a stored exchange request as being sent again (same key, same body): they
+/// count one more delivery attempt, exactly like `get_sync_push_payload` does for a new request.
+pub async fn mark_outbox_items_resent(db: &DatabaseConnection, outbox_ids: &[i64]) -> AppResult<()> {
+    if outbox_ids.is_empty() {
+        return Ok(());
+    }
+    let ids_json = serde_json::to_string(outbox_ids)?;
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "UPDATE sync_outbox
+         SET status = 'in_flight',
+             attempt_count = attempt_count + 1,
+             last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         WHERE status IN ('pending', 'in_flight') AND id IN (SELECT value FROM json_each(?))",
+        [ids_json.into()],
+    ))
+    .await?;
+    Ok(())
 }
 
 pub async fn list_inbox_items(
@@ -1520,7 +1684,7 @@ pub async fn get_sync_state_summary(db: &DatabaseConnection) -> AppResult<SyncSt
     .await?;
 
     Ok(SyncStateSummary {
-        protocol_version: SYNC_PROTOCOL_VERSION_V1.to_string(),
+        protocol_version: SYNC_PROTOCOL_VERSION_V2.to_string(),
         checkpoint,
         pending_outbox_count,
         rejected_outbox_count,

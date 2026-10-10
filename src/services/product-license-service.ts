@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
+import controlPlaneConfig from "@shared/control-plane.json";
 
 /** Session flag: show one-time login notice after activation (LoginPage reads and clears). */
 export const POST_ACTIVATION_LOGIN_HINT_KEY = "maintafox:post-activation-login-hint:v1";
@@ -489,10 +490,14 @@ export async function getProductLicenseOnboardingState(): Promise<ProductLicense
   return ProductLicenseOnboardingStateSchema.parse(raw);
 }
 
-/** Control-plane API origin (activation, sync exchange). Matches VPS deployment URL. */
+/**
+ * Control-plane API origin for activation and licence calls. The Rust sync worker resolves the
+ * same value at build time (`src-tauri/build.rs`): `VITE_ADMIN_API_BASE_URL`, else the shared
+ * default in `shared/control-plane.json`.
+ */
 export function controlPlaneApiBase(): string {
   const fromEnv = (import.meta.env["VITE_ADMIN_API_BASE_URL"] as string | undefined)?.trim();
-  return (fromEnv && fromEnv.length > 0 ? fromEnv : "https://api.maintafox.systems").replace(
+  return (fromEnv && fromEnv.length > 0 ? fromEnv : controlPlaneConfig.defaultApiBaseUrl).replace(
     /\/$/,
     "",
   );

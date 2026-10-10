@@ -1715,11 +1715,13 @@
     "sync_conflicts": "sync_control",
     "sync_entity_state": "sync_control",
     "sync_inbox": "sync_control",
+    "sync_media_uploads": "sync_control",
     "sync_outbox": "sync_control",
     "sync_rejections": "sync_control",
     "sync_repair_actions": "sync_control",
     "sync_replay_runs": "sync_control",
     "sync_replica_identity": "sync_control",
+    "sync_transport_state": "sync_control",
     "system_config": "session_or_device",
     "trusted_devices": "session_or_device",
     "users": "legacy"

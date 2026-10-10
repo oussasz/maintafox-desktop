@@ -56,6 +56,80 @@
       "OUTBOX_DEAD_LETTER": "Une modification locale n'a pas pu être envoyée après plusieurs tentatives",
       "AUTHORITY_MISMATCH": "Le serveur a refusé une modification protégée",
       "other": "À examiner"
+    },
+    "worker": {
+      "title": "Synchronisation",
+      "runsInBackground": "La synchronisation continue quand la fenêtre est fermée (Maintafox reste dans la zone de notification).",
+      "state": {
+        "starting": "Démarrage…",
+        "idle": "À jour",
+        "running": "Synchronisation en cours…",
+        "paused": "En pause",
+        "offline": "Hors ligne : nouvel essai automatique",
+        "retrying": "Nouvel essai prévu",
+        "blocked": "Arrêtée",
+        "error": "Erreur"
+      },
+      "blocker": {
+        "not_licensed": "La synchronisation n'est pas incluse dans la licence de cet appareil.",
+        "not_activated": "Cet appareil n'est pas activé.",
+        "activation_refused": "Le serveur a refusé l'activation de cet appareil. La licence est en cours de vérification.",
+        "tenant_config_mismatch": "Les données de cet appareil appartiennent à une autre organisation que son activation. Contactez votre administrateur.",
+        "not_configured": "La synchronisation n'est pas configurée sur cet appareil.",
+        "other": "La synchronisation est arrêtée."
+      },
+      "lastSuccess": "Dernière synchronisation réussie",
+      "never": "Jamais",
+      "nextAttempt": "Prochain essai : {{time}}",
+      "pausedUntil": "En pause jusqu'à {{time}}",
+      "pending": "Modifications en attente d'envoi",
+      "conflicts": "Conflits à examiner",
+      "media": "Fichiers en attente d'envoi : {{pending}} · en échec : {{failed}}",
+      "deadLetter": "{{count}} modification(s) n'ont pas pu être envoyées après plusieurs tentatives : voir les conflits.",
+      "lastError": "Dernière erreur : {{message}}",
+      "syncNow": "Synchroniser maintenant",
+      "pause": "Mettre en pause",
+      "pauseDuration": "Durée de la pause",
+      "pauseOption": {
+        "m15": "15 minutes",
+        "h1": "1 heure",
+        "h4": "4 heures",
+        "h24": "24 heures"
+      },
+      "resume": "Reprendre",
+      "actionFailed": "L'action n'a pas abouti : {{message}}"
+    },
+    "indicator": {
+      "idle": "À jour",
+      "scheduled": "Démarrage de la synchronisation",
+      "running": "Synchronisation",
+      "degraded": "Attention requise",
+      "paused": "En pause",
+      "blocked": "Arrêtée",
+      "error": "Erreur de sync",
+      "pausedTitle": "La synchronisation a été mise en pause par un opérateur",
+      "blockedTitle": "La synchronisation est arrêtée",
+      "degradedTitle": "La synchronisation demande votre attention (nouvel essai prévu ou conflits à examiner)",
+      "statusBar": "Sync : {{state}}"
+    },
+    "panel": {
+      "title": "Diagnostic de synchronisation",
+      "description": "État du service de synchronisation de cet appareil, actions de reprise et conflits à examiner.",
+      "replay": "Rejouer les éléments en échec",
+      "export": "Exporter le diagnostic",
+      "support": "Transmettre au support",
+      "conflictsTitle": "Conflits à examiner",
+      "recommended": "Recommandé : {{action}}",
+      "apply": "Appliquer",
+      "resolutionNote": "Résolu par un opérateur avec l'action « {{action}} ».",
+      "action": {
+        "accept_local": "Garder la version de cet appareil",
+        "accept_remote": "Prendre la version du serveur",
+        "retry_later": "Réessayer plus tard",
+        "escalate": "Escalader",
+        "dismiss": "Ignorer",
+        "review": "Examiner"
+      }
     }
   },
   "status": {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { SyncWorkerStatusCard } from "@/components/sync/SyncWorkerStatusCard";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -89,6 +90,8 @@ export function SyncCenterModal({ open, onOpenChange }: SyncCenterModalProps) {
             {t("sync.syncCenterConflicts")} · {t("sync.syncCenterRejected")}
           </DialogDescription>
         </DialogHeader>
+
+        <SyncWorkerStatusCard />
 
         {rejectedOutboxCount > 0 ? (
           <p className="rounded-md border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-xs text-text-primary">

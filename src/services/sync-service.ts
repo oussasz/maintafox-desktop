@@ -2,8 +2,6 @@ import { z, ZodError } from "zod";
 
 import { invoke, invokeSilent } from "@/lib/ipc-invoke";
 import type {
-  ApplySyncBatchInput,
-  ApplySyncBatchResult,
   ExecuteSyncRepairInput,
   ListOutboxFilter,
   ReplaySyncFailuresInput,
@@ -15,14 +13,13 @@ import type {
   SyncObservabilityReport,
   SyncInboxItem,
   SyncOutboxItem,
-  SyncPushPayload,
   SyncRepairActionRecord,
   SyncRepairExecutionResult,
   SyncRepairPreview,
   SyncRepairPreviewInput,
   SyncReplayRun,
   SyncStateSummary,
-  MaterializeInboxResult,
+  SyncWorkerStatus,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -78,40 +75,6 @@ const SyncCheckpointSchema = z.object({
   policy_metadata_json: z.string().nullable(),
   last_sync_at: z.string().nullable(),
   updated_at: z.string(),
-});
-
-const SyncTypedRejectionSchema = z.object({
-  scope: z.string(),
-  entity_sync_id: z.string(),
-  operation: z.string(),
-  rejection_code: z.string(),
-  rejection_message: z.string(),
-});
-
-const ApplySyncBatchResultSchema = z.object({
-  protocol_version: z.string(),
-  checkpoint_token: z.string().nullable(),
-  checkpoint_advanced: z.boolean(),
-  acknowledged_count: z.number(),
-  rejected_count: z.number(),
-  inbound_applied_count: z.number(),
-  inbound_duplicate_count: z.number(),
-  conflict_count: z.number(),
-  typed_rejections: z.array(SyncTypedRejectionSchema),
-});
-
-const TenantConfigSyncPayloadSchema = z.object({
-  tenant_id: z.string(),
-  is_activated: z.boolean(),
-  company_display_name: z.string().nullable(),
-});
-
-const SyncPushPayloadSchema = z.object({
-  protocol_version: z.string(),
-  checkpoint_token: z.string().nullable(),
-  outbox_batch: z.array(SyncOutboxItemSchema),
-  tenant_config: TenantConfigSyncPayloadSchema.nullable().optional(),
-  current_user_sync_ids: z.array(z.string()),
 });
 
 const SyncStateSummarySchema = z.object({
@@ -273,57 +236,6 @@ export async function listOutboxItems(filter: ListOutboxFilter = {}): Promise<Sy
   }
 }
 
-export async function getSyncPushPayload(
-  limit?: number,
-  options?: { silent?: boolean },
-): Promise<SyncPushPayload> {
-  try {
-    const inv = options?.silent ? invokeSilent : invoke;
-    const result = await inv<unknown>("get_sync_push_payload", { limit });
-    return SyncPushPayloadSchema.parse(result) as SyncPushPayload;
-  } catch (err) {
-    throw formatDecodeError("get_sync_push_payload", err);
-  }
-}
-
-export async function applySyncBatch(
-  input: ApplySyncBatchInput,
-  options?: { silent?: boolean },
-): Promise<ApplySyncBatchResult> {
-  try {
-    const inv = options?.silent ? invokeSilent : invoke;
-    const result = await inv<unknown>("apply_sync_batch", { input });
-    return ApplySyncBatchResultSchema.parse(result) as ApplySyncBatchResult;
-  } catch (err) {
-    throw formatDecodeError("apply_sync_batch", err);
-  }
-}
-
-const MaterializeInboxResultSchema = z.object({
-  processed: z.number(),
-  applied: z.number(),
-  conflicts: z.number(),
-  skipped: z.number(),
-  deferred: z.number(),
-  errors: z.array(z.string()),
-});
-
-/** Apply pending sync_inbox envelopes into domain tables (Universal Sync Standard). */
-export async function materializeSyncInbox(
-  limit?: number,
-  options?: { silent?: boolean },
-): Promise<MaterializeInboxResult> {
-  try {
-    const inv = options?.silent ? invokeSilent : invoke;
-    const result = await inv<unknown>("materialize_sync_inbox", {
-      limit: limit ?? null,
-    });
-    return MaterializeInboxResultSchema.parse(result) as MaterializeInboxResult;
-  } catch (err) {
-    throw formatDecodeError("materialize_sync_inbox", err);
-  }
-}
-
 export async function listInboxItems(
   applyStatus?: string,
   limit?: number,
@@ -448,4 +360,67 @@ export async function getSyncObservabilityReport(): Promise<SyncObservabilityRep
   } catch (err) {
     throw formatDecodeError("get_sync_observability_report", err);
   }
+}
+
+const SyncWorkerErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  http_status: z.number().nullable(),
+  at: z.string(),
+});
+
+export const SyncWorkerStatusSchema = z.object({
+  state: z.enum([
+    "starting",
+    "idle",
+    "running",
+    "paused",
+    "offline",
+    "retrying",
+    "blocked",
+    "error",
+  ]),
+  blocker: z.string().nullable(),
+  paused_until: z.string().nullable(),
+  last_success_at: z.string().nullable(),
+  last_attempt_at: z.string().nullable(),
+  next_attempt_at: z.string().nullable(),
+  pending_outbox_count: z.number(),
+  dead_letter_outbox_count: z.number(),
+  unresolved_conflict_count: z.number(),
+  media_pending_count: z.number(),
+  media_failed_count: z.number(),
+  consecutive_failures: z.number(),
+  last_error: SyncWorkerErrorSchema.nullable(),
+});
+
+/** Event emitted by the Rust sync worker on every status change. */
+export const SYNC_WORKER_STATUS_EVENT = "sync-worker-status";
+
+export async function getSyncWorkerStatus(): Promise<SyncWorkerStatus> {
+  try {
+    const result = await invokeSilent<unknown>("get_sync_worker_status");
+    return SyncWorkerStatusSchema.parse(result) as SyncWorkerStatus;
+  } catch (err) {
+    throw formatDecodeError("get_sync_worker_status", err);
+  }
+}
+
+/** Ask the worker to sync now (it resets its retry delay). */
+export async function runSyncNow(): Promise<void> {
+  await invoke<null>("run_sync_now");
+}
+
+/** Pause sync on this device; returns the end of the pause (UTC). */
+export async function pauseSync(minutes: number): Promise<string> {
+  return z.string().parse(await invoke<unknown>("pause_sync", { minutes }));
+}
+
+export async function resumeSync(): Promise<void> {
+  await invoke<null>("resume_sync");
+}
+
+/** Tell the worker the network is back (browser `online` event). */
+export async function reportNetworkOnline(): Promise<void> {
+  await invokeSilent<null>("report_network_online");
 }

@@ -1,889 +1,305 @@
+/**
+ * Sync state for the UI. Sync itself runs in Rust (background task `sync`, protocol v2) and keeps
+ * running while the window is hidden; this store mirrors its status (`sync-worker-status` event),
+ * forwards operator actions (sync now, pause, resume) and lists conflicts for the Sync Center.
+ */
+import { type UnlistenFn, listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
 import { i18n } from "@/i18n/config";
-import { isModuleCapabilityAllowed, parseCapabilityMap } from "@/lib/module-capability";
-import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
-import { getEntitlementSummary } from "@/services/entitlement-service";
+import { requestLicenseRecheck } from "@/services/product-license-service";
 import {
-  computeRetryDelayMs,
-  defaultRetryPolicy,
-  defaultSyncPolicyControls,
-  evaluateSchedulingGate,
-  normalizeRuntimeStateAfterRestart,
-  shouldRetry,
-  SYNC_EXHAUSTED_RETRY_COOLDOWN_MS,
-  type RetryPolicy,
-  type SyncPolicyControls,
-  type SyncRunMode,
-  type SyncRuntimeState,
-} from "@/services/sync-orchestrator-core";
-import {
+  SYNC_WORKER_STATUS_EVENT,
+  SyncWorkerStatusSchema,
   getSyncStateSummary,
+  getSyncWorkerStatus,
   listSyncConflicts,
   listSyncReplayRuns,
+  pauseSync,
   replaySyncFailures,
+  reportNetworkOnline,
+  runSyncNow as requestSyncNow,
   resolveSyncConflict,
+  resumeSync,
 } from "@/services/sync-service";
-import { exchangeControlPlaneSyncRound } from "@/services/sync-vps-transport-service";
-import { useAppStore } from "@/store/app-store";
-import { pushAppToast } from "@/store/app-toast-store";
-import { extractIpcErrorCode, toErrorMessage } from "@/utils/errors";
+import { type SyncStatus, useAppStore } from "@/store/app-store";
+import { toErrorMessage } from "@/utils/errors";
 import type {
   ReplaySyncFailuresInput,
   ResolveSyncConflictInput,
   SyncConflictRecord,
+  SyncStateSummary,
+  SyncWorkerStatus,
 } from "@shared/ipc-types";
-import { P } from "@shared/rbac/permissions.generated";
 
-type TimelineSeverity = "info" | "warning" | "error";
+/** Blocker codes with a dedicated text in `shell:sync.worker.blocker`. */
+const KNOWN_BLOCKERS = new Set([
+  "not_licensed",
+  "not_activated",
+  "activation_refused",
+  "tenant_config_mismatch",
+  "not_configured",
+]);
 
-/** True when the active entitlement explicitly allows the sync module (or soft-allows via empty map). */
-async function resolveSyncCapabilityEnabled(): Promise<boolean> {
-  try {
-    const summary = await getEntitlementSummary();
-    const map = parseCapabilityMap(summary.capability_map_json);
-    return isModuleCapabilityAllowed(map, P.SYNC_VIEW);
-  } catch {
-    // Without a readable entitlement summary, do not start automatic sync cycles.
-    return false;
+export function syncBlockerText(blocker: string | null): string | null {
+  if (!blocker) return null;
+  const key = KNOWN_BLOCKERS.has(blocker) ? blocker : "other";
+  return String(i18n.t(`shell:sync.worker.blocker.${key}`));
+}
+
+/** Top bar / status bar state for a worker status. */
+function appSyncState(worker: SyncWorkerStatus): SyncStatus["state"] {
+  switch (worker.state) {
+    case "starting":
+      return "scheduled";
+    case "running":
+      return "running";
+    case "paused":
+      return "paused";
+    case "blocked":
+      return "blocked";
+    case "error":
+      return "error";
+    case "offline":
+    case "retrying":
+      return "degraded";
+    case "idle":
+      return worker.unresolved_conflict_count > 0 || worker.dead_letter_outbox_count > 0
+        ? "degraded"
+        : "idle";
   }
 }
 
-function isSyncCapabilityDeniedError(err: unknown): boolean {
-  if ((extractIpcErrorCode(err) ?? "").toUpperCase() !== "PERMISSION_DENIED") {
-    return false;
-  }
-  const msg = toErrorMessage(err).toLowerCase();
-  return (
-    msg.includes("entitlement capability blocked: sync") ||
-    msg.includes("capability 'sync' blocked") ||
-    msg.includes('capability "sync" blocked')
-  );
-}
-
-function enterSyncUnlicensedIdle(correlationId: string, mode: SyncRunMode, detail?: string) {
-  clearSchedulerTimer();
-  clearHeartbeatTimer();
-  useSyncOrchestratorStore.setState((state) => {
-    const timeline = pushTimeline(state.timeline, {
-      correlationId,
-      severity: "info",
-      mode,
-      event: "sync_not_licensed",
-      message: detail ?? "Sync capability is disabled for this entitlement; orchestrator idle.",
-    });
-    reflectAppSyncState("idle", state.pendingBacklog, state.lastSuccessAt, null, null, 0);
-    return {
-      syncCapabilityEnabled: false,
-      runtimeState: "idle" as const,
-      blockerReason: null,
-      lastError: null,
-      nextScheduledAt: null,
-      retry: { attempt: 0, nextRetryAt: null, lastError: null },
-      timeline,
-    };
+function reflectInAppStore(worker: SyncWorkerStatus) {
+  const app = useAppStore.getState();
+  app.setSyncStatus({
+    state: appSyncState(worker),
+    pendingCount: worker.pending_outbox_count,
+    lastSyncAt: worker.last_success_at,
+    errorMessage:
+      worker.state === "error" || worker.state === "retrying"
+        ? (worker.last_error?.message ?? null)
+        : null,
+    blockerReason: syncBlockerText(worker.blocker),
+    retryAttempt: worker.consecutive_failures,
   });
-}
-
-export interface SyncTimelineEvent {
-  id: string;
-  at: string;
-  severity: TimelineSeverity;
-  mode: SyncRunMode;
-  event: string;
-  message: string;
-  correlationId: string;
-  details?: Record<string, unknown>;
-}
-
-interface SyncTelemetryCounters {
-  runsTotal: number;
-  runsSucceeded: number;
-  runsFailed: number;
-  runsBlocked: number;
-  retriesScheduled: number;
-  totalDurationMs: number;
-}
-
-interface RetryState {
-  attempt: number;
-  nextRetryAt: string | null;
-  lastError: string | null;
+  if (worker.state === "offline") {
+    app.setOnline(false);
+  } else if (typeof navigator !== "undefined") {
+    app.setOnline(navigator.onLine);
+  }
 }
 
 export interface SyncDiagnosticsExport {
   generatedAt: string;
-  machineContext: {
-    userAgent: string;
-    language: string;
-    platform: string;
-    online: boolean;
-  };
-  runtime: {
-    state: SyncRuntimeState;
-    mode: SyncRunMode;
-    blockerReason: string | null;
-    checkpointToken: string | null;
-    pendingBacklog: number;
-    unresolvedConflicts: number;
-    lastSuccessAt: string | null;
-    nextScheduledAt: string | null;
-  };
-  policy: SyncPolicyControls;
-  retry: RetryState;
-  telemetry: SyncTelemetryCounters & {
-    averageDurationMs: number;
-  };
-  timeline: SyncTimelineEvent[];
+  online: boolean;
+  worker: SyncWorkerStatus | null;
+  summary: SyncStateSummary | null;
+  unresolvedConflicts: Array<
+    Pick<SyncConflictRecord, "id" | "entity_type" | "conflict_type" | "status">
+  >;
 }
 
 interface SyncOrchestratorState {
   initialized: boolean;
-  /** False when entitlement capability map disables sync (expected on Core). */
-  syncCapabilityEnabled: boolean;
-  runtimeState: SyncRuntimeState;
-  activeMode: SyncRunMode;
-  blockerReason: string | null;
-  lastSuccessAt: string | null;
-  lastRunStartedAt: string | null;
-  lastRunFinishedAt: string | null;
-  nextScheduledAt: string | null;
-  checkpointToken: string | null;
-  pendingBacklog: number;
-  unresolvedConflicts: number;
-  lastError: string | null;
-  offlineSince: string | null;
-  policy: SyncPolicyControls;
-  retryPolicy: RetryPolicy;
-  retry: RetryState;
-  timeline: SyncTimelineEvent[];
-  telemetry: SyncTelemetryCounters;
+  /** Last status pushed by the Rust worker (`null` until the first one arrives). */
+  worker: SyncWorkerStatus | null;
+  /** Last failure of an operator action (sync now, pause, resume) for the Sync Center. */
+  actionError: string | null;
   conflictInbox: SyncConflictRecord[];
   replayHistoryCount: number;
   rejectedOutboxCount: number;
   /** Received changes waiting for related data or a newer app version (retried automatically). */
   deferredInboxCount: number;
+  lastSummary: SyncStateSummary | null;
 
   initialize: () => void;
   shutdown: () => void;
-  scheduleNext: (delayMs?: number) => void;
-  runSyncNow: (mode?: SyncRunMode) => Promise<void>;
+  runSyncNow: () => Promise<void>;
+  pauseForMinutes: (minutes: number) => Promise<void>;
+  resumeNow: () => Promise<void>;
   runReplayRecovery: (scope?: Partial<ReplaySyncFailuresInput>) => Promise<void>;
   resolveConflictAction: (input: ResolveSyncConflictInput) => Promise<void>;
   refreshInbox: () => Promise<void>;
-  updatePolicy: (patch: Partial<SyncPolicyControls>) => void;
-  pauseForMinutes: (minutes: number) => void;
-  resumeNow: () => void;
   exportDiagnostics: () => SyncDiagnosticsExport;
 }
 
-let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-let onlineHandlerBound = false;
+let unlistenStatus: UnlistenFn | null = null;
+let removeNetworkListeners: (() => void) | null = null;
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function newCorrelationId(): string {
-  return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-}
-
-function pushTimeline(
-  timeline: SyncTimelineEvent[],
-  entry: Omit<SyncTimelineEvent, "id" | "at">,
-): SyncTimelineEvent[] {
-  const item: SyncTimelineEvent = {
-    id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-    at: nowIso(),
-    ...entry,
-  };
-  const next = [...timeline, item];
-  return next.slice(Math.max(0, next.length - 250));
-}
-
-function redactSecrets(value: string): string {
-  return value
-    .replace(/(token|secret|password)\s*[:=]\s*["']?[^"',\s}]+["']?/gi, "$1=[REDACTED]")
-    .replace(/[A-Za-z0-9_\-]{24,}\.[A-Za-z0-9_\-]{12,}\.[A-Za-z0-9_\-]{12,}/g, "[REDACTED_JWT]");
-}
-
-function clearSchedulerTimer() {
-  if (schedulerTimer) {
-    clearTimeout(schedulerTimer);
-    schedulerTimer = null;
+function applyWorkerStatus(next: SyncWorkerStatus) {
+  const previous = useSyncOrchestratorStore.getState().worker;
+  useSyncOrchestratorStore.setState({ worker: next });
+  reflectInAppStore(next);
+  // The control API refused this device: let the licence gate check the activation now (it may
+  // re-claim with the cached key or record the revocation) instead of waiting for its schedule.
+  if (next.blocker === "activation_refused" && previous?.blocker !== "activation_refused") {
+    requestLicenseRecheck(`sync_${next.last_error?.code ?? "activation_refused"}`);
   }
-}
-
-function clearHeartbeatTimer() {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-}
-
-function reflectAppSyncState(
-  runtimeState: SyncRuntimeState,
-  pendingBacklog: number,
-  lastSuccessAt: string | null,
-  lastError: string | null,
-  blockerReason: string | null,
-  retryAttempt: number,
-) {
-  const appState = useAppStore.getState();
-  appState.setSyncStatus({
-    state: runtimeState,
-    pendingCount: pendingBacklog,
-    lastSyncAt: lastSuccessAt,
-    errorMessage: lastError,
-    blockerReason,
-    retryAttempt,
-  });
-}
-
-async function executeSyncRun(mode: SyncRunMode) {
-  const startedAtMs = Date.now();
-  const correlationId = newCorrelationId();
-  let orchestrator = useSyncOrchestratorStore.getState();
-
-  // Re-check entitlement each run so Core (sync:false) stays idle without exchange spam.
-  const capabilityEnabled = await resolveSyncCapabilityEnabled();
-  if (!capabilityEnabled) {
-    enterSyncUnlicensedIdle(correlationId, mode);
-    return;
-  }
-  if (!orchestrator.syncCapabilityEnabled) {
-    useSyncOrchestratorStore.setState({ syncCapabilityEnabled: true });
-    orchestrator = useSyncOrchestratorStore.getState();
-  }
-
-  // Automatic recovery: after retry budget is exhausted, heartbeat/background used to fail instantly
-  // forever. Skip duplicate runs for a cooldown, then grant a fresh budget without user action.
-  const autoModes: SyncRunMode[] = ["heartbeat_refresh", "background", "bootstrap_restore"];
-  if (autoModes.includes(mode) && !isSessionActiveForBackgroundWork()) {
-    return;
-  }
+  // Conflicts or dead letters changed: refresh the Sync Center list.
   if (
-    autoModes.includes(mode) &&
-    orchestrator.retry.attempt >= orchestrator.retryPolicy.maxAttempts
+    previous &&
+    (previous.unresolved_conflict_count !== next.unresolved_conflict_count ||
+      previous.dead_letter_outbox_count !== next.dead_letter_outbox_count)
   ) {
-    const lastEnd = orchestrator.lastRunFinishedAt;
-    const elapsed = lastEnd
-      ? Date.now() - new Date(lastEnd).getTime()
-      : SYNC_EXHAUSTED_RETRY_COOLDOWN_MS;
-    if (elapsed < SYNC_EXHAUSTED_RETRY_COOLDOWN_MS) {
-      return;
-    }
-    useSyncOrchestratorStore.setState((state) => ({
-      retry: { attempt: 0, nextRetryAt: null, lastError: null },
-      lastError: null,
-      timeline: pushTimeline(state.timeline, {
-        correlationId: newCorrelationId(),
-        severity: "info",
-        mode,
-        event: "retry_budget_refreshed",
-        message: "Automatic retry budget refresh after cooldown.",
-      }),
-    }));
-    orchestrator = useSyncOrchestratorStore.getState();
-    reflectAppSyncState(
-      orchestrator.runtimeState === "error" ? "scheduled" : orchestrator.runtimeState,
-      orchestrator.pendingBacklog,
-      orchestrator.lastSuccessAt,
-      null,
-      orchestrator.blockerReason,
-      0,
-    );
-  }
-
-  const gate = evaluateSchedulingGate(orchestrator.policy, {
-    nowIso: nowIso(),
-    isOnline: typeof navigator === "undefined" ? true : navigator.onLine,
-    offlineSinceIso: orchestrator.offlineSince,
-  });
-  if (!gate.allowed) {
-    useSyncOrchestratorStore.setState((state) => {
-      const timeline = pushTimeline(state.timeline, {
-        correlationId,
-        severity: gate.state === "degraded" ? "warning" : "info",
-        mode,
-        event: "run_blocked",
-        message: gate.blockerReason ?? "Sync blocked by policy gate.",
-      });
-      reflectAppSyncState(
-        gate.state,
-        state.pendingBacklog,
-        state.lastSuccessAt,
-        state.lastError,
-        gate.blockerReason,
-        state.retry.attempt,
-      );
-      return {
-        runtimeState: gate.state,
-        blockerReason: gate.blockerReason,
-        activeMode: mode,
-        timeline,
-        telemetry: {
-          ...state.telemetry,
-          runsBlocked: state.telemetry.runsBlocked + 1,
-        },
-      };
-    });
-    return;
-  }
-
-  useSyncOrchestratorStore.setState((state) => {
-    const timeline = pushTimeline(state.timeline, {
-      correlationId,
-      severity: "info",
-      mode,
-      event: "run_started",
-      message: `Sync cycle started (${mode}).`,
-    });
-    reflectAppSyncState(
-      "running",
-      state.pendingBacklog,
-      state.lastSuccessAt,
-      null,
-      null,
-      state.retry.attempt,
-    );
-    return {
-      runtimeState: "running",
-      activeMode: mode,
-      blockerReason: null,
-      lastRunStartedAt: nowIso(),
-      lastError: null,
-      timeline,
-    };
-  });
-
-  try {
-    await exchangeControlPlaneSyncRound();
-    const summary = await getSyncStateSummary();
-    const conflicts = await listSyncConflicts({
-      statuses: ["new", "triaged", "escalated"],
-      requires_operator_review: true,
-      limit: 50,
-    });
-    const replayRuns = await listSyncReplayRuns(20);
-
-    useSyncOrchestratorStore.setState((state) => {
-      const isDegraded = summary.rejected_outbox_count > 0 || conflicts.length > 0;
-      const runtimeState: SyncRuntimeState = isDegraded ? "degraded" : "idle";
-      const finishedAt = nowIso();
-      const durationMs = Date.now() - startedAtMs;
-      const timeline = pushTimeline(state.timeline, {
-        correlationId,
-        severity: isDegraded ? "warning" : "info",
-        mode,
-        event: "run_completed",
-        message: isDegraded
-          ? "Sync cycle completed with operator attention required."
-          : "Sync cycle completed successfully.",
-        details: {
-          pending_outbox_count: summary.pending_outbox_count,
-          rejected_outbox_count: summary.rejected_outbox_count,
-          unresolved_conflicts: conflicts.length,
-          replay_runs_observed: replayRuns.length,
-          duration_ms: durationMs,
-        },
-      });
-      const retry: RetryState = {
-        attempt: 0,
-        nextRetryAt: null,
-        lastError: null,
-      };
-      reflectAppSyncState(
-        runtimeState,
-        summary.pending_outbox_count,
-        finishedAt,
-        null,
-        null,
-        retry.attempt,
-      );
-      return {
-        runtimeState,
-        blockerReason: null,
-        checkpointToken: summary.checkpoint?.checkpoint_token ?? null,
-        pendingBacklog: summary.pending_outbox_count + summary.in_flight_outbox_count,
-        unresolvedConflicts: conflicts.length,
-        conflictInbox: conflicts,
-        replayHistoryCount: replayRuns.length,
-        rejectedOutboxCount: summary.rejected_outbox_count,
-        deferredInboxCount: summary.deferred_inbox_count,
-        lastRunFinishedAt: finishedAt,
-        lastSuccessAt: finishedAt,
-        lastError: null,
-        retry,
-        timeline,
-        telemetry: {
-          ...state.telemetry,
-          runsTotal: state.telemetry.runsTotal + 1,
-          runsSucceeded: state.telemetry.runsSucceeded + 1,
-          totalDurationMs: state.telemetry.totalDurationMs + durationMs,
-        },
-      };
-    });
-    useSyncOrchestratorStore.getState().scheduleNext();
-  } catch (error) {
-    if (isSyncCapabilityDeniedError(error)) {
-      enterSyncUnlicensedIdle(
-        correlationId,
-        mode,
-        "Sync capability denied by entitlement; orchestrator idle.",
-      );
-      return;
-    }
-    const message = redactSecrets(toErrorMessage(error));
-    if (message.includes("SYNC_EXCHANGE_TIMEOUT")) {
-      pushAppToast({
-        title: String(i18n.t("errors:generic.timeout")),
-        description: String(i18n.t("shell:sync.offlineChangesSaved")),
-        variant: "default",
-      });
-    }
-    useSyncOrchestratorStore.setState((state) => {
-      const nextAttempt = state.retry.attempt + 1;
-      const canRetry = shouldRetry(nextAttempt, state.retryPolicy);
-      const retryDelayMs = canRetry ? computeRetryDelayMs(nextAttempt, state.retryPolicy) : 0;
-      const nextRetryAt = canRetry ? new Date(Date.now() + retryDelayMs).toISOString() : null;
-      const runtimeState: SyncRuntimeState = canRetry ? "degraded" : "error";
-      const timeline = pushTimeline(state.timeline, {
-        correlationId,
-        severity: "error",
-        mode,
-        event: canRetry ? "run_retry_scheduled" : "run_failed",
-        message: canRetry
-          ? `Sync cycle failed; retry scheduled in ${Math.round(retryDelayMs / 1000)}s.`
-          : "Sync cycle failed; retry budget exhausted.",
-        details: {
-          attempt: nextAttempt,
-          max_attempts: state.retryPolicy.maxAttempts,
-          error: message,
-        },
-      });
-      reflectAppSyncState(
-        runtimeState,
-        state.pendingBacklog,
-        state.lastSuccessAt,
-        message,
-        null,
-        nextAttempt,
-      );
-      return {
-        runtimeState,
-        lastRunFinishedAt: nowIso(),
-        lastError: message,
-        retry: {
-          attempt: nextAttempt,
-          nextRetryAt,
-          lastError: message,
-        },
-        timeline,
-        telemetry: {
-          ...state.telemetry,
-          runsTotal: state.telemetry.runsTotal + 1,
-          runsFailed: state.telemetry.runsFailed + 1,
-          retriesScheduled: state.telemetry.retriesScheduled + (canRetry ? 1 : 0),
-        },
-      };
-    });
-    const afterError = useSyncOrchestratorStore.getState();
-    if (afterError.retry.nextRetryAt) {
-      const retryMs = Math.max(0, new Date(afterError.retry.nextRetryAt).getTime() - Date.now());
-      afterError.scheduleNext(retryMs);
-    }
+    void useSyncOrchestratorStore
+      .getState()
+      .refreshInbox()
+      .catch(() => {});
   }
 }
 
-export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
-  persist(
-    (set, get) => ({
-      initialized: false,
-      syncCapabilityEnabled: true,
-      runtimeState: "idle",
-      activeMode: "background",
-      blockerReason: null,
-      lastSuccessAt: null,
-      lastRunStartedAt: null,
-      lastRunFinishedAt: null,
-      nextScheduledAt: null,
-      checkpointToken: null,
-      pendingBacklog: 0,
-      unresolvedConflicts: 0,
-      lastError: null,
-      offlineSince: null,
-      policy: defaultSyncPolicyControls(),
-      retryPolicy: defaultRetryPolicy(),
-      retry: {
-        attempt: 0,
-        nextRetryAt: null,
-        lastError: null,
-      },
-      timeline: [],
-      telemetry: {
-        runsTotal: 0,
-        runsSucceeded: 0,
-        runsFailed: 0,
-        runsBlocked: 0,
-        retriesScheduled: 0,
-        totalDurationMs: 0,
-      },
-      conflictInbox: [],
-      replayHistoryCount: 0,
-      rejectedOutboxCount: 0,
-      deferredInboxCount: 0,
+export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, get) => ({
+  initialized: false,
+  worker: null,
+  actionError: null,
+  conflictInbox: [],
+  replayHistoryCount: 0,
+  rejectedOutboxCount: 0,
+  deferredInboxCount: 0,
+  lastSummary: null,
 
-      initialize: () => {
-        if (get().initialized) return;
-        set({ initialized: true });
-        void (async () => {
-          const enabled = await resolveSyncCapabilityEnabled();
-          if (!enabled) {
-            enterSyncUnlicensedIdle(
-              newCorrelationId(),
-              "bootstrap_restore",
-              "Sync capability is disabled for this entitlement; orchestrator idle.",
-            );
-            return;
-          }
-
-          set((state) => {
-            const runtimeState = normalizeRuntimeStateAfterRestart(state.runtimeState);
-            const clearedTerminalError = state.runtimeState === "error";
-            return {
-              syncCapabilityEnabled: true,
-              runtimeState,
-              retry: { attempt: 0, nextRetryAt: null, lastError: null },
-              lastError: clearedTerminalError ? null : state.lastError,
-              timeline: pushTimeline(state.timeline, {
-                correlationId: newCorrelationId(),
-                severity: "info",
-                mode: "bootstrap_restore",
-                event: "orchestrator_initialized",
-                message: "Sync orchestrator initialized from persisted state.",
-              }),
-            };
-          });
-          {
-            const s = get();
-            reflectAppSyncState(
-              s.runtimeState,
-              s.pendingBacklog,
-              s.lastSuccessAt,
-              s.lastError,
-              s.blockerReason,
-              s.retry.attempt,
-            );
-          }
-          if (typeof window !== "undefined" && !onlineHandlerBound) {
-            window.addEventListener("online", () => {
-              useAppStore.getState().setOnline(true);
-              set({ offlineSince: null });
-              void get().runSyncNow("heartbeat_refresh");
-            });
-            window.addEventListener("offline", () => {
-              useAppStore.getState().setOnline(false);
-              set((state) => ({
-                offlineSince: state.offlineSince ?? nowIso(),
-              }));
-            });
-            onlineHandlerBound = true;
-          }
-          clearHeartbeatTimer();
-          heartbeatTimer = setInterval(
-            () => {
-              void get().runSyncNow("heartbeat_refresh");
-            },
-            Math.max(15, get().policy.heartbeatIntervalSeconds) * 1000,
-          );
-          void get().runSyncNow("bootstrap_restore");
-        })();
-      },
-
-      shutdown: () => {
-        clearSchedulerTimer();
-        clearHeartbeatTimer();
-        set((state) => ({
-          initialized: false,
-          runtimeState: "paused",
-          nextScheduledAt: null,
-          timeline: pushTimeline(state.timeline, {
-            correlationId: newCorrelationId(),
-            severity: "info",
-            mode: "background",
-            event: "orchestrator_shutdown",
-            message: "Sync orchestrator shutdown gracefully.",
-          }),
-        }));
-      },
-
-      scheduleNext: (delayMs?: number) => {
-        if (!get().syncCapabilityEnabled) {
-          clearSchedulerTimer();
-          return;
-        }
-        clearSchedulerTimer();
-        const policyDelayMs = Math.max(10, get().policy.schedulerIntervalSeconds) * 1000;
-        const effectiveDelayMs = Math.max(500, delayMs ?? policyDelayMs);
-        const nextAt = new Date(Date.now() + effectiveDelayMs).toISOString();
-        set((state) => {
-          const timeline = pushTimeline(state.timeline, {
-            correlationId: newCorrelationId(),
-            severity: "info",
-            mode: "background",
-            event: "scheduled",
-            message: `Next sync scheduled in ${Math.round(effectiveDelayMs / 1000)}s.`,
-            details: { next_scheduled_at: nextAt },
-          });
-          return {
-            runtimeState: "scheduled",
-            nextScheduledAt: nextAt,
-            timeline,
-          };
+  initialize: () => {
+    if (get().initialized) return;
+    set({ initialized: true });
+    void (async () => {
+      try {
+        const unlisten = await listen<unknown>(SYNC_WORKER_STATUS_EVENT, (event) => {
+          const parsed = SyncWorkerStatusSchema.safeParse(event.payload);
+          if (parsed.success) applyWorkerStatus(parsed.data as SyncWorkerStatus);
         });
-        schedulerTimer = setTimeout(() => {
-          void executeSyncRun("background");
-        }, effectiveDelayMs);
-      },
-
-      runSyncNow: async (mode = "manual") => {
-        if (!get().initialized && mode !== "bootstrap_restore") {
-          get().initialize();
+        if (get().initialized) {
+          unlistenStatus = unlisten;
+        } else {
+          unlisten();
         }
-        // Operator explicitly asked for a sync run: give a fresh retry budget and cancel any
-        // pending auto-retry timer. Otherwise after maxAttempts the next run would compute
-        // nextAttempt > maxAttempts and fail immediately ("retry budget exhausted" loop).
-        if (mode === "manual") {
-          clearSchedulerTimer();
-          set({
-            retry: { attempt: 0, nextRetryAt: null, lastError: null },
-            lastError: null,
-            nextScheduledAt: null,
-          });
-          const s = get();
-          reflectAppSyncState(
-            "scheduled",
-            s.pendingBacklog,
-            s.lastSuccessAt,
-            null,
-            s.blockerReason,
-            0,
-          );
-        }
-        await executeSyncRun(mode);
-      },
+      } catch {
+        // Outside Tauri (tests) there is no event bus; the store stays empty.
+      }
+      try {
+        applyWorkerStatus(await getSyncWorkerStatus());
+      } catch {
+        // No session yet: the next status event fills the store.
+      }
+    })();
+    if (typeof window !== "undefined" && !removeNetworkListeners) {
+      const onOnline = () => {
+        useAppStore.getState().setOnline(true);
+        void reportNetworkOnline().catch(() => {});
+      };
+      const onOffline = () => useAppStore.getState().setOnline(false);
+      window.addEventListener("online", onOnline);
+      window.addEventListener("offline", onOffline);
+      removeNetworkListeners = () => {
+        window.removeEventListener("online", onOnline);
+        window.removeEventListener("offline", onOffline);
+      };
+    }
+  },
 
-      runReplayRecovery: async (scope = {}) => {
-        const correlationId = newCorrelationId();
-        const replayKey = `replay-${Date.now()}`;
-        const defaultScope: ReplaySyncFailuresInput = {
-          replay_key: replayKey,
-          mode: "single_item",
-          reason: "Operator-triggered replay recovery",
-          conflict_id: get().conflictInbox[0]?.id ?? null,
-          outbox_id: get().conflictInbox[0]?.linked_outbox_id ?? null,
-          server_batch_id: null,
-          window_start: null,
-          window_end: null,
-          checkpoint_token: null,
-        };
-        const payload: ReplaySyncFailuresInput = { ...defaultScope, ...scope };
-        try {
-          const result = await replaySyncFailures(payload);
-          set((state) => ({
-            runtimeState: "scheduled",
-            timeline: pushTimeline(state.timeline, {
-              correlationId,
-              severity: "info",
-              mode: "replay_recovery",
-              event: "replay_completed",
-              message: "Replay recovery completed successfully.",
-              details: {
-                replay_run_id: result.run.id,
-                requeued_outbox_count: result.requeued_outbox_count,
-                transitioned_conflict_count: result.transitioned_conflict_count,
-                checkpoint_token_after: result.checkpoint_token_after,
-              },
-            }),
-          }));
-          await get().refreshInbox();
-          get().scheduleNext(500);
-        } catch (error) {
-          const message = redactSecrets(toErrorMessage(error));
-          set((state) => ({
-            runtimeState: "degraded",
-            lastError: message,
-            timeline: pushTimeline(state.timeline, {
-              correlationId,
-              severity: "error",
-              mode: "replay_recovery",
-              event: "replay_failed",
-              message: "Replay recovery failed.",
-              details: { error: message },
-            }),
-          }));
-        }
-      },
+  shutdown: () => {
+    unlistenStatus?.();
+    unlistenStatus = null;
+    removeNetworkListeners?.();
+    removeNetworkListeners = null;
+    set({ initialized: false });
+  },
 
-      resolveConflictAction: async (input) => {
-        const correlationId = newCorrelationId();
-        const resolved = await resolveSyncConflict(input);
-        set((state) => ({
-          conflictInbox: state.conflictInbox.map((item) =>
-            item.id === resolved.id ? resolved : item,
-          ),
-          timeline: pushTimeline(state.timeline, {
-            correlationId,
-            severity: "info",
-            mode: "manual",
-            event: "conflict_resolved",
-            message: `Conflict ${resolved.id} moved to ${resolved.status}.`,
-            details: {
-              conflict_id: resolved.id,
-              action: input.action,
-              status: resolved.status,
-            },
-          }),
-        }));
-        await get().refreshInbox();
-      },
+  runSyncNow: async () => {
+    set({ actionError: null });
+    try {
+      await requestSyncNow();
+    } catch (error) {
+      set({ actionError: toErrorMessage(error) });
+    }
+  },
 
-      refreshInbox: async () => {
-        const [conflicts, replayRuns, summary] = await Promise.all([
-          listSyncConflicts({
-            statuses: ["new", "triaged", "escalated"],
-            requires_operator_review: true,
-            limit: 50,
-          }),
-          listSyncReplayRuns(20),
-          getSyncStateSummary(),
-        ]);
-        set((state) => ({
-          conflictInbox: conflicts,
-          replayHistoryCount: replayRuns.length,
-          unresolvedConflicts: conflicts.length,
-          rejectedOutboxCount: summary.rejected_outbox_count,
-          deferredInboxCount: summary.deferred_inbox_count,
-          pendingBacklog: summary.pending_outbox_count + summary.in_flight_outbox_count,
-          checkpointToken: summary.checkpoint?.checkpoint_token ?? null,
-          runtimeState:
-            state.runtimeState === "error"
-              ? "error"
-              : conflicts.length > 0 || summary.rejected_outbox_count > 0
-                ? "degraded"
-                : state.runtimeState,
-        }));
-      },
+  pauseForMinutes: async (minutes) => {
+    set({ actionError: null });
+    try {
+      await pauseSync(minutes);
+    } catch (error) {
+      set({ actionError: toErrorMessage(error) });
+    }
+  },
 
-      updatePolicy: (patch) => {
-        set((state) => ({
-          policy: {
-            ...state.policy,
-            ...patch,
-          },
-        }));
-      },
+  resumeNow: async () => {
+    set({ actionError: null });
+    try {
+      await resumeSync();
+    } catch (error) {
+      set({ actionError: toErrorMessage(error) });
+    }
+  },
 
-      pauseForMinutes: (minutes) => {
-        const bounded = Math.max(1, Math.min(24 * 60, minutes));
-        const pausedUntil = new Date(Date.now() + bounded * 60_000).toISOString();
-        set((state) => ({
-          policy: { ...state.policy, pausedUntil },
-          runtimeState: "paused",
-          blockerReason: `Sync paused until ${pausedUntil}.`,
-          timeline: pushTimeline(state.timeline, {
-            correlationId: newCorrelationId(),
-            severity: "warning",
-            mode: "manual",
-            event: "sync_paused",
-            message: `Sync paused for ${bounded} minute(s).`,
-          }),
-        }));
-      },
+  runReplayRecovery: async (scope = {}) => {
+    const first = get().conflictInbox[0];
+    const payload: ReplaySyncFailuresInput = {
+      replay_key: `replay-${Date.now()}`,
+      mode: "single_item",
+      reason: "Operator-triggered replay recovery",
+      conflict_id: first?.id ?? null,
+      outbox_id: first?.linked_outbox_id ?? null,
+      server_batch_id: null,
+      window_start: null,
+      window_end: null,
+      checkpoint_token: null,
+      ...scope,
+    };
+    set({ actionError: null });
+    try {
+      await replaySyncFailures(payload);
+      await get().refreshInbox();
+      await requestSyncNow();
+    } catch (error) {
+      set({ actionError: toErrorMessage(error) });
+    }
+  },
 
-      resumeNow: () => {
-        set((state) => ({
-          policy: { ...state.policy, pausedUntil: null },
-          runtimeState: "scheduled",
-          blockerReason: null,
-          timeline: pushTimeline(state.timeline, {
-            correlationId: newCorrelationId(),
-            severity: "info",
-            mode: "manual",
-            event: "sync_resumed",
-            message: "Sync resumed by operator.",
-          }),
-        }));
-        void get().runSyncNow("manual");
-      },
+  resolveConflictAction: async (input) => {
+    const resolved = await resolveSyncConflict(input);
+    set((state) => ({
+      conflictInbox: state.conflictInbox.map((item) => (item.id === resolved.id ? resolved : item)),
+    }));
+    await get().refreshInbox();
+    // "Keep mine" re-stages the local version: send it without waiting for the next cycle.
+    if (input.action === "accept_local") {
+      await requestSyncNow().catch(() => {});
+    }
+  },
 
-      exportDiagnostics: () => {
-        const state = get();
-        const avgDuration =
-          state.telemetry.runsSucceeded > 0
-            ? Math.round(state.telemetry.totalDurationMs / state.telemetry.runsSucceeded)
-            : 0;
-        const timeline = state.timeline.slice(-120).map((event) => ({
-          ...event,
-          message: redactSecrets(event.message),
-          details:
-            event.details === undefined
-              ? undefined
-              : JSON.parse(redactSecrets(JSON.stringify(event.details))),
-        }));
-        return {
-          generatedAt: nowIso(),
-          machineContext: {
-            userAgent: typeof navigator === "undefined" ? "unknown" : navigator.userAgent,
-            language: typeof navigator === "undefined" ? "unknown" : navigator.language,
-            platform: typeof navigator === "undefined" ? "unknown" : navigator.platform,
-            online: typeof navigator === "undefined" ? true : navigator.onLine,
-          },
-          runtime: {
-            state: state.runtimeState,
-            mode: state.activeMode,
-            blockerReason: state.blockerReason,
-            checkpointToken: state.checkpointToken,
-            pendingBacklog: state.pendingBacklog,
-            unresolvedConflicts: state.unresolvedConflicts,
-            lastSuccessAt: state.lastSuccessAt,
-            nextScheduledAt: state.nextScheduledAt,
-          },
-          policy: state.policy,
-          retry: state.retry,
-          telemetry: {
-            ...state.telemetry,
-            averageDurationMs: avgDuration,
-          },
-          timeline,
-        };
-      },
-    }),
-    {
-      name: "maintafox-sync-orchestrator",
-      partialize: (state) => ({
-        runtimeState: state.runtimeState,
-        activeMode: state.activeMode,
-        blockerReason: state.blockerReason,
-        lastSuccessAt: state.lastSuccessAt,
-        lastRunStartedAt: state.lastRunStartedAt,
-        lastRunFinishedAt: state.lastRunFinishedAt,
-        nextScheduledAt: state.nextScheduledAt,
-        checkpointToken: state.checkpointToken,
-        pendingBacklog: state.pendingBacklog,
-        unresolvedConflicts: state.unresolvedConflicts,
-        lastError: state.lastError,
-        offlineSince: state.offlineSince,
-        policy: state.policy,
-        retryPolicy: state.retryPolicy,
-        retry: state.retry,
-        timeline: state.timeline,
-        telemetry: state.telemetry,
-        replayHistoryCount: state.replayHistoryCount,
+  refreshInbox: async () => {
+    const [conflicts, replayRuns, summary] = await Promise.all([
+      listSyncConflicts({
+        statuses: ["new", "triaged", "escalated"],
+        requires_operator_review: true,
+        limit: 50,
       }),
-    },
-  ),
-);
+      listSyncReplayRuns(20),
+      getSyncStateSummary(),
+    ]);
+    set({
+      conflictInbox: conflicts,
+      replayHistoryCount: replayRuns.length,
+      rejectedOutboxCount: summary.rejected_outbox_count,
+      deferredInboxCount: summary.deferred_inbox_count,
+      lastSummary: summary,
+    });
+  },
+
+  exportDiagnostics: () => {
+    const state = get();
+    return {
+      generatedAt: new Date().toISOString(),
+      online: typeof navigator === "undefined" ? true : navigator.onLine,
+      worker: state.worker,
+      summary: state.lastSummary,
+      unresolvedConflicts: state.conflictInbox.map((c) => ({
+        id: c.id,
+        entity_type: c.entity_type,
+        conflict_type: c.conflict_type,
+        status: c.status,
+      })),
+    };
+  },
+}));

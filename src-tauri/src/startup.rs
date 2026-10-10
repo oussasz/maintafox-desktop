@@ -239,6 +239,10 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     );
     emit_event(&app, StartupEvent::EntitlementCacheLoaded);
 
+    // Phase 4b: sync worker (protocol v2), background task `sync`. Closing the main window only
+    // hides it in the tray (window.rs), so the process and the worker keep running.
+    start_sync_worker(&app, &app_state).await;
+
     // Phase 5: notification scheduler background loop (non-fatal)
     {
         let scheduler_db = app_state.db.clone();
@@ -320,6 +324,64 @@ pub(crate) fn resolve_db_path(app: &AppHandle) -> AppResult<String> {
         .to_str()
         .map(String::from)
         .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("Non-UTF8 app data path")))
+}
+
+/// Start the sync worker as background task `sync` and forward its status to the webview.
+async fn start_sync_worker(app: &AppHandle, state: &crate::state::AppState) {
+    use crate::sync::transport::{
+        LicenseSyncAccess, SyncTiming, SyncWorker, SyncWorkerConfig, SYNC_STATUS_EVENT, SYNC_TASK_ID,
+    };
+
+    let handle = state.sync_worker.clone();
+    {
+        let mut status = handle.subscribe();
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            while status.changed().await.is_ok() {
+                let current = status.borrow_and_update().clone();
+                if let Err(e) = app.emit(SYNC_STATUS_EVENT, current) {
+                    warn!("startup: cannot forward sync status to the window: {e}");
+                }
+            }
+        });
+    }
+
+    let media_root = match app.path().app_data_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            let message = format!("App data directory unavailable: {e}");
+            error!("startup: sync worker not started: {message}");
+            handle.publish_not_configured(&message);
+            return;
+        }
+    };
+    let config = SyncWorkerConfig {
+        api_base_url: env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL").to_string(),
+        media_root,
+        timing: SyncTiming::production(),
+    };
+    let worker = match SyncWorker::new(
+        state.db.clone(),
+        handle.clone(),
+        config,
+        std::sync::Arc::new(LicenseSyncAccess),
+    ) {
+        Ok(worker) => worker,
+        Err(message) => {
+            error!("startup: sync worker not started: {message}");
+            handle.publish_not_configured(&message);
+            return;
+        }
+    };
+    let Some(commands) = handle.take_receiver() else {
+        warn!("startup: sync worker already started");
+        return;
+    };
+    state
+        .tasks
+        .spawn(SYNC_TASK_ID, move |cancel| worker.run(commands, cancel))
+        .await;
+    info!("startup: sync worker started");
 }
 
 fn emit_event(app: &AppHandle, event: StartupEvent) {

@@ -346,6 +346,14 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
         category: LocalOnlyCategory::SyncControl,
     },
     LocalOnlyTable {
+        table: "sync_transport_state",
+        category: LocalOnlyCategory::SyncControl,
+    },
+    LocalOnlyTable {
+        table: "sync_media_uploads",
+        category: LocalOnlyCategory::SyncControl,
+    },
+    LocalOnlyTable {
         table: "seaql_migrations",
         category: LocalOnlyCategory::SyncControl,
     },

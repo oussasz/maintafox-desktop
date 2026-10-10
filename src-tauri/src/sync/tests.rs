@@ -146,7 +146,7 @@ async fn replaying_same_batch_is_duplicate_safe_and_checkpoint_stable() {
     let push = queries::get_sync_push_payload(&db, Some(50))
         .await
         .expect("push payload");
-    assert_eq!(push.protocol_version, SYNC_PROTOCOL_VERSION_V1);
+    assert_eq!(push.protocol_version, crate::sync::domain::SYNC_PROTOCOL_VERSION_V2);
     assert_eq!(push.checkpoint_token.as_deref(), Some("ckpt-002"));
 }
 
