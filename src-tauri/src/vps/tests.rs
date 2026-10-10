@@ -2,8 +2,7 @@ use crate::vps::domain::{
     AuthBoundary, PolicyDeliveryContract, VpsContractFamily, VpsRequestContext, VPS_API_VERSION_V1,
 };
 use crate::vps::guards::{
-    enforce_request_context, route_contract_for_family, validate_policy_delivery,
-    validate_sync_exchange_request_json,
+    enforce_request_context, route_contract_for_family, validate_policy_delivery, validate_sync_exchange_request_json,
 };
 
 fn base_tenant_context() -> VpsRequestContext {

@@ -4,18 +4,13 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 
 use crate::errors::AppResult;
 use crate::sync::domain::{
-    OrgNodeSyncPayload, PersonnelSyncPayload, ReferenceValueSyncPayload, RoleSyncPayload,
-    StageOutboxItemInput, TeamSyncPayload, UserAccountSyncPayload, SYNC_ENTITY_ORG_NODES,
-    SYNC_ENTITY_PERSONNEL, SYNC_ENTITY_REFERENCE_VALUES, SYNC_ENTITY_ROLES, SYNC_ENTITY_TEAMS,
-    SYNC_ENTITY_USER_ACCOUNTS,
+    OrgNodeSyncPayload, PersonnelSyncPayload, ReferenceValueSyncPayload, RoleSyncPayload, StageOutboxItemInput,
+    TeamSyncPayload, UserAccountSyncPayload, SYNC_ENTITY_ORG_NODES, SYNC_ENTITY_PERSONNEL,
+    SYNC_ENTITY_REFERENCE_VALUES, SYNC_ENTITY_ROLES, SYNC_ENTITY_TEAMS, SYNC_ENTITY_USER_ACCOUNTS,
 };
 use crate::sync::queries::stage_outbox_item;
 
-async fn lookup_entity_sync_id(
-    db: &impl ConnectionTrait,
-    table: &str,
-    id: i64,
-) -> AppResult<Option<String>> {
+async fn lookup_entity_sync_id(db: &impl ConnectionTrait, table: &str, id: i64) -> AppResult<Option<String>> {
     let sql = format!("SELECT entity_sync_id FROM {table} WHERE id = ? LIMIT 1");
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -103,9 +98,7 @@ pub async fn stage_user_account_sync(db: &DatabaseConnection, user_id: i64) -> A
         username: row.try_get("", "username").unwrap_or_default(),
         display_name: row.try_get("", "display_name").ok(),
         password_hash: row.try_get("", "password_hash").ok(),
-        identity_mode: row
-            .try_get("", "identity_mode")
-            .unwrap_or_else(|_| "local".into()),
+        identity_mode: row.try_get("", "identity_mode").unwrap_or_else(|_| "local".into()),
         is_active: is_active != 0,
         is_admin: is_admin != 0,
         updated_at: row.try_get("", "updated_at").ok(),
@@ -255,11 +248,7 @@ pub async fn stage_team_sync(db: &DatabaseConnection, team_id: i64) -> AppResult
 }
 
 /// Stage a reference catalog value. Stable identity is `set_code:value_code`.
-pub async fn stage_reference_value_sync(
-    db: &DatabaseConnection,
-    set_code: &str,
-    value_code: &str,
-) -> AppResult<()> {
+pub async fn stage_reference_value_sync(db: &DatabaseConnection, set_code: &str, value_code: &str) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,

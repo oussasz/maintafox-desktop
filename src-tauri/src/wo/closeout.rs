@@ -730,7 +730,7 @@ pub async fn save_failure_detail(db: &DatabaseConnection, input: SaveFailureDeta
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
+            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
             [input.wo_id.into()],
         ))
         .await?
@@ -1049,7 +1049,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                     );
                 }
                 let nmin = policy.notes_min_length_when_cnd.max(1) as usize;
-                if fd_notes.as_deref().map_or(true, |s| s.trim().len() < nmin) {
+                if fd_notes.as_deref().is_none_or(|s| s.trim().len() < nmin) {
                     preflight.add(format!(
                         "Notes obligatoires (cause non determinee), minimum {nmin} caracteres. \
                          (Notes required when cause not determined.)"
@@ -1094,7 +1094,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         let rcs: Option<String> = rcs_row
             .try_get::<Option<String>>("", "root_cause_summary")
             .map_err(|e| decode_err("root_cause_summary", e))?;
-        if rcs.as_deref().map_or(true, |s| s.trim().is_empty()) {
+        if rcs.as_deref().is_none_or(|s| s.trim().is_empty()) {
             preflight.add("Resume de cause racine requis. (Root cause summary required.)");
         }
     }
@@ -1588,7 +1588,7 @@ pub async fn get_failure_details(db: &impl ConnectionTrait, wo_id: i64) -> AppRe
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
+            format!("{FAILURE_DETAIL_SELECT} WHERE fd.work_order_id = ?"),
             [wo_id.into()],
         ))
         .await?;

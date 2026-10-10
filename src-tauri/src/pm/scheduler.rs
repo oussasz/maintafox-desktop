@@ -6,9 +6,7 @@ use tokio::time::{interval, Duration as TokioDuration};
 
 use crate::errors::AppResult;
 use crate::pm::domain::GeneratePmOccurrencesInput;
-use crate::pm::generation_control::{
-    get_pm_generation_control, run_generation_with_audit,
-};
+use crate::pm::generation_control::{get_pm_generation_control, run_generation_with_audit};
 
 pub async fn start_pm_generation_scheduler(db: DatabaseConnection) {
     let mut ticker = interval(TokioDuration::from_secs(60));

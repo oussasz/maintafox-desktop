@@ -29,11 +29,9 @@ impl MigrationTrait for Migration {
         if !names.iter().any(|n| n == "review_team_id") {
             return Ok(());
         }
-        db.execute_unprepared(
-            "ALTER TABLE intervention_requests DROP COLUMN review_team_id",
-        )
-        .await
-        .map_err(|e| DbErr::Custom(format!("drop review_team_id failed: {e}")))?;
+        db.execute_unprepared("ALTER TABLE intervention_requests DROP COLUMN review_team_id")
+            .await
+            .map_err(|e| DbErr::Custom(format!("drop review_team_id failed: {e}")))?;
         Ok(())
     }
 
@@ -53,11 +51,9 @@ impl MigrationTrait for Migration {
         if names.iter().any(|n| n == "review_team_id") {
             return Ok(());
         }
-        db.execute_unprepared(
-            "ALTER TABLE intervention_requests ADD COLUMN review_team_id INTEGER NULL",
-        )
-        .await
-        .map_err(|e| DbErr::Custom(format!("add review_team_id failed: {e}")))?;
+        db.execute_unprepared("ALTER TABLE intervention_requests ADD COLUMN review_team_id INTEGER NULL")
+            .await
+            .map_err(|e| DbErr::Custom(format!("add review_team_id failed: {e}")))?;
         Ok(())
     }
 }

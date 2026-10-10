@@ -119,8 +119,7 @@ pub async fn create_personnel(input: PersonnelCreateInput, state: State<'_, AppS
 
     queries::assert_position_exists(&state.db, payload.position_id).await?;
     queries::assert_org_node_exists(&state.db, payload.primary_entity_id).await?;
-    crate::repository::team_repository::assert_active_crew_exists(&state.db, payload.primary_team_id)
-        .await?;
+    crate::repository::team_repository::assert_active_crew_exists(&state.db, payload.primary_team_id).await?;
 
     queries::create_personnel(&state.db, payload, i64::from(user.user_id)).await
 }
@@ -696,10 +695,7 @@ pub async fn update_availability_block(
 }
 
 #[tauri::command]
-pub async fn delete_availability_block(
-    id: i64,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn delete_availability_block(id: i64, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
     require_permission!(
         state,

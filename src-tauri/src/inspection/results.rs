@@ -422,8 +422,7 @@ pub async fn record_inspection_result(
     }
 
     let status = if cp.check_type == "boolean" {
-        if input.result_status.is_some() {
-            let s = input.result_status.as_ref().expect("checked");
+        if let Some(s) = input.result_status.as_ref() {
             validate_result_status(s)?;
             s.clone()
         } else {
@@ -658,7 +657,7 @@ async fn get_inspection_result_by_id(db: &DatabaseConnection, id: i64) -> AppRes
             [id.into()],
         ))
         .await?;
-    Ok(row.map(|r| map_result(&r)).transpose()?)
+    row.map(|r| map_result(&r)).transpose()
 }
 
 pub async fn add_inspection_evidence(
@@ -804,7 +803,7 @@ pub async fn enqueue_inspection_offline(
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    Ok(id_row.try_get("", "id").map_err(|e| decode_err("id", e))?)
+    id_row.try_get("", "id").map_err(|e| decode_err("id", e))
 }
 
 pub async fn list_inspection_offline_queue(db: &DatabaseConnection) -> AppResult<Vec<InspectionOfflineQueueItem>> {

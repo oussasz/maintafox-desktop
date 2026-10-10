@@ -239,7 +239,7 @@ async fn load_di_with_status(txn: &impl ConnectionTrait, di_id: i64) -> AppResul
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \
@@ -372,7 +372,7 @@ async fn refetch_di(txn: &impl ConnectionTrait, di_id: i64) -> AppResult<Interve
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \

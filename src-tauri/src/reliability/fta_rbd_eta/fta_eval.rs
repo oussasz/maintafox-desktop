@@ -85,9 +85,9 @@ pub fn evaluate_fta(graph: &FtaGraph) -> Result<FtaEvalResult, String> {
         let mut cut_sets: Vec<HashSet<String>> = Vec::new();
         for mask in 1usize..(1usize << n) {
             let mut failed: HashSet<String> = HashSet::new();
-            for i in 0..n {
+            for (i, basic) in basics.iter().enumerate() {
                 if (mask & (1 << i)) != 0 {
-                    failed.insert(basics[i].clone());
+                    failed.insert(basic.clone());
                 }
             }
             vis.clear();

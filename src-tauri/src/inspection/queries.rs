@@ -420,7 +420,7 @@ async fn get_template(db: &DatabaseConnection, id: i64) -> AppResult<Option<Insp
             [id.into()],
         ))
         .await?;
-    Ok(row.map(|r| map_template(&r)).transpose()?)
+    row.map(|r| map_template(&r)).transpose()
 }
 
 pub async fn create_inspection_template(
@@ -803,7 +803,7 @@ pub async fn get_inspection_round_by_id(db: &DatabaseConnection, id: i64) -> App
             [id.into()],
         ))
         .await?;
-    Ok(row.map(|r| map_round(&r)).transpose()?)
+    row.map(|r| map_round(&r)).transpose()
 }
 
 pub async fn get_inspection_checkpoint_by_id(
@@ -820,7 +820,7 @@ pub async fn get_inspection_checkpoint_by_id(
             [id.into()],
         ))
         .await?;
-    Ok(row.map(|r| map_checkpoint(&r)).transpose()?)
+    row.map(|r| map_checkpoint(&r)).transpose()
 }
 
 pub async fn get_inspection_template_version_by_id(
@@ -836,5 +836,5 @@ pub async fn get_inspection_template_version_by_id(
             [id.into()],
         ))
         .await?;
-    Ok(row.map(|r| map_version(&r)).transpose()?)
+    row.map(|r| map_version(&r)).transpose()
 }

@@ -135,7 +135,7 @@ async fn published_set_id(db: &DatabaseConnection, domain_code: &str) -> AppResu
 fn metadata_implies_system(metadata_json: Option<String>) -> bool {
     metadata_json
         .as_ref()
-        .map_or(false, |s| s.contains("\"origin\":\"system\""))
+        .is_some_and(|s| s.contains("\"origin\":\"system\""))
 }
 
 fn map_option_row(row: &sea_orm::QueryResult) -> AppResult<EquipmentTaxonomyOption> {

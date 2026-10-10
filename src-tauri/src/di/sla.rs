@@ -195,10 +195,7 @@ pub async fn lookup_asset_criticality(db: &impl ConnectionTrait, equipment_id: i
         .await?
         .and_then(|row| row.try_get::<Option<String>>("", "criticality_code").ok().flatten());
 
-    Ok(match raw {
-        Some(code) => Some(normalize_criticality_to_canon(&code).unwrap_or_else(|_| code.trim().to_ascii_uppercase())),
-        None => None,
-    })
+    Ok(raw.map(|code| normalize_criticality_to_canon(&code).unwrap_or_else(|_| code.trim().to_ascii_uppercase())))
 }
 
 fn is_sla_terminal(di: &InterventionRequest) -> bool {

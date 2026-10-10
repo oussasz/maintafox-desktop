@@ -78,8 +78,7 @@ async fn assert_no_overlapping_blocks(
            AND start_at < ?
            AND end_at > ?",
     );
-    let mut values: Vec<sea_orm::Value> =
-        vec![personnel_id.into(), end_at.into(), start_at.into()];
+    let mut values: Vec<sea_orm::Value> = vec![personnel_id.into(), end_at.into(), start_at.into()];
     if let Some(id) = exclude_id {
         sql.push_str(" AND id <> ?");
         values.push(id.into());
@@ -127,10 +126,7 @@ fn map_block_row(row: sea_orm::QueryResult) -> PersonnelAvailabilityBlock {
     }
 }
 
-async fn fetch_block_by_id(
-    db: &DatabaseConnection,
-    id: i64,
-) -> AppResult<PersonnelAvailabilityBlock> {
+async fn fetch_block_by_id(db: &DatabaseConnection, id: i64) -> AppResult<PersonnelAvailabilityBlock> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -421,10 +417,7 @@ pub async fn delete_availability_block(db: &DatabaseConnection, id: i64) -> AppR
 }
 
 /// Truncate an active block so `end_at = now` (soft end). Rejects if now is outside [start, end).
-pub async fn end_availability_block(
-    db: &DatabaseConnection,
-    id: i64,
-) -> AppResult<PersonnelAvailabilityBlock> {
+pub async fn end_availability_block(db: &DatabaseConnection, id: i64) -> AppResult<PersonnelAvailabilityBlock> {
     let existing = fetch_block_by_id(db, id).await?;
     let now = Utc::now();
     let now_str = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();

@@ -151,10 +151,7 @@ pub struct ActivatePolicyPayload {
 
 /// List all policy snapshots for a domain (active + drafts + history).
 #[tauri::command]
-pub async fn list_policy_snapshots(
-    domain: String,
-    state: State<'_, AppState>,
-) -> AppResult<Vec<PolicySnapshot>> {
+pub async fn list_policy_snapshots(domain: String, state: State<'_, AppState>) -> AppResult<Vec<PolicySnapshot>> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -178,13 +175,7 @@ pub async fn save_policy_draft(
         crate::rbac::permissions::ADM_SETTINGS,
         PermissionScope::Global
     );
-    settings::save_policy_draft(
-        &state.db,
-        &payload.domain,
-        &payload.snapshot_json,
-        user.user_id,
-    )
-    .await
+    settings::save_policy_draft(&state.db, &payload.domain, &payload.snapshot_json, user.user_id).await
 }
 
 /// Run validation rules against the current draft.
@@ -205,10 +196,7 @@ pub async fn test_policy_draft(
 
 /// Promote a draft snapshot to active. Security domains require step-up.
 #[tauri::command]
-pub async fn activate_policy(
-    payload: ActivatePolicyPayload,
-    state: State<'_, AppState>,
-) -> AppResult<PolicySnapshot> {
+pub async fn activate_policy(payload: ActivatePolicyPayload, state: State<'_, AppState>) -> AppResult<PolicySnapshot> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -219,13 +207,7 @@ pub async fn activate_policy(
     if matches!(payload.domain.as_str(), "session" | "password") {
         require_step_up!(state);
     }
-    settings::activate_policy(
-        &state.db,
-        &payload.domain,
-        payload.snapshot_id,
-        user.user_id,
-    )
-    .await
+    settings::activate_policy(&state.db, &payload.domain, payload.snapshot_id, user.user_id).await
 }
 
 /// Discard the current draft for a domain.
@@ -243,9 +225,7 @@ pub async fn discard_policy_draft(domain: String, state: State<'_, AppState>) ->
 
 /// List connection profiles (read-only) for the Integrations tab.
 #[tauri::command]
-pub async fn list_connection_profiles(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<settings::ConnectionProfile>> {
+pub async fn list_connection_profiles(state: State<'_, AppState>) -> AppResult<Vec<settings::ConnectionProfile>> {
     let user = require_session!(state);
     require_permission!(
         state,
@@ -290,21 +270,12 @@ pub async fn upload_document_branding_logo(
         .path()
         .app_data_dir()
         .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))?;
-    settings::branding::upload_document_branding_logo(
-        &state.db,
-        &app_data_dir,
-        &source_path,
-        user.user_id,
-    )
-    .await
+    settings::branding::upload_document_branding_logo(&state.db, &app_data_dir, &source_path, user.user_id).await
 }
 
 /// Clear the tenant document branding logo. Requires `adm.settings`.
 #[tauri::command]
-pub async fn clear_document_branding_logo(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn clear_document_branding_logo(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
     require_permission!(
         state,

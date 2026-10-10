@@ -307,7 +307,7 @@ mod tests {
                 assigned_team_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
-            override_reason: "test assign".to_string(),
+                override_reason: "test assign".to_string(),
             },
         )
         .await
@@ -561,7 +561,7 @@ mod tests {
                 assigned_team_id: None,
                 primary_responsible_id: None,
                 scheduled_at: None,
-            override_reason: "test assign".to_string(),
+                override_reason: "test assign".to_string(),
             },
         )
         .await;
@@ -1168,7 +1168,7 @@ mod tests {
                 assigned_team_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
-            override_reason: "test assign".to_string(),
+                override_reason: "test assign".to_string(),
             },
         )
         .await

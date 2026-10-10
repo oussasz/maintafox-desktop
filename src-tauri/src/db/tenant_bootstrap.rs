@@ -158,7 +158,7 @@ async fn ensure_active_org_model(db: &DatabaseConnection, now: &str) -> AppResul
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     db.execute(Statement::from_sql_and_values(
@@ -187,7 +187,7 @@ async fn ensure_root_node_type(db: &DatabaseConnection, model_id: i64, now: &str
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     db.execute(Statement::from_sql_and_values(
@@ -325,7 +325,7 @@ async fn ensure_node_type(
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     db.execute(Statement::from_sql_and_values(
@@ -436,7 +436,7 @@ async fn ensure_equipment_class(
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     db.execute(Statement::from_sql_and_values(
@@ -475,7 +475,7 @@ async fn ensure_equipment(
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     db.execute(Statement::from_sql_and_values(
@@ -566,7 +566,7 @@ async fn ensure_work_order(
         ))
         .await?;
     if let Some(row) = existing {
-        return Ok(try_get_i64(&row, "id")?);
+        return try_get_i64(&row, "id");
     }
 
     let code = crate::wo::domain::generate_wo_code(db).await?;

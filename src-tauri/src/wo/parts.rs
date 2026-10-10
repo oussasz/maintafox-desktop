@@ -309,7 +309,7 @@ pub async fn add_planned_part(db: &DatabaseConnection, input: AddPartInput) -> A
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.rowid = last_insert_rowid()"),
+            format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.rowid = last_insert_rowid()"),
             [],
         ))
         .await?
@@ -349,7 +349,7 @@ pub async fn add_planned_part(db: &DatabaseConnection, input: AddPartInput) -> A
                 let updated = db
                     .query_one(Statement::from_sql_and_values(
                         DbBackend::Sqlite,
-                        &format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
+                        format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
                         [created.id.into()],
                     ))
                     .await?
@@ -401,7 +401,7 @@ pub async fn record_actual_usage(
     let part_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
+            format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
             [wo_part_id.into()],
         ))
         .await?
@@ -479,7 +479,7 @@ pub async fn record_actual_usage(
     let updated = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
+            format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
             [wo_part_id.into()],
         ))
         .await?
@@ -515,7 +515,7 @@ pub async fn mark_part_not_used(db: &DatabaseConnection, input: MarkPartNotUsedI
     let part_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
+            format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
             [input.wo_part_id.into()],
         ))
         .await?
@@ -600,7 +600,7 @@ pub async fn mark_part_not_used(db: &DatabaseConnection, input: MarkPartNotUsedI
     let updated = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
+            format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.id = ?"),
             [input.wo_part_id.into()],
         ))
         .await?
@@ -742,7 +742,7 @@ pub async fn list_wo_parts(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.work_order_id = ? ORDER BY wop.id ASC"),
+            format!("SELECT {PART_COLS} FROM {PART_FROM} WHERE wop.work_order_id = ? ORDER BY wop.id ASC"),
             [wo_id.into()],
         ))
         .await?;

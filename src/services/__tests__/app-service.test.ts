@@ -20,7 +20,7 @@ describe("healthCheck", () => {
   it("calls the health_check command", async () => {
     mockInvoke.mockResolvedValueOnce(fixtures.healthCheck);
     await healthCheck();
-    expect(mockInvoke).toHaveBeenCalledWith("health_check");
+    expect(mockInvoke).toHaveBeenCalledWith("health_check", undefined);
   });
 
   it("returns a validated HealthCheckResponse when Rust returns correct shape", async () => {
@@ -58,7 +58,7 @@ describe("getAppInfo", () => {
   it("calls the get_app_info command", async () => {
     mockInvoke.mockResolvedValueOnce(fixtures.appInfo);
     await getAppInfo();
-    expect(mockInvoke).toHaveBeenCalledWith("get_app_info");
+    expect(mockInvoke).toHaveBeenCalledWith("get_app_info", undefined);
   });
 
   it("returns a validated AppInfoResponse", async () => {
@@ -94,7 +94,7 @@ describe("getTaskStatus", () => {
   it("calls the get_task_status command", async () => {
     mockInvoke.mockResolvedValueOnce(fixtures.taskStatus);
     await getTaskStatus();
-    expect(mockInvoke).toHaveBeenCalledWith("get_task_status");
+    expect(mockInvoke).toHaveBeenCalledWith("get_task_status", undefined);
   });
 
   it("returns an empty array when no tasks are registered", async () => {

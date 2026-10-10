@@ -200,7 +200,7 @@ pub async fn open_downtime_segment(db: &DatabaseConnection, input: OpenDowntimeI
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {DOWNTIME_COLS} FROM work_order_downtime_segments \
                  WHERE rowid = last_insert_rowid()"
             ),
@@ -267,7 +267,7 @@ pub async fn close_downtime_segment(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {DOWNTIME_COLS} FROM work_order_downtime_segments WHERE id = ?"),
+            format!("SELECT {DOWNTIME_COLS} FROM work_order_downtime_segments WHERE id = ?"),
             [segment_id.into()],
         ))
         .await?
@@ -298,7 +298,7 @@ pub async fn list_delay_segments(db: &DatabaseConnection, wo_id: i64) -> AppResu
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {DELAY_COLS} FROM work_order_delay_segments \
                  WHERE work_order_id = ? ORDER BY started_at ASC"
             ),
@@ -316,7 +316,7 @@ pub async fn list_downtime_segments(db: &DatabaseConnection, wo_id: i64) -> AppR
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {DOWNTIME_COLS} FROM work_order_downtime_segments \
                  WHERE work_order_id = ? ORDER BY started_at ASC"
             ),

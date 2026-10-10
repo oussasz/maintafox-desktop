@@ -173,12 +173,7 @@ pub async fn build_executive_dashboard(
                AND datetime(ir.created_at) <= datetime('now', ?)
                AND (? IS NULL OR ir.org_node_id = ?)";
         let shift = format!("-{horizon} days");
-        let prev = count_i64(
-            db,
-            prev_sql,
-            vec![shift.into(), org_bind.clone(), org_bind.clone()],
-        )
-        .await?;
+        let prev = count_i64(db, prev_sql, vec![shift.into(), org_bind.clone(), org_bind.clone()]).await?;
         int_kpi("open_dis", n, prev, None)
     } else {
         denied_kpi("open_dis", None)
@@ -196,12 +191,7 @@ pub async fn build_executive_dashboard(
                AND datetime(wo.created_at) <= datetime('now', ?)
                AND (? IS NULL OR wo.entity_id = ?)";
         let shift = format!("-{horizon} days");
-        let prev = count_i64(
-            db,
-            prev_sql,
-            vec![shift.into(), org_bind.clone(), org_bind.clone()],
-        )
-        .await?;
+        let prev = count_i64(db, prev_sql, vec![shift.into(), org_bind.clone(), org_bind.clone()]).await?;
         int_kpi("open_wos", n, prev, None)
     } else {
         denied_kpi("open_wos", None)
@@ -286,8 +276,18 @@ pub async fn build_executive_dashboard(
         )
         .await?;
         (
-            int_kpi("pm_overdue", overdue, overdue, Some(kpi_definitions::catalog::PM_ADHERENCE)),
-            int_kpi("pm_due_today", today, today, Some(kpi_definitions::catalog::PM_ADHERENCE)),
+            int_kpi(
+                "pm_overdue",
+                overdue,
+                overdue,
+                Some(kpi_definitions::catalog::PM_ADHERENCE),
+            ),
+            int_kpi(
+                "pm_due_today",
+                today,
+                today,
+                Some(kpi_definitions::catalog::PM_ADHERENCE),
+            ),
             int_kpi(
                 "pm_due_next_7d",
                 next7,
@@ -326,11 +326,7 @@ pub async fn build_executive_dashboard(
                  LEFT JOIN equipment e ON e.id = s.equipment_id
                  WHERE datetime(s.period_end) >= datetime('now', ?)
                    AND (? IS NULL OR e.installed_at_node_id = ?)",
-                [
-                    horizon_shift.clone().into(),
-                    org_bind.clone(),
-                    org_bind.clone(),
-                ],
+                [horizon_shift.clone().into(), org_bind.clone(), org_bind.clone()],
             ))
             .await?;
         let prev_shift = format!("-{} days", horizon * 2);
@@ -378,18 +374,8 @@ pub async fn build_executive_dashboard(
             (None, None, None, None)
         };
         (
-            float_kpi(
-                "avg_mtbf_hours",
-                mtbf,
-                p_mtbf,
-                Some(kpi_definitions::catalog::MTBF),
-            ),
-            float_kpi(
-                "avg_mttr_hours",
-                mttr,
-                p_mttr,
-                Some(kpi_definitions::catalog::MTTR),
-            ),
+            float_kpi("avg_mtbf_hours", mtbf, p_mtbf, Some(kpi_definitions::catalog::MTBF)),
+            float_kpi("avg_mttr_hours", mttr, p_mttr, Some(kpi_definitions::catalog::MTTR)),
             float_kpi(
                 "avg_availability",
                 avail,
@@ -404,10 +390,7 @@ pub async fn build_executive_dashboard(
         (
             denied_kpi("avg_mtbf_hours", Some(kpi_definitions::catalog::MTBF)),
             denied_kpi("avg_mttr_hours", Some(kpi_definitions::catalog::MTTR)),
-            denied_kpi(
-                "avg_availability",
-                Some(kpi_definitions::catalog::AVAILABILITY),
-            ),
+            denied_kpi("avg_availability", Some(kpi_definitions::catalog::AVAILABILITY)),
             denied_kpi("avg_data_quality", None),
             0,
             0,
@@ -442,12 +425,7 @@ pub async fn build_executive_dashboard(
                    AND datetime(wo.closed_at) >= datetime('now', ?)
                    AND datetime(wo.closed_at) < datetime('now', ?)
                    AND (? IS NULL OR wo.entity_id = ?)",
-                [
-                    prev_shift.into(),
-                    shift.into(),
-                    org_bind.clone(),
-                    org_bind.clone(),
-                ],
+                [prev_shift.into(), shift.into(), org_bind.clone(), org_bind.clone()],
             ))
             .await?;
         let cur = row
@@ -467,10 +445,7 @@ pub async fn build_executive_dashboard(
             catalog_id: Some(kpi_definitions::catalog::MAINTENANCE_COST.to_string()),
         }
     } else {
-        denied_kpi(
-            "maintenance_cost",
-            Some(kpi_definitions::catalog::MAINTENANCE_COST),
-        )
+        denied_kpi("maintenance_cost", Some(kpi_definitions::catalog::MAINTENANCE_COST))
     };
 
     // ── Workload chart (grouped; one query per series) ─────────────────────
@@ -571,8 +546,7 @@ pub async fn build_executive_dashboard(
             .iter()
             .all(|d| d.di_created == 0 && d.wo_completed == 0 && d.pm_due == 0);
         if all_zero {
-            workload_quality_badge =
-                Some(kpi_definitions::quality_badge::SPARSE_WORKLOAD.to_string());
+            workload_quality_badge = Some(kpi_definitions::quality_badge::SPARSE_WORKLOAD.to_string());
         }
     }
 

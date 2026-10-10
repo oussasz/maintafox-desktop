@@ -388,8 +388,7 @@
       "category": "pm",
       "is_dangerous": false,
       "requires_step_up": false,
-      "usage": "catalog-only",
-      "usage_justification": "Reserved for PM approval workflow; not yet enforced",
+      "usage": "both",
       "aliases": []
     },
     {

@@ -910,9 +910,7 @@ mod tests {
     /// Active rate card resolves for today; future-only card is ignored.
     #[tokio::test]
     async fn active_labor_rate_respects_effective_from() {
-        use crate::personnel::queries::{
-            create_rate_card, resolve_active_labor_rate, resolve_active_rate_pair,
-        };
+        use crate::personnel::queries::{create_rate_card, resolve_active_labor_rate, resolve_active_rate_pair};
 
         let db = setup().await;
         let actor = admin_id(&db).await;
@@ -949,12 +947,7 @@ mod tests {
         .await
         .expect("create");
 
-        assert!(
-            resolve_active_labor_rate(&db, p.id)
-                .await
-                .expect("resolve")
-                .is_none()
-        );
+        assert!(resolve_active_labor_rate(&db, p.id).await.expect("resolve").is_none());
 
         create_rate_card(&db, p.id, 42.5, 55.0, None, "manual".into(), actor)
             .await
@@ -1011,11 +1004,7 @@ mod tests {
             "INSERT INTO personnel_rate_cards \
              (personnel_id, effective_from, labor_rate, overtime_rate, source_type, created_at) \
              VALUES (?, ?, 99.0, 120.0, 'manual', ?)",
-            [
-                p2.id.into(),
-                future.into(),
-                "2099-01-01T00:00:00Z".into(),
-            ],
+            [p2.id.into(), future.into(), "2099-01-01T00:00:00Z".into()],
         ))
         .await
         .expect("insert future card");

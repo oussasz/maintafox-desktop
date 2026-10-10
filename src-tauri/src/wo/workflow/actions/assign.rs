@@ -44,10 +44,7 @@ struct LatestCommitment {
     assigned_personnel_id: Option<i64>,
 }
 
-async fn load_latest_commitment(
-    db: &impl ConnectionTrait,
-    wo_id: i64,
-) -> AppResult<Option<LatestCommitment>> {
+async fn load_latest_commitment(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<Option<LatestCommitment>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -63,21 +60,18 @@ async fn load_latest_commitment(
         return Ok(None);
     };
     Ok(Some(LatestCommitment {
-        id: row.try_get("", "id").map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("schedule_commitments.id: {e}"))
-        })?,
+        id: row
+            .try_get("", "id")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("schedule_commitments.id: {e}")))?,
         frozen_at: row.try_get("", "frozen_at").ok().flatten(),
-        assigned_team_id: row.try_get("", "assigned_team_id").map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("schedule_commitments.assigned_team_id: {e}"))
-        })?,
+        assigned_team_id: row
+            .try_get("", "assigned_team_id")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("schedule_commitments.assigned_team_id: {e}")))?,
         assigned_personnel_id: row.try_get("", "assigned_personnel_id").ok().flatten(),
     }))
 }
 
-async fn resolve_user_personnel_id(
-    db: &impl ConnectionTrait,
-    user_id: Option<i64>,
-) -> AppResult<Option<i64>> {
+async fn resolve_user_personnel_id(db: &impl ConnectionTrait, user_id: Option<i64>) -> AppResult<Option<i64>> {
     let Some(user_id) = user_id else {
         return Ok(None);
     };
@@ -131,10 +125,7 @@ async fn append_emergency_schedule_log(
 }
 
 /// Product path: emergency reassign (skips capacity / lock / double-booking gates).
-pub async fn emergency_reassign(
-    db: &DatabaseConnection,
-    input: WoEmergencyReassignInput,
-) -> AppResult<WorkOrder> {
+pub async fn emergency_reassign(db: &DatabaseConnection, input: WoEmergencyReassignInput) -> AppResult<WorkOrder> {
     let reason = input.override_reason.trim().to_string();
     if reason.is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -217,11 +208,7 @@ pub async fn emergency_reassign(
                 row_version = row_version + 1,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE id = ?",
-            [
-                next_team.into(),
-                next_personnel.into(),
-                cmt.id.into(),
-            ],
+            [next_team.into(), next_personnel.into(), cmt.id.into()],
         ))
         .await?;
         append_emergency_schedule_log(

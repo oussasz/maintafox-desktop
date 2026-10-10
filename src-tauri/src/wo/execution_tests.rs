@@ -283,7 +283,7 @@ mod tests {
                 assigned_team_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
-            override_reason: "test assign".to_string(),
+                override_reason: "test assign".to_string(),
             },
         )
         .await
@@ -735,7 +735,7 @@ mod tests {
                 assigned_team_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
-            override_reason: "test assign".to_string(),
+                override_reason: "test assign".to_string(),
             },
         )
         .await
@@ -883,7 +883,8 @@ mod tests {
 
         let wo_lines: Vec<&str> = lib_rs.lines().filter(|l| l.contains("commands::wo::")).collect();
 
-        assert_eq!(wo_lines.len(), 54, "invoke_handler must contain exactly 54 WO commands");
+        // Snapshot of the registered WO command surface; update deliberately when adding commands.
+        assert_eq!(wo_lines.len(), 64, "invoke_handler must contain exactly 64 WO commands");
 
         let mut seen = std::collections::HashSet::new();
         for line in &wo_lines {

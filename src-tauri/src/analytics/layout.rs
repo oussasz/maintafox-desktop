@@ -35,7 +35,7 @@ fn validate_widget_array(widgets: &[Value]) -> AppResult<()> {
 fn validate_overview_kpis_array(kpis: &[Value]) -> AppResult<()> {
     if kpis.len() > 32 {
         return Err(AppError::ValidationFailed(vec![
-            "layout_json.overview_kpis length invalid.".into()
+            "layout_json.overview_kpis length invalid.".into(),
         ]));
     }
     for w in kpis {
@@ -54,15 +54,13 @@ fn validate_overview_kpis_array(kpis: &[Value]) -> AppResult<()> {
             .ok_or_else(|| AppError::ValidationFailed(vec!["overview_kpi.visible invalid.".into()]))?;
         if let Some(accent) = wo.get("accent") {
             if !accent.is_null() {
-                let s = accent.as_str().ok_or_else(|| {
-                    AppError::ValidationFailed(vec!["overview_kpi.accent invalid.".into()])
-                })?;
+                let s = accent
+                    .as_str()
+                    .ok_or_else(|| AppError::ValidationFailed(vec!["overview_kpi.accent invalid.".into()]))?;
                 match s {
                     "default" | "brand" | "amber" | "danger" | "teal" => {}
                     _ => {
-                        return Err(AppError::ValidationFailed(vec![
-                            "overview_kpi.accent unknown.".into(),
-                        ]));
+                        return Err(AppError::ValidationFailed(vec!["overview_kpi.accent unknown.".into()]));
                     }
                 }
             }
@@ -81,9 +79,9 @@ pub fn validate_analytics_layout_json(raw: &str) -> AppResult<()> {
         .as_object()
         .ok_or_else(|| AppError::ValidationFailed(vec!["layout_json must be an object.".into()]))?;
     if obj.get("version").and_then(|x| x.as_u64()) != Some(1) {
-        return Err(AppError::ValidationFailed(vec![
-            "layout_json.version must be 1.".into()
-        ]));
+        return Err(AppError::ValidationFailed(
+            vec!["layout_json.version must be 1.".into()],
+        ));
     }
     let Some(widgets) = obj.get("widgets").and_then(|x| x.as_array()) else {
         return Err(AppError::ValidationFailed(vec!["layout_json.widgets required.".into()]));

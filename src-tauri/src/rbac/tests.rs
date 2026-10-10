@@ -200,7 +200,12 @@ mod tests {
             "INSERT INTO roles (entity_sync_id, name, description, role_type, status, is_system, \
                                 created_at, updated_at, row_version) \
              VALUES (?, ?, NULL, 'custom', 'active', 0, ?, ?, 1)",
-            [entity_sync_id.into(), name.into(), now.clone().into(), now.clone().into()],
+            [
+                entity_sync_id.into(),
+                name.into(),
+                now.clone().into(),
+                now.clone().into(),
+            ],
         ))
         .await
         .expect("insert test role");

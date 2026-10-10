@@ -27,17 +27,14 @@ impl MigrationTrait for Migration {
             )",
         )
         .await?;
-        db.execute_unprepared(
-            "CREATE INDEX IF NOT EXISTS idx_report_artifacts_run ON report_artifacts(run_id)",
-        )
-        .await?;
+        db.execute_unprepared("CREATE INDEX IF NOT EXISTS idx_report_artifacts_run ON report_artifacts(run_id)")
+            .await?;
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared("DROP TABLE IF EXISTS report_artifacts")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS report_artifacts").await?;
         Ok(())
     }
 }

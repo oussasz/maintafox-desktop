@@ -138,6 +138,8 @@ mod tests {
             "related_di_id",
             "closed_by_id",
             "deferred_from_status",
+            // Sync identity (outbox staging).
+            "entity_sync_id",
             "row_version",
             "submitter_id",
             "created_at",
@@ -214,7 +216,8 @@ mod tests {
 
         let expected_indexes = [
             "idx_ir_status",
-            "idx_ir_asset",
+            // Renamed from idx_ir_asset by migration 146 (asset_id -> equipment_id).
+            "idx_ir_equipment",
             "idx_ir_org_node",
             "idx_ir_submitter",
             "idx_ir_reviewer",

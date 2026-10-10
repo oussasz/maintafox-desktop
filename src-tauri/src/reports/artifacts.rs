@@ -119,10 +119,7 @@ pub async fn persist_run_artifact(
     })
 }
 
-pub async fn get_artifact_by_run_id(
-    db: &DatabaseConnection,
-    run_id: i64,
-) -> AppResult<Option<ReportArtifact>> {
+pub async fn get_artifact_by_run_id(db: &DatabaseConnection, run_id: i64) -> AppResult<Option<ReportArtifact>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -194,10 +191,7 @@ pub async fn read_run_document(
     if let Some(art) = get_artifact_by_run_id(db, run_id).await? {
         let abs = resolve_under_app_data(app_data_dir, &art.relative_path);
         let bytes = std::fs::read(&abs).map_err(|e| {
-            AppError::Internal(anyhow::anyhow!(
-                "failed to read report artifact {}: {e}",
-                abs.display()
-            ))
+            AppError::Internal(anyhow::anyhow!("failed to read report artifact {}: {e}", abs.display()))
         })?;
         return Ok(ExportedBinaryDocument {
             file_name: art.file_name,
@@ -221,9 +215,7 @@ pub async fn read_run_document(
             abs.display()
         ))
     })?;
-    let export_format: String = run_row
-        .try_get("", "export_format")
-        .unwrap_or_else(|_| "pdf".into());
+    let export_format: String = run_row.try_get("", "export_format").unwrap_or_else(|_| "pdf".into());
     let file_name = abs
         .file_name()
         .and_then(|s| s.to_str())

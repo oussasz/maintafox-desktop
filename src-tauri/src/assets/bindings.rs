@@ -43,7 +43,7 @@ pub async fn count_open_di(db: &DatabaseConnection, asset_id: i64) -> AppResult<
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COUNT(*) AS cnt FROM intervention_requests \
-             WHERE asset_id = ? \
+             WHERE equipment_id = ? \
                AND closed_at IS NULL \
                AND archived_at IS NULL \
                AND status NOT IN ( \

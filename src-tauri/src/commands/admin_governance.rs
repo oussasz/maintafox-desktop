@@ -4,7 +4,7 @@
 //!   1. Session visibility   — list_active_sessions, revoke_session
 //!   2. Delegation management — list/create/update/delete delegation_policies
 //!   3. Emergency elevation   — list/grant/revoke (grant+revoke in admin_users.rs;
-//!                              this module adds list_emergency_grants)
+//!      this module adds list_emergency_grants)
 //!   4. Role import/export    — export_role_model, import_role_model
 //!
 //! All mutation commands write to `admin_change_events` (migration 030).

@@ -16,7 +16,7 @@ import {
   Server,
   Wrench,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -92,16 +92,23 @@ export function AssetBindingSummary({ assetId }: AssetBindingSummaryProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Monotonic request id: when the user switches assets quickly, a slower response for a
+  // previously selected asset must not overwrite the summary of the asset now on screen.
+  const latestRequest = useRef(0);
+
   const load = useCallback(async (id: number) => {
+    const requestId = ++latestRequest.current;
     setLoading(true);
     setError(null);
     try {
       const data = await getAssetBindingSummary(id);
+      if (requestId !== latestRequest.current) return;
       setSummary(data);
     } catch (err) {
+      if (requestId !== latestRequest.current) return;
       setError(toErrorMessage(err));
     } finally {
-      setLoading(false);
+      if (requestId === latestRequest.current) setLoading(false);
     }
   }, []);
 

@@ -5,8 +5,8 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::{AppError, AppResult};
 use crate::pm::domain::{
-    GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmGenerationControl, PmGenerationRun,
-    PmGenerationStatus, UpdatePmGenerationSettingsInput,
+    GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmGenerationControl, PmGenerationRun, PmGenerationStatus,
+    UpdatePmGenerationSettingsInput,
 };
 use crate::pm::queries::generate_pm_occurrences;
 
@@ -118,10 +118,7 @@ pub async fn update_pm_generation_settings(
         .map(|c| c.trim().to_string())
         .filter(|c| !c.is_empty())
         .unwrap_or(current.cron_expr);
-    let horizon_days = input
-        .horizon_days
-        .unwrap_or(current.horizon_days)
-        .clamp(1, 365);
+    let horizon_days = input.horizon_days.unwrap_or(current.horizon_days).clamp(1, 365);
     let next = next_cron_run_rfc3339(&cron_expr);
     let now = now_rfc3339();
     db.execute(Statement::from_sql_and_values(

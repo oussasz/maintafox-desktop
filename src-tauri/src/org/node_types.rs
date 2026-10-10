@@ -283,7 +283,11 @@ pub async fn create_node_type(db: &DatabaseConnection, payload: CreateNodeTypePa
     // Retrieve via entity_sync_id
     let sql = format!("SELECT {SELECT_COLS} FROM org_node_types WHERE entity_sync_id = ?");
     let row = db
-        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, sql, [entity_sync_id.into()]))
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            [entity_sync_id.into()],
+        ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("node type created but not found after insert")))?;
     let node_type = map_node_type(row)?;

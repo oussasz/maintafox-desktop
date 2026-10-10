@@ -937,9 +937,7 @@ pub struct PasswordRecoveryContact {
 /// Elevation matches `user_has_elevated_admin_access`: `is_admin = 1` or an active
 /// Administrator / Superadmin role assignment. Callable without a session.
 #[tauri::command]
-pub async fn get_password_recovery_contacts(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<PasswordRecoveryContact>> {
+pub async fn get_password_recovery_contacts(state: State<'_, AppState>) -> AppResult<Vec<PasswordRecoveryContact>> {
     query_password_recovery_contacts(&state.db).await
 }
 
@@ -1018,9 +1016,7 @@ mod password_recovery_contacts_tests {
     use super::{query_password_recovery_contacts, PasswordRecoveryContact};
 
     async fn setup_db() -> sea_orm::DatabaseConnection {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("in-memory SQLite");
+        let db = Database::connect("sqlite::memory:").await.expect("in-memory SQLite");
         db.execute(Statement::from_string(
             DbBackend::Sqlite,
             r"CREATE TABLE user_accounts (

@@ -123,9 +123,7 @@ fn validate_accent_color(value: Option<&str>) -> AppResult<Option<String>> {
     let Some(raw) = value.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
-    let ok = raw.len() == 7
-        && raw.starts_with('#')
-        && raw.chars().skip(1).all(|c| c.is_ascii_hexdigit());
+    let ok = raw.len() == 7 && raw.starts_with('#') && raw.chars().skip(1).all(|c| c.is_ascii_hexdigit());
     if ok {
         Ok(Some(raw.to_ascii_lowercase()))
     } else {
@@ -136,10 +134,7 @@ fn validate_accent_color(value: Option<&str>) -> AppResult<Option<String>> {
 }
 
 /// Assert an active, non-deleted crew exists.
-pub async fn assert_active_crew_exists(
-    db: &impl ConnectionTrait,
-    team_id: i64,
-) -> AppResult<()> {
+pub async fn assert_active_crew_exists(db: &impl ConnectionTrait, team_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -158,10 +153,7 @@ pub async fn assert_active_crew_exists(
 }
 
 /// Lists active crews, optionally scoped to an entity (node or descendant).
-pub async fn list_active_teams(
-    db: &DatabaseConnection,
-    filter: TeamListFilter,
-) -> AppResult<Vec<TeamSummary>> {
+pub async fn list_active_teams(db: &DatabaseConnection, filter: TeamListFilter) -> AppResult<Vec<TeamSummary>> {
     let include_inactive = filter.include_inactive.unwrap_or(false);
     let status_sql = if include_inactive {
         "t.deleted_at IS NULL AND t.status IN ('active', 'inactive')"
@@ -169,8 +161,7 @@ pub async fn list_active_teams(
         "t.deleted_at IS NULL AND t.status = 'active'"
     };
 
-    let (scope_sql, values): (String, Vec<sea_orm::Value>) = if let Some(entity_id) = filter.entity_id
-    {
+    let (scope_sql, values): (String, Vec<sea_orm::Value>) = if let Some(entity_id) = filter.entity_id {
         (
             format!(
                 "{status_sql}
@@ -248,14 +239,10 @@ pub async fn create_team(db: &DatabaseConnection, input: TeamCreateInput) -> App
     let code = input.code.trim().to_string();
     let name = input.name.trim().to_string();
     if code.is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "Crew code is required.".into()
-        ]));
+        return Err(AppError::ValidationFailed(vec!["Crew code is required.".into()]));
     }
     if name.is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "Crew name is required.".into()
-        ]));
+        return Err(AppError::ValidationFailed(vec!["Crew name is required.".into()]));
     }
     validate_team_type(input.team_type.trim())?;
     let status = input.status.unwrap_or_else(|| "active".to_string());
@@ -321,9 +308,7 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
     if let Some(code) = input.code {
         let trimmed = code.trim().to_string();
         if trimmed.is_empty() {
-            return Err(AppError::ValidationFailed(vec![
-                "Crew code is required.".into()
-            ]));
+            return Err(AppError::ValidationFailed(vec!["Crew code is required.".into()]));
         }
         sets.push("code = ?".into());
         values.push(trimmed.into());
@@ -331,9 +316,7 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
     if let Some(name) = input.name {
         let trimmed = name.trim().to_string();
         if trimmed.is_empty() {
-            return Err(AppError::ValidationFailed(vec![
-                "Crew name is required.".into()
-            ]));
+            return Err(AppError::ValidationFailed(vec!["Crew name is required.".into()]));
         }
         sets.push("name = ?".into());
         values.push(trimmed.into());
@@ -378,7 +361,10 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
     sets.push("row_version = row_version + 1".into());
     values.push(input.id.into());
 
-    let sql = format!("UPDATE teams SET {} WHERE id = ? AND deleted_at IS NULL", sets.join(", "));
+    let sql = format!(
+        "UPDATE teams SET {} WHERE id = ? AND deleted_at IS NULL",
+        sets.join(", ")
+    );
     db.execute(Statement::from_sql_and_values(DbBackend::Sqlite, sql, values))
         .await
         .map_err(|e| {
@@ -398,10 +384,7 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
 }
 
 /// Resolve active crew id by business code.
-pub async fn try_resolve_active_team_id_by_code(
-    db: &impl ConnectionTrait,
-    code: &str,
-) -> AppResult<Option<i64>> {
+pub async fn try_resolve_active_team_id_by_code(db: &impl ConnectionTrait, code: &str) -> AppResult<Option<i64>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,

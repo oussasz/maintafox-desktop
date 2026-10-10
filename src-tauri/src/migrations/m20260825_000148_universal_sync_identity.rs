@@ -50,10 +50,8 @@ async fn rename_sync_id(db: &dyn ConnectionTrait, table: &str) -> Result<(), DbE
     let has_sync_id = cols.iter().any(|n| n == "sync_id");
     let has_entity_sync_id = cols.iter().any(|n| n == "entity_sync_id");
     if has_sync_id && !has_entity_sync_id {
-        db.execute_unprepared(&format!(
-            "ALTER TABLE {table} RENAME COLUMN sync_id TO entity_sync_id"
-        ))
-        .await?;
+        db.execute_unprepared(&format!("ALTER TABLE {table} RENAME COLUMN sync_id TO entity_sync_id"))
+            .await?;
     }
     Ok(())
 }
@@ -70,10 +68,8 @@ async fn add_entity_sync_id_if_missing(db: &dyn ConnectionTrait, table: &str) ->
         // Prefer rename over dual columns
         return rename_sync_id(db, table).await;
     }
-    db.execute_unprepared(&format!(
-        "ALTER TABLE {table} ADD COLUMN entity_sync_id TEXT NULL"
-    ))
-    .await?;
+    db.execute_unprepared(&format!("ALTER TABLE {table} ADD COLUMN entity_sync_id TEXT NULL"))
+        .await?;
     db.execute_unprepared(&format!(
         "UPDATE {table} SET entity_sync_id = lower(hex(randomblob(16))) WHERE entity_sync_id IS NULL"
     ))
@@ -85,12 +81,7 @@ async fn add_entity_sync_id_if_missing(db: &dyn ConnectionTrait, table: &str) ->
     Ok(())
 }
 
-async fn add_col_if_missing(
-    db: &dyn ConnectionTrait,
-    table: &str,
-    col: &str,
-    ddl: &str,
-) -> Result<(), DbErr> {
+async fn add_col_if_missing(db: &dyn ConnectionTrait, table: &str, col: &str, ddl: &str) -> Result<(), DbErr> {
     if !table_exists(db, table).await? {
         return Ok(());
     }
@@ -147,8 +138,7 @@ impl MigrationTrait for Migration {
             "asset_document_links",
         ] {
             add_entity_sync_id_if_missing(db, table).await?;
-            add_col_if_missing(db, table, "row_version", "row_version INTEGER NOT NULL DEFAULT 1")
-                .await?;
+            add_col_if_missing(db, table, "row_version", "row_version INTEGER NOT NULL DEFAULT 1").await?;
             // SQLite forbids non-constant defaults on ADD COLUMN — use literal then backfill.
             add_col_if_missing(db, table, "updated_at", "updated_at TEXT NULL").await?;
             if table_exists(db, table).await? {
@@ -160,10 +150,20 @@ impl MigrationTrait for Migration {
             }
         }
 
-        add_col_if_missing(db, "user_accounts", "row_version", "row_version INTEGER NOT NULL DEFAULT 1")
-            .await?;
-        add_col_if_missing(db, "warehouses", "row_version", "row_version INTEGER NOT NULL DEFAULT 1")
-            .await?;
+        add_col_if_missing(
+            db,
+            "user_accounts",
+            "row_version",
+            "row_version INTEGER NOT NULL DEFAULT 1",
+        )
+        .await?;
+        add_col_if_missing(
+            db,
+            "warehouses",
+            "row_version",
+            "row_version INTEGER NOT NULL DEFAULT 1",
+        )
+        .await?;
         add_col_if_missing(db, "warehouses", "updated_at", "updated_at TEXT NULL").await?;
         if table_exists(db, "warehouses").await? {
             db.execute_unprepared(
@@ -206,8 +206,7 @@ impl MigrationTrait for Migration {
         // Reference catalogs — stable code identity for cross-machine rematerialization
         for table in ["reference_sets", "reference_values"] {
             add_entity_sync_id_if_missing(db, table).await?;
-            add_col_if_missing(db, table, "row_version", "row_version INTEGER NOT NULL DEFAULT 1")
-                .await?;
+            add_col_if_missing(db, table, "row_version", "row_version INTEGER NOT NULL DEFAULT 1").await?;
             add_col_if_missing(db, table, "updated_at", "updated_at TEXT NULL").await?;
             if table_exists(db, table).await? {
                 db.execute_unprepared(&format!(
@@ -223,8 +222,7 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute_unprepared("DROP TABLE IF EXISTS media_attachments")
-            .await?;
+        db.execute_unprepared("DROP TABLE IF EXISTS media_attachments").await?;
         Ok(())
     }
 }

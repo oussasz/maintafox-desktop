@@ -101,7 +101,7 @@ pub struct ProductLicenseDiagnosticEvent {
     pub code: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProductLicenseReconciliationPolicy {
     pub retry_attempt: u32,
     pub next_retry_at: Option<String>,
@@ -109,19 +109,6 @@ pub struct ProductLicenseReconciliationPolicy {
     pub last_success_at: Option<String>,
     pub last_error_code: Option<String>,
     pub last_error_message: Option<String>,
-}
-
-impl Default for ProductLicenseReconciliationPolicy {
-    fn default() -> Self {
-        Self {
-            retry_attempt: 0,
-            next_retry_at: None,
-            last_attempt_at: None,
-            last_success_at: None,
-            last_error_code: None,
-            last_error_message: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -446,7 +433,7 @@ pub fn record_has_valid_activation_claim(record: &ProductLicenseStateRecord) -> 
     record
         .activation_claim
         .as_ref()
-        .map_or(false, activation_claim_is_complete)
+        .is_some_and(activation_claim_is_complete)
 }
 
 /// True when this device has a complete product activation claim (tenant is bound).
@@ -886,7 +873,7 @@ pub async fn get_product_license_onboarding_state(
 ///   `adm.settings` + step-up, so nobody at the login screen can swap a working licence.
 async fn authorize_license_key_submission(state: &State<'_, AppState>) -> AppResult<()> {
     let record = load_state_record(state).await?;
-    let usable_activation = record.as_ref().map_or(false, |r| {
+    let usable_activation = record.as_ref().is_some_and(|r| {
         record_has_valid_activation_claim(r)
             && matches!(
                 r.status,

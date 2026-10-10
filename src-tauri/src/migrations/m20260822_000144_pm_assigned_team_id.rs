@@ -41,8 +41,7 @@ impl MigrationTrait for Migration {
         }
         if !names.iter().any(|n| n == "assigned_group_id") {
             return Err(DbErr::Custom(
-                "pm_assigned_team_id: neither assigned_group_id nor assigned_team_id present"
-                    .into(),
+                "pm_assigned_team_id: neither assigned_group_id nor assigned_team_id present".into(),
             ));
         }
 

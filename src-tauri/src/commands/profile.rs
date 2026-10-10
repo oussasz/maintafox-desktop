@@ -322,7 +322,7 @@ pub async fn get_session_history(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SessionHistoryEntry>> {
     let user = require_session!(state);
-    let row_limit = limit.unwrap_or(10).min(50).max(1);
+    let row_limit = limit.unwrap_or(10).clamp(1, 50);
 
     let rows = state
         .db

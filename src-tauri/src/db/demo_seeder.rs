@@ -990,7 +990,7 @@ pub async fn seed_demo_work_orders(db: &DatabaseConnection) -> AppResult<()> {
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("WO status not found: {code}")))?;
         use sea_orm::TryGetable;
-        Ok(i64::try_get(&row, "", "id").map_err(|e| AppError::Internal(anyhow::anyhow!("{e:?}")))?)
+        i64::try_get(&row, "", "id").map_err(|e| AppError::Internal(anyhow::anyhow!("{e:?}")))
     }
 
     // Resolve admin

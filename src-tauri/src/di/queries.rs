@@ -295,7 +295,7 @@ pub async fn list_intervention_requests(db: &DatabaseConnection, filter: DiListF
         .map_err(|e| decode_err("total", e))?;
 
     // ── Data query with LIMIT/OFFSET ──────────────────────────────────────
-    let row_limit = filter.limit.min(200).max(1);
+    let row_limit = filter.limit.clamp(1, 200);
     let offset = filter.offset.max(0);
 
     let data_sql = format!(
@@ -326,7 +326,7 @@ pub async fn get_intervention_request(db: &DatabaseConnection, id: i64) -> AppRe
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \
@@ -477,7 +477,7 @@ pub async fn create_intervention_request(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \
@@ -631,9 +631,9 @@ pub async fn update_di_draft_fields(
     if sets.is_empty() {
         // Nothing to update — return current row as-is
         crate::sync::foundation_stage::warn_stage(
-        crate::sync::ops_stage::stage_intervention_request_sync(db, current.id).await,
-        "di",
-    );
+            crate::sync::ops_stage::stage_intervention_request_sync(db, current.id).await,
+            "di",
+        );
         return Ok(current);
     }
 

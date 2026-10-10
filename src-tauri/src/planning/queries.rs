@@ -144,9 +144,7 @@ fn map_candidate(row: &QueryResult) -> AppResult<ScheduleCandidate> {
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
         source_code: row.try_get::<Option<String>>("", "source_code").unwrap_or(None),
         source_title: row.try_get::<Option<String>>("", "source_title").unwrap_or(None),
-        assigned_team_label: row
-            .try_get::<Option<String>>("", "assigned_team_label")
-            .unwrap_or(None),
+        assigned_team_label: row.try_get::<Option<String>>("", "assigned_team_label").unwrap_or(None),
         assigned_personnel_name: row
             .try_get::<Option<String>>("", "assigned_personnel_name")
             .unwrap_or(None),
@@ -695,7 +693,7 @@ async fn evaluate_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppRe
             if pm_status == "deferred" {
                 prerequisite_blocked = true;
             }
-            if parse_string_array(required_parts_json.as_deref()).len() > 0 {
+            if !parse_string_array(required_parts_json.as_deref()).is_empty() {
                 required_parts_missing = true;
             }
             if required_skills.is_empty() {
@@ -950,11 +948,8 @@ async fn evaluate_candidate(db: &DatabaseConnection, candidate_id: i64) -> AppRe
             .await?
             .and_then(|row| row.try_get("", "c").ok());
 
-        let rate_pair =
-            crate::personnel::queries::resolve_active_rate_pair(db, personnel_id).await?;
-        if let (Some(duration), Some((labor_rate, overtime_rate))) =
-            (candidate.estimated_duration_hours, rate_pair)
-        {
+        let rate_pair = crate::personnel::queries::resolve_active_rate_pair(db, personnel_id).await?;
+        if let (Some(duration), Some((labor_rate, overtime_rate))) = (candidate.estimated_duration_hours, rate_pair) {
             labor_cost_range = Some(
                 json!({
                     "min": duration * labor_rate,

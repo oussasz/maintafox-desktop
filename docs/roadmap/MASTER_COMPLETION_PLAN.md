@@ -249,6 +249,34 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
 
 **Still open until Phase 1.1:** licence envelopes are still symmetric-signed, and the desktop still has `SOFT_ACCEPT_CONTROL_PLANE_ENVELOPES = true`, so envelope forgery is **not yet** prevented on the desktop side. Ed25519 is the next item.
 
+### CI cleanup (2026-10-10/11)
+
+**Finding: CI on `develop` and `main` had been red since at least 2026-08-01.** Clippy failed first, so the Rust unit tests never ran in CI; the Vitest job was red too. Fixed:
+
+- **Lint policy.** `#![deny(clippy::pedantic)]`, plus `nursery` (which `-D warnings` makes fatal), produced about 1,985 errors. The policy is now `deny(clippy::all)`; pedantic and nursery are tracked as gradual debt. `too_many_arguments` (37 functions) and `type_complexity` (4 types) are allowed until they are refactored into input structs. About 20 real `clippy::all` findings were fixed.
+- **MSRV.** A hidden `src-tauri/.clippy.toml` pinned `msrv = 1.78`, but the code needs 1.82. Both it and `Cargo.toml` `rust-version` are now 1.82.
+- **RBAC parity:** `pm.approve` is enforced in the backend and the frontend, so the registry now says `usage: both`. The generated artifacts were regenerated.
+- **Frontend tests (10 failing, now all 432 pass):** IPC call assertions were updated to the central wrapper, the i18n namespace list was refreshed, and the archive tests mock an authenticated session.
+- **Rust tests (39 failing locally on first run).** Fixtures were updated for these changes:
+  - time bombs: fixed dates against the 24 h anti-replay window
+  - crews (`teams`) replacing org nodes as the budget team
+  - the no-orphan-WO and installed-node rules
+  - the org structure model being required
+  - the 7-state DI model
+  - snapshot counts and the golden hash after legitimate changes
+
+**Real production bugs found by the tests that CI never ran:**
+
+| Bug | Impact | Fix |
+|---|---|---|
+| `count_open_di` still queried `intervention_requests.asset_id` after migration 146 renamed it | **Asset decommission failed for every asset** (SQL error) | Query `equipment_id` |
+| Successor budget version INSERT had 15 values for 14 columns (since commit `a5c01445`, April) | **Creating a successor budget version always failed** | Placeholder count fixed |
+| `AssetBindingSummary` had no stale-response guard | Switching assets quickly could show **another asset's** bindings | Request-id guard |
+| `normalizePreflightCode` compared mojibake literals | French completion blockers showed as a generic error | Real characters |
+| Licence compromise response hardcoded `key-v1` | After Ed25519, the emergency action would target a key that does not exist | Uses the active envelope's `key_id` (new `envelope_key_id` in the status view) |
+
+**Speeding up local Rust checks:** run clippy plus the tests of the touched modules with `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0` (no debug info, so compile and link are much faster). Open a draft PR into `develop` so GitHub runs the full suite.
+
 ## 6. Risks and open points
 
 - **D2 departs from the PRD.** The server would use a generic current-state table instead of typed per-entity tables, so the PRD needs an update if you approve it.

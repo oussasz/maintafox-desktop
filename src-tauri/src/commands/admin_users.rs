@@ -675,7 +675,7 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
             &state.db,
             crate::audit::AuditEvent {
                 event_type: crate::audit::event_type::USER_CREATED,
-                actor_id: Some(caller.user_id as i32),
+                actor_id: Some(caller.user_id),
                 entity_type: Some("user_account"),
                 entity_id: Some(new_id_str.as_str()),
                 summary: "User account created",
@@ -925,7 +925,7 @@ pub async fn deactivate_user(user_id: i64, app: AppHandle, state: State<'_, AppS
             &state.db,
             crate::audit::AuditEvent {
                 event_type: crate::audit::event_type::USER_DEACTIVATED,
-                actor_id: Some(caller.user_id as i32),
+                actor_id: Some(caller.user_id),
                 entity_type: Some("user_account"),
                 entity_id: Some(target_str.as_str()),
                 summary: "User account deactivated",
@@ -1193,7 +1193,7 @@ pub async fn revoke_role_scope(assignment_id: i64, app: AppHandle, state: State<
             &state.db,
             crate::audit::AuditEvent {
                 event_type: crate::audit::event_type::ROLE_REVOKED,
-                actor_id: Some(caller.user_id as i32),
+                actor_id: Some(caller.user_id),
                 entity_type: Some("user_scope_assignment"),
                 entity_id: Some(target_str.as_str()),
                 summary: "Role scope assignment revoked",
@@ -1750,7 +1750,7 @@ pub async fn grant_emergency_elevation(
             &state.db,
             crate::audit::AuditEvent {
                 event_type: crate::audit::event_type::RBAC_EMERGENCY_GRANT_CREATED,
-                actor_id: Some(caller.user_id as i32),
+                actor_id: Some(caller.user_id),
                 entity_type: Some("user_account"),
                 entity_id: Some(target_str.as_str()),
                 summary: "Emergency elevation granted",
@@ -1984,7 +1984,12 @@ pub async fn admin_set_user_password(
         ]));
     }
 
-    let plaintext = match input.temporary_password.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let plaintext = match input
+        .temporary_password
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(pw) => {
             validate_password_strength(pw)?;
             pw.to_string()

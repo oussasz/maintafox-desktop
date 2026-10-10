@@ -8,11 +8,11 @@ use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{
     ApplySyncBatchInput, ApplySyncBatchResult, ExecuteSyncRepairInput, ListOutboxFilter, ReplaySyncFailuresInput,
     ReplaySyncFailuresResult, ResolveSyncConflictInput, StageOutboxItemInput, SyncCheckpoint, SyncConflictFilter,
-    SyncConflictRecord, SyncHealthAlert, SyncHealthMetrics, SyncInboundItemInput, SyncInboxItem,
-    SyncMediaManifestItem, SyncObservabilityReport, SyncOutboxItem, SyncPushPayload, SyncRecoveryProof,
-    SyncRepairActionRecord, SyncRepairExecutionResult, SyncRepairPreview, SyncRepairPreviewInput, SyncReplayRun,
-    SyncStateSummary, SyncTypedRejection, SYNC_ENTITY_BUDGET_LINES, SYNC_ENTITY_BUDGET_VERSIONS,
-    SYNC_ENTITY_MEDIA_ATTACHMENTS, SYNC_PROTOCOL_VERSION_V1,
+    SyncConflictRecord, SyncHealthAlert, SyncHealthMetrics, SyncInboundItemInput, SyncInboxItem, SyncMediaManifestItem,
+    SyncObservabilityReport, SyncOutboxItem, SyncPushPayload, SyncRecoveryProof, SyncRepairActionRecord,
+    SyncRepairExecutionResult, SyncRepairPreview, SyncRepairPreviewInput, SyncReplayRun, SyncStateSummary,
+    SyncTypedRejection, SYNC_ENTITY_BUDGET_LINES, SYNC_ENTITY_BUDGET_VERSIONS, SYNC_ENTITY_MEDIA_ATTACHMENTS,
+    SYNC_PROTOCOL_VERSION_V1,
 };
 
 fn hash_payload(payload: &str) -> String {
@@ -496,10 +496,7 @@ fn build_media_manifest_from_outbox(outbox_batch: &[SyncOutboxItem]) -> Option<V
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let byte_size = payload
-            .get("byte_size")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
+        let byte_size = payload.get("byte_size").and_then(|v| v.as_i64()).unwrap_or(0);
         if content_sha256.is_empty() || object_key.is_empty() {
             continue;
         }
@@ -1675,9 +1672,7 @@ pub async fn preview_sync_repair(
     if affected_outbox_count == 0 && affected_conflict_count == 0 && input.mode != "checkpoint_realign" {
         warnings.push("Repair preview has zero affected rows.".to_string());
     }
-    let risk_level = if input.mode == "checkpoint_realign" {
-        "high".to_string()
-    } else if affected_outbox_count + affected_conflict_count > 100 {
+    let risk_level = if input.mode == "checkpoint_realign" || affected_outbox_count + affected_conflict_count > 100 {
         "high".to_string()
     } else if affected_outbox_count + affected_conflict_count > 20 {
         "medium".to_string()

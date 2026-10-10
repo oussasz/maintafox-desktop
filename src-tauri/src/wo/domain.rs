@@ -480,22 +480,14 @@ pub fn map_work_order(row: &QueryResult) -> AppResult<WorkOrder> {
         source_di_status: row.try_get::<Option<String>>("", "source_di_status").unwrap_or(None),
         assigned_team_code: row.try_get::<Option<String>>("", "assigned_team_code").unwrap_or(None),
         assigned_team_name: row.try_get::<Option<String>>("", "assigned_team_name").unwrap_or(None),
-        assigned_team_label: row
-            .try_get::<Option<String>>("", "assigned_team_label")
-            .unwrap_or(None),
-        schedule_commitment_id: row
-            .try_get::<Option<i64>>("", "schedule_commitment_id")
-            .unwrap_or(None),
+        assigned_team_label: row.try_get::<Option<String>>("", "assigned_team_label").unwrap_or(None),
+        schedule_commitment_id: row.try_get::<Option<i64>>("", "schedule_commitment_id").unwrap_or(None),
         schedule_frozen: row
             .try_get::<Option<i64>>("", "schedule_frozen")
             .ok()
             .flatten()
             .map(|v| v != 0)
-            .or_else(|| {
-                row.try_get::<i64>("", "schedule_frozen")
-                    .ok()
-                    .map(|v| v != 0)
-            }),
+            .or_else(|| row.try_get::<i64>("", "schedule_frozen").ok().map(|v| v != 0)),
     })
 }
 

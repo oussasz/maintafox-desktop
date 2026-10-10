@@ -2007,9 +2007,7 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
     notes: Option<&str>,
     entity_sync_id: Option<uuid::Uuid>,
 ) -> AppResult<i64> {
-    let entity_sync_id = entity_sync_id
-        .unwrap_or_else(uuid::Uuid::new_v4)
-        .to_string();
+    let entity_sync_id = entity_sync_id.unwrap_or_else(uuid::Uuid::new_v4).to_string();
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO inventory_transactions (
@@ -2039,9 +2037,7 @@ async fn insert_inventory_transaction<C: ConnectionTrait>(
             "SELECT last_insert_rowid() AS id".to_string(),
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("failed to read inventory transaction id"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read inventory transaction id")))?;
     Ok(id_row.try_get("", "id")?)
 }
 
@@ -2464,8 +2460,7 @@ pub async fn release_stock_reservation(
 ) -> AppResult<StockReservation> {
     let tx = db.begin().await?;
     let (released, movement_id) =
-        release_stock_reservation_with_connection(&tx, input.reservation_id, input.notes.as_deref())
-            .await?;
+        release_stock_reservation_with_connection(&tx, input.reservation_id, input.notes.as_deref()).await?;
     tx.commit().await?;
     crate::sync::foundation_stage::warn_stage(
         crate::sync::ops_stage::stage_stock_reservation_sync(db, released.id).await,

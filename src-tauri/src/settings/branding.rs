@@ -49,9 +49,9 @@ fn ensure_path_under_app_data(file: &Path, app_data_dir: &Path) -> AppResult<()>
     let root = app_data_dir
         .canonicalize()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("canonicalize app_data_dir: {e}")))?;
-    let abs = file.canonicalize().map_err(|e| {
-        AppError::ValidationFailed(vec![format!("Impossible de résoudre le chemin logo : {e}")])
-    })?;
+    let abs = file
+        .canonicalize()
+        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de résoudre le chemin logo : {e}")]))?;
     if !abs.starts_with(&root) {
         return Err(AppError::ValidationFailed(vec![
             "Chemin logo hors du répertoire de données de l'application.".into(),
@@ -111,7 +111,7 @@ fn resolve_logo_path(app_data_dir: &Path, relative: &str) -> AppResult<PathBuf> 
     let rel = relative.replace('\\', "/");
     if rel.is_empty() || rel.contains("..") || Path::new(&rel).is_absolute() {
         return Err(AppError::ValidationFailed(vec![
-            "Chemin relatif de logo invalide.".into(),
+            "Chemin relatif de logo invalide.".into()
         ]));
     }
     let abs = app_data_dir.join(&rel);
@@ -120,12 +120,12 @@ fn resolve_logo_path(app_data_dir: &Path, relative: &str) -> AppResult<PathBuf> 
         ensure_path_under_app_data(&abs, app_data_dir)?;
     } else {
         let parent = abs.parent().unwrap_or(app_data_dir);
-        let parent_canon = parent.canonicalize().map_err(|e| {
-            AppError::ValidationFailed(vec![format!("Impossible de résoudre le dossier logo : {e}")])
-        })?;
-        let root = app_data_dir.canonicalize().map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("canonicalize app_data_dir: {e}"))
-        })?;
+        let parent_canon = parent
+            .canonicalize()
+            .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de résoudre le dossier logo : {e}")]))?;
+        let root = app_data_dir
+            .canonicalize()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("canonicalize app_data_dir: {e}")))?;
         if !parent_canon.starts_with(&root) {
             return Err(AppError::ValidationFailed(vec![
                 "Chemin logo hors du répertoire de données de l'application.".into(),
@@ -138,15 +138,14 @@ fn resolve_logo_path(app_data_dir: &Path, relative: &str) -> AppResult<PathBuf> 
 fn read_preview_bytes(abs: &Path) -> AppResult<(String, String)> {
     let mime = extension_mime(abs).ok_or_else(|| {
         AppError::ValidationFailed(vec![
-            "Type d'image non autorisé. Utilisez png, jpg, jpeg, webp ou gif.".into(),
+            "Type d'image non autorisé. Utilisez png, jpg, jpeg, webp ou gif.".into()
         ])
     })?;
-    let bytes = std::fs::read(abs).map_err(|e| {
-        AppError::ValidationFailed(vec![format!("Impossible de lire le fichier logo : {e}")])
-    })?;
+    let bytes = std::fs::read(abs)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de lire le fichier logo : {e}")]))?;
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err(AppError::ValidationFailed(vec![
-            "Le logo dépasse la limite de taille.".into(),
+            "Le logo dépasse la limite de taille.".into()
         ]));
     }
     Ok((mime.to_string(), B64.encode(bytes)))
@@ -184,9 +183,8 @@ pub async fn upload_document_branding_logo(
         ]));
     };
 
-    let meta = std::fs::metadata(src).map_err(|e| {
-        AppError::ValidationFailed(vec![format!("Impossible de lire le fichier source : {e}")])
-    })?;
+    let meta = std::fs::metadata(src)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de lire le fichier source : {e}")]))?;
     if !meta.is_file() {
         return Err(AppError::ValidationFailed(vec![
             "Le chemin source n'est pas un fichier.".into(),
@@ -218,24 +216,16 @@ pub async fn upload_document_branding_logo(
 
     let relative = format!("{BRANDING_DIR}/logo.{safe_ext}");
     let absolute = app_data_dir.join(&relative);
-    let bytes = std::fs::read(src).map_err(|e| {
-        AppError::ValidationFailed(vec![format!("Impossible de lire le fichier : {e}")])
-    })?;
-    std::fs::write(&absolute, &bytes)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("write logo file: {e}")))?;
+    let bytes = std::fs::read(src)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de lire le fichier : {e}")]))?;
+    std::fs::write(&absolute, &bytes).map_err(|e| AppError::Internal(anyhow::anyhow!("write logo file: {e}")))?;
 
     let mut header = load_header_json(db).await?;
     if let Some(obj) = header.as_object_mut() {
         obj.insert("logo_relative_path".into(), Value::String(relative.clone()));
         obj.entry("version").or_insert(json!(1));
     }
-    persist_header_json(
-        db,
-        &header,
-        changed_by_id,
-        "Document branding logo uploaded",
-    )
-    .await?;
+    persist_header_json(db, &header, changed_by_id, "Document branding logo uploaded").await?;
 
     Ok(DocumentBrandingLogoUploadResult {
         relative_path: relative,
@@ -269,13 +259,7 @@ pub async fn clear_document_branding_logo(
     if let Some(obj) = header.as_object_mut() {
         obj.insert("logo_relative_path".into(), Value::Null);
     }
-    persist_header_json(
-        db,
-        &header,
-        changed_by_id,
-        "Document branding logo cleared",
-    )
-    .await
+    persist_header_json(db, &header, changed_by_id, "Document branding logo cleared").await
 }
 
 /// Read the current document branding logo for inline preview.

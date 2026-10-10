@@ -454,7 +454,7 @@ pub async fn record_lifecycle_event(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {EVENT_SELECT} \
                  FROM equipment_lifecycle_events WHERE entity_sync_id = ?"
             ),

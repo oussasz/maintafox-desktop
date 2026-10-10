@@ -70,7 +70,7 @@ describe("checkForUpdate (service)", () => {
 
     await checkForUpdate();
 
-    expect(mockInvoke).toHaveBeenCalledWith("check_for_update");
+    expect(mockInvoke).toHaveBeenCalledWith("check_for_update", undefined);
   });
 
   it("throws a ZodError when Rust returns a malformed response", async () => {

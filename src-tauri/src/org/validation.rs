@@ -554,7 +554,7 @@ async fn remap_integer_fk(
 ) -> AppResult<()> {
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        &format!(
+        format!(
             "UPDATE {table} SET {column} = ?, updated_at = ?, row_version = row_version + 1 \
              WHERE {column} = ?"
         ),
@@ -574,7 +574,7 @@ async fn remap_integer_fk_row_version_only(
 ) -> AppResult<()> {
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
-        &format!(
+        format!(
             "UPDATE {table} SET {column} = ?, row_version = row_version + 1 \
              WHERE {column} = ?"
         ),

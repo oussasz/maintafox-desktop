@@ -516,8 +516,7 @@ export const PERMISSION_CATALOG: readonly PermissionMeta[] = [
     category: "pm",
     isDangerous: false,
     requiresStepUp: false,
-    usage: "catalog-only",
-    usageJustification: "Reserved for PM approval workflow; not yet enforced",
+    usage: "both",
     aliases: [] as const,
   },
   {

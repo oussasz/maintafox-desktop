@@ -4,22 +4,17 @@ use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, St
 use sea_orm_migration::MigratorTrait;
 
 use crate::sync::domain::{
-    ApplySyncBatchInput, StageOutboxItemInput, SyncAckInput, SyncInboundItemInput,
-    SYNC_ENTITY_ARTICLES, SYNC_ENTITY_EQUIPMENT, SYNC_ENTITY_INTERVENTION_REQUESTS,
-    SYNC_ENTITY_MEDIA_ATTACHMENTS, SYNC_ENTITY_ORG_NODES, SYNC_ENTITY_STOCK_LOCATIONS,
-    SYNC_ENTITY_STOCK_MOVEMENTS, SYNC_ENTITY_WAREHOUSES, SYNC_ENTITY_WORK_ORDERS,
+    ApplySyncBatchInput, StageOutboxItemInput, SyncAckInput, SyncInboundItemInput, SYNC_ENTITY_ARTICLES,
+    SYNC_ENTITY_EQUIPMENT, SYNC_ENTITY_INTERVENTION_REQUESTS, SYNC_ENTITY_MEDIA_ATTACHMENTS, SYNC_ENTITY_ORG_NODES,
+    SYNC_ENTITY_STOCK_LOCATIONS, SYNC_ENTITY_STOCK_MOVEMENTS, SYNC_ENTITY_WAREHOUSES, SYNC_ENTITY_WORK_ORDERS,
     SYNC_ENTITY_WORK_ORDER_TASKS, SYNC_PROTOCOL_VERSION_V1,
 };
 use crate::sync::materialize::materialize_inbox_batch;
 use crate::sync::queries::{apply_sync_batch, list_outbox_items, stage_outbox_item};
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite");
-    crate::migrations::Migrator::up(&db, None)
-        .await
-        .expect("migrations");
+    let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
+    crate::migrations::Migrator::up(&db, None).await.expect("migrations");
     crate::db::seeder::seed_system_data(&db)
         .await
         .expect("seed system data");
@@ -51,7 +46,7 @@ async fn setup_db() -> DatabaseConnection {
                 'SITE', 'Site', 1, 1, 0, 1, 0, 1, 1,
                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
              )"
-                .to_string(),
+            .to_string(),
         ))
         .await
         .expect("node type");
@@ -79,9 +74,7 @@ async fn first_unit_value_id(db: &DatabaseConnection) -> i64 {
     row.try_get("", "id").expect("unit id")
 }
 
-fn outbox_to_inbound(
-    items: &[crate::sync::domain::SyncOutboxItem],
-) -> Vec<SyncInboundItemInput> {
+fn outbox_to_inbound(items: &[crate::sync::domain::SyncOutboxItem]) -> Vec<SyncInboundItemInput> {
     items
         .iter()
         .map(|o| SyncInboundItemInput {
@@ -94,12 +87,7 @@ fn outbox_to_inbound(
         .collect()
 }
 
-async fn exchange_a_to_b(
-    db_a: &DatabaseConnection,
-    db_b: &DatabaseConnection,
-    batch_id: &str,
-    checkpoint: &str,
-) {
+async fn exchange_a_to_b(db_a: &DatabaseConnection, db_b: &DatabaseConnection, batch_id: &str, checkpoint: &str) {
     let pending = list_outbox_items(
         db_a,
         crate::sync::domain::ListOutboxFilter {
@@ -109,10 +97,7 @@ async fn exchange_a_to_b(
     )
     .await
     .expect("list A outbox");
-    assert!(
-        !pending.is_empty(),
-        "DB-A must have pending outbox before exchange"
-    );
+    assert!(!pending.is_empty(), "DB-A must have pending outbox before exchange");
 
     let acks: Vec<SyncAckInput> = pending
         .iter()
@@ -133,18 +118,10 @@ async fn exchange_a_to_b(
         policy_metadata_json: None,
     };
 
-    apply_sync_batch(db_a, batch.clone())
-        .await
-        .expect("ack on A");
+    apply_sync_batch(db_a, batch.clone()).await.expect("ack on A");
     apply_sync_batch(db_b, batch).await.expect("ingest on B");
-    let mat = materialize_inbox_batch(db_b, Some(200))
-        .await
-        .expect("materialize B");
-    assert!(
-        mat.errors.is_empty(),
-        "materialize errors on B: {:?}",
-        mat.errors
-    );
+    let mat = materialize_inbox_batch(db_b, Some(200)).await.expect("materialize B");
+    assert!(mat.errors.is_empty(), "materialize errors on B: {:?}", mat.errors);
     assert_eq!(mat.conflicts, 0, "unexpected conflicts on B");
     assert!(mat.applied > 0, "expected applied rows on B");
 }
@@ -595,8 +572,7 @@ async fn golden_exchange_request_fixture_validates() {
     let raw = include_str!("fixtures/exchange_request_v1.json");
     let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     let value: serde_json::Value = serde_json::from_str(raw).expect("parse request fixture");
-    crate::vps::guards::validate_sync_exchange_request_json(&value)
-        .expect("request fixture must satisfy VPS contract");
+    crate::vps::guards::validate_sync_exchange_request_json(&value).expect("request fixture must satisfy VPS contract");
 }
 
 #[tokio::test]

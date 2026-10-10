@@ -34,6 +34,13 @@ const COMMON_TOP_KEYS = [
   "pagination",
   "table",
   "time",
+  // Shared UI primitives added after the initial namespace freeze.
+  "assetPicker",
+  "detailWorkspace",
+  "kanban",
+  "linkedEntity",
+  "resourceTimeline",
+  "smartFilter",
 ];
 const AUTH_TOP_KEYS = [
   "activation",

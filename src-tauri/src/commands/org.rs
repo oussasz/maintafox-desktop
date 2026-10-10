@@ -14,7 +14,7 @@
 use tauri::State;
 
 use crate::auth::rbac::PermissionScope;
-use crate::errors::{AppError, AppResult};
+use crate::errors::AppResult;
 use crate::org::fail::fail;
 use crate::org::{
     audit::{self, OrgAuditEventInput, OrgChangeEvent},

@@ -125,7 +125,7 @@ pub async fn convert_di_to_work_order(
     let di_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \
@@ -419,7 +419,7 @@ pub async fn convert_di_to_work_order(
     let updated_row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {IR_COLS}, {IR_JOIN_COLS} \
                  FROM intervention_requests ir \
                  {IR_JOINS} \

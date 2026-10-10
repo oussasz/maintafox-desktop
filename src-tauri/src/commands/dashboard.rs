@@ -8,13 +8,15 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::analytics::layout::{
+    get_layout as get_analytics_layout, merge_overview_kpis_into_layout, save_layout as save_analytics_layout,
+};
+use crate::analytics::overview_kpis::{build_overview_kpis, OverviewKpisPayload};
 use crate::auth::rbac::{check_permission, PermissionScope};
 use crate::errors::{AppError, AppResult};
 use crate::kpi_definitions;
 use crate::require_session;
 use crate::state::AppState;
-use crate::analytics::layout::{get_layout as get_analytics_layout, merge_overview_kpis_into_layout, save_layout as save_analytics_layout};
-use crate::analytics::overview_kpis::{build_overview_kpis, OverviewKpisPayload};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
@@ -146,13 +148,13 @@ fn validate_dashboard_layout_json(raw: &str) -> AppResult<()> {
             .ok_or_else(|| AppError::ValidationFailed(vec!["layout_json.metric_cards must be an array.".into()]))?;
         if arr.len() > 16 {
             return Err(AppError::ValidationFailed(vec![
-                "layout_json.metric_cards length invalid.".into()
+                "layout_json.metric_cards length invalid.".into(),
             ]));
         }
         for w in arr {
-            let wo = w.as_object().ok_or_else(|| {
-                AppError::ValidationFailed(vec!["each metric_card must be an object.".into()])
-            })?;
+            let wo = w
+                .as_object()
+                .ok_or_else(|| AppError::ValidationFailed(vec!["each metric_card must be an object.".into()]))?;
             wo.get("id")
                 .and_then(|x| x.as_str())
                 .filter(|s| !s.is_empty() && s.len() <= 64)
@@ -861,14 +863,10 @@ pub async fn get_overview_kpi_layout(state: State<'_, AppState>) -> AppResult<Ov
 }
 
 #[tauri::command]
-pub async fn save_overview_kpi_layout(
-    input: SaveOverviewKpiLayoutInput,
-    state: State<'_, AppState>,
-) -> AppResult<()> {
+pub async fn save_overview_kpi_layout(input: SaveOverviewKpiLayoutInput, state: State<'_, AppState>) -> AppResult<()> {
     let user = require_session!(state);
-    let overview: serde_json::Value = serde_json::from_str(&input.overview_kpis_json).map_err(|e| {
-        AppError::ValidationFailed(vec![format!("overview_kpis_json: {e}")])
-    })?;
+    let overview: serde_json::Value = serde_json::from_str(&input.overview_kpis_json)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("overview_kpis_json: {e}")]))?;
     let existing = get_analytics_layout(&state.db, i64::from(user.user_id)).await?;
     let merged = merge_overview_kpis_into_layout(&existing, overview)?;
     save_analytics_layout(&state.db, i64::from(user.user_id), &merged).await

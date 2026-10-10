@@ -76,43 +76,20 @@ fn cell(
     }
 }
 
-async fn count_scoped(
-    db: &DatabaseConnection,
-    where_sql: &str,
-    binds: &[Value],
-    extra_and: &str,
-) -> AppResult<i64> {
-    let sql = format!(
-        "SELECT COUNT(*) AS cnt {METRICS_FROM} WHERE {where_sql} AND ({extra_and})"
-    );
+async fn count_scoped(db: &DatabaseConnection, where_sql: &str, binds: &[Value], extra_and: &str) -> AppResult<i64> {
+    let sql = format!("SELECT COUNT(*) AS cnt {METRICS_FROM} WHERE {where_sql} AND ({extra_and})");
     let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds.to_vec(),
-        ))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds.to_vec()))
         .await?;
-    Ok(row
-        .map(|r| r.try_get::<i64>("", "cnt").unwrap_or(0))
-        .unwrap_or(0))
+    Ok(row.map(|r| r.try_get::<i64>("", "cnt").unwrap_or(0)).unwrap_or(0))
 }
 
-async fn count_scoped_total(
-    db: &DatabaseConnection,
-    where_sql: &str,
-    binds: &[Value],
-) -> AppResult<i64> {
+async fn count_scoped_total(db: &DatabaseConnection, where_sql: &str, binds: &[Value]) -> AppResult<i64> {
     let sql = format!("SELECT COUNT(*) AS cnt {METRICS_FROM} WHERE {where_sql}");
     let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds.to_vec(),
-        ))
+        .query_one(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds.to_vec()))
         .await?;
-    Ok(row
-        .map(|r| r.try_get::<i64>("", "cnt").unwrap_or(0))
-        .unwrap_or(0))
+    Ok(row.map(|r| r.try_get::<i64>("", "cnt").unwrap_or(0)).unwrap_or(0))
 }
 
 /// Compute registry strip metrics under the same SmartFilterBar scope as `search_assets`.
@@ -143,9 +120,7 @@ pub async fn get_equipment_registry_metrics(
         db,
         &where_sql,
         &binds,
-        &format!(
-            "{CRITICAL_SQL} AND ({DOWN_STATUS_SQL} OR {OPEN_DI_EXISTS} OR {OPEN_WO_EXISTS})"
-        ),
+        &format!("{CRITICAL_SQL} AND ({DOWN_STATUS_SQL} OR {OPEN_DI_EXISTS} OR {OPEN_WO_EXISTS})"),
     )
     .await?;
     let critical_cell = cell(
@@ -198,8 +173,7 @@ pub async fn get_equipment_registry_metrics(
     );
 
     // ── EQUIP_HEALTH_SCORE (sample + reuse SSOT scorer) ───────────────────
-    let (avg_health, health_available) =
-        average_health_score(db, &where_sql, &binds).await?;
+    let (avg_health, health_available) = average_health_score(db, &where_sql, &binds).await?;
     let health_cell = cell(
         kpi_definitions::equipment::EQUIP_HEALTH_SCORE,
         kpi_definitions::catalog::EQUIP_HEALTH_SCORE,
@@ -212,32 +186,18 @@ pub async fn get_equipment_registry_metrics(
 
     Ok(EquipmentRegistryMetricsPayload {
         scoped_total,
-        cells: vec![
-            status_cell,
-            critical_cell,
-            health_cell,
-            open_work_cell,
-            stale_cell,
-        ],
+        cells: vec![status_cell, critical_cell, health_cell, open_work_cell, stale_cell],
     })
 }
 
-async fn average_health_score(
-    db: &DatabaseConnection,
-    where_sql: &str,
-    binds: &[Value],
-) -> AppResult<(f64, bool)> {
+async fn average_health_score(db: &DatabaseConnection, where_sql: &str, binds: &[Value]) -> AppResult<(f64, bool)> {
     let sql = format!(
         "SELECT e.id {METRICS_FROM} WHERE {where_sql} \
          AND EXISTS (SELECT 1 FROM equipment_lifecycle_events le WHERE le.equipment_id = e.id) \
          ORDER BY e.id ASC LIMIT {HEALTH_SCORE_SAMPLE_CAP}"
     );
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            binds.to_vec(),
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, binds.to_vec()))
         .await?;
 
     if rows.is_empty() {
@@ -263,11 +223,7 @@ async fn average_health_score(
     Ok((sum / n as f64, true))
 }
 
-async fn load_open_work_series(
-    db: &DatabaseConnection,
-    where_sql: &str,
-    binds: &[Value],
-) -> AppResult<Vec<f64>> {
+async fn load_open_work_series(db: &DatabaseConnection, where_sql: &str, binds: &[Value]) -> AppResult<Vec<f64>> {
     // Daily count of distinct scoped assets that received a new open DI or WO that day (30d).
     let sql = format!(
         "SELECT d AS day, COUNT(*) AS cnt FROM (\
@@ -290,11 +246,7 @@ async fn load_open_work_series(
     all_binds.extend(binds.iter().cloned());
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            &sql,
-            all_binds,
-        ))
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, all_binds))
         .await?;
 
     let mut out = Vec::new();

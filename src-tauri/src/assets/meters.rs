@@ -404,7 +404,7 @@ pub async fn create_asset_meter(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {METER_SELECT} FROM equipment_meters WHERE entity_sync_id = ?"),
+            format!("SELECT {METER_SELECT} FROM equipment_meters WHERE entity_sync_id = ?"),
             [entity_sync_id.into()],
         ))
         .await?
@@ -548,7 +548,7 @@ pub async fn record_meter_reading(
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {READING_SELECT} FROM asset_meter_readings \
                  WHERE meter_id = ? ORDER BY id DESC LIMIT 1"
             ),

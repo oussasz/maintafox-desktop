@@ -4,21 +4,16 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 
 use crate::errors::AppResult;
 use crate::sync::domain::{
-    ArticleSyncPayload, InterventionRequestSyncPayload, MediaAttachmentSyncPayload,
-    PmOccurrenceSyncPayload, PmPlanSyncPayload, PmPlanVersionSyncPayload, StageOutboxItemInput,
-    StockLocationSyncPayload, StockMovementSyncPayload, StockReservationSyncPayload,
-    WarehouseSyncPayload, SYNC_ENTITY_ARTICLES, SYNC_ENTITY_INTERVENTION_REQUESTS,
-    SYNC_ENTITY_MEDIA_ATTACHMENTS, SYNC_ENTITY_PM_OCCURRENCES, SYNC_ENTITY_PM_PLANS,
+    ArticleSyncPayload, InterventionRequestSyncPayload, MediaAttachmentSyncPayload, PmOccurrenceSyncPayload,
+    PmPlanSyncPayload, PmPlanVersionSyncPayload, StageOutboxItemInput, StockLocationSyncPayload,
+    StockMovementSyncPayload, StockReservationSyncPayload, WarehouseSyncPayload, SYNC_ENTITY_ARTICLES,
+    SYNC_ENTITY_INTERVENTION_REQUESTS, SYNC_ENTITY_MEDIA_ATTACHMENTS, SYNC_ENTITY_PM_OCCURRENCES, SYNC_ENTITY_PM_PLANS,
     SYNC_ENTITY_PM_PLAN_VERSIONS, SYNC_ENTITY_STOCK_LOCATIONS, SYNC_ENTITY_STOCK_MOVEMENTS,
     SYNC_ENTITY_STOCK_RESERVATIONS, SYNC_ENTITY_WAREHOUSES,
 };
 use crate::sync::queries::stage_outbox_item;
 
-async fn lookup_entity_sync_id(
-    db: &impl ConnectionTrait,
-    table: &str,
-    id: i64,
-) -> AppResult<Option<String>> {
+async fn lookup_entity_sync_id(db: &impl ConnectionTrait, table: &str, id: i64) -> AppResult<Option<String>> {
     let sql = format!("SELECT entity_sync_id FROM {table} WHERE id = ? LIMIT 1");
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -35,10 +30,7 @@ async fn lookup_entity_sync_id(
         .filter(|s| !s.is_empty()))
 }
 
-pub async fn stage_intervention_request_sync(
-    db: &DatabaseConnection,
-    di_id: i64,
-) -> AppResult<()> {
+pub async fn stage_intervention_request_sync(db: &DatabaseConnection, di_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -137,9 +129,7 @@ pub async fn stage_pm_plan_sync(db: &DatabaseConnection, plan_id: i64) -> AppRes
             Some(id) => lookup_entity_sync_id(db, "teams", id).await?,
             None => None,
         },
-        lifecycle_status: row
-            .try_get("", "lifecycle_status")
-            .unwrap_or_else(|_| "draft".into()),
+        lifecycle_status: row.try_get("", "lifecycle_status").unwrap_or_else(|_| "draft".into()),
         is_active: is_active != 0,
         updated_at: row.try_get("", "updated_at").ok(),
     };
@@ -272,9 +262,7 @@ pub async fn stage_stock_location_sync(db: &DatabaseConnection, location_id: i64
         .unwrap_or_else(|| code.clone());
     let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
     let is_active: i64 = row.try_get("", "is_active").unwrap_or(1);
-    let warehouse_esid: String = row
-        .try_get("", "warehouse_entity_sync_id")
-        .unwrap_or_default();
+    let warehouse_esid: String = row.try_get("", "warehouse_entity_sync_id").unwrap_or_default();
     if warehouse_esid.is_empty() {
         return Ok(());
     }
@@ -303,10 +291,7 @@ pub async fn stage_stock_location_sync(db: &DatabaseConnection, location_id: i64
     Ok(())
 }
 
-pub async fn stage_stock_reservation_sync(
-    db: &DatabaseConnection,
-    reservation_id: i64,
-) -> AppResult<()> {
+pub async fn stage_stock_reservation_sync(db: &DatabaseConnection, reservation_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -337,9 +322,7 @@ pub async fn stage_stock_reservation_sync(
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
     let article_esid: String = row.try_get("", "article_entity_sync_id").unwrap_or_default();
-    let warehouse_esid: String = row
-        .try_get("", "warehouse_entity_sync_id")
-        .unwrap_or_default();
+    let warehouse_esid: String = row.try_get("", "warehouse_entity_sync_id").unwrap_or_default();
     let location_esid: String = row.try_get("", "location_entity_sync_id").unwrap_or_default();
     if article_esid.is_empty() || warehouse_esid.is_empty() || location_esid.is_empty() {
         return Ok(());
@@ -375,10 +358,7 @@ pub async fn stage_stock_reservation_sync(
     Ok(())
 }
 
-pub async fn stage_stock_movement_sync(
-    db: &DatabaseConnection,
-    transaction_id: i64,
-) -> AppResult<()> {
+pub async fn stage_stock_movement_sync(db: &DatabaseConnection, transaction_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -403,9 +383,7 @@ pub async fn stage_stock_movement_sync(
         .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
     let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
     let article_esid: String = row.try_get("", "article_entity_sync_id").unwrap_or_default();
-    let warehouse_esid: String = row
-        .try_get("", "warehouse_entity_sync_id")
-        .unwrap_or_default();
+    let warehouse_esid: String = row.try_get("", "warehouse_entity_sync_id").unwrap_or_default();
     let location_esid: String = row.try_get("", "location_entity_sync_id").unwrap_or_default();
     if article_esid.is_empty() || warehouse_esid.is_empty() || location_esid.is_empty() {
         return Ok(());
@@ -460,10 +438,7 @@ pub async fn stage_media_attachment_sync(
     Ok(())
 }
 
-pub async fn stage_pm_plan_version_sync(
-    db: &DatabaseConnection,
-    version_id: i64,
-) -> AppResult<()> {
+pub async fn stage_pm_plan_version_sync(db: &DatabaseConnection, version_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -479,9 +454,7 @@ pub async fn stage_pm_plan_version_sync(
     let Some(row) = row else {
         return Ok(());
     };
-    let plan_esid: String = row
-        .try_get("", "pm_plan_entity_sync_id")
-        .unwrap_or_default();
+    let plan_esid: String = row.try_get("", "pm_plan_entity_sync_id").unwrap_or_default();
     if plan_esid.is_empty() {
         return Ok(());
     }
@@ -517,10 +490,7 @@ pub async fn stage_pm_plan_version_sync(
     Ok(())
 }
 
-pub async fn stage_pm_occurrence_sync(
-    db: &DatabaseConnection,
-    occurrence_id: i64,
-) -> AppResult<()> {
+pub async fn stage_pm_occurrence_sync(db: &DatabaseConnection, occurrence_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -539,12 +509,8 @@ pub async fn stage_pm_occurrence_sync(
     let Some(row) = row else {
         return Ok(());
     };
-    let plan_esid: String = row
-        .try_get("", "pm_plan_entity_sync_id")
-        .unwrap_or_default();
-    let ver_esid: String = row
-        .try_get("", "pm_plan_version_entity_sync_id")
-        .unwrap_or_default();
+    let plan_esid: String = row.try_get("", "pm_plan_entity_sync_id").unwrap_or_default();
+    let ver_esid: String = row.try_get("", "pm_plan_version_entity_sync_id").unwrap_or_default();
     if plan_esid.is_empty() || ver_esid.is_empty() {
         return Ok(());
     }
@@ -559,12 +525,8 @@ pub async fn stage_pm_occurrence_sync(
         row_version,
         pm_plan_entity_sync_id: plan_esid,
         pm_plan_version_entity_sync_id: ver_esid,
-        due_basis: row
-            .try_get("", "due_basis")
-            .unwrap_or_else(|_| "calendar".into()),
-        status: row
-            .try_get("", "status")
-            .unwrap_or_else(|_| "generated".into()),
+        due_basis: row.try_get("", "due_basis").unwrap_or_else(|_| "calendar".into()),
+        status: row.try_get("", "status").unwrap_or_else(|_| "generated".into()),
         due_at: row.try_get("", "due_at").ok(),
         linked_work_order_entity_sync_id: row.try_get("", "linked_work_order_entity_sync_id").ok(),
     };

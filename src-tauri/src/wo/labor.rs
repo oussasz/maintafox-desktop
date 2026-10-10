@@ -239,7 +239,7 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("{LABOR_SELECT} WHERE woi.rowid = last_insert_rowid()"),
+            format!("{LABOR_SELECT} WHERE woi.rowid = last_insert_rowid()"),
             [],
         ))
         .await?
@@ -267,7 +267,7 @@ pub async fn close_labor_entry(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("{LABOR_SELECT} WHERE woi.id = ?"),
+            format!("{LABOR_SELECT} WHERE woi.id = ?"),
             [intervener_id.into()],
         ))
         .await?
@@ -308,7 +308,7 @@ pub async fn close_labor_entry(
     let updated = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("{LABOR_SELECT} WHERE woi.id = ?"),
+            format!("{LABOR_SELECT} WHERE woi.id = ?"),
             [intervener_id.into()],
         ))
         .await?
@@ -332,7 +332,7 @@ pub async fn list_labor_entries(db: &DatabaseConnection, wo_id: i64) -> AppResul
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("{LABOR_SELECT} WHERE woi.work_order_id = ? ORDER BY woi.id ASC"),
+            format!("{LABOR_SELECT} WHERE woi.work_order_id = ? ORDER BY woi.id ASC"),
             [wo_id.into()],
         ))
         .await?;

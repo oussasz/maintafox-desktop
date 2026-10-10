@@ -67,15 +67,13 @@ impl EntitlementLifecycleAction {
 pub fn entitlement_transition_allowed(from: EntitlementLifecycleState, action: EntitlementLifecycleAction) -> bool {
     use EntitlementLifecycleAction::*;
     use EntitlementLifecycleState::*;
-    match (from, action) {
-        (Expired | Revoked, Issue) => true,
-        (Active | Grace, Renew) => true,
-        (Active | Grace, Suspend) => true,
-        (Suspended, ResumeFromSuspension) => true,
-        (Active | Grace | Suspended, Revoke) => true,
-        (Active | Grace, EmergencyLock) => true,
-        _ => false,
-    }
+    matches!(
+        (from, action),
+        (Expired | Revoked, Issue)
+            | (Active | Grace, Renew | Suspend | EmergencyLock)
+            | (Suspended, ResumeFromSuspension)
+            | (Active | Grace | Suspended, Revoke)
+    )
 }
 
 /// Normalize: Issue from non-terminal is often modeled as renew — reject ambiguous Issue from Active.

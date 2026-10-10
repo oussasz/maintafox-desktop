@@ -364,13 +364,7 @@ pub async fn sync_home_crew_assignment(
          WHERE personnel_id = ?
            AND (valid_to IS NULL OR date(valid_to) >= date(?))
            AND team_id <> ?",
-        [
-            now.into(),
-            now.into(),
-            personnel_id.into(),
-            now.into(),
-            team_id.into(),
-        ],
+        [now.into(), now.into(), personnel_id.into(), now.into(), team_id.into()],
     ))
     .await?;
 
@@ -409,13 +403,7 @@ pub async fn sync_home_crew_assignment(
             personnel_id, team_id, role_code, allocation_percent,
             valid_from, valid_to, is_lead, created_at, updated_at
          ) VALUES (?, ?, 'member', 100.0, ?, NULL, 0, ?, ?)",
-        [
-            personnel_id.into(),
-            team_id.into(),
-            now.into(),
-            now.into(),
-            now.into(),
-        ],
+        [personnel_id.into(), team_id.into(), now.into(), now.into(), now.into()],
     ))
     .await?;
     Ok(())
@@ -761,7 +749,7 @@ pub async fn update_personnel(
     }
     // Gate: inactive requires reactivation first
     if current.employment_status == "inactive" {
-        let reactivates = input.employment_status.as_deref().map_or(false, |s| s != "inactive");
+        let reactivates = input.employment_status.as_deref().is_some_and(|s| s != "inactive");
         if !reactivates {
             return Err(AppError::ValidationFailed(vec![
                 "Impossible de modifier un collaborateur inactif sans le réactiver (employment_status).".into(),
@@ -1744,20 +1732,12 @@ pub async fn get_active_rate_card(
 }
 
 /// Regular labor rate from the active rate card (effective_from ≤ today), if any.
-pub async fn resolve_active_labor_rate(
-    db: &impl ConnectionTrait,
-    personnel_id: i64,
-) -> AppResult<Option<f64>> {
-    Ok(get_active_rate_card(db, personnel_id)
-        .await?
-        .map(|c| c.labor_rate))
+pub async fn resolve_active_labor_rate(db: &impl ConnectionTrait, personnel_id: i64) -> AppResult<Option<f64>> {
+    Ok(get_active_rate_card(db, personnel_id).await?.map(|c| c.labor_rate))
 }
 
 /// Active labor + overtime rates for cost range estimates.
-pub async fn resolve_active_rate_pair(
-    db: &impl ConnectionTrait,
-    personnel_id: i64,
-) -> AppResult<Option<(f64, f64)>> {
+pub async fn resolve_active_rate_pair(db: &impl ConnectionTrait, personnel_id: i64) -> AppResult<Option<(f64, f64)>> {
     Ok(get_active_rate_card(db, personnel_id)
         .await?
         .map(|c| (c.labor_rate, c.overtime_rate)))
@@ -2121,10 +2101,7 @@ pub async fn list_team_members(
         ))
         .await?;
 
-    Ok(rows
-        .into_iter()
-        .map(|row| map_team_member_row(&row))
-        .collect())
+    Ok(rows.into_iter().map(|row| map_team_member_row(&row)).collect())
 }
 
 fn map_team_member_row(row: &sea_orm::QueryResult) -> crate::personnel::domain::TeamMemberRow {
@@ -2167,11 +2144,7 @@ pub async fn set_team_lead(
                AND (valid_to IS NULL OR date(valid_to) >= date(?))
              ORDER BY id DESC
              LIMIT 1",
-            [
-                input.personnel_id.into(),
-                input.team_id.into(),
-                now.clone().into(),
-            ],
+            [input.personnel_id.into(), input.team_id.into(), now.clone().into()],
         ))
         .await?;
 
@@ -2245,9 +2218,7 @@ pub async fn set_team_lead(
         .into_iter()
         .find(|m| m.personnel_id == input.personnel_id)
         .ok_or_else(|| {
-            AppError::ValidationFailed(vec![
-                "Cette personne n'est pas membre actif de cette équipe.".into(),
-            ])
+            AppError::ValidationFailed(vec!["Cette personne n'est pas membre actif de cette équipe.".into()])
         })
 }
 

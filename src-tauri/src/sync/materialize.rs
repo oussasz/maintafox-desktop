@@ -8,13 +8,11 @@ use serde_json::Value;
 
 use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{
-    SYNC_ENTITY_ARTICLES, SYNC_ENTITY_EQUIPMENT, SYNC_ENTITY_INTERVENTION_REQUESTS,
-    SYNC_ENTITY_MEDIA_ATTACHMENTS, SYNC_ENTITY_ORG_NODES, SYNC_ENTITY_PERSONNEL,
-    SYNC_ENTITY_PM_OCCURRENCES, SYNC_ENTITY_PM_PLANS, SYNC_ENTITY_PM_PLAN_VERSIONS,
-    SYNC_ENTITY_REFERENCE_VALUES, SYNC_ENTITY_ROLES, SYNC_ENTITY_STOCK_LOCATIONS,
-    SYNC_ENTITY_STOCK_MOVEMENTS, SYNC_ENTITY_STOCK_RESERVATIONS, SYNC_ENTITY_TEAMS,
-    SYNC_ENTITY_USER_ACCOUNTS, SYNC_ENTITY_WAREHOUSES, SYNC_ENTITY_WORK_ORDERS,
-    SYNC_ENTITY_WORK_ORDER_INTERVENERS, SYNC_ENTITY_WORK_ORDER_TASKS,
+    SYNC_ENTITY_ARTICLES, SYNC_ENTITY_EQUIPMENT, SYNC_ENTITY_INTERVENTION_REQUESTS, SYNC_ENTITY_MEDIA_ATTACHMENTS,
+    SYNC_ENTITY_ORG_NODES, SYNC_ENTITY_PERSONNEL, SYNC_ENTITY_PM_OCCURRENCES, SYNC_ENTITY_PM_PLANS,
+    SYNC_ENTITY_PM_PLAN_VERSIONS, SYNC_ENTITY_REFERENCE_VALUES, SYNC_ENTITY_ROLES, SYNC_ENTITY_STOCK_LOCATIONS,
+    SYNC_ENTITY_STOCK_MOVEMENTS, SYNC_ENTITY_STOCK_RESERVATIONS, SYNC_ENTITY_TEAMS, SYNC_ENTITY_USER_ACCOUNTS,
+    SYNC_ENTITY_WAREHOUSES, SYNC_ENTITY_WORK_ORDERS, SYNC_ENTITY_WORK_ORDER_INTERVENERS, SYNC_ENTITY_WORK_ORDER_TASKS,
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -50,10 +48,7 @@ pub fn materialize_priority(entity_type: &str) -> u16 {
 }
 
 /// Materialize all pending inbox rows (ordered by apply priority then id).
-pub async fn materialize_inbox_batch(
-    db: &DatabaseConnection,
-    limit: Option<i64>,
-) -> AppResult<MaterializeInboxResult> {
+pub async fn materialize_inbox_batch(db: &DatabaseConnection, limit: Option<i64>) -> AppResult<MaterializeInboxResult> {
     let lim = limit.unwrap_or(200).clamp(1, 2000);
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -189,9 +184,7 @@ async fn materialize_one(
 
     match entity_type {
         x if x == SYNC_ENTITY_EQUIPMENT => upsert_equipment(conn, entity_sync_id, row_version, &payload).await,
-        x if x == SYNC_ENTITY_USER_ACCOUNTS => {
-            upsert_user_account(conn, entity_sync_id, row_version, &payload).await
-        }
+        x if x == SYNC_ENTITY_USER_ACCOUNTS => upsert_user_account(conn, entity_sync_id, row_version, &payload).await,
         x if x == SYNC_ENTITY_ROLES => upsert_role(conn, entity_sync_id, row_version, &payload).await,
         x if x == SYNC_ENTITY_ORG_NODES => upsert_org_node(conn, entity_sync_id, row_version, &payload).await,
         x if x == SYNC_ENTITY_INTERVENTION_REQUESTS => {
@@ -208,9 +201,7 @@ async fn materialize_one(
         x if x == SYNC_ENTITY_PM_PLAN_VERSIONS => {
             upsert_pm_plan_version(conn, entity_sync_id, row_version, &payload).await
         }
-        x if x == SYNC_ENTITY_PM_OCCURRENCES => {
-            upsert_pm_occurrence(conn, entity_sync_id, row_version, &payload).await
-        }
+        x if x == SYNC_ENTITY_PM_OCCURRENCES => upsert_pm_occurrence(conn, entity_sync_id, row_version, &payload).await,
         x if x == SYNC_ENTITY_ARTICLES => upsert_article(conn, entity_sync_id, row_version, &payload).await,
         x if x == SYNC_ENTITY_WAREHOUSES => upsert_warehouse(conn, entity_sync_id, row_version, &payload).await,
         x if x == SYNC_ENTITY_STOCK_LOCATIONS => {
@@ -234,11 +225,7 @@ async fn materialize_one(
     }
 }
 
-async fn local_row_version(
-    conn: &impl ConnectionTrait,
-    table: &str,
-    entity_sync_id: &str,
-) -> AppResult<Option<i64>> {
+async fn local_row_version(conn: &impl ConnectionTrait, table: &str, entity_sync_id: &str) -> AppResult<Option<i64>> {
     // table names are internal constants only
     let sql = format!("SELECT row_version FROM {table} WHERE entity_sync_id = ? LIMIT 1");
     let row = conn
@@ -277,11 +264,7 @@ fn json_bool_i64(v: &Value, key: &str) -> i64 {
     }
 }
 
-async fn resolve_local_id(
-    conn: &impl ConnectionTrait,
-    table: &str,
-    entity_sync_id: &str,
-) -> AppResult<Option<i64>> {
+async fn resolve_local_id(conn: &impl ConnectionTrait, table: &str, entity_sync_id: &str) -> AppResult<Option<i64>> {
     let sql = format!("SELECT id FROM {table} WHERE entity_sync_id = ? LIMIT 1");
     let row = conn
         .query_one(Statement::from_sql_and_values(
@@ -290,10 +273,9 @@ async fn resolve_local_id(
             [entity_sync_id.to_string().into()],
         ))
         .await?;
-    Ok(row
-        .map(|r| r.try_get::<i64>("", "id"))
+    row.map(|r| r.try_get::<i64>("", "id"))
         .transpose()
-        .map_err(|e| AppError::SyncError(format!("resolve id: {e}")))?)
+        .map_err(|e| AppError::SyncError(format!("resolve id: {e}")))
 }
 
 async fn check_row_version_conflict(
@@ -379,10 +361,7 @@ async fn upsert_equipment(
         None => None,
     };
 
-    if resolve_local_id(conn, "equipment", entity_sync_id)
-        .await?
-        .is_some()
-    {
+    if resolve_local_id(conn, "equipment", entity_sync_id).await?.is_some() {
         conn.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "UPDATE equipment SET asset_id_code = ?, name = ?, lifecycle_status = ?,
@@ -431,9 +410,8 @@ async fn upsert_user_account(
     if let Some(c) = check_row_version_conflict(conn, "user_accounts", entity_sync_id, row_version).await? {
         return Ok(c);
     }
-    let username = json_str(p, "username").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["user_accounts.username required".into()])
-    })?;
+    let username = json_str(p, "username")
+        .ok_or_else(|| AppError::ValidationFailed(vec!["user_accounts.username required".into()]))?;
     let display_name = json_str(p, "display_name");
     let password_hash = json_str(p, "password_hash");
     let identity_mode = json_str(p, "identity_mode").unwrap_or_else(|| "local".into());
@@ -441,10 +419,7 @@ async fn upsert_user_account(
     let is_admin = json_bool_i64(p, "is_admin");
     let updated_at = json_str(p, "updated_at").unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
 
-    if resolve_local_id(conn, "user_accounts", entity_sync_id)
-        .await?
-        .is_some()
-    {
+    if resolve_local_id(conn, "user_accounts", entity_sync_id).await?.is_some() {
         conn.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "UPDATE user_accounts SET username = ?, display_name = ?, password_hash = COALESCE(?, password_hash),
@@ -497,9 +472,7 @@ async fn upsert_role(
     if let Some(c) = check_row_version_conflict(conn, "roles", entity_sync_id, row_version).await? {
         return Ok(c);
     }
-    let name = json_str(p, "name").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["roles.name required".into()])
-    })?;
+    let name = json_str(p, "name").ok_or_else(|| AppError::ValidationFailed(vec!["roles.name required".into()]))?;
     let description = json_str(p, "description");
     let role_type = json_str(p, "role_type").unwrap_or_else(|| "custom".into());
     let status = json_str(p, "status").unwrap_or_else(|| "active".into());
@@ -587,10 +560,7 @@ async fn upsert_org_node(
         });
     };
 
-    if resolve_local_id(conn, "org_nodes", entity_sync_id)
-        .await?
-        .is_some()
-    {
+    if resolve_local_id(conn, "org_nodes", entity_sync_id).await?.is_some() {
         conn.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "UPDATE org_nodes SET code = ?, name = ?, parent_id = ?, ancestor_path = ?, depth = ?,
@@ -654,9 +624,7 @@ async fn upsert_intervention_request(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) =
-        check_row_version_conflict(conn, "intervention_requests", entity_sync_id, row_version).await?
-    {
+    if let Some(c) = check_row_version_conflict(conn, "intervention_requests", entity_sync_id, row_version).await? {
         return Ok(c);
     }
     let code = json_str(p, "code").unwrap_or_else(|| format!("DI-{entity_sync_id}"));
@@ -809,10 +777,7 @@ async fn upsert_work_order(
         });
     };
 
-    if resolve_local_id(conn, "work_orders", entity_sync_id)
-        .await?
-        .is_some()
-    {
+    if resolve_local_id(conn, "work_orders", entity_sync_id).await?.is_some() {
         conn.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "UPDATE work_orders SET code = ?, title = ?, description = ?, status_id = ?,
@@ -873,14 +838,11 @@ async fn upsert_work_order_task(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) =
-        check_row_version_conflict(conn, "work_order_tasks", entity_sync_id, row_version).await?
-    {
+    if let Some(c) = check_row_version_conflict(conn, "work_order_tasks", entity_sync_id, row_version).await? {
         return Ok(c);
     }
-    let wo_sync = json_str(p, "work_order_entity_sync_id").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["work_order_entity_sync_id required".into()])
-    })?;
+    let wo_sync = json_str(p, "work_order_entity_sync_id")
+        .ok_or_else(|| AppError::ValidationFailed(vec!["work_order_entity_sync_id required".into()]))?;
     let Some(wo_id) = resolve_local_id(conn, "work_orders", &wo_sync).await? else {
         return Ok(ApplyOutcome::Conflict {
             code: "MISSING_WO".into(),
@@ -946,14 +908,11 @@ async fn upsert_work_order_intervener(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) =
-        check_row_version_conflict(conn, "work_order_interveners", entity_sync_id, row_version).await?
-    {
+    if let Some(c) = check_row_version_conflict(conn, "work_order_interveners", entity_sync_id, row_version).await? {
         return Ok(c);
     }
-    let wo_sync = json_str(p, "work_order_entity_sync_id").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["work_order_entity_sync_id required".into()])
-    })?;
+    let wo_sync = json_str(p, "work_order_entity_sync_id")
+        .ok_or_else(|| AppError::ValidationFailed(vec!["work_order_entity_sync_id required".into()]))?;
     let Some(wo_id) = resolve_local_id(conn, "work_orders", &wo_sync).await? else {
         return Ok(ApplyOutcome::Conflict {
             code: "MISSING_WO".into(),
@@ -1083,14 +1042,11 @@ async fn upsert_pm_plan_version(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) =
-        check_row_version_conflict(conn, "pm_plan_versions", entity_sync_id, row_version).await?
-    {
+    if let Some(c) = check_row_version_conflict(conn, "pm_plan_versions", entity_sync_id, row_version).await? {
         return Ok(c);
     }
-    let plan_sync = json_str(p, "pm_plan_entity_sync_id").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["pm_plan_entity_sync_id required".into()])
-    })?;
+    let plan_sync = json_str(p, "pm_plan_entity_sync_id")
+        .ok_or_else(|| AppError::ValidationFailed(vec!["pm_plan_entity_sync_id required".into()]))?;
     let Some(plan_id) = resolve_local_id(conn, "pm_plans", &plan_sync).await? else {
         return Ok(ApplyOutcome::Conflict {
             code: "MISSING_PM_PLAN".into(),
@@ -1153,17 +1109,13 @@ async fn upsert_pm_occurrence(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) =
-        check_row_version_conflict(conn, "pm_occurrences", entity_sync_id, row_version).await?
-    {
+    if let Some(c) = check_row_version_conflict(conn, "pm_occurrences", entity_sync_id, row_version).await? {
         return Ok(c);
     }
-    let plan_sync = json_str(p, "pm_plan_entity_sync_id").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["pm_plan_entity_sync_id required".into()])
-    })?;
-    let ver_sync = json_str(p, "pm_plan_version_entity_sync_id").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["pm_plan_version_entity_sync_id required".into()])
-    })?;
+    let plan_sync = json_str(p, "pm_plan_entity_sync_id")
+        .ok_or_else(|| AppError::ValidationFailed(vec!["pm_plan_entity_sync_id required".into()]))?;
+    let ver_sync = json_str(p, "pm_plan_version_entity_sync_id")
+        .ok_or_else(|| AppError::ValidationFailed(vec!["pm_plan_version_entity_sync_id required".into()]))?;
     let Some(plan_id) = resolve_local_id(conn, "pm_plans", &plan_sync).await? else {
         return Ok(ApplyOutcome::Conflict {
             code: "MISSING_PM_PLAN".into(),
@@ -1295,10 +1247,7 @@ async fn upsert_warehouse(
     let is_active = json_bool_i64(p, "is_active").max(1);
     let created_at = json_str(p, "updated_at").unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
 
-    if resolve_local_id(conn, "warehouses", entity_sync_id)
-        .await?
-        .is_some()
-    {
+    if resolve_local_id(conn, "warehouses", entity_sync_id).await?.is_some() {
         conn.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "UPDATE warehouses SET code = ?, name = ?, is_active = ?, row_version = ?
@@ -1337,14 +1286,11 @@ async fn upsert_stock_location(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) =
-        check_row_version_conflict(conn, "stock_locations", entity_sync_id, row_version).await?
-    {
+    if let Some(c) = check_row_version_conflict(conn, "stock_locations", entity_sync_id, row_version).await? {
         return Ok(c);
     }
-    let wh_sync = json_str(p, "warehouse_entity_sync_id").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["warehouse_entity_sync_id required".into()])
-    })?;
+    let wh_sync = json_str(p, "warehouse_entity_sync_id")
+        .ok_or_else(|| AppError::ValidationFailed(vec!["warehouse_entity_sync_id required".into()]))?;
     let Some(wh_id) = resolve_local_id(conn, "warehouses", &wh_sync).await? else {
         return Ok(ApplyOutcome::Conflict {
             code: "MISSING_WAREHOUSE".into(),
@@ -1471,20 +1417,15 @@ async fn upsert_stock_reservation(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) =
-        check_row_version_conflict(conn, "stock_reservations", entity_sync_id, row_version).await?
-    {
+    if let Some(c) = check_row_version_conflict(conn, "stock_reservations", entity_sync_id, row_version).await? {
         return Ok(c);
     }
-    let article_sync = json_str(p, "article_entity_sync_id").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["article_entity_sync_id required".into()])
-    })?;
-    let warehouse_sync = json_str(p, "warehouse_entity_sync_id").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["warehouse_entity_sync_id required".into()])
-    })?;
-    let location_sync = json_str(p, "location_entity_sync_id").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["location_entity_sync_id required".into()])
-    })?;
+    let article_sync = json_str(p, "article_entity_sync_id")
+        .ok_or_else(|| AppError::ValidationFailed(vec!["article_entity_sync_id required".into()]))?;
+    let warehouse_sync = json_str(p, "warehouse_entity_sync_id")
+        .ok_or_else(|| AppError::ValidationFailed(vec!["warehouse_entity_sync_id required".into()]))?;
+    let location_sync = json_str(p, "location_entity_sync_id")
+        .ok_or_else(|| AppError::ValidationFailed(vec!["location_entity_sync_id required".into()]))?;
     let Some(article_id) = resolve_local_id(conn, "articles", &article_sync).await? else {
         return Ok(ApplyOutcome::Conflict {
             code: "MISSING_ARTICLE".into(),
@@ -1560,9 +1501,7 @@ async fn upsert_stock_reservation(
                 article_id.into(),
                 warehouse_id.into(),
                 location_id.into(),
-                source_type
-                    .unwrap_or_else(|| "SYNC".to_string())
-                    .into(),
+                source_type.unwrap_or_else(|| "SYNC".to_string()).into(),
                 source_id.into(),
                 qty.into(),
                 status.into(),
@@ -1601,10 +1540,7 @@ async fn upsert_personnel(
     let updated_at = json_str(p, "updated_at").unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
     let availability = json_str(p, "availability_status").unwrap_or_else(|| "available".into());
 
-    if resolve_local_id(conn, "personnel", entity_sync_id)
-        .await?
-        .is_some()
-    {
+    if resolve_local_id(conn, "personnel", entity_sync_id).await?.is_some() {
         conn.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "UPDATE personnel SET employee_code = ?, full_name = ?, availability_status = ?,
@@ -1706,9 +1642,7 @@ async fn upsert_media_attachment(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) =
-        check_row_version_conflict(conn, "media_attachments", entity_sync_id, row_version).await?
-    {
+    if let Some(c) = check_row_version_conflict(conn, "media_attachments", entity_sync_id, row_version).await? {
         return Ok(c);
     }
     let parent_type = json_str(p, "parent_entity_type").unwrap_or_else(|| "unknown".into());
@@ -1783,17 +1717,13 @@ async fn upsert_reference_value(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) =
-        check_row_version_conflict(conn, "reference_values", entity_sync_id, row_version).await?
-    {
+    if let Some(c) = check_row_version_conflict(conn, "reference_values", entity_sync_id, row_version).await? {
         return Ok(c);
     }
-    let set_code = json_str(p, "set_code").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["reference_values.set_code required".into()])
-    })?;
-    let code = json_str(p, "code").ok_or_else(|| {
-        AppError::ValidationFailed(vec!["reference_values.code required".into()])
-    })?;
+    let set_code = json_str(p, "set_code")
+        .ok_or_else(|| AppError::ValidationFailed(vec!["reference_values.set_code required".into()]))?;
+    let code =
+        json_str(p, "code").ok_or_else(|| AppError::ValidationFailed(vec!["reference_values.code required".into()]))?;
     let label = json_str(p, "label").unwrap_or_else(|| code.clone());
     let is_active = json_bool_i64(p, "is_active").max(0);
     let updated_at = json_str(p, "updated_at").unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
@@ -1822,8 +1752,8 @@ async fn upsert_reference_value(
     };
 
     let parent_id = match json_str(p, "parent_code").as_deref() {
-        Some(pc) if !pc.is_empty() => {
-            conn.query_one(Statement::from_sql_and_values(
+        Some(pc) if !pc.is_empty() => conn
+            .query_one(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
                 "SELECT id FROM reference_values WHERE set_id = ? AND code = ? LIMIT 1",
                 [set_id.into(), pc.into()],
@@ -1832,8 +1762,7 @@ async fn upsert_reference_value(
             .map(|r| r.try_get::<i64>("", "id"))
             .transpose()
             .ok()
-            .flatten()
-        }
+            .flatten(),
         _ => None,
     };
 

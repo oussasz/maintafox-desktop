@@ -140,26 +140,9 @@ pub async fn export_report_now(
     }
     let fmt = input.export_format.to_ascii_lowercase();
     let doc = export_report_document(&state.db, &t.code, &fmt).await?;
-    let run_id = insert_run(
-        &state.db,
-        None,
-        t.id,
-        i64::from(user.user_id),
-        "running",
-        &fmt,
-    )
-    .await?;
+    let run_id = insert_run(&state.db, None, t.id, i64::from(user.user_id), "running", &fmt).await?;
     let data_dir = app_data_dir(&app)?;
-    if let Err(e) = persist_run_artifact(
-        &state.db,
-        &data_dir,
-        run_id,
-        &fmt,
-        &doc.file_name,
-        &doc.bytes,
-    )
-    .await
-    {
+    if let Err(e) = persist_run_artifact(&state.db, &data_dir, run_id, &fmt, &doc.file_name, &doc.bytes).await {
         let _ = crate::reports::queries::finish_run_failed(&state.db, run_id, &e.to_string()).await;
         return Err(e);
     }

@@ -236,6 +236,9 @@ mod tests {
     #[tokio::test]
     async fn v2_create_asset_with_nonexistent_org_node_rejected() {
         let db = setup().await;
+        // An active structure model must exist, otherwise the guard fails earlier with
+        // ORG_NO_ACTIVE_MODEL and the missing-node path is never exercised.
+        setup_org_node(&db).await;
         setup_equipment_class(&db).await;
 
         // Use a node id that does not exist
@@ -277,14 +280,13 @@ mod tests {
             .expect_err("inactive org node should fail");
 
         match err {
-            AppError::ValidationFailed(msgs) => {
-                let joined = msgs.join(" ");
+            AppError::OrgValidationFailed(issues) => {
                 assert!(
-                    joined.contains("actif") || joined.contains("inactive"),
-                    "error should mention inactive status, got: {joined}"
+                    issues.iter().any(|i| i.code == "ORG_NODE_NOT_ACTIVE"),
+                    "expected ORG_NODE_NOT_ACTIVE, got: {issues:?}"
                 );
             }
-            other => panic!("expected ValidationFailed, got: {other:?}"),
+            other => panic!("expected OrgValidationFailed(ORG_NODE_NOT_ACTIVE), got: {other:?}"),
         }
     }
 

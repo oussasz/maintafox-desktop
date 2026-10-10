@@ -137,7 +137,7 @@ async fn get_value_by_id(db: &DatabaseConnection, value_id: i64) -> AppResult<Re
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {SELECT_COLS} FROM reference_values WHERE id = ?"),
+            format!("SELECT {SELECT_COLS} FROM reference_values WHERE id = ?"),
             [value_id.into()],
         ))
         .await?
@@ -349,7 +349,7 @@ pub async fn list_values(db: &DatabaseConnection, set_id: i64) -> AppResult<Vec<
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {SELECT_COLS} FROM reference_values \
                  WHERE set_id = ? ORDER BY sort_order ASC, code ASC"
             ),
@@ -421,7 +421,7 @@ pub async fn create_value(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
+            format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
             [payload.set_id.into(), code.into()],
         ))
         .await?
@@ -540,7 +540,7 @@ pub async fn create_operational_value(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
+            format!("SELECT {SELECT_COLS} FROM reference_values WHERE set_id = ? AND code = ?"),
             [set_id.into(), code.into()],
         ))
         .await?

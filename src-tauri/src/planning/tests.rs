@@ -956,10 +956,7 @@ async fn gantt_snapshot_and_pdf_export_use_real_commitments() {
         "All Crews overview uses crew lanes, not technician lanes"
     );
     assert!(
-        plant_wide
-            .crew_lanes
-            .iter()
-            .any(|lane| lane.team_id == team_id),
+        plant_wide.crew_lanes.iter().any(|lane| lane.team_id == team_id),
         "All Crews snapshot must include active crew lanes"
     );
 
@@ -1068,7 +1065,10 @@ async fn create_planning_wo(db: &DatabaseConnection, title: &str) -> (i64, i64) 
     (wo.id, actor)
 }
 
-async fn load_wo_planning_fields(db: &DatabaseConnection, wo_id: i64) -> (Option<String>, Option<String>, Option<i64>, Option<i64>) {
+async fn load_wo_planning_fields(
+    db: &DatabaseConnection,
+    wo_id: i64,
+) -> (Option<String>, Option<String>, Option<i64>, Option<i64>) {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -1133,7 +1133,10 @@ async fn commitment_write_back_updates_work_order_fields() {
         .expect("query candidate")
         .expect("candidate");
     assert_eq!(
-        candidate.try_get::<Option<String>>("", "window_start").unwrap().as_deref(),
+        candidate
+            .try_get::<Option<String>>("", "window_start")
+            .unwrap()
+            .as_deref(),
         Some("2026-10-05T08:00:00Z")
     );
     assert_eq!(
@@ -1364,4 +1367,3 @@ async fn commitment_rejects_when_work_order_not_planning_or_ready() {
         .unwrap_or(0);
     assert_eq!(commitment_count, 0);
 }
-

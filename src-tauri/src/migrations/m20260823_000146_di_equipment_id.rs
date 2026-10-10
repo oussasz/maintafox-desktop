@@ -42,12 +42,7 @@ impl MigrationTrait for Migration {
             ));
         }
 
-        exec_step(
-            db,
-            "drop_old_index",
-            "DROP INDEX IF EXISTS idx_ir_asset",
-        )
-        .await?;
+        exec_step(db, "drop_old_index", "DROP INDEX IF EXISTS idx_ir_asset").await?;
 
         exec_step(
             db,
@@ -91,9 +86,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
             let _ = db
-                .execute_unprepared(
-                    "CREATE INDEX IF NOT EXISTS idx_ir_asset ON intervention_requests(asset_id)",
-                )
+                .execute_unprepared("CREATE INDEX IF NOT EXISTS idx_ir_asset ON intervention_requests(asset_id)")
                 .await;
         }
         Ok(())

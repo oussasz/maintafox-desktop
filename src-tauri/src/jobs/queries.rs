@@ -17,7 +17,7 @@ async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
         ))
         .await?
         .ok_or_else(|| AppError::SyncError("last_insert_rowid missing.".into()))?;
-    Ok(row.try_get("", "id").map_err(|e| dec("id", e))?)
+    row.try_get("", "id").map_err(|e| dec("id", e))
 }
 
 pub async fn insert_computation_job(db: &DatabaseConnection, job_kind: &str, input_json: &str) -> AppResult<i64> {
@@ -144,5 +144,5 @@ pub async fn list_computation_jobs(db: &DatabaseConnection, limit: i64) -> AppRe
             [lim.into()],
         ))
         .await?;
-    rows.iter().map(|r| map_job(r)).collect::<Result<Vec<_>, _>>()
+    rows.iter().map(map_job).collect::<Result<Vec<_>, _>>()
 }

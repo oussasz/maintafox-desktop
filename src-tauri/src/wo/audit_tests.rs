@@ -273,7 +273,7 @@ mod tests {
                 assigned_team_id: None,
                 primary_responsible_id: Some(actor),
                 scheduled_at: None,
-            override_reason: "test assign".to_string(),
+                override_reason: "test assign".to_string(),
             },
         )
         .await
@@ -390,7 +390,8 @@ mod tests {
             .expect("should return a row");
 
         let cnt: i64 = row.try_get("", "cnt").unwrap();
-        assert_eq!(cnt, 8, "expected 8 ot.* permissions, got {cnt}");
+        // 9 since ot.emergency_assign (emergency reassignment) joined the registry.
+        assert_eq!(cnt, 9, "expected 9 ot.* permissions, got {cnt}");
     }
 
     #[tokio::test]

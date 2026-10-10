@@ -20,8 +20,7 @@ use crate::assets::{
     import::{self, ApplyPolicy},
     lifecycle::{self, RecordLifecycleEventPayload},
     meters::{self, CreateAssetMeterPayload, RecordMeterReadingPayload},
-    photos,
-    registry_metrics,
+    photos, registry_metrics,
     search::{self, AssetPickerSuggestFilters, AssetSearchFilters},
     taxonomy_reference, EquipmentTaxonomyCatalog,
 };

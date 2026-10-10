@@ -195,6 +195,8 @@ fn run_evaluate_fmucd(
     Ok(())
 }
 
+// Same structural-lint policy as the library crate (see lib.rs).
+#[allow(clippy::too_many_arguments)]
 fn run_scientific_analysis(
     csv: &Path,
     config_path: &Path,

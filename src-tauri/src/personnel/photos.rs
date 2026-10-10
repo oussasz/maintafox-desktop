@@ -50,9 +50,9 @@ fn ensure_path_under_app_data(file: &Path, app_data_dir: &Path) -> AppResult<()>
     let root = app_data_dir
         .canonicalize()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("canonicalize app_data_dir: {e}")))?;
-    let abs = file.canonicalize().map_err(|e| {
-        AppError::ValidationFailed(vec![format!("Impossible de résoudre le chemin photo : {e}")])
-    })?;
+    let abs = file
+        .canonicalize()
+        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de résoudre le chemin photo : {e}")]))?;
     if !abs.starts_with(&root) {
         return Err(AppError::ValidationFailed(vec![
             "Chemin photo hors du répertoire de données de l'application.".into(),
@@ -105,9 +105,7 @@ pub async fn read_personnel_photo_preview(
         )]));
     }
 
-    let mime_type = extension_mime(&abs)
-        .unwrap_or("application/octet-stream")
-        .to_string();
+    let mime_type = extension_mime(&abs).unwrap_or("application/octet-stream").to_string();
 
     let abs_for_read = abs.clone();
     let bytes = tokio::task::spawn_blocking(move || std::fs::read(abs_for_read))
@@ -162,9 +160,8 @@ pub async fn upload_personnel_photo(
         ]));
     };
 
-    let meta = std::fs::metadata(src).map_err(|e| {
-        AppError::ValidationFailed(vec![format!("Impossible de lire le fichier source : {e}")])
-    })?;
+    let meta = std::fs::metadata(src)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("Impossible de lire le fichier source : {e}")]))?;
     if !meta.is_file() {
         return Err(AppError::ValidationFailed(vec![
             "Le chemin source n'est pas un fichier.".into(),

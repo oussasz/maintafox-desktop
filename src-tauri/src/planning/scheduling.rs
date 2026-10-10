@@ -45,8 +45,7 @@ const COMMITMENT_JOINS: &str = "\
     LEFT JOIN teams t ON t.id = sc.assigned_team_id \
     LEFT JOIN personnel p ON p.id = sc.assigned_personnel_id";
 const CHANGE_LOG_COLS: &str = "scl.id,scl.commitment_id,scl.action_type,scl.actor_id,scl.field_changed,scl.old_value,scl.new_value,scl.reason_code,scl.reason_note,scl.reason,scl.details_json,scl.created_at";
-const CHANGE_LOG_JOIN_COLS: &str =
-    "COALESCE(ua.display_name, ua.username) AS actor_display_name";
+const CHANGE_LOG_JOIN_COLS: &str = "COALESCE(ua.display_name, ua.username) AS actor_display_name";
 const CHANGE_LOG_JOINS: &str = "LEFT JOIN user_accounts ua ON ua.id = scl.actor_id";
 const BREAK_IN_COLS: &str = "sb.id,sb.schedule_commitment_id,sb.break_in_reason,sb.approved_by_user_id,sb.approved_by_personnel_id,sb.override_reason,sb.old_slot_start,sb.old_slot_end,sb.new_slot_start,sb.new_slot_end,sb.old_assignee_id,sb.new_assignee_id,sb.cost_impact_delta,sb.notification_dedupe_key,sb.row_version,sb.created_by_id,sb.created_at";
 const BREAK_IN_JOIN_COLS: &str = "\
@@ -68,7 +67,6 @@ const BREAK_IN_JOINS: &str = "\
     LEFT JOIN user_accounts approver ON approver.id = sb.approved_by_user_id \
     LEFT JOIN personnel old_p ON old_p.id = sb.old_assignee_id \
     LEFT JOIN personnel new_p ON new_p.id = sb.new_assignee_id";
-
 
 fn decode_err(column: &str, e: sea_orm::DbErr) -> AppError {
     AppError::Internal(anyhow::anyhow!(
@@ -203,9 +201,7 @@ fn map_commitment(row: &QueryResult) -> AppResult<ScheduleCommitment> {
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
         source_code: row.try_get::<Option<String>>("", "source_code").unwrap_or(None),
         source_title: row.try_get::<Option<String>>("", "source_title").unwrap_or(None),
-        assigned_team_label: row
-            .try_get::<Option<String>>("", "assigned_team_label")
-            .unwrap_or(None),
+        assigned_team_label: row.try_get::<Option<String>>("", "assigned_team_label").unwrap_or(None),
         assigned_personnel_name: row
             .try_get::<Option<String>>("", "assigned_personnel_name")
             .unwrap_or(None),
@@ -238,9 +234,7 @@ fn map_change_log(row: &QueryResult) -> AppResult<ScheduleChangeLogEntry> {
             .try_get("", "details_json")
             .map_err(|e| decode_err("details_json", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
-        actor_display_name: row
-            .try_get::<Option<String>>("", "actor_display_name")
-            .unwrap_or(None),
+        actor_display_name: row.try_get::<Option<String>>("", "actor_display_name").unwrap_or(None),
     })
 }
 
@@ -299,12 +293,8 @@ fn map_schedule_break_in(row: &QueryResult) -> AppResult<ScheduleBreakIn> {
         approved_by_display_name: row
             .try_get::<Option<String>>("", "approved_by_display_name")
             .unwrap_or(None),
-        old_assignee_name: row
-            .try_get::<Option<String>>("", "old_assignee_name")
-            .unwrap_or(None),
-        new_assignee_name: row
-            .try_get::<Option<String>>("", "new_assignee_name")
-            .unwrap_or(None),
+        old_assignee_name: row.try_get::<Option<String>>("", "old_assignee_name").unwrap_or(None),
+        new_assignee_name: row.try_get::<Option<String>>("", "new_assignee_name").unwrap_or(None),
     })
 }
 
@@ -766,9 +756,7 @@ async fn estimate_labor_cost(
     let Some(personnel_id) = personnel_id else {
         return Ok(None);
     };
-    let Some(rate) =
-        crate::personnel::queries::resolve_active_labor_rate(db, personnel_id).await?
-    else {
+    let Some(rate) = crate::personnel::queries::resolve_active_labor_rate(db, personnel_id).await? else {
         return Ok(None);
     };
     let duration = hours_between(committed_start, committed_end)?;

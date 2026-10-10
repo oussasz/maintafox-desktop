@@ -72,10 +72,7 @@ pub fn backup_database(db_path: &PathBuf, backup_dir: &PathBuf) -> crate::errors
     std::fs::create_dir_all(backup_dir).map_err(crate::errors::AppError::Io)?;
 
     std::fs::copy(db_path, &backup_path).map_err(|e| {
-        crate::errors::AppError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Pre-migration backup failed: {}", e),
-        ))
+        crate::errors::AppError::Io(std::io::Error::other(format!("Pre-migration backup failed: {}", e)))
     })?;
 
     tracing::info!(

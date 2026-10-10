@@ -212,7 +212,7 @@ pub async fn seed_rams_presentation_data(
         let months_ago = failure_count - i;
         let event_anchor = now - Duration::days(months_ago * 28);
         let fail_start = event_anchor - Duration::hours(4);
-        let fail_end = event_anchor + Duration::hours(2 + (i % 3) as i64);
+        let fail_end = event_anchor + Duration::hours(2 + (i % 3));
         let fail_start_s = fail_start.to_rfc3339();
         let fail_end_s = fail_end.to_rfc3339();
 

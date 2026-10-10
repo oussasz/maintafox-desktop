@@ -3,9 +3,7 @@
 use tauri::State;
 
 use crate::analytics::layout::{get_layout, save_layout};
-use crate::analytics::projection::{
-    build_executive_dashboard, AnalyticsExecutiveDashboard, AnalyticsExecutiveFilter,
-};
+use crate::analytics::projection::{build_executive_dashboard, AnalyticsExecutiveDashboard, AnalyticsExecutiveFilter};
 use crate::auth::rbac::{check_permission, PermissionScope};
 use crate::errors::AppResult;
 use crate::state::AppState;
@@ -46,9 +44,7 @@ pub async fn get_analytics_executive_dashboard(
 }
 
 #[tauri::command]
-pub async fn get_analytics_dashboard_layout(
-    state: State<'_, AppState>,
-) -> AppResult<AnalyticsDashboardLayoutPayload> {
+pub async fn get_analytics_dashboard_layout(state: State<'_, AppState>) -> AppResult<AnalyticsDashboardLayoutPayload> {
     let user = require_session!(state);
     require_permission!(
         state,

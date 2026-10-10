@@ -162,10 +162,7 @@ pub async fn record_wo_sync_audit(db: &DatabaseConnection, actor_id: i64, wo_id:
     crate::wo::sync_stage::warn_stage_wo(db, wo_id).await;
 }
 
-async fn resolve_personnel_user_id(
-    tx: &impl ConnectionTrait,
-    personnel_id: Option<i64>,
-) -> AppResult<Option<i64>> {
+async fn resolve_personnel_user_id(tx: &impl ConnectionTrait, personnel_id: Option<i64>) -> AppResult<Option<i64>> {
     let Some(personnel_id) = personnel_id else {
         return Ok(None);
     };

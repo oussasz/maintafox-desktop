@@ -591,7 +591,7 @@ pub(crate) fn build_asset_scope_where(filters: &AssetSearchFilters) -> (String, 
                          WHERE wo.equipment_id = e.id AND s.code NOT IN ('closed','cancelled')\
                        )\
                      )"
-                        .to_string(),
+                    .to_string(),
                 );
             }
             "open_work" => {
@@ -606,7 +606,7 @@ pub(crate) fn build_asset_scope_where(filters: &AssetSearchFilters) -> (String, 
                        JOIN work_order_statuses s ON s.id = wo.status_id \
                        WHERE wo.equipment_id = e.id AND s.code NOT IN ('closed','cancelled')\
                      ))"
-                        .to_string(),
+                    .to_string(),
                 );
             }
             "stale_meters" => {
@@ -617,7 +617,7 @@ pub(crate) fn build_asset_scope_where(filters: &AssetSearchFilters) -> (String, 
                          AND (em.last_read_at IS NULL \
                               OR datetime(em.last_read_at) < datetime('now', '-30 days'))\
                      )"
-                        .to_string(),
+                    .to_string(),
                 );
             }
             _ => {}

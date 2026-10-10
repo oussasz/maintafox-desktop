@@ -503,10 +503,7 @@ fn is_security_domain(domain: &str) -> bool {
 }
 
 /// List all policy snapshots for a domain, newest version first.
-pub async fn list_policy_snapshots(
-    db: &DatabaseConnection,
-    domain: &str,
-) -> AppResult<Vec<PolicySnapshot>> {
+pub async fn list_policy_snapshots(db: &DatabaseConnection, domain: &str) -> AppResult<Vec<PolicySnapshot>> {
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -531,10 +528,7 @@ pub async fn list_policy_snapshots(
     rows.into_iter().map(map_policy_snapshot).collect()
 }
 
-async fn get_draft_policy(
-    db: &DatabaseConnection,
-    domain: &str,
-) -> AppResult<Option<PolicySnapshot>> {
+async fn get_draft_policy(db: &DatabaseConnection, domain: &str) -> AppResult<Option<PolicySnapshot>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -569,9 +563,7 @@ async fn next_policy_version(db: &DatabaseConnection, domain: &str) -> AppResult
         ))
         .await?;
 
-    let max = row
-        .map(|r| r.try_get::<i64>("", "max_ver").unwrap_or(0))
-        .unwrap_or(0);
+    let max = row.map(|r| r.try_get::<i64>("", "max_ver").unwrap_or(0)).unwrap_or(0);
     Ok(max + 1)
 }
 
@@ -584,12 +576,11 @@ pub async fn save_policy_draft(
 ) -> AppResult<PolicySnapshot> {
     if domain.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
-            "policy domain must not be empty".to_string(),
+            "policy domain must not be empty".to_string()
         ]));
     }
-    let _: serde_json::Value = serde_json::from_str(snapshot_json).map_err(|_| {
-        AppError::ValidationFailed(vec!["snapshot_json is not valid JSON".to_string()])
-    })?;
+    let _: serde_json::Value = serde_json::from_str(snapshot_json)
+        .map_err(|_| AppError::ValidationFailed(vec!["snapshot_json is not valid JSON".to_string()]))?;
 
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -658,9 +649,9 @@ pub async fn save_policy_draft(
 
 /// Validate the current draft for a domain.
 pub async fn test_policy_draft(db: &DatabaseConnection, domain: &str) -> AppResult<Vec<PolicyTestResult>> {
-    let draft = get_draft_policy(db, domain).await?.ok_or_else(|| {
-        AppError::ValidationFailed(vec![format!("no draft exists for domain '{domain}'")])
-    })?;
+    let draft = get_draft_policy(db, domain)
+        .await?
+        .ok_or_else(|| AppError::ValidationFailed(vec![format!("no draft exists for domain '{domain}'")]))?;
 
     Ok(validate_policy_json(domain, &draft.snapshot_json))
 }
@@ -676,36 +667,16 @@ fn validate_policy_json(domain: &str, snapshot_json: &str) -> Vec<PolicyTestResu
                 message: format!("Session policy JSON is invalid: {e}"),
             }),
             Ok(p) => {
-                results.push(range_rule(
-                    "idle_timeout_minutes",
-                    p.idle_timeout_minutes,
-                    1,
-                    480,
-                ));
+                results.push(range_rule("idle_timeout_minutes", p.idle_timeout_minutes, 1, 480));
                 results.push(range_rule(
                     "absolute_session_minutes",
                     p.absolute_session_minutes,
                     15,
                     1440,
                 ));
-                results.push(range_rule(
-                    "offline_grace_hours",
-                    p.offline_grace_hours,
-                    0,
-                    720,
-                ));
-                results.push(range_rule(
-                    "step_up_window_minutes",
-                    p.step_up_window_minutes,
-                    1,
-                    120,
-                ));
-                results.push(range_rule(
-                    "max_failed_attempts",
-                    p.max_failed_attempts,
-                    1,
-                    20,
-                ));
+                results.push(range_rule("offline_grace_hours", p.offline_grace_hours, 0, 720));
+                results.push(range_rule("step_up_window_minutes", p.step_up_window_minutes, 1, 120));
+                results.push(range_rule("max_failed_attempts", p.max_failed_attempts, 1, 20));
                 results.push(range_rule("lockout_minutes", p.lockout_minutes, 1, 1440));
                 if p.idle_timeout_minutes > p.absolute_session_minutes {
                     results.push(PolicyTestResult {
@@ -754,8 +725,7 @@ fn validate_policy_json(domain: &str, snapshot_json: &str) -> Vec<PolicyTestResu
         "password" => results.push(PolicyTestResult {
             rule_name: "password_ssot".into(),
             severity: "warn".into(),
-            message: "Password policy is managed via RBAC settings; use PasswordPolicyPanel"
-                .into(),
+            message: "Password policy is managed via RBAC settings; use PasswordPolicyPanel".into(),
         }),
         other => results.push(PolicyTestResult {
             rule_name: "domain".into(),
@@ -855,11 +825,7 @@ pub async fn activate_policy(
 }
 
 /// Delete the current draft for a domain (if any).
-pub async fn discard_policy_draft(
-    db: &DatabaseConnection,
-    domain: &str,
-    actor_id: i32,
-) -> AppResult<()> {
+pub async fn discard_policy_draft(db: &DatabaseConnection, domain: &str, actor_id: i32) -> AppResult<()> {
     let Some(draft) = get_draft_policy(db, domain).await? else {
         return Ok(());
     };
@@ -903,10 +869,7 @@ pub async fn ensure_default_policies(db: &DatabaseConnection) -> AppResult<()> {
                WHERE NOT EXISTS (
                    SELECT 1 FROM policy_snapshots WHERE policy_domain = 'session' AND is_active = 1
                )",
-            [
-                json.into(),
-                chrono::Utc::now().to_rfc3339().into(),
-            ],
+            [json.into(), chrono::Utc::now().to_rfc3339().into()],
         ))
         .await?;
     }
@@ -921,10 +884,7 @@ pub async fn ensure_default_policies(db: &DatabaseConnection) -> AppResult<()> {
                WHERE NOT EXISTS (
                    SELECT 1 FROM policy_snapshots WHERE policy_domain = 'backup' AND is_active = 1
                )",
-            [
-                json.into(),
-                chrono::Utc::now().to_rfc3339().into(),
-            ],
+            [json.into(), chrono::Utc::now().to_rfc3339().into()],
         ))
         .await?;
     }
@@ -1081,8 +1041,7 @@ mod tests {
             .expect("active session policy should exist");
         assert!(session.is_active);
         assert_eq!(session.policy_domain, "session");
-        let parsed: SessionPolicy =
-            serde_json::from_str(&session.snapshot_json).expect("session JSON");
+        let parsed: SessionPolicy = serde_json::from_str(&session.snapshot_json).expect("session JSON");
         assert_eq!(parsed, SessionPolicy::default());
 
         let backup = get_active_policy(&db, "backup")
@@ -1096,9 +1055,7 @@ mod tests {
         ensure_default_policies(&db)
             .await
             .expect("ensure_default_policies should be idempotent");
-        let session_rows = list_policy_snapshots(&db, "session")
-            .await
-            .expect("list session");
+        let session_rows = list_policy_snapshots(&db, "session").await.expect("list session");
         assert_eq!(
             session_rows.iter().filter(|s| s.is_active).count(),
             1,
@@ -1125,9 +1082,7 @@ mod tests {
         assert!(!draft.is_active);
         assert!(draft.activated_at.is_none());
 
-        let results = test_policy_draft(&db, "session")
-            .await
-            .expect("test draft");
+        let results = test_policy_draft(&db, "session").await.expect("test draft");
         assert!(
             results.iter().all(|r| r.severity != "fail"),
             "default-range draft should pass: {results:?}"
@@ -1143,8 +1098,7 @@ mod tests {
             .await
             .expect("get active")
             .expect("active exists");
-        let loaded: SessionPolicy =
-            serde_json::from_str(&active.snapshot_json).expect("parse active");
+        let loaded: SessionPolicy = serde_json::from_str(&active.snapshot_json).expect("parse active");
         assert_eq!(loaded.idle_timeout_minutes, 45);
 
         let second = SessionPolicy {
@@ -1155,21 +1109,14 @@ mod tests {
         let second_draft = save_policy_draft(&db, "session", &second_json, 1)
             .await
             .expect("save second draft");
-        discard_policy_draft(&db, "session", 1)
-            .await
-            .expect("discard draft");
-        let after_discard = list_policy_snapshots(&db, "session")
-            .await
-            .expect("list after discard");
+        discard_policy_draft(&db, "session", 1).await.expect("discard draft");
+        let after_discard = list_policy_snapshots(&db, "session").await.expect("list after discard");
         assert!(
             after_discard.iter().all(|s| s.id != second_draft.id),
             "discarded draft must be gone"
         );
         assert!(
-            get_active_policy(&db, "session")
-                .await
-                .expect("active still")
-                .is_some(),
+            get_active_policy(&db, "session").await.expect("active still").is_some(),
             "active policy remains after discard"
         );
     }

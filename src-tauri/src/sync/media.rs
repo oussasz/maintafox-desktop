@@ -5,14 +5,10 @@
 use sha2::{Digest, Sha256};
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{
-    MediaAttachmentSyncPayload, StageOutboxItemInput, SYNC_ENTITY_MEDIA_ATTACHMENTS,
-};
+use crate::sync::domain::{MediaAttachmentSyncPayload, StageOutboxItemInput, SYNC_ENTITY_MEDIA_ATTACHMENTS};
 use crate::sync::ops_stage::stage_media_attachment_sync;
 use crate::sync::queries::stage_outbox_item;
-use crate::vps::object_storage::{
-    build_tenant_media_object_key, DeploymentEnvironment, ObjectCategory,
-};
+use crate::vps::object_storage::{build_tenant_media_object_key, DeploymentEnvironment, ObjectCategory};
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 
 /// Compute SHA-256 hex of file bytes (lowercase, 64 chars).
@@ -88,9 +84,7 @@ pub async fn stage_media_bytes(
     capture_meta_json: Option<String>,
 ) -> AppResult<MediaAttachmentSyncPayload> {
     if bytes.is_empty() {
-        return Err(AppError::ValidationFailed(vec![
-            "media bytes must not be empty".into(),
-        ]));
+        return Err(AppError::ValidationFailed(vec!["media bytes must not be empty".into()]));
     }
     let content_sha256 = content_sha256_hex(bytes);
     let object_key = build_tenant_media_object_key(
@@ -130,8 +124,7 @@ pub async fn stage_media_delete_if_found(
     relative_path: Option<&str>,
     content_sha256: Option<&str>,
 ) -> AppResult<()> {
-    let row = if let (Some(ptype), Some(psync), Some(path)) =
-        (parent_entity_type, parent_entity_sync_id, relative_path)
+    let row = if let (Some(ptype), Some(psync), Some(path)) = (parent_entity_type, parent_entity_sync_id, relative_path)
     {
         db.query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,

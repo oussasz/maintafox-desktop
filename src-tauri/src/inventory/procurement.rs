@@ -279,9 +279,7 @@ async fn append_stock_event<C: ConnectionTrait>(
             "SELECT last_insert_rowid() AS id".to_string(),
         ))
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("failed to read inventory transaction id"))
-        })?;
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read inventory transaction id")))?;
     Ok(id_row.try_get("", "id")?)
 }
 
@@ -291,7 +289,7 @@ fn guard_transition(current: &str, next: &str, allowed: &[(&str, &[&str])], enti
             "{entity} is in unsupported state '{current}'."
         )]));
     };
-    if allowed_next.iter().any(|candidate| *candidate == next) {
+    if allowed_next.contains(&next) {
         return Ok(());
     }
     Err(AppError::ValidationFailed(vec![format!(
@@ -902,7 +900,7 @@ pub async fn receive_purchase_order_goods(
                             chrono::DateTime::parse_from_rfc3339(&now_iso()),
                         ) {
                             let days = (end - start).num_seconds() as f64 / 86400.0;
-                            Value::Double(Some(days.into()))
+                            Value::Double(Some(days))
                         } else {
                             Value::Double(None)
                         }
@@ -1034,7 +1032,9 @@ pub async fn receive_purchase_order_goods(
                                 source_type: Some("PO_GR".to_string()),
                                 source_id: Some(line.po_line_id),
                                 source_ref: None,
-                                notes: Some(format!("Auto-issued on GR accept (fulfillment_action=ISSUE_TO_DEMAND)")),
+                                notes: Some(
+                                    "Auto-issued on GR accept (fulfillment_action=ISSUE_TO_DEMAND)".to_string(),
+                                ),
                             },
                         )
                         .await
@@ -1680,7 +1680,7 @@ pub async fn evaluate_repair_vs_replace(db: &DatabaseConnection, order_id: i64) 
         .filter(|cost| cost.is_finite() && *cost > 0.0);
     let replacement_is_provisional = valuation
         .as_ref()
-        .map_or(false, |cost| cost.is_provisional || cost.confidence == "low");
+        .is_some_and(|cost| cost.is_provisional || cost.confidence == "low");
 
     let (Some(repair_cost), Some(replacement_cost)) = (repair_cost, replacement_cost) else {
         let reason = if repair_cost.is_none() {

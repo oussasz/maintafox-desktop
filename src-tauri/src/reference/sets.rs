@@ -109,7 +109,7 @@ async fn get_set_by_id(db: &DatabaseConnection, set_id: i64) -> AppResult<Refere
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {SELECT_COLS} FROM reference_sets WHERE id = ?"),
+            format!("SELECT {SELECT_COLS} FROM reference_sets WHERE id = ?"),
             [set_id.into()],
         ))
         .await?
@@ -165,7 +165,7 @@ async fn clone_published_values_into_draft(
     let source_rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {VALUE_CLONE_COLS} FROM reference_values WHERE set_id = ? \
                  ORDER BY sort_order ASC, code ASC"
             ),
@@ -356,7 +356,7 @@ pub async fn list_sets_for_domain(db: &DatabaseConnection, domain_id: i64) -> Ap
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {SELECT_COLS} FROM reference_sets \
                  WHERE domain_id = ? ORDER BY version_no DESC"
             ),
@@ -401,7 +401,7 @@ pub async fn create_draft_set(db: &DatabaseConnection, domain_id: i64, actor_id:
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {SELECT_COLS} FROM reference_sets \
                  WHERE domain_id = ? AND version_no = ?"
             ),

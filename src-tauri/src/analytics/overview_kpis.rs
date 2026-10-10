@@ -55,9 +55,7 @@ async fn sum_scalar(db: &DatabaseConnection, sql: &str) -> AppResult<f64> {
     let row = db
         .query_one(Statement::from_string(DbBackend::Sqlite, sql.to_owned()))
         .await?;
-    Ok(row
-        .map(|r| f64::try_get(&r, "", "total").unwrap_or(0.0))
-        .unwrap_or(0.0))
+    Ok(row.map(|r| f64::try_get(&r, "", "total").unwrap_or(0.0)).unwrap_or(0.0))
 }
 
 async fn avg_optional(db: &DatabaseConnection, sql: &str) -> AppResult<Option<f64>> {
@@ -693,9 +691,7 @@ async fn load_reliability_series(db: &DatabaseConnection, field: &str) -> AppRes
     let col = match field {
         "mtbf" => "AVG(CASE WHEN s.mtbf IS NOT NULL AND s.mtbf > 0 THEN s.mtbf END)",
         "mttr" => "AVG(CASE WHEN s.mttr IS NOT NULL AND s.mttr > 0 THEN s.mttr END)",
-        "availability" => {
-            "AVG(CASE WHEN s.availability IS NOT NULL THEN s.availability * 100.0 END)"
-        }
+        "availability" => "AVG(CASE WHEN s.availability IS NOT NULL THEN s.availability * 100.0 END)",
         _ => return Ok(vec![]),
     };
     let sql = format!(

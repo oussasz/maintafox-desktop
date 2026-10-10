@@ -106,10 +106,7 @@ pub fn validate_sync_exchange_request_json(body: &serde_json::Value) -> Result<(
             false,
         )
     })?;
-    let protocol = obj
-        .get("protocol_version")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let protocol = obj.get("protocol_version").and_then(|v| v.as_str()).unwrap_or("");
     if protocol != VPS_API_VERSION_V1 && protocol != "v1" {
         return Err(typed_error(
             VpsContractFamily::Sync,

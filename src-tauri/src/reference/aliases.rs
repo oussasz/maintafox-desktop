@@ -215,7 +215,7 @@ pub async fn list_aliases(db: &DatabaseConnection, reference_value_id: i64) -> A
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {SELECT_COLS} FROM reference_aliases \
                  WHERE reference_value_id = ? \
                  ORDER BY locale ASC, alias_type ASC, alias_label ASC"
@@ -232,7 +232,7 @@ pub async fn get_alias(db: &DatabaseConnection, alias_id: i64) -> AppResult<Refe
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {SELECT_COLS} FROM reference_aliases WHERE id = ?"),
+            format!("SELECT {SELECT_COLS} FROM reference_aliases WHERE id = ?"),
             [alias_id.into()],
         ))
         .await?
@@ -299,7 +299,7 @@ pub async fn create_alias(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {SELECT_COLS} FROM reference_aliases \
                  WHERE reference_value_id = ? AND locale = ? AND alias_type = ? AND alias_label = ?"
             ),

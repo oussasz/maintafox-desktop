@@ -9,11 +9,11 @@ use crate::notifications::emitter::{emit_event as emit_notification_event, Notif
 use crate::pm::domain::{
     CreatePmPlanInput, CreatePmPlanVersionInput, ExecutePmOccurrenceInput, ExecutePmOccurrenceResult,
     GeneratePmOccurrencesInput, GeneratePmOccurrencesResult, PmDueMetrics, PmEffortVarianceKpi, PmExecution,
-    PmExecutionFilter, PmExecutionFindingInput, PmFinding, PmGovernanceKpiInput, PmGovernanceKpiReport,
-    PmOccurrence, PmOccurrenceFilter, PmPlan, PmPlanFilter, PmPlanVersion, PmPlanningCandidate,
-    PmPlanningReadinessBlocker, PmPlanningReadinessInput, PmPlanningReadinessProjection, PmRateKpi,
-    PmRecurringFinding, PmRecurringFindingsInput, PublishPmPlanVersionInput, TransitionPmOccurrenceInput,
-    TransitionPmPlanLifecycleInput, UpdatePmPlanInput, UpdatePmPlanVersionInput,
+    PmExecutionFilter, PmExecutionFindingInput, PmFinding, PmGovernanceKpiInput, PmGovernanceKpiReport, PmOccurrence,
+    PmOccurrenceFilter, PmPlan, PmPlanFilter, PmPlanVersion, PmPlanningCandidate, PmPlanningReadinessBlocker,
+    PmPlanningReadinessInput, PmPlanningReadinessProjection, PmRateKpi, PmRecurringFinding, PmRecurringFindingsInput,
+    PublishPmPlanVersionInput, TransitionPmOccurrenceInput, TransitionPmPlanLifecycleInput, UpdatePmPlanInput,
+    UpdatePmPlanVersionInput,
 };
 use crate::wo::domain::WoCreateInput;
 use crate::wo::queries as wo_queries;
@@ -2300,7 +2300,7 @@ async fn create_follow_up_di_from_finding(
     let di = create_intervention_request(
         db,
         DiCreateInput {
-            equipment_id: equipment_id,
+            equipment_id,
             org_node_id,
             title: format!(
                 "PM finding follow-up [{}] {}",

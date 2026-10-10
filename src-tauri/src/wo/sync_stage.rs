@@ -1,8 +1,8 @@
 use crate::errors::AppResult;
 use crate::sync::domain::{
     EquipmentSyncPayload, StageOutboxItemInput, WorkOrderIntervenerSyncPayload, WorkOrderSyncPayload,
-    WorkOrderTaskSyncPayload, SYNC_ENTITY_EQUIPMENT, SYNC_ENTITY_WORK_ORDERS,
-    SYNC_ENTITY_WORK_ORDER_INTERVENERS, SYNC_ENTITY_WORK_ORDER_TASKS,
+    WorkOrderTaskSyncPayload, SYNC_ENTITY_EQUIPMENT, SYNC_ENTITY_WORK_ORDERS, SYNC_ENTITY_WORK_ORDER_INTERVENERS,
+    SYNC_ENTITY_WORK_ORDER_TASKS,
 };
 use crate::sync::foundation_stage::warn_stage;
 use crate::sync::queries::stage_outbox_item;
@@ -10,11 +10,7 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 
 use super::domain::WorkOrder;
 
-async fn lookup_entity_sync_id(
-    db: &impl ConnectionTrait,
-    table: &str,
-    id: i64,
-) -> AppResult<Option<String>> {
+async fn lookup_entity_sync_id(db: &impl ConnectionTrait, table: &str, id: i64) -> AppResult<Option<String>> {
     let sql = format!("SELECT entity_sync_id FROM {table} WHERE id = ? LIMIT 1");
     let row = db
         .query_one(Statement::from_sql_and_values(
@@ -40,10 +36,7 @@ pub async fn stage_work_order_sync(
     closeout_profile_id: Option<i64>,
     closeout_passed: bool,
 ) -> AppResult<()> {
-    let esid = wo
-        .entity_sync_id
-        .clone()
-        .unwrap_or_else(|| wo.code.clone());
+    let esid = wo.entity_sync_id.clone().unwrap_or_else(|| wo.code.clone());
     let equipment_entity_sync_id = match wo.equipment_id {
         Some(id) => lookup_entity_sync_id(db, "equipment", id).await?,
         None => None,
@@ -118,10 +111,7 @@ pub async fn warn_stage_wo(db: &DatabaseConnection, wo_id: i64) {
     warn_stage(stage_work_order_by_id(db, wo_id).await, "work_order");
 }
 
-pub async fn stage_work_order_task_sync(
-    db: &DatabaseConnection,
-    task_id: i64,
-) -> AppResult<()> {
+pub async fn stage_work_order_task_sync(db: &DatabaseConnection, task_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -137,9 +127,7 @@ pub async fn stage_work_order_task_sync(
     let Some(row) = row else {
         return Ok(());
     };
-    let wo_esid: String = row
-        .try_get("", "work_order_entity_sync_id")
-        .unwrap_or_default();
+    let wo_esid: String = row.try_get("", "work_order_entity_sync_id").unwrap_or_default();
     if wo_esid.is_empty() {
         return Ok(());
     }
@@ -178,10 +166,7 @@ pub async fn stage_work_order_task_sync(
     Ok(())
 }
 
-pub async fn stage_work_order_intervener_sync(
-    db: &DatabaseConnection,
-    intervener_row_id: i64,
-) -> AppResult<()> {
+pub async fn stage_work_order_intervener_sync(db: &DatabaseConnection, intervener_row_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -199,9 +184,7 @@ pub async fn stage_work_order_intervener_sync(
     let Some(row) = row else {
         return Ok(());
     };
-    let wo_esid: String = row
-        .try_get("", "work_order_entity_sync_id")
-        .unwrap_or_default();
+    let wo_esid: String = row.try_get("", "work_order_entity_sync_id").unwrap_or_default();
     if wo_esid.is_empty() {
         return Ok(());
     }

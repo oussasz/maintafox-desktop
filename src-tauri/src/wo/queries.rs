@@ -266,7 +266,7 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
         .map_err(|e| AppError::Internal(anyhow::anyhow!("WO count decode: {e}")))?;
 
     // ── Data query with LIMIT/OFFSET ─────────────────────────────────────
-    let row_limit = filter.limit.min(200).max(1);
+    let row_limit = filter.limit.clamp(1, 200);
     let offset = filter.offset.max(0);
 
     let data_sql = format!(

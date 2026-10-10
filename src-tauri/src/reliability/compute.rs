@@ -6,9 +6,7 @@ pub fn eligible_unplanned_mtbf(flags_json: &str) -> bool {
         .ok()
         .and_then(|v| {
             v.get("eligible_unplanned_mtbf").and_then(|x| {
-                if x.as_bool() == Some(true) {
-                    Some(true)
-                } else if x.as_u64() == Some(1) {
+                if x.as_bool() == Some(true) || x.as_u64() == Some(1) {
                     Some(true)
                 } else {
                     x.as_i64().map(|i| i == 1)

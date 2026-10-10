@@ -10,6 +10,6 @@ pub mod ops_stage;
 pub mod queries;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod convergence_tests;
+#[cfg(test)]
+mod tests;

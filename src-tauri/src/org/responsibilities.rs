@@ -88,12 +88,8 @@ fn map_responsibility(row: &QueryResult) -> AppResult<OrgNodeResponsibility> {
         team_id: row
             .try_get::<Option<i64>>("", "team_id")
             .map_err(|e| decode_err("team_id", e))?,
-        person_display_name: row
-            .try_get::<Option<String>>("", "person_display_name")
-            .unwrap_or(None),
-        team_label: row
-            .try_get::<Option<String>>("", "team_label")
-            .unwrap_or(None),
+        person_display_name: row.try_get::<Option<String>>("", "person_display_name").unwrap_or(None),
+        team_label: row.try_get::<Option<String>>("", "team_label").unwrap_or(None),
         valid_from: row
             .try_get::<Option<String>>("", "valid_from")
             .map_err(|e| decode_err("valid_from", e))?,
@@ -230,9 +226,7 @@ pub async fn assign_responsibility(
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
-            format!(
-                "SELECT {SELECT_COLS} {SELECT_FROM} WHERE r.id = last_insert_rowid()"
-            ),
+            format!("SELECT {SELECT_COLS} {SELECT_FROM} WHERE r.id = last_insert_rowid()"),
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("responsibility created but not found after insert")))?;

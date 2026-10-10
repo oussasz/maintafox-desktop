@@ -91,7 +91,7 @@ pub async fn refresh_inspection_reliability_signals(
     db: &DatabaseConnection,
     input: RefreshInspectionReliabilitySignalsInput,
 ) -> AppResult<Vec<InspectionReliabilitySignal>> {
-    let days = input.window_days.max(1).min(366);
+    let days = input.window_days.clamp(1, 366);
     let end = Utc::now();
     let start = end - Duration::days(days);
     let period_start = start.to_rfc3339();

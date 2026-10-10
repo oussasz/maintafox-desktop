@@ -674,9 +674,7 @@ async fn validate_mapped_fields(
         }
     }
     if let Some(team_code) = normalized.team_code.as_deref() {
-        let found =
-            crate::repository::team_repository::try_resolve_active_team_id_by_code(db, team_code)
-                .await?;
+        let found = crate::repository::team_repository::try_resolve_active_team_id_by_code(db, team_code).await?;
         if found.is_none() {
             push_message(
                 messages,
@@ -737,9 +735,7 @@ async fn resolve_mapped_fields(db: &impl ConnectionTrait, normalized: &Normalize
         None => None,
     };
     let team_id = match normalized.team_code.as_deref() {
-        Some(code) => {
-            crate::repository::team_repository::try_resolve_active_team_id_by_code(db, code).await?
-        }
+        Some(code) => crate::repository::team_repository::try_resolve_active_team_id_by_code(db, code).await?,
         None => None,
     };
     Ok(MappedIds {

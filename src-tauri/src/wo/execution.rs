@@ -237,10 +237,7 @@ pub async fn assign_wo(db: &DatabaseConnection, input: WoAssignInput) -> AppResu
     .await
 }
 
-pub async fn emergency_reassign_wo(
-    db: &DatabaseConnection,
-    input: WoEmergencyReassignInput,
-) -> AppResult<WorkOrder> {
+pub async fn emergency_reassign_wo(db: &DatabaseConnection, input: WoEmergencyReassignInput) -> AppResult<WorkOrder> {
     crate::wo::workflow::actions::emergency_reassign(
         db,
         crate::wo::workflow::actions::WoEmergencyReassignInput {
@@ -699,10 +696,8 @@ async fn collect_completion_gates(conn: &impl ConnectionTrait, wo_id: i64) -> Ap
         .map_err(|e| decode_err("parts_actuals_confirmed", e))?;
     let parts_ok = if pending_planned > 0 {
         false
-    } else if planned_count == 0 && used_count == 0 && parts_confirmed == 0 {
-        false
     } else {
-        true
+        !(planned_count == 0 && used_count == 0 && parts_confirmed == 0)
     };
     gates.push(WoCompletionGate {
         code: "PARTS".into(),

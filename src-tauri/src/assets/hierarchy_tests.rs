@@ -157,7 +157,12 @@ mod tests {
               created_at, updated_at, row_version, structure_model_id) \
              VALUES (?, 'SITE-002', 'Second Site', ?, NULL, 'active', ?, ?, 1, \
                      (SELECT id FROM org_structure_models WHERE status = 'active' ORDER BY id DESC LIMIT 1))",
-            [entity_sync_id.into(), node_type_id.into(), now.clone().into(), now.into()],
+            [
+                entity_sync_id.into(),
+                node_type_id.into(),
+                now.clone().into(),
+                now.into(),
+            ],
         ))
         .await
         .expect("insert second org node");

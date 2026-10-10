@@ -841,7 +841,7 @@ pub async fn create_budget_successor_version(
             erp_external_ref,
             successor_of_version_id,
             created_by_id
-         ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             entity_sync_id.into(),
             fiscal_year.into(),
@@ -3890,12 +3890,12 @@ pub async fn build_budget_report_pack(
     let mut dashboard_rows = list_budget_dashboard_rows(db, dashboard_filter.clone()).await?;
     let mut drilldown_rows = list_budget_dashboard_drilldown(db, dashboard_filter).await?;
     if let Some(period_start) = filter.period_month_start {
-        dashboard_rows.retain(|row| row.period_month.map_or(true, |month| month >= period_start));
-        drilldown_rows.retain(|row| row.period_month.map_or(true, |month| month >= period_start));
+        dashboard_rows.retain(|row| row.period_month.is_none_or(|month| month >= period_start));
+        drilldown_rows.retain(|row| row.period_month.is_none_or(|month| month >= period_start));
     }
     if let Some(period_end) = filter.period_month_end {
-        dashboard_rows.retain(|row| row.period_month.map_or(true, |month| month <= period_end));
-        drilldown_rows.retain(|row| row.period_month.map_or(true, |month| month <= period_end));
+        dashboard_rows.retain(|row| row.period_month.is_none_or(|month| month <= period_end));
+        drilldown_rows.retain(|row| row.period_month.is_none_or(|month| month <= period_end));
     }
     let reviews = list_budget_variance_reviews(
         db,

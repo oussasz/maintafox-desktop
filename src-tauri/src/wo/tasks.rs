@@ -197,7 +197,7 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE rowid = last_insert_rowid()"),
+            format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE rowid = last_insert_rowid()"),
             [],
         ))
         .await?
@@ -274,7 +274,7 @@ pub async fn complete_task(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE id = ?"),
+            format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE id = ?"),
             [task_id.into()],
         ))
         .await?
@@ -358,7 +358,7 @@ pub async fn reopen_task(db: &DatabaseConnection, task_id: i64, _actor_id: i64) 
     let updated = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE id = ?"),
+            format!("SELECT {TASK_COLS} FROM work_order_tasks WHERE id = ?"),
             [task_id.into()],
         ))
         .await?
@@ -382,7 +382,7 @@ pub async fn list_tasks(db: &DatabaseConnection, wo_id: i64) -> AppResult<Vec<Wo
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {TASK_COLS} FROM work_order_tasks \
                  WHERE work_order_id = ? ORDER BY sequence_order ASC, id ASC"
             ),

@@ -28,7 +28,7 @@ describe("useIntegrityCheck", () => {
     expect(result.current.status).toBe("done");
     expect(result.current.report?.is_healthy).toBe(true);
     expect(result.current.report?.domain_count).toBe(18);
-    expect(mockInvoke).toHaveBeenCalledWith("run_integrity_check");
+    expect(mockInvoke).toHaveBeenCalledWith("run_integrity_check", undefined);
   });
 
   it("check() sets error status on failure", async () => {
@@ -56,7 +56,7 @@ describe("useIntegrityCheck", () => {
 
     expect(result.current.status).toBe("done");
     expect(result.current.report?.is_healthy).toBe(true);
-    expect(mockInvoke).toHaveBeenCalledWith("repair_seed_data");
+    expect(mockInvoke).toHaveBeenCalledWith("repair_seed_data", undefined);
   });
 
   it("repair() sets error status on failure", async () => {

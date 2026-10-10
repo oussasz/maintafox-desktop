@@ -632,7 +632,7 @@ pub const CATALOG: &[PermissionMeta] = &[
         category: "pm",
         is_dangerous: false,
         requires_step_up: false,
-        usage: "catalog-only",
+        usage: "both",
         aliases: &[],
     },
     PermissionMeta {
@@ -1616,7 +1616,7 @@ pub fn canonicalize(name: &str) -> Option<&'static str> {
         if meta.name == name {
             return Some(meta.name);
         }
-        if meta.aliases.iter().any(|a| *a == name) {
+        if meta.aliases.contains(&name) {
             return Some(meta.name);
         }
     }

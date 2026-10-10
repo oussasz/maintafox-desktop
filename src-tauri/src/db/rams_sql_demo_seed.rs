@@ -56,7 +56,7 @@ pub async fn ensure_equipment_rams_simulation(db: &DatabaseConnection, equipment
 
     sql_ensure_default_schedule_class(db).await?;
     sql_assign_schedule_class(db, equipment_id).await?;
-    let anchor_wo_id = sql_ensure_anchor_work_order(db, equipment_id).await?;
+    let _anchor_wo_id = sql_ensure_anchor_work_order(db, equipment_id).await?;
     sql_promote_failure_event_eligibility(db, equipment_id).await?;
     sql_ensure_demo_failure_events(db, equipment_id).await?;
     sql_ensure_demo_exposure_logs(db, equipment_id).await?;

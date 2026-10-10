@@ -62,15 +62,8 @@ async fn run_due_schedules(db: &DatabaseConnection, app_data_dir: &std::path::Pa
             }
         };
 
-        if let Err(e) = persist_run_artifact(
-            db,
-            app_data_dir,
-            run_id,
-            &s.export_format,
-            &doc.file_name,
-            &doc.bytes,
-        )
-        .await
+        if let Err(e) =
+            persist_run_artifact(db, app_data_dir, run_id, &s.export_format, &doc.file_name, &doc.bytes).await
         {
             let _ = finish_run_failed(db, run_id, &e.to_string()).await;
             let cron = Schedule::from_str(s.cron_expr.trim())

@@ -165,9 +165,7 @@ pub async fn save_di_attachment(
         ]));
     }
 
-    let parent_entity_sync_id: String = di_row
-        .try_get::<String>("", "entity_sync_id")
-        .unwrap_or_default();
+    let parent_entity_sync_id: String = di_row.try_get::<String>("", "entity_sync_id").unwrap_or_default();
 
     // ── Generate unique relative path ─────────────────────────────────────
     let uuid = Uuid::new_v4();

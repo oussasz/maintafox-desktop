@@ -16,19 +16,14 @@ impl MigrationTrait for Migration {
         let db = manager.get_connection();
         for (step, sql) in [
             ("icon_key", "ALTER TABLE teams ADD COLUMN icon_key TEXT NULL"),
-            (
-                "accent_color",
-                "ALTER TABLE teams ADD COLUMN accent_color TEXT NULL",
-            ),
+            ("accent_color", "ALTER TABLE teams ADD COLUMN accent_color TEXT NULL"),
         ] {
             if let Err(e) = db.execute_unprepared(sql).await {
                 let msg = e.to_string().to_lowercase();
                 if msg.contains("duplicate column") {
                     continue;
                 }
-                return Err(DbErr::Custom(format!(
-                    "team_crest_identity step '{step}' failed: {e}"
-                )));
+                return Err(DbErr::Custom(format!("team_crest_identity step '{step}' failed: {e}")));
             }
         }
         Ok(())

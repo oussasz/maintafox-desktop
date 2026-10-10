@@ -92,7 +92,7 @@ async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid missing")))?;
-    Ok(row.try_get("", "id").map_err(|e| decode_err("id", e))?)
+    row.try_get("", "id").map_err(|e| decode_err("id", e))
 }
 
 fn extension_mime(path: &Path) -> Option<&'static str> {
@@ -207,9 +207,7 @@ pub async fn upload_asset_photo(
             id: payload.asset_id.to_string(),
         });
     };
-    let parent_entity_sync_id: String = equip_row
-        .try_get::<String>("", "entity_sync_id")
-        .unwrap_or_default();
+    let parent_entity_sync_id: String = equip_row.try_get::<String>("", "entity_sync_id").unwrap_or_default();
 
     let src = Path::new(&payload.source_path);
     let file_name = sanitize_file_name(src)?;
