@@ -878,12 +878,10 @@ pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitSt
             })?;
             finalize_open_suspension(db, input.id, rid, true).await?;
         }
-        ("closed", "handed_back") => {
-            if count_handover_logs(db, input.id).await? < 1 {
-                return Err(AppError::ValidationFailed(vec![
-                    "At least one permit_handover_logs row is required before handed_back.".into(),
-                ]));
-            }
+        ("closed", "handed_back") if count_handover_logs(db, input.id).await? < 1 => {
+            return Err(AppError::ValidationFailed(vec![
+                "At least one permit_handover_logs row is required before handed_back.".into(),
+            ]));
         }
         _ => {}
     }

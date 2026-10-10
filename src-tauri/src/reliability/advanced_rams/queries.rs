@@ -1578,13 +1578,7 @@ pub async fn get_weibull_dashboard_payload(
     let t_effective = (t_base + t_offset_hours).max(0.0);
 
     let fit = get_latest_weibull_fit_for_equipment(db, input.equipment_id).await?;
-    let fit = fit.and_then(|f| {
-        if f.beta.unwrap_or(0.0) > 0.0 && f.eta.unwrap_or(0.0) > 0.0 {
-            Some(f)
-        } else {
-            None
-        }
-    });
+    let fit = fit.filter(|f| f.beta.unwrap_or(0.0) > 0.0 && f.eta.unwrap_or(0.0) > 0.0);
     let Some(main_fit) = fit else {
         return Ok(WeibullDashboardPayload {
             equipment_id: input.equipment_id,

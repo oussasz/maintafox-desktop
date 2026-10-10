@@ -188,7 +188,7 @@ function generateRust(registry: Registry): string {
   lines.push("        if meta.name == name {");
   lines.push("            return Some(meta.name);");
   lines.push("        }");
-  lines.push("        if meta.aliases.iter().any(|a| *a == name) {");
+  lines.push("        if meta.aliases.contains(&name) {");
   lines.push("            return Some(meta.name);");
   lines.push("        }");
   lines.push("    }");

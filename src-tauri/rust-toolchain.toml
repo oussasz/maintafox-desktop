@@ -1,0 +1,5 @@
+# One Rust toolchain for local builds and CI, so clippy/rustfmt apply the same rules everywhere.
+# Upgrade deliberately: bump this, fix new lints, commit.
+[toolchain]
+channel = "1.94.1"
+components = ["clippy", "rustfmt"]

@@ -3087,9 +3087,9 @@ pub async fn upsert_article_equivalent(
     }
     let allowed = ["DIRECT", "FUNCTIONAL", "UPGRADE"];
     if !allowed.contains(&input.equivalence_type.as_str()) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "equivalence_type must be one of: DIRECT, FUNCTIONAL, UPGRADE."
-        )]));
+        return Err(AppError::ValidationFailed(vec![
+            "equivalence_type must be one of: DIRECT, FUNCTIONAL, UPGRADE.".to_string(),
+        ]));
     }
     let is_bidirectional = input.is_bidirectional.unwrap_or(true) as i64;
     db.execute(Statement::from_sql_and_values(
