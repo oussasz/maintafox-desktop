@@ -62,6 +62,9 @@ pub async fn get_task_status(state: State<'_, AppState>) -> AppResult<Vec<TaskSt
 /// tasks are cancelled and the database pool is dropped before the process exits.
 #[tauri::command]
 pub async fn shutdown_app(app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult<()> {
+    // No frontend caller; the window close / tray quit path does not go through IPC.
+    // Requiring a session stops an unauthenticated webview from terminating the app.
+    let _user = crate::require_session!(state);
     tracing::info!("shutdown_app: initiating graceful shutdown");
 
     // 1. Signal all background tasks to stop and await with 5s timeout

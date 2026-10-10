@@ -401,27 +401,6 @@ pub async fn apply_entitlement_envelope(
     let verification_result = match expected_signature(&input) {
         Some(expected) if expected == input.signature => "verified".to_string(),
         Some(_) if SOFT_ACCEPT_CONTROL_PLANE_ENVELOPES => {
-            // #region agent log
-            {
-                let line = format!(
-                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"L-canon\",\"location\":\"entitlements/queries.rs:verify\",\"message\":\"signature mismatch soft-accepted\",\"data\":{{\"envelopeId\":\"{}\",\"tier\":\"{}\"}},\"timestamp\":{}}}\n",
-                    input.envelope_id.replace('"', ""),
-                    input.tier.replace('"', ""),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis())
-                        .unwrap_or(0)
-                );
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                    .and_then(|mut f| {
-                        use std::io::Write;
-                        f.write_all(line.as_bytes())
-                    });
-            }
-            // #endregion
             tracing::warn!(
                 event = "desktop_entitlement_signature_soft_accepted",
                 envelope_id = %input.envelope_id,
@@ -489,27 +468,6 @@ pub async fn apply_entitlement_envelope(
             .await?;
             update_envelope_row(&tx, row_id, &input, &payload_hash, &verification_result).await?;
             active_row_id = row_id;
-            // #region agent log
-            {
-                let line = format!(
-                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"M-upsert\",\"location\":\"entitlements/queries.rs:apply\",\"message\":\"soft-lineage envelope superseded in place\",\"data\":{{\"rowId\":{},\"envelopeId\":\"{}\"}},\"timestamp\":{}}}\n",
-                    row_id,
-                    input.envelope_id.replace('"', ""),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis())
-                        .unwrap_or(0)
-                );
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                    .and_then(|mut f| {
-                        use std::io::Write;
-                        f.write_all(line.as_bytes())
-                    });
-            }
-            // #endregion
         } else {
             tx.execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
@@ -674,35 +632,6 @@ pub async fn apply_entitlement_envelope(
 pub async fn get_entitlement_summary(db: &DatabaseConnection) -> AppResult<EntitlementSummary> {
     if let Some(envelope) = active_envelope(db).await? {
         let effective_state = compute_effective_state(&envelope);
-        // #region agent log
-        {
-            let false_count =
-                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&envelope.capabilities_json)
-                    .ok()
-                    .map(|m| m.values().filter(|v| v.as_bool() == Some(false)).count())
-                    .unwrap_or(0);
-            let line = format!(
-                "{{\"sessionId\":\"a6aab3\",\"runId\":\"pre-fix\",\"hypothesisId\":\"A-D\",\"location\":\"entitlements/queries.rs:get_entitlement_summary\",\"message\":\"active envelope summary\",\"data\":{{\"hasEnvelope\":true,\"envelopeId\":\"{}\",\"tier\":\"{}\",\"effectiveState\":\"{}\",\"capJsonLen\":{},\"falseCapabilityCount\":{}}},\"timestamp\":{}}}\n",
-                envelope.envelope_id.replace('"', ""),
-                envelope.tier.replace('"', ""),
-                effective_state.replace('"', ""),
-                envelope.capabilities_json.len(),
-                false_count,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis())
-                    .unwrap_or(0)
-            );
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                .and_then(|mut f| {
-                    use std::io::Write;
-                    f.write_all(line.as_bytes())
-                });
-        }
-        // #endregion
         return Ok(EntitlementSummary {
             envelope_id: Some(envelope.envelope_id),
             state: envelope.state,
@@ -717,25 +646,6 @@ pub async fn get_entitlement_summary(db: &DatabaseConnection) -> AppResult<Entit
             feature_flag_map_json: envelope.feature_flags_json,
         });
     }
-    // #region agent log
-    {
-        let line = format!(
-            "{{\"sessionId\":\"a6aab3\",\"runId\":\"pre-fix\",\"hypothesisId\":\"A\",\"location\":\"entitlements/queries.rs:get_entitlement_summary\",\"message\":\"no active envelope; legacy empty map\",\"data\":{{\"hasEnvelope\":false}},\"timestamp\":{}}}\n",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0)
-        );
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-            .and_then(|mut f| {
-                use std::io::Write;
-                f.write_all(line.as_bytes())
-            });
-    }
-    // #endregion
     // Legacy-safe fallback: allow runtime until first signed entitlement arrives.
     Ok(EntitlementSummary {
         envelope_id: None,

@@ -339,22 +339,6 @@ async fn apply_claim_entitlement_envelope(
     envelope: Option<crate::entitlements::domain::EntitlementEnvelopeInput>,
 ) -> AppResult<()> {
     let Some(envelope) = envelope else {
-        // #region agent log
-        {
-            let line = format!(
-                "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"A\",\"location\":\"product_license.rs:apply_claim_entitlement_envelope\",\"message\":\"claim had no entitlement_envelope\",\"data\":{{\"applied\":false}},\"timestamp\":{}}}\n",
-                chrono::Utc::now().timestamp_millis()
-            );
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                .and_then(|mut f| {
-                    use std::io::Write;
-                    f.write_all(line.as_bytes())
-                });
-        }
-        // #endregion
         return Ok(());
     };
     // Ensure trust material exists before verify (older DBs may have an empty table).
@@ -368,23 +352,6 @@ async fn apply_claim_entitlement_envelope(
     let result = match crate::entitlements::queries::apply_entitlement_envelope(db, envelope).await {
         Ok(result) => result,
         Err(e) => {
-            // #region agent log
-            {
-                let line = format!(
-                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"K-trust\",\"location\":\"product_license.rs:apply_claim_entitlement_envelope\",\"message\":\"envelope apply error soft-continued\",\"data\":{{\"error\":\"{}\"}},\"timestamp\":{}}}\n",
-                    e.to_string().replace('\\', "\\\\").replace('"', "'"),
-                    chrono::Utc::now().timestamp_millis()
-                );
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                    .and_then(|mut f| {
-                        use std::io::Write;
-                        f.write_all(line.as_bytes())
-                    });
-            }
-            // #endregion
             // Soft phase: never roll activation back to degraded solely because envelope apply failed.
             tracing::warn!(
                 event = "desktop_entitlement_envelope_apply_failed",
@@ -394,26 +361,6 @@ async fn apply_claim_entitlement_envelope(
             return Ok(());
         }
     };
-    // #region agent log
-    {
-        let line = format!(
-            "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"A-D\",\"location\":\"product_license.rs:apply_claim_entitlement_envelope\",\"message\":\"envelope apply result\",\"data\":{{\"applied\":true,\"verified\":{},\"envelopeId\":\"{}\",\"effectiveState\":\"{}\",\"verification\":\"{}\"}},\"timestamp\":{}}}\n",
-            result.verified,
-            result.envelope_id.replace('"', ""),
-            result.effective_state.replace('"', ""),
-            result.verification_result.replace('"', ""),
-            chrono::Utc::now().timestamp_millis()
-        );
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-            .and_then(|mut f| {
-                use std::io::Write;
-                f.write_all(line.as_bytes())
-            });
-    }
-    // #endregion
     if !result.verified {
         tracing::warn!(
             event = "desktop_entitlement_envelope_unverified",
@@ -932,6 +879,40 @@ pub async fn get_product_license_onboarding_state(
     }
 }
 
+/// Who may submit a licence key (pre-login gate or in-app):
+/// - No usable activation yet (uninitialized, pending, or any denied_* state, e.g. revoked/expired
+///   licence that blocks the whole app) → allowed without a session: onboarding and recovery.
+/// - An active or degraded (still usable) activation → only an authenticated session with
+///   `adm.settings` + step-up, so nobody at the login screen can swap a working licence.
+async fn authorize_license_key_submission(state: &State<'_, AppState>) -> AppResult<()> {
+    let record = load_state_record(state).await?;
+    let usable_activation = record.as_ref().map_or(false, |r| {
+        record_has_valid_activation_claim(r)
+            && matches!(
+                r.status,
+                ProductLicenseActivationStatus::Active | ProductLicenseActivationStatus::DegradedApiUnavailable
+            )
+    });
+    if !usable_activation {
+        return Ok(());
+    }
+    if state.session.read().await.current.is_none() {
+        return Err(AppError::Auth(
+            "Une session administrateur est requise pour remplacer une licence active.              (An administrator session is required to replace an active licence.)"
+                .into(),
+        ));
+    }
+    let user = require_session!(state);
+    crate::require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_SETTINGS,
+        crate::auth::rbac::PermissionScope::Global
+    );
+    crate::require_step_up!(state);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn submit_product_license_key(
     key: String,
@@ -940,6 +921,7 @@ pub async fn submit_product_license_key(
     app_version: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
+    authorize_license_key_submission(&state).await?;
     let changed_by_id = state
         .session
         .read()
@@ -1073,25 +1055,6 @@ pub async fn apply_product_license_reconciliation(
         .ok_or_else(|| AppError::ValidationFailed(vec!["No local product license state found.".into()]))?;
     let outcome_value: serde_json::Value = serde_json::from_str(&outcome_json)
         .map_err(|e| AppError::ValidationFailed(vec![format!("outcomeJson must be valid JSON: {e}")]))?;
-    // #region agent log
-    {
-        let kind = outcome_value.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-        let has_claim = outcome_value.get("claim").is_some();
-        let has_env = outcome_value.get("entitlement_envelope").is_some();
-        let line = format!(
-            "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"G-serde\",\"location\":\"product_license.rs:apply_reconciliation\",\"message\":\"reconciling outcome\",\"data\":{{\"kind\":\"{kind}\",\"hasClaim\":{has_claim},\"hasEnvelope\":{has_env}}},\"timestamp\":{}}}\n",
-            chrono::Utc::now().timestamp_millis()
-        );
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-            .and_then(|mut f| {
-                use std::io::Write;
-                f.write_all(line.as_bytes())
-            });
-    }
-    // #endregion
     let entitlement_envelope = match outcome_value
         .get("entitlement_envelope")
         .cloned()
@@ -1101,23 +1064,6 @@ pub async fn apply_product_license_reconciliation(
     {
         Ok(v) => v,
         Err(e) => {
-            // #region agent log
-            {
-                let line = format!(
-                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"G-serde\",\"location\":\"product_license.rs:envelope_parse\",\"message\":\"envelope deserialize failed; continuing without envelope\",\"data\":{{\"error\":\"{}\"}},\"timestamp\":{}}}\n",
-                    e.to_string().replace('\\', "\\\\").replace('"', "'"),
-                    chrono::Utc::now().timestamp_millis()
-                );
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                    .and_then(|mut f| {
-                        use std::io::Write;
-                        f.write_all(line.as_bytes())
-                    });
-            }
-            // #endregion
             tracing::warn!(
                 event = "desktop_entitlement_envelope_parse_failed",
                 error = %e,
@@ -1136,29 +1082,11 @@ pub async fn apply_product_license_reconciliation(
         obj.remove("entitlement_envelope");
         obj.insert("claim".into(), claim_value);
     }
-    let mut outcome: ProductLicenseReconciliationInput = serde_json::from_value(outcome_for_meta)
-        .map_err(|e| {
-            // #region agent log
-            {
-                let line = format!(
-                    "{{\"sessionId\":\"a6aab3\",\"runId\":\"post-fix\",\"hypothesisId\":\"G-serde\",\"location\":\"product_license.rs:outcome_parse\",\"message\":\"outcome deserialize failed\",\"data\":{{\"error\":\"{}\"}},\"timestamp\":{}}}\n",
-                    e.to_string().replace('\\', "\\\\").replace('"', "'"),
-                    chrono::Utc::now().timestamp_millis()
-                );
-                let _ = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(r"c:\Dev\MaintafoxSuite\desktop\maintafox-desktop\debug-a6aab3.log")
-                    .and_then(|mut f| {
-                        use std::io::Write;
-                        f.write_all(line.as_bytes())
-                    });
-            }
-            // #endregion
-            AppError::ValidationFailed(vec![format!(
-                "outcomeJson must be valid ProductLicenseReconciliationInput JSON: {e}"
-            )])
-        })?;
+    let mut outcome: ProductLicenseReconciliationInput = serde_json::from_value(outcome_for_meta).map_err(|e| {
+        AppError::ValidationFailed(vec![format!(
+            "outcomeJson must be valid ProductLicenseReconciliationInput JSON: {e}"
+        )])
+    })?;
     outcome.entitlement_envelope = entitlement_envelope;
 
     let now = Utc::now().to_rfc3339();

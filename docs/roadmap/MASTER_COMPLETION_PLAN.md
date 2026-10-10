@@ -209,7 +209,47 @@ These are optional and come only after v1.0 is stable. Commodity CMMS products d
 4. **Planner optimization:** a capacity- and skill-aware auto-scheduling suggestion, built on the existing planning gates.
 5. **Field companion (mobile/tablet)** for inspections and WO execution, reusing the sync v2 protocol. **This is not in the current PRD scope, so it needs a product decision.**
 
-## 5. Risks and open points
+## 5. Phase 0 execution log (2026-10-10)
+
+Work is on branch `phase0/security-hardening` in both repos. Each side has a baseline commit of the work that was previously uncommitted.
+
+**Done (vendor-console `api/` + console):**
+- Tokens are scoped by `aud`/`iss`/`kind` (`api/src/auth-tokens.ts`), so device and step-up tokens are rejected on admin routes and vice versa.
+- Real step-up: `POST /api/v1/auth/step-up` re-checks the password and issues a 5-minute token bound to the operator. Privileged routes verify it and always require a reason.
+- Rate limits on login, step-up, activation, public checkout and device routes.
+- Body limit of 32 MB on sync only, plus nginx `client_max_body_size`; `outbox_batch` is capped at 1000.
+- No fallback secrets; the API exits when a required variable is missing; compose requires the DB, MinIO and admin variables.
+- The console dialog uses server step-up. Every privileged call sends a reason and a token. Buttons with no server endpoint are disabled with an explicit reason.
+- Tests: new `test:auth-boundaries`. All API integration scripts and 24/24 console tests pass.
+
+**Done (desktop):**
+- `submit_product_license_key` is open before login only while the activation is unusable (onboarding or recovery). Otherwise it needs `adm.settings` plus step-up.
+- `shutdown_app` requires a session.
+- 10 debug blocks writing to a hardcoded developer path are removed.
+- The fs capability is reduced to Save-dialog files plus temp print files; the asset scope covers temp print files only.
+- Production CSP no longer lists the dev origins; a `devCsp` keeps HMR working.
+- Fixed the mojibake in WO completion-blocker matching.
+
+**Additional findings discovered during Phase 0 (added to later phases):**
+
+| Finding | Where | Phase |
+|---|---|---|
+| Server step-up was a length check (any 8 chars); compose disabled the guard by default | API | fixed in 0 |
+| nginx had no `client_max_body_size` (1 MB default), so large sync pushes already failed | deploy | fixed in 0 |
+| Public SlickPay checkout creates tenants from unauthenticated input (rate-limited now) | API | 4.4: add bot protection and checkout validation |
+| No server-side RBAC: every vendor operator has every permission | API | 4.3 |
+| Licence key stored in plain text in `app_settings` (`license_key_plaintext`) | desktop | 1.2: move to the OS keyring |
+| Unauthenticated licence actions write `changed_by_id = 0` (fake user) into settings audit | desktop | 1.5: system-actor support in `settings::set_setting` |
+| `get_product_activation_token` / `run_integrity_check` are pre-auth by design | desktop | 2.5: once transport is in Rust, the token never leaves Rust |
+| "Show in folder" uses `shell.open` on a folder path; the default shell scope only allows URLs, so it is probably broken | desktop | 6.9: switch to the opener plugin's reveal |
+| Double-encoded UTF-8 (mojibake) in at least 20 files on develop, some user-visible | desktop | 6.9: encoding sweep |
+| `style-src 'unsafe-inline'` still in the CSP (needed by the current UI libraries) | desktop | 6.9: evaluate nonce/hash |
+
+**Breaking (acceptable, nothing in production):** existing console sessions and desktop activation tokens become invalid, so operators log in again and desktops re-activate. Deployments must add `ENTITLEMENT_ISSUER_SECRET_V1`, `SEED_ADMIN_EMAIL`, `DATABASE_URL`, `POSTGRES_*` and `MINIO_*` to `.env`.
+
+**Still open until Phase 1.1:** licence envelopes are still symmetric-signed, and the desktop still has `SOFT_ACCEPT_CONTROL_PLANE_ENVELOPES = true`, so envelope forgery is **not yet** prevented on the desktop side. Ed25519 is the next item.
+
+## 6. Risks and open points
 
 - **D2 departs from the PRD.** The server would use a generic current-state table instead of typed per-entity tables, so the PRD needs an update if you approve it.
 - **Encrypting existing desktop DBs (1.2) is irreversible for users** if the keyring entry is lost. A recovery-key export flow is required before release.
