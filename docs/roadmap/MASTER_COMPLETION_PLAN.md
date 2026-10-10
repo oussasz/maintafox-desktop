@@ -299,6 +299,43 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
 - **Open point:** the backup policy's `retention_days` field is not used. Retention comes from the
   three `backup.retention_*` settings. Remove the field or map it in a later settings cleanup.
 
+### Phase 1.4 — Licence lifecycle enforcement (2026-10-10)
+
+**Server (vendor-console `9462503`)**
+- Every device request (sync, policy refresh, tenant status) goes through
+  `activationAuthMiddleware`. It checks that the token is the latest issued to the machine
+  (`401 token_superseded`) and that the tenant, licence and machine are still valid
+  (`403 tenant_inactive | license_revoked | license_expired | activation_revoked`). It also
+  updates `last_seen_at`, at most once a minute.
+- New operator routes `POST /tenants/:id/machines/:fp/revoke` and `/reinstate`: they need
+  step-up and a reason, are audited and idempotent, and reinstate needs a free slot. The console
+  Machines page has live Revoke and Reinstate buttons in place of the disabled "Soft suspend"
+  placeholder.
+- New column `machine_activations.revocation_kind` (`machine` or `license`). **Bug fixed:** a
+  claim used to reset `revoked_at`, so a desktop re-entering its key silently undid a
+  revocation. Preview and claim now refuse an operator-revoked machine.
+- **Bug fixed:** the slot check skipped any machine that already had a row, including a revoked
+  machine or one bound to another licence.
+- Policy refresh replaces device tokens older than 7 days, and the old token stops working.
+- New test `test:machine-revocation`; all existing API suites still pass.
+
+**Desktop (`96acb3aa`)**
+- A licence check runs every 15 minutes (it was every 6 hours). A sync refused with 401/403
+  starts a check immediately.
+- The desktop re-claims with the cached licence key only after `missing_token`,
+  `invalid_token` or `token_superseded`. A revocation or any other denial is recorded as a
+  denial. `activation_revoked` and `tenant_inactive` map to `denied_revoked`.
+- New status `denied_offline_grace_expired`: an active or degraded activation with no
+  successful contact for the licence's `offline_grace_hours` (default 72 h, set per tenant in
+  the console) is blocked. The status is computed when read, so it also applies while offline,
+  and it clears at the next successful check.
+- **Known limits:**
+  - The block is enforced by the licence screen (UI gate) plus the server refusing sync. Local
+    Rust commands do not check licence status yet.
+  - The offline grace uses the device clock, so setting the clock back extends it.
+  - Other per-machine console buttons (Slot release, Rebind, Policy refresh) are still disabled
+    placeholders.
+
 ### VPS deployment of the Phase 0/1.1 control plane (2026-10-10)
 
 - The server (188.165.123.199, SSH key login) now runs vendor-console `3da1090`; it was on
