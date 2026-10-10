@@ -11,6 +11,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri",
+    "installer:art": "python scripts/generate-installer-art.py",
     "lint": "eslint src shared --fix",
     "lint:check": "eslint src shared",
     "lint:rust": "cd src-tauri && cargo clippy -- -D warnings",

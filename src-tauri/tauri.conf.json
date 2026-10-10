@@ -45,7 +45,24 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "publisher": "Maintafox Systems",
+    "homepage": "https://maintafox.systems",
+    "copyright": "Copyright © 2026 Maintafox Systems. Tous droits réservés.",
+    "shortDescription": "Maintafox - GMAO / CMMS industrielle",
+    "longDescription": "Maintafox est une solution de gestion de maintenance assistée par ordinateur (GMAO / CMMS) pour l'industrie : équipements, ordres de travail, maintenance préventive, stocks et fiabilité, avec fonctionnement local et synchronisation.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["French", "English"],
+        "displayLanguageSelector": true,
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "windows/nsis/header.bmp",
+        "sidebarImage": "windows/nsis/sidebar.bmp",
+        "startMenuFolder": "Maintafox",
+        "installerHooks": "windows/nsis/installer-hooks.nsh"
+      }
+    }
   },
   "plugins": {
     "shell": {
