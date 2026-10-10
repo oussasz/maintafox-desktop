@@ -60,6 +60,8 @@ vi.mock("@/services/entitlement-service", () => ({
 
 vi.mock("@/services/product-license-service", () => ({
   CLAIM_FALLBACK_TOKEN_ERRORS: new Set(["missing_token", "invalid_token", "token_superseded"]),
+  activationRequiresLocalDataReset: (bound: string | null | undefined, claim: string) =>
+    !bound?.trim() || bound.trim() !== claim.trim(),
   LICENSE_RECHECK_REQUESTED_EVENT: "maintafox:license-recheck-requested",
   POST_ACTIVATION_LOGIN_HINT_KEY: "maintafox:post-activation-login-hint:v1",
   PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY: "maintafox:product-license:key-cache:v1",

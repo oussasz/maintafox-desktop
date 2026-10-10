@@ -33,6 +33,21 @@ export async function resetProductLicenseActivation(): Promise<void> {
   await invoke<void>("reset_product_license_activation");
 }
 
+/**
+ * Whether activating `claimTenantId` must first wipe local tenant data.
+ * Re-activating the tenant already bound on this device keeps its data (e.g. after a licence
+ * reset or app reinstall); a first activation or a switch to another tenant wipes it so no data
+ * leaks across tenants. The backend still requires an admin session to wipe once an
+ * administrator exists.
+ */
+export function activationRequiresLocalDataReset(
+  boundTenantId: string | null | undefined,
+  claimTenantId: string,
+): boolean {
+  const bound = boundTenantId?.trim();
+  return !bound || bound !== claimTenantId.trim();
+}
+
 /** Wipes tenant runtime data (operational tables) while preserving global settings/bootstrap data. */
 export async function resetLocalTenantRuntimeData(): Promise<number> {
   return await invoke<number>("reset_local_tenant_runtime_data");

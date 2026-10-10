@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { getAppInfo } from "@/services/app.service";
 import { getEntitlementSummary, notifyEntitlementsUpdated } from "@/services/entitlement-service";
 import {
+  activationRequiresLocalDataReset,
   applyProductLicenseReconciliation,
   assertClaimSerializableForDesktop,
   CLAIM_FALLBACK_TOKEN_ERRORS,
@@ -401,7 +402,9 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
       // Validate desktop claim shape BEFORE wiping local tenant data.
       // Previous bug: reset ran, then submit failed on alias-duplicate claim JSON.
       assertClaimSerializableForDesktop(claim);
-      await resetLocalTenantRuntimeData();
+      if (activationRequiresLocalDataReset(stateRef.current?.tenant_id, claim.tenant_id)) {
+        await resetLocalTenantRuntimeData();
+      }
       await submitProductLicenseKey({
         key: trimmed,
         claim,
