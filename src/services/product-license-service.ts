@@ -48,6 +48,26 @@ const ProductLicenseActivationStatusSchema = z.enum([
   "denied_slot_limit",
   "denied_force_update_required",
   "denied_invalid",
+  "denied_offline_grace_expired",
+]);
+
+/** Fired when a control-plane call reveals the licence may have changed (e.g. sync got 401/403). */
+export const LICENSE_RECHECK_REQUESTED_EVENT = "maintafox:license-recheck-requested";
+
+export function requestLicenseRecheck(reason: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(LICENSE_RECHECK_REQUESTED_EVENT, { detail: { reason } }));
+}
+
+/**
+ * Policy-refresh failures after which re-claiming with the cached licence key is allowed: the
+ * device token is merely unusable (expired, malformed, or replaced by a newer claim). Revocations
+ * and other denials must never fall back to a claim.
+ */
+export const CLAIM_FALLBACK_TOKEN_ERRORS: ReadonlySet<string> = new Set([
+  "missing_token",
+  "invalid_token",
+  "token_superseded",
 ]);
 
 const ProductLicenseOnboardingStateSchema = z.object({
@@ -341,6 +361,27 @@ export function toUserFacingActivationError(err: unknown): UserFacingActivationE
       technicalDetails,
       ...(status != null ? { status } : {}),
       ...(code ? { code } : {}),
+    };
+  }
+  if (code === "activation_revoked") {
+    return {
+      title: "Device revoked",
+      message:
+        "This device was revoked by the vendor. Ask your administrator to have it reinstated.",
+      referenceCode,
+      technicalDetails,
+      ...(status != null ? { status } : {}),
+      code,
+    };
+  }
+  if (code === "tenant_inactive") {
+    return {
+      title: "Account deactivated",
+      message: "Your organization's account is deactivated. Contact your vendor to restore access.",
+      referenceCode,
+      technicalDetails,
+      ...(status != null ? { status } : {}),
+      code,
     };
   }
   if (code === "license_revoked") {

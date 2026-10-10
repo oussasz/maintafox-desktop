@@ -1,7 +1,7 @@
 import { z, ZodError } from "zod";
 
 import { invokeSilent } from "@/lib/ipc-invoke";
-import { controlPlaneApiBase } from "@/services/product-license-service";
+import { controlPlaneApiBase, requestLicenseRecheck } from "@/services/product-license-service";
 import { applySyncBatch, getSyncPushPayload, materializeSyncInbox } from "@/services/sync-service";
 import type {
   ApplySyncBatchInput,
@@ -185,6 +185,11 @@ export async function exchangeControlPlaneSyncRound(): Promise<MaterializeInboxR
   }
 
   if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      // The control plane refused this device (revoked, licence revoked/expired, token replaced):
+      // re-check the licence now instead of waiting for the next scheduled refresh.
+      requestLicenseRecheck(`sync_exchange_http_${res.status}`);
+    }
     let message = `Sync exchange failed (${res.status})`;
     const text = await res.text();
     if (text) {

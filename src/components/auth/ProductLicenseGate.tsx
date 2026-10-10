@@ -19,11 +19,13 @@ import { getEntitlementSummary, notifyEntitlementsUpdated } from "@/services/ent
 import {
   applyProductLicenseReconciliation,
   assertClaimSerializableForDesktop,
+  CLAIM_FALLBACK_TOKEN_ERRORS,
   claimProductActivation,
   getActivationBootstrapState,
   getProductActivationToken,
   getProductLicenseDiagnostics,
   getProductLicenseOnboardingState,
+  LICENSE_RECHECK_REQUESTED_EVENT,
   markActivationTenantInitialized,
   POST_ACTIVATION_LOGIN_HINT_KEY,
   PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY,
@@ -43,8 +45,11 @@ import { isSessionUnavailableError } from "@/utils/errors";
 
 type ReconcileOrigin = "submit" | "scheduled" | "manual" | "policy" | "startup" | "login";
 
-/** Soft-phase: refresh active editions at least every 6h so upgrades/downgrades apply without re-claim. */
-const POLICY_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/**
+ * Re-validate the licence with the control plane every 15 minutes, so a revocation (licence,
+ * device or account) takes effect within that window. Sync refusals trigger an immediate check.
+ */
+const POLICY_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
 interface ProductLicenseGateProps {
   children: ReactNode;
@@ -217,7 +222,12 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
           try {
             claim = await refreshProductActivationPolicy(existingToken);
           } catch (refreshErr) {
-            // Fall back to claim for devices that predate policy-refresh or lost token validity.
+            // Re-claim only when the token itself is unusable; a revocation or other denial must
+            // surface as a denial, never be retried as a fresh claim.
+            const refreshCode = (refreshErr as { code?: string }).code;
+            if (!refreshCode || !CLAIM_FALLBACK_TOKEN_ERRORS.has(refreshCode)) {
+              throw refreshErr;
+            }
             const cachedKey = localStorage.getItem(keyCacheStorage)?.trim();
             if (!cachedKey || cachedKey.length < 8) {
               throw refreshErr;
@@ -254,6 +264,8 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
         const status = e.status;
         const message = e.message || "Activation reconciliation failed.";
         const deniedCodes = new Set([
+          "activation_revoked",
+          "tenant_inactive",
           "license_revoked",
           "license_expired",
           "slot_limit_reached",
@@ -446,6 +458,7 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
         const at = Date.parse(s.next_retry_at);
         return Number.isFinite(at) ? Date.now() >= at : true;
       }
+      if (s.status === "denied_offline_grace_expired") return true;
       if (s.status === "active") {
         const last = s.last_reconciled_at ? Date.parse(s.last_reconciled_at) : NaN;
         if (!Number.isFinite(last)) return true;
@@ -480,11 +493,27 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
 
     void maybeReconcile("startup");
     const interval = window.setInterval(() => {
+      if (!isOnlineRef.current) {
+        // Offline: re-read the local state so an expired offline grace window blocks the app.
+        void getProductLicenseOnboardingState()
+          .then((next) => {
+            if (!cancelled) setState(next);
+          })
+          .catch(() => undefined);
+        return;
+      }
       void maybeReconcile("scheduled");
     }, POLICY_REFRESH_INTERVAL_MS);
+    const onRecheckRequested = () => {
+      const s = stateRef.current;
+      if (!s?.complete || !isOnlineRef.current || reconcilingRef.current || cancelled) return;
+      void attemptReconciliation("policy");
+    };
+    window.addEventListener(LICENSE_RECHECK_REQUESTED_EVENT, onRecheckRequested);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      window.removeEventListener(LICENSE_RECHECK_REQUESTED_EVENT, onRecheckRequested);
     };
   }, [attemptReconciliation, isOnline, loading]);
 
@@ -514,6 +543,11 @@ export function ProductLicenseGate({ children }: ProductLicenseGateProps) {
         return {
           title: t("activation.denied.invalidTitle"),
           body: t("activation.denied.invalidBody"),
+        };
+      case "denied_offline_grace_expired":
+        return {
+          title: t("activation.denied.offlineGraceTitle"),
+          body: t("activation.denied.offlineGraceBody"),
         };
       default:
         return null;

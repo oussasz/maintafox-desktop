@@ -52,6 +52,9 @@ pub enum ProductLicenseActivationStatus {
     DeniedSlotLimit,
     DeniedForceUpdateRequired,
     DeniedInvalid,
+    /// No successful contact with the control plane within the licence's `offline_grace_hours`.
+    /// Derived on read (see `effective_status`); cleared by the next successful reconciliation.
+    DeniedOfflineGraceExpired,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -375,7 +378,9 @@ fn compute_backoff_at(attempt: u32) -> DateTime<Utc> {
 
 fn map_denied_status(code: Option<&str>) -> ProductLicenseActivationStatus {
     match code.unwrap_or_default() {
-        "license_revoked" => ProductLicenseActivationStatus::DeniedRevoked,
+        // Licence revoked, this device revoked by the vendor, or the customer account deactivated:
+        // all mean access was withdrawn; `deny_reason_code` keeps the exact server code.
+        "license_revoked" | "activation_revoked" | "tenant_inactive" => ProductLicenseActivationStatus::DeniedRevoked,
         "license_expired" => ProductLicenseActivationStatus::DeniedExpired,
         "slot_limit_reached" => ProductLicenseActivationStatus::DeniedSlotLimit,
         "force_update_required" => ProductLicenseActivationStatus::DeniedForceUpdateRequired,
@@ -458,14 +463,64 @@ fn commercial_edition_from_claim(claim: &ProductActivationClaimRecord) -> Option
     None
 }
 
+const OFFLINE_GRACE_EXPIRED_CODE: &str = "offline_grace_expired";
+
+/// Last successful contact with the control plane (falls back to the last reconciliation for
+/// records written before `last_success_at` existed).
+fn last_contact_at(record: &ProductLicenseStateRecord) -> Option<&str> {
+    record
+        .reconciliation
+        .last_success_at
+        .as_deref()
+        .or(record.last_reconciled_at.as_deref())
+}
+
+/// End of the offline grace window: last successful contact + the licence's `offline_grace_hours`.
+/// `None` when either is unknown (nothing to enforce).
+fn offline_grace_deadline(record: &ProductLicenseStateRecord) -> Option<DateTime<Utc>> {
+    let hours = record.activation_claim.as_ref()?.offline_grace_hours?;
+    let last_contact = DateTime::parse_from_rfc3339(last_contact_at(record)?)
+        .ok()?
+        .with_timezone(&Utc);
+    Some(last_contact + Duration::hours(i64::from(hours)))
+}
+
+/// Status as enforced now: a usable activation (active or degraded) whose offline grace window has
+/// ended is reported as `DeniedOfflineGraceExpired` until the next successful reconciliation.
+fn effective_status(record: &ProductLicenseStateRecord, now: DateTime<Utc>) -> ProductLicenseActivationStatus {
+    let usable = matches!(
+        record.status,
+        ProductLicenseActivationStatus::Active | ProductLicenseActivationStatus::DegradedApiUnavailable
+    );
+    if usable && offline_grace_deadline(record).is_some_and(|deadline| now > deadline) {
+        ProductLicenseActivationStatus::DeniedOfflineGraceExpired
+    } else {
+        record.status.clone()
+    }
+}
+
 fn onboarding_state_from_record(record: &ProductLicenseStateRecord) -> ProductLicenseOnboardingState {
     let complete = record_has_valid_activation_claim(record);
+    let status = effective_status(record, Utc::now());
+    let grace_expired = status == ProductLicenseActivationStatus::DeniedOfflineGraceExpired;
     ProductLicenseOnboardingState {
         complete,
-        status: record.status.clone(),
-        pending_online_validation: record.pending_online_validation,
-        deny_reason_code: record.deny_reason_code.clone(),
-        deny_message: record.deny_message.clone(),
+        status,
+        // Keep retrying: the denial clears as soon as the control plane is reachable again.
+        pending_online_validation: record.pending_online_validation || grace_expired,
+        deny_reason_code: if grace_expired {
+            Some(OFFLINE_GRACE_EXPIRED_CODE.to_string())
+        } else {
+            record.deny_reason_code.clone()
+        },
+        deny_message: if grace_expired {
+            Some(format!(
+                "No contact with the licence server since {}. Connect this device to the internet to continue.",
+                last_contact_at(record).unwrap_or("activation")
+            ))
+        } else {
+            record.deny_message.clone()
+        },
         degraded_reason: record.degraded_reason.clone(),
         next_retry_at: record.reconciliation.next_retry_at.clone(),
         retry_attempt: record.reconciliation.retry_attempt,
@@ -483,7 +538,7 @@ pub async fn product_activation_view_fields(db: &DatabaseConnection) -> AppResul
     let Some(record) = load_state_record_from_db(db).await? else {
         return Ok(("uninitialized".to_string(), None));
     };
-    let status = serde_json::to_value(&record.status)
+    let status = serde_json::to_value(effective_status(&record, Utc::now()))
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_else(|| "uninitialized".to_string());
@@ -1343,7 +1398,7 @@ pub async fn get_control_plane_activation_bearer_token(state: State<'_, AppState
     let Some(rec) = record else {
         return Ok(None);
     };
-    if rec.status != ProductLicenseActivationStatus::Active {
+    if effective_status(&rec, Utc::now()) != ProductLicenseActivationStatus::Active {
         return Ok(None);
     }
     if !record_has_valid_activation_claim(&rec) {
@@ -1443,5 +1498,114 @@ mod claim_json_tests {
         assert!(!obj.contains_key("edition"));
         assert!(!obj.contains_key("company_name"));
         assert!(!obj.contains_key("seat_limit"));
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    fn record(
+        status: ProductLicenseActivationStatus,
+        last_success: &str,
+        grace_hours: Option<u32>,
+    ) -> ProductLicenseStateRecord {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "key_sha256": "abc",
+            "license_key_plaintext": null,
+            "machine_fingerprint": "fp-1",
+            "app_version": "1.0.0",
+            "submitted_at": "2026-10-01T00:00:00Z",
+            "status": status,
+            "pending_online_validation": false,
+            "deny_reason_code": null,
+            "deny_message": null,
+            "degraded_reason": null,
+            "activation_claim": {
+                "tenant_id": "t-1",
+                "license_id": "lic-1",
+                "machine_fingerprint": "fp-1",
+                "activation_token": "tok-1",
+                "offline_grace_hours": grace_hours,
+            },
+            "last_reconciled_at": last_success,
+            "reconciliation": { "retry_attempt": 0, "last_success_at": last_success },
+            "diagnostics": [],
+        }))
+        .expect("record fixture")
+    }
+
+    fn at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn revocation_codes_map_to_denied_revoked() {
+        for code in ["license_revoked", "activation_revoked", "tenant_inactive"] {
+            assert_eq!(
+                map_denied_status(Some(code)),
+                ProductLicenseActivationStatus::DeniedRevoked,
+                "{code}"
+            );
+        }
+        assert_eq!(
+            map_denied_status(Some("license_expired")),
+            ProductLicenseActivationStatus::DeniedExpired
+        );
+        assert_eq!(
+            map_denied_status(Some("something_else")),
+            ProductLicenseActivationStatus::DeniedInvalid
+        );
+    }
+
+    #[test]
+    fn active_within_grace_stays_active() {
+        let r = record(ProductLicenseActivationStatus::Active, "2026-10-10T00:00:00Z", Some(72));
+        assert_eq!(
+            effective_status(&r, at("2026-10-12T23:00:00Z")),
+            ProductLicenseActivationStatus::Active
+        );
+    }
+
+    #[test]
+    fn active_or_degraded_past_grace_is_denied() {
+        for status in [
+            ProductLicenseActivationStatus::Active,
+            ProductLicenseActivationStatus::DegradedApiUnavailable,
+        ] {
+            let r = record(status, "2026-10-10T00:00:00Z", Some(72));
+            assert_eq!(
+                effective_status(&r, at("2026-10-13T00:00:01Z")),
+                ProductLicenseActivationStatus::DeniedOfflineGraceExpired
+            );
+        }
+    }
+
+    #[test]
+    fn grace_not_enforced_without_server_value_and_other_denials_are_kept() {
+        let r = record(ProductLicenseActivationStatus::Active, "2020-01-01T00:00:00Z", None);
+        assert_eq!(
+            effective_status(&r, at("2026-10-13T00:00:00Z")),
+            ProductLicenseActivationStatus::Active
+        );
+        let r = record(
+            ProductLicenseActivationStatus::DeniedRevoked,
+            "2020-01-01T00:00:00Z",
+            Some(1),
+        );
+        assert_eq!(
+            effective_status(&r, at("2026-10-13T00:00:00Z")),
+            ProductLicenseActivationStatus::DeniedRevoked
+        );
+    }
+
+    #[test]
+    fn onboarding_state_reports_grace_expiry() {
+        let r = record(ProductLicenseActivationStatus::Active, "2020-01-01T00:00:00Z", Some(72));
+        let view = onboarding_state_from_record(&r);
+        assert_eq!(view.status, ProductLicenseActivationStatus::DeniedOfflineGraceExpired);
+        assert_eq!(view.deny_reason_code.as_deref(), Some(OFFLINE_GRACE_EXPIRED_CODE));
+        assert!(view.pending_online_validation, "must keep retrying when back online");
     }
 }

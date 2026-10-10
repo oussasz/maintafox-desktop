@@ -222,7 +222,12 @@ pub async fn get_license_status_view(db: &DatabaseConnection, user_id: i32) -> A
         "License is suspended. Read-only mode is active until admin reactivation.".to_string()
     } else if matches!(
         product_activation_state.as_str(),
-        "denied_revoked" | "denied_expired" | "denied_slot_limit" | "denied_force_update_required" | "denied_invalid"
+        "denied_revoked"
+            | "denied_expired"
+            | "denied_slot_limit"
+            | "denied_force_update_required"
+            | "denied_invalid"
+            | "denied_offline_grace_expired"
     ) {
         format!("Product activation is '{product_activation_state}'. Re-activate or contact support.")
     } else if product_activation_state == "degraded_api_unavailable" {

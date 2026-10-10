@@ -8,6 +8,7 @@ import { getAppInfo } from "@/services/app.service";
 import { getEntitlementSummary } from "@/services/entitlement-service";
 import {
   applyProductLicenseReconciliation,
+  claimProductActivation,
   getActivationBootstrapState,
   getProductActivationToken,
   getProductLicenseDiagnostics,
@@ -58,6 +59,8 @@ vi.mock("@/services/entitlement-service", () => ({
 }));
 
 vi.mock("@/services/product-license-service", () => ({
+  CLAIM_FALLBACK_TOKEN_ERRORS: new Set(["missing_token", "invalid_token", "token_superseded"]),
+  LICENSE_RECHECK_REQUESTED_EVENT: "maintafox:license-recheck-requested",
   POST_ACTIVATION_LOGIN_HINT_KEY: "maintafox:post-activation-login-hint:v1",
   PRODUCT_LICENSE_KEY_CACHE_STORAGE_KEY: "maintafox:product-license:key-cache:v1",
   PRODUCT_LICENSE_DEVICE_FINGERPRINT_STORAGE_KEY: "maintafox:product-license:device-fingerprint:v1",
@@ -88,6 +91,7 @@ const mockedGetEntitlementSummary = vi.mocked(getEntitlementSummary);
 const mockedGetProductActivationToken = vi.mocked(getProductActivationToken);
 const mockedRefreshProductActivationPolicy = vi.mocked(refreshProductActivationPolicy);
 const mockedApplyProductLicenseReconciliation = vi.mocked(applyProductLicenseReconciliation);
+const mockedClaimProductActivation = vi.mocked(claimProductActivation);
 const appInfo = {
   version: "1.2.3",
   build_mode: "debug" as const,
@@ -309,5 +313,79 @@ describe("ProductLicenseGate", () => {
     expect(mockedRefreshProductActivationPolicy).not.toHaveBeenCalled();
     expect(mockedApplyProductLicenseReconciliation).not.toHaveBeenCalled();
     expect(mockedGetEntitlementSummary.mock.calls.length).toBeLessThan(5);
+  });
+
+  /** Active device due for its scheduled re-validation (never reconciled), with a stored token. */
+  function setUpDueActiveDevice() {
+    mockedGetAppInfo.mockResolvedValue(appInfo);
+    mockedGetProductLicenseOnboardingState.mockResolvedValue({
+      complete: true,
+      status: "active",
+      pending_online_validation: false,
+      tenant_id: "ten_test",
+    });
+    mockedGetProductLicenseDiagnostics.mockResolvedValue({
+      status: "active",
+      pending_online_validation: false,
+      reconciliation: { retry_attempt: 0 },
+      diagnostics: [],
+      has_activation_claim: true,
+    });
+    mockedGetProductActivationToken.mockResolvedValue("device-token");
+    localStorage.setItem("maintafox:product-license:key-cache:v1", "MFX-TEST-KEY-0001");
+  }
+
+  it("records a vendor revocation as a denial and never re-claims with the cached key", async () => {
+    setUpDueActiveDevice();
+    mockedRefreshProductActivationPolicy.mockRejectedValue(
+      Object.assign(new Error("Device revoked"), { code: "activation_revoked", status: 403 }),
+    );
+    mockedApplyProductLicenseReconciliation.mockResolvedValue({
+      complete: true,
+      status: "denied_revoked",
+      pending_online_validation: false,
+      tenant_id: "ten_test",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedApplyProductLicenseReconciliation).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "denied", error_code: "activation_revoked" }),
+      );
+    });
+    expect(mockedClaimProductActivation).not.toHaveBeenCalled();
+  });
+
+  it("re-claims with the cached key when the device token was superseded", async () => {
+    setUpDueActiveDevice();
+    mockedRefreshProductActivationPolicy.mockRejectedValue(
+      Object.assign(new Error("Token superseded"), { code: "token_superseded", status: 401 }),
+    );
+    mockedClaimProductActivation.mockRejectedValue(
+      Object.assign(new Error("offline"), { status: undefined }),
+    );
+    mockedApplyProductLicenseReconciliation.mockResolvedValue({
+      complete: true,
+      status: "degraded_api_unavailable",
+      pending_online_validation: true,
+      tenant_id: "ten_test",
+    });
+
+    renderWithRouter(
+      <ProductLicenseGate>
+        <div>app content</div>
+      </ProductLicenseGate>,
+    );
+
+    await waitFor(() => {
+      expect(mockedClaimProductActivation).toHaveBeenCalledWith(
+        expect.objectContaining({ license_key: "MFX-TEST-KEY-0001" }),
+      );
+    });
   });
 });
