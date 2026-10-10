@@ -299,6 +299,24 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
 - **Open point:** the backup policy's `retention_days` field is not used. Retention comes from the
   three `backup.retention_*` settings. Remove the field or map it in a later settings cleanup.
 
+### VPS deployment of the Phase 0/1.1 control plane (2026-10-10)
+
+- The server (188.165.123.199, SSH key login) now runs vendor-console `3da1090`; it was on
+  `5badef9`. Every hand edit in the old server folder matched baseline `911028c` (83/83 files),
+  so nothing was lost.
+- Backup taken first: `/opt/backups/20261010T120725Z/` holds the app folder with `.env`, a
+  `pg_dump` of the sync Postgres, and the control-API and MinIO volumes.
+- `.env` gained `ENTITLEMENT_SIGNING_KEY_ID` and `ENTITLEMENT_SIGNING_PRIVATE_KEY`; all other
+  values are unchanged and already met the new secret rules.
+- Smoke-tested over HTTPS: health 200, console 200, and admin routes return 401 with no token or
+  a forged token. Step-up returns 401 without a session, and policy-refresh without a token
+  returns `missing_token`. Ten failed logins get 429 from the rate limit.
+- **Rollback:** `cd /opt && mv maintafox-vendor-console maintafox-vendor-console-3da1090 &&
+  mv maintafox-vendor-console-prev-5badef9 maintafox-vendor-console && cd maintafox-vendor-console &&
+  docker compose up -d --build`. If needed, restore the data volumes from the backup folder.
+- Not yet verified: an admin console login plus step-up with real credentials (the owner does this).
+  The API runs Node 20; the AWS SDK warns that its updates after January 2027 require Node 22.
+
 ## 6. Risks and open points
 
 - **D2 departs from the PRD.** The server would use a generic current-state table instead of typed per-entity tables, so the PRD needs an update if you approve it.
