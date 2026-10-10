@@ -318,6 +318,11 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
   machine or one bound to another licence.
 - Policy refresh replaces device tokens older than 7 days, and the old token stops working.
 - New test `test:machine-revocation`; all existing API suites still pass.
+- **Deployed to the VPS on 2026-10-10.**
+  - Backup: `/opt/backups/20261010T124158Z/`.
+  - Rollback folder: `/opt/maintafox-vendor-console-prev-3da1090` (swap the folders back, then
+    `docker compose up -d --build`).
+  - The new column was added on startup; the 4 existing machines are unchanged.
 
 **Desktop (`96acb3aa`)**
 - A licence check runs every 15 minutes (it was every 6 hours). A sync refused with 401/403
