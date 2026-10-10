@@ -70,7 +70,7 @@
 - @docs/PRD.md §6.24
 - @src/pages/BudgetPage.tsx
 - @src-tauri/src/sync/domain.rs
-- @src/services/sync-vps-transport-service.ts
+- @src-tauri/src/sync/transport/worker.rs
 
 **Agent Rules:** Only tagged `@` paths. No whole-file rewrites—output **full code for changed blocks** only. No explanations or confirmations. Minimal comments. One pass per file where possible. **Never** edit VPS/server repos or run infra deploys from this stage.
 

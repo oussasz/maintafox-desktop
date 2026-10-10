@@ -42,10 +42,73 @@ Local INTEGER PKs are device-local. Rename legacy `sync_id` → `entity_sync_id`
 
 ## 3. Protocol
 
-- **Version:** `v1` (additive fields preferred over breaking `v2`)
-- **Exchange:** `POST /api/v1/sync/exchange` (Bearer activation JWT + Idempotency-Key)
-- **Envelope:** `entity_type`, `entity_sync_id`, `operation` (`create`\|`update`\|`delete`\|`upsert`\|`archive`), `row_version`, `payload_json`, `payload_hash` (SHA-256 hex)
-- **Checkpoint:** Replay-safe `checkpoint_token`; do not advance when materialize conflicts remain unresolved
+- **Version:** `v2` only since Phase 2.3 (contract: `maintafox-vendor-console/deploy/SYNC_PROTOCOL_V2.md`).
+  The server keeps v1 for desktops that are not updated; nothing in this app speaks v1 any more
+  (`apply_sync_batch` still accepts v1 input for the replay/repair tools and old fixtures).
+- **Exchange:** `POST /api/v1/sync/exchange`; **bootstrap:** `POST /api/v1/sync/snapshot` (paged);
+  **media:** `POST /api/v1/sync/media/presign-put` then `PUT` to the presigned URL. All with
+  `Authorization: Bearer <activation token>`.
+- **Envelope:** `entity_type`, `entity_sync_id`, `operation` (`create`\|`update`\|`delete`\|`upsert`\|`archive`), `row_version`, `base_row_version` (explicit `null` for a create), `owner_user_sync_id` (user scope), `payload_json`, `payload_hash` (SHA-256 hex)
+- **Checkpoint:** signed and opaque (`v2.…`); stored by `apply_sync_batch` in the same transaction
+  that writes the answer to the outbox/inbox, i.e. only once the answer is durable. A v1 token
+  (`cp-…`) is treated as "no checkpoint" (bootstrap). v2 item failures never hold the cursor: an
+  invalid inbound envelope becomes an `INVALID_INBOUND_PAYLOAD` conflict and the token advances.
+
+### Transport: the Rust sync worker (Phase 2.3)
+
+`src-tauri/src/sync/transport/` (`worker.rs`, `client.rs`, `store.rs`, `wire.rs`) runs as background
+task `sync` in `BackgroundTaskSupervisor`, started at the end of the startup sequence. Closing the
+main window only hides it in the tray (`window.rs`), so the process and the worker keep running; the
+worker stops when the app quits (tray "Quit") through the supervisor shutdown. HTTP: `reqwest` with
+rustls/ring (same build as the updater; no OpenSSL/native-tls) and the system proxy settings. Base URL: `VITE_ADMIN_API_BASE_URL`
+resolved at build time by `src-tauri/build.rs` like Vite does for the webview, else
+`shared/control-plane.json` (the webview reads the same file). `http://` is accepted only for
+localhost.
+
+One cycle:
+
+1. Stop when paused (`sync_transport_state.paused_until`), when the entitlement does not allow the
+   `sync` capability, when the activation is not active, or when the server refused this activation
+   token (its SHA-256 is stored, never the token; a new token, e.g. after the licence check
+   re-claims, resumes sync).
+2. No v2 checkpoint → scope `all` snapshot (pages of `SYNC_SNAPSHOT_PAGE_SIZE`; each page goes to the
+   inbox and is materialized; the last page's checkpoint is stored with the last page). A refused
+   page token restarts the snapshot (bounded).
+3. Exchange loop. A new request is built from `get_sync_push_payload` (≤ `SYNC_OUTBOX_BATCH_SIZE`
+   items), `current_user_sync_ids`, `device_class: "desktop"`, `tenant_config` and the media
+   manifest (entries outside the activated tenant are left out: the server would refuse the whole
+   request), then **stored** (`idempotency_key`, exact body, outbox ids) before it is sent. A resend
+   (failure, crash, restart) sends the stored key and body unchanged. On success the answer is applied
+   (acks store `server_seq` and `duplicate`; `conflict_items` become `SERVER_CONFLICT`), the stored
+   request is cleared, the inbox is materialized and users in `user_snapshot_required` get a scope
+   `user` snapshot with the same user list (its checkpoint is ignored). The loop continues while
+   `has_more` or the batch was full.
+4. Media: before each exchange, objects recorded from earlier manifests (`sync_media_uploads`) are
+   uploaded: local file under the app data dir, hash verified, presign, `PUT`. Failures never block the
+   exchange; they are retried and give up after `OUTBOX_MAX_DELIVERY_ATTEMPTS` (shown in the status).
+
+Failures (`classify` in `worker.rs`):
+
+| Answer | Outbox items | Worker |
+|---|---|---|
+| No connection (DNS, refused, connect timeout) | back to `pending`, attempt not counted | `offline`; backoff; a webview `online` event wakes it (not sooner than `SYNC_NETWORK_WAKE_MIN_SPACING`) |
+| 429 | back to `pending`, attempt not counted | `retrying`; waits `Retry-After` (capped at 1 h) |
+| 5xx, 408, interrupted, malformed 2xx | `record_outbox_delivery_failure` (counted; `dead_letter` + conflict after `OUTBOX_MAX_DELIVERY_ATTEMPTS`) | `retrying`; same key and body next time; rebuilt without dead-lettered items |
+| 401 / 403 | back to `pending`; stored request kept | `blocked` (`activation_refused`); the UI starts a licence check |
+| 409 `tenant_config_mismatch` | back to `pending` | `blocked` until the activation changes |
+| 400 `invalid_checkpoint_token`, 409 `checkpoint_ahead_of_server` | back to `pending` | checkpoint cleared, snapshot, exchange again (once per cycle) |
+| 409 `idempotency_key_reused` | back to `pending` | logged as an error (bug signal), shown; rebuilt with a new key after the backoff |
+| other 4xx (`validation_error`, …) | counted as a delivery attempt | `error`; the request is rebuilt after the backoff, items dead-letter after the limit |
+
+Backoff: `SYNC_RETRY_BASE_DELAY` (2 s) doubled per consecutive failure, capped at
+`SYNC_RETRY_MAX_DELAY` (5 min), ±25 % jitter; there is no retry budget to exhaust. Idle interval
+`SYNC_IDLE_INTERVAL` (60 s). All constants are in `worker.rs`.
+
+Status: `get_sync_worker_status` and the `sync-worker-status` event (state, blocker, last success,
+last attempt, next attempt, pending/dead-letter/conflict counts, media counts, last error). Commands:
+`run_sync_now` (`sync.view`), `pause_sync` / `resume_sync` (`sync.manage`, pause 1–1440 min, persisted),
+`report_network_online` (no data, no session needed). The activation token is read in Rust
+(`sync_activation_bearer_token`) and no command returns it for sync.
 
 ### Outbox versioning (protocol v2 rules, applied locally since Phase 2.2)
 
@@ -107,7 +170,9 @@ Resolution acts on data in the same transaction that closes the conflict:
 - Envelope fields: `entity_type`, `parent_entity_sync_id`, `content_sha256`, `mime_type`, `byte_size`, `object_key`, `capture_meta`
 - Object store category: `TenantMedia` under tenant-scoped prefix
 - JSON outbox MUST NOT carry file bytes
-- Desktop stores files under app data; sync uploads/downloads by content hash
+- Desktop stores files under app data; the worker uploads them through the presigned flow
+  (`sync_media_uploads` tracks pending / uploaded / failed). Download of media received from other
+  devices (`presign-get`) is not implemented yet (Phase 2.4).
 
 ## 7. Phase 1 entity coverage
 
@@ -138,7 +203,8 @@ Resolution acts on data in the same transaction that closes the conflict:
 | Layer | Owner |
 |---|---|
 | SQLite schema, outbox staging, materializer | Desktop (`src-tauri/src/sync/`) |
-| Exchange HTTP client + Zod | Desktop (`src/services/sync-vps-transport-service.ts`) |
+| Sync transport (exchange, snapshot, media upload) | Desktop Rust worker (`src-tauri/src/sync/transport/`) |
+| Sync status, pause/resume, conflict UI | Desktop webview (`src/stores/sync-orchestrator-store.ts`, `src/components/sync/`) |
 | Route contracts / object taxonomy | Desktop contracts (`src-tauri/src/vps/`) |
 | Postgres mirror, Fastify exchange, MinIO | Control-plane VPS repo (implements same envelopes) |
 
@@ -149,7 +215,9 @@ See also: [`VPS_SYNC_EXCHANGE.md`](./VPS_SYNC_EXCHANGE.md) for the frozen Fastif
 - Two-DB convergence tests: outbox on A → exchange fixture → materialize on B → domain row present (`src-tauri/src/sync/convergence_tests.rs`)
 - Golden fixtures: `src-tauri/src/sync/fixtures/exchange_request_v1.json`, `exchange_response_v1.json`
 - `cargo check`, `pnpm typecheck`, `cargo test --lib sync::` / `vps::`
-- Sync Center / transport: exchange OK is insufficient — materialize conflicts/errors fail the round (`exchangeControlPlaneSyncRound`)
+- Transport: `cargo test --lib -- sync::transport` (worker against an in-process HTTP stub: push/pull,
+  paging, crash resend, 409, checkpoint refusal → snapshot, conflicts, 429/5xx backoff, offline →
+  resume, refused activation, dead letter, per-user fields, pause, media upload)
 
 ## 11. Staging coverage matrix (Phase 1)
 

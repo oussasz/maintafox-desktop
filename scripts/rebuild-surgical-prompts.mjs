@@ -23,7 +23,7 @@ function readPathsFor(rel) {
   if (p.includes("03-inspection-rounds-and-checklists"))
     return ["@docs/PRD.md §6.25", "@src-tauri/src/migrations/", "@src-tauri/src/sync/domain.rs", "@src/pages/InspectionsPage.tsx"];
   if (p.includes("04-budget-cost-center-closure"))
-    return ["@docs/PRD.md §6.24", "@src/pages/BudgetPage.tsx", "@src-tauri/src/sync/domain.rs", "@src/services/sync-vps-transport-service.ts"];
+    return ["@docs/PRD.md §6.24", "@src/pages/BudgetPage.tsx", "@src-tauri/src/sync/domain.rs", "@src-tauri/src/sync/transport/worker.rs"];
   if (p.includes("05-reliability-data-foundation-iso-14224"))
     return ["@docs/PRD.md §6.10.1", "@docs/research/MODULE_6_10_RELIABILITY_ENGINE.md", "@src-tauri/src/migrations/", "@src-tauri/src/sync/domain.rs"];
   if (p.includes("06-work-order-closeout-and-data-integrity"))

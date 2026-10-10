@@ -335,7 +335,7 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
 | No server-side RBAC: every vendor operator has every permission | API | 4.3 |
 | Licence key stored in plain text in `app_settings` (`license_key_plaintext`) | desktop | 1.2: move to the OS keyring |
 | Unauthenticated licence actions write `changed_by_id = 0` (fake user) into settings audit | desktop | 1.5: system-actor support in `settings::set_setting` |
-| `get_product_activation_token` / `run_integrity_check` are pre-auth by design | desktop | 2.5: once transport is in Rust, the token never leaves Rust |
+| `get_product_activation_token` / `run_integrity_check` are pre-auth by design | desktop | 2.3 done for sync: the sync worker reads the token in Rust and `get_control_plane_activation_bearer_token` is removed. Still open: the licence checks (tenant status, policy refresh) run in the webview with `get_product_activation_token`; moving them to Rust removes the last command that returns the token |
 | "Show in folder" uses `shell.open` on a folder path; the default shell scope only allows URLs, so it is probably broken | desktop | 6.9: switch to the opener plugin's reveal |
 | Double-encoded UTF-8 (mojibake) in at least 20 files on develop, some user-visible | desktop | 6.9: encoding sweep |
 | `style-src 'unsafe-inline'` still in the CSP (needed by the current UI libraries) | desktop | 6.9: evaluate nonce/hash |
@@ -514,6 +514,41 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
 - **Open for 2.3/2.4:** see `docs/engineering/SYNC_STRATEGY.md` and the session notes: seeded
   catalog rows created by old migrations still have per-database ids; delivery-failure hook not
   wired to the transport; deletes mostly not staged; legacy payloads keep local integer FKs.
+
+### Phase 2.3 — Rust sync worker (2026-10-11)
+
+- **Transport in Rust:** `src-tauri/src/sync/transport/` runs as background task `sync` in
+  `BackgroundTaskSupervisor`, speaking protocol v2 only (exchange, paged snapshot bootstrap,
+  `has_more` paging, `user_snapshot_required` user snapshots, media manifest + presigned upload).
+  `reqwest` with rustls/ring, already in the dependency tree through the updater (no OpenSSL);
+  its `system-proxy` feature (one new crate, `windows-registry`) keeps following the Windows proxy
+  settings like the webview did. The webview transport (`sync-vps-transport-service.ts`), its scheduling core
+  and the commands it used (`get_control_plane_activation_bearer_token`, `get_sync_push_payload`,
+  `apply_sync_batch`, `materialize_sync_inbox`) are removed: the webview can no longer read the
+  activation token for sync or inject sync batches.
+- **Crash safety:** each request (idempotency key, exact body, outbox ids) is stored in
+  `sync_transport_state` (migration 161) before it is sent and resent unchanged after a failure or a
+  restart; the checkpoint is stored with the applied answer. Acks now store `server_seq` and
+  `duplicate`.
+- **Reliability:** offline / 429 (`Retry-After`) / 5xx / 401–403 / checkpoint refusal / 409 handled
+  as listed in `SYNC_STRATEGY.md` §3; exponential backoff with jitter (2 s → 5 min), no retry budget
+  to exhaust; transport failures go through `record_outbox_delivery_failure` (dead letter after 25);
+  a refused activation stops sync until the token changes and makes the UI run a licence check.
+- **Runs with the window closed:** closing the window already hid it in the tray; the worker lives in
+  the Rust process, so sync continues until the app is quit from the tray.
+- **Sync Center (FR/EN):** status card (state, reason, last success, pending, conflicts, next
+  attempt, media, last error) with sync now / pause (15 min–24 h, persisted) / resume, in the Sync
+  Center and in Settings; top bar and status bar labels translated. The simulated "entitlement /
+  bandwidth" selectors of the old panel are gone.
+- **API base URL:** one default in `shared/control-plane.json`, read by the webview and by
+  `src-tauri/build.rs`; `VITE_ADMIN_API_BASE_URL` overrides both.
+- **Fixed on the way:** "reset local tenant data" deleted the `sync_replica_identity` row, after
+  which every business write failed at staging; the reset now re-creates it (and the transport row).
+- **Tests:** `cargo test --lib -- sync::transport` (worker against an in-process HTTP stub, 21 tests).
+- **Not verified here / open:** no end-to-end run against a local vendor-console API (Phase 2.5);
+  media download from other devices (`presign-get`) not implemented (2.4); a database restored from a backup keeps its old
+  checkpoint, so rows written after the backup are not re-sent by the server (2.5: force a snapshot
+  after restore).
 
 ## 6. Risks and open points
 

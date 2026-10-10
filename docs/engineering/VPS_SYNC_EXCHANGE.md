@@ -1,7 +1,8 @@
 # VPS Sync Exchange — Control-Plane Contract
 
 **Companion:** [`SYNC_STRATEGY.md`](./SYNC_STRATEGY.md)  
-**Desktop contracts:** `src-tauri/src/vps/guards.rs`, `src/services/sync-vps-transport-service.ts`  
+**Desktop contracts:** `src-tauri/src/vps/guards.rs`, `src-tauri/src/sync/transport/` (Rust worker, protocol v2 since Phase 2.3)  
+**v2 contract (authoritative for this desktop):** `maintafox-vendor-console/deploy/SYNC_PROTOCOL_V2.md`. This page describes v1, which the server still serves to desktops that are not updated.  
 **Server implementation:** `maintafox-vendor-console/api/src/sync/` (Express; not Fastify)
 
 **Status:** Exchange live (Step 2) — fan-out, checkpoint freeze, Postgres mirror optional, MinIO TenantMedia presign.
@@ -72,9 +73,9 @@ Requires `S3_ENDPOINT` / MinIO env on the API. Returns `503 object_storage_unava
 
 ## Desktop client apply path
 
-1. `apply_sync_batch` → insert `sync_inbox` with `apply_status = 'pending'`
-2. `materialize_sync_inbox` → upsert domain tables → `applied` / `conflict`
-3. Transport (`exchangeControlPlaneSyncRound`) fails the round if materialize reports conflicts/errors
+1. `apply_sync_batch` → insert `sync_inbox` with `apply_status = 'pending'` (called by the Rust worker, no longer a command)
+2. `materialize_inbox_batch` → upsert domain tables → `applied` / `deferred` / `conflict`
+3. Conflicts and errors are listed in the Sync Center; they never hold the v2 checkpoint (see `SYNC_STRATEGY.md` §3)
 
 ## Verification
 
