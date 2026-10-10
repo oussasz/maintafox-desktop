@@ -86,7 +86,8 @@ fn run_evaluate_fixtures(fixtures_dir: &Path, output_dir: Option<&Path>) -> Resu
     info!(dir = %fixtures_dir.display(), "Running cargo test readiness_golden");
     let status = Command::new("cargo")
         .args(["test", "--test", "readiness_golden", "--", "--nocapture"])
-        .current_dir(workspace_root()?)
+        // The Cargo package lives in `src-tauri/`; the repository root has no Cargo.toml.
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
         .status()
         .context("spawn cargo test readiness_golden")?;
     if !status.success() {

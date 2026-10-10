@@ -29,7 +29,12 @@ export const DASHBOARD_KPI_DRILL_PATH: Record<DashboardKpiKey, string> = {
 export const RELIABILITY_KPI_SNAPSHOT_FIELDS = {
   MTBF: "mtbf",
   MTTR: "mttr",
+  /** KPI-035 operational availability A_o (alias of `availability_operational`). */
   AVAILABILITY: "availability",
+  AVAILABILITY_OPERATIONAL: "availability_operational",
+  AVAILABILITY_INHERENT: "availability_inherent",
+  /** Non-repairable equipment only (`equipment.rams_is_repairable = 0`). */
+  MTTF: "mttf",
   FAILURE_RATE: "failure_rate",
   REPEAT_FAILURE_RATE: "repeat_failure_rate",
   EVENT_COUNT: "event_count",
@@ -40,6 +45,7 @@ export const RELIABILITY_KPI_SNAPSHOT_FIELDS = {
 export const ANALYTICS_HUB_KPI_CATALOG_IDS = {
   MTBF: "KPI-033",
   MTTR: "KPI-034",
+  /** Operational availability A_o = T_up / (T_up + downtime) — not inherent availability. */
   AVAILABILITY: "KPI-035",
   PM_ADHERENCE: "KPI-036",
   MAINTENANCE_COST: "KPI-037",

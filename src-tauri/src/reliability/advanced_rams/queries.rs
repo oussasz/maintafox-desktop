@@ -1,5 +1,7 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -12,9 +14,10 @@ use crate::reliability::advanced_rams::domain::{
     UpsertFmecaItemInput, UpsertRamIshikawaDiagramInput, UpsertRcmDecisionInput, WeibullCurvePoint,
     WeibullDashboardInput, WeibullDashboardPayload, WeibullFitRecord, WeibullFitRunInput, WeibullPmMarker,
 };
-use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
-use crate::reliability::queries::evaluate_reliability_analysis_input;
-use crate::reliability::weibull_fit::fit_weibull_with_ci;
+use crate::reliability::compute::eligible_unplanned_mtbf;
+use crate::reliability::exposure_inference::{load_exposure_basis, ExposureBasis};
+use crate::reliability::readiness_gate::{evaluate_equipment_readiness, ReliabilityReadinessGate, ReliabilityReadinessInput};
+use crate::reliability::weibull_fit::{fit_weibull_censored_with_ci, WeibullObservation, WEIBULL_ALGORITHM_VERSION};
 use crate::settings;
 
 fn decode_err(field: &str, err: impl std::fmt::Display) -> AppError {
@@ -38,125 +41,250 @@ fn parse_ts(s: &str) -> AppResult<DateTime<Utc>> {
         .map_err(|e| AppError::ValidationFailed(vec![format!("invalid timestamp: {e}")]))
 }
 
-pub fn inter_arrival_hours_from_events(timestamps: &[DateTime<Utc>]) -> Vec<f64> {
-    if timestamps.len() < 2 {
-        return Vec::new();
-    }
-    let mut out = Vec::with_capacity(timestamps.len() - 1);
-    for w in timestamps.windows(2) {
-        let h = (w[1] - w[0]).num_milliseconds() as f64 / 3_600_000.0;
-        if h > 0.0 && h.is_finite() {
-            out.push(h);
-        }
-    }
-    out
+/// Exposure-hour time base marker persisted on `weibull_fit_results.time_base`.
+pub const WEIBULL_TIME_BASE_EXPOSURE: &str = "exposure_hours";
+
+/// One eligible failure event used to build a Weibull dataset.
+#[derive(Debug, Clone, Serialize)]
+pub struct WeibullSourceEvent {
+    pub id: i64,
+    pub failed_at: DateTime<Utc>,
+    /// Restoration instant; when it lies strictly between this and the next failure the next interval
+    /// starts here (repair time is not operating exposure).
+    pub restored_at: Option<DateTime<Utc>>,
 }
 
+impl WeibullSourceEvent {
+    fn renewal(&self, next: Option<DateTime<Utc>>) -> DateTime<Utc> {
+        match (self.restored_at, next) {
+            (Some(r), Some(n)) if r > self.failed_at && r < n => r,
+            (Some(r), None) if r > self.failed_at => r,
+            _ => self.failed_at,
+        }
+    }
+}
+
+/// Times-between-failures in exposure hours plus the optional right-censored tail.
+/// Intervals with zero exposure (e.g. two failures inside one non-operating window) are dropped and
+/// counted, since a Weibull time-to-failure must be positive.
+#[must_use]
+pub fn weibull_observations_from_events(
+    events: &[WeibullSourceEvent],
+    basis: &ExposureBasis,
+    censor_at: Option<DateTime<Utc>>,
+) -> (Vec<WeibullObservation>, usize) {
+    let mut out = Vec::with_capacity(events.len());
+    let mut dropped = 0_usize;
+    for w in events.windows(2) {
+        let start = w[0].renewal(Some(w[1].failed_at));
+        let h = basis.hours_between(start, w[1].failed_at);
+        if h > 0.0 && h.is_finite() {
+            out.push(WeibullObservation::failure(h));
+        } else {
+            dropped += 1;
+        }
+    }
+    if let (Some(end), Some(last)) = (censor_at, events.last()) {
+        let h = basis.hours_between(last.renewal(None), end);
+        if h > 0.0 && h.is_finite() {
+            out.push(WeibullObservation::censored(h));
+        }
+    }
+    (out, dropped)
+}
+
+/// Eligible (`eligible_unplanned_mtbf`) failure events for one equipment, optionally one failure mode,
+/// ordered by failure time.
+pub async fn load_weibull_source_events(
+    db: &DatabaseConnection,
+    equipment_id: i64,
+    period_start: Option<&str>,
+    period_end: Option<&str>,
+    failure_mode_id: Option<i64>,
+) -> AppResult<Vec<WeibullSourceEvent>> {
+    let mut sql = String::from(
+        "SELECT id, COALESCE(failed_at, detected_at, created_at) AS ts, restored_at, eligible_flags_json
+         FROM failure_events WHERE equipment_id = ?",
+    );
+    let mut vals: Vec<sea_orm::Value> = vec![equipment_id.into()];
+    if let Some(ps) = period_start {
+        sql.push_str(" AND COALESCE(failed_at, detected_at, created_at) >= ?");
+        vals.push(ps.to_string().into());
+    }
+    if let Some(pe) = period_end {
+        sql.push_str(" AND COALESCE(failed_at, detected_at, created_at) <= ?");
+        vals.push(pe.to_string().into());
+    }
+    if let Some(m) = failure_mode_id {
+        sql.push_str(" AND failure_mode_id = ?");
+        vals.push(m.into());
+    }
+    sql.push_str(" ORDER BY ts ASC, id ASC");
+    let rows = db
+        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, vals))
+        .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let flags: String = r
+            .try_get("", "eligible_flags_json")
+            .map_err(|e| decode_err("eligible_flags_json", e))?;
+        if !eligible_unplanned_mtbf(&flags) {
+            continue;
+        }
+        let ts: String = r.try_get("", "ts").map_err(|e| decode_err("ts", e))?;
+        let restored: Option<String> = r
+            .try_get("", "restored_at")
+            .map_err(|e| decode_err("restored_at", e))?;
+        out.push(WeibullSourceEvent {
+            id: r.try_get("", "id").map_err(|e| decode_err("id", e))?,
+            failed_at: parse_ts(&ts)?,
+            restored_at: restored.as_deref().map(parse_ts).transpose()?,
+        });
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
+struct WeibullDatasetCanonical<'a> {
+    algorithm_version: &'a str,
+    time_base: &'a str,
+    equipment_id: i64,
+    period_start: Option<&'a str>,
+    period_end: Option<&'a str>,
+    failure_mode_id: Option<i64>,
+    include_censored: bool,
+    exposure_source: &'a str,
+    events: &'a [WeibullSourceEvent],
+    observations: &'a [WeibullObservation],
+}
+
+fn weibull_dataset_hash(canonical: &WeibullDatasetCanonical<'_>) -> String {
+    let json = serde_json::to_string(canonical).unwrap_or_default();
+    hex::encode(Sha256::digest(json.as_bytes()))
+}
+
+fn opt_str_value(v: Option<String>) -> sea_orm::Value {
+    v.map(sea_orm::Value::from)
+        .unwrap_or_else(|| sea_orm::Value::from(None::<String>))
+}
+
+fn opt_f64_value(v: Option<f64>) -> sea_orm::Value {
+    v.map(sea_orm::Value::from)
+        .unwrap_or_else(|| sea_orm::Value::from(None::<f64>))
+}
+
+fn opt_i64_value(v: Option<i64>) -> sea_orm::Value {
+    v.map(sea_orm::Value::from)
+        .unwrap_or_else(|| sea_orm::Value::from(None::<i64>))
+}
+
+/// Fit a right-censored Weibull on exposure-hour times between eligible unplanned failures.
+/// Refused (`READINESS_DENY:*`) when the StrictRam readiness gate denies the equipment.
 pub async fn run_and_store_weibull_fit(
     db: &DatabaseConnection,
     user_id: Option<i32>,
     input: WeibullFitRunInput,
 ) -> AppResult<WeibullFitRecord> {
-    let include_censored = input.include_censored.unwrap_or(false);
-    let mut sql = String::from(
-        "SELECT COALESCE(failed_at, detected_at, created_at) AS ts
-         FROM failure_events WHERE equipment_id = ?",
-    );
-    let mut vals: Vec<sea_orm::Value> = vec![input.equipment_id.into()];
-    if let Some(ref ps) = input.period_start {
-        sql.push_str(" AND COALESCE(failed_at, detected_at, created_at) >= ?");
-        vals.push(ps.clone().into());
+    let include_censored = input.include_censored.unwrap_or(true);
+    let gate = evaluate_equipment_readiness(
+        db,
+        ReliabilityReadinessInput {
+            equipment_id: input.equipment_id,
+            period_start: input.period_start.clone(),
+            period_end: input.period_end.clone(),
+            min_sample_n: None,
+        },
+    )
+    .await?;
+    if !gate.allowed() {
+        return Err(gate.deny_error());
     }
-    if let Some(ref pe) = input.period_end {
-        sql.push_str(" AND COALESCE(failed_at, detected_at, created_at) <= ?");
-        vals.push(pe.clone().into());
-    }
-    sql.push_str(" ORDER BY ts ASC");
-    let rows = db
-        .query_all(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, vals))
-        .await?;
-    let mut ts: Vec<DateTime<Utc>> = Vec::new();
-    for r in &rows {
-        let s: String = r.try_get("", "ts").map_err(|e| decode_err("ts", e))?;
-        if let Ok(t) = parse_ts(&s) {
-            ts.push(t);
-        }
-    }
-    let gaps = inter_arrival_hours_from_events(&ts);
-    let mut fit_points = gaps.clone();
-    if include_censored {
-        let ref_end = input
-            .period_end
-            .as_deref()
-            .map(parse_ts)
-            .transpose()?
-            .unwrap_or_else(Utc::now);
-        if let Some(last) = ts.last().copied() {
-            let tail_h = (ref_end - last).num_milliseconds() as f64 / 3_600_000.0;
-            if tail_h.is_finite() && tail_h > 0.0 {
-                fit_points.push(tail_h);
-            }
-        }
-    }
-    let fit = fit_weibull_with_ci(&fit_points);
-    let inter_json = serde_json::to_string(&gaps).unwrap_or_else(|_| "[]".to_string());
-    let now = Utc::now().to_rfc3339();
-    let uid = user_id.map(i64::from);
-    let adequate = if fit.adequate_sample { 1 } else { 0 };
-    let eid = format!("weibull_fit:{}", Uuid::new_v4());
-    let (beta, eta, bl, bh, el, eh) = if fit.adequate_sample {
-        (
-            Some(fit.beta),
-            Some(fit.eta),
-            Some(fit.beta_ci_low),
-            Some(fit.beta_ci_high),
-            Some(fit.eta_ci_low),
-            Some(fit.eta_ci_high),
-        )
+    let basis = load_exposure_basis(db, input.equipment_id)
+        .await?
+        .ok_or_else(|| AppError::ValidationFailed(vec!["READINESS_DENY:MISSING_EXPOSURE".into()]))?;
+
+    let events = load_weibull_source_events(
+        db,
+        input.equipment_id,
+        input.period_start.as_deref(),
+        input.period_end.as_deref(),
+        input.failure_mode_id,
+    )
+    .await?;
+    let now = Utc::now();
+    let censor_at = if include_censored {
+        let end = input.period_end.as_deref().map(parse_ts).transpose()?.unwrap_or(now);
+        Some(if end < now { end } else { now })
     } else {
-        (None, None, None, None, None, None)
+        None
     };
+    let (observations, dropped) = weibull_observations_from_events(&events, &basis, censor_at);
+    let fit = fit_weibull_censored_with_ci(&observations);
+    let failure_hours: Vec<f64> = observations
+        .iter()
+        .filter(|o| !o.censored)
+        .map(|o| o.hours)
+        .collect();
+    let inter_json = serde_json::to_string(&failure_hours)?;
+    let observations_json = serde_json::to_string(&observations)?;
+    let dataset_hash = weibull_dataset_hash(&WeibullDatasetCanonical {
+        algorithm_version: WEIBULL_ALGORITHM_VERSION,
+        time_base: WEIBULL_TIME_BASE_EXPOSURE,
+        equipment_id: input.equipment_id,
+        period_start: input.period_start.as_deref(),
+        period_end: input.period_end.as_deref(),
+        failure_mode_id: input.failure_mode_id,
+        include_censored,
+        exposure_source: basis.source(),
+        events: &events,
+        observations: &observations,
+    });
+    let mut message = fit.message.clone();
+    if dropped > 0 {
+        if !message.is_empty() {
+            message.push_str("; ");
+        }
+        message.push_str(&format!("{dropped} zero-exposure interval(s) dropped"));
+    }
+
+    let uid = user_id.map(i64::from);
+    let eid = format!("weibull_fit:{}", Uuid::new_v4());
+    let ok = fit.adequate_sample;
+    let pick = |v: f64| if ok { Some(v) } else { None };
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO weibull_fit_results (
             entity_sync_id, equipment_id, period_start, period_end, n_points,
             inter_arrival_hours_json, beta, eta, beta_ci_low, beta_ci_high,
-            eta_ci_low, eta_ci_high, adequate_sample, message, row_version, created_at, created_by_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            eta_ci_low, eta_ci_high, adequate_sample, message, row_version, created_at, created_by_id,
+            algorithm_version, dataset_hash_sha256, time_base, failure_mode_id,
+            n_failures, n_censored, observations_json, exposure_source
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             eid.into(),
             input.equipment_id.into(),
-            input
-                .period_start
-                .map(sea_orm::Value::from)
-                .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-            input
-                .period_end
-                .map(sea_orm::Value::from)
-                .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
-            (gaps.len() as i64).into(),
+            opt_str_value(input.period_start.clone()),
+            opt_str_value(input.period_end.clone()),
+            (observations.len() as i64).into(),
             inter_json.into(),
-            beta.map(sea_orm::Value::from)
-                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
-            eta.map(sea_orm::Value::from)
-                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
-            bl.map(sea_orm::Value::from)
-                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
-            bh.map(sea_orm::Value::from)
-                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
-            el.map(sea_orm::Value::from)
-                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
-            eh.map(sea_orm::Value::from)
-                .unwrap_or_else(|| sea_orm::Value::from(None::<f64>)),
-            adequate.into(),
-            if include_censored {
-                format!("{} [include_censored=true]", fit.message).into()
-            } else {
-                fit.message.clone().into()
-            },
-            now.clone().into(),
-            uid.map(sea_orm::Value::from)
-                .unwrap_or_else(|| sea_orm::Value::from(None::<i64>)),
+            opt_f64_value(pick(fit.beta)),
+            opt_f64_value(pick(fit.eta)),
+            opt_f64_value(pick(fit.beta_ci_low)),
+            opt_f64_value(pick(fit.beta_ci_high)),
+            opt_f64_value(pick(fit.eta_ci_low)),
+            opt_f64_value(pick(fit.eta_ci_high)),
+            i64::from(ok).into(),
+            message.into(),
+            now.to_rfc3339().into(),
+            opt_i64_value(uid),
+            WEIBULL_ALGORITHM_VERSION.into(),
+            dataset_hash.into(),
+            WEIBULL_TIME_BASE_EXPOSURE.into(),
+            opt_i64_value(input.failure_mode_id),
+            (fit.n_failures as i64).into(),
+            (fit.n_censored as i64).into(),
+            observations_json.into(),
+            basis.source().into(),
         ],
     ))
     .await?;
@@ -166,14 +294,18 @@ pub async fn run_and_store_weibull_fit(
         .ok_or_else(|| AppError::SyncError("weibull_fit_results insert missing.".into()))
 }
 
+const WEIBULL_SELECT: &str = "SELECT id, entity_sync_id, equipment_id, period_start, period_end, n_points,
+        inter_arrival_hours_json, beta, eta, beta_ci_low, beta_ci_high,
+        eta_ci_low, eta_ci_high, adequate_sample, message, row_version, created_at, created_by_id,
+        algorithm_version, dataset_hash_sha256, time_base, failure_mode_id,
+        n_failures, n_censored, observations_json, exposure_source
+     FROM weibull_fit_results";
+
 pub async fn get_weibull_fit(db: &DatabaseConnection, id: i64) -> AppResult<Option<WeibullFitRecord>> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, equipment_id, period_start, period_end, n_points,
-                    inter_arrival_hours_json, beta, eta, beta_ci_low, beta_ci_high,
-                    eta_ci_low, eta_ci_high, adequate_sample, message, row_version, created_at, created_by_id
-             FROM weibull_fit_results WHERE id = ?",
+            format!("{WEIBULL_SELECT} WHERE id = ?"),
             [id.into()],
         ))
         .await?;
@@ -183,6 +315,7 @@ pub async fn get_weibull_fit(db: &DatabaseConnection, id: i64) -> AppResult<Opti
     }
 }
 
+/// Latest fit of any version (history / audit display).
 pub async fn get_latest_weibull_fit_for_equipment(
     db: &DatabaseConnection,
     equipment_id: i64,
@@ -190,10 +323,7 @@ pub async fn get_latest_weibull_fit_for_equipment(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, equipment_id, period_start, period_end, n_points,
-                    inter_arrival_hours_json, beta, eta, beta_ci_low, beta_ci_high,
-                    eta_ci_low, eta_ci_high, adequate_sample, message, row_version, created_at, created_by_id
-             FROM weibull_fit_results WHERE equipment_id = ? ORDER BY id DESC LIMIT 1",
+            format!("{WEIBULL_SELECT} WHERE equipment_id = ? ORDER BY id DESC LIMIT 1"),
             [equipment_id.into()],
         ))
         .await?;
@@ -201,6 +331,40 @@ pub async fn get_latest_weibull_fit_for_equipment(
         None => Ok(None),
         Some(r) => map_weibull(&r).map(Some),
     }
+}
+
+/// Latest adequate fit on the exposure-hour time base — the only fits R(t) / RUL may use.
+/// Legacy calendar-gap fits (migration 151) are ignored.
+async fn latest_usable_weibull_fit(db: &DatabaseConnection, equipment_id: i64) -> AppResult<Option<WeibullFitRecord>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            format!(
+                "{WEIBULL_SELECT} WHERE equipment_id = ? AND time_base = ? AND adequate_sample = 1
+                   AND beta > 0 AND eta > 0
+                 ORDER BY id DESC LIMIT 1"
+            ),
+            [equipment_id.into(), WEIBULL_TIME_BASE_EXPOSURE.into()],
+        ))
+        .await?;
+    match row {
+        None => Ok(None),
+        Some(r) => map_weibull(&r).map(Some),
+    }
+}
+
+/// Current age in exposure hours since the last renewal (restoration of the last eligible failure of
+/// the fit's failure-mode scope) — the same clock the fit's times-between-failures were measured on.
+async fn exposure_age_hours(
+    db: &DatabaseConnection,
+    equipment_id: i64,
+    failure_mode_id: Option<i64>,
+    basis: &ExposureBasis,
+) -> AppResult<Option<f64>> {
+    let events = load_weibull_source_events(db, equipment_id, None, None, failure_mode_id).await?;
+    Ok(events
+        .last()
+        .map(|last| basis.hours_between(last.renewal(None), Utc::now())))
 }
 
 fn map_weibull(row: &sea_orm::QueryResult) -> AppResult<WeibullFitRecord> {
@@ -252,6 +416,30 @@ fn map_weibull(row: &sea_orm::QueryResult) -> AppResult<WeibullFitRecord> {
         created_by_id: row
             .try_get::<Option<i64>>("", "created_by_id")
             .map_err(|e| decode_err("created_by_id", e))?,
+        algorithm_version: row
+            .try_get::<Option<String>>("", "algorithm_version")
+            .map_err(|e| decode_err("algorithm_version", e))?,
+        dataset_hash_sha256: row
+            .try_get::<Option<String>>("", "dataset_hash_sha256")
+            .map_err(|e| decode_err("dataset_hash_sha256", e))?,
+        time_base: row
+            .try_get::<Option<String>>("", "time_base")
+            .map_err(|e| decode_err("time_base", e))?,
+        failure_mode_id: row
+            .try_get::<Option<i64>>("", "failure_mode_id")
+            .map_err(|e| decode_err("failure_mode_id", e))?,
+        n_failures: row
+            .try_get::<Option<i64>>("", "n_failures")
+            .map_err(|e| decode_err("n_failures", e))?,
+        n_censored: row
+            .try_get::<Option<i64>>("", "n_censored")
+            .map_err(|e| decode_err("n_censored", e))?,
+        observations_json: row
+            .try_get::<Option<String>>("", "observations_json")
+            .map_err(|e| decode_err("observations_json", e))?,
+        exposure_source: row
+            .try_get::<Option<String>>("", "exposure_source")
+            .map_err(|e| decode_err("exposure_source", e))?,
     })
 }
 
@@ -1482,69 +1670,72 @@ pub async fn get_suggested_parts_for_failure(
     rows.iter().map(map_suggested_part_for_failure).collect()
 }
 
+async fn readiness_for_live_values(db: &DatabaseConnection, equipment_id: i64) -> AppResult<ReliabilityReadinessGate> {
+    evaluate_equipment_readiness(
+        db,
+        ReliabilityReadinessInput {
+            equipment_id,
+            period_start: None,
+            period_end: None,
+            min_sample_n: None,
+        },
+    )
+    .await
+}
+
+/// R(t) and median residual life at the current exposure age. Withheld when the readiness gate
+/// denies the equipment, when no exposure-hour fit exists, or when no exposure basis exists.
 pub async fn get_reliability_rul_indicator(
     db: &DatabaseConnection,
     equipment_id: i64,
 ) -> AppResult<ReliabilityRulIndicator> {
-    let end = Utc::now();
-    let start = end - Duration::days(365);
-    let ev = evaluate_reliability_analysis_input(
-        db,
-        RefreshReliabilityKpiSnapshotInput {
-            equipment_id,
-            period_start: start.to_rfc3339(),
-            period_end: end.to_rfc3339(),
-            min_sample_n: Some(1),
-            repeat_lookback_days: None,
-        },
-    )
-    .await?;
-    let exposure_t = ev.exposure_hours.max(0.0);
-
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT beta, eta FROM weibull_fit_results
-             WHERE equipment_id = ? AND beta IS NOT NULL AND eta IS NOT NULL AND beta > 0 AND eta > 0
-             ORDER BY id DESC LIMIT 1",
-            [equipment_id.into()],
-        ))
-        .await?;
-
-    let (beta, eta) = match row {
-        Some(r) => {
-            let b: f64 = r.try_get("", "beta").map_err(|e| decode_err("beta", e))?;
-            let e: f64 = r.try_get("", "eta").map_err(|e| decode_err("eta", e))?;
-            (b, e)
-        }
-        None => {
-            return Ok(ReliabilityRulIndicator {
-                equipment_id,
-                weibull_beta: None,
-                weibull_eta_hours: None,
-                reliability_at_t: None,
-                predicted_rul_hours: None,
-                t_hours: Some(exposure_t),
-                message: "No valid Weibull fit in database for this equipment.".into(),
-            });
-        }
+    let gate = readiness_for_live_values(db, equipment_id).await?;
+    let empty = |message: String| ReliabilityRulIndicator {
+        equipment_id,
+        weibull_beta: None,
+        weibull_eta_hours: None,
+        reliability_at_t: None,
+        predicted_rul_hours: None,
+        t_hours: None,
+        message,
+        readiness_decision: gate.decision.clone(),
+        blocking_reasons: gate.blocking_reasons.clone(),
     };
-
-    let t_eff = exposure_t;
-    let r_now = weibull_r(beta, eta, t_eff);
-    let rul = weibull_residual_median_hours(beta, eta, t_eff);
+    if !gate.allowed() {
+        return Ok(empty(format!(
+            "Blocked by readiness gate: {}",
+            gate.blocking_reasons.join(", ")
+        )));
+    }
+    let Some(basis) = load_exposure_basis(db, equipment_id).await? else {
+        return Ok(empty("No governed exposure basis for this equipment.".into()));
+    };
+    let Some(fit) = latest_usable_weibull_fit(db, equipment_id).await? else {
+        return Ok(empty(
+            "No adequate exposure-hour Weibull fit for this equipment; run a fit first.".into(),
+        ));
+    };
+    let (beta, eta) = (fit.beta.unwrap_or(0.0), fit.eta.unwrap_or(0.0));
+    let Some(t_eff) = exposure_age_hours(db, equipment_id, fit.failure_mode_id, &basis).await? else {
+        return Ok(empty("No eligible failure to anchor the current exposure age.".into()));
+    };
 
     Ok(ReliabilityRulIndicator {
         equipment_id,
         weibull_beta: Some(beta),
         weibull_eta_hours: Some(eta),
-        reliability_at_t: r_now,
-        predicted_rul_hours: rul,
+        reliability_at_t: weibull_r(beta, eta, t_eff),
+        predicted_rul_hours: weibull_residual_median_hours(beta, eta, t_eff),
         t_hours: Some(t_eff),
         message: format!(
-            "t = {:.1} h (exposure hours from maintenance / operating profile); R(t) and RUL from Weibull fit (β={:.4}, η={:.1} h).",
-            t_eff, beta, eta
+            "t = {:.1} h exposure since last restoration ({}); R(t) and RUL from Weibull fit (β={:.4}, η={:.1} h).",
+            t_eff,
+            basis.source(),
+            beta,
+            eta
         ),
+        readiness_decision: gate.decision,
+        blocking_reasons: gate.blocking_reasons,
     })
 }
 
@@ -1552,7 +1743,7 @@ pub async fn get_weibull_dashboard_payload(
     db: &DatabaseConnection,
     input: WeibullDashboardInput,
 ) -> AppResult<WeibullDashboardPayload> {
-    let include_censored = input.include_censored.unwrap_or(false);
+    let include_censored = input.include_censored.unwrap_or(true);
     let t_offset_hours = input.t_offset_hours.unwrap_or(0.0);
     let t_offset_hours = if t_offset_hours.is_finite() {
         t_offset_hours
@@ -1560,31 +1751,21 @@ pub async fn get_weibull_dashboard_payload(
         0.0
     };
     let (danger_threshold_r, pm_threshold_r, pm_label) = load_reliability_dashboard_policy(db).await?;
-
-    let end = Utc::now();
-    let start = end - Duration::days(365);
-    let ev = evaluate_reliability_analysis_input(
-        db,
-        RefreshReliabilityKpiSnapshotInput {
-            equipment_id: input.equipment_id,
-            period_start: start.to_rfc3339(),
-            period_end: end.to_rfc3339(),
-            min_sample_n: Some(1),
-            repeat_lookback_days: None,
-        },
-    )
-    .await?;
-    let t_base = ev.exposure_hours.max(0.0);
+    let gate = readiness_for_live_values(db, input.equipment_id).await?;
+    let basis = load_exposure_basis(db, input.equipment_id).await?;
+    let fit = if gate.allowed() {
+        latest_usable_weibull_fit(db, input.equipment_id).await?
+    } else {
+        None
+    };
+    let t_base = match (&fit, &basis) {
+        (Some(f), Some(b)) => exposure_age_hours(db, input.equipment_id, f.failure_mode_id, b)
+            .await?
+            .unwrap_or(0.0),
+        _ => 0.0,
+    };
     let t_effective = (t_base + t_offset_hours).max(0.0);
 
-    let fit = get_latest_weibull_fit_for_equipment(db, input.equipment_id).await?;
-    let fit = fit.and_then(|f| {
-        if f.beta.unwrap_or(0.0) > 0.0 && f.eta.unwrap_or(0.0) > 0.0 {
-            Some(f)
-        } else {
-            None
-        }
-    });
     let Some(main_fit) = fit else {
         return Ok(WeibullDashboardPayload {
             equipment_id: input.equipment_id,
@@ -1603,6 +1784,8 @@ pub async fn get_weibull_dashboard_payload(
             rul_live_hours: None,
             danger_threshold_r,
             pm_threshold_r,
+            readiness_decision: gate.decision,
+            blocking_reasons: gate.blocking_reasons,
         });
     };
 
@@ -1627,31 +1810,23 @@ pub async fn get_weibull_dashboard_payload(
         label: pm_label,
     });
 
-    let comparison_points = if let Some(cmp_id) = input.comparison_equipment_id {
-        if cmp_id > 0 && cmp_id != input.equipment_id {
-            if let Some(cmp_fit) = get_latest_weibull_fit_for_equipment(db, cmp_id).await? {
-                if cmp_fit.beta.unwrap_or(0.0) > 0.0 && cmp_fit.eta.unwrap_or(0.0) > 0.0 {
-                    build_weibull_curve_points(
-                        cmp_fit.beta.unwrap_or(0.0),
-                        cmp_fit.eta.unwrap_or(0.0),
-                        cmp_fit.beta_ci_low,
-                        cmp_fit.beta_ci_high,
-                        cmp_fit.eta_ci_low,
-                        cmp_fit.eta_ci_high,
-                        t_max,
-                        120,
-                    )
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
+    let comparison_points = match input.comparison_equipment_id {
+        Some(cmp_id) if cmp_id > 0 && cmp_id != input.equipment_id => {
+            match latest_usable_weibull_fit(db, cmp_id).await? {
+                Some(cmp_fit) => build_weibull_curve_points(
+                    cmp_fit.beta.unwrap_or(0.0),
+                    cmp_fit.eta.unwrap_or(0.0),
+                    cmp_fit.beta_ci_low,
+                    cmp_fit.beta_ci_high,
+                    cmp_fit.eta_ci_low,
+                    cmp_fit.eta_ci_high,
+                    t_max,
+                    120,
+                ),
+                None => Vec::new(),
             }
-        } else {
-            Vec::new()
         }
-    } else {
-        Vec::new()
+        _ => Vec::new(),
     };
 
     let class_row = db
@@ -1686,6 +1861,8 @@ pub async fn get_weibull_dashboard_payload(
         rul_live_hours: weibull_residual_median_hours(beta, eta, t_effective),
         danger_threshold_r,
         pm_threshold_r,
+        readiness_decision: gate.decision,
+        blocking_reasons: gate.blocking_reasons,
     })
 }
 
@@ -1811,4 +1988,61 @@ pub async fn delete_ram_ishikawa_diagram(db: &DatabaseConnection, id: i64) -> Ap
     ))
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod weibull_dataset_tests {
+    use super::*;
+
+    fn ts(s: &str) -> DateTime<Utc> {
+        parse_ts(s).expect("ts")
+    }
+
+    /// Runtime log of 1 h at every hour mark from 00:00 to 23:00 on 2026-01-01..02 (48 increments).
+    fn hourly_basis() -> ExposureBasis {
+        let start = ts("2026-01-01T00:00:00Z");
+        ExposureBasis::RuntimeLogs {
+            increments: (0..48).map(|h| (start + chrono::Duration::hours(h), 1.0)).collect(),
+        }
+    }
+
+    #[test]
+    fn intervals_start_at_restoration_and_tail_is_censored() {
+        let events = vec![
+            WeibullSourceEvent {
+                id: 1,
+                failed_at: ts("2026-01-01T02:00:00Z"),
+                restored_at: Some(ts("2026-01-01T05:00:00Z")),
+            },
+            WeibullSourceEvent {
+                id: 2,
+                failed_at: ts("2026-01-01T15:00:00Z"),
+                restored_at: Some(ts("2026-01-01T16:00:00Z")),
+            },
+        ];
+        let (obs, dropped) =
+            weibull_observations_from_events(&events, &hourly_basis(), Some(ts("2026-01-02T00:00:00Z")));
+        // (05:00, 15:00] → 10 h failure; (16:00, 24:00] → 8 h censored.
+        assert_eq!(dropped, 0);
+        assert_eq!(obs, vec![WeibullObservation::failure(10.0), WeibullObservation::censored(8.0)]);
+    }
+
+    #[test]
+    fn zero_exposure_interval_is_dropped_not_fitted() {
+        let events = vec![
+            WeibullSourceEvent {
+                id: 1,
+                failed_at: ts("2026-01-01T10:10:00Z"),
+                restored_at: None,
+            },
+            WeibullSourceEvent {
+                id: 2,
+                failed_at: ts("2026-01-01T10:50:00Z"),
+                restored_at: None,
+            },
+        ];
+        let (obs, dropped) = weibull_observations_from_events(&events, &hourly_basis(), None);
+        assert!(obs.is_empty());
+        assert_eq!(dropped, 1);
+    }
 }

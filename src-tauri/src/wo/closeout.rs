@@ -1402,7 +1402,19 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     )
     .await?;
 
+    // Audit P1-6: the governed failure event is written in the close transaction, so a failed ingest
+    // aborts the close instead of silently losing the reliability record.
+    let ingested_failure_event =
+        reliability_queries::ingest_failure_event_from_closed_wo(&txn, input.wo_id, input.actor_id).await?;
+
     txn.commit().await?;
+
+    if let Some(ev) = ingested_failure_event.as_ref() {
+        crate::sync::foundation_stage::warn_stage(
+            reliability_queries::stage_ingested_failure_event(db, ev).await,
+            "failure_event",
+        );
+    }
 
     for (reservation_id, movement_id) in released_reservation_stages {
         crate::sync::foundation_stage::warn_stage(
@@ -1437,10 +1449,6 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
         }
     }
 
-    if let Err(e) = reliability_queries::ingest_failure_event_from_closed_wo(db, input.wo_id, input.actor_id).await {
-        tracing::warn!(target: "maintafox", "ingest_failure_event_from_closed_wo: {e}");
-    }
-
     // Optimistic immediate RAMS KPI refresh for the impacted equipment.
     if let Ok(Some(wo)) = queries::get_work_order(db, input.wo_id).await {
         if let Some(equipment_id) = wo.equipment_id {
@@ -1450,7 +1458,7 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
                 equipment_id,
                 period_start: period_start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                 period_end: period_end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                min_sample_n: Some(1),
+                min_sample_n: None,
                 repeat_lookback_days: Some(30),
             };
             if let Err(e) = reliability_queries::refresh_reliability_kpi_snapshot(db, refresh_input).await {

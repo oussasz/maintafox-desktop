@@ -6624,6 +6624,19 @@ export interface ReliabilityKpiSnapshot {
   analysis_input_spec_json: string;
   plot_payload_json: string;
   row_version: number;
+  /** `reliability_kpi_v2`+; legacy rows `reliability_kpi_v1`. */
+  algorithm_version: string | null;
+  /** Governed exposure (uptime) hours used as the KPI denominator. */
+  exposure_hours: number | null;
+  repair_event_count: number | null;
+  active_repair_hours_total: number | null;
+  downtime_hours_total: number | null;
+  /** Inherent availability A_i = T / (T + Σ active repair). */
+  availability_inherent: number | null;
+  /** Operational availability A_o = T / (T + Σ downtime) — KPI-035. */
+  availability_operational: number | null;
+  /** Non-repairable equipment only. */
+  mttf: number | null;
 }
 
 export interface ReliabilityAnalysisInputEvaluation {
@@ -6676,6 +6689,7 @@ export interface WeibullFitRunInput {
   period_start?: string | null;
   period_end?: string | null;
   include_censored?: boolean | null;
+  failure_mode_id?: number | null;
 }
 
 export interface WeibullFitRecord {
@@ -6697,6 +6711,16 @@ export interface WeibullFitRecord {
   row_version: number;
   created_at: string;
   created_by_id: number | null;
+  algorithm_version: string | null;
+  dataset_hash_sha256: string | null;
+  /** `exposure_hours` (current) or `calendar_hours` (legacy). */
+  time_base: string | null;
+  failure_mode_id: number | null;
+  n_failures: number | null;
+  n_censored: number | null;
+  /** JSON `[{hours, censored}]` — the exact sample the MLE used. */
+  observations_json: string | null;
+  exposure_source: string | null;
 }
 
 export interface WeibullDashboardInput {
@@ -6736,6 +6760,8 @@ export interface WeibullDashboardPayload {
   rul_live_hours: number | null;
   danger_threshold_r: number;
   pm_threshold_r: number;
+  readiness_decision: ReliabilityReadinessDecision;
+  blocking_reasons: string[];
 }
 
 export interface FmecaAnalysis {
@@ -6880,6 +6906,35 @@ export interface ReliabilityRulIndicator {
   predicted_rul_hours: number | null;
   t_hours: number | null;
   message: string;
+  readiness_decision: ReliabilityReadinessDecision;
+  blocking_reasons: string[];
+}
+
+export type ReliabilityReadinessDecision = "ALLOW" | "DENY";
+
+export interface ReliabilityReadinessInput {
+  equipment_id: number;
+  period_start?: string | null;
+  period_end?: string | null;
+  min_sample_n?: number | null;
+}
+
+/** StrictRam readiness gate — guards Weibull fits, R(t) and RUL. */
+export interface ReliabilityReadinessGate {
+  equipment_id: number;
+  period_start: string;
+  period_end: string;
+  decision: ReliabilityReadinessDecision;
+  /** `MISSING_EXPOSURE` | `MISSING_FAILURE_MODE` | `INSUFFICIENT_EVENTS` */
+  blocking_reasons: string[];
+  warnings: string[];
+  eligible_event_count: number;
+  min_sample_n: number;
+  exposure_hours: number;
+  exposure_source: string | null;
+  data_quality_score: number;
+  completeness_percent: number;
+  badge: string;
 }
 
 export interface RamIshikawaDiagram {

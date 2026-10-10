@@ -144,6 +144,7 @@ mod m20260824_000147_pm_generation_autopilot;
 mod m20260825_000148_universal_sync_identity;
 mod m20260826_000149_report_artifacts;
 mod m20260826_000150_user_analytics_dashboard_layouts;
+mod m20261010_000151_reliability_censoring_and_availability;
 mod m20260901_000034_notification_core;
 mod m20261001_000035_archive_core;
 mod m20261101_000036_activity_audit_log;
@@ -304,6 +305,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260825_000148_universal_sync_identity::Migration),
             Box::new(m20260826_000149_report_artifacts::Migration),
             Box::new(m20260826_000150_user_analytics_dashboard_layouts::Migration),
+            Box::new(m20261010_000151_reliability_censoring_and_availability::Migration),
             Box::new(m_test::Migration),
         ]
     }

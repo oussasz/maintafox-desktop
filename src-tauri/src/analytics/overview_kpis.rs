@@ -8,6 +8,8 @@ use crate::errors::AppResult;
 use crate::inventory::queries::evaluate_reorder;
 use crate::kpi_definitions;
 use crate::pm::queries::get_pm_due_metrics;
+use crate::reliability::fleet::{pooled_fleet_kpis, FleetWindow};
+use crate::reliability::readiness::DQ_GREEN_THRESHOLD;
 
 const OVERVIEW_HORIZON_DAYS: i64 = 30;
 
@@ -58,14 +60,6 @@ async fn sum_scalar(db: &DatabaseConnection, sql: &str) -> AppResult<f64> {
     Ok(row
         .map(|r| f64::try_get(&r, "", "total").unwrap_or(0.0))
         .unwrap_or(0.0))
-}
-
-async fn avg_optional(db: &DatabaseConnection, sql: &str) -> AppResult<Option<f64>> {
-    use sea_orm::TryGetable;
-    let row = db
-        .query_one(Statement::from_string(DbBackend::Sqlite, sql.to_owned()))
-        .await?;
-    Ok(row.and_then(|r| Option::<f64>::try_get(&r, "", "avg_v").ok()).flatten())
 }
 
 fn count_cell(
@@ -303,87 +297,38 @@ pub async fn build_overview_kpis(
         "up-bad",
     ));
 
-    let horizon_shift = format!("-{OVERVIEW_HORIZON_DAYS} days");
-    let prev_shift = format!("-{} days", OVERVIEW_HORIZON_DAYS * 2);
-
+    // Fleet RAMS KPIs: pooled ratios over the latest snapshot per equipment (never mean of ratios).
     let (mtbf, mtbf_prev, mttr, mttr_prev, avail, avail_prev, dq, dq_prev) = if perms.can_rep {
-        let mtbf = avg_optional(
+        let now = pooled_fleet_kpis(
             db,
-            &format!(
-                "SELECT AVG(CASE WHEN s.mtbf IS NOT NULL AND s.mtbf > 0 THEN s.mtbf END) AS avg_v \
-                 FROM reliability_kpi_snapshots s \
-                 WHERE datetime(s.period_end) >= datetime('now', '{horizon_shift}')"
-            ),
+            FleetWindow {
+                since_days: OVERVIEW_HORIZON_DAYS,
+                until_days: None,
+            },
+            None,
+            DQ_GREEN_THRESHOLD,
         )
         .await?;
-        let mtbf_prev = avg_optional(
+        let prev = pooled_fleet_kpis(
             db,
-            &format!(
-                "SELECT AVG(CASE WHEN s.mtbf IS NOT NULL AND s.mtbf > 0 THEN s.mtbf END) AS avg_v \
-                 FROM reliability_kpi_snapshots s \
-                 WHERE datetime(s.period_end) >= datetime('now', '{prev_shift}') \
-                   AND datetime(s.period_end) < datetime('now', '{horizon_shift}')"
-            ),
+            FleetWindow {
+                since_days: OVERVIEW_HORIZON_DAYS * 2,
+                until_days: Some(OVERVIEW_HORIZON_DAYS),
+            },
+            None,
+            DQ_GREEN_THRESHOLD,
         )
         .await?;
-        let mttr = avg_optional(
-            db,
-            &format!(
-                "SELECT AVG(CASE WHEN s.mttr IS NOT NULL AND s.mttr > 0 THEN s.mttr END) AS avg_v \
-                 FROM reliability_kpi_snapshots s \
-                 WHERE datetime(s.period_end) >= datetime('now', '{horizon_shift}')"
-            ),
+        (
+            now.mtbf_hours,
+            prev.mtbf_hours,
+            now.mttr_hours,
+            prev.mttr_hours,
+            now.availability_operational,
+            prev.availability_operational,
+            now.mean_data_quality_score,
+            prev.mean_data_quality_score,
         )
-        .await?;
-        let mttr_prev = avg_optional(
-            db,
-            &format!(
-                "SELECT AVG(CASE WHEN s.mttr IS NOT NULL AND s.mttr > 0 THEN s.mttr END) AS avg_v \
-                 FROM reliability_kpi_snapshots s \
-                 WHERE datetime(s.period_end) >= datetime('now', '{prev_shift}') \
-                   AND datetime(s.period_end) < datetime('now', '{horizon_shift}')"
-            ),
-        )
-        .await?;
-        let avail = avg_optional(
-            db,
-            &format!(
-                "SELECT AVG(CASE WHEN s.availability IS NOT NULL THEN s.availability END) AS avg_v \
-                 FROM reliability_kpi_snapshots s \
-                 WHERE datetime(s.period_end) >= datetime('now', '{horizon_shift}')"
-            ),
-        )
-        .await?;
-        let avail_prev = avg_optional(
-            db,
-            &format!(
-                "SELECT AVG(CASE WHEN s.availability IS NOT NULL THEN s.availability END) AS avg_v \
-                 FROM reliability_kpi_snapshots s \
-                 WHERE datetime(s.period_end) >= datetime('now', '{prev_shift}') \
-                   AND datetime(s.period_end) < datetime('now', '{horizon_shift}')"
-            ),
-        )
-        .await?;
-        let dq = avg_optional(
-            db,
-            &format!(
-                "SELECT AVG(s.data_quality_score) AS avg_v \
-                 FROM reliability_kpi_snapshots s \
-                 WHERE datetime(s.period_end) >= datetime('now', '{horizon_shift}')"
-            ),
-        )
-        .await?;
-        let dq_prev = avg_optional(
-            db,
-            &format!(
-                "SELECT AVG(s.data_quality_score) AS avg_v \
-                 FROM reliability_kpi_snapshots s \
-                 WHERE datetime(s.period_end) >= datetime('now', '{prev_shift}') \
-                   AND datetime(s.period_end) < datetime('now', '{horizon_shift}')"
-            ),
-        )
-        .await?;
-        (mtbf, mtbf_prev, mttr, mttr_prev, avail, avail_prev, dq, dq_prev)
     } else {
         (None, None, None, None, None, None, None, None)
     };

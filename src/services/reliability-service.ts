@@ -45,6 +45,8 @@ import type {
   Iso14224DatasetCompleteness,
   RamIshikawaDiagram,
   RamIshikawaDiagramsFilter,
+  ReliabilityReadinessGate,
+  ReliabilityReadinessInput,
   ReliabilityRulIndicator,
   UpsertFmecaItemInput,
   UpsertRamIshikawaDiagramInput,
@@ -231,6 +233,14 @@ const ReliabilityKpiSnapshotSchema = z.object({
   analysis_input_spec_json: z.string(),
   plot_payload_json: z.string(),
   row_version: z.number(),
+  algorithm_version: z.string().nullable(),
+  exposure_hours: z.number().nullable(),
+  repair_event_count: z.number().nullable(),
+  active_repair_hours_total: z.number().nullable(),
+  downtime_hours_total: z.number().nullable(),
+  availability_inherent: z.number().nullable(),
+  availability_operational: z.number().nullable(),
+  mttf: z.number().nullable(),
 });
 
 const ReliabilityAnalysisInputEvaluationSchema = z.object({
@@ -357,6 +367,30 @@ const RamEquipmentQualityBadgeSchema = z.object({
   blocking_issue_codes: z.array(z.string()),
 });
 
+const ReliabilityReadinessGateSchema = z.object({
+  equipment_id: z.number(),
+  period_start: z.string(),
+  period_end: z.string(),
+  decision: z.enum(["ALLOW", "DENY"]),
+  blocking_reasons: z.array(z.string()),
+  warnings: z.array(z.string()),
+  eligible_event_count: z.number(),
+  min_sample_n: z.number(),
+  exposure_hours: z.number(),
+  exposure_source: z.string().nullable(),
+  data_quality_score: z.number(),
+  completeness_percent: z.number(),
+  badge: z.string(),
+});
+
+/** StrictRam readiness gate (ALLOW / DENY + blocking reasons) for one equipment. */
+export async function getReliabilityReadiness(
+  input: ReliabilityReadinessInput,
+): Promise<ReliabilityReadinessGate> {
+  const raw = await invoke<unknown>("get_reliability_readiness", { input });
+  return ReliabilityReadinessGateSchema.parse(raw);
+}
+
 export async function getRamEquipmentQualityBadge(
   equipment_id: number,
 ): Promise<RamEquipmentQualityBadge> {
@@ -422,6 +456,14 @@ const WeibullFitRecordSchema = z.object({
   row_version: z.number(),
   created_at: z.string(),
   created_by_id: z.number().nullable(),
+  algorithm_version: z.string().nullable(),
+  dataset_hash_sha256: z.string().nullable(),
+  time_base: z.string().nullable(),
+  failure_mode_id: z.number().nullable(),
+  n_failures: z.number().nullable(),
+  n_censored: z.number().nullable(),
+  observations_json: z.string().nullable(),
+  exposure_source: z.string().nullable(),
 });
 
 const WeibullCurvePointSchema = z.object({
@@ -454,6 +496,8 @@ const WeibullDashboardPayloadSchema = z.object({
   rul_live_hours: z.number().nullable(),
   danger_threshold_r: z.number(),
   pm_threshold_r: z.number(),
+  readiness_decision: z.enum(["ALLOW", "DENY"]),
+  blocking_reasons: z.array(z.string()),
 });
 
 export async function runWeibullFit(input: WeibullFitRunInput): Promise<WeibullFitRecord> {
@@ -617,6 +661,8 @@ const ReliabilityRulIndicatorSchema = z.object({
   predicted_rul_hours: z.number().nullable(),
   t_hours: z.number().nullable(),
   message: z.string(),
+  readiness_decision: z.enum(["ALLOW", "DENY"]),
+  blocking_reasons: z.array(z.string()),
 });
 
 export async function getReliabilityRulIndicator(

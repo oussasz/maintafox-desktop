@@ -6,7 +6,9 @@ use crate::errors::{AppError, AppResult};
 use crate::reliability::analysis_input::{
     build_input_spec_json, dataset_hash_sha256, ExposurePart, ExposureProvenance, FailurePart,
 };
-use crate::reliability::compute::{compute_reliability_kpis, KpiFailureEvent, ReliabilityKpiComputeInput};
+use crate::reliability::compute::{
+    compute_reliability_kpis, KpiFailureEvent, ReliabilityKpiComputeInput, RELIABILITY_KPI_ALGORITHM_VERSION,
+};
 use crate::reliability::domain::{
     CostOfFailureFilter, CostOfFailureRow, DeactivateFailureCodeInput, DismissRamDataQualityIssueInput,
     EquipmentMissingExposureRow, FailureCode, FailureCodeUpsertInput, FailureCodesFilter, FailureEvent,
@@ -835,7 +837,7 @@ pub async fn upsert_failure_event(db: &DatabaseConnection, input: UpsertFailureE
     Ok(mapped)
 }
 
-async fn is_failure_mode_active_mode(db: &DatabaseConnection, mode_id: Option<i64>) -> AppResult<bool> {
+async fn is_failure_mode_active_mode<C: ConnectionTrait>(db: &C, mode_id: Option<i64>) -> AppResult<bool> {
     let Some(mid) = mode_id else {
         return Ok(false);
     };
@@ -855,7 +857,17 @@ async fn is_failure_mode_active_mode(db: &DatabaseConnection, mode_id: Option<i6
     Ok(row.is_some())
 }
 
-pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id: i64, actor_id: i64) -> AppResult<()> {
+/// Ingest the governed failure event for a closed corrective / emergency WO.
+///
+/// Generic over the connection so `wo::closeout` runs it inside the close transaction (audit P1-6):
+/// if ingest fails the close is rolled back instead of silently losing the reliability record.
+/// Returns the inserted event (to stage for sync after commit), or `None` when the WO is not
+/// ingestible or the event already exists.
+pub async fn ingest_failure_event_from_closed_wo<C: ConnectionTrait>(
+    db: &C,
+    wo_id: i64,
+    actor_id: i64,
+) -> AppResult<Option<FailureEvent>> {
     let wo_row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -875,14 +887,14 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         .try_get("", "type_code")
         .map_err(|e| decode_err("type_code", e))?;
     if !INGEST_WO_TYPE_CODES.contains(&type_code.as_str()) {
-        return Ok(());
+        return Ok(None);
     }
 
     let equipment_id: Option<i64> = wo_row
         .try_get::<Option<i64>>("", "equipment_id")
         .map_err(|e| decode_err("equipment_id", e))?;
     let Some(equipment_id) = equipment_id else {
-        return Ok(());
+        return Ok(None);
     };
 
     let closed_at: Option<String> = wo_row
@@ -923,12 +935,10 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COALESCE(SUM( \
-                 CASE WHEN ended_at IS NOT NULL \
-                 THEN (JULIANDAY(ended_at) - JULIANDAY(started_at)) * 24.0 \
-                 ELSE 0 END \
+                 MAX(0.0, (JULIANDAY(COALESCE(ended_at, ?)) - JULIANDAY(started_at)) * 24.0) \
                ), 0.0) AS h \
-             FROM work_order_downtime_segments WHERE work_order_id = ?",
-            [wo_id.into()],
+             FROM work_order_downtime_segments WHERE work_order_id = ? AND (ended_at IS NOT NULL OR ? IS NOT NULL)",
+            [opt_string(closed_at.clone()), wo_id.into(), opt_string(closed_at.clone())],
         ))
         .await?
         .ok_or_else(|| AppError::SyncError("downtime sum missing.".into()))?;
@@ -938,12 +948,10 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT COALESCE(SUM( \
-                 CASE WHEN ended_at IS NOT NULL \
-                 THEN (JULIANDAY(ended_at) - JULIANDAY(started_at)) * 24.0 \
-                 ELSE 0 END \
+                 MAX(0.0, (JULIANDAY(COALESCE(ended_at, ?)) - JULIANDAY(started_at)) * 24.0) \
                ), 0.0) AS h \
-             FROM work_order_delay_segments WHERE work_order_id = ?",
-            [wo_id.into()],
+             FROM work_order_delay_segments WHERE work_order_id = ? AND (ended_at IS NOT NULL OR ? IS NOT NULL)",
+            [opt_string(closed_at.clone()), wo_id.into(), opt_string(closed_at.clone())],
         ))
         .await?
         .ok_or_else(|| AppError::SyncError("waiting sum missing.".into()))?;
@@ -1030,7 +1038,7 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         ))
         .await?;
     if ins.rows_affected() == 0 {
-        return Ok(());
+        return Ok(None);
     }
 
     let row = db
@@ -1049,9 +1057,12 @@ pub async fn ingest_failure_event_from_closed_wo(db: &DatabaseConnection, wo_id:
         .await?
         .ok_or_else(|| AppError::SyncError("failure_events row missing after ingest.".into()))?;
 
-    let mapped = map_failure_event(&row)?;
-    stage_failure_event(db, &mapped).await?;
-    Ok(())
+    Ok(Some(map_failure_event(&row)?))
+}
+
+/// Stage an ingested failure event for sync (after the close transaction has committed).
+pub async fn stage_ingested_failure_event(db: &DatabaseConnection, event: &FailureEvent) -> AppResult<()> {
+    stage_failure_event(db, event).await
 }
 
 pub async fn list_failure_events(db: &DatabaseConnection, filter: FailureEventsFilter) -> AppResult<Vec<FailureEvent>> {
@@ -1191,6 +1202,30 @@ fn map_kpi_snapshot(row: &sea_orm::QueryResult) -> AppResult<ReliabilityKpiSnaps
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
+        algorithm_version: row
+            .try_get::<Option<String>>("", "algorithm_version")
+            .map_err(|e| decode_err("algorithm_version", e))?,
+        exposure_hours: row
+            .try_get::<Option<f64>>("", "exposure_hours")
+            .map_err(|e| decode_err("exposure_hours", e))?,
+        repair_event_count: row
+            .try_get::<Option<i64>>("", "repair_event_count")
+            .map_err(|e| decode_err("repair_event_count", e))?,
+        active_repair_hours_total: row
+            .try_get::<Option<f64>>("", "active_repair_hours_total")
+            .map_err(|e| decode_err("active_repair_hours_total", e))?,
+        downtime_hours_total: row
+            .try_get::<Option<f64>>("", "downtime_hours_total")
+            .map_err(|e| decode_err("downtime_hours_total", e))?,
+        availability_inherent: row
+            .try_get::<Option<f64>>("", "availability_inherent")
+            .map_err(|e| decode_err("availability_inherent", e))?,
+        availability_operational: row
+            .try_get::<Option<f64>>("", "availability_operational")
+            .map_err(|e| decode_err("availability_operational", e))?,
+        mttf: row
+            .try_get::<Option<f64>>("", "mttf")
+            .map_err(|e| decode_err("mttf", e))?,
     })
 }
 
@@ -1307,6 +1342,11 @@ struct KpiRefreshCore {
     mtbf: Option<f64>,
     mttr: Option<f64>,
     availability: Option<f64>,
+    availability_inherent: Option<f64>,
+    mttf: Option<f64>,
+    repair_event_count: i64,
+    active_repair_hours_total: f64,
+    downtime_hours_total: f64,
     failure_rate: Option<f64>,
     repeat_failure_rate: Option<f64>,
     f: i64,
@@ -1314,6 +1354,25 @@ struct KpiRefreshCore {
     dataset_hash: String,
     input_spec_json: String,
     plot_payload_json: String,
+}
+
+/// `equipment.rams_is_repairable` (migration 151): MTBF for repairable items, MTTF otherwise.
+pub(crate) async fn equipment_is_repairable(db: &DatabaseConnection, equipment_id: i64) -> AppResult<bool> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT rams_is_repairable FROM equipment WHERE id = ?",
+            [equipment_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "equipment".into(),
+            id: equipment_id.to_string(),
+        })?;
+    let v: i64 = row
+        .try_get("", "rams_is_repairable")
+        .map_err(|e| decode_err("rams_is_repairable", e))?;
+    Ok(v != 0)
 }
 
 async fn kpi_refresh_core(
@@ -1423,12 +1482,14 @@ async fn kpi_refresh_core(
         });
     }
 
+    let repairable = equipment_is_repairable(db, input.equipment_id).await?;
     let computed = compute_reliability_kpis(&ReliabilityKpiComputeInput {
         period_start: p0,
         period_end: p1,
         t_exp_hours: t_exp,
         repeat_lookback_days: lookback,
         min_sample_n: min_n,
+        repairable,
         events,
     });
 
@@ -1488,6 +1549,11 @@ async fn kpi_refresh_core(
         mtbf: computed.mtbf,
         mttr: computed.mttr,
         availability: computed.availability,
+        availability_inherent: computed.availability_inherent,
+        mttf: computed.mttf,
+        repair_event_count: computed.repair_event_count,
+        active_repair_hours_total: computed.active_repair_hours_total,
+        downtime_hours_total: computed.downtime_hours_total,
         failure_rate: computed.failure_rate,
         repeat_failure_rate: computed.repeat_failure_rate,
         f: computed.event_count,
@@ -1584,6 +1650,9 @@ pub async fn refresh_reliability_kpi_snapshot(
                 mtbf = ?, mttr = ?, availability = ?, failure_rate = ?, repeat_failure_rate = ?,
                 event_count = ?, data_quality_score = ?, inspection_signal_json = ?,
                 analysis_dataset_hash_sha256 = ?, analysis_input_spec_json = ?, plot_payload_json = ?,
+                algorithm_version = ?, exposure_hours = ?, repair_event_count = ?,
+                active_repair_hours_total = ?, downtime_hours_total = ?,
+                availability_inherent = ?, availability_operational = ?, mttf = ?,
                 row_version = row_version + 1
              WHERE id = ?",
             [
@@ -1598,6 +1667,14 @@ pub async fn refresh_reliability_kpi_snapshot(
                 dataset_hash.clone().into(),
                 input_spec_json.clone().into(),
                 plot_payload_json.clone().into(),
+                RELIABILITY_KPI_ALGORITHM_VERSION.into(),
+                core.t_exp.into(),
+                core.repair_event_count.into(),
+                core.active_repair_hours_total.into(),
+                core.downtime_hours_total.into(),
+                opt_f64(core.availability_inherent),
+                opt_f64(availability),
+                opt_f64(core.mttf),
                 ex_id.into(),
             ],
         ))
@@ -1607,7 +1684,9 @@ pub async fn refresh_reliability_kpi_snapshot(
             "SELECT id, entity_sync_id, equipment_id, asset_group_id, period_start, period_end,
                     mtbf, mttr, availability, failure_rate, repeat_failure_rate,
                     event_count, data_quality_score, inspection_signal_json,
-                    analysis_dataset_hash_sha256, analysis_input_spec_json, plot_payload_json, row_version
+                    analysis_dataset_hash_sha256, analysis_input_spec_json, plot_payload_json, row_version,
+                    algorithm_version, exposure_hours, repair_event_count, active_repair_hours_total,
+                    downtime_hours_total, availability_inherent, availability_operational, mttf
              FROM reliability_kpi_snapshots WHERE id = ?",
             [ex_id.into()],
         ))
@@ -1620,8 +1699,11 @@ pub async fn refresh_reliability_kpi_snapshot(
                 entity_sync_id, equipment_id, asset_group_id, period_start, period_end,
                 mtbf, mttr, availability, failure_rate, repeat_failure_rate,
                 event_count, data_quality_score, inspection_signal_json,
-                analysis_dataset_hash_sha256, analysis_input_spec_json, plot_payload_json, row_version
-            ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                analysis_dataset_hash_sha256, analysis_input_spec_json, plot_payload_json,
+                algorithm_version, exposure_hours, repair_event_count,
+                active_repair_hours_total, downtime_hours_total,
+                availability_inherent, availability_operational, mttf, row_version
+            ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
             [
                 eid.into(),
                 input.equipment_id.into(),
@@ -1638,6 +1720,14 @@ pub async fn refresh_reliability_kpi_snapshot(
                 dataset_hash.into(),
                 input_spec_json.into(),
                 plot_payload_json.into(),
+                RELIABILITY_KPI_ALGORITHM_VERSION.into(),
+                core.t_exp.into(),
+                core.repair_event_count.into(),
+                core.active_repair_hours_total.into(),
+                core.downtime_hours_total.into(),
+                opt_f64(core.availability_inherent),
+                opt_f64(availability),
+                opt_f64(core.mttf),
             ],
         ))
         .await?;
@@ -1647,7 +1737,9 @@ pub async fn refresh_reliability_kpi_snapshot(
             "SELECT id, entity_sync_id, equipment_id, asset_group_id, period_start, period_end,
                     mtbf, mttr, availability, failure_rate, repeat_failure_rate,
                     event_count, data_quality_score, inspection_signal_json,
-                    analysis_dataset_hash_sha256, analysis_input_spec_json, plot_payload_json, row_version
+                    analysis_dataset_hash_sha256, analysis_input_spec_json, plot_payload_json, row_version,
+                    algorithm_version, exposure_hours, repair_event_count, active_repair_hours_total,
+                    downtime_hours_total, availability_inherent, availability_operational, mttf
              FROM reliability_kpi_snapshots WHERE id = ?",
             [nid.into()],
         ))
@@ -1674,7 +1766,9 @@ pub async fn list_reliability_kpi_snapshots(
         "SELECT id, entity_sync_id, equipment_id, asset_group_id, period_start, period_end,
                 mtbf, mttr, availability, failure_rate, repeat_failure_rate,
                 event_count, data_quality_score, inspection_signal_json,
-                analysis_dataset_hash_sha256, analysis_input_spec_json, plot_payload_json, row_version
+                analysis_dataset_hash_sha256, analysis_input_spec_json, plot_payload_json, row_version,
+                    algorithm_version, exposure_hours, repair_event_count, active_repair_hours_total,
+                    downtime_hours_total, availability_inherent, availability_operational, mttf
          FROM reliability_kpi_snapshots WHERE 1 = 1",
     );
     let mut vals: Vec<sea_orm::Value> = Vec::new();
@@ -1697,7 +1791,9 @@ pub async fn get_reliability_kpi_snapshot(db: &DatabaseConnection, id: i64) -> A
             "SELECT id, entity_sync_id, equipment_id, asset_group_id, period_start, period_end,
                     mtbf, mttr, availability, failure_rate, repeat_failure_rate,
                     event_count, data_quality_score, inspection_signal_json,
-                    analysis_dataset_hash_sha256, analysis_input_spec_json, plot_payload_json, row_version
+                    analysis_dataset_hash_sha256, analysis_input_spec_json, plot_payload_json, row_version,
+                    algorithm_version, exposure_hours, repair_event_count, active_repair_hours_total,
+                    downtime_hours_total, availability_inherent, availability_operational, mttf
              FROM reliability_kpi_snapshots WHERE id = ?",
             [id.into()],
         ))

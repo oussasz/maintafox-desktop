@@ -23,6 +23,7 @@ fn make_input(n: usize) -> ReliabilityKpiComputeInput {
         t_exp_hours: 1_000_000.0,
         repeat_lookback_days: 30,
         min_sample_n: 5,
+        repairable: true,
         events,
     }
 }

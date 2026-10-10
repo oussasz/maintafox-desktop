@@ -23,6 +23,7 @@ import { listAssets } from "@/services/asset-service";
 import {
   evaluateMarkovModel,
   getWeibullDashboardPayload,
+  getReliabilityReadiness,
   getReliabilityRulIndicator,
   listFailureEvents,
   listMarkovModels,
@@ -33,6 +34,7 @@ import {
 import type {
   Asset,
   ReliabilityKpiSnapshot,
+  ReliabilityReadinessGate,
   ReliabilityRulIndicator,
   WeibullDashboardPayload,
 } from "@shared/ipc-types";
@@ -73,13 +75,15 @@ export function ReliabilityDashboardPage() {
   const [weibullDashboard, setWeibullDashboard] = useState<WeibullDashboardPayload | null>(null);
   const [comparisonAssets, setComparisonAssets] = useState<Asset[]>([]);
   const [failureEventCount, setFailureEventCount] = useState(0);
-  const [includeCensored, setIncludeCensored] = useState(false);
+  const [includeCensored, setIncludeCensored] = useState(true);
+  const [readiness, setReadiness] = useState<ReliabilityReadinessGate | null>(null);
   const [comparisonEquipmentId, setComparisonEquipmentId] = useState<number | null>(null);
   const [tOffsetHours, setTOffsetHours] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [weibullFitFeedback, setWeibullFitFeedback] = useState<{
     adequate: boolean;
-    nPoints: number;
+    failures: number;
+    censored: number;
     message: string;
     beta: number | null;
     eta: number | null;
@@ -116,6 +120,15 @@ export function ReliabilityDashboardPage() {
       setFailureEventCount(events.length);
     } catch {
       setFailureEventCount(0);
+    }
+  }, [equipmentId]);
+
+  const loadReadiness = useCallback(async () => {
+    try {
+      setReadiness(await getReliabilityReadiness({ equipment_id: equipmentId }));
+    } catch (e) {
+      setReadiness(null);
+      setErr(e instanceof Error ? e.message : String(e));
     }
   }, [equipmentId]);
 
@@ -191,10 +204,12 @@ export function ReliabilityDashboardPage() {
         period_start: null,
         period_end: null,
         include_censored: includeCensored,
+        failure_mode_id: null,
       });
       setWeibullFitFeedback({
         adequate: fit.adequate_sample,
-        nPoints: fit.n_points,
+        failures: fit.n_failures ?? 0,
+        censored: fit.n_censored ?? 0,
         message: fit.message,
         beta: fit.beta,
         eta: fit.eta,
@@ -206,10 +221,10 @@ export function ReliabilityDashboardPage() {
         equipment_id: equipmentId,
         period_start: start.toISOString(),
         period_end: end.toISOString(),
-        min_sample_n: 5,
+        min_sample_n: null,
         repeat_lookback_days: 30,
       });
-      await Promise.all([loadLatestWeibull(), loadSnapshots(), loadRul()]);
+      await Promise.all([loadLatestWeibull(), loadSnapshots(), loadRul(), loadReadiness()]);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -275,12 +290,19 @@ export function ReliabilityDashboardPage() {
       loadMarkov(),
       loadRul(),
       loadFailureEvents(),
+      loadReadiness(),
     ]);
-  }, [loadFailureEvents, loadLatestWeibull, loadMarkov, loadRul, loadSnapshots]);
+  }, [loadFailureEvents, loadLatestWeibull, loadMarkov, loadReadiness, loadRul, loadSnapshots]);
 
   useEffect(() => {
     void loadRul();
   }, [loadRul]);
+
+  useEffect(() => {
+    void loadReadiness();
+  }, [loadReadiness]);
+
+  const readinessDenied = readiness?.decision === "DENY";
 
   return (
     <div className="space-y-6 p-6 text-sm text-text-primary">
@@ -311,8 +333,23 @@ export function ReliabilityDashboardPage() {
               />
               <Kpi
                 label={t("dashboard.availability")}
-                value={latest.availability != null ? latest.availability.toFixed(3) : "—"}
+                value={
+                  (latest.availability_operational ?? latest.availability) != null
+                    ? (latest.availability_operational ?? latest.availability ?? 0).toFixed(3)
+                    : "—"
+                }
               />
+              <Kpi
+                label={t("dashboard.availabilityInherent")}
+                value={
+                  latest.availability_inherent != null
+                    ? latest.availability_inherent.toFixed(3)
+                    : "—"
+                }
+              />
+              {latest.mttf != null ? (
+                <Kpi label={t("dashboard.mttf")} value={latest.mttf.toFixed(1)} />
+              ) : null}
               <Kpi
                 label={t("dashboard.failureRate")}
                 value={latest.failure_rate != null ? latest.failure_rate.toExponential(2) : "—"}
@@ -389,6 +426,8 @@ export function ReliabilityDashboardPage() {
         )}
       </section>
 
+      {readiness ? <ReadinessGatePanel gate={readiness} /> : null}
+
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <section className={mfCard.panel}>
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -397,13 +436,15 @@ export function ReliabilityDashboardPage() {
             </h2>
             <button
               type="button"
-              disabled={!canAnalyze || permissionsLoading}
+              disabled={!canAnalyze || permissionsLoading || readinessDenied}
               title={
                 permissionsLoading
                   ? t("dashboard.weibullPermissionsLoading")
                   : !canAnalyze
                     ? t("dashboard.weibullPermission")
-                    : undefined
+                    : readinessDenied
+                      ? t("dashboard.readinessDeny")
+                      : undefined
               }
               className="rounded-md border border-surface-border bg-surface-2 px-2 py-1 text-xs text-text-primary disabled:opacity-40"
               onClick={() => void onRunWeibull().then(() => void loadRul())}
@@ -429,10 +470,12 @@ export function ReliabilityDashboardPage() {
                 ? t("dashboard.weibullFitOk", {
                     beta: weibullFitFeedback.beta?.toFixed(3) ?? "—",
                     eta: weibullFitFeedback.eta?.toFixed(1) ?? "—",
-                    n: weibullFitFeedback.nPoints,
+                    failures: weibullFitFeedback.failures,
+                    censored: weibullFitFeedback.censored,
                   })
                 : t("dashboard.weibullFitInadequate", {
-                    n: weibullFitFeedback.nPoints,
+                    failures: weibullFitFeedback.failures,
+                    censored: weibullFitFeedback.censored,
                     message: weibullFitFeedback.message,
                   })}
             </p>
@@ -699,5 +742,69 @@ function Kpi({ label, value, accent }: { label: string; value: string; accent?: 
       <p className="text-[10px] uppercase tracking-wide text-text-muted">{label}</p>
       <p className="font-mono text-sm font-semibold text-text-primary">{value}</p>
     </div>
+  );
+}
+
+function ReadinessGatePanel({ gate }: { gate: ReliabilityReadinessGate }) {
+  const { t } = useTranslation("reliability");
+  const allowed = gate.decision === "ALLOW";
+  const reason = (code: string) => t(`dashboard.readinessReason.${code}`, { defaultValue: code });
+  return (
+    <section
+      className={cn(
+        mfCard.panel,
+        allowed ? "border-status-success/30" : "border-status-warning/40",
+      )}
+      data-testid="reliability-readiness-gate"
+    >
+      <h2 className="mb-1 text-base font-medium text-text-primary">
+        {t("dashboard.readinessTitle")}
+      </h2>
+      <p
+        className={cn(
+          "text-xs font-medium",
+          allowed ? "text-status-success" : "text-status-warning",
+        )}
+      >
+        {allowed ? t("dashboard.readinessAllow") : t("dashboard.readinessDeny")}
+      </p>
+      <p className="mt-1 text-[11px] text-text-secondary">
+        {t("dashboard.readinessSummary", {
+          events: gate.eligible_event_count,
+          min: gate.min_sample_n,
+          hours: gate.exposure_hours.toFixed(1),
+          completeness: gate.completeness_percent.toFixed(0),
+        })}
+      </p>
+      <p className="text-[11px] text-text-muted">
+        {gate.exposure_source != null
+          ? t("dashboard.readinessExposureSource", { source: gate.exposure_source })
+          : t("dashboard.readinessNoExposureSource")}
+      </p>
+      {gate.blocking_reasons.length > 0 ? (
+        <div className="mt-2">
+          <p className="text-[11px] font-semibold text-text-primary">
+            {t("dashboard.readinessBlocking")}
+          </p>
+          <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px] text-status-warning">
+            {gate.blocking_reasons.map((code) => (
+              <li key={code}>{reason(code)}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {gate.warnings.length > 0 ? (
+        <div className="mt-2">
+          <p className="text-[11px] font-semibold text-text-primary">
+            {t("dashboard.readinessWarnings")}
+          </p>
+          <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px] text-text-secondary">
+            {gate.warnings.map((code) => (
+              <li key={code}>{reason(code)}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </section>
   );
 }
