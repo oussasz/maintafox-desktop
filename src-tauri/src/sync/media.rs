@@ -72,7 +72,7 @@ pub async fn upsert_media_attachment_row(
 
 /// Build a media sync envelope and stage it on the outbox.
 pub async fn stage_media_bytes(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     env: DeploymentEnvironment,
     tenant_id: &str,
     parent_entity_type: &str,
@@ -118,7 +118,7 @@ pub async fn stage_media_bytes(
 
 /// Stage a media delete when a `media_attachments` row can be resolved; otherwise warn and skip.
 pub async fn stage_media_delete_if_found(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     parent_entity_type: Option<&str>,
     parent_entity_sync_id: Option<&str>,
     relative_path: Option<&str>,
@@ -154,25 +154,14 @@ pub async fn stage_media_delete_if_found(
         return Ok(());
     };
 
-    let esid: String = row.try_get("", "entity_sync_id").unwrap_or_default();
-    if esid.is_empty() {
-        tracing::warn!(
-            target: "maintafox",
-            "sync stage media delete skipped: empty entity_sync_id"
-        );
-        return Ok(());
-    }
-    let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
+    let esid: String = crate::sync::identity::require_parent_sync_id(&row, "entity_sync_id")?;
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("media_attachments:{esid}:delete:v{row_version}"),
             entity_type: SYNC_ENTITY_MEDIA_ATTACHMENTS.to_string(),
             entity_sync_id: esid.clone(),
             operation: "delete".to_string(),
-            row_version,
             payload_json: serde_json::json!({ "entity_sync_id": esid }).to_string(),
-            origin_machine_id: None,
         },
     )
     .await?;

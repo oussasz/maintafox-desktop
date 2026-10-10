@@ -149,7 +149,7 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
     })
 }
 
-async fn stage_permit_type(db: &DatabaseConnection, row: &PermitType) -> AppResult<()> {
+async fn stage_permit_type(db: &impl ConnectionTrait, row: &PermitType) -> AppResult<()> {
     let payload = PermitTypeSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -162,24 +162,17 @@ async fn stage_permit_type(db: &DatabaseConnection, row: &PermitType) -> AppResu
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("permit_types:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_PERMIT_TYPES.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-async fn stage_work_permit_with_idempotency_key(
-    db: &DatabaseConnection,
-    row: &WorkPermit,
-    idempotency_key: &str,
-) -> AppResult<()> {
+pub(crate) async fn stage_work_permit(db: &impl ConnectionTrait, row: &WorkPermit) -> AppResult<()> {
     let payload = WorkPermitSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -198,31 +191,14 @@ async fn stage_work_permit_with_idempotency_key(
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: idempotency_key.to_string(),
             entity_type: SYNC_ENTITY_WORK_PERMITS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
-}
-
-async fn stage_work_permit(db: &DatabaseConnection, row: &WorkPermit) -> AppResult<()> {
-    stage_work_permit_with_idempotency_key(
-        db,
-        row,
-        &format!("work_permits:{}:v{}", row.entity_sync_id, row.row_version),
-    )
-    .await
-}
-
-pub async fn stage_work_permit_batched(db: &DatabaseConnection, row: &WorkPermit, batch_id: &str) -> AppResult<()> {
-    let key = format!("{batch_id}:work_permits:{}:v{}", row.entity_sync_id, row.row_version);
-    stage_work_permit_with_idempotency_key(db, row, &key).await
 }
 
 pub async fn get_work_permit_linked_to_work_order(
@@ -244,7 +220,7 @@ pub async fn get_work_permit_linked_to_work_order(
     }
 }
 
-async fn stage_permit_isolation(db: &DatabaseConnection, row: &PermitIsolation) -> AppResult<()> {
+async fn stage_permit_isolation(db: &impl ConnectionTrait, row: &PermitIsolation) -> AppResult<()> {
     let payload = PermitIsolationSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -259,20 +235,17 @@ async fn stage_permit_isolation(db: &DatabaseConnection, row: &PermitIsolation) 
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("permit_isolations:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_PERMIT_ISOLATIONS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-async fn stage_permit_suspension(db: &DatabaseConnection, row: &PermitSuspension) -> AppResult<()> {
+async fn stage_permit_suspension(db: &impl ConnectionTrait, row: &PermitSuspension) -> AppResult<()> {
     let payload = PermitSuspensionSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -289,20 +262,17 @@ async fn stage_permit_suspension(db: &DatabaseConnection, row: &PermitSuspension
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("permit_suspensions:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_PERMIT_SUSPENSIONS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-async fn stage_permit_handover_log(db: &DatabaseConnection, row: &PermitHandoverLog) -> AppResult<()> {
+async fn stage_permit_handover_log(db: &impl ConnectionTrait, row: &PermitHandoverLog) -> AppResult<()> {
     let payload = PermitHandoverLogSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -317,13 +287,10 @@ async fn stage_permit_handover_log(db: &DatabaseConnection, row: &PermitHandover
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("permit_handover_logs:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_PERMIT_HANDOVER_LOGS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
@@ -1248,7 +1215,7 @@ pub async fn upsert_permit_isolation(
     Ok(created)
 }
 
-async fn stage_loto_card_print_job(db: &DatabaseConnection, row: &LotoCardPrintJob) -> AppResult<()> {
+async fn stage_loto_card_print_job(db: &impl ConnectionTrait, row: &LotoCardPrintJob) -> AppResult<()> {
     let payload = LotoCardPrintJobSyncPayload {
         id: row.id,
         permit_id: row.permit_id,
@@ -1262,13 +1229,10 @@ async fn stage_loto_card_print_job(db: &DatabaseConnection, row: &LotoCardPrintJ
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("loto_card_print_jobs:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_LOTO_CARD_PRINT_JOBS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;

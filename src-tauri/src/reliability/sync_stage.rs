@@ -1,4 +1,4 @@
-use sea_orm::DatabaseConnection;
+use sea_orm::ConnectionTrait;
 
 use crate::errors::AppResult;
 use crate::sync::domain::{
@@ -13,7 +13,7 @@ use super::domain::{
     FailureCode, FailureEvent, FailureHierarchy, ReliabilityKpiSnapshot, RuntimeExposureLog, UserDismissal,
 };
 
-pub async fn stage_failure_hierarchy(db: &DatabaseConnection, row: &FailureHierarchy) -> AppResult<()> {
+pub async fn stage_failure_hierarchy(db: &impl ConnectionTrait, row: &FailureHierarchy) -> AppResult<()> {
     let payload = FailureHierarchySyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -26,20 +26,17 @@ pub async fn stage_failure_hierarchy(db: &DatabaseConnection, row: &FailureHiera
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("failure_hierarchies:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_FAILURE_HIERARCHIES.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_failure_code(db: &DatabaseConnection, row: &FailureCode) -> AppResult<()> {
+pub async fn stage_failure_code(db: &impl ConnectionTrait, row: &FailureCode) -> AppResult<()> {
     let payload = FailureCodeSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -55,20 +52,17 @@ pub async fn stage_failure_code(db: &DatabaseConnection, row: &FailureCode) -> A
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("failure_codes:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_FAILURE_CODES.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_failure_event(db: &DatabaseConnection, row: &FailureEvent) -> AppResult<()> {
+pub async fn stage_failure_event(db: &impl ConnectionTrait, row: &FailureEvent) -> AppResult<()> {
     let payload = FailureEventSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -102,20 +96,17 @@ pub async fn stage_failure_event(db: &DatabaseConnection, row: &FailureEvent) ->
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("failure_events:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_FAILURE_EVENTS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_runtime_exposure_log(db: &DatabaseConnection, row: &RuntimeExposureLog) -> AppResult<()> {
+pub async fn stage_runtime_exposure_log(db: &impl ConnectionTrait, row: &RuntimeExposureLog) -> AppResult<()> {
     let payload = RuntimeExposureLogSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -130,20 +121,17 @@ pub async fn stage_runtime_exposure_log(db: &DatabaseConnection, row: &RuntimeEx
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("runtime_exposure_logs:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_RUNTIME_EXPOSURE_LOGS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_reliability_kpi_snapshot(db: &DatabaseConnection, row: &ReliabilityKpiSnapshot) -> AppResult<()> {
+pub async fn stage_reliability_kpi_snapshot(db: &impl ConnectionTrait, row: &ReliabilityKpiSnapshot) -> AppResult<()> {
     let payload = ReliabilityKpiSnapshotSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -168,20 +156,17 @@ pub async fn stage_reliability_kpi_snapshot(db: &DatabaseConnection, row: &Relia
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("reliability_kpi_snapshots:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_RELIABILITY_KPI_SNAPSHOTS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_user_dismissal(db: &DatabaseConnection, row: &UserDismissal) -> AppResult<()> {
+pub async fn stage_user_dismissal(db: &impl ConnectionTrait, row: &UserDismissal) -> AppResult<()> {
     let payload = UserDismissalSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -196,13 +181,10 @@ pub async fn stage_user_dismissal(db: &DatabaseConnection, row: &UserDismissal) 
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("user_dismissals:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_USER_DISMISSALS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;

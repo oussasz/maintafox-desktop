@@ -1,33 +1,17 @@
 //! Outbox staging for foundation replica entities (org, RBAC, personnel, reference).
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{
     OrgNodeSyncPayload, PersonnelSyncPayload, ReferenceValueSyncPayload, RoleSyncPayload, StageOutboxItemInput,
     TeamSyncPayload, UserAccountSyncPayload, SYNC_ENTITY_ORG_NODES, SYNC_ENTITY_PERSONNEL,
     SYNC_ENTITY_REFERENCE_VALUES, SYNC_ENTITY_ROLES, SYNC_ENTITY_TEAMS, SYNC_ENTITY_USER_ACCOUNTS,
 };
+use crate::sync::identity::require_entity_sync_id;
 use crate::sync::queries::stage_outbox_item;
 
-async fn lookup_entity_sync_id(db: &impl ConnectionTrait, table: &str, id: i64) -> AppResult<Option<String>> {
-    let sql = format!("SELECT entity_sync_id FROM {table} WHERE id = ? LIMIT 1");
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            &sql,
-            [id.into()],
-        ))
-        .await?;
-    Ok(row
-        .map(|r| r.try_get::<String>("", "entity_sync_id"))
-        .transpose()
-        .ok()
-        .flatten()
-        .filter(|s| !s.is_empty()))
-}
-
-pub async fn stage_org_node_sync(db: &DatabaseConnection, node_id: i64) -> AppResult<()> {
+pub async fn stage_org_node_sync(db: &impl ConnectionTrait, node_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -42,9 +26,12 @@ pub async fn stage_org_node_sync(db: &DatabaseConnection, node_id: i64) -> AppRe
     let Some(row) = row else {
         return Ok(());
     };
-    let esid: String = row
-        .try_get("", "entity_sync_id")
-        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+    let esid = require_entity_sync_id(
+        "org_nodes",
+        node_id,
+        row.try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(|e| AppError::SyncError(format!("org_nodes.entity_sync_id: {e}")))?,
+    )?;
     let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
     let payload = OrgNodeSyncPayload {
         entity_sync_id: esid.clone(),
@@ -60,20 +47,17 @@ pub async fn stage_org_node_sync(db: &DatabaseConnection, node_id: i64) -> AppRe
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("org_nodes:{esid}:v{row_version}"),
             entity_type: SYNC_ENTITY_ORG_NODES.to_string(),
             entity_sync_id: esid,
             operation: "upsert".to_string(),
-            row_version,
             payload_json: serde_json::to_string(&payload)?,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_user_account_sync(db: &DatabaseConnection, user_id: i64) -> AppResult<()> {
+pub async fn stage_user_account_sync(db: &impl ConnectionTrait, user_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -86,9 +70,12 @@ pub async fn stage_user_account_sync(db: &DatabaseConnection, user_id: i64) -> A
     let Some(row) = row else {
         return Ok(());
     };
-    let esid: String = row
-        .try_get("", "entity_sync_id")
-        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+    let esid = require_entity_sync_id(
+        "user_accounts",
+        user_id,
+        row.try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(|e| AppError::SyncError(format!("user_accounts.entity_sync_id: {e}")))?,
+    )?;
     let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
     let is_active: i64 = row.try_get("", "is_active").unwrap_or(1);
     let is_admin: i64 = row.try_get("", "is_admin").unwrap_or(0);
@@ -106,20 +93,17 @@ pub async fn stage_user_account_sync(db: &DatabaseConnection, user_id: i64) -> A
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("user_accounts:{esid}:v{row_version}"),
             entity_type: SYNC_ENTITY_USER_ACCOUNTS.to_string(),
             entity_sync_id: esid,
             operation: "upsert".to_string(),
-            row_version,
             payload_json: serde_json::to_string(&payload)?,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_role_sync(db: &DatabaseConnection, role_id: i64) -> AppResult<()> {
+pub async fn stage_role_sync(db: &impl ConnectionTrait, role_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -132,9 +116,12 @@ pub async fn stage_role_sync(db: &DatabaseConnection, role_id: i64) -> AppResult
     let Some(row) = row else {
         return Ok(());
     };
-    let esid: String = row
-        .try_get("", "entity_sync_id")
-        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+    let esid = require_entity_sync_id(
+        "roles",
+        role_id,
+        row.try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(|e| AppError::SyncError(format!("roles.entity_sync_id: {e}")))?,
+    )?;
     let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
     let is_system: i64 = row.try_get("", "is_system").unwrap_or(0);
     let payload = RoleSyncPayload {
@@ -150,20 +137,17 @@ pub async fn stage_role_sync(db: &DatabaseConnection, role_id: i64) -> AppResult
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("roles:{esid}:v{row_version}"),
             entity_type: SYNC_ENTITY_ROLES.to_string(),
             entity_sync_id: esid,
             operation: "upsert".to_string(),
-            row_version,
             payload_json: serde_json::to_string(&payload)?,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_personnel_sync(db: &DatabaseConnection, personnel_id: i64) -> AppResult<()> {
+pub async fn stage_personnel_sync(db: &impl ConnectionTrait, personnel_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -176,9 +160,12 @@ pub async fn stage_personnel_sync(db: &DatabaseConnection, personnel_id: i64) ->
     let Some(row) = row else {
         return Ok(());
     };
-    let esid: String = row
-        .try_get("", "entity_sync_id")
-        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+    let esid = require_entity_sync_id(
+        "personnel",
+        personnel_id,
+        row.try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(|e| AppError::SyncError(format!("personnel.entity_sync_id: {e}")))?,
+    )?;
     let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
     let payload = PersonnelSyncPayload {
         entity_sync_id: esid.clone(),
@@ -193,20 +180,17 @@ pub async fn stage_personnel_sync(db: &DatabaseConnection, personnel_id: i64) ->
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("personnel:{esid}:v{row_version}"),
             entity_type: SYNC_ENTITY_PERSONNEL.to_string(),
             entity_sync_id: esid,
             operation: "upsert".to_string(),
-            row_version,
             payload_json: serde_json::to_string(&payload)?,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_team_sync(db: &DatabaseConnection, team_id: i64) -> AppResult<()> {
+pub async fn stage_team_sync(db: &impl ConnectionTrait, team_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -218,9 +202,12 @@ pub async fn stage_team_sync(db: &DatabaseConnection, team_id: i64) -> AppResult
     let Some(row) = row else {
         return Ok(());
     };
-    let esid: String = row
-        .try_get("", "entity_sync_id")
-        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+    let esid = require_entity_sync_id(
+        "teams",
+        team_id,
+        row.try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(|e| AppError::SyncError(format!("teams.entity_sync_id: {e}")))?,
+    )?;
     let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
     let status: String = row.try_get("", "status").unwrap_or_else(|_| "active".into());
     let payload = TeamSyncPayload {
@@ -234,21 +221,42 @@ pub async fn stage_team_sync(db: &DatabaseConnection, team_id: i64) -> AppResult
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("teams:{esid}:v{row_version}"),
             entity_type: SYNC_ENTITY_TEAMS.to_string(),
             entity_sync_id: esid,
             operation: "upsert".to_string(),
-            row_version,
             payload_json: serde_json::to_string(&payload)?,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-/// Stage a reference catalog value. Stable identity is `set_code:value_code`.
-pub async fn stage_reference_value_sync(db: &DatabaseConnection, set_code: &str, value_code: &str) -> AppResult<()> {
+/// Stage a reference catalog value identified by its domain code and value code.
+pub async fn stage_reference_value_sync(db: &impl ConnectionTrait, set_code: &str, value_code: &str) -> AppResult<()> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT rv.id
+             FROM reference_values rv
+             JOIN reference_sets rs ON rs.id = rv.set_id
+             JOIN reference_domains rd ON rd.id = rs.domain_id
+             WHERE rd.code = ? AND rv.code = ?
+             LIMIT 1",
+            [set_code.into(), value_code.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "reference_value".into(),
+            id: format!("{set_code}:{value_code}"),
+        })?;
+    let id: i64 = row
+        .try_get("", "id")
+        .map_err(|e| AppError::SyncError(format!("reference_values.id: {e}")))?;
+    stage_reference_value_by_id(db, id).await
+}
+
+/// Stage a reference catalog value by local id.
+pub async fn stage_reference_value_by_id(db: &impl ConnectionTrait, value_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -258,45 +266,40 @@ pub async fn stage_reference_value_sync(db: &DatabaseConnection, set_code: &str,
              JOIN reference_sets rs ON rs.id = rv.set_id
              JOIN reference_domains rd ON rd.id = rs.domain_id
              LEFT JOIN reference_values parent ON parent.id = rv.parent_id
-             WHERE rd.code = ? AND rv.code = ?
-             LIMIT 1",
-            [set_code.into(), value_code.into()],
+             WHERE rv.id = ?",
+            [value_id.into()],
         ))
-        .await?;
-    let Some(row) = row else {
-        return Ok(());
-    };
-    let set = row
-        .try_get::<String>("", "set_code")
-        .unwrap_or_else(|_| set_code.to_string());
-    let code: String = row.try_get("", "code").unwrap_or_else(|_| value_code.to_string());
-    let esid: String = row
-        .try_get("", "entity_sync_id")
-        .ok()
-        .filter(|s: &String| !s.is_empty())
-        .unwrap_or_else(|| format!("{set}:{code}"));
-    let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
-    let is_active: i64 = row.try_get("", "is_active").unwrap_or(1);
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "reference_value".into(),
+            id: value_id.to_string(),
+        })?;
+    let decode = |field: &str, e: sea_orm::DbErr| AppError::SyncError(format!("reference_values.{field}: {e}"));
+    let esid = require_entity_sync_id(
+        "reference_values",
+        value_id,
+        row.try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(|e| decode("entity_sync_id", e))?,
+    )?;
+    let row_version: i64 = row.try_get("", "row_version").map_err(|e| decode("row_version", e))?;
+    let is_active: i64 = row.try_get("", "is_active").map_err(|e| decode("is_active", e))?;
     let payload = ReferenceValueSyncPayload {
         entity_sync_id: esid.clone(),
         row_version,
-        set_code: set,
-        code,
-        label: row.try_get("", "label").unwrap_or_default(),
+        set_code: row.try_get("", "set_code").map_err(|e| decode("set_code", e))?,
+        code: row.try_get("", "code").map_err(|e| decode("code", e))?,
+        label: row.try_get("", "label").map_err(|e| decode("label", e))?,
         is_active: is_active != 0,
-        parent_code: row.try_get("", "parent_code").ok(),
-        updated_at: row.try_get("", "updated_at").ok(),
+        parent_code: row.try_get("", "parent_code").map_err(|e| decode("parent_code", e))?,
+        updated_at: row.try_get("", "updated_at").map_err(|e| decode("updated_at", e))?,
     };
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("reference_values:{esid}:v{row_version}"),
             entity_type: SYNC_ENTITY_REFERENCE_VALUES.to_string(),
             entity_sync_id: esid,
             operation: "upsert".to_string(),
-            row_version,
             payload_json: serde_json::to_string(&payload)?,
-            origin_machine_id: None,
         },
     )
     .await?;
@@ -307,17 +310,5 @@ pub async fn stage_reference_value_sync(db: &DatabaseConnection, set_code: &str,
 pub fn warn_stage(result: AppResult<()>, context: &str) {
     if let Err(e) = result {
         tracing::warn!(target: "maintafox", "sync stage {context}: {e}");
-    }
-}
-
-#[allow(dead_code)]
-pub async fn resolve_parent_sync_id(
-    db: &impl ConnectionTrait,
-    table: &str,
-    id: Option<i64>,
-) -> AppResult<Option<String>> {
-    match id {
-        Some(i) => lookup_entity_sync_id(db, table, i).await,
-        None => Ok(None),
     }
 }

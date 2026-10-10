@@ -162,6 +162,8 @@ interface SyncOrchestratorState {
   conflictInbox: SyncConflictRecord[];
   replayHistoryCount: number;
   rejectedOutboxCount: number;
+  /** Received changes waiting for related data or a newer app version (retried automatically). */
+  deferredInboxCount: number;
 
   initialize: () => void;
   shutdown: () => void;
@@ -405,11 +407,12 @@ async function executeSyncRun(mode: SyncRunMode) {
         runtimeState,
         blockerReason: null,
         checkpointToken: summary.checkpoint?.checkpoint_token ?? null,
-        pendingBacklog: summary.pending_outbox_count,
+        pendingBacklog: summary.pending_outbox_count + summary.in_flight_outbox_count,
         unresolvedConflicts: conflicts.length,
         conflictInbox: conflicts,
         replayHistoryCount: replayRuns.length,
         rejectedOutboxCount: summary.rejected_outbox_count,
+        deferredInboxCount: summary.deferred_inbox_count,
         lastRunFinishedAt: finishedAt,
         lastSuccessAt: finishedAt,
         lastError: null,
@@ -531,6 +534,7 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
       conflictInbox: [],
       replayHistoryCount: 0,
       rejectedOutboxCount: 0,
+      deferredInboxCount: 0,
 
       initialize: () => {
         if (get().initialized) return;
@@ -762,7 +766,8 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()(
           replayHistoryCount: replayRuns.length,
           unresolvedConflicts: conflicts.length,
           rejectedOutboxCount: summary.rejected_outbox_count,
-          pendingBacklog: summary.pending_outbox_count,
+          deferredInboxCount: summary.deferred_inbox_count,
+          pendingBacklog: summary.pending_outbox_count + summary.in_flight_outbox_count,
           checkpointToken: summary.checkpoint?.checkpoint_token ?? null,
           runtimeState:
             state.runtimeState === "error"

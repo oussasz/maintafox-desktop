@@ -38,9 +38,25 @@
     "syncCenterTitle": "Centre de synchronisation",
     "syncCenterConflicts": "Conflits non résolus",
     "syncCenterRejected": "Éléments rejetés (file d'attente)",
-    "resolveLocal": "Conserver la version locale",
-    "resolveRemote": "Conserver la version serveur",
-    "noConflicts": "Aucun élément à traiter."
+    "resolveLocal": "Garder la version de cet appareil",
+    "resolveRemote": "Prendre la version du serveur",
+    "noConflicts": "Aucun élément à traiter.",
+    "dismissConflict": "Ignorer",
+    "conflictVersions": "Cet appareil : {{local}} · Serveur : {{remote}}",
+    "versionUnknown": "inconnue",
+    "deferredInbox": "{{count}} modification(s) reçue(s) attendent des données liées ou une version plus récente de l'application. Elles seront appliquées automatiquement.",
+    "resolveFailed": "Le choix n'a pas pu être appliqué : {{message}}",
+    "conflictKind": {
+      "CONCURRENT_EDIT": "Modifié sur cet appareil et sur un autre appareil",
+      "SERVER_CONFLICT": "Le serveur possède déjà une version plus récente",
+      "STALE_INBOUND": "Le serveur a envoyé une version plus ancienne que celle-ci",
+      "EQUAL_VERSION_DIVERGENCE": "Même numéro de version avec un contenu différent",
+      "MATERIALIZE_ERROR": "Une modification reçue n'a pas pu être appliquée",
+      "INVALID_INBOUND_PAYLOAD": "Une modification reçue était invalide",
+      "OUTBOX_DEAD_LETTER": "Une modification locale n'a pas pu être envoyée après plusieurs tentatives",
+      "AUTHORITY_MISMATCH": "Le serveur a refusé une modification protégée",
+      "other": "À examiner"
+    }
   },
   "status": {
     "online": "En ligne",

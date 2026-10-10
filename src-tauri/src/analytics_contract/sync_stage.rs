@@ -21,16 +21,10 @@ pub async fn stage_analytics_contract_version_sync(
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "analytics_contract_versions:{}:v{}",
-                row.entity_sync_id, row.row_version
-            ),
             entity_type: SYNC_ENTITY_ANALYTICS_CONTRACT_VERSIONS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;

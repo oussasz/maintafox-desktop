@@ -107,7 +107,7 @@ fn validate_drafts(drafts: &[InspectionCheckpointDraft]) -> AppResult<()> {
     Ok(())
 }
 
-async fn stage_inspection_template(db: &DatabaseConnection, row: &InspectionTemplate) -> AppResult<()> {
+async fn stage_inspection_template(db: &impl ConnectionTrait, row: &InspectionTemplate) -> AppResult<()> {
     let payload = InspectionTemplateSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -121,20 +121,20 @@ async fn stage_inspection_template(db: &DatabaseConnection, row: &InspectionTemp
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("inspection_templates:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_INSPECTION_TEMPLATES.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-async fn stage_inspection_template_version(db: &DatabaseConnection, row: &InspectionTemplateVersion) -> AppResult<()> {
+async fn stage_inspection_template_version(
+    db: &impl ConnectionTrait,
+    row: &InspectionTemplateVersion,
+) -> AppResult<()> {
     let payload = InspectionTemplateVersionSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -149,23 +149,17 @@ async fn stage_inspection_template_version(db: &DatabaseConnection, row: &Inspec
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "inspection_template_versions:{}:v{}",
-                row.entity_sync_id, row.row_version
-            ),
             entity_type: SYNC_ENTITY_INSPECTION_TEMPLATE_VERSIONS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-async fn stage_inspection_checkpoint(db: &DatabaseConnection, row: &InspectionCheckpoint) -> AppResult<()> {
+async fn stage_inspection_checkpoint(db: &impl ConnectionTrait, row: &InspectionCheckpoint) -> AppResult<()> {
     let payload = InspectionCheckpointSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -179,20 +173,17 @@ async fn stage_inspection_checkpoint(db: &DatabaseConnection, row: &InspectionCh
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("inspection_checkpoints:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_INSPECTION_CHECKPOINTS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub(crate) async fn stage_inspection_round(db: &DatabaseConnection, row: &InspectionRound) -> AppResult<()> {
+pub(crate) async fn stage_inspection_round(db: &impl ConnectionTrait, row: &InspectionRound) -> AppResult<()> {
     let payload = InspectionRoundSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -206,13 +197,10 @@ pub(crate) async fn stage_inspection_round(db: &DatabaseConnection, row: &Inspec
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("inspection_rounds:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_INSPECTION_ROUNDS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;

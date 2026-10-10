@@ -1,4 +1,4 @@
-use sea_orm::DatabaseConnection;
+use sea_orm::ConnectionTrait;
 
 use crate::errors::AppResult;
 use crate::finance::domain::{
@@ -12,7 +12,7 @@ use crate::sync::domain::{
 };
 use crate::sync::queries::stage_outbox_item;
 
-pub async fn stage_budget_version(db: &DatabaseConnection, row: &BudgetVersion) -> AppResult<()> {
+pub async fn stage_budget_version(db: &impl ConnectionTrait, row: &BudgetVersion) -> AppResult<()> {
     let payload = BudgetVersionSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -41,23 +41,17 @@ pub async fn stage_budget_version(db: &DatabaseConnection, row: &BudgetVersion) 
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "{}:{}:v{}",
-                SYNC_ENTITY_BUDGET_VERSIONS, row.entity_sync_id, row.row_version
-            ),
             entity_type: SYNC_ENTITY_BUDGET_VERSIONS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_budget_line(db: &DatabaseConnection, row: &BudgetLine) -> AppResult<()> {
+pub async fn stage_budget_line(db: &impl ConnectionTrait, row: &BudgetLine) -> AppResult<()> {
     let payload = BudgetLineSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -82,23 +76,17 @@ pub async fn stage_budget_line(db: &DatabaseConnection, row: &BudgetLine) -> App
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "{}:{}:v{}",
-                SYNC_ENTITY_BUDGET_LINES, row.entity_sync_id, row.row_version
-            ),
             entity_type: SYNC_ENTITY_BUDGET_LINES.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_budget_alert_config(db: &DatabaseConnection, row: &BudgetAlertConfig) -> AppResult<()> {
+pub async fn stage_budget_alert_config(db: &impl ConnectionTrait, row: &BudgetAlertConfig) -> AppResult<()> {
     let payload = BudgetAlertConfigSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -122,23 +110,17 @@ pub async fn stage_budget_alert_config(db: &DatabaseConnection, row: &BudgetAler
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "{}:{}:v{}",
-                SYNC_ENTITY_BUDGET_ALERT_CONFIGS, row.entity_sync_id, row.row_version
-            ),
             entity_type: SYNC_ENTITY_BUDGET_ALERT_CONFIGS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_budget_alert_event(db: &DatabaseConnection, row: &BudgetAlertEvent) -> AppResult<()> {
+pub async fn stage_budget_alert_event(db: &impl ConnectionTrait, row: &BudgetAlertEvent) -> AppResult<()> {
     let payload = BudgetAlertEventSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -170,23 +152,17 @@ pub async fn stage_budget_alert_event(db: &DatabaseConnection, row: &BudgetAlert
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "{}:{}:v{}",
-                SYNC_ENTITY_BUDGET_ALERT_EVENTS, row.entity_sync_id, row.row_version
-            ),
             entity_type: SYNC_ENTITY_BUDGET_ALERT_EVENTS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_posted_export_batch(db: &DatabaseConnection, row: &PostedExportBatch) -> AppResult<()> {
+pub async fn stage_posted_export_batch(db: &impl ConnectionTrait, row: &PostedExportBatch) -> AppResult<()> {
     let payload = PostedExportBatchSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -208,23 +184,17 @@ pub async fn stage_posted_export_batch(db: &DatabaseConnection, row: &PostedExpo
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "{}:{}:v{}",
-                SYNC_ENTITY_POSTED_EXPORT_BATCHES, row.entity_sync_id, row.row_version
-            ),
             entity_type: SYNC_ENTITY_POSTED_EXPORT_BATCHES.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_integration_exception(db: &DatabaseConnection, row: &IntegrationException) -> AppResult<()> {
+pub async fn stage_integration_exception(db: &impl ConnectionTrait, row: &IntegrationException) -> AppResult<()> {
     let payload = IntegrationExceptionSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -243,16 +213,10 @@ pub async fn stage_integration_exception(db: &DatabaseConnection, row: &Integrat
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "{}:{}:v{}",
-                SYNC_ENTITY_INTEGRATION_EXCEPTIONS, row.entity_sync_id, row.row_version
-            ),
             entity_type: SYNC_ENTITY_INTEGRATION_EXCEPTIONS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;

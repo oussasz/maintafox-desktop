@@ -196,7 +196,7 @@ async fn count_evidence(db: &DatabaseConnection, result_id: i64) -> AppResult<i6
     Ok(c)
 }
 
-async fn stage_inspection_result(db: &DatabaseConnection, row: &InspectionResult) -> AppResult<()> {
+async fn stage_inspection_result(db: &impl ConnectionTrait, row: &InspectionResult) -> AppResult<()> {
     let payload = InspectionResultSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -214,20 +214,17 @@ async fn stage_inspection_result(db: &DatabaseConnection, row: &InspectionResult
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("inspection_results:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_INSPECTION_RESULTS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-async fn stage_inspection_evidence(db: &DatabaseConnection, row: &InspectionEvidence) -> AppResult<()> {
+async fn stage_inspection_evidence(db: &impl ConnectionTrait, row: &InspectionEvidence) -> AppResult<()> {
     let payload = InspectionEvidenceSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -241,20 +238,17 @@ async fn stage_inspection_evidence(db: &DatabaseConnection, row: &InspectionEvid
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("inspection_evidence:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_INSPECTION_EVIDENCE.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub(crate) async fn stage_inspection_anomaly(db: &DatabaseConnection, row: &InspectionAnomaly) -> AppResult<()> {
+pub(crate) async fn stage_inspection_anomaly(db: &impl ConnectionTrait, row: &InspectionAnomaly) -> AppResult<()> {
     let payload = InspectionAnomalySyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -274,13 +268,10 @@ pub(crate) async fn stage_inspection_anomaly(db: &DatabaseConnection, row: &Insp
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("inspection_anomalies:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_INSPECTION_ANOMALIES.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;

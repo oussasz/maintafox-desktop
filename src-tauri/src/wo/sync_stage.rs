@@ -1,34 +1,22 @@
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{
     EquipmentSyncPayload, StageOutboxItemInput, WorkOrderIntervenerSyncPayload, WorkOrderSyncPayload,
     WorkOrderTaskSyncPayload, SYNC_ENTITY_EQUIPMENT, SYNC_ENTITY_WORK_ORDERS, SYNC_ENTITY_WORK_ORDER_INTERVENERS,
     SYNC_ENTITY_WORK_ORDER_TASKS,
 };
 use crate::sync::foundation_stage::warn_stage;
+use crate::sync::identity::{parent_entity_sync_id, require_entity_sync_id, require_parent_sync_id};
 use crate::sync::queries::stage_outbox_item;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 
 use super::domain::WorkOrder;
 
 async fn lookup_entity_sync_id(db: &impl ConnectionTrait, table: &str, id: i64) -> AppResult<Option<String>> {
-    let sql = format!("SELECT entity_sync_id FROM {table} WHERE id = ? LIMIT 1");
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            &sql,
-            [id.into()],
-        ))
-        .await?;
-    Ok(row
-        .map(|r| r.try_get::<String>("", "entity_sync_id"))
-        .transpose()
-        .ok()
-        .flatten()
-        .filter(|s| !s.is_empty()))
+    parent_entity_sync_id(db, table, id).await.map(Some)
 }
 
 pub async fn stage_work_order_sync(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     wo: &WorkOrder,
     status_code: &str,
     maintenance_type_code: &str,
@@ -36,7 +24,7 @@ pub async fn stage_work_order_sync(
     closeout_profile_id: Option<i64>,
     closeout_passed: bool,
 ) -> AppResult<()> {
-    let esid = wo.entity_sync_id.clone().unwrap_or_else(|| wo.code.clone());
+    let esid = require_entity_sync_id("work_orders", wo.id, wo.entity_sync_id.clone())?;
     let equipment_entity_sync_id = match wo.equipment_id {
         Some(id) => lookup_entity_sync_id(db, "equipment", id).await?,
         None => None,
@@ -74,27 +62,32 @@ pub async fn stage_work_order_sync(
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("work_orders:{}:v{}", esid, wo.row_version),
             entity_type: SYNC_ENTITY_WORK_ORDERS.to_string(),
             entity_sync_id: esid,
             operation: "upsert".to_string(),
-            row_version: wo.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-/// Load WO by id and stage (preferred post-commit hook).
-pub async fn stage_work_order_by_id(db: &DatabaseConnection, wo_id: i64) -> AppResult<()> {
-    let wo = crate::wo::queries::get_work_order(db, wo_id).await?;
-    let Some(wo) = wo else {
-        return Ok(());
-    };
-    let status = wo.status_code.as_deref().unwrap_or("draft");
-    let type_code = wo.type_code.as_deref().unwrap_or("corrective");
+/// Load a WO by id and stage it. Call it inside the transaction of the write.
+pub async fn stage_work_order_by_id(db: &impl ConnectionTrait, wo_id: i64) -> AppResult<()> {
+    let wo = crate::wo::queries::get_work_order(db, wo_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: wo_id.to_string(),
+        })?;
+    let status = wo
+        .status_code
+        .as_deref()
+        .ok_or_else(|| AppError::SyncError(format!("work_orders row {wo_id} has no status code.")))?;
+    let type_code = wo
+        .type_code
+        .as_deref()
+        .ok_or_else(|| AppError::SyncError(format!("work_orders row {wo_id} has no type code.")))?;
     stage_work_order_sync(
         db,
         &wo,
@@ -111,7 +104,7 @@ pub async fn warn_stage_wo(db: &DatabaseConnection, wo_id: i64) {
     warn_stage(stage_work_order_by_id(db, wo_id).await, "work_order");
 }
 
-pub async fn stage_work_order_task_sync(db: &DatabaseConnection, task_id: i64) -> AppResult<()> {
+pub async fn stage_work_order_task_sync(db: &impl ConnectionTrait, task_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -127,15 +120,13 @@ pub async fn stage_work_order_task_sync(db: &DatabaseConnection, task_id: i64) -
     let Some(row) = row else {
         return Ok(());
     };
-    let wo_esid: String = row.try_get("", "work_order_entity_sync_id").unwrap_or_default();
-    if wo_esid.is_empty() {
-        return Ok(());
-    }
-    let esid: String = row
-        .try_get("", "entity_sync_id")
-        .ok()
-        .filter(|s: &String| !s.is_empty())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let wo_esid: String = require_parent_sync_id(&row, "work_order_entity_sync_id")?;
+    let esid = require_entity_sync_id(
+        "work_order_tasks",
+        task_id,
+        row.try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(|e| AppError::SyncError(format!("work_order_tasks.entity_sync_id: {e}")))?,
+    )?;
     let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
     let is_mandatory: i64 = row.try_get("", "is_mandatory").unwrap_or(0);
     let is_completed: i64 = row.try_get("", "is_completed").unwrap_or(0);
@@ -153,20 +144,17 @@ pub async fn stage_work_order_task_sync(db: &DatabaseConnection, task_id: i64) -
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("work_order_tasks:{esid}:v{row_version}"),
             entity_type: SYNC_ENTITY_WORK_ORDER_TASKS.to_string(),
             entity_sync_id: esid,
             operation: "upsert".to_string(),
-            row_version,
             payload_json: serde_json::to_string(&payload)?,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_work_order_intervener_sync(db: &DatabaseConnection, intervener_row_id: i64) -> AppResult<()> {
+pub async fn stage_work_order_intervener_sync(db: &impl ConnectionTrait, intervener_row_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -184,15 +172,13 @@ pub async fn stage_work_order_intervener_sync(db: &DatabaseConnection, intervene
     let Some(row) = row else {
         return Ok(());
     };
-    let wo_esid: String = row.try_get("", "work_order_entity_sync_id").unwrap_or_default();
-    if wo_esid.is_empty() {
-        return Ok(());
-    }
-    let esid: String = row
-        .try_get("", "entity_sync_id")
-        .ok()
-        .filter(|s: &String| !s.is_empty())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let wo_esid: String = require_parent_sync_id(&row, "work_order_entity_sync_id")?;
+    let esid = require_entity_sync_id(
+        "work_order_interveners",
+        intervener_row_id,
+        row.try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(|e| AppError::SyncError(format!("work_order_interveners.entity_sync_id: {e}")))?,
+    )?;
     let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
     let payload = WorkOrderIntervenerSyncPayload {
         entity_sync_id: esid.clone(),
@@ -207,20 +193,17 @@ pub async fn stage_work_order_intervener_sync(db: &DatabaseConnection, intervene
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("work_order_interveners:{esid}:v{row_version}"),
             entity_type: SYNC_ENTITY_WORK_ORDER_INTERVENERS.to_string(),
             entity_sync_id: esid,
             operation: "upsert".to_string(),
-            row_version,
             payload_json: serde_json::to_string(&payload)?,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-pub async fn stage_equipment_sync(db: &DatabaseConnection, equipment_id: i64) -> AppResult<()> {
+pub async fn stage_equipment_sync(db: &impl ConnectionTrait, equipment_id: i64) -> AppResult<()> {
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
@@ -236,9 +219,12 @@ pub async fn stage_equipment_sync(db: &DatabaseConnection, equipment_id: i64) ->
     let Some(row) = row else {
         return Ok(());
     };
-    let esid: String = row
-        .try_get("", "entity_sync_id")
-        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+    let esid = require_entity_sync_id(
+        "equipment",
+        equipment_id,
+        row.try_get::<Option<String>>("", "entity_sync_id")
+            .map_err(|e| AppError::SyncError(format!("equipment.entity_sync_id: {e}")))?,
+    )?;
     let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
     let payload = EquipmentSyncPayload {
         entity_sync_id: esid.clone(),
@@ -258,13 +244,10 @@ pub async fn stage_equipment_sync(db: &DatabaseConnection, equipment_id: i64) ->
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("equipment:{}:v{row_version}", esid),
             entity_type: SYNC_ENTITY_EQUIPMENT.to_string(),
             entity_sync_id: esid,
             operation: "upsert".to_string(),
-            row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;

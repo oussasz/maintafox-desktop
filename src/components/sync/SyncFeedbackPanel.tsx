@@ -9,7 +9,6 @@ import type { ResolveSyncConflictInput, SyncConflictRecord } from "@shared/ipc-t
 const CONFLICT_ACTIONS: ResolveSyncConflictInput["action"][] = [
   "accept_local",
   "accept_remote",
-  "merge_fields",
   "retry_later",
   "escalate",
   "dismiss",
@@ -72,7 +71,7 @@ export function SyncFeedbackPanel() {
       conflict.recommended_action as ResolveSyncConflictInput["action"],
     )
       ? (conflict.recommended_action as ResolveSyncConflictInput["action"])
-      : "merge_fields";
+      : "escalate";
     const action = resolvingById[conflict.id] ?? suggested;
     await resolveConflictAction({
       conflict_id: conflict.id,

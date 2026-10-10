@@ -45,7 +45,7 @@ fn map_signal(row: &sea_orm::QueryResult) -> AppResult<InspectionReliabilitySign
     })
 }
 
-async fn stage_signal(db: &DatabaseConnection, row: &InspectionReliabilitySignal) -> AppResult<()> {
+async fn stage_signal(db: &impl ConnectionTrait, row: &InspectionReliabilitySignal) -> AppResult<()> {
     let payload = InspectionReliabilitySignalSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -62,16 +62,10 @@ async fn stage_signal(db: &DatabaseConnection, row: &InspectionReliabilitySignal
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "inspection_reliability_signals:{}:{}:v{}",
-                row.entity_sync_id, row.period_start, row.row_version
-            ),
             entity_type: SYNC_ENTITY_INSPECTION_RELIABILITY_SIGNALS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;

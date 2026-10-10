@@ -5,7 +5,7 @@ use crate::wo::domain::WorkOrder;
 use crate::wo::sync_stage::stage_work_order_sync;
 
 use super::domain::WorkPermit;
-use super::queries::{activation_ready, get_work_permit_linked_to_work_order, stage_work_permit_batched};
+use super::queries::{activation_ready, get_work_permit_linked_to_work_order, stage_work_permit};
 
 pub async fn assert_in_progress_permit_gate(db: &DatabaseConnection, wo_id: i64) -> AppResult<()> {
     let row = db
@@ -47,13 +47,18 @@ pub async fn assert_in_progress_permit_gate(db: &DatabaseConnection, wo_id: i64)
 }
 
 pub async fn stage_wo_in_progress_sync_pair(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     wo: &WorkOrder,
     permit: &WorkPermit,
-    batch_id: &str,
 ) -> AppResult<()> {
-    let status_code = wo.status_code.as_deref().unwrap_or("in_progress");
-    let type_code = wo.type_code.as_deref().unwrap_or("corrective");
+    let status_code = wo
+        .status_code
+        .as_deref()
+        .ok_or_else(|| AppError::SyncError(format!("work_orders row {} has no status code.", wo.id)))?;
+    let type_code = wo
+        .type_code
+        .as_deref()
+        .ok_or_else(|| AppError::SyncError(format!("work_orders row {} has no type code.", wo.id)))?;
     stage_work_order_sync(
         db,
         wo,
@@ -64,5 +69,5 @@ pub async fn stage_wo_in_progress_sync_pair(
         wo.closeout_validation_passed,
     )
     .await?;
-    stage_work_permit_batched(db, permit, batch_id).await
+    stage_work_permit(db, permit).await
 }

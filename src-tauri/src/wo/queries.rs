@@ -290,7 +290,7 @@ pub async fn list_work_orders(db: &DatabaseConnection, filter: WoListFilter) -> 
 // B) get_work_order — single row by id with full joins
 // ═══════════════════════════════════════════════════════════════════════════════
 
-pub async fn get_work_order(db: &DatabaseConnection, id: i64) -> AppResult<Option<WorkOrder>> {
+pub async fn get_work_order(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<WorkOrder>> {
     let sql = format!(
         "SELECT {WO_COLS}, {WO_JOIN_COLS} \
          FROM work_orders wo \

@@ -36,7 +36,7 @@ fn assert_routable(a: &InspectionAnomaly) -> AppResult<()> {
     Ok(())
 }
 
-async fn stage_work_order_sync_from_row(db: &DatabaseConnection, wo: &crate::wo::domain::WorkOrder) -> AppResult<()> {
+async fn stage_work_order_sync_from_row(db: &impl ConnectionTrait, wo: &crate::wo::domain::WorkOrder) -> AppResult<()> {
     let status_code = wo.status_code.as_deref().unwrap_or("draft");
     let type_code = wo.type_code.as_deref().unwrap_or("corrective");
     stage_work_order_sync(

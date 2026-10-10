@@ -40,6 +40,11 @@ const SyncOutboxItemSchema = z.object({
   rejection_code: z.string().nullable(),
   rejection_message: z.string().nullable(),
   origin_machine_id: z.string().nullable(),
+  base_row_version: z.number().nullable(),
+  owner_user_sync_id: z.string().nullable(),
+  attempt_count: z.number(),
+  last_attempt_at: z.string().nullable(),
+  last_error: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -57,6 +62,10 @@ const SyncInboxItemSchema = z.object({
   apply_status: z.string(),
   rejection_code: z.string().nullable(),
   rejection_message: z.string().nullable(),
+  server_seq: z.number().nullable(),
+  owner_user_sync_id: z.string().nullable(),
+  attempt_count: z.number(),
+  last_attempt_at: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -87,6 +96,7 @@ const ApplySyncBatchResultSchema = z.object({
   rejected_count: z.number(),
   inbound_applied_count: z.number(),
   inbound_duplicate_count: z.number(),
+  conflict_count: z.number(),
   typed_rejections: z.array(SyncTypedRejectionSchema),
 });
 
@@ -101,6 +111,7 @@ const SyncPushPayloadSchema = z.object({
   checkpoint_token: z.string().nullable(),
   outbox_batch: z.array(SyncOutboxItemSchema),
   tenant_config: TenantConfigSyncPayloadSchema.nullable().optional(),
+  current_user_sync_ids: z.array(z.string()),
 });
 
 const SyncStateSummarySchema = z.object({
@@ -109,6 +120,11 @@ const SyncStateSummarySchema = z.object({
   pending_outbox_count: z.number(),
   rejected_outbox_count: z.number(),
   inbox_error_count: z.number(),
+  in_flight_outbox_count: z.number(),
+  dead_letter_outbox_count: z.number(),
+  deferred_inbox_count: z.number(),
+  inbox_conflict_count: z.number(),
+  unresolved_conflict_count: z.number(),
 });
 
 const SyncConflictRecordSchema = z.object({
@@ -135,6 +151,8 @@ const SyncConflictRecordSchema = z.object({
   resolved_by_id: z.number().nullable(),
   resolved_at: z.string().nullable(),
   row_version: z.number(),
+  local_row_version: z.number().nullable(),
+  inbound_row_version: z.number().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -286,6 +304,7 @@ const MaterializeInboxResultSchema = z.object({
   applied: z.number(),
   conflicts: z.number(),
   skipped: z.number(),
+  deferred: z.number(),
   errors: z.array(z.string()),
 });
 
@@ -340,6 +359,11 @@ export async function getSyncStateSummary(): Promise<SyncStateSummary> {
         pending_outbox_count: 0,
         rejected_outbox_count: 0,
         inbox_error_count: 0,
+        in_flight_outbox_count: 0,
+        dead_letter_outbox_count: 0,
+        deferred_inbox_count: 0,
+        inbox_conflict_count: 0,
+        unresolved_conflict_count: 0,
       };
     }
     throw decoded;

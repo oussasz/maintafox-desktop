@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 pub const SYNC_PROTOCOL_VERSION_V1: &str = "v1";
+/// Protocol v2 (`maintafox-vendor-console/deploy/SYNC_PROTOCOL_V2.md`). The local data model
+/// supports it; the v2 transport arrives with step 2.3.
+pub const SYNC_PROTOCOL_VERSION_V2: &str = "v2";
 
 /// Device-side tenant context included with sync exchange payloads for control-plane isolation checks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,11 +23,24 @@ pub struct SyncOutboxItem {
     pub row_version: i64,
     pub payload_json: String,
     pub payload_hash: String,
+    /// `pending` | `in_flight` | `acked` | `rejected` | `conflict` | `dead_letter` | `superseded`.
     pub status: String,
     pub acknowledged_at: Option<String>,
     pub rejection_code: Option<String>,
     pub rejection_message: Option<String>,
     pub origin_machine_id: Option<String>,
+    /// Server row version this change was made on; `None` when the row is created here.
+    #[serde(default)]
+    pub base_row_version: Option<i64>,
+    /// Owning user for user-scoped entities.
+    #[serde(default)]
+    pub owner_user_sync_id: Option<String>,
+    #[serde(default)]
+    pub attempt_count: i64,
+    #[serde(default)]
+    pub last_attempt_at: Option<String>,
+    #[serde(default)]
+    pub last_error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -40,9 +56,18 @@ pub struct SyncInboxItem {
     pub row_version: i64,
     pub payload_json: String,
     pub payload_hash: String,
+    /// `pending` | `applied` | `deferred` | `conflict` | `rejected` | `superseded`.
     pub apply_status: String,
     pub rejection_code: Option<String>,
     pub rejection_message: Option<String>,
+    #[serde(default)]
+    pub server_seq: Option<i64>,
+    #[serde(default)]
+    pub owner_user_sync_id: Option<String>,
+    #[serde(default)]
+    pub attempt_count: i64,
+    #[serde(default)]
+    pub last_attempt_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -58,15 +83,16 @@ pub struct SyncCheckpoint {
     pub updated_at: String,
 }
 
+/// A change to stage in the outbox.
+///
+/// The envelope's idempotency key, wire `row_version`, `base_row_version`, owner and origin are
+/// assigned by `stage_outbox_item`, so every stager follows the same versioning rules.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StageOutboxItemInput {
-    pub idempotency_key: String,
     pub entity_type: String,
     pub entity_sync_id: String,
     pub operation: String,
-    pub row_version: i64,
     pub payload_json: String,
-    pub origin_machine_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -75,11 +101,17 @@ pub struct ListOutboxFilter {
     pub limit: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SyncAckInput {
     pub idempotency_key: String,
     pub entity_sync_id: String,
     pub operation: String,
+    /// v2: position of the applied item in the server log.
+    #[serde(default)]
+    pub server_seq: Option<i64>,
+    /// v2: the item was already applied by an earlier request.
+    #[serde(default)]
+    pub duplicate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,13 +123,44 @@ pub struct SyncRejectedItemInput {
     pub rejection_message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SyncInboundItemInput {
     pub entity_type: String,
     pub entity_sync_id: String,
     pub operation: String,
     pub row_version: i64,
     pub payload_json: String,
+    /// v2: position in the server log.
+    #[serde(default)]
+    pub server_seq: Option<i64>,
+    /// v2: SHA-256 of `payload_json` computed by the server; checked on ingest when present.
+    #[serde(default)]
+    pub payload_hash: Option<String>,
+    /// v2: owning user for user-scoped entities.
+    #[serde(default)]
+    pub owner_user_sync_id: Option<String>,
+    /// v2: tombstone (delivered with operation `delete`).
+    #[serde(default)]
+    pub deleted: bool,
+}
+
+/// v2: an outbox item the server refused because the row changed on the server meanwhile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncServerConflictInput {
+    pub idempotency_key: String,
+    pub entity_type: String,
+    pub entity_sync_id: String,
+    pub local_row_version: i64,
+    pub local_base_row_version: Option<i64>,
+    pub server_row_version: i64,
+    pub server_operation: String,
+    pub server_payload_json: Option<String>,
+    #[serde(default)]
+    pub server_payload_hash: Option<String>,
+    #[serde(default)]
+    pub server_owner_user_sync_id: Option<String>,
+    #[serde(default)]
+    pub server_deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +171,9 @@ pub struct ApplySyncBatchInput {
     pub acknowledged_items: Vec<SyncAckInput>,
     pub rejected_items: Vec<SyncRejectedItemInput>,
     pub inbound_items: Vec<SyncInboundItemInput>,
+    /// v2 only; always empty for v1 responses.
+    #[serde(default)]
+    pub conflict_items: Vec<SyncServerConflictInput>,
     pub policy_metadata_json: Option<String>,
 }
 
@@ -129,6 +195,9 @@ pub struct ApplySyncBatchResult {
     pub rejected_count: i64,
     pub inbound_applied_count: i64,
     pub inbound_duplicate_count: i64,
+    /// v2 server conflicts recorded for a person to resolve.
+    #[serde(default)]
+    pub conflict_count: i64,
     pub typed_rejections: Vec<SyncTypedRejection>,
 }
 
@@ -152,6 +221,9 @@ pub struct SyncPushPayload {
     pub device_class: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_manifest: Option<Vec<SyncMediaManifestItem>>,
+    /// v2: users known on this device; user-scoped rows are delivered only for them.
+    #[serde(default)]
+    pub current_user_sync_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +233,16 @@ pub struct SyncStateSummary {
     pub pending_outbox_count: i64,
     pub rejected_outbox_count: i64,
     pub inbox_error_count: i64,
+    /// Sent but not yet acknowledged (the exchange may have failed; they are sent again).
+    pub in_flight_outbox_count: i64,
+    /// Gave up after the maximum number of delivery attempts; listed as conflicts.
+    pub dead_letter_outbox_count: i64,
+    /// Inbound rows waiting for a parent row or for a materializer.
+    pub deferred_inbox_count: i64,
+    /// Inbound rows that could not be applied and wait for a person.
+    pub inbox_conflict_count: i64,
+    /// Conflicts not yet resolved by a person (all sources).
+    pub unresolved_conflict_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -196,6 +278,12 @@ pub struct SyncConflictRecord {
     pub resolved_by_id: Option<i64>,
     pub resolved_at: Option<String>,
     pub row_version: i64,
+    /// Version of the local change involved (outbox side), when known.
+    #[serde(default)]
+    pub local_row_version: Option<i64>,
+    /// Version of the server/inbound row involved, when known.
+    #[serde(default)]
+    pub inbound_row_version: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -346,7 +434,6 @@ pub const SYNC_ENTITY_WORK_ORDER_INTERVENERS: &str = "work_order_interveners";
 pub const SYNC_ENTITY_DATA_INTEGRITY_FINDINGS: &str = "data_integrity_findings";
 pub const SYNC_ENTITY_DATA_INTEGRITY_REPAIR_ACTIONS: &str = "data_integrity_repair_actions";
 pub const SYNC_ENTITY_ANALYTICS_CONTRACT_VERSIONS: &str = "analytics_contract_versions";
-pub const SYNC_ENTITY_CLOSEOUT_VALIDATION_POLICIES: &str = "closeout_validation_policies";
 pub const SYNC_ENTITY_INTERVENTION_REQUESTS: &str = "intervention_requests";
 pub const SYNC_ENTITY_WORK_PERMITS: &str = "work_permits";
 pub const SYNC_ENTITY_PERMIT_ISOLATIONS: &str = "permit_isolations";
@@ -362,19 +449,14 @@ pub const SYNC_ENTITY_TRAINING_ATTENDANCE: &str = "training_attendance";
 pub const SYNC_ENTITY_PERSONNEL_READINESS_SNAPSHOTS: &str = "personnel_readiness_snapshots";
 pub const SYNC_ENTITY_TRAINING_EXPIRY_ALERT_EVENTS: &str = "training_expiry_alert_events";
 
-// ── Universal sync registry (Phase 1 multi-desktop foundation) ───────────────
+// Entity type names used by stagers and materializers. The full list of replicated tables,
+// their scope and apply order lives in `sync::registry`.
 pub const SYNC_ENTITY_EQUIPMENT: &str = "equipment";
-pub const SYNC_ENTITY_EQUIPMENT_METERS: &str = "equipment_meters";
 pub const SYNC_ENTITY_USER_ACCOUNTS: &str = "user_accounts";
 pub const SYNC_ENTITY_ROLES: &str = "roles";
-pub const SYNC_ENTITY_USER_ROLE_ASSIGNMENTS: &str = "user_role_assignments";
-pub const SYNC_ENTITY_USER_SCOPE_ASSIGNMENTS: &str = "user_scope_assignments";
 pub const SYNC_ENTITY_ORG_NODES: &str = "org_nodes";
-pub const SYNC_ENTITY_ORG_STRUCTURE_MODELS: &str = "org_structure_models";
-pub const SYNC_ENTITY_ORG_NODE_TYPES: &str = "org_node_types";
 pub const SYNC_ENTITY_PERSONNEL: &str = "personnel";
 pub const SYNC_ENTITY_TEAMS: &str = "teams";
-pub const SYNC_ENTITY_PERSONNEL_TEAM_ASSIGNMENTS: &str = "personnel_team_assignments";
 pub const SYNC_ENTITY_PM_PLANS: &str = "pm_plans";
 pub const SYNC_ENTITY_PM_PLAN_VERSIONS: &str = "pm_plan_versions";
 pub const SYNC_ENTITY_PM_OCCURRENCES: &str = "pm_occurrences";

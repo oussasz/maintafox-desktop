@@ -83,6 +83,7 @@ fn outbox_to_inbound(items: &[crate::sync::domain::SyncOutboxItem]) -> Vec<SyncI
             operation: o.operation.clone(),
             row_version: o.row_version,
             payload_json: o.payload_json.clone(),
+            ..Default::default()
         })
         .collect()
 }
@@ -105,6 +106,7 @@ async fn exchange_a_to_b(db_a: &DatabaseConnection, db_b: &DatabaseConnection, b
             idempotency_key: o.idempotency_key.clone(),
             entity_sync_id: o.entity_sync_id.clone(),
             operation: o.operation.clone(),
+            ..Default::default()
         })
         .collect();
 
@@ -115,6 +117,7 @@ async fn exchange_a_to_b(db_a: &DatabaseConnection, db_b: &DatabaseConnection, b
         acknowledged_items: acks,
         rejected_items: vec![],
         inbound_items: outbox_to_inbound(&pending),
+        conflict_items: vec![],
         policy_metadata_json: None,
     };
 
@@ -135,11 +138,9 @@ async fn two_db_equipment_converges() {
     stage_outbox_item(
         &db_a,
         StageOutboxItemInput {
-            idempotency_key: format!("equipment:{esid}:v1"),
             entity_type: SYNC_ENTITY_EQUIPMENT.to_string(),
             entity_sync_id: esid.to_string(),
             operation: "upsert".to_string(),
-            row_version: 1,
             payload_json: serde_json::json!({
                 "entity_sync_id": esid,
                 "row_version": 1,
@@ -148,7 +149,6 @@ async fn two_db_equipment_converges() {
                 "status_code": "active_in_service"
             })
             .to_string(),
-            origin_machine_id: Some("machine-a".into()),
         },
     )
     .await
@@ -179,11 +179,9 @@ async fn two_db_org_then_equipment_order_converges() {
     stage_outbox_item(
         &db_a,
         StageOutboxItemInput {
-            idempotency_key: format!("org_nodes:{org_esid}:v1"),
             entity_type: SYNC_ENTITY_ORG_NODES.to_string(),
             entity_sync_id: org_esid.to_string(),
             operation: "upsert".to_string(),
-            row_version: 1,
             payload_json: serde_json::json!({
                 "entity_sync_id": org_esid,
                 "row_version": 1,
@@ -194,7 +192,6 @@ async fn two_db_org_then_equipment_order_converges() {
                 "ancestor_path": "/"
             })
             .to_string(),
-            origin_machine_id: Some("machine-a".into()),
         },
     )
     .await
@@ -204,11 +201,9 @@ async fn two_db_org_then_equipment_order_converges() {
     stage_outbox_item(
         &db_a,
         StageOutboxItemInput {
-            idempotency_key: format!("equipment:{eq_esid}:v1"),
             entity_type: SYNC_ENTITY_EQUIPMENT.to_string(),
             entity_sync_id: eq_esid.to_string(),
             operation: "upsert".to_string(),
-            row_version: 1,
             payload_json: serde_json::json!({
                 "entity_sync_id": eq_esid,
                 "row_version": 1,
@@ -218,7 +213,6 @@ async fn two_db_org_then_equipment_order_converges() {
                 "org_node_entity_sync_id": org_esid
             })
             .to_string(),
-            origin_machine_id: Some("machine-a".into()),
         },
     )
     .await
@@ -251,11 +245,9 @@ async fn two_db_work_order_with_task_converges() {
     stage_outbox_item(
         &db_a,
         StageOutboxItemInput {
-            idempotency_key: format!("work_orders:{wo_esid}:v1"),
             entity_type: SYNC_ENTITY_WORK_ORDERS.to_string(),
             entity_sync_id: wo_esid.to_string(),
             operation: "upsert".to_string(),
-            row_version: 1,
             payload_json: serde_json::json!({
                 "entity_sync_id": wo_esid,
                 "row_version": 1,
@@ -267,7 +259,6 @@ async fn two_db_work_order_with_task_converges() {
                 "closeout_validation_passed": false
             })
             .to_string(),
-            origin_machine_id: Some("machine-a".into()),
         },
     )
     .await
@@ -277,11 +268,9 @@ async fn two_db_work_order_with_task_converges() {
     stage_outbox_item(
         &db_a,
         StageOutboxItemInput {
-            idempotency_key: format!("work_order_tasks:{task_esid}:v1"),
             entity_type: SYNC_ENTITY_WORK_ORDER_TASKS.to_string(),
             entity_sync_id: task_esid.to_string(),
             operation: "upsert".to_string(),
-            row_version: 1,
             payload_json: serde_json::json!({
                 "entity_sync_id": task_esid,
                 "row_version": 1,
@@ -292,7 +281,6 @@ async fn two_db_work_order_with_task_converges() {
                 "is_completed": false
             })
             .to_string(),
-            origin_machine_id: Some("machine-a".into()),
         },
     )
     .await
@@ -335,11 +323,9 @@ async fn two_db_di_converges() {
     stage_outbox_item(
         &db_a,
         StageOutboxItemInput {
-            idempotency_key: format!("org_nodes:{org_esid}:v1"),
             entity_type: SYNC_ENTITY_ORG_NODES.to_string(),
             entity_sync_id: org_esid.to_string(),
             operation: "upsert".to_string(),
-            row_version: 1,
             payload_json: serde_json::json!({
                 "entity_sync_id": org_esid,
                 "row_version": 1,
@@ -350,7 +336,6 @@ async fn two_db_di_converges() {
                 "ancestor_path": "/"
             })
             .to_string(),
-            origin_machine_id: Some("machine-a".into()),
         },
     )
     .await
@@ -359,11 +344,9 @@ async fn two_db_di_converges() {
     stage_outbox_item(
         &db_a,
         StageOutboxItemInput {
-            idempotency_key: format!("equipment:{eq_esid}:v1"),
             entity_type: SYNC_ENTITY_EQUIPMENT.to_string(),
             entity_sync_id: eq_esid.to_string(),
             operation: "upsert".to_string(),
-            row_version: 1,
             payload_json: serde_json::json!({
                 "entity_sync_id": eq_esid,
                 "row_version": 1,
@@ -373,7 +356,6 @@ async fn two_db_di_converges() {
                 "org_node_entity_sync_id": org_esid
             })
             .to_string(),
-            origin_machine_id: Some("machine-a".into()),
         },
     )
     .await
@@ -383,11 +365,9 @@ async fn two_db_di_converges() {
     stage_outbox_item(
         &db_a,
         StageOutboxItemInput {
-            idempotency_key: format!("intervention_requests:{di_esid}:v1"),
             entity_type: SYNC_ENTITY_INTERVENTION_REQUESTS.to_string(),
             entity_sync_id: di_esid.to_string(),
             operation: "upsert".to_string(),
-            row_version: 1,
             payload_json: serde_json::json!({
                 "entity_sync_id": di_esid,
                 "row_version": 1,
@@ -400,7 +380,6 @@ async fn two_db_di_converges() {
                 "org_node_entity_sync_id": org_esid
             })
             .to_string(),
-            origin_machine_id: Some("machine-a".into()),
         },
     )
     .await
@@ -432,7 +411,7 @@ async fn two_db_stock_movement_converges() {
     let loc = "loc-conv-1";
     let mv = "mv-conv-1";
 
-    for (key, entity_type, esid, payload) in [
+    for (_label, entity_type, esid, payload) in [
         (
             "articles",
             SYNC_ENTITY_ARTICLES,
@@ -491,13 +470,10 @@ async fn two_db_stock_movement_converges() {
         stage_outbox_item(
             &db_a,
             StageOutboxItemInput {
-                idempotency_key: format!("{key}:{esid}:v1"),
                 entity_type: entity_type.to_string(),
                 entity_sync_id: esid.to_string(),
                 operation: "upsert".to_string(),
-                row_version: 1,
                 payload_json: payload.to_string(),
-                origin_machine_id: Some("machine-a".into()),
             },
         )
         .await
@@ -529,11 +505,9 @@ async fn two_db_media_envelope_converges() {
     stage_outbox_item(
         &db_a,
         StageOutboxItemInput {
-            idempotency_key: format!("media_attachments:{esid}:v1"),
             entity_type: SYNC_ENTITY_MEDIA_ATTACHMENTS.to_string(),
             entity_sync_id: esid.to_string(),
             operation: "upsert".to_string(),
-            row_version: 1,
             payload_json: serde_json::json!({
                 "entity_sync_id": esid,
                 "row_version": 1,
@@ -546,7 +520,6 @@ async fn two_db_media_envelope_converges() {
                 "file_name": "photo.jpg"
             })
             .to_string(),
-            origin_machine_id: Some("machine-a".into()),
         },
     )
     .await

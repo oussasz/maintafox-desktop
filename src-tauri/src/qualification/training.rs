@@ -63,7 +63,7 @@ fn validate_attendance_status(s: &str) -> AppResult<()> {
     }
 }
 
-async fn stage_training_session(db: &DatabaseConnection, row: &TrainingSession) -> AppResult<()> {
+async fn stage_training_session(db: &impl ConnectionTrait, row: &TrainingSession) -> AppResult<()> {
     let payload = TrainingSessionSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -80,20 +80,17 @@ async fn stage_training_session(db: &DatabaseConnection, row: &TrainingSession) 
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("training_sessions:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_TRAINING_SESSIONS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-async fn stage_training_attendance(db: &DatabaseConnection, row: &TrainingAttendance) -> AppResult<()> {
+async fn stage_training_attendance(db: &impl ConnectionTrait, row: &TrainingAttendance) -> AppResult<()> {
     let payload = TrainingAttendanceSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -108,13 +105,10 @@ async fn stage_training_attendance(db: &DatabaseConnection, row: &TrainingAttend
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("training_attendance:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_TRAINING_ATTENDANCE.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;

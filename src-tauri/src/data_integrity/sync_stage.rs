@@ -35,13 +35,10 @@ pub async fn stage_finding_sync(
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("data_integrity_findings:{entity_sync_id}:v{row_version}"),
             entity_type: SYNC_ENTITY_DATA_INTEGRITY_FINDINGS.to_string(),
             entity_sync_id: entity_sync_id.to_string(),
             operation: "upsert".to_string(),
-            row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
@@ -73,13 +70,10 @@ pub async fn stage_repair_action_sync(
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("data_integrity_repair_actions:{entity_sync_id}:v{row_version}"),
             entity_type: SYNC_ENTITY_DATA_INTEGRITY_REPAIR_ACTIONS.to_string(),
             entity_sync_id: entity_sync_id.to_string(),
             operation: "upsert".to_string(),
-            row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;

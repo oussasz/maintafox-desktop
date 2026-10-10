@@ -11,11 +11,34 @@ use crate::sync::domain::{
     SyncConflictRecord, SyncHealthAlert, SyncHealthMetrics, SyncInboundItemInput, SyncInboxItem, SyncMediaManifestItem,
     SyncObservabilityReport, SyncOutboxItem, SyncPushPayload, SyncRecoveryProof, SyncRepairActionRecord,
     SyncRepairExecutionResult, SyncRepairPreview, SyncRepairPreviewInput, SyncReplayRun, SyncStateSummary,
-    SyncTypedRejection, SYNC_ENTITY_BUDGET_LINES, SYNC_ENTITY_BUDGET_VERSIONS, SYNC_ENTITY_MEDIA_ATTACHMENTS,
-    SYNC_PROTOCOL_VERSION_V1,
+    SyncTypedRejection, SYNC_ENTITY_MEDIA_ATTACHMENTS, SYNC_PROTOCOL_VERSION_V1, SYNC_PROTOCOL_VERSION_V2,
 };
+use crate::sync::registry::{self, SyncScope};
 
-fn hash_payload(payload: &str) -> String {
+/// After this many failed deliveries reported by the transport (`record_outbox_delivery_failure`)
+/// an outbox item becomes `dead_letter` and is listed as a conflict for a person. It is never
+/// dropped: replay puts it back to `pending`.
+pub const OUTBOX_MAX_DELIVERY_ATTEMPTS: i64 = 25;
+
+/// Outbox statuses of a change that is still on its way to the server.
+const OUTBOX_UNSENT_STATUSES_SQL: &str = "('pending', 'in_flight')";
+
+const OUTBOX_COLUMNS: &str = "id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
+    payload_json, payload_hash, status, acknowledged_at, rejection_code, rejection_message,
+    origin_machine_id, base_row_version, owner_user_sync_id, attempt_count, last_attempt_at, last_error,
+    created_at, updated_at";
+
+const INBOX_COLUMNS: &str = "id, server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+    row_version, payload_json, payload_hash, apply_status, rejection_code, rejection_message,
+    server_seq, owner_user_sync_id, attempt_count, last_attempt_at, created_at, updated_at";
+
+pub(crate) const CONFLICT_COLUMNS: &str = "id, conflict_key, source_scope, source_batch_id, linked_outbox_id,
+    linked_inbox_id, entity_type, entity_sync_id, operation, conflict_type, local_payload_json,
+    inbound_payload_json, authority_side, checkpoint_token, auto_resolution_policy,
+    requires_operator_review, recommended_action, status, resolution_action, resolution_note,
+    resolved_by_id, resolved_at, row_version, local_row_version, inbound_row_version, created_at, updated_at";
+
+pub(crate) fn hash_payload(payload: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(payload.as_bytes());
     hex::encode(hasher.finalize())
@@ -41,22 +64,28 @@ fn validate_operation(operation: &str, errors: &mut Vec<String>) {
 }
 
 fn validate_protocol_version(version: &str) -> AppResult<()> {
-    if version != SYNC_PROTOCOL_VERSION_V1 {
+    if version != SYNC_PROTOCOL_VERSION_V1 && version != SYNC_PROTOCOL_VERSION_V2 {
         return Err(AppError::ValidationFailed(vec![format!(
-            "Unsupported sync protocol version '{version}'. Supported: {SYNC_PROTOCOL_VERSION_V1}."
+            "Unsupported sync protocol version '{version}'. Supported: {SYNC_PROTOCOL_VERSION_V1}, {SYNC_PROTOCOL_VERSION_V2}."
         )]));
     }
     Ok(())
 }
 
+/// `(authority_side, requires_operator_review, recommended_action, auto_resolution_policy)`.
+///
+/// Every conflict that touches data needs a person (owner decision: no silent last-write-wins).
+/// `recommended_action` is either a resolution action or `review` when only a person can tell.
 fn conflict_policy(conflict_type: &str) -> (&'static str, bool, &'static str, &'static str) {
     match conflict_type {
         "NOT_FOUND" | "DUPLICATE_INBOUND" | "STALE_ACK" | "TRANSIENT_NETWORK" | "RATE_LIMIT" => {
             ("remote", false, "retry_later", "auto_retry_then_close")
         }
-        "INVALID_INBOUND_PAYLOAD" => ("remote", true, "escalate", "manual_review_required"),
-        "AUTHORITY_MISMATCH" => ("mixed", true, "merge_fields", "manual_review_required"),
-        _ => ("mixed", true, "merge_fields", "manual_review_required"),
+        "INVALID_INBOUND_PAYLOAD" | "MATERIALIZE_ERROR" => ("remote", true, "escalate", "manual_review_required"),
+        "AUTHORITY_MISMATCH" => ("remote", true, "accept_remote", "manual_review_required"),
+        "STALE_INBOUND" => ("local", true, "accept_local", "manual_review_required"),
+        "OUTBOX_DEAD_LETTER" => ("local", true, "retry_later", "manual_review_required"),
+        _ => ("mixed", true, "review", "manual_review_required"),
     }
 }
 
@@ -64,7 +93,6 @@ fn map_resolution_to_status(action: &str) -> Option<&'static str> {
     match action {
         "accept_local" => Some("resolved_local"),
         "accept_remote" => Some("resolved_remote"),
-        "merge_fields" => Some("merged"),
         "retry_later" => Some("triaged"),
         "escalate" => Some("escalated"),
         "dismiss" => Some("dismissed"),
@@ -113,14 +141,10 @@ async fn actor_id_for_audit(db: &DatabaseConnection, user_id: i64) -> AppResult<
 
 fn validate_outbox_input(input: &StageOutboxItemInput) -> AppResult<()> {
     let mut errors = Vec::new();
-    validate_non_empty("idempotency_key", &input.idempotency_key, &mut errors);
     validate_non_empty("entity_type", &input.entity_type, &mut errors);
     validate_non_empty("entity_sync_id", &input.entity_sync_id, &mut errors);
     validate_non_empty("operation", &input.operation, &mut errors);
     validate_operation(&input.operation, &mut errors);
-    if input.row_version < 0 {
-        errors.push("row_version must be >= 0.".to_string());
-    }
     if serde_json::from_str::<serde_json::Value>(&input.payload_json).is_err() {
         errors.push("payload_json must be a valid JSON document.".to_string());
     }
@@ -166,6 +190,19 @@ fn to_sync_outbox_item(row: &sea_orm::QueryResult) -> AppResult<SyncOutboxItem> 
         origin_machine_id: row
             .try_get("", "origin_machine_id")
             .map_err(|e| decode_err("origin_machine_id", e))?,
+        base_row_version: row
+            .try_get("", "base_row_version")
+            .map_err(|e| decode_err("base_row_version", e))?,
+        owner_user_sync_id: row
+            .try_get("", "owner_user_sync_id")
+            .map_err(|e| decode_err("owner_user_sync_id", e))?,
+        attempt_count: row
+            .try_get("", "attempt_count")
+            .map_err(|e| decode_err("attempt_count", e))?,
+        last_attempt_at: row
+            .try_get("", "last_attempt_at")
+            .map_err(|e| decode_err("last_attempt_at", e))?,
+        last_error: row.try_get("", "last_error").map_err(|e| decode_err("last_error", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -205,12 +242,22 @@ fn to_sync_inbox_item(row: &sea_orm::QueryResult) -> AppResult<SyncInboxItem> {
         rejection_message: row
             .try_get("", "rejection_message")
             .map_err(|e| decode_err("rejection_message", e))?,
+        server_seq: row.try_get("", "server_seq").map_err(|e| decode_err("server_seq", e))?,
+        owner_user_sync_id: row
+            .try_get("", "owner_user_sync_id")
+            .map_err(|e| decode_err("owner_user_sync_id", e))?,
+        attempt_count: row
+            .try_get("", "attempt_count")
+            .map_err(|e| decode_err("attempt_count", e))?,
+        last_attempt_at: row
+            .try_get("", "last_attempt_at")
+            .map_err(|e| decode_err("last_attempt_at", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
 }
 
-fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConflictRecord> {
+pub(crate) fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConflictRecord> {
     Ok(SyncConflictRecord {
         id: row.try_get("", "id").map_err(|e| decode_err("id", e))?,
         conflict_key: row
@@ -276,6 +323,12 @@ fn to_sync_conflict(row: &sea_orm::QueryResult) -> AppResult<SyncConflictRecord>
         row_version: row
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
+        local_row_version: row
+            .try_get("", "local_row_version")
+            .map_err(|e| decode_err("local_row_version", e))?,
+        inbound_row_version: row
+            .try_get("", "inbound_row_version")
+            .map_err(|e| decode_err("inbound_row_version", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
         updated_at: row.try_get("", "updated_at").map_err(|e| decode_err("updated_at", e))?,
     })
@@ -349,93 +402,351 @@ fn is_unique_constraint_error(err: &sea_orm::DbErr) -> bool {
     }
 }
 
-pub async fn stage_outbox_item(db: &impl ConnectionTrait, input: StageOutboxItemInput) -> AppResult<SyncOutboxItem> {
-    validate_outbox_input(&input)?;
-    let payload_hash = hash_payload(&input.payload_json);
-    let backend = db.get_database_backend();
-    let insert_result = db
-        .execute(Statement::from_sql_and_values(
-            backend,
-            "INSERT INTO sync_outbox (
-                idempotency_key, entity_type, entity_sync_id, operation,
-                row_version, payload_json, payload_hash, status, origin_machine_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-            [
-                input.idempotency_key.clone().into(),
-                input.entity_type.clone().into(),
-                input.entity_sync_id.clone().into(),
-                input.operation.clone().into(),
-                input.row_version.into(),
-                input.payload_json.clone().into(),
-                payload_hash.clone().into(),
-                input.origin_machine_id.clone().into(),
-            ],
-        ))
-        .await;
-
-    match insert_result {
-        Ok(_) => {}
-        Err(err) if is_unique_constraint_error(&err) => {
-            // Idempotent staging: return existing matching envelope.
-        }
-        Err(err) => return Err(err.into()),
-    }
-
+/// Stable id of this local database, recorded as `origin_machine_id` on every staged change.
+pub async fn local_replica_id(db: &impl ConnectionTrait) -> AppResult<String> {
     let row = db
         .query_one(Statement::from_sql_and_values(
-            backend,
-            "SELECT id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
-                    payload_json, payload_hash, status, acknowledged_at, rejection_code,
-                    rejection_message, origin_machine_id, created_at, updated_at
-             FROM sync_outbox
-             WHERE idempotency_key = ?
-               AND entity_type = ?
-               AND entity_sync_id = ?
-               AND operation = ?
-               AND payload_hash = ?",
-            [
-                input.idempotency_key.into(),
-                input.entity_type.into(),
-                input.entity_sync_id.into(),
-                input.operation.into(),
-                payload_hash.into(),
-            ],
+            DatabaseBackend::Sqlite,
+            "SELECT replica_id FROM sync_replica_identity WHERE id = 1",
+            [],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::SyncError("sync_replica_identity is missing; database migrations are incomplete.".into())
+        })?;
+    row.try_get("", "replica_id").map_err(|e| decode_err("replica_id", e))
+}
+
+/// Last row version the server is known to hold for an entity (acknowledged or applied inbound).
+pub(crate) async fn synced_row_version(
+    db: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+) -> AppResult<Option<(i64, String)>> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT synced_row_version, synced_payload_hash FROM sync_entity_state
+             WHERE entity_type = ? AND entity_sync_id = ?",
+            [entity_type.into(), entity_sync_id.into()],
+        ))
+        .await?;
+    row.map(|r| -> AppResult<(i64, String)> {
+        Ok((
+            r.try_get("", "synced_row_version")
+                .map_err(|e| decode_err("synced_row_version", e))?,
+            r.try_get("", "synced_payload_hash")
+                .map_err(|e| decode_err("synced_payload_hash", e))?,
+        ))
+    })
+    .transpose()
+}
+
+/// Record the version the server now holds for an entity. Never moves backwards.
+pub(crate) async fn record_synced_state(
+    db: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+    row_version: i64,
+    payload_hash: &str,
+    source: &str,
+) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "INSERT INTO sync_entity_state
+            (entity_type, entity_sync_id, synced_row_version, synced_payload_hash, source, updated_at)
+         VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+         ON CONFLICT(entity_type, entity_sync_id) DO UPDATE SET
+            synced_row_version = excluded.synced_row_version,
+            synced_payload_hash = excluded.synced_payload_hash,
+            source = excluded.source,
+            updated_at = excluded.updated_at
+         WHERE excluded.synced_row_version >= sync_entity_state.synced_row_version",
+        [
+            entity_type.into(),
+            entity_sync_id.into(),
+            row_version.into(),
+            payload_hash.into(),
+            source.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Replace the known server version for an entity (used when a person resolves a conflict with the
+/// server's version as the new base).
+pub(crate) async fn overwrite_synced_state(
+    db: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+    row_version: i64,
+    payload_hash: &str,
+    source: &str,
+) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "INSERT INTO sync_entity_state
+            (entity_type, entity_sync_id, synced_row_version, synced_payload_hash, source, updated_at)
+         VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+         ON CONFLICT(entity_type, entity_sync_id) DO UPDATE SET
+            synced_row_version = excluded.synced_row_version,
+            synced_payload_hash = excluded.synced_payload_hash,
+            source = excluded.source,
+            updated_at = excluded.updated_at",
+        [
+            entity_type.into(),
+            entity_sync_id.into(),
+            row_version.into(),
+            payload_hash.into(),
+            source.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+async fn owner_user_sync_id_for(
+    db: &impl ConnectionTrait,
+    def: &registry::SyncEntityDef,
+    entity_sync_id: &str,
+) -> AppResult<Option<String>> {
+    if def.scope == SyncScope::Tenant {
+        return Ok(None);
+    }
+    let column = def.owner_user_column.ok_or_else(|| {
+        AppError::SyncError(format!(
+            "User-scoped sync entity '{}' has no owner column in the registry.",
+            def.entity_type
+        ))
+    })?;
+    // Table and column names come from the static registry, never from input.
+    let sql = format!(
+        "SELECT u.entity_sync_id AS owner FROM {table} t
+         JOIN user_accounts u ON u.id = t.{column}
+         WHERE t.entity_sync_id = ?",
+        table = def.table
+    );
+    let owner: Option<String> = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            &sql,
+            [entity_sync_id.into()],
+        ))
+        .await?
+        .map(|r| r.try_get::<Option<String>>("", "owner"))
+        .transpose()
+        .map_err(|e| decode_err("owner_user_sync_id", e))?
+        .flatten()
+        .filter(|v| !v.trim().is_empty());
+    owner.map(Some).ok_or_else(|| {
+        AppError::SyncError(format!(
+            "{} {entity_sync_id} is user-scoped but has no owning user with a sync id.",
+            def.entity_type
+        ))
+    })
+}
+
+async fn latest_unsent_outbox_item(
+    db: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+) -> AppResult<Option<SyncOutboxItem>> {
+    let sql = format!(
+        "SELECT {OUTBOX_COLUMNS} FROM sync_outbox
+         WHERE entity_type = ? AND entity_sync_id = ? AND status IN {OUTBOX_UNSENT_STATUSES_SQL}
+         ORDER BY id DESC LIMIT 1"
+    );
+    db.query_one(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        &sql,
+        [entity_type.into(), entity_sync_id.into()],
+    ))
+    .await?
+    .map(|row| to_sync_outbox_item(&row))
+    .transpose()
+}
+
+/// Stage a change in the outbox. Call it with the same connection or transaction as the business
+/// write, so a failed stage fails the write.
+///
+/// Versioning (protocol v2, `SYNC_PROTOCOL_V2.md` §3.1):
+/// - `base_row_version` is the version of the previous unsent change of the same entity, else the
+///   version the server is known to hold (`sync_entity_state`), else `NULL` (the row is created
+///   here);
+/// - the envelope `row_version` is `base_row_version + 1`, or `1` for a create;
+/// - restaging an unchanged payload while the previous change is still unsent returns that change;
+/// - every new envelope gets a fresh UUID idempotency key, unique per tenant forever.
+pub async fn stage_outbox_item(db: &impl ConnectionTrait, input: StageOutboxItemInput) -> AppResult<SyncOutboxItem> {
+    validate_outbox_input(&input)?;
+    let def = registry::require_entity(&input.entity_type)?;
+    let payload_hash = hash_payload(&input.payload_json);
+
+    let previous = latest_unsent_outbox_item(db, &input.entity_type, &input.entity_sync_id).await?;
+    if let Some(prev) = &previous {
+        if prev.payload_hash == payload_hash && prev.operation == input.operation {
+            return Ok(prev.clone());
+        }
+    }
+    let base_row_version = match &previous {
+        Some(prev) => Some(prev.row_version),
+        None => synced_row_version(db, &input.entity_type, &input.entity_sync_id)
+            .await?
+            .map(|(version, _)| version),
+    };
+    let row_version = base_row_version.map_or(1, |base| base + 1);
+    let owner_user_sync_id = owner_user_sync_id_for(db, def, &input.entity_sync_id).await?;
+    let origin_machine_id = local_replica_id(db).await?;
+    let idempotency_key = uuid::Uuid::new_v4().to_string();
+
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "INSERT INTO sync_outbox (
+            idempotency_key, entity_type, entity_sync_id, operation, row_version, base_row_version,
+            owner_user_sync_id, payload_json, payload_hash, status, origin_machine_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+        [
+            idempotency_key.clone().into(),
+            input.entity_type.into(),
+            input.entity_sync_id.into(),
+            input.operation.into(),
+            row_version.into(),
+            base_row_version.into(),
+            owner_user_sync_id.into(),
+            input.payload_json.into(),
+            payload_hash.into(),
+            origin_machine_id.into(),
+        ],
+    ))
+    .await?;
+
+    let sql = format!("SELECT {OUTBOX_COLUMNS} FROM sync_outbox WHERE idempotency_key = ?");
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            &sql,
+            [idempotency_key.into()],
         ))
         .await?
         .ok_or_else(|| AppError::SyncError("Failed to fetch staged outbox item.".to_string()))?;
     to_sync_outbox_item(&row)
 }
 
+/// Report that delivering outbox items failed for a reason other than a server answer (the
+/// transport calls this). Items go back to `pending`; after `OUTBOX_MAX_DELIVERY_ATTEMPTS` they
+/// become `dead_letter` and a conflict is recorded for a person.
+pub async fn record_outbox_delivery_failure(
+    db: &DatabaseConnection,
+    outbox_ids: &[i64],
+    error: &str,
+) -> AppResult<i64> {
+    let tx = db.begin().await?;
+    let mut dead_lettered = 0_i64;
+    for id in outbox_ids {
+        let sql = format!("SELECT {OUTBOX_COLUMNS} FROM sync_outbox WHERE id = ? AND status = 'in_flight'");
+        let Some(row) = tx
+            .query_one(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                &sql,
+                [(*id).into()],
+            ))
+            .await?
+        else {
+            continue;
+        };
+        let item = to_sync_outbox_item(&row)?;
+        if item.attempt_count >= OUTBOX_MAX_DELIVERY_ATTEMPTS {
+            tx.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "UPDATE sync_outbox
+                 SET status = 'dead_letter', last_error = ?,
+                     dead_lettered_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                 WHERE id = ?",
+                [error.into(), (*id).into()],
+            ))
+            .await?;
+            record_sync_conflict(
+                &tx,
+                NewSyncConflict {
+                    source_scope: "outbox",
+                    source_batch_id: None,
+                    linked_outbox_id: Some(item.id),
+                    linked_inbox_id: None,
+                    entity_type: item.entity_type.clone(),
+                    entity_sync_id: item.entity_sync_id.clone(),
+                    operation: item.operation.clone(),
+                    conflict_type: "OUTBOX_DEAD_LETTER".to_string(),
+                    local_payload_json: Some(item.payload_json.clone()),
+                    inbound_payload_json: None,
+                    checkpoint_token: None,
+                    local_row_version: Some(item.row_version),
+                    inbound_row_version: None,
+                },
+            )
+            .await?;
+            dead_lettered += 1;
+        } else {
+            tx.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "UPDATE sync_outbox
+                 SET status = 'pending', last_error = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                 WHERE id = ?",
+                [error.into(), (*id).into()],
+            ))
+            .await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(dead_lettered)
+}
+
 pub async fn list_outbox_items(db: &DatabaseConnection, filter: ListOutboxFilter) -> AppResult<Vec<SyncOutboxItem>> {
     let limit = filter.limit.unwrap_or(200).clamp(1, 1000);
     let rows = if let Some(status) = filter.status {
+        let sql = format!("SELECT {OUTBOX_COLUMNS} FROM sync_outbox WHERE status = ? ORDER BY id ASC LIMIT ?");
         db.query_all(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
-                    payload_json, payload_hash, status, acknowledged_at, rejection_code,
-                    rejection_message, origin_machine_id, created_at, updated_at
-             FROM sync_outbox
-             WHERE status = ?
-             ORDER BY id ASC
-             LIMIT ?",
+            &sql,
             [status.into(), limit.into()],
         ))
         .await?
     } else {
+        let sql = format!("SELECT {OUTBOX_COLUMNS} FROM sync_outbox ORDER BY id ASC LIMIT ?");
         db.query_all(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
-                    payload_json, payload_hash, status, acknowledged_at, rejection_code,
-                    rejection_message, origin_machine_id, created_at, updated_at
-             FROM sync_outbox
-             ORDER BY id ASC
-             LIMIT ?",
+            &sql,
             [limit.into()],
         ))
         .await?
     };
 
     rows.into_iter().map(|row| to_sync_outbox_item(&row)).collect()
+}
+
+/// Users signed in or trusted on this device; the server delivers their personal rows here.
+async fn current_user_sync_ids(db: &impl ConnectionTrait) -> AppResult<Vec<String>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT DISTINCT u.entity_sync_id AS sid
+             FROM user_accounts u
+             WHERE u.entity_sync_id IS NOT NULL AND trim(u.entity_sync_id) <> ''
+               AND u.id IN (
+                   SELECT user_id FROM trusted_devices WHERE is_revoked = 0
+                   UNION
+                   SELECT user_id FROM app_sessions WHERE is_revoked = 0
+               )
+             ORDER BY u.entity_sync_id",
+            [],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            r.try_get::<String>("", "sid")
+                .map_err(|e| decode_err("current_user_sync_id", e))
+        })
+        .collect()
 }
 
 pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) -> AppResult<SyncPushPayload> {
@@ -452,14 +763,64 @@ pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) 
         .transpose()
         .map_err(|e| decode_err("checkpoint_token", e))?;
 
-    let outbox_batch = list_outbox_items(
-        db,
-        ListOutboxFilter {
-            status: Some("pending".to_string()),
-            limit,
-        },
-    )
-    .await?;
+    // Unsent changes in staging order. An entity whose earlier change is waiting for a person
+    // (`conflict`) is held back: its later changes were built on the refused one.
+    let page_size = limit.unwrap_or(200).clamp(1, 1000);
+    let tx = db.begin().await?;
+    let sql = format!(
+        "SELECT {OUTBOX_COLUMNS} FROM sync_outbox o
+         WHERE o.status IN {OUTBOX_UNSENT_STATUSES_SQL}
+           AND NOT EXISTS (
+               SELECT 1 FROM sync_outbox c
+               WHERE c.entity_type = o.entity_type
+                 AND c.entity_sync_id = o.entity_sync_id
+                 AND c.status = 'conflict'
+           )
+         ORDER BY o.id ASC
+         LIMIT ?"
+    );
+    let rows = tx
+        .query_all(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            &sql,
+            [page_size.into()],
+        ))
+        .await?;
+    let ids: Vec<i64> = rows
+        .iter()
+        .map(|row| row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e)))
+        .collect::<AppResult<Vec<_>>>()?;
+    let mut outbox_batch = Vec::with_capacity(ids.len());
+    if !ids.is_empty() {
+        let ids_json = serde_json::to_string(&ids)?;
+        tx.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "UPDATE sync_outbox
+             SET status = 'in_flight',
+                 attempt_count = attempt_count + 1,
+                 last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             WHERE id IN (SELECT value FROM json_each(?))",
+            [ids_json.clone().into()],
+        ))
+        .await?;
+        let sql = format!(
+            "SELECT {OUTBOX_COLUMNS} FROM sync_outbox WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id ASC"
+        );
+        let refreshed = tx
+            .query_all(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                &sql,
+                [ids_json.into()],
+            ))
+            .await?;
+        outbox_batch = refreshed
+            .iter()
+            .map(to_sync_outbox_item)
+            .collect::<AppResult<Vec<_>>>()?;
+    }
+    let current_user_sync_ids = current_user_sync_ids(&tx).await?;
+    tx.commit().await?;
 
     let tenant_config = tenant_config_sync_payload(db).await?;
     let media_manifest = build_media_manifest_from_outbox(&outbox_batch);
@@ -471,6 +832,7 @@ pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) 
         tenant_config,
         device_class: Some("desktop".to_string()),
         media_manifest,
+        current_user_sync_ids,
     })
 }
 
@@ -514,40 +876,53 @@ fn build_media_manifest_from_outbox(outbox_batch: &[SyncOutboxItem]) -> Option<V
     }
 }
 
-async fn upsert_sync_conflict(
-    tx: &sea_orm::DatabaseTransaction,
-    source_scope: &str,
-    source_batch_id: Option<String>,
-    linked_outbox_id: Option<i64>,
-    linked_inbox_id: Option<i64>,
-    entity_type: String,
-    entity_sync_id: String,
-    operation: String,
-    conflict_type: String,
-    local_payload_json: Option<String>,
-    inbound_payload_json: Option<String>,
-    checkpoint_token: Option<String>,
-) -> AppResult<()> {
+/// A conflict to record for a person.
+pub(crate) struct NewSyncConflict {
+    pub source_scope: &'static str,
+    pub source_batch_id: Option<String>,
+    pub linked_outbox_id: Option<i64>,
+    pub linked_inbox_id: Option<i64>,
+    pub entity_type: String,
+    pub entity_sync_id: String,
+    pub operation: String,
+    pub conflict_type: String,
+    pub local_payload_json: Option<String>,
+    pub inbound_payload_json: Option<String>,
+    pub checkpoint_token: Option<String>,
+    pub local_row_version: Option<i64>,
+    pub inbound_row_version: Option<i64>,
+}
+
+/// Insert or refresh a conflict. The key identifies the concrete outbox/inbox row (or inbound
+/// version), so a new conflict on an entity after an earlier one was resolved is a new record.
+pub(crate) async fn record_sync_conflict(conn: &impl ConnectionTrait, c: NewSyncConflict) -> AppResult<()> {
     let (authority_side, requires_operator_review, recommended_action, auto_resolution_policy) =
-        conflict_policy(&conflict_type);
+        conflict_policy(&c.conflict_type);
+    let discriminator = match (c.linked_outbox_id, c.linked_inbox_id, c.inbound_row_version) {
+        (Some(outbox_id), _, _) => format!("o{outbox_id}"),
+        (None, Some(inbox_id), _) => format!("i{inbox_id}"),
+        (None, None, Some(version)) => format!("v{version}"),
+        (None, None, None) => "-".to_string(),
+    };
     let conflict_key = format!(
-        "{}:{}:{}:{}:{}",
-        source_scope, entity_type, entity_sync_id, operation, conflict_type
+        "{}:{}:{}:{}:{}:{}",
+        c.source_scope, c.entity_type, c.entity_sync_id, c.operation, c.conflict_type, discriminator
     );
     let initial_status = if requires_operator_review {
         "new"
     } else {
         "resolved_remote"
     };
-    tx.execute(Statement::from_sql_and_values(
+    conn.execute(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "INSERT INTO sync_conflicts (
             conflict_key, source_scope, source_batch_id, linked_outbox_id, linked_inbox_id,
             entity_type, entity_sync_id, operation, conflict_type, local_payload_json,
             inbound_payload_json, authority_side, checkpoint_token, auto_resolution_policy,
-            requires_operator_review, recommended_action, status, row_version, created_at, updated_at
+            requires_operator_review, recommended_action, status, row_version,
+            local_row_version, inbound_row_version, created_at, updated_at
         ) VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?,
             strftime('%Y-%m-%dT%H:%M:%SZ','now'),
             strftime('%Y-%m-%dT%H:%M:%SZ','now')
         )
@@ -557,6 +932,8 @@ async fn upsert_sync_conflict(
             linked_inbox_id = COALESCE(excluded.linked_inbox_id, sync_conflicts.linked_inbox_id),
             local_payload_json = COALESCE(excluded.local_payload_json, sync_conflicts.local_payload_json),
             inbound_payload_json = COALESCE(excluded.inbound_payload_json, sync_conflicts.inbound_payload_json),
+            local_row_version = COALESCE(excluded.local_row_version, sync_conflicts.local_row_version),
+            inbound_row_version = COALESCE(excluded.inbound_row_version, sync_conflicts.inbound_row_version),
             authority_side = excluded.authority_side,
             checkpoint_token = excluded.checkpoint_token,
             auto_resolution_policy = excluded.auto_resolution_policy,
@@ -571,26 +948,32 @@ async fn upsert_sync_conflict(
             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
         [
             conflict_key.into(),
-            source_scope.to_string().into(),
-            source_batch_id.into(),
-            linked_outbox_id.into(),
-            linked_inbox_id.into(),
-            entity_type.into(),
-            entity_sync_id.into(),
-            operation.into(),
-            conflict_type.into(),
-            local_payload_json.into(),
-            inbound_payload_json.into(),
+            c.source_scope.to_string().into(),
+            c.source_batch_id.into(),
+            c.linked_outbox_id.into(),
+            c.linked_inbox_id.into(),
+            c.entity_type.into(),
+            c.entity_sync_id.into(),
+            c.operation.into(),
+            c.conflict_type.into(),
+            c.local_payload_json.into(),
+            c.inbound_payload_json.into(),
             authority_side.to_string().into(),
-            checkpoint_token.into(),
+            c.checkpoint_token.into(),
             auto_resolution_policy.to_string().into(),
             (if requires_operator_review { 1_i64 } else { 0_i64 }).into(),
             recommended_action.to_string().into(),
             initial_status.to_string().into(),
+            c.local_row_version.into(),
+            c.inbound_row_version.into(),
         ],
     ))
     .await?;
     Ok(())
+}
+
+fn strip_hash_prefix(hash: &str) -> &str {
+    hash.strip_prefix("sha256:").unwrap_or(hash)
 }
 
 pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInput) -> AppResult<ApplySyncBatchResult> {
@@ -663,11 +1046,12 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
                 "UPDATE sync_outbox
                  SET status = 'acked',
                      acknowledged_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                     last_error = NULL,
                      updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
                  WHERE idempotency_key = ?
                    AND entity_sync_id = ?
                    AND operation = ?
-                   AND status = 'pending'",
+                   AND status IN ('pending', 'in_flight')",
                 [
                     ack.idempotency_key.clone().into(),
                     ack.entity_sync_id.clone().into(),
@@ -675,7 +1059,36 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
                 ],
             ))
             .await?;
-        acknowledged_count += i64::try_from(result.rows_affected()).unwrap_or(0);
+        let affected = i64::try_from(result.rows_affected()).unwrap_or(0);
+        acknowledged_count += affected;
+        if affected > 0 {
+            let row = tx
+                .query_one(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    "SELECT entity_type, row_version, payload_hash FROM sync_outbox WHERE idempotency_key = ?",
+                    [ack.idempotency_key.clone().into()],
+                ))
+                .await?
+                .ok_or_else(|| AppError::SyncError("Acknowledged outbox item disappeared.".into()))?;
+            let entity_type: String = row
+                .try_get("", "entity_type")
+                .map_err(|e| decode_err("entity_type", e))?;
+            let row_version: i64 = row
+                .try_get("", "row_version")
+                .map_err(|e| decode_err("row_version", e))?;
+            let payload_hash: String = row
+                .try_get("", "payload_hash")
+                .map_err(|e| decode_err("payload_hash", e))?;
+            record_synced_state(
+                &tx,
+                &entity_type,
+                &ack.entity_sync_id,
+                row_version,
+                &payload_hash,
+                "outbox_ack",
+            )
+            .await?;
+        }
     }
 
     let mut rejected_count: i64 = 0;
@@ -692,7 +1105,7 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
                  WHERE idempotency_key = ?
                    AND entity_sync_id = ?
                    AND operation = ?
-                   AND status IN ('pending', 'acked')",
+                   AND status IN ('pending', 'in_flight', 'acked')",
                 [
                     rejected.rejection_code.clone().into(),
                     rejected.rejection_message.clone().into(),
@@ -730,7 +1143,7 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
             if let Some(outbox_row) = tx
                 .query_one(Statement::from_sql_and_values(
                     DatabaseBackend::Sqlite,
-                    "SELECT id, entity_type, payload_json
+                    "SELECT id, entity_type, payload_json, row_version
                      FROM sync_outbox
                      WHERE idempotency_key = ?
                        AND entity_sync_id = ?
@@ -750,38 +1163,108 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
                 let local_payload_json: String = outbox_row
                     .try_get("", "payload_json")
                     .map_err(|e| decode_err("payload_json", e))?;
-                upsert_sync_conflict(
+                let local_row_version: i64 = outbox_row
+                    .try_get("", "row_version")
+                    .map_err(|e| decode_err("row_version", e))?;
+                record_sync_conflict(
                     &tx,
-                    "outbox",
-                    Some(input.server_batch_id.clone()),
-                    Some(linked_outbox_id),
-                    None,
-                    entity_type,
-                    rejected.entity_sync_id.clone(),
-                    rejected.operation.clone(),
-                    rejected.rejection_code.clone(),
-                    Some(local_payload_json),
-                    None,
-                    Some(input.checkpoint_token.clone()),
+                    NewSyncConflict {
+                        source_scope: "outbox",
+                        source_batch_id: Some(input.server_batch_id.clone()),
+                        linked_outbox_id: Some(linked_outbox_id),
+                        linked_inbox_id: None,
+                        entity_type,
+                        entity_sync_id: rejected.entity_sync_id.clone(),
+                        operation: rejected.operation.clone(),
+                        conflict_type: rejected.rejection_code.clone(),
+                        local_payload_json: Some(local_payload_json),
+                        inbound_payload_json: None,
+                        checkpoint_token: Some(input.checkpoint_token.clone()),
+                        local_row_version: Some(local_row_version),
+                        inbound_row_version: None,
+                    },
                 )
                 .await?;
             }
         }
     }
 
+    let mut conflict_count: i64 = 0;
+    for conflict in &input.conflict_items {
+        let outbox_row = tx
+            .query_one(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT id, payload_json FROM sync_outbox
+                 WHERE idempotency_key = ? AND entity_type = ? AND entity_sync_id = ?",
+                [
+                    conflict.idempotency_key.clone().into(),
+                    conflict.entity_type.clone().into(),
+                    conflict.entity_sync_id.clone().into(),
+                ],
+            ))
+            .await?;
+        let (linked_outbox_id, local_payload_json) = match &outbox_row {
+            Some(row) => (
+                Some(row.try_get::<i64>("", "id").map_err(|e| decode_err("id", e))?),
+                Some(
+                    row.try_get::<String>("", "payload_json")
+                        .map_err(|e| decode_err("payload_json", e))?,
+                ),
+            ),
+            None => (None, None),
+        };
+        if let Some(outbox_id) = linked_outbox_id {
+            let base_label = conflict
+                .local_base_row_version
+                .map_or_else(|| "a new row".to_string(), |v| format!("version {v}"));
+            tx.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "UPDATE sync_outbox
+                 SET status = 'conflict', rejection_code = 'SERVER_CONFLICT',
+                     rejection_message = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                 WHERE id = ?",
+                [
+                    format!(
+                        "Server holds version {} (this change was made on {base_label}).",
+                        conflict.server_row_version
+                    )
+                    .into(),
+                    outbox_id.into(),
+                ],
+            ))
+            .await?;
+        }
+        record_sync_conflict(
+            &tx,
+            NewSyncConflict {
+                source_scope: "outbox",
+                source_batch_id: Some(input.server_batch_id.clone()),
+                linked_outbox_id,
+                linked_inbox_id: None,
+                entity_type: conflict.entity_type.clone(),
+                entity_sync_id: conflict.entity_sync_id.clone(),
+                operation: if conflict.server_deleted {
+                    "delete".to_string()
+                } else {
+                    conflict.server_operation.clone()
+                },
+                conflict_type: "SERVER_CONFLICT".to_string(),
+                local_payload_json,
+                inbound_payload_json: conflict.server_payload_json.clone(),
+                checkpoint_token: Some(input.checkpoint_token.clone()),
+                local_row_version: Some(conflict.local_row_version),
+                inbound_row_version: Some(conflict.server_row_version),
+            },
+        )
+        .await?;
+        conflict_count += 1;
+    }
+
     let mut inbound_applied_count: i64 = 0;
     let mut inbound_duplicate_count: i64 = 0;
     let mut inbound_work: Vec<SyncInboundItemInput> = input.inbound_items.clone();
-    inbound_work.sort_by(|a, b| {
-        fn pri(t: &str) -> u8 {
-            match t {
-                x if x == SYNC_ENTITY_BUDGET_VERSIONS => 0,
-                x if x == SYNC_ENTITY_BUDGET_LINES => 1,
-                _ => 10,
-            }
-        }
-        pri(&a.entity_type).cmp(&pri(&b.entity_type))
-    });
+    // Stable sort: dependency order first, server order within an entity type.
+    inbound_work.sort_by_key(|item| registry::apply_priority(&item.entity_type));
     for inbound in &inbound_work {
         let mut inbound_errors = Vec::new();
         validate_non_empty("entity_type", &inbound.entity_type, &mut inbound_errors);
@@ -791,6 +1274,12 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
         if serde_json::from_str::<serde_json::Value>(&inbound.payload_json).is_err() {
             inbound_errors.push("payload_json must be a valid JSON document.".to_string());
         }
+        let payload_hash = hash_payload(&inbound.payload_json);
+        if let Some(server_hash) = &inbound.payload_hash {
+            if !strip_hash_prefix(server_hash).eq_ignore_ascii_case(&payload_hash) {
+                inbound_errors.push("payload_hash does not match payload_json.".to_string());
+            }
+        }
         if !inbound_errors.is_empty() {
             typed_rejections.push(SyncTypedRejection {
                 scope: "inbound".to_string(),
@@ -799,41 +1288,51 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
                 rejection_code: "INVALID_INBOUND_PAYLOAD".to_string(),
                 rejection_message: inbound_errors.join(" "),
             });
-            upsert_sync_conflict(
+            record_sync_conflict(
                 &tx,
-                "inbound",
-                Some(input.server_batch_id.clone()),
-                None,
-                None,
-                inbound.entity_type.clone(),
-                inbound.entity_sync_id.clone(),
-                inbound.operation.clone(),
-                "INVALID_INBOUND_PAYLOAD".to_string(),
-                None,
-                Some(inbound.payload_json.clone()),
-                Some(input.checkpoint_token.clone()),
+                NewSyncConflict {
+                    source_scope: "inbound",
+                    source_batch_id: Some(input.server_batch_id.clone()),
+                    linked_outbox_id: None,
+                    linked_inbox_id: None,
+                    entity_type: inbound.entity_type.clone(),
+                    entity_sync_id: inbound.entity_sync_id.clone(),
+                    operation: inbound.operation.clone(),
+                    conflict_type: "INVALID_INBOUND_PAYLOAD".to_string(),
+                    local_payload_json: None,
+                    inbound_payload_json: Some(inbound.payload_json.clone()),
+                    checkpoint_token: Some(input.checkpoint_token.clone()),
+                    local_row_version: None,
+                    inbound_row_version: Some(inbound.row_version),
+                },
             )
             .await?;
             continue;
         }
 
-        let payload_hash = hash_payload(&inbound.payload_json);
+        let operation = if inbound.deleted {
+            "delete".to_string()
+        } else {
+            inbound.operation.clone()
+        };
         let insert_result = tx
             .execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
                 "INSERT INTO sync_inbox (
                     server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
-                    row_version, payload_json, payload_hash, apply_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
+                    row_version, payload_json, payload_hash, apply_status, server_seq, owner_user_sync_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
                 [
                     input.server_batch_id.clone().into(),
                     input.checkpoint_token.clone().into(),
                     inbound.entity_type.clone().into(),
                     inbound.entity_sync_id.clone().into(),
-                    inbound.operation.clone().into(),
+                    operation.into(),
                     inbound.row_version.into(),
                     inbound.payload_json.clone().into(),
                     payload_hash.into(),
+                    inbound.server_seq.into(),
+                    inbound.owner_user_sync_id.clone().into(),
                 ],
             ))
             .await;
@@ -896,6 +1395,7 @@ pub async fn apply_sync_batch(db: &DatabaseConnection, input: ApplySyncBatchInpu
         rejected_count,
         inbound_applied_count,
         inbound_duplicate_count,
+        conflict_count,
         typed_rejections,
     })
 }
@@ -907,33 +1407,32 @@ pub async fn list_inbox_items(
 ) -> AppResult<Vec<SyncInboxItem>> {
     let page_size = limit.unwrap_or(200).clamp(1, 1000);
     let rows = if let Some(status) = apply_status {
+        let sql = format!("SELECT {INBOX_COLUMNS} FROM sync_inbox WHERE apply_status = ? ORDER BY id ASC LIMIT ?");
         db.query_all(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT id, server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
-                    row_version, payload_json, payload_hash, apply_status, rejection_code,
-                    rejection_message, created_at, updated_at
-             FROM sync_inbox
-             WHERE apply_status = ?
-             ORDER BY id ASC
-             LIMIT ?",
+            &sql,
             [status.into(), page_size.into()],
         ))
         .await?
     } else {
+        let sql = format!("SELECT {INBOX_COLUMNS} FROM sync_inbox ORDER BY id ASC LIMIT ?");
         db.query_all(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT id, server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
-                    row_version, payload_json, payload_hash, apply_status, rejection_code,
-                    rejection_message, created_at, updated_at
-             FROM sync_inbox
-             ORDER BY id ASC
-             LIMIT ?",
+            &sql,
             [page_size.into()],
         ))
         .await?
     };
 
     rows.into_iter().map(|row| to_sync_inbox_item(&row)).collect()
+}
+
+async fn count(db: &impl ConnectionTrait, sql: &str, field: &str) -> AppResult<i64> {
+    db.query_one(Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, []))
+        .await?
+        .ok_or_else(|| AppError::SyncError(format!("Failed to query {field}.")))?
+        .try_get("", "count")
+        .map_err(|e| decode_err(field, e))
 }
 
 pub async fn get_sync_state_summary(db: &DatabaseConnection) -> AppResult<SyncStateSummary> {
@@ -970,38 +1469,55 @@ pub async fn get_sync_state_summary(db: &DatabaseConnection) -> AppResult<SyncSt
         })
         .transpose()?;
 
-    let pending_outbox_count: i64 = db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT COUNT(*) AS count FROM sync_outbox WHERE status = 'pending'",
-            [],
-        ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("Failed to query pending outbox count.".to_string()))?
-        .try_get("", "count")
-        .map_err(|e| decode_err("pending_outbox_count", e))?;
-
-    let rejected_outbox_count: i64 = db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT COUNT(*) AS count FROM sync_outbox WHERE status = 'rejected'",
-            [],
-        ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("Failed to query rejected outbox count.".to_string()))?
-        .try_get("", "count")
-        .map_err(|e| decode_err("rejected_outbox_count", e))?;
-
-    let inbox_error_count: i64 = db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT COUNT(*) AS count FROM sync_inbox WHERE apply_status = 'rejected'",
-            [],
-        ))
-        .await?
-        .ok_or_else(|| AppError::SyncError("Failed to query inbox error count.".to_string()))?
-        .try_get("", "count")
-        .map_err(|e| decode_err("inbox_error_count", e))?;
+    let pending_outbox_count = count(
+        db,
+        "SELECT COUNT(*) AS count FROM sync_outbox WHERE status = 'pending'",
+        "pending_outbox_count",
+    )
+    .await?;
+    let in_flight_outbox_count = count(
+        db,
+        "SELECT COUNT(*) AS count FROM sync_outbox WHERE status = 'in_flight'",
+        "in_flight_outbox_count",
+    )
+    .await?;
+    let rejected_outbox_count = count(
+        db,
+        "SELECT COUNT(*) AS count FROM sync_outbox WHERE status = 'rejected'",
+        "rejected_outbox_count",
+    )
+    .await?;
+    let dead_letter_outbox_count = count(
+        db,
+        "SELECT COUNT(*) AS count FROM sync_outbox WHERE status = 'dead_letter'",
+        "dead_letter_outbox_count",
+    )
+    .await?;
+    let inbox_error_count = count(
+        db,
+        "SELECT COUNT(*) AS count FROM sync_inbox WHERE apply_status = 'rejected'",
+        "inbox_error_count",
+    )
+    .await?;
+    let deferred_inbox_count = count(
+        db,
+        "SELECT COUNT(*) AS count FROM sync_inbox WHERE apply_status = 'deferred'",
+        "deferred_inbox_count",
+    )
+    .await?;
+    let inbox_conflict_count = count(
+        db,
+        "SELECT COUNT(*) AS count FROM sync_inbox WHERE apply_status = 'conflict'",
+        "inbox_conflict_count",
+    )
+    .await?;
+    let unresolved_conflict_count = count(
+        db,
+        "SELECT COUNT(*) AS count FROM sync_conflicts
+         WHERE requires_operator_review = 1 AND status IN ('new', 'triaged', 'escalated')",
+        "unresolved_conflict_count",
+    )
+    .await?;
 
     Ok(SyncStateSummary {
         protocol_version: SYNC_PROTOCOL_VERSION_V1.to_string(),
@@ -1009,6 +1525,11 @@ pub async fn get_sync_state_summary(db: &DatabaseConnection) -> AppResult<SyncSt
         pending_outbox_count,
         rejected_outbox_count,
         inbox_error_count,
+        in_flight_outbox_count,
+        dead_letter_outbox_count,
+        deferred_inbox_count,
+        inbox_conflict_count,
+        unresolved_conflict_count,
     })
 }
 
@@ -1020,11 +1541,8 @@ pub async fn list_sync_conflicts(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT id, conflict_key, source_scope, source_batch_id, linked_outbox_id, linked_inbox_id,
-                    entity_type, entity_sync_id, operation, conflict_type, local_payload_json,
-                    inbound_payload_json, authority_side, checkpoint_token, auto_resolution_policy,
-                    requires_operator_review, recommended_action, status, resolution_action,
-                    resolution_note, resolved_by_id, resolved_at, row_version, created_at, updated_at
+            &format!(
+                "SELECT {CONFLICT_COLUMNS}
              FROM sync_conflicts
              WHERE (? IS NULL OR conflict_type = ?)
                AND (? IS NULL OR requires_operator_review = ?)
@@ -1042,7 +1560,8 @@ pub async fn list_sync_conflicts(
                 END,
                 updated_at DESC,
                 id DESC
-             LIMIT ?",
+             LIMIT ?"
+            ),
             [
                 filter.conflict_type.clone().into(),
                 filter.conflict_type.into(),
@@ -1080,10 +1599,7 @@ pub async fn resolve_sync_conflict(
         errors.push("expected_row_version must be > 0.".to_string());
     }
     if map_resolution_to_status(&input.action).is_none() {
-        errors.push(
-            "action must be one of: accept_local, accept_remote, merge_fields, retry_later, escalate, dismiss."
-                .to_string(),
-        );
+        errors.push("action must be one of: accept_local, accept_remote, retry_later, escalate, dismiss.".to_string());
     }
     if !errors.is_empty() {
         return Err(AppError::ValidationFailed(errors));
@@ -1092,12 +1608,11 @@ pub async fn resolve_sync_conflict(
         .ok_or_else(|| AppError::SyncError("Invalid conflict action mapping.".to_string()))?;
 
     let tx = db.begin().await?;
+    let sql = format!("SELECT {CONFLICT_COLUMNS} FROM sync_conflicts WHERE id = ?");
     let current = tx
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT row_version, status
-             FROM sync_conflicts
-             WHERE id = ?",
+            &sql,
             [input.conflict_id.into()],
         ))
         .await?
@@ -1105,14 +1620,29 @@ pub async fn resolve_sync_conflict(
             entity: "sync_conflict".to_string(),
             id: input.conflict_id.to_string(),
         })?;
-    let current_row_version: i64 = current
-        .try_get("", "row_version")
-        .map_err(|e| decode_err("row_version", e))?;
-    if current_row_version != input.expected_row_version {
+    let conflict = to_sync_conflict(&current)?;
+    if conflict.row_version != input.expected_row_version {
         return Err(AppError::ValidationFailed(vec![
             "Sync conflict was modified elsewhere (stale row_version).".to_string(),
         ]));
     }
+    if matches!(
+        conflict.status.as_str(),
+        "resolved_local" | "resolved_remote" | "merged" | "dismissed"
+    ) {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Sync conflict {} is already closed ({}).",
+            conflict.id, conflict.status
+        )]));
+    }
+
+    // The person's choice is applied to the data in the same transaction as the status change.
+    match input.action.as_str() {
+        "accept_local" => crate::sync::conflicts::keep_local_version(&tx, &conflict).await?,
+        "accept_remote" => crate::sync::conflicts::take_remote_version(&tx, &conflict).await?,
+        _ => {}
+    }
+
     tx.execute(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         "UPDATE sync_conflicts
@@ -1142,13 +1672,7 @@ pub async fn resolve_sync_conflict(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT id, conflict_key, source_scope, source_batch_id, linked_outbox_id, linked_inbox_id,
-                    entity_type, entity_sync_id, operation, conflict_type, local_payload_json,
-                    inbound_payload_json, authority_side, checkpoint_token, auto_resolution_policy,
-                    requires_operator_review, recommended_action, status, resolution_action,
-                    resolution_note, resolved_by_id, resolved_at, row_version, created_at, updated_at
-             FROM sync_conflicts
-             WHERE id = ?",
+            &sql,
             [input.conflict_id.into()],
         ))
         .await?
@@ -1301,11 +1825,13 @@ pub async fn replay_sync_failures(
                         DatabaseBackend::Sqlite,
                         "UPDATE sync_outbox
                          SET status = 'pending',
+                             attempt_count = 0,
+                             dead_lettered_at = NULL,
                              rejection_code = NULL,
                              rejection_message = NULL,
                              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
                          WHERE id = ?
-                           AND status = 'rejected'",
+                           AND status IN ('rejected', 'dead_letter')",
                         [outbox_id.into()],
                     ))
                     .await?;
@@ -1337,6 +1863,8 @@ pub async fn replay_sync_failures(
                     DatabaseBackend::Sqlite,
                     "UPDATE sync_outbox
                      SET status = 'pending',
+                         attempt_count = 0,
+                         dead_lettered_at = NULL,
                          rejection_code = NULL,
                          rejection_message = NULL,
                          updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
@@ -1346,7 +1874,7 @@ pub async fn replay_sync_failures(
                         WHERE source_batch_id = ?
                           AND linked_outbox_id IS NOT NULL
                      )
-                       AND status = 'rejected'",
+                       AND status IN ('rejected', 'dead_letter')",
                     [batch_id.clone().into()],
                 ))
                 .await?;
@@ -1377,10 +1905,12 @@ pub async fn replay_sync_failures(
                     DatabaseBackend::Sqlite,
                     "UPDATE sync_outbox
                      SET status = 'pending',
+                         attempt_count = 0,
+                         dead_lettered_at = NULL,
                          rejection_code = NULL,
                          rejection_message = NULL,
                          updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                     WHERE status = 'rejected'
+                     WHERE status IN ('rejected', 'dead_letter')
                        AND updated_at >= ?
                        AND updated_at <= ?",
                     [start.clone().into(), end.clone().into()],
@@ -1795,6 +2325,8 @@ pub async fn execute_sync_repair(
                             DatabaseBackend::Sqlite,
                             "UPDATE sync_outbox
                              SET status = 'pending',
+                                 attempt_count = 0,
+                                 dead_lettered_at = NULL,
                                  rejection_code = NULL,
                                  rejection_message = NULL,
                                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
@@ -1811,6 +2343,8 @@ pub async fn execute_sync_repair(
                         DatabaseBackend::Sqlite,
                         "UPDATE sync_outbox
                          SET status = 'pending',
+                             attempt_count = 0,
+                             dead_lettered_at = NULL,
                              rejection_code = NULL,
                              rejection_message = NULL,
                              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
@@ -1831,6 +2365,8 @@ pub async fn execute_sync_repair(
                         DatabaseBackend::Sqlite,
                         "UPDATE sync_outbox
                          SET status = 'pending',
+                             attempt_count = 0,
+                             dead_lettered_at = NULL,
                              rejection_code = NULL,
                              rejection_message = NULL,
                              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')

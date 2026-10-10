@@ -1,7 +1,13 @@
 //! Inbox materialization — apply pending sync_inbox rows to domain tables.
 //!
-//! Ingest (`apply_sync_batch`) stores envelopes as `pending`.
-//! This module upserts real domain rows, then marks `applied` / `conflict`.
+//! Ingest (`apply_sync_batch`) stores envelopes as `pending`. This module applies them in
+//! dependency order (`sync::registry::apply_priority`) and marks each row:
+//! - `applied`: written to the domain table (or already current here);
+//! - `deferred`: waiting for a parent row from a later batch, or for a materializer (entity types
+//!   that are staged but not yet applied inbound); retried on every run;
+//! - `conflict`: needs a person; a `sync_conflicts` record is written in the same transaction.
+//!
+//! A row is never marked `applied` unless it was applied or is already current.
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
 use serde_json::Value;
@@ -14,131 +20,368 @@ use crate::sync::domain::{
     SYNC_ENTITY_STOCK_MOVEMENTS, SYNC_ENTITY_STOCK_RESERVATIONS, SYNC_ENTITY_TEAMS, SYNC_ENTITY_USER_ACCOUNTS,
     SYNC_ENTITY_WAREHOUSES, SYNC_ENTITY_WORK_ORDERS, SYNC_ENTITY_WORK_ORDER_INTERVENERS, SYNC_ENTITY_WORK_ORDER_TASKS,
 };
+use crate::sync::queries::{record_sync_conflict, record_synced_state, synced_row_version, NewSyncConflict};
+use crate::sync::registry::{self, ConflictPolicy};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MaterializeInboxResult {
     pub processed: i64,
     pub applied: i64,
     pub conflicts: i64,
+    /// Already current here (replayed row or this device's own change sent back).
     pub skipped: i64,
+    /// Waiting for a parent row or a materializer; retried on the next run.
+    pub deferred: i64,
     pub errors: Vec<String>,
 }
 
-/// Dependency-safe apply priority (lower = earlier).
-pub fn materialize_priority(entity_type: &str) -> u16 {
-    match entity_type {
-        x if x == SYNC_ENTITY_ORG_NODES => 10,
-        x if x == SYNC_ENTITY_ROLES => 20,
-        x if x == SYNC_ENTITY_USER_ACCOUNTS => 30,
-        x if x == SYNC_ENTITY_PERSONNEL || x == SYNC_ENTITY_TEAMS => 40,
-        x if x == SYNC_ENTITY_EQUIPMENT => 50,
-        x if x == SYNC_ENTITY_REFERENCE_VALUES => 55,
-        x if x == SYNC_ENTITY_WAREHOUSES || x == SYNC_ENTITY_STOCK_LOCATIONS || x == SYNC_ENTITY_ARTICLES => 60,
-        x if x == SYNC_ENTITY_STOCK_RESERVATIONS => 64,
-        x if x == SYNC_ENTITY_STOCK_MOVEMENTS => 65,
-        x if x == SYNC_ENTITY_INTERVENTION_REQUESTS => 70,
-        x if x == SYNC_ENTITY_PM_PLANS => 80,
-        x if x == SYNC_ENTITY_PM_PLAN_VERSIONS => 81,
-        x if x == SYNC_ENTITY_PM_OCCURRENCES => 82,
-        x if x == SYNC_ENTITY_WORK_ORDERS => 90,
-        x if x == SYNC_ENTITY_WORK_ORDER_TASKS || x == SYNC_ENTITY_WORK_ORDER_INTERVENERS => 91,
-        x if x == SYNC_ENTITY_MEDIA_ATTACHMENTS => 100,
-        _ => 500,
-    }
+/// Deferral code for a row whose parent has not been applied yet.
+pub(crate) const DEFER_MISSING_PARENT: &str = "MISSING_PARENT";
+/// Deferral code for an entity type that is staged by other devices but not applied here yet.
+pub(crate) const DEFER_NO_MATERIALIZER: &str = "NO_MATERIALIZER";
+/// Deferral code for an entity type this version of the app does not know.
+pub(crate) const DEFER_UNKNOWN_ENTITY_TYPE: &str = "UNKNOWN_ENTITY_TYPE";
+
+#[derive(Debug, Clone)]
+struct InboxRow {
+    id: i64,
+    server_batch_id: String,
+    checkpoint_token: String,
+    entity_type: String,
+    entity_sync_id: String,
+    operation: String,
+    row_version: i64,
+    payload_json: String,
+    payload_hash: String,
 }
 
-/// Materialize all pending inbox rows (ordered by apply priority then id).
+fn decode(field: &str, e: impl std::fmt::Display) -> AppError {
+    AppError::SyncError(format!("inbox {field}: {e}"))
+}
+
+/// Apply pending inbox rows, plus deferred rows whose entity type can now be applied.
 pub async fn materialize_inbox_batch(db: &DatabaseConnection, limit: Option<i64>) -> AppResult<MaterializeInboxResult> {
     let lim = limit.unwrap_or(200).clamp(1, 2000);
+    let materializable = serde_json::to_string(&registry::materializable_entity_types())?;
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT id, entity_type, entity_sync_id, operation, row_version, payload_json
+            "SELECT id, server_batch_id, checkpoint_token, entity_type, entity_sync_id, operation,
+                    row_version, payload_json, payload_hash
              FROM sync_inbox
              WHERE apply_status = 'pending'
+                OR (apply_status = 'deferred' AND entity_type IN (SELECT value FROM json_each(?)))
              ORDER BY id ASC
              LIMIT ?",
-            [lim.into()],
+            [materializable.into(), lim.into()],
         ))
         .await?;
 
-    let mut items: Vec<(i64, String, String, String, i64, String)> = Vec::with_capacity(rows.len());
+    let mut items = Vec::with_capacity(rows.len());
     for row in &rows {
-        items.push((
-            row.try_get("", "id")
-                .map_err(|e| AppError::SyncError(format!("inbox id: {e}")))?,
-            row.try_get("", "entity_type")
-                .map_err(|e| AppError::SyncError(format!("entity_type: {e}")))?,
-            row.try_get("", "entity_sync_id")
-                .map_err(|e| AppError::SyncError(format!("entity_sync_id: {e}")))?,
-            row.try_get("", "operation")
-                .map_err(|e| AppError::SyncError(format!("operation: {e}")))?,
-            row.try_get("", "row_version")
-                .map_err(|e| AppError::SyncError(format!("row_version: {e}")))?,
-            row.try_get("", "payload_json")
-                .map_err(|e| AppError::SyncError(format!("payload_json: {e}")))?,
-        ));
+        items.push(InboxRow {
+            id: row.try_get("", "id").map_err(|e| decode("id", e))?,
+            server_batch_id: row
+                .try_get("", "server_batch_id")
+                .map_err(|e| decode("server_batch_id", e))?,
+            checkpoint_token: row
+                .try_get("", "checkpoint_token")
+                .map_err(|e| decode("checkpoint_token", e))?,
+            entity_type: row.try_get("", "entity_type").map_err(|e| decode("entity_type", e))?,
+            entity_sync_id: row
+                .try_get("", "entity_sync_id")
+                .map_err(|e| decode("entity_sync_id", e))?,
+            operation: row.try_get("", "operation").map_err(|e| decode("operation", e))?,
+            row_version: row.try_get("", "row_version").map_err(|e| decode("row_version", e))?,
+            payload_json: row.try_get("", "payload_json").map_err(|e| decode("payload_json", e))?,
+            payload_hash: row.try_get("", "payload_hash").map_err(|e| decode("payload_hash", e))?,
+        });
     }
-
     items.sort_by(|a, b| {
-        materialize_priority(&a.1)
-            .cmp(&materialize_priority(&b.1))
-            .then(a.0.cmp(&b.0))
+        registry::apply_priority(&a.entity_type)
+            .cmp(&registry::apply_priority(&b.entity_type))
+            .then(a.id.cmp(&b.id))
     });
 
     let mut result = MaterializeInboxResult {
-        processed: 0,
+        processed: i64::try_from(items.len()).unwrap_or(i64::MAX),
         applied: 0,
         conflicts: 0,
         skipped: 0,
+        deferred: 0,
         errors: Vec::new(),
     };
 
-    for (id, entity_type, entity_sync_id, operation, row_version, payload_json) in items {
-        result.processed += 1;
-        let tx = db.begin().await?;
-        match materialize_one(
-            &tx,
-            &entity_type,
-            &entity_sync_id,
-            &operation,
-            row_version,
-            &payload_json,
-        )
-        .await
-        {
-            Ok(ApplyOutcome::Applied) => {
-                mark_inbox(&tx, id, "applied", None, None).await?;
-                tx.commit().await?;
-                result.applied += 1;
-            }
-            Ok(ApplyOutcome::Conflict { code, message }) => {
-                mark_inbox(&tx, id, "conflict", Some(&code), Some(&message)).await?;
-                tx.commit().await?;
-                result.conflicts += 1;
-            }
-            Ok(ApplyOutcome::Skipped) => {
-                mark_inbox(&tx, id, "applied", None, None).await?;
-                tx.commit().await?;
-                result.skipped += 1;
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                let _ = mark_inbox(&tx, id, "conflict", Some("MATERIALIZE_ERROR"), Some(&msg)).await;
-                let _ = tx.commit().await;
-                result.conflicts += 1;
-                result.errors.push(format!("{entity_type}/{entity_sync_id}: {msg}"));
+    // Rows waiting for a parent are retried in the same run as long as other rows were applied,
+    // so a child that arrived before its parent in the same run does not wait for the next one.
+    let mut queue = items;
+    loop {
+        let mut waiting_for_parent = Vec::new();
+        let mut progressed = false;
+        for item in queue {
+            match apply_inbox_row(db, &item).await? {
+                ApplyOutcome::Applied => {
+                    result.applied += 1;
+                    progressed = true;
+                }
+                ApplyOutcome::Unchanged => {
+                    result.skipped += 1;
+                    progressed = true;
+                }
+                ApplyOutcome::Deferred { code, .. } if code == DEFER_MISSING_PARENT => {
+                    waiting_for_parent.push(item);
+                }
+                ApplyOutcome::Deferred { .. } => result.deferred += 1,
+                ApplyOutcome::Conflict { code, message } => {
+                    result.conflicts += 1;
+                    if code == "MATERIALIZE_ERROR" {
+                        result
+                            .errors
+                            .push(format!("{}/{}: {message}", item.entity_type, item.entity_sync_id));
+                    }
+                }
             }
         }
+        if waiting_for_parent.is_empty() {
+            break;
+        }
+        if !progressed {
+            result.deferred += i64::try_from(waiting_for_parent.len()).unwrap_or(i64::MAX);
+            break;
+        }
+        queue = waiting_for_parent;
     }
 
     Ok(result)
 }
 
-enum ApplyOutcome {
+#[derive(Debug, Clone)]
+pub(crate) enum ApplyOutcome {
+    /// Written to the domain table.
     Applied,
-    Skipped,
+    /// Already current locally; nothing to write.
+    Unchanged,
+    /// Cannot be applied yet; kept for a later run.
+    Deferred { code: String, message: String },
+    /// Needs a person.
     Conflict { code: String, message: String },
+}
+
+fn missing_parent(what: &str, sync_id: &str) -> ApplyOutcome {
+    ApplyOutcome::Deferred {
+        code: DEFER_MISSING_PARENT.into(),
+        message: format!("{what} {sync_id} has not been received yet"),
+    }
+}
+
+/// Apply one inbox row in its own transaction and record the outcome.
+async fn apply_inbox_row(db: &DatabaseConnection, item: &InboxRow) -> AppResult<ApplyOutcome> {
+    let tx = db.begin().await?;
+    let evaluated = evaluate_and_apply(&tx, item).await;
+    let outcome = match evaluated {
+        Ok(outcome @ (ApplyOutcome::Applied | ApplyOutcome::Unchanged)) => {
+            mark_inbox(&tx, item.id, "applied", None, None).await?;
+            record_synced_state(
+                &tx,
+                &item.entity_type,
+                &item.entity_sync_id,
+                item.row_version,
+                &item.payload_hash,
+                "inbound_apply",
+            )
+            .await?;
+            tx.commit().await?;
+            return Ok(outcome);
+        }
+        Ok(other) => {
+            tx.rollback().await?;
+            other
+        }
+        Err(e) => {
+            tx.rollback().await?;
+            ApplyOutcome::Conflict {
+                code: "MATERIALIZE_ERROR".into(),
+                message: e.to_string(),
+            }
+        }
+    };
+
+    // Nothing from the attempt is kept; record why the row was not applied.
+    let tx = db.begin().await?;
+    match &outcome {
+        ApplyOutcome::Deferred { code, message } => {
+            tx.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "UPDATE sync_inbox
+                 SET apply_status = 'deferred', rejection_code = ?, rejection_message = ?,
+                     attempt_count = attempt_count + 1,
+                     last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                 WHERE id = ?",
+                [code.as_str().into(), message.as_str().into(), item.id.into()],
+            ))
+            .await?;
+        }
+        ApplyOutcome::Conflict { code, message } => {
+            mark_inbox(&tx, item.id, "conflict", Some(code), Some(message)).await?;
+            let local = latest_local_change(&tx, &item.entity_type, &item.entity_sync_id).await?;
+            record_sync_conflict(
+                &tx,
+                NewSyncConflict {
+                    source_scope: "inbound",
+                    source_batch_id: Some(item.server_batch_id.clone()),
+                    linked_outbox_id: None,
+                    linked_inbox_id: Some(item.id),
+                    entity_type: item.entity_type.clone(),
+                    entity_sync_id: item.entity_sync_id.clone(),
+                    operation: item.operation.clone(),
+                    conflict_type: code.clone(),
+                    local_payload_json: local.as_ref().map(|l| l.payload_json.clone()),
+                    inbound_payload_json: Some(item.payload_json.clone()),
+                    checkpoint_token: Some(item.checkpoint_token.clone()),
+                    local_row_version: local.as_ref().map(|l| l.row_version),
+                    inbound_row_version: Some(item.row_version),
+                },
+            )
+            .await?;
+        }
+        ApplyOutcome::Applied | ApplyOutcome::Unchanged => {}
+    }
+    tx.commit().await?;
+    Ok(outcome)
+}
+
+struct LocalChange {
+    row_version: i64,
+    payload_json: String,
+    payload_hash: String,
+    base_row_version: Option<i64>,
+}
+
+/// Local changes of an entity that the server has not accepted yet, oldest first.
+async fn unsent_local_changes(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+) -> AppResult<Vec<LocalChange>> {
+    let rows = conn
+        .query_all(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT row_version, payload_json, payload_hash, base_row_version FROM sync_outbox
+             WHERE entity_type = ? AND entity_sync_id = ? AND status IN ('pending', 'in_flight', 'conflict')
+             ORDER BY id ASC",
+            [entity_type.into(), entity_sync_id.into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(LocalChange {
+                row_version: r.try_get("", "row_version").map_err(|e| decode("row_version", e))?,
+                payload_json: r.try_get("", "payload_json").map_err(|e| decode("payload_json", e))?,
+                payload_hash: r.try_get("", "payload_hash").map_err(|e| decode("payload_hash", e))?,
+                base_row_version: r
+                    .try_get("", "base_row_version")
+                    .map_err(|e| decode("base_row_version", e))?,
+            })
+        })
+        .collect()
+}
+
+async fn latest_local_change(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    entity_sync_id: &str,
+) -> AppResult<Option<LocalChange>> {
+    Ok(unsent_local_changes(conn, entity_type, entity_sync_id).await?.pop())
+}
+
+/// Decide whether an inbound row may be applied, then apply it.
+async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> AppResult<ApplyOutcome> {
+    let Some(def) = registry::entity(&item.entity_type) else {
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_UNKNOWN_ENTITY_TYPE.into(),
+            message: format!("entity type '{}' is not known by this version", item.entity_type),
+        });
+    };
+    if !def.has_materializer {
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_NO_MATERIALIZER.into(),
+            message: format!("'{}' rows are not applied by this version yet", item.entity_type),
+        });
+    }
+    if let Some(outcome) = concurrency_check(conn, def, item).await? {
+        return Ok(outcome);
+    }
+    apply_inbound_payload(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
+        &item.operation,
+        item.row_version,
+        &item.payload_json,
+    )
+    .await
+}
+
+/// Owner decision: concurrent changes are never merged silently.
+///
+/// - Our own unsent change sent back by the server → already current.
+/// - A local change the server has not accepted yet → `CONCURRENT_EDIT` (both sides changed the
+///   row; with protocol v2 the local change was made on `base_row_version`, which the server
+///   version has moved past).
+/// - An older version than the one already applied → `STALE_INBOUND`.
+/// - The same version with different content → `EQUAL_VERSION_DIVERGENCE`.
+async fn concurrency_check(
+    conn: &impl ConnectionTrait,
+    def: &registry::SyncEntityDef,
+    item: &InboxRow,
+) -> AppResult<Option<ApplyOutcome>> {
+    let unsent = unsent_local_changes(conn, &item.entity_type, &item.entity_sync_id).await?;
+    if unsent.iter().any(|c| c.payload_hash == item.payload_hash) {
+        return Ok(Some(ApplyOutcome::Unchanged));
+    }
+    if def.conflict_policy == ConflictPolicy::AppendOnly {
+        // History rows are only inserted; the materializer skips rows that already exist.
+        return Ok(None);
+    }
+    if let Some(local) = unsent.last() {
+        let base = local
+            .base_row_version
+            .map_or_else(|| "a new row".to_string(), |v| format!("version {v}"));
+        return Ok(Some(ApplyOutcome::Conflict {
+            code: "CONCURRENT_EDIT".into(),
+            message: format!(
+                "Local change v{} (made on {base}) is not on the server yet; the server sent v{}.",
+                local.row_version, item.row_version
+            ),
+        }));
+    }
+    if let Some((synced_version, synced_hash)) =
+        synced_row_version(conn, &item.entity_type, &item.entity_sync_id).await?
+    {
+        if item.row_version < synced_version {
+            return Ok(Some(ApplyOutcome::Conflict {
+                code: "STALE_INBOUND".into(),
+                message: format!(
+                    "Server sent v{} but v{synced_version} is already applied here.",
+                    item.row_version
+                ),
+            }));
+        }
+        if item.row_version == synced_version {
+            if synced_hash.eq_ignore_ascii_case(&item.payload_hash) {
+                return Ok(Some(ApplyOutcome::Unchanged));
+            }
+            return Ok(Some(ApplyOutcome::Conflict {
+                code: "EQUAL_VERSION_DIVERGENCE".into(),
+                message: format!(
+                    "Server sent v{} with content that differs from the v{synced_version} applied here.",
+                    item.row_version
+                ),
+            }));
+        }
+    }
+    Ok(None)
 }
 
 async fn mark_inbox(
@@ -154,6 +397,7 @@ async fn mark_inbox(
          SET apply_status = ?,
              rejection_code = ?,
              rejection_message = ?,
+             last_attempt_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
          WHERE id = ?",
         [
@@ -167,7 +411,9 @@ async fn mark_inbox(
     Ok(())
 }
 
-async fn materialize_one(
+/// Write an inbound row to its domain table without the concurrency check. Used for normal apply
+/// (after the check) and when a person chooses the server version of a conflict.
+pub(crate) async fn apply_inbound_payload(
     conn: &impl ConnectionTrait,
     entity_type: &str,
     entity_sync_id: &str,
@@ -221,28 +467,36 @@ async fn materialize_one(
         x if x == SYNC_ENTITY_MEDIA_ATTACHMENTS => {
             upsert_media_attachment(conn, entity_sync_id, row_version, &payload).await
         }
-        _ => Ok(ApplyOutcome::Skipped),
+        other => Err(AppError::SyncError(format!(
+            "No inbound materializer for '{other}' although the registry declares one."
+        ))),
     }
 }
 
-async fn local_row_version(conn: &impl ConnectionTrait, table: &str, entity_sync_id: &str) -> AppResult<Option<i64>> {
-    // table names are internal constants only
-    let sql = format!("SELECT row_version FROM {table} WHERE entity_sync_id = ? LIMIT 1");
-    let row = conn
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            &sql,
-            [entity_sync_id.to_string().into()],
-        ))
-        .await?;
-    match row {
-        None => Ok(None),
-        Some(r) => Ok(Some(
-            r.try_get::<i64>("", "row_version")
-                .map_err(|e| AppError::SyncError(format!("row_version: {e}")))?,
-        )),
-    }
-}
+/// Entity types `apply_inbound_payload` can write (checked against the registry by a test).
+#[cfg(test)]
+pub(crate) const UPSERT_ENTITY_TYPES: &[&str] = &[
+    SYNC_ENTITY_EQUIPMENT,
+    SYNC_ENTITY_USER_ACCOUNTS,
+    SYNC_ENTITY_ROLES,
+    SYNC_ENTITY_ORG_NODES,
+    SYNC_ENTITY_INTERVENTION_REQUESTS,
+    SYNC_ENTITY_WORK_ORDERS,
+    SYNC_ENTITY_WORK_ORDER_TASKS,
+    SYNC_ENTITY_WORK_ORDER_INTERVENERS,
+    SYNC_ENTITY_PM_PLANS,
+    SYNC_ENTITY_PM_PLAN_VERSIONS,
+    SYNC_ENTITY_PM_OCCURRENCES,
+    SYNC_ENTITY_ARTICLES,
+    SYNC_ENTITY_WAREHOUSES,
+    SYNC_ENTITY_STOCK_LOCATIONS,
+    SYNC_ENTITY_STOCK_MOVEMENTS,
+    SYNC_ENTITY_STOCK_RESERVATIONS,
+    SYNC_ENTITY_PERSONNEL,
+    SYNC_ENTITY_TEAMS,
+    SYNC_ENTITY_REFERENCE_VALUES,
+    SYNC_ENTITY_MEDIA_ATTACHMENTS,
+];
 
 fn json_str(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(|x| x.as_str()).map(|s| s.to_string())
@@ -278,24 +532,21 @@ async fn resolve_local_id(conn: &impl ConnectionTrait, table: &str, entity_sync_
         .map_err(|e| AppError::SyncError(format!("resolve id: {e}")))
 }
 
-async fn check_row_version_conflict(
+/// Resolve an optional reference carried by sync id. A reference that is present but not applied
+/// yet defers the row (the parent can arrive in a later batch) instead of silently dropping the
+/// link.
+async fn resolve_optional_ref(
     conn: &impl ConnectionTrait,
     table: &str,
-    entity_sync_id: &str,
-    incoming_version: i64,
-) -> AppResult<Option<ApplyOutcome>> {
-    if let Some(local) = local_row_version(conn, table, entity_sync_id).await? {
-        if local > incoming_version {
-            return Ok(Some(ApplyOutcome::Conflict {
-                code: "STALE_INBOUND".into(),
-                message: format!("local row_version {local} > inbound {incoming_version}"),
-            }));
-        }
-        if local == incoming_version {
-            return Ok(Some(ApplyOutcome::Skipped));
-        }
+    entity_sync_id: Option<&str>,
+) -> AppResult<Result<Option<i64>, ApplyOutcome>> {
+    match entity_sync_id.filter(|s| !s.trim().is_empty()) {
+        None => Ok(Ok(None)),
+        Some(sync_id) => match resolve_local_id(conn, table, sync_id).await? {
+            Some(id) => Ok(Ok(Some(id))),
+            None => Ok(Err(missing_parent(table, sync_id))),
+        },
     }
-    Ok(None)
 }
 
 async fn delete_by_sync_id(
@@ -303,36 +554,19 @@ async fn delete_by_sync_id(
     entity_type: &str,
     entity_sync_id: &str,
 ) -> AppResult<ApplyOutcome> {
-    let table = match entity_type {
-        x if x == SYNC_ENTITY_EQUIPMENT => "equipment",
-        x if x == SYNC_ENTITY_USER_ACCOUNTS => "user_accounts",
-        x if x == SYNC_ENTITY_ROLES => "roles",
-        x if x == SYNC_ENTITY_ORG_NODES => "org_nodes",
-        x if x == SYNC_ENTITY_INTERVENTION_REQUESTS => "intervention_requests",
-        x if x == SYNC_ENTITY_WORK_ORDERS => "work_orders",
-        x if x == SYNC_ENTITY_WORK_ORDER_TASKS => "work_order_tasks",
-        x if x == SYNC_ENTITY_WORK_ORDER_INTERVENERS => "work_order_interveners",
-        x if x == SYNC_ENTITY_PM_PLANS => "pm_plans",
-        x if x == SYNC_ENTITY_PM_PLAN_VERSIONS => "pm_plan_versions",
-        x if x == SYNC_ENTITY_PM_OCCURRENCES => "pm_occurrences",
-        x if x == SYNC_ENTITY_ARTICLES => "articles",
-        x if x == SYNC_ENTITY_WAREHOUSES => "warehouses",
-        x if x == SYNC_ENTITY_STOCK_LOCATIONS => "stock_locations",
-        x if x == SYNC_ENTITY_STOCK_MOVEMENTS => "inventory_transactions",
-        x if x == SYNC_ENTITY_STOCK_RESERVATIONS => "stock_reservations",
-        x if x == SYNC_ENTITY_PERSONNEL => "personnel",
-        x if x == SYNC_ENTITY_TEAMS => "teams",
-        x if x == SYNC_ENTITY_MEDIA_ATTACHMENTS => "media_attachments",
-        x if x == SYNC_ENTITY_REFERENCE_VALUES => "reference_values",
-        _ => return Ok(ApplyOutcome::Skipped),
-    };
-    let sql = format!("DELETE FROM {table} WHERE entity_sync_id = ?");
-    conn.execute(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        &sql,
-        [entity_sync_id.to_string().into()],
-    ))
-    .await?;
+    let def = registry::require_entity(entity_type)?;
+    // Table names come from the static registry, never from input.
+    let sql = format!("DELETE FROM {} WHERE entity_sync_id = ?", def.table);
+    let result = conn
+        .execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            &sql,
+            [entity_sync_id.to_string().into()],
+        ))
+        .await?;
+    if result.rows_affected() == 0 {
+        return Ok(ApplyOutcome::Unchanged);
+    }
     Ok(ApplyOutcome::Applied)
 }
 
@@ -342,9 +576,6 @@ async fn upsert_equipment(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "equipment", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let code = json_str(p, "asset_code")
         .or_else(|| json_str(p, "asset_id_code"))
         .unwrap_or_else(|| format!("EQ-{entity_sync_id}"));
@@ -356,9 +587,9 @@ async fn upsert_equipment(
         .unwrap_or_else(|| "active_in_service".into());
     let updated_at = json_str(p, "updated_at").unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
     let org_sync = json_str(p, "org_node_entity_sync_id");
-    let org_id = match org_sync.as_deref() {
-        Some(s) => resolve_local_id(conn, "org_nodes", s).await?,
-        None => None,
+    let org_id = match resolve_optional_ref(conn, "org_nodes", org_sync.as_deref()).await? {
+        Ok(id) => id,
+        Err(deferred) => return Ok(deferred),
     };
 
     if resolve_local_id(conn, "equipment", entity_sync_id).await?.is_some() {
@@ -407,9 +638,6 @@ async fn upsert_user_account(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "user_accounts", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let username = json_str(p, "username")
         .ok_or_else(|| AppError::ValidationFailed(vec!["user_accounts.username required".into()]))?;
     let display_name = json_str(p, "display_name");
@@ -469,9 +697,6 @@ async fn upsert_role(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "roles", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let name = json_str(p, "name").ok_or_else(|| AppError::ValidationFailed(vec!["roles.name required".into()]))?;
     let description = json_str(p, "description");
     let role_type = json_str(p, "role_type").unwrap_or_else(|| "custom".into());
@@ -526,17 +751,14 @@ async fn upsert_org_node(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "org_nodes", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let code = json_str(p, "code").unwrap_or_else(|| format!("ORG-{entity_sync_id}"));
     let name = json_str(p, "name").unwrap_or_else(|| code.clone());
     let status = json_str(p, "status").unwrap_or_else(|| "active".into());
     let updated_at = json_str(p, "updated_at").unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
     let parent_sync = json_str(p, "parent_entity_sync_id");
-    let parent_id = match parent_sync.as_deref() {
-        Some(s) => resolve_local_id(conn, "org_nodes", s).await?,
-        None => None,
+    let parent_id = match resolve_optional_ref(conn, "org_nodes", parent_sync.as_deref()).await? {
+        Ok(id) => id,
+        Err(deferred) => return Ok(deferred),
     };
     let depth = json_i64(p, "depth").unwrap_or(0);
     let ancestor_path = json_str(p, "ancestor_path").unwrap_or_default();
@@ -624,9 +846,6 @@ async fn upsert_intervention_request(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "intervention_requests", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let code = json_str(p, "code").unwrap_or_else(|| format!("DI-{entity_sync_id}"));
     let title = json_str(p, "title").unwrap_or_else(|| code.clone());
     let description = json_str(p, "description").unwrap_or_default();
@@ -634,28 +853,36 @@ async fn upsert_intervention_request(
     let origin_type = json_str(p, "origin_type").unwrap_or_else(|| "field".into());
     let updated_at = json_str(p, "updated_at").unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
 
-    let equipment_id = match json_str(p, "equipment_entity_sync_id").as_deref() {
-        Some(s) => resolve_local_id(conn, "equipment", s).await?,
-        None => None,
-    };
-    let org_node_id = match json_str(p, "org_node_entity_sync_id").as_deref() {
-        Some(s) => resolve_local_id(conn, "org_nodes", s).await?,
-        None => None,
-    };
-    let submitter_id = match json_str(p, "submitter_entity_sync_id").as_deref() {
-        Some(s) => resolve_local_id(conn, "user_accounts", s).await?,
-        None => None,
+    let equipment_id =
+        match resolve_optional_ref(conn, "equipment", json_str(p, "equipment_entity_sync_id").as_deref()).await? {
+            Ok(id) => id,
+            Err(deferred) => return Ok(deferred),
+        };
+    let org_node_id =
+        match resolve_optional_ref(conn, "org_nodes", json_str(p, "org_node_entity_sync_id").as_deref()).await? {
+            Ok(id) => id,
+            Err(deferred) => return Ok(deferred),
+        };
+    let submitter_id = match resolve_optional_ref(
+        conn,
+        "user_accounts",
+        json_str(p, "submitter_entity_sync_id").as_deref(),
+    )
+    .await?
+    {
+        Ok(id) => id,
+        Err(deferred) => return Ok(deferred),
     };
 
     let Some(equipment_id) = equipment_id else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_EQUIPMENT".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: "equipment_entity_sync_id could not be resolved".into(),
         });
     };
     let Some(org_node_id) = org_node_id else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_ORG_NODE".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: "org_node_entity_sync_id could not be resolved".into(),
         });
     };
@@ -718,9 +945,6 @@ async fn upsert_work_order(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "work_orders", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let code = json_str(p, "code").unwrap_or_else(|| format!("OT-{entity_sync_id}"));
     let title = json_str(p, "title").unwrap_or_else(|| code.clone());
     let description = json_str(p, "description");
@@ -736,36 +960,58 @@ async fn upsert_work_order(
         .await?
         .map(|r| r.try_get::<i64>("", "id"))
         .transpose()
-        .map_err(|e| AppError::SyncError(format!("wo status: {e}")))?
-        .or(Some(1));
+        .map_err(|e| AppError::SyncError(format!("wo status: {e}")))?;
 
-    let type_id = conn
+    let Some(type_code) = json_str(p, "maintenance_type_code") else {
+        return Ok(ApplyOutcome::Conflict {
+            code: "MISSING_WO_TYPE".into(),
+            message: "work order payload has no maintenance_type_code".into(),
+        });
+    };
+    let Some(type_id) = conn
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            "SELECT id FROM work_order_types ORDER BY id ASC LIMIT 1",
-            [],
+            "SELECT id FROM work_order_types WHERE code = ? LIMIT 1",
+            [type_code.clone().into()],
         ))
         .await?
         .map(|r| r.try_get::<i64>("", "id"))
         .transpose()
         .map_err(|e| AppError::SyncError(format!("wo type: {e}")))?
-        .unwrap_or(1);
+    else {
+        return Ok(ApplyOutcome::Conflict {
+            code: "MISSING_WO_TYPE".into(),
+            message: format!("work order type '{type_code}' not found"),
+        });
+    };
 
-    let equipment_id = match json_str(p, "equipment_entity_sync_id")
-        .or_else(|| json_str(p, "asset_entity_sync_id"))
-        .as_deref()
+    let equipment_id = match resolve_optional_ref(
+        conn,
+        "equipment",
+        json_str(p, "equipment_entity_sync_id")
+            .or_else(|| json_str(p, "asset_entity_sync_id"))
+            .as_deref(),
+    )
+    .await?
     {
-        Some(s) => resolve_local_id(conn, "equipment", s).await?,
-        None => None,
+        Ok(id) => id,
+        Err(deferred) => return Ok(deferred),
     };
-    let responsible_id = match json_str(p, "primary_responsible_entity_sync_id").as_deref() {
-        Some(s) => resolve_local_id(conn, "user_accounts", s).await?,
-        None => None,
+    let responsible_id = match resolve_optional_ref(
+        conn,
+        "user_accounts",
+        json_str(p, "primary_responsible_entity_sync_id").as_deref(),
+    )
+    .await?
+    {
+        Ok(id) => id,
+        Err(deferred) => return Ok(deferred),
     };
-    let team_id = match json_str(p, "assigned_team_entity_sync_id").as_deref() {
-        Some(s) => resolve_local_id(conn, "teams", s).await?,
-        None => None,
-    };
+    let team_id =
+        match resolve_optional_ref(conn, "teams", json_str(p, "assigned_team_entity_sync_id").as_deref()).await? {
+            Ok(id) => id,
+            Err(deferred) => return Ok(deferred),
+        };
     let planned_start = json_str(p, "planned_start");
     let planned_end = json_str(p, "planned_end");
     let scheduled_at = json_str(p, "scheduled_at");
@@ -838,14 +1084,11 @@ async fn upsert_work_order_task(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "work_order_tasks", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let wo_sync = json_str(p, "work_order_entity_sync_id")
         .ok_or_else(|| AppError::ValidationFailed(vec!["work_order_entity_sync_id required".into()]))?;
     let Some(wo_id) = resolve_local_id(conn, "work_orders", &wo_sync).await? else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_WO".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: format!("work_order {wo_sync} not found"),
         });
     };
@@ -908,20 +1151,19 @@ async fn upsert_work_order_intervener(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "work_order_interveners", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let wo_sync = json_str(p, "work_order_entity_sync_id")
         .ok_or_else(|| AppError::ValidationFailed(vec!["work_order_entity_sync_id required".into()]))?;
     let Some(wo_id) = resolve_local_id(conn, "work_orders", &wo_sync).await? else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_WO".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: format!("work_order {wo_sync} not found"),
         });
     };
-    let intervener_id = match json_str(p, "intervener_entity_sync_id").as_deref() {
-        Some(s) => resolve_local_id(conn, "user_accounts", s).await?.unwrap_or(1),
-        None => 1,
+    let intervener_sync = json_str(p, "intervener_entity_sync_id").ok_or_else(|| {
+        AppError::ValidationFailed(vec!["work_order_interveners.intervener_entity_sync_id required".into()])
+    })?;
+    let Some(intervener_id) = resolve_local_id(conn, "user_accounts", &intervener_sync).await? else {
+        return Ok(missing_parent("user_accounts", &intervener_sync));
     };
     let hours = json_f64(p, "hours_worked");
     let notes = json_str(p, "notes");
@@ -978,19 +1220,17 @@ async fn upsert_pm_plan(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "pm_plans", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let code = json_str(p, "code").unwrap_or_else(|| format!("PM-{entity_sync_id}"));
     let title = json_str(p, "title").unwrap_or_else(|| code.clone());
     let strategy = json_str(p, "strategy_type").unwrap_or_else(|| "calendar".into());
     let scope = json_str(p, "asset_scope_type").unwrap_or_else(|| "equipment".into());
     let lifecycle = json_str(p, "lifecycle_status").unwrap_or_else(|| "draft".into());
     let updated_at = json_str(p, "updated_at").unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-    let team_id = match json_str(p, "assigned_team_entity_sync_id").as_deref() {
-        Some(s) => resolve_local_id(conn, "teams", s).await?,
-        None => None,
-    };
+    let team_id =
+        match resolve_optional_ref(conn, "teams", json_str(p, "assigned_team_entity_sync_id").as_deref()).await? {
+            Ok(id) => id,
+            Err(deferred) => return Ok(deferred),
+        };
 
     if resolve_local_id(conn, "pm_plans", entity_sync_id).await?.is_some() {
         conn.execute(Statement::from_sql_and_values(
@@ -1042,14 +1282,11 @@ async fn upsert_pm_plan_version(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "pm_plan_versions", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let plan_sync = json_str(p, "pm_plan_entity_sync_id")
         .ok_or_else(|| AppError::ValidationFailed(vec!["pm_plan_entity_sync_id required".into()]))?;
     let Some(plan_id) = resolve_local_id(conn, "pm_plans", &plan_sync).await? else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_PM_PLAN".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: plan_sync,
         });
     };
@@ -1109,31 +1346,34 @@ async fn upsert_pm_occurrence(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "pm_occurrences", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let plan_sync = json_str(p, "pm_plan_entity_sync_id")
         .ok_or_else(|| AppError::ValidationFailed(vec!["pm_plan_entity_sync_id required".into()]))?;
     let ver_sync = json_str(p, "pm_plan_version_entity_sync_id")
         .ok_or_else(|| AppError::ValidationFailed(vec!["pm_plan_version_entity_sync_id required".into()]))?;
     let Some(plan_id) = resolve_local_id(conn, "pm_plans", &plan_sync).await? else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_PM_PLAN".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: plan_sync,
         });
     };
     let Some(ver_id) = resolve_local_id(conn, "pm_plan_versions", &ver_sync).await? else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_PM_VERSION".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: ver_sync,
         });
     };
     let due_basis = json_str(p, "due_basis").unwrap_or_else(|| "calendar".into());
     let status = json_str(p, "status").unwrap_or_else(|| "forecasted".into());
     let due_at = json_str(p, "due_at");
-    let wo_id = match json_str(p, "linked_work_order_entity_sync_id").as_deref() {
-        Some(s) => resolve_local_id(conn, "work_orders", s).await?,
-        None => None,
+    let wo_id = match resolve_optional_ref(
+        conn,
+        "work_orders",
+        json_str(p, "linked_work_order_entity_sync_id").as_deref(),
+    )
+    .await?
+    {
+        Ok(id) => id,
+        Err(deferred) => return Ok(deferred),
     };
 
     if resolve_local_id(conn, "pm_occurrences", entity_sync_id)
@@ -1185,9 +1425,6 @@ async fn upsert_article(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "articles", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let code = json_str(p, "article_code").unwrap_or_else(|| format!("ART-{entity_sync_id}"));
     let name = json_str(p, "article_name").unwrap_or_else(|| code.clone());
     let updated_at = json_str(p, "updated_at").unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
@@ -1239,9 +1476,6 @@ async fn upsert_warehouse(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "warehouses", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let code = json_str(p, "code").unwrap_or_else(|| format!("WH-{entity_sync_id}"));
     let name = json_str(p, "name").unwrap_or_else(|| code.clone());
     let is_active = json_bool_i64(p, "is_active").max(1);
@@ -1286,14 +1520,11 @@ async fn upsert_stock_location(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "stock_locations", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let wh_sync = json_str(p, "warehouse_entity_sync_id")
         .ok_or_else(|| AppError::ValidationFailed(vec!["warehouse_entity_sync_id required".into()]))?;
     let Some(wh_id) = resolve_local_id(conn, "warehouses", &wh_sync).await? else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_WAREHOUSE".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: wh_sync,
         });
     };
@@ -1347,38 +1578,38 @@ async fn upsert_stock_movement(
         .await?
         .is_some()
     {
-        return Ok(ApplyOutcome::Skipped);
+        return Ok(ApplyOutcome::Unchanged);
     }
     let article_sync = json_str(p, "article_entity_sync_id");
     let loc_sync = json_str(p, "location_entity_sync_id");
     let wh_sync = json_str(p, "warehouse_entity_sync_id");
-    let article_id = match article_sync.as_deref() {
-        Some(s) => resolve_local_id(conn, "articles", s).await?,
-        None => None,
+    let article_id = match resolve_optional_ref(conn, "articles", article_sync.as_deref()).await? {
+        Ok(id) => id,
+        Err(deferred) => return Ok(deferred),
     };
-    let location_id = match loc_sync.as_deref() {
-        Some(s) => resolve_local_id(conn, "stock_locations", s).await?,
-        None => None,
+    let location_id = match resolve_optional_ref(conn, "stock_locations", loc_sync.as_deref()).await? {
+        Ok(id) => id,
+        Err(deferred) => return Ok(deferred),
     };
-    let warehouse_id = match wh_sync.as_deref() {
-        Some(s) => resolve_local_id(conn, "warehouses", s).await?,
-        None => None,
+    let warehouse_id = match resolve_optional_ref(conn, "warehouses", wh_sync.as_deref()).await? {
+        Ok(id) => id,
+        Err(deferred) => return Ok(deferred),
     };
     let Some(article_id) = article_id else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_ARTICLE".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: "article_entity_sync_id required".into(),
         });
     };
     let Some(location_id) = location_id else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_LOCATION".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: "location_entity_sync_id required".into(),
         });
     };
     let Some(warehouse_id) = warehouse_id else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_WAREHOUSE".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: "warehouse_entity_sync_id required".into(),
         });
     };
@@ -1417,9 +1648,6 @@ async fn upsert_stock_reservation(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "stock_reservations", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let article_sync = json_str(p, "article_entity_sync_id")
         .ok_or_else(|| AppError::ValidationFailed(vec!["article_entity_sync_id required".into()]))?;
     let warehouse_sync = json_str(p, "warehouse_entity_sync_id")
@@ -1427,20 +1655,20 @@ async fn upsert_stock_reservation(
     let location_sync = json_str(p, "location_entity_sync_id")
         .ok_or_else(|| AppError::ValidationFailed(vec!["location_entity_sync_id required".into()]))?;
     let Some(article_id) = resolve_local_id(conn, "articles", &article_sync).await? else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_ARTICLE".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: article_sync,
         });
     };
     let Some(warehouse_id) = resolve_local_id(conn, "warehouses", &warehouse_sync).await? else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_WAREHOUSE".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: warehouse_sync,
         });
     };
     let Some(location_id) = resolve_local_id(conn, "stock_locations", &location_sync).await? else {
-        return Ok(ApplyOutcome::Conflict {
-            code: "MISSING_LOCATION".into(),
+        return Ok(ApplyOutcome::Deferred {
+            code: DEFER_MISSING_PARENT.into(),
             message: location_sync,
         });
     };
@@ -1449,8 +1677,8 @@ async fn upsert_stock_reservation(
         Some(s) => match resolve_local_id(conn, "work_orders", s).await? {
             Some(id) => (Some("WORK_ORDER".to_string()), Some(id)),
             None => {
-                return Ok(ApplyOutcome::Conflict {
-                    code: "MISSING_WORK_ORDER".into(),
+                return Ok(ApplyOutcome::Deferred {
+                    code: DEFER_MISSING_PARENT.into(),
                     message: s.to_string(),
                 });
             }
@@ -1521,9 +1749,6 @@ async fn upsert_personnel(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "personnel", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let employee_code = json_str(p, "employee_code").unwrap_or_else(|| format!("P-{entity_sync_id}"));
     let full_name = json_str(p, "full_name")
         .or_else(|| {
@@ -1583,9 +1808,6 @@ async fn upsert_team(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "teams", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let code = json_str(p, "code").unwrap_or_else(|| format!("T-{entity_sync_id}"));
     let name = json_str(p, "name").unwrap_or_else(|| code.clone());
     let updated_at = json_str(p, "updated_at").unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
@@ -1642,9 +1864,6 @@ async fn upsert_media_attachment(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "media_attachments", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let parent_type = json_str(p, "parent_entity_type").unwrap_or_else(|| "unknown".into());
     let parent_sync = json_str(p, "parent_entity_sync_id").unwrap_or_default();
     let content_sha = json_str(p, "content_sha256").unwrap_or_default();
@@ -1717,9 +1936,6 @@ async fn upsert_reference_value(
     row_version: i64,
     p: &Value,
 ) -> AppResult<ApplyOutcome> {
-    if let Some(c) = check_row_version_conflict(conn, "reference_values", entity_sync_id, row_version).await? {
-        return Ok(c);
-    }
     let set_code = json_str(p, "set_code")
         .ok_or_else(|| AppError::ValidationFailed(vec!["reference_values.set_code required".into()]))?;
     let code =

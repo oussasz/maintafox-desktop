@@ -8839,6 +8839,13 @@ export interface SyncOutboxItem {
   rejection_code: string | null;
   rejection_message: string | null;
   origin_machine_id: string | null;
+  /** Server version this change was made on; null when the row was created on this device. */
+  base_row_version: number | null;
+  /** Owning user for user-scoped entities. */
+  owner_user_sync_id: string | null;
+  attempt_count: number;
+  last_attempt_at: string | null;
+  last_error: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -8853,9 +8860,14 @@ export interface SyncInboxItem {
   row_version: number;
   payload_json: string;
   payload_hash: string;
+  /** pending | applied | deferred | conflict | rejected | superseded */
   apply_status: string;
   rejection_code: string | null;
   rejection_message: string | null;
+  server_seq: number | null;
+  owner_user_sync_id: string | null;
+  attempt_count: number;
+  last_attempt_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -8870,14 +8882,12 @@ export interface SyncCheckpoint {
   updated_at: string;
 }
 
+/** The outbox assigns the idempotency key, versions, owner and origin. */
 export interface StageOutboxItemInput {
-  idempotency_key: string;
   entity_type: string;
   entity_sync_id: string;
   operation: "create" | "update" | "delete" | "upsert" | "archive";
-  row_version: number;
   payload_json: string;
-  origin_machine_id?: string | null;
 }
 
 export interface ListOutboxFilter {
@@ -8889,6 +8899,10 @@ export interface SyncAckInput {
   idempotency_key: string;
   entity_sync_id: string;
   operation: "create" | "update" | "delete" | "upsert" | "archive";
+  /** v2 only. */
+  server_seq?: number | null;
+  /** v2 only. */
+  duplicate?: boolean;
 }
 
 export interface SyncRejectedItemInput {
@@ -8905,6 +8919,29 @@ export interface SyncInboundItemInput {
   operation: "create" | "update" | "delete" | "upsert" | "archive";
   row_version: number;
   payload_json: string;
+  /** v2 only. */
+  server_seq?: number | null;
+  /** v2 only; checked against payload_json when present. */
+  payload_hash?: string | null;
+  /** v2 only. */
+  owner_user_sync_id?: string | null;
+  /** v2 only; tombstone. */
+  deleted?: boolean;
+}
+
+/** v2: an outbox item the server refused because the row changed there meanwhile. */
+export interface SyncServerConflictInput {
+  idempotency_key: string;
+  entity_type: string;
+  entity_sync_id: string;
+  local_row_version: number;
+  local_base_row_version: number | null;
+  server_row_version: number;
+  server_operation: string;
+  server_payload_json: string | null;
+  server_payload_hash?: string | null;
+  server_owner_user_sync_id?: string | null;
+  server_deleted?: boolean;
 }
 
 export interface ApplySyncBatchInput {
@@ -8914,6 +8951,8 @@ export interface ApplySyncBatchInput {
   acknowledged_items: SyncAckInput[];
   rejected_items: SyncRejectedItemInput[];
   inbound_items: SyncInboundItemInput[];
+  /** v2 only. */
+  conflict_items?: SyncServerConflictInput[];
   policy_metadata_json?: string | null;
 }
 
@@ -8933,6 +8972,8 @@ export interface ApplySyncBatchResult {
   rejected_count: number;
   inbound_applied_count: number;
   inbound_duplicate_count: number;
+  /** v2 server conflicts recorded for a person to resolve. */
+  conflict_count: number;
   typed_rejections: SyncTypedRejection[];
 }
 
@@ -8958,6 +8999,8 @@ export interface SyncPushPayload {
     object_key: string;
     byte_size: number;
   }> | null;
+  /** v2: users known on this device; their personal rows are delivered here. */
+  current_user_sync_ids: string[];
 }
 
 export interface SyncStateSummary {
@@ -8966,6 +9009,16 @@ export interface SyncStateSummary {
   pending_outbox_count: number;
   rejected_outbox_count: number;
   inbox_error_count: number;
+  /** Sent but not acknowledged yet (sent again on the next exchange). */
+  in_flight_outbox_count: number;
+  /** Gave up after repeated delivery failures; listed as conflicts. */
+  dead_letter_outbox_count: number;
+  /** Inbound rows waiting for a parent row or a newer app version. */
+  deferred_inbox_count: number;
+  /** Inbound rows waiting for a person. */
+  inbox_conflict_count: number;
+  /** Conflicts not resolved yet (all sources). */
+  unresolved_conflict_count: number;
 }
 
 /** Result of applying pending sync_inbox rows to domain tables. */
@@ -8973,7 +9026,10 @@ export interface MaterializeInboxResult {
   processed: number;
   applied: number;
   conflicts: number;
+  /** Already current on this device. */
   skipped: number;
+  /** Waiting for a parent row or a newer app version; retried automatically. */
+  deferred: number;
   errors: string[];
 }
 
@@ -9008,6 +9064,8 @@ export interface SyncConflictRecord {
   resolved_by_id: number | null;
   resolved_at: string | null;
   row_version: number;
+  local_row_version: number | null;
+  inbound_row_version: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -9015,13 +9073,8 @@ export interface SyncConflictRecord {
 export interface ResolveSyncConflictInput {
   conflict_id: number;
   expected_row_version: number;
-  action:
-    | "accept_local"
-    | "accept_remote"
-    | "merge_fields"
-    | "retry_later"
-    | "escalate"
-    | "dismiss";
+  /** accept_local = keep this device's version; accept_remote = take the server's version. */
+  action: "accept_local" | "accept_remote" | "retry_later" | "escalate" | "dismiss";
   resolution_note?: string | null;
 }
 

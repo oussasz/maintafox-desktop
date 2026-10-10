@@ -10,7 +10,6 @@ use crate::wo::workflow::events::emit_action_event;
 use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::domain::{guard_wo_transition, WoStatus, WorkOrder};
 
@@ -339,7 +338,7 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
                     input.wo_id
                 ))
             })?;
-        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(db, &wo, &permit, &Uuid::new_v4().to_string()).await?;
+        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(db, &wo, &permit).await?;
     }
 
     crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;
@@ -564,7 +563,7 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
                     input.wo_id
                 ))
             })?;
-        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(db, &wo, &permit, &Uuid::new_v4().to_string()).await?;
+        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(db, &wo, &permit).await?;
     }
 
     crate::wo::sync_stage::warn_stage_wo(db, wo.id).await;

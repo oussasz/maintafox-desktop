@@ -136,7 +136,7 @@ fn map_personnel_cert(
     })
 }
 
-async fn stage_certification_type(db: &DatabaseConnection, row: &CertificationType) -> AppResult<()> {
+async fn stage_certification_type(db: &impl ConnectionTrait, row: &CertificationType) -> AppResult<()> {
     let payload = CertificationTypeSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -150,20 +150,17 @@ async fn stage_certification_type(db: &DatabaseConnection, row: &CertificationTy
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("certification_types:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_CERTIFICATION_TYPES.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-async fn stage_personnel_certification(db: &DatabaseConnection, row: &PersonnelCertification) -> AppResult<()> {
+async fn stage_personnel_certification(db: &impl ConnectionTrait, row: &PersonnelCertification) -> AppResult<()> {
     let payload = PersonnelCertificationSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -180,20 +177,20 @@ async fn stage_personnel_certification(db: &DatabaseConnection, row: &PersonnelC
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!("personnel_certifications:{}:v{}", row.entity_sync_id, row.row_version),
             entity_type: SYNC_ENTITY_PERSONNEL_CERTIFICATIONS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
     Ok(())
 }
 
-async fn stage_qualification_profile(db: &DatabaseConnection, row: &QualificationRequirementProfile) -> AppResult<()> {
+async fn stage_qualification_profile(
+    db: &impl ConnectionTrait,
+    row: &QualificationRequirementProfile,
+) -> AppResult<()> {
     let ids: Vec<i64> = serde_json::from_str(&row.required_certification_type_ids_json)
         .map_err(|e| AppError::ValidationFailed(vec![format!("required_certification_type_ids_json: {e}")]))?;
     let codes: Vec<String> = serde_json::from_str(&row.applies_to_permit_type_codes_json)
@@ -210,16 +207,10 @@ async fn stage_qualification_profile(db: &DatabaseConnection, row: &Qualificatio
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "qualification_requirement_profiles:{}:v{}",
-                row.entity_sync_id, row.row_version
-            ),
             entity_type: SYNC_ENTITY_QUALIFICATION_REQUIREMENT_PROFILES.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;

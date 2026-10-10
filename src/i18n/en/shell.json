@@ -38,9 +38,25 @@
     "syncCenterTitle": "Sync center",
     "syncCenterConflicts": "Unresolved conflicts",
     "syncCenterRejected": "Rejected outbox items",
-    "resolveLocal": "Keep local version",
-    "resolveRemote": "Keep server version",
-    "noConflicts": "No items need review."
+    "resolveLocal": "Keep this device's version",
+    "resolveRemote": "Take the server's version",
+    "noConflicts": "No items need review.",
+    "dismissConflict": "Dismiss",
+    "conflictVersions": "This device: {{local}} · Server: {{remote}}",
+    "versionUnknown": "unknown",
+    "deferredInbox": "{{count}} received change(s) are waiting for related data or a newer app version. They are applied automatically.",
+    "resolveFailed": "The choice could not be applied: {{message}}",
+    "conflictKind": {
+      "CONCURRENT_EDIT": "Changed on this device and on another device",
+      "SERVER_CONFLICT": "The server already holds a newer version",
+      "STALE_INBOUND": "The server sent an older version than the one here",
+      "EQUAL_VERSION_DIVERGENCE": "Same version number with different content",
+      "MATERIALIZE_ERROR": "A received change could not be applied",
+      "INVALID_INBOUND_PAYLOAD": "A received change was invalid",
+      "OUTBOX_DEAD_LETTER": "A local change could not be sent after repeated attempts",
+      "AUTHORITY_MISMATCH": "The server refused a protected change",
+      "other": "Needs review"
+    }
   },
   "status": {
     "online": "Online",

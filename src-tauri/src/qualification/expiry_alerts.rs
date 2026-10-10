@@ -73,7 +73,7 @@ fn map_event(row: &sea_orm::QueryResult) -> AppResult<TrainingExpiryAlertEvent> 
     })
 }
 
-async fn stage_event(db: &DatabaseConnection, row: &TrainingExpiryAlertEvent) -> AppResult<()> {
+async fn stage_event(db: &impl ConnectionTrait, row: &TrainingExpiryAlertEvent) -> AppResult<()> {
     let payload = TrainingExpiryAlertEventSyncPayload {
         id: row.id,
         entity_sync_id: row.entity_sync_id.clone(),
@@ -87,16 +87,10 @@ async fn stage_event(db: &DatabaseConnection, row: &TrainingExpiryAlertEvent) ->
     stage_outbox_item(
         db,
         StageOutboxItemInput {
-            idempotency_key: format!(
-                "training_expiry_alert_events:{}:v{}",
-                row.entity_sync_id, row.row_version
-            ),
             entity_type: SYNC_ENTITY_TRAINING_EXPIRY_ALERT_EVENTS.to_string(),
             entity_sync_id: row.entity_sync_id.clone(),
             operation: "upsert".to_string(),
-            row_version: row.row_version,
             payload_json,
-            origin_machine_id: None,
         },
     )
     .await?;
