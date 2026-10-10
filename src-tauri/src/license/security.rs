@@ -96,12 +96,29 @@ pub async fn verify_trust_key(db: &impl ConnectionTrait, issuer: &str, key_id: &
 /// Idempotent seed for VPS entitlement/activation trust keys (migration may be missing on older DBs).
 pub async fn ensure_default_licensing_trust_keys(db: &impl ConnectionTrait) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    for (issuer, key_id, purpose) in [
-        ("maintafox-vps", "key-v1", "entitlement_signature"),
-        ("maintafox-vps", "key-rotated-v2", "entitlement_signature"),
-        ("maintafox-vps", "activation-v1", "activation_signature"),
-        ("maintafox-vps", "admin-policy-v1", "admin_policy_action"),
-    ] {
+    // Entitlement key ids come from the Ed25519 trusted-key list so the operational registry
+    // (active / compromised) and the cryptographic keys cannot drift apart.
+    let mut keys: Vec<(String, String, String)> = crate::entitlements::trusted_keys::entitlement_key_ids()
+        .into_iter()
+        .map(|id| {
+            (
+                crate::entitlements::trusted_keys::ENTITLEMENT_ISSUER.to_string(),
+                id,
+                "entitlement_signature".to_string(),
+            )
+        })
+        .collect();
+    keys.push((
+        "maintafox-vps".into(),
+        "activation-v1".into(),
+        "activation_signature".into(),
+    ));
+    keys.push((
+        "maintafox-vps".into(),
+        "admin-policy-v1".into(),
+        "admin_policy_action".into(),
+    ));
+    for (issuer, key_id, purpose) in keys {
         db.execute(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             "INSERT OR IGNORE INTO licensing_trust_keys

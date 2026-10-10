@@ -1,9 +1,10 @@
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
-use sha2::{Digest, Sha256};
 
 use crate::activation::domain::{ActivationPolicySnapshot, ApplyMachineActivationInput};
-use crate::entitlements::domain::{EntitlementEnvelopeInput, ENTITLEMENT_SIGNATURE_ALG_V1};
+use crate::entitlements::domain::{EntitlementEnvelopeInput, ENTITLEMENT_SIGNATURE_ALG};
+use crate::entitlements::test_support::{now_rfc3339, sign_envelope};
+use crate::entitlements::trusted_keys::TEST_ENTITLEMENT_KEY_ID;
 use crate::license::domain::ApplyAdminLicenseActionInput;
 use crate::license::queries;
 
@@ -22,39 +23,10 @@ async fn setup_db() -> DatabaseConnection {
     ))
     .await
     .expect("seed user");
+    crate::license::security::ensure_default_licensing_trust_keys(&db)
+        .await
+        .expect("seed trusted signing keys (as startup.rs does)");
     db
-}
-
-fn sign_envelope(input: &EntitlementEnvelopeInput) -> String {
-    let payload = serde_json::json!({
-        "envelope_id": input.envelope_id,
-        "previous_envelope_id": input.previous_envelope_id,
-        "lineage_version": input.lineage_version,
-        "issuer": input.issuer,
-        "key_id": input.key_id,
-        "signature_alg": input.signature_alg,
-        "tier": input.tier,
-        "state": input.state,
-        "channel": input.channel,
-        "machine_slots": input.machine_slots,
-        "feature_flags_json": input.feature_flags_json,
-        "capabilities_json": input.capabilities_json,
-        "policy_json": input.policy_json,
-        "issued_at": input.issued_at,
-        "valid_from": input.valid_from,
-        "valid_until": input.valid_until,
-        "offline_grace_until": input.offline_grace_until
-    })
-    .to_string();
-    let mut payload_hasher = Sha256::new();
-    payload_hasher.update(payload);
-    let payload_hash = hex::encode(payload_hasher.finalize());
-    let mut hasher = Sha256::new();
-    hasher.update(format!(
-        "{}:{}:{}:{}",
-        input.issuer, input.key_id, payload_hash, "MAINTAFOX_TRUSTED_ISSUER_KEY_V1"
-    ));
-    hex::encode(hasher.finalize())
 }
 
 async fn seed_entitlement_and_activation(db: &DatabaseConnection) {
@@ -63,8 +35,8 @@ async fn seed_entitlement_and_activation(db: &DatabaseConnection) {
         previous_envelope_id: None,
         lineage_version: 1,
         issuer: "maintafox-vps".to_string(),
-        key_id: "key-v1".to_string(),
-        signature_alg: ENTITLEMENT_SIGNATURE_ALG_V1.to_string(),
+        key_id: TEST_ENTITLEMENT_KEY_ID.to_string(),
+        signature_alg: ENTITLEMENT_SIGNATURE_ALG.to_string(),
         tier: "enterprise".to_string(),
         state: "active".to_string(),
         channel: "stable".to_string(),
@@ -73,8 +45,8 @@ async fn seed_entitlement_and_activation(db: &DatabaseConnection) {
         capabilities_json: r#"{"equipment":true,"inventory":true,"finance":true,"planning":true,"sync":true}"#
             .to_string(),
         policy_json: r#"{"grace_allowed_modules":["sync","equipment"]}"#.to_string(),
-        issued_at: "2026-07-26T00:00:00Z".to_string(),
-        valid_from: "2026-07-26T00:00:00Z".to_string(),
+        issued_at: now_rfc3339(),
+        valid_from: now_rfc3339(),
         valid_until: "2099-01-01T00:00:00Z".to_string(),
         offline_grace_until: "2099-01-03T00:00:00Z".to_string(),
         signature: String::new(),
@@ -96,7 +68,7 @@ async fn seed_entitlement_and_activation(db: &DatabaseConnection) {
             trust_score: 99,
             vps_version: 4,
             response_nonce: "nonce-license-1".to_string(),
-            issued_at: "2026-07-26T00:00:00Z".to_string(),
+            issued_at: now_rfc3339(),
             expires_at: "2099-01-01T00:00:00Z".to_string(),
             offline_grace_until: "2099-01-03T00:00:00Z".to_string(),
             revocation_state: "active".to_string(),
@@ -236,8 +208,15 @@ async fn reactivation_restores_write_path_and_recovery_status_message() {
 
     let status = queries::get_license_status_view(&db, 1).await.expect("status");
     assert_eq!(status.entitlement_state, "active");
-    assert_eq!(status.activation_state, "active");
-    assert!(status.actionable_message.contains("healthy"));
+    // Reactivation restores the machine contract. `activation_state` is the product onboarding
+    // state (not seeded in this fixture), so it is not what this admin action controls.
+    assert_eq!(status.machine_activation_state, "active");
+    assert!(
+        !status.actionable_message.contains("suspended")
+            && !status.actionable_message.contains("revocation is pending"),
+        "reactivated licence must not report suspension/pending revocation: {}",
+        status.actionable_message
+    );
 }
 
 #[tokio::test]
@@ -248,7 +227,7 @@ async fn compromise_response_sets_sync_pending_and_forces_revocation() {
         &db,
         crate::license::domain::ApplyLicensingCompromiseResponseInput {
             issuer: "maintafox-vps".to_string(),
-            key_id: "key-v1".to_string(),
+            key_id: TEST_ENTITLEMENT_KEY_ID.to_string(),
             reason: "security drill".to_string(),
             force_revocation: true,
         },

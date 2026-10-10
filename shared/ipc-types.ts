@@ -253,6 +253,8 @@ export interface LicenseStatusView {
   license_edition: string | null;
   entitlement_tier: string | null;
   envelope_id: string | null;
+  /** Signing key of the active envelope (target of compromise responses). */
+  envelope_key_id: string | null;
   verification_result: string | null;
   policy_sync_pending: boolean;
   pending_local_writes: number;
@@ -9055,7 +9057,8 @@ export interface ReplaySyncFailuresResult {
   guard_applied: boolean;
 }
 
-export const ENTITLEMENT_SIGNATURE_ALG_V1 = "sha256:issuer-key-v1";
+/** Ed25519 over the canonical payload (src-tauri/src/entitlements/trusted_keys.rs). */
+export const ENTITLEMENT_SIGNATURE_ALG = "ed25519:v2";
 
 export interface EntitlementEnvelopeInput {
   envelope_id: string;

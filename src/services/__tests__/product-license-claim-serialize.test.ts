@@ -41,7 +41,7 @@ describe("desktop activation claim serialization", () => {
         lineage_version: 1,
         issuer: "maintafox",
         key_id: "k1",
-        signature_alg: "sha256:issuer-key-v1",
+        signature_alg: "ed25519:v2",
         tier: "core",
         state: "active",
         channel: "stable",

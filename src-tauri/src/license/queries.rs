@@ -187,6 +187,7 @@ pub async fn get_license_status_view(db: &DatabaseConnection, user_id: i32) -> A
     let policy_sync_pending = is_policy_sync_pending(db).await?;
     let pending_writes = pending_local_writes(db).await?;
     let active_meta = entitlements::queries::peek_active_envelope_meta(db).await?;
+    let envelope_key_id = entitlements::queries::active_envelope_key_id(db).await?;
     let (envelope_id, verification_result) = match active_meta {
         Some((id, _tier, verification)) => (Some(id), Some(verification)),
         None => (entitlement.envelope_id.clone(), None),
@@ -250,6 +251,7 @@ pub async fn get_license_status_view(db: &DatabaseConnection, user_id: i32) -> A
         license_edition,
         entitlement_tier: entitlement.tier,
         envelope_id,
+        envelope_key_id,
         verification_result,
         policy_sync_pending,
         pending_local_writes: pending_writes,

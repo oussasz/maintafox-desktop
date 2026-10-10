@@ -43,7 +43,7 @@ fn activation_input(contract_id: &str, nonce: &str, slot_assignment_id: &str) ->
         trust_score: 99,
         vps_version: 10,
         response_nonce: nonce.to_string(),
-        issued_at: "2026-04-16T00:00:00Z".to_string(),
+        issued_at: crate::entitlements::test_support::now_rfc3339(),
         expires_at: "2099-01-01T00:00:00Z".to_string(),
         offline_grace_until: "2099-01-03T00:00:00Z".to_string(),
         revocation_state: "active".to_string(),
