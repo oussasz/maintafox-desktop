@@ -1541,7 +1541,7 @@ pub async fn list_sync_conflicts(
     let rows = db
         .query_all(Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
-            &format!(
+            format!(
                 "SELECT {CONFLICT_COLUMNS}
              FROM sync_conflicts
              WHERE (? IS NULL OR conflict_type = ?)

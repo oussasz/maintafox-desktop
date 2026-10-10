@@ -46,7 +46,8 @@ async fn insert_team(db: &impl ConnectionTrait, sync_id: Option<&str>, code: &st
         db,
         "INSERT INTO teams (entity_sync_id, code, name, team_type, status, row_version, created_at, updated_at)
          VALUES (?, ?, ?, 'maintenance', 'active', 1, '2026-10-10T00:00:00Z', '2026-10-10T00:00:00Z')",
-        vec![sync_id.map(str::to_string).into(), code.into(), name.into()],
+        // teams.entity_sync_id is NOT NULL: a blank id stands for "row without identity".
+        vec![sync_id.unwrap_or("").into(), code.into(), name.into()],
     )
     .await;
     scalar_i64(db, "SELECT id FROM teams WHERE code = ?", vec![code.into()]).await

@@ -210,9 +210,11 @@ fn registry_export_matches_shared_file() {
     }
     let committed =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{} is missing ({e}); regenerate it", path.display()));
+    // Compared as JSON values: formatting (line endings, array wrapping) does not matter.
+    let committed: serde_json::Value = serde_json::from_str(&committed).expect("committed registry json");
+    let generated: serde_json::Value = serde_json::from_str(&generated).expect("generated registry json");
     assert_eq!(
-        committed.replace("\r\n", "\n"),
-        generated,
+        committed, generated,
         "shared/sync/entity-registry.json is out of date; regenerate it"
     );
 }
@@ -274,8 +276,9 @@ fn inserts_into_synchronised_tables_set_entity_sync_id() {
         .filter(|e| e.has_stager || e.has_materializer)
         .map(|e| e.table)
         .collect();
+    // `[\s\\]*` also skips Rust string line continuations between the table name and `(`.
     let insert =
-        regex::Regex::new(r"(?is)INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\w+)\s*(\(([^)]*)\))?").expect("insert regex");
+        regex::Regex::new(r"(?is)INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\w+)[\s\\]*(\(([^)]*)\))?").expect("insert regex");
     let mut files = Vec::new();
     rust_sources(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
