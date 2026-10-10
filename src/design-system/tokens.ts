@@ -44,15 +44,33 @@ export const mfCard = {
 
 /** Standalone auth / activation surfaces (login, lock, license gate, …) */
 export const mfAuth = {
-  shell: "flex min-h-screen w-screen items-center justify-center bg-surface-0 px-4",
+  /**
+   * Page canvas. `mf-auth` (styles/auth.css) pins the light brand palette for these screens only;
+   * `min-h-[100dvh]` + vertical padding lets short windows scroll instead of clipping the card.
+   */
+  shell:
+    "mf-auth mf-auth-backdrop flex min-h-[100dvh] w-full flex-col items-center justify-center px-4 py-8 sm:px-6",
   /** Lock screen — same canvas as auth, no card */
-  lockShell: "flex min-h-screen w-full items-center justify-center bg-surface-0 px-4",
-  /** Primary login card — elevated panel shadow from theme */
-  card: "w-full max-w-[420px] rounded-2xl border border-surface-border bg-surface-1 px-10 py-12 shadow-panel animate-in fade-in zoom-in-95 duration-300",
+  lockShell:
+    "mf-auth mf-auth-backdrop flex min-h-[100dvh] w-full flex-col items-center justify-center px-4 py-8 sm:px-6",
+  /** Primary login card: compact, white, subtle border and restrained shadow. */
+  card: "w-full max-w-[400px] rounded-xl border border-surface-border bg-surface-1 p-6 shadow-[var(--mfa-shadow-card)] motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200 sm:p-8",
   cardCompact:
-    "w-full max-w-md rounded-xl border border-surface-border bg-surface-1 p-6 shadow-panel",
-  cardBrandSeparator: "mb-6 flex justify-center border-b border-surface-border pb-5",
-  linkPrimary: "text-sm font-medium text-primary hover:text-primary-dark transition-colors",
+    "w-full max-w-[480px] rounded-xl border border-surface-border bg-surface-1 p-6 shadow-[var(--mfa-shadow-card)] motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200 sm:p-8",
+  cardBrandSeparator: "mb-6 flex justify-center",
+  title: "text-xl font-semibold tracking-tight text-text-primary",
+  subtitle: "mt-1.5 text-sm leading-relaxed text-text-secondary",
+  linkPrimary:
+    "rounded-sm text-sm font-medium text-[var(--mfa-blue)] underline-offset-4 transition-colors hover:text-[var(--mfa-blue-dark)] hover:underline disabled:opacity-50",
+  /** Primary action: logo orange with navy text (6.7:1). One per screen. */
+  buttonPrimary:
+    "inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--mfa-orange)] px-4 text-[15px] font-semibold text-[var(--mfa-navy)] shadow-sm transition-colors hover:bg-[var(--mfa-orange-dark)] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50",
+  /** Secondary action: white with brand-blue outline. */
+  buttonSecondary:
+    "inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-[var(--mfa-blue)] bg-white px-4 text-[15px] font-semibold text-[var(--mfa-blue)] transition-colors hover:bg-[var(--mfa-blue-tint)] disabled:cursor-not-allowed disabled:opacity-50",
+  /** Tertiary action: text only. */
+  buttonGhost:
+    "inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium text-[var(--mfa-blue)] transition-colors hover:bg-[var(--mfa-blue-tint)] disabled:cursor-not-allowed disabled:opacity-50",
 } as const;
 
 /** Form controls aligned with shadcn `Input` + DI/OT filter bars */
@@ -61,10 +79,24 @@ export const mfInput = {
   filterSelect: "h-8 text-sm",
   /** Auth-style fields (login) — use with `Input` or native `<input>` + cn() */
   authField:
-    "w-full rounded-lg border border-surface-border bg-surface-2 py-2.5 pl-10 pr-3 text-sm text-text-primary shadow-sm placeholder:text-text-muted transition-all focus:border-primary-light focus:bg-surface-1 focus:outline-none focus:ring-2 focus:ring-primary/25",
+    "h-11 w-full rounded-lg border border-[var(--mfa-border-strong)] bg-white pl-10 pr-3 text-[15px] text-text-primary placeholder:text-text-muted transition-[border-color,box-shadow] focus:border-[var(--mfa-blue)] focus:outline-none focus:ring-[3px] focus:ring-[var(--mfa-blue)]/20 disabled:cursor-not-allowed disabled:bg-surface-2 disabled:opacity-70 aria-[invalid=true]:border-[var(--mfa-danger)]",
   authFieldWithTrailing:
-    "w-full rounded-lg border border-surface-border bg-surface-2 py-2.5 pl-10 pr-10 text-sm text-text-primary shadow-sm placeholder:text-text-muted transition-all focus:border-primary-light focus:bg-surface-1 focus:outline-none focus:ring-2 focus:ring-primary/25",
-  authLabel: "mb-1.5 block text-sm font-medium text-text-secondary",
+    "h-11 w-full rounded-lg border border-[var(--mfa-border-strong)] bg-white pl-10 pr-10 text-[15px] text-text-primary placeholder:text-text-muted transition-[border-color,box-shadow] focus:border-[var(--mfa-blue)] focus:outline-none focus:ring-[3px] focus:ring-[var(--mfa-blue)]/20 disabled:cursor-not-allowed disabled:bg-surface-2 disabled:opacity-70 aria-[invalid=true]:border-[var(--mfa-danger)]",
+  authLabel: "mb-1.5 block text-[13px] font-medium text-text-primary",
+} as const;
+
+/**
+ * Alert surfaces for authentication screens (scoped to `.mf-auth`): orange for attention,
+ * red for errors, blue for information. Each is paired with an icon and `role` at the call site.
+ */
+export const mfAuthAlert = {
+  info: "rounded-lg border border-[var(--mfa-border)] bg-[var(--mfa-blue-tint)] px-3.5 py-3 text-sm text-text-primary",
+  warning:
+    "rounded-lg border border-[var(--mfa-orange-border)] bg-[var(--mfa-orange-tint)] px-3.5 py-3 text-sm text-text-primary",
+  danger:
+    "rounded-lg border border-[#f3b8b3] bg-[var(--mfa-danger-tint)] px-3.5 py-3 text-sm text-text-primary",
+  success:
+    "rounded-lg border border-[#b5e0c4] bg-[var(--mfa-success-tint)] px-3.5 py-3 text-sm text-text-primary",
 } as const;
 
 /** Alert / callout surfaces (login errors, license meta, …) */

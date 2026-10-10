@@ -2,8 +2,8 @@ import { ArrowRight, Eye, EyeOff, Info, Lock, User } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { AuthButton } from "@/components/auth/shell/AuthPrimitives";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useProductLicenseGateRefresh } from "@/contexts/product-license-gate-context";
@@ -103,7 +103,7 @@ export function SetupInitialAdminPage() {
     <div className={mfAuth.shell}>
       <div className={mfAuth.cardCompact}>
         <div className={mfAuth.cardBrandSeparator}>
-          <MaintafoxWordmark size="md" align="center" />
+          <MaintafoxWordmark size="md" tone="auth" align="center" />
         </div>
         <h1 className="text-lg font-semibold text-text-primary">Create initial administrator</h1>
         <p className="mt-2 text-sm text-text-secondary">
@@ -207,7 +207,11 @@ export function SetupInitialAdminPage() {
             </p>
           </div>
           {error ? <p className="text-sm text-text-danger">{error}</p> : null}
-          <Button type="submit" className="w-full" disabled={submitting || resettingActivation}>
+          <AuthButton
+            type="submit"
+            loading={submitting}
+            disabled={submitting || resettingActivation}
+          >
             {submitting ? (
               "Creating…"
             ) : (
@@ -216,7 +220,7 @@ export function SetupInitialAdminPage() {
                 <ArrowRight className="ml-2 inline h-4 w-4" />
               </>
             )}
-          </Button>
+          </AuthButton>
         </form>
         <div className="mt-5 border-t border-surface-border pt-4 text-center">
           <p className="mb-2 text-xs text-text-secondary">

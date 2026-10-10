@@ -37,7 +37,7 @@ export function MaintafoxWordmark({
 }: MaintafoxWordmarkProps) {
   const s = SIZE[size];
   const textTone =
-    tone === "auth" ? "font-bold text-primary-dark" : "font-semibold text-text-primary";
+    tone === "auth" ? "font-bold text-text-primary" : "font-semibold text-text-primary";
 
   return (
     <div

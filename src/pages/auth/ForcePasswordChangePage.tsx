@@ -1,8 +1,8 @@
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AuthButton } from "@/components/auth/shell/AuthPrimitives";
 import { MaintafoxWordmark } from "@/components/branding/MaintafoxWordmark";
-import { Button } from "@/components/ui/button";
 import { mfAuth } from "@/design-system/tokens";
 
 interface ForcePasswordChangePageProps {
@@ -44,7 +44,7 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
     <div className={mfAuth.shell}>
       <div className={mfAuth.cardCompact}>
         <div className="mb-8 flex justify-center">
-          <MaintafoxWordmark size="lg" align="center" tone="auth" />
+          <MaintafoxWordmark size="md" align="center" tone="auth" />
         </div>
 
         <div className="mb-6">
@@ -106,9 +106,9 @@ export function ForcePasswordChangePage({ onComplete }: ForcePasswordChangePageP
             </div>
           )}
 
-          <Button type="submit" className="w-full font-medium" disabled={loading}>
+          <AuthButton type="submit" loading={loading} disabled={loading}>
             {loading ? t("login.form.submitting") : t("session.forcePasswordChange.submit")}
-          </Button>
+          </AuthButton>
         </form>
       </div>
     </div>

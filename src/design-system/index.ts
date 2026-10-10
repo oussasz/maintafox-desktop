@@ -1,6 +1,7 @@
 export {
   mfAlert,
   mfAuth,
+  mfAuthAlert,
   mfButton,
   mfChart,
   mfChip,

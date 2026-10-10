@@ -1,0 +1,83 @@
+/*
+ * Authentication surfaces (sign-in, licence activation, admin setup, lock, password change).
+ *
+ * `.mf-auth` pins a light, brand-true palette on these screens only, whatever theme the app is in,
+ * and re-points the shared theme variables (surface-*, text-*, border, ring) so base components
+ * (Input, Label, dialogs opened from these screens) inherit it. Nothing outside `.mf-auth` changes.
+ *
+ * Palette (logo-derived): deep navy typography, brand blue for interactive elements,
+ * vivid logo orange for the primary action and attention states, white and icy-blue surfaces.
+ * Contrast: navy on white 16:1, secondary text 6.9:1, muted text 4.6:1, navy on orange 6.7:1.
+ */
+.mf-auth {
+  color-scheme: light;
+
+  --mfa-navy: #0b1f3a;
+  --mfa-blue: #0049ac;
+  --mfa-blue-dark: #003a8c;
+  --mfa-blue-tint: #e6eefb;
+  --mfa-orange: #f68714;
+  --mfa-orange-dark: #e8780a;
+  --mfa-orange-tint: #fff4e6;
+  --mfa-orange-border: #f9c98a;
+  --mfa-ice: #eef4fc;
+  --mfa-border: #d5e0ee;
+  --mfa-border-strong: #bccadd;
+  --mfa-danger: #b42318;
+  --mfa-danger-tint: #fdeceb;
+  --mfa-success: #117a3d;
+  --mfa-success-tint: #e7f6ed;
+
+  --surface-0: #f4f8fd;
+  --surface-1: #ffffff;
+  --surface-2: #f3f7fc;
+  --surface-3: #e6eef8;
+  --surface-border: var(--mfa-border);
+  --text-primary: var(--mfa-navy);
+  --text-secondary: #445874;
+  --text-muted: #62758e;
+  --text-danger: var(--mfa-danger);
+  --text-success: var(--mfa-success);
+  --text-warning: #9a4d00;
+
+  --background: var(--surface-0);
+  --foreground: var(--text-primary);
+  --card: var(--surface-1);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface-1);
+  --popover-foreground: var(--text-primary);
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-muted);
+  --border: var(--mfa-border);
+  --input: var(--mfa-border-strong);
+  --ring: var(--mfa-blue);
+
+  --mfa-shadow-card: 0 1px 2px rgba(11, 31, 58, 0.05), 0 12px 32px -12px rgba(11, 31, 58, 0.16);
+
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Page backdrop: white fading to icy blue. Subtle by design — no decoration. */
+.mf-auth-backdrop {
+  background-image: linear-gradient(180deg, #ffffff 0%, #f1f6fc 55%, #e9f1fb 100%);
+}
+
+/* Keyboard focus must stay visible on every interactive element of these screens. */
+.mf-auth :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--mfa-blue);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mf-auth *,
+  .mf-auth *::before,
+  .mf-auth *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
