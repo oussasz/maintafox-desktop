@@ -115,6 +115,101 @@ Each phase has **exit criteria**. A phase is not done until every criterion is m
 - A new device bootstraps from a snapshot.
 - Sync continues while the UI window is closed.
 
+#### Phase 2 execution plan (agreed 2026-10-10)
+
+**Owner decisions**
+- **Conflicts:** a person decides. A concurrent edit becomes a conflict shown in the Sync Center
+  ("keep mine / take theirs" actually applies the choice). Last-write-wins is never applied silently.
+- **Personal items** (notification read state, dashboard layouts, saved filters) sync per user,
+  delivered only to that user's devices.
+- **All** control-API data moves to Postgres in this phase, not only sync. Phase 3 item D1 is
+  pulled forward.
+- Steps 2.1 (server) and 2.2 (desktop) run in **parallel sessions**. Then come 2.3 → 2.5.
+
+**Findings that drive the work** (research on 2026-10-10)
+- **Server:**
+  - The exchange is not atomic, and the device cursor advances before the response is saved, so
+    inbound items can be lost.
+  - A device whose last 300 rows are its own is starved forever (`fanout.ts:30`).
+  - Idempotency replay ignores body changes and is scoped per tenant, not per device.
+  - The checkpoint is tenant-global and unsigned.
+  - There is no conflict check, no current-state table, no tombstones, no snapshot endpoint, no
+    entity allowlist (`validate.ts:26`) and no retention.
+  - On Postgres, tenant delete hits SQLite-only tables.
+- **Desktop:**
+  - Only 20 of 81 entity types are applied inbound. 54 are staged but Skipped *and marked
+    applied*, so they are lost even after materializers exist. 7 constants have nothing behind
+    them.
+  - About 100 business tables are not synced.
+  - WO, personnel, org and reference rows lack a stable `entity_sync_id`: the stager falls back to
+    the code or a fresh random UUID per call.
+  - Staging runs after commit: about 80 call sites only warn, and the legacy modules fail the
+    command after commit.
+  - Legacy payloads carry local integer FKs.
+  - Equal `row_version` is Skipped, so concurrent edits go undetected.
+  - Materialize conflicts are invisible, and conflict resolution does not touch domain data.
+  - Transport is webview `fetch`, and media manifests are withheld.
+
+**2.1 Server protocol v2 + Postgres** (vendor-console)
+- **Versioned migrations; all API data on Postgres.**
+  - Includes tenants, licences, activations, users, audit hash chain, support, payments,
+    edition catalog and sync.
+  - A one-shot SQLite → Postgres copy with row counts and hash-chain verification, backup first,
+    and a rollback path.
+- **Atomic exchange:** one transaction covering ingress, conflict check, state upsert, cursor and
+  idempotency record.
+  - Idempotency is per device and stores the request hash; the same key with a different body
+    returns 409.
+  - The cursor advances only with the saved response, and the starvation bug is fixed.
+- **Current-state table** keyed by `(tenant, entity_type, entity_sync_id)`.
+  - An incoming item carries `base_row_version`. A mismatch returns a `conflict` item with the
+    server row and is never applied silently.
+  - Deletes become tombstones.
+- **Signed per-device checkpoints.**
+- **Snapshot endpoint** for paged bootstrap, then a switch to deltas.
+- **Typed entity registry** shared with the desktop; unknown types are rejected.
+- **Per-user scope:** an item with `owner_user_sync_id` is delivered only to that user's devices.
+- **Retention and compaction** of the append log.
+- **Protocol `v2`** alongside `v1` until all desktops are updated.
+- Tests cover concurrency, a crash mid-exchange, replay, starvation, conflicts, snapshot, and
+  Postgres in CI.
+
+**2.2 Desktop foundations** (desktop)
+- **Stable `entity_sync_id`** on every business insert, plus a backfill migration; stagers never
+  invent IDs.
+- **Staging inside the business transaction**: `warn_stage` is removed, and a failed stage fails
+  the write. The outbox gains attempt/in-flight/dead-letter state and `origin_machine_id`.
+- **A single sync entity registry** (entity → stager → materializer → conflict policy → scope).
+  - A CI test fails on any business table without an entry or an explicit local-only mark.
+  - Unknown inbound types stay `deferred`, not `applied`.
+- **Conflicts:**
+  - Materialize conflicts land in `sync_conflicts`.
+  - Accept-local re-stages; accept-remote applies the inbound payload.
+  - Equal-version divergence is detected through `base_row_version`.
+
+**2.3 Rust sync worker:**
+- `reqwest` with rustls in the `BackgroundTaskSupervisor` (task id `sync`).
+- Retry and backoff, network awareness, pause/resume.
+- Sends the manifests and uploads media.
+- Runs while the window is closed. The webview transport is removed.
+
+**2.4 Coverage by domain:** legacy payloads move to sync-id references, plus stagers and
+materializers for:
+- inventory/procurement
+- WO details
+- PM/planning
+- finance
+- personnel/qualification
+- inspections/permits
+- RAMS models
+- config/reference/notifications/reports
+- per-user items
+
+**2.5 Proof:**
+- A docker-compose harness (API + Postgres + 3 headless desktop DBs) runs the scenarios in the
+  Phase 2 test-harness list above.
+- A registry-generated round-trip test covers every entity.
+
 ### Phase 3 — Control plane hardening · *API*
 
 | Item | Detail |
