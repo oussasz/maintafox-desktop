@@ -611,6 +611,44 @@ Work is on branch `phase0/security-hardening` in both repos. Each side has a bas
   deployed. Media download, two people editing at once through the real UI, and very large
   tenants (snapshot size, time) are not covered by the harness.
 
+### Phase 2 leftovers — files, numbers, history ids, large tenants (2026-10-11)
+
+- **1. Files from other devices** (desktop `235304c8`, vendor `1ff8562`): received
+  `media_attachments` rows queue a download (migration 165); the sync worker fetches the file
+  through `presign-get`, checks size and SHA-256 while streaming, and only then moves it into
+  place; retries with backoff, never blocks sync. WO/DI attachments, asset photos and library
+  documents show "not downloaded yet / download failed, retry / not on this device" (FR/EN). The
+  document library now syncs (row + file); archives stay device-local (no production writer).
+  Fixed on the way: asset photo upload re-read the wrong row. Server: `library_documents` added to
+  the registry (deploy).
+- **2. Record numbers** (see SYNC_STRATEGY §6a): new WO/DI/personnel/permit numbers carry a
+  4-character device code (`OT-7KQ2-0001`), so devices never hand out the same number; old numbers
+  unchanged. A clash (old numbers, or two devices sharing a code) is a `CODE_CLASH` conflict with
+  one action, "renumber the record on this device"; never renamed silently. Migration 166 re-types
+  clashes already recorded as technical errors.
+- **3. History ids** (SYNC_STRATEGY §6b): audit targets/details, activity summaries, admin
+  scope/diff, request and schedule change details and notification payloads travel as sync ids;
+  rows received before this version are marked and shown as "from another device" (migration 167).
+  Fixed on the way: article stock state events could not be sent (unmapped type); notification
+  de-duplication keys no longer travel (they would suppress unrelated events on another device).
+- **4. Large tenant:** measured with `pnpm sync:harness --large N` (SYNC_STRATEGY §12). Before:
+  a bootstrap of even 4 000 rows left almost every row unapplied (waiting rows blocked the queue),
+  and a snapshot over ~60 000 rows could never finish (server 429 restarted it from page 1). After:
+  100 008 work orders (333 574 rows) bootstrap in 15.5 min on the development PC (671 MB received,
+  peak memory 202 MB, device file 1.47 GB, 0 conflicts); the server's snapshot page query takes
+  ~6.5 ms; one change in steady state travels in < 50 ms. Fixes are desktop-only (apply order,
+  chunked transactions, two indexes, resumable snapshot, 1 000-row pages); no server change.
+  Follow-up: compact applied inbox rows (they double the device file during a bootstrap).
+- **Tests:** full `cargo test --lib`: 1022 passed, 0 failed, 2 ignored (the two
+  harness tests, run through `pnpm sync:harness`), 91 min; `pnpm sync:harness`: 11 scenarios
+  pass (incl. 9 files through object storage, 10 number clash); `cargo clippy --lib -- -D
+  warnings` clean; `pnpm typecheck` clean; vitest (sync, activity, admin, stores): 39 passed;
+  vendor `test:sync-v2` passes. Commits: desktop 235304c8, 52c82684, 8201a98a; vendor 1ff8562
+  (deploy: registry gains `library_documents`).
+- **Not verified here:** uploads/downloads against real MinIO (the harness uses a local
+  S3-compatible stand-in that checks the presigned query but not the signature); the new UI states
+  in the running app (covered by component tests only); timings on a field PC.
+
 ## 6. Risks and open points
 
 - **D2 departs from the PRD.** The server would use a generic current-state table instead of typed per-entity tables, so the PRD needs an update if you approve it.
