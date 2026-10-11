@@ -530,11 +530,12 @@
       "conflict_policy": "operator_review",
       "apply_priority": 11,
       "parents": [
-        "ram_ishikawa_diagrams",
-        "work_orders",
+        "fmeca_analyses",
+        "pm_plan_versions",
         "pm_plans",
+        "ram_ishikawa_diagrams",
         "reference_values",
-        "fmeca_analyses"
+        "work_orders"
       ],
       "sync_status": "synced"
     },
@@ -1476,11 +1477,13 @@
       "entity_type": "rcm_decisions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 6,
+      "apply_priority": 11,
       "parents": [
+        "pm_plan_versions",
         "pm_plans",
+        "rcm_studies",
         "reference_values",
-        "rcm_studies"
+        "work_orders"
       ],
       "sync_status": "synced"
     },

@@ -2,6 +2,16 @@ import { z } from "zod";
 
 import { invoke } from "@/lib/ipc-invoke";
 import type {
+  ApplyRcmLogicInput,
+  FmecaCriticality,
+  FmecaCriticalityEvidence,
+  FmecaCriticalityInput,
+  PmRevisionFromSourceInput,
+  RamsSourceAction,
+  RcmAnswers,
+  RcmDecisionLogic,
+  RcmRecommendation,
+  WoFromSourceInput,
   CostOfFailureFilter,
   CostOfFailureRow,
   DeactivateFailureCodeInput,
@@ -776,6 +786,112 @@ export async function listRcmDecisions(studyId: number): Promise<RcmDecision[]> 
 export async function upsertRcmDecision(input: UpsertRcmDecisionInput): Promise<RcmDecision> {
   const raw = await invoke<unknown>("upsert_rcm_decision", { input });
   return RcmDecisionSchema.parse(raw);
+}
+
+const RcmAnswersSchema = z.object({
+  failure_evident: z.boolean(),
+  safety_or_environmental: z.boolean(),
+  operational_impact: z.boolean(),
+  multiple_failure_affects_safety: z.boolean(),
+  on_condition_feasible: z.boolean(),
+  scheduled_restoration_feasible: z.boolean(),
+  scheduled_discard_feasible: z.boolean(),
+  failure_finding_feasible: z.boolean(),
+  combination_feasible: z.boolean(),
+  weibull_beta: z.number().nullable(),
+});
+
+const RcmDecisionLogicSchema = z.object({
+  decision_id: z.number(),
+  row_version: z.number(),
+  selected_tactic: z.string(),
+  consequence_category: z.string(),
+  justification: z.string(),
+  recommended_tactic: z.string().nullable(),
+  answers: RcmAnswersSchema.nullable(),
+  path: z.array(z.string()),
+  linked_pm_plan_id: z.number().nullable(),
+  linked_pm_plan_version_id: z.number().nullable(),
+  pm_plan_code: z.string().nullable(),
+  pm_version_no: z.number().nullable(),
+  linked_work_order_id: z.number().nullable(),
+  work_order_code: z.string().nullable(),
+});
+
+const RamsSourceActionSchema = z.object({
+  source_type: z.enum(["fmeca_item", "rcm_decision"]),
+  source_id: z.number(),
+  pm_plan_version_id: z.number().nullable(),
+  pm_version_no: z.number().nullable(),
+  work_order_id: z.number().nullable(),
+  work_order_code: z.string().nullable(),
+});
+
+export async function previewRcmRecommendation(answers: RcmAnswers): Promise<RcmRecommendation> {
+  const raw = await invoke<unknown>("preview_rcm_recommendation", { answers });
+  return z
+    .object({
+      consequence_category: z.string(),
+      recommended_tactic: z.string(),
+      redesign_compulsory: z.boolean(),
+      path: z.array(z.string()),
+    })
+    .parse(raw);
+}
+
+export async function applyRcmDecisionLogic(input: ApplyRcmLogicInput): Promise<RcmDecisionLogic> {
+  const raw = await invoke<unknown>("apply_rcm_decision_logic", { input });
+  return RcmDecisionLogicSchema.parse(raw);
+}
+
+export async function listRcmDecisionLogic(studyId: number): Promise<RcmDecisionLogic[]> {
+  const raw = await invoke<unknown>("list_rcm_decision_logic", { studyId });
+  return z.array(RcmDecisionLogicSchema).parse(raw);
+}
+
+export async function createPmRevisionFromRamsSource(
+  input: PmRevisionFromSourceInput,
+): Promise<RamsSourceAction> {
+  const raw = await invoke<unknown>("create_pm_revision_from_rams_source", { input });
+  return RamsSourceActionSchema.parse(raw);
+}
+
+export async function createWoFromRamsSource(input: WoFromSourceInput): Promise<RamsSourceAction> {
+  const raw = await invoke<unknown>("create_wo_from_rams_source", { input });
+  return RamsSourceActionSchema.parse(raw);
+}
+
+export async function getFmecaCriticalityEvidence(
+  itemId: number,
+): Promise<FmecaCriticalityEvidence> {
+  const raw = await invoke<unknown>("get_fmeca_criticality_evidence", { itemId });
+  return z
+    .object({
+      mode_failures: z.number(),
+      total_failures: z.number(),
+      mode_ratio: z.number().nullable(),
+      failure_rate_per_hour: z.number().nullable(),
+      kpi_period_end: z.string().nullable(),
+    })
+    .parse(raw);
+}
+
+export async function computeFmecaCriticality(
+  input: FmecaCriticalityInput,
+): Promise<FmecaCriticality> {
+  const raw = await invoke<unknown>("compute_fmeca_criticality", { input });
+  return z
+    .object({
+      item_id: z.number(),
+      row_version: z.number(),
+      effect_probability: z.number(),
+      mode_ratio: z.number(),
+      failure_rate_per_hour: z.number(),
+      operating_hours: z.number(),
+      criticality_number: z.number(),
+      analysis_criticality: z.number(),
+    })
+    .parse(raw);
 }
 
 export async function deleteRcmDecision(id: number): Promise<void> {

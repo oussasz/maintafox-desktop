@@ -11,6 +11,9 @@ pub mod queries;
 #[cfg(test)]
 mod queries_tests;
 pub mod ram_review;
+pub mod rcm_loop;
+#[cfg(test)]
+mod rcm_loop_tests;
 pub mod readiness;
 pub mod readiness_gate;
 pub mod weibull_fit;

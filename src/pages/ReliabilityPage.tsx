@@ -2,11 +2,13 @@ import { listen } from "@tauri-apps/api/event";
 import * as htmlToImage from "html-to-image";
 import { FlaskConical, LineChart } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { RamMethodAssumptions } from "@/components/RamMethodAssumptions";
 import { ModulePageShell } from "@/components/layout/ModulePageShell";
+import { FmecaActionsDialog, RcmDecisionDialog } from "@/components/reliability/RamsLoopDialogs";
 import { mfChart } from "@/design-system/tokens";
 import { cn } from "@/lib/utils";
 import { listPmPlans } from "@/services/pm-service";
@@ -273,6 +275,7 @@ function KpiSnapshotPlotDetail({
 }
 
 export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: number | null } = {}) {
+  const { t } = useTranslation("reliability");
   const { embedded = false, equipmentId = null } = props;
   const equipSeed = embedded && equipmentId != null ? String(equipmentId) : "1";
   const location = useLocation();
@@ -352,6 +355,8 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
   const [rcmEquipFilter, setRcmEquipFilter] = useState("");
   const [rcmStudies, setRcmStudies] = useState<RcmStudy[]>([]);
   const [rcmSelectedId, setRcmSelectedId] = useState<number | null>(null);
+  const [rcmLogicDecisionId, setRcmLogicDecisionId] = useState<number | null>(null);
+  const [fmecaActionsItem, setFmecaActionsItem] = useState<{ id: number; rv: number } | null>(null);
   const [rcmNewEquip, setRcmNewEquip] = useState(equipSeed);
   const [rcmNewTitle, setRcmNewTitle] = useState("");
   const [rcmDecisions, setRcmDecisions] = useState<RcmDecision[]>([]);
@@ -2581,6 +2586,13 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                           <button
                             type="button"
                             className="mr-2 text-fg-2 underline hover:text-fg-1"
+                            onClick={() => setFmecaActionsItem({ id: it.id, rv: it.row_version })}
+                          >
+                            {t("rcmLoop.openActions")}
+                          </button>
+                          <button
+                            type="button"
+                            className="mr-2 text-fg-2 underline hover:text-fg-1"
                             onClick={() => {
                               setFmItemId(it.id);
                               setFmItemRv(it.row_version);
@@ -2833,6 +2845,13 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
                           {d.functional_failure}
                         </td>
                         <td className="py-1 pr-2">
+                          <button
+                            type="button"
+                            className="mr-2 text-fg-2 underline hover:text-fg-1"
+                            onClick={() => setRcmLogicDecisionId(d.id)}
+                          >
+                            {t("rcmLoop.openLogic")}
+                          </button>
                           <button
                             type="button"
                             className="mr-2 text-fg-2 underline hover:text-fg-1"
@@ -3797,6 +3816,22 @@ export function ReliabilityPage(props: { embedded?: boolean; equipmentId?: numbe
       bodyClassName="p-4 text-sm text-fg-1"
     >
       {workspace}
+      {rcmLogicDecisionId != null && rcmSelectedId != null ? (
+        <RcmDecisionDialog
+          studyId={rcmSelectedId}
+          decisionId={rcmLogicDecisionId}
+          onClose={() => setRcmLogicDecisionId(null)}
+          onSaved={() => void loadRcmDecisionsList()}
+        />
+      ) : null}
+      {fmecaActionsItem != null ? (
+        <FmecaActionsDialog
+          itemId={fmecaActionsItem.id}
+          rowVersion={fmecaActionsItem.rv}
+          onClose={() => setFmecaActionsItem(null)}
+          onSaved={() => void loadFmecaItemsList()}
+        />
+      ) : null}
     </ModulePageShell>
   );
 }

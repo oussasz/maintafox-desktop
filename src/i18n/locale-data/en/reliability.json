@@ -240,5 +240,71 @@
     "presentationSeedDone": "Demo seed complete: {{wo}} WOs, β={{beta}}, η={{eta}}, Markov #{{markov}}.",
     "presentationSeedSkipped": "Demo seed already present — analytics refreshed.",
     "presentationSeedPermission": "adm.settings required to generate demo RAMS data."
+  },
+  "rcmLoop": {
+    "openLogic": "RCM logic",
+    "openActions": "Actions & criticality",
+    "logicTitle": "RCM decision logic",
+    "questions": {
+      "failure_evident": "Will the loss of function be evident to operators under normal circumstances?",
+      "safety_or_environmental": "Could the failure hurt someone or breach an environmental standard?",
+      "operational_impact": "Does it affect output, quality, service or operating cost?",
+      "multiple_failure_affects_safety": "Hidden failure: would the multiple failure have safety or environmental consequences?",
+      "on_condition_feasible": "Is an on-condition task feasible (detectable warning before failure) and worth doing?",
+      "scheduled_restoration_feasible": "Is scheduled restoration feasible (identifiable wear-out age) and worth doing?",
+      "scheduled_discard_feasible": "Is scheduled discard feasible and worth doing?",
+      "failure_finding_feasible": "Hidden failure: is a failure-finding task feasible and worth doing?",
+      "combination_feasible": "Safety: does a combination of tasks bring the risk to a tolerable level?",
+      "weibull_beta": "Weibull shape β of this failure mode (optional)"
+    },
+    "yes": "Yes",
+    "no": "No",
+    "consequence": "Consequence",
+    "recommended": "Recommended tactic",
+    "compulsory": "Redesign is compulsory.",
+    "path": "Decision path",
+    "retained": "Tactic retained",
+    "justification": "Justification (required when different from the recommendation)",
+    "apply": "Record the decision",
+    "consequences": {
+      "hidden": "Hidden",
+      "safety_environmental": "Safety / environment",
+      "operational": "Operational",
+      "non_operational": "Non-operational"
+    },
+    "tactics": {
+      "condition_based": "Condition-based",
+      "time_based": "Time-based (restoration / discard)",
+      "failure_finding": "Failure finding",
+      "run_to_failure": "Run to failure",
+      "redesign": "Redesign"
+    },
+    "pmRevision": "Create a PM plan revision",
+    "pmPlan": "PM plan",
+    "pmPlanPlaceholder": "Choose a PM plan",
+    "changeNote": "Why the plan changes",
+    "createRevision": "Create the draft version",
+    "revisionCreated": "Draft version {{no}} created for {{plan}}.",
+    "woType": "Work order type",
+    "createWo": "Create a work order",
+    "woCreated": "Work order {{code}} created.",
+    "linkedPm": "Linked PM: {{plan}} v{{no}}",
+    "linkedWo": "Linked work order: {{code}}",
+    "criticality": "Criticality number (MIL-STD-1629A)",
+    "beta": "Effect probability β",
+    "betaOptions": {
+      "1": "1.0 — actual loss",
+      "0.5": "0.5 — probable loss",
+      "0.1": "0.1 — possible loss",
+      "0": "0 — no effect"
+    },
+    "alpha": "Failure mode ratio α",
+    "lambda": "Failure rate λp (per hour)",
+    "hours": "Operating time t (hours)",
+    "evidence": "From history: {{mode}} of {{total}} failures for this mode; λp from the KPI snapshot of {{date}}.",
+    "noEvidence": "No failure history for this mode: enter α and λp.",
+    "compute": "Compute",
+    "cm": "Mode criticality Cm = {{cm}} — analysis total Cr = {{cr}}",
+    "invalidNumber": "Enter a number."
   }
 }

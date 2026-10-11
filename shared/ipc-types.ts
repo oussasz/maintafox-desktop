@@ -7038,6 +7038,107 @@ export interface RcmStudiesFilter {
   limit?: number | null;
 }
 
+/** Answers to the RCM decision diagram for one failure mode (Phase 6.5). */
+export interface RcmAnswers {
+  failure_evident: boolean;
+  safety_or_environmental: boolean;
+  operational_impact: boolean;
+  multiple_failure_affects_safety: boolean;
+  on_condition_feasible: boolean;
+  scheduled_restoration_feasible: boolean;
+  scheduled_discard_feasible: boolean;
+  failure_finding_feasible: boolean;
+  combination_feasible: boolean;
+  weibull_beta: number | null;
+}
+
+export interface RcmRecommendation {
+  consequence_category: string;
+  recommended_tactic: string;
+  redesign_compulsory: boolean;
+  path: string[];
+}
+
+export interface ApplyRcmLogicInput {
+  decision_id: number;
+  expected_row_version: number;
+  answers: RcmAnswers;
+  selected_tactic?: string | null;
+  justification?: string | null;
+}
+
+export interface RcmDecisionLogic {
+  decision_id: number;
+  row_version: number;
+  selected_tactic: string;
+  consequence_category: string;
+  justification: string;
+  recommended_tactic: string | null;
+  answers: RcmAnswers | null;
+  /** Ordered `step:yes|no` codes of the decision path. */
+  path: string[];
+  linked_pm_plan_id: number | null;
+  linked_pm_plan_version_id: number | null;
+  pm_plan_code: string | null;
+  pm_version_no: number | null;
+  linked_work_order_id: number | null;
+  work_order_code: string | null;
+}
+
+export type RamsActionSourceType = "fmeca_item" | "rcm_decision";
+
+export interface PmRevisionFromSourceInput {
+  source_type: RamsActionSourceType;
+  source_id: number;
+  pm_plan_id: number;
+  trigger_definition_json?: string | null;
+  change_note: string;
+}
+
+export interface WoFromSourceInput {
+  source_type: RamsActionSourceType;
+  source_id: number;
+  type_code: string;
+  title?: string | null;
+}
+
+export interface RamsSourceAction {
+  source_type: RamsActionSourceType;
+  source_id: number;
+  pm_plan_version_id: number | null;
+  pm_version_no: number | null;
+  work_order_id: number | null;
+  work_order_code: string | null;
+}
+
+export interface FmecaCriticalityEvidence {
+  mode_failures: number;
+  total_failures: number;
+  mode_ratio: number | null;
+  failure_rate_per_hour: number | null;
+  kpi_period_end: string | null;
+}
+
+export interface FmecaCriticalityInput {
+  item_id: number;
+  expected_row_version: number;
+  effect_probability: number;
+  mode_ratio?: number | null;
+  failure_rate_per_hour?: number | null;
+  operating_hours: number;
+}
+
+export interface FmecaCriticality {
+  item_id: number;
+  row_version: number;
+  effect_probability: number;
+  mode_ratio: number;
+  failure_rate_per_hour: number;
+  operating_hours: number;
+  criticality_number: number;
+  analysis_criticality: number;
+}
+
 export interface RcmDecision {
   id: number;
   entity_sync_id: string;

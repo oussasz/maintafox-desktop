@@ -240,5 +240,71 @@
     "presentationSeedDone": "Démo terminée : {{wo}} OT, β={{beta}}, η={{eta}}, Markov #{{markov}}.",
     "presentationSeedSkipped": "Démo déjà présente — analytique rafraîchie.",
     "presentationSeedPermission": "adm.settings requis pour générer les données démo RAMS."
+  },
+  "rcmLoop": {
+    "openLogic": "Logique RCM",
+    "openActions": "Actions et criticité",
+    "logicTitle": "Logique de décision RCM",
+    "questions": {
+      "failure_evident": "La perte de fonction sera-t-elle évidente pour les opérateurs en conditions normales ?",
+      "safety_or_environmental": "La défaillance peut-elle blesser quelqu'un ou enfreindre une norme environnementale ?",
+      "operational_impact": "Affecte-t-elle la production, la qualité, le service ou les coûts d'exploitation ?",
+      "multiple_failure_affects_safety": "Défaillance cachée : la défaillance multiple aurait-elle des conséquences sécurité ou environnement ?",
+      "on_condition_feasible": "Une tâche conditionnelle est-elle faisable (signe avant-coureur détectable) et rentable ?",
+      "scheduled_restoration_feasible": "Une remise en état systématique est-elle faisable (âge d'usure identifiable) et rentable ?",
+      "scheduled_discard_feasible": "Un remplacement systématique est-il faisable et rentable ?",
+      "failure_finding_feasible": "Défaillance cachée : une tâche de recherche de panne est-elle faisable et rentable ?",
+      "combination_feasible": "Sécurité : une combinaison de tâches ramène-t-elle le risque à un niveau tolérable ?",
+      "weibull_beta": "Forme de Weibull β de ce mode (facultatif)"
+    },
+    "yes": "Oui",
+    "no": "Non",
+    "consequence": "Conséquence",
+    "recommended": "Tactique recommandée",
+    "compulsory": "La reconception est obligatoire.",
+    "path": "Chemin de décision",
+    "retained": "Tactique retenue",
+    "justification": "Justification (obligatoire si différente de la recommandation)",
+    "apply": "Enregistrer la décision",
+    "consequences": {
+      "hidden": "Cachée",
+      "safety_environmental": "Sécurité / environnement",
+      "operational": "Opérationnelle",
+      "non_operational": "Non opérationnelle"
+    },
+    "tactics": {
+      "condition_based": "Conditionnelle",
+      "time_based": "Systématique (remise en état / remplacement)",
+      "failure_finding": "Recherche de panne",
+      "run_to_failure": "Fonctionnement jusqu'à défaillance",
+      "redesign": "Reconception"
+    },
+    "pmRevision": "Créer une révision du plan préventif",
+    "pmPlan": "Plan préventif",
+    "pmPlanPlaceholder": "Choisir un plan préventif",
+    "changeNote": "Motif de la modification du plan",
+    "createRevision": "Créer la version brouillon",
+    "revisionCreated": "Version brouillon {{no}} créée pour {{plan}}.",
+    "woType": "Type d'ordre de travail",
+    "createWo": "Créer un ordre de travail",
+    "woCreated": "Ordre de travail {{code}} créé.",
+    "linkedPm": "Plan préventif lié : {{plan}} v{{no}}",
+    "linkedWo": "Ordre de travail lié : {{code}}",
+    "criticality": "Nombre de criticité (MIL-STD-1629A)",
+    "beta": "Probabilité d'effet β",
+    "betaOptions": {
+      "1": "1,0 — perte certaine",
+      "0.5": "0,5 — perte probable",
+      "0.1": "0,1 — perte possible",
+      "0": "0 — sans effet"
+    },
+    "alpha": "Ratio du mode α",
+    "lambda": "Taux de défaillance λp (par heure)",
+    "hours": "Durée de fonctionnement t (heures)",
+    "evidence": "Historique : {{mode}} défaillances sur {{total}} pour ce mode ; λp issu de l'instantané KPI du {{date}}.",
+    "noEvidence": "Aucun historique pour ce mode : saisissez α et λp.",
+    "compute": "Calculer",
+    "cm": "Criticité du mode Cm = {{cm}} — total de l'analyse Cr = {{cr}}",
+    "invalidNumber": "Saisissez un nombre."
   }
 }

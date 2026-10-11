@@ -365,3 +365,121 @@ pub async fn delete_rcm_decision(id: i64, state: State<'_, AppState>) -> AppResu
     let _ = user;
     queries::delete_rcm_decision(&state.db, id).await
 }
+
+/// RCM decision logic: records the answers, the recommended tactic and the decision path.
+#[tauri::command]
+pub async fn apply_rcm_decision_logic(
+    input: crate::reliability::rcm_loop::ApplyRcmLogicInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::reliability::rcm_loop::RcmDecisionLogic> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
+    crate::reliability::rcm_loop::apply_rcm_decision_logic(&state.db, input).await
+}
+
+/// Decision path, recommendation and linked PM version / WO of every decision of a study.
+#[tauri::command]
+pub async fn list_rcm_decision_logic(
+    study_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::reliability::rcm_loop::RcmDecisionLogic>> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
+    crate::reliability::rcm_loop::list_rcm_decision_logic(&state.db, study_id).await
+}
+
+/// Draft PM plan version from an FMECA item or an RCM decision, linked both ways.
+#[tauri::command]
+pub async fn create_pm_revision_from_rams_source(
+    input: crate::reliability::rcm_loop::PmRevisionFromSourceInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::reliability::rcm_loop::SourceAction> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
+    crate::reliability::rcm_loop::create_pm_revision_from_source(&state.db, input).await
+}
+
+/// Failure mode ratio and failure rate observed for an FMECA item (criticality inputs).
+#[tauri::command]
+pub async fn get_fmeca_criticality_evidence(
+    item_id: i64,
+    state: State<'_, AppState>,
+) -> AppResult<crate::reliability::rcm_loop::CriticalityEvidence> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
+    crate::reliability::rcm_loop::fmeca_criticality_evidence(&state.db, item_id).await
+}
+
+/// MIL-STD-1629A mode criticality number of an FMECA item.
+#[tauri::command]
+pub async fn compute_fmeca_criticality(
+    input: crate::reliability::rcm_loop::FmecaCriticalityInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::reliability::rcm_loop::FmecaCriticality> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
+    crate::reliability::rcm_loop::compute_fmeca_criticality(&state.db, input).await
+}
+
+/// Work order from an FMECA item or an RCM decision (redesign, corrective action), linked back.
+#[tauri::command]
+pub async fn create_wo_from_rams_source(
+    input: crate::reliability::rcm_loop::WoFromSourceInput,
+    state: State<'_, AppState>,
+) -> AppResult<crate::reliability::rcm_loop::SourceAction> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_MANAGE,
+        PermissionScope::Global
+    );
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::OT_CREATE,
+        PermissionScope::Global
+    );
+    crate::reliability::rcm_loop::create_wo_from_source(&state.db, input, i64::from(user.user_id)).await
+}
+
+/// Preview of the RCM decision logic for a set of answers (nothing is saved).
+#[tauri::command]
+pub async fn preview_rcm_recommendation(
+    answers: crate::reliability::rcm_loop::RcmAnswers,
+    state: State<'_, AppState>,
+) -> AppResult<crate::reliability::rcm_loop::RcmRecommendation> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::RAM_VIEW,
+        PermissionScope::Global
+    );
+    Ok(crate::reliability::rcm_loop::recommend_tactic(&answers))
+}
