@@ -703,6 +703,17 @@ pub(crate) async fn editable_text_column(db: &DatabaseConnection, entity_type: &
         .filter_map(|r| r.try_get::<String>("", "name").ok())
         .collect();
     let pk: HashSet<usize> = layout.natural_pk.clone().unwrap_or_default().into_iter().collect();
+    let type_columns: HashSet<&str> = layout
+        .columns
+        .iter()
+        .filter_map(|c| match &c.role {
+            Role::Ref {
+                target: Target::Poly { type_column, .. },
+                ..
+            } => Some(*type_column),
+            _ => None,
+        })
+        .collect();
     layout
         .columns
         .iter()
@@ -715,6 +726,7 @@ pub(crate) async fn editable_text_column(db: &DatabaseConnection, entity_type: &
                 && !unique_cols.contains(&c.name)
                 && !looks_like_time(&c.name)
                 && !c.name.ends_with("_json")
+                && !type_columns.contains(c.name.as_str())
                 && !c.name.ends_with("_type")
                 && !c.name.ends_with("status")
         })

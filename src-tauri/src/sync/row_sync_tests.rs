@@ -112,6 +112,61 @@ pub(crate) const WORK_ORDER_TYPES: &[&str] = &[
     "wo_state_transition_log",
 ];
 
+/// Preventive maintenance and planning.
+pub(crate) const PM_PLANNING_TYPES: &[&str] = &[
+    "pm_plans",
+    "pm_plan_versions",
+    "pm_occurrences",
+    "pm_executions",
+    "pm_findings",
+    "pm_occurrence_transitions",
+    "pm_trigger_events",
+    "planning_windows",
+    "capacity_rules",
+    "schedule_candidates",
+    "schedule_commitments",
+    "schedule_break_ins",
+    "schedule_change_log",
+    "schedule_details",
+];
+
+/// Budgets, costs, forecasts and ERP exports.
+pub(crate) const FINANCE_TYPES: &[&str] = &[
+    "cost_centers",
+    "budget_versions",
+    "budget_lines",
+    "budget_actuals",
+    "budget_commitments",
+    "budget_erp_cost_center_master",
+    "budget_forecast_runs",
+    "budget_forecasts",
+    "budget_variance_reviews",
+    "budget_alert_configs",
+    "budget_alert_events",
+    "posted_export_batches",
+    "integration_exceptions",
+];
+
+/// Personnel records, skills and qualifications.
+pub(crate) const PERSONNEL_TYPES: &[&str] = &[
+    "personnel_assignment_history",
+    "personnel_authorizations",
+    "personnel_availability_blocks",
+    "personnel_rate_cards",
+    "personnel_skills",
+    "personnel_team_assignments",
+    "skill_categories",
+    "skill_definitions",
+    "team_skill_requirements",
+    "certification_types",
+    "personnel_certifications",
+    "qualification_requirement_profiles",
+    "qualification_profile_skills",
+    "training_sessions",
+    "training_attendance",
+    "document_acknowledgements",
+];
+
 async fn compare(
     a: &DatabaseConnection,
     b: &DatabaseConnection,
@@ -240,6 +295,21 @@ async fn foundation_entities_round_trip() {
 #[tokio::test]
 async fn work_orders_and_requests_round_trip() {
     round_trip(WORK_ORDER_TYPES).await;
+}
+
+#[tokio::test]
+async fn pm_and_planning_round_trip() {
+    round_trip(PM_PLANNING_TYPES).await;
+}
+
+#[tokio::test]
+async fn finance_round_trip() {
+    round_trip(FINANCE_TYPES).await;
+}
+
+#[tokio::test]
+async fn personnel_and_qualification_round_trip() {
+    round_trip(PERSONNEL_TYPES).await;
 }
 
 #[tokio::test]

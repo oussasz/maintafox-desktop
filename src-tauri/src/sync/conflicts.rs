@@ -12,9 +12,9 @@
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{StageOutboxItemInput, SyncConflictRecord};
+use crate::sync::domain::SyncConflictRecord;
 use crate::sync::materialize::{apply_inbound_payload, ApplyOutcome};
-use crate::sync::queries::{hash_payload, overwrite_synced_state, stage_outbox_item};
+use crate::sync::queries::{hash_payload, overwrite_synced_state};
 use crate::sync::registry;
 
 /// Marks unsent, refused or dead-lettered local changes of an entity as replaced by the person's
@@ -84,19 +84,16 @@ pub(crate) async fn keep_local_version(conn: &impl ConnectionTrait, conflict: &S
     }
     supersede_local_changes(conn, &conflict.entity_type, &conflict.entity_sync_id).await?;
     set_linked_inbox_status(conn, conflict, "superseded").await?;
-    if crate::sync::row_spec::row_spec(&conflict.entity_type).is_some() {
-        return crate::sync::capture::restage_current_state(
-            conn,
-            &conflict.entity_type,
-            &conflict.entity_sync_id,
-            &[
-                conflict.local_payload_json.as_deref(),
-                conflict.inbound_payload_json.as_deref(),
-            ],
-        )
-        .await;
-    }
-    restage_entity(conn, &conflict.entity_type, &conflict.entity_sync_id).await
+    crate::sync::capture::restage_current_state(
+        conn,
+        &conflict.entity_type,
+        &conflict.entity_sync_id,
+        &[
+            conflict.local_payload_json.as_deref(),
+            conflict.inbound_payload_json.as_deref(),
+        ],
+    )
+    .await
 }
 
 /// "Take theirs": write the server's version to the local table.
@@ -144,61 +141,4 @@ pub(crate) async fn take_remote_version(conn: &impl ConnectionTrait, conflict: &
     )
     .await?;
     set_linked_inbox_status(conn, conflict, "applied").await
-}
-
-async fn local_id(conn: &impl ConnectionTrait, table: &str, entity_sync_id: &str) -> AppResult<Option<i64>> {
-    // Table names come from the static registry, never from input.
-    let sql = format!("SELECT id FROM {table} WHERE entity_sync_id = ? LIMIT 1");
-    conn.query_one(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        &sql,
-        [entity_sync_id.into()],
-    ))
-    .await?
-    .map(|r| r.try_get::<i64>("", "id"))
-    .transpose()
-    .map_err(|e| AppError::SyncError(format!("{table}.id: {e}")))
-}
-
-/// Entity types `restage_entity` can stage from the local row (checked against the registry by a
-/// test: every `synced` entity must be restageable).
-pub(crate) const RESTAGEABLE_ENTITY_TYPES: &[&str] = &[
-    "pm_plans",
-    "pm_plan_versions",
-    "pm_occurrences",
-];
-
-/// Stage the current local row of an entity. When the row no longer exists locally, the local
-/// state is "deleted", so a delete is staged.
-pub(crate) async fn restage_entity(
-    conn: &impl ConnectionTrait,
-    entity_type: &str,
-    entity_sync_id: &str,
-) -> AppResult<()> {
-    let def = registry::require_entity(entity_type)?;
-    if !RESTAGEABLE_ENTITY_TYPES.contains(&entity_type) {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Keeping the local version of '{entity_type}' is not available yet."
-        )]));
-    }
-    let Some(id) = local_id(conn, def.table, entity_sync_id).await? else {
-        stage_outbox_item(
-            conn,
-            StageOutboxItemInput {
-                entity_type: entity_type.to_string(),
-                entity_sync_id: entity_sync_id.to_string(),
-                operation: "delete".to_string(),
-                payload_json: serde_json::json!({ "entity_sync_id": entity_sync_id }).to_string(),
-            },
-        )
-        .await?;
-        return Ok(());
-    };
-    use crate::sync::ops_stage as o;
-    match entity_type {
-        "pm_plans" => o::stage_pm_plan_sync(conn, id).await,
-        "pm_plan_versions" => o::stage_pm_plan_version_sync(conn, id).await,
-        "pm_occurrences" => o::stage_pm_occurrence_sync(conn, id).await,
-        other => Err(AppError::SyncError(format!("restage dispatch is missing '{other}'."))),
-    }
 }

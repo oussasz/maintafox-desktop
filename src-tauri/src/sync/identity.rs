@@ -71,6 +71,22 @@ pub async fn parent_entity_sync_id(conn: &impl ConnectionTrait, table: &str, loc
     require_entity_sync_id(table, local_id, value)
 }
 
+/// Sync id of a row when it has one. Rows always have one once sync capture is installed (the
+/// insert trigger gives one); a database without capture (tests, tools) may hold rows without.
+pub async fn optional_entity_sync_id(conn: &impl ConnectionTrait, table: &str, local_id: i64) -> AppResult<Option<String>> {
+    // Table names are internal constants, never input.
+    let sql = format!("SELECT entity_sync_id FROM {table} WHERE id = ? LIMIT 1");
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            &sql,
+            [local_id.into()],
+        ))
+        .await?
+        .and_then(|r| r.try_get::<Option<String>>("", "entity_sync_id").ok().flatten())
+        .filter(|v| !v.trim().is_empty()))
+}
+
 /// Read a joined parent sync id column (`..._entity_sync_id`) that must be present.
 pub fn require_parent_sync_id(row: &QueryResult, column: &str) -> AppResult<String> {
     let value: Option<String> = row

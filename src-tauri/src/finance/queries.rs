@@ -20,7 +20,6 @@ use crate::finance::domain::{
     TransitionBudgetVersionLifecycleInput, UpdateBudgetAlertConfigInput, UpdateBudgetLineInput,
     UpdateBudgetVersionInput, UpdateCostCenterInput, UpdateIntegrationExceptionInput,
 };
-use crate::finance::sync_stage;
 
 fn map_cost_center(row: &QueryResult) -> AppResult<CostCenter> {
     Ok(CostCenter {
@@ -798,7 +797,6 @@ pub async fn create_budget_version(
     .into_iter()
     .find(|version| version.version_no == version_no)
     .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Inserted budget version could not be reloaded.")))?;
-    sync_stage::stage_budget_version(&txn, &created).await?;
     txn.commit().await?;
     Ok(created)
 }
@@ -909,19 +907,6 @@ pub async fn create_budget_successor_version(
     ))
     .await?;
 
-    sync_stage::stage_budget_version(&txn, &inserted).await?;
-    let copied_lines = list_budget_lines(
-        &txn,
-        BudgetLineFilter {
-            budget_version_id: Some(inserted.id),
-            ..BudgetLineFilter::default()
-        },
-    )
-    .await?;
-    for line in copied_lines {
-        sync_stage::stage_budget_line(&txn, &line).await?;
-    }
-
     txn.commit().await?;
     Ok(inserted)
 }
@@ -991,7 +976,6 @@ pub async fn update_budget_version(
     }
 
     let updated = get_budget_version(&txn, version_id).await?;
-    sync_stage::stage_budget_version(&txn, &updated).await?;
     txn.commit().await?;
     Ok(updated)
 }
@@ -1066,7 +1050,6 @@ pub async fn transition_budget_version_lifecycle(
     }
 
     let updated = get_budget_version(&txn, input.version_id).await?;
-    sync_stage::stage_budget_version(&txn, &updated).await?;
     txn.commit().await?;
     Ok(updated)
 }
@@ -1165,7 +1148,6 @@ pub async fn create_budget_line(db: &DatabaseConnection, input: CreateBudgetLine
         entity: "BudgetLine".to_string(),
         id: line_id.to_string(),
     })?;
-    sync_stage::stage_budget_line(&txn, &created).await?;
     txn.commit().await?;
     Ok(created)
 }
@@ -1262,7 +1244,6 @@ pub async fn update_budget_line(
         entity: "BudgetLine".to_string(),
         id: line_id.to_string(),
     })?;
-    sync_stage::stage_budget_line(&txn, &updated).await?;
     txn.commit().await?;
     Ok(updated)
 }
@@ -3080,7 +3061,6 @@ pub async fn record_erp_export_batch(
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("integration exception row missing")))?;
         let mapped = map_integration_exception(&ex_row)?;
-        sync_stage::stage_integration_exception(&txn, &mapped).await?;
         exceptions_out.push(mapped);
     }
 
@@ -3093,7 +3073,6 @@ pub async fn record_erp_export_batch(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("posted export batch row missing")))?;
     let batch = map_posted_export_batch(&batch_row)?;
-    sync_stage::stage_posted_export_batch(&txn, &batch).await?;
     txn.commit().await?;
 
     Ok(ErpExportBatchResult {
@@ -3210,7 +3189,6 @@ pub async fn update_integration_exception(
             id: exception_id.to_string(),
         })?;
     let mapped = map_integration_exception(&row)?;
-    sync_stage::stage_integration_exception(&txn, &mapped).await?;
     txn.commit().await?;
     Ok(mapped)
 }
@@ -3313,7 +3291,6 @@ pub async fn create_budget_alert_config(
             id: config_id.to_string(),
         })?;
     let mapped = map_budget_alert_config(&row)?;
-    sync_stage::stage_budget_alert_config(&txn, &mapped).await?;
     txn.commit().await?;
     Ok(mapped)
 }
@@ -3421,7 +3398,6 @@ pub async fn update_budget_alert_config(
             id: config_id.to_string(),
         })?;
     let mapped = map_budget_alert_config(&row)?;
-    sync_stage::stage_budget_alert_config(&txn, &mapped).await?;
     txn.commit().await?;
     Ok(mapped)
 }
@@ -3778,27 +3754,6 @@ pub async fn evaluate_budget_alerts(
                 ],
             ))
             .await?;
-            let inserted_event_id_row = txn
-                .query_one(Statement::from_string(
-                    DbBackend::Sqlite,
-                    "SELECT last_insert_rowid() AS id".to_string(),
-                ))
-                .await?
-                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("budget alert event id missing")))?;
-            let inserted_event_id: i64 = inserted_event_id_row.try_get("", "id")?;
-            let inserted_event_row = txn
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT ae.*, cc.code AS cost_center_code, cc.name AS cost_center_name
-                     FROM budget_alert_events ae
-                     JOIN cost_centers cc ON cc.id = ae.cost_center_id
-                     WHERE ae.id = ?",
-                    [inserted_event_id.into()],
-                ))
-                .await?
-                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("budget alert event row missing")))?;
-            let staged_event = map_budget_alert_event(&inserted_event_row)?;
-            sync_stage::stage_budget_alert_event(&txn, &staged_event).await?;
             emitted_count += 1;
         }
     }
@@ -3891,7 +3846,6 @@ pub async fn acknowledge_budget_alert(
         entity: "BudgetAlertEvent".to_string(),
         id: input.alert_event_id.to_string(),
     })?;
-    sync_stage::stage_budget_alert_event(&txn, &found).await?;
     txn.commit().await?;
     Ok(found)
 }

@@ -1626,6 +1626,8 @@ pub async fn create_schedule_commitment(
         .await?;
     let id = i64::try_from(inserted.last_insert_id())
         .map_err(|_| AppError::Internal(anyhow::anyhow!("schedule_commitments last_insert_id does not fit i64")))?;
+    // The candidate is derived on each device; the commitment depends on it, so it travels now.
+    crate::sync::capture::capture_row_change(&tx, "schedule_candidates", input.schedule_candidate_id).await?;
     append_change_log(
         &tx,
         Some(id),

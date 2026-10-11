@@ -3,11 +3,6 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Transac
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{
-    StageOutboxItemInput, TrainingAttendanceSyncPayload, TrainingSessionSyncPayload, SYNC_ENTITY_TRAINING_ATTENDANCE,
-    SYNC_ENTITY_TRAINING_SESSIONS,
-};
-use crate::sync::queries::stage_outbox_item;
 
 use super::domain::{
     DocumentAcknowledgement, DocumentAcknowledgementListFilter, DocumentAcknowledgementUpsertInput,
@@ -61,58 +56,6 @@ fn validate_attendance_status(s: &str) -> AppResult<()> {
             ATT_STATUSES
         )]))
     }
-}
-
-async fn stage_training_session(db: &impl ConnectionTrait, row: &TrainingSession) -> AppResult<()> {
-    let payload = TrainingSessionSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        course_code: row.course_code.clone(),
-        scheduled_start: row.scheduled_start.clone(),
-        scheduled_end: row.scheduled_end.clone(),
-        location: row.location.clone(),
-        instructor_id: row.instructor_id,
-        certification_type_id: row.certification_type_id,
-        min_pass_score: row.min_pass_score,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_TRAINING_SESSIONS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn stage_training_attendance(db: &impl ConnectionTrait, row: &TrainingAttendance) -> AppResult<()> {
-    let payload = TrainingAttendanceSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        session_id: row.session_id,
-        personnel_id: row.personnel_id,
-        attendance_status: row.attendance_status.clone(),
-        completed_at: row.completed_at.clone(),
-        score: row.score,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_TRAINING_ATTENDANCE.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
 }
 
 fn map_session(row: &sea_orm::QueryResult) -> AppResult<TrainingSession> {
@@ -353,7 +296,6 @@ pub async fn upsert_training_session(
             ]));
         }
         let updated = get_session_by_id(&txn, id).await?.expect("row");
-        stage_training_session(&txn, &updated).await?;
         txn.commit().await?;
         return Ok(updated);
     }
@@ -385,7 +327,6 @@ pub async fn upsert_training_session(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
     let created = get_session_by_id(&txn, new_id).await?.expect("row");
-    stage_training_session(&txn, &created).await?;
     txn.commit().await?;
     Ok(created)
 }
@@ -490,7 +431,6 @@ pub async fn upsert_training_attendance(
             ]));
         }
         let updated = get_attendance_by_id(&txn, id).await?.expect("row");
-        stage_training_attendance(&txn, &updated).await?;
         if input.attendance_status == "passed" {
             maybe_issue_cert_from_pass(&txn, &session, input.personnel_id, &input.completed_at, input.score).await?;
         }
@@ -522,7 +462,6 @@ pub async fn upsert_training_attendance(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
     let created = get_attendance_by_id(&txn, new_id).await?.expect("row");
-    stage_training_attendance(&txn, &created).await?;
     if input.attendance_status == "passed" {
         maybe_issue_cert_from_pass(&txn, &session, input.personnel_id, &input.completed_at, input.score).await?;
     }

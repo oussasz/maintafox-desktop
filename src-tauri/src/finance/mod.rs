@@ -2,7 +2,6 @@
 
 pub mod domain;
 pub mod queries;
-mod sync_stage;
 
 #[cfg(test)]
 mod tests;

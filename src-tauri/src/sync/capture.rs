@@ -344,6 +344,48 @@ pub(crate) async fn end_suppression(conn: &impl ConnectionTrait) -> AppResult<()
     Ok(())
 }
 
+/// Queue the current state of a row explicitly (by local id). Used for rows that every device
+/// derives itself and that are therefore written with capture suppressed, at the moment a
+/// person's decision starts to depend on them (for example the scheduling candidate a schedule
+/// commitment is made for).
+pub(crate) async fn capture_row_change(conn: &impl ConnectionTrait, entity_type: &str, local_id: i64) -> AppResult<()> {
+    let layout = row_layout::layout(conn, entity_type).await?;
+    if layout.natural_pk.is_some() {
+        return Err(AppError::SyncError(format!(
+            "{entity_type} is keyed by a natural key; capture it by writing the row."
+        )));
+    }
+    let table = quote(layout.table());
+    let inserted = conn
+        .execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            format!(
+                "INSERT INTO sync_capture_journal (entity_type, entity_sync_id, natural_key_json, operation, owner_user_sync_id)
+                 SELECT ?, r.entity_sync_id, NULL, 'upsert', {owner} FROM {table} r
+                  WHERE r.id = ? AND r.entity_sync_id IS NOT NULL",
+                owner = owner_sql(&layout, "r"),
+            ),
+            [layout.def.entity_type.into(), local_id.into()],
+        ))
+        .await?;
+    if inserted.rows_affected() == 0 {
+        let exists = conn
+            .query_one(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                format!("SELECT 1 AS v FROM {table} WHERE id = ?"),
+                [local_id.into()],
+            ))
+            .await?
+            .is_some();
+        if !exists {
+            return Err(AppError::SyncError(format!("{entity_type} row {local_id} does not exist.")));
+        }
+        // A row without identity only exists where capture is not installed: nothing to send.
+        tracing::debug!(entity_type, local_id, "sync capture not installed: explicit capture skipped");
+    }
+    Ok(())
+}
+
 /// Journal entries not turned into outbox envelopes yet.
 pub async fn pending_capture_count(conn: &impl ConnectionTrait) -> AppResult<i64> {
     conn.query_one(Statement::from_string(

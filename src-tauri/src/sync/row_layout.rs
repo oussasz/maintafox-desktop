@@ -62,9 +62,47 @@ pub(crate) enum Role {
     },
 }
 
+/// One step of a JSON reference path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum JsonSeg {
+    Each,
+    Key(String),
+}
+
+/// Local ids inside a JSON text column (`RowSpec::json_refs`).
+#[derive(Debug, Clone)]
+pub(crate) struct JsonRef {
+    pub path: Vec<JsonSeg>,
+    pub entity_type: &'static str,
+    pub table: &'static str,
+}
+
+fn parse_json_path(path: &str) -> AppResult<Vec<JsonSeg>> {
+    let mut rest = path.strip_prefix('$').unwrap_or(path);
+    let mut segs = Vec::new();
+    while !rest.is_empty() {
+        if let Some(r) = rest.strip_prefix("[*]") {
+            segs.push(JsonSeg::Each);
+            rest = r;
+        } else if let Some(r) = rest.strip_prefix('.') {
+            let end = r.find(['.', '[']).unwrap_or(r.len());
+            if end == 0 {
+                return Err(AppError::SyncError(format!("invalid JSON reference path '{path}'")));
+            }
+            segs.push(JsonSeg::Key(r[..end].to_string()));
+            rest = &r[end..];
+        } else {
+            return Err(AppError::SyncError(format!("invalid JSON reference path '{path}'")));
+        }
+    }
+    Ok(segs)
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct LayoutColumn {
     pub name: String,
+    /// Local ids inside this JSON text column (value columns only).
+    pub json_refs: Vec<JsonRef>,
     /// Declared type is TEXT-like: a reference stored here keeps the local id as text.
     pub is_text: bool,
     pub is_blob: bool,
@@ -229,6 +267,14 @@ async fn build_layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResu
     let values: HashSet<&str> = spec.value_columns.iter().copied().collect();
     let device: HashSet<&str> = spec.device_local.iter().copied().collect();
     let derived: HashMap<&str, &'static str> = spec.derived.iter().copied().collect();
+    for j in spec.json_refs {
+        if !raw.iter().any(|c| c.name == j.column) {
+            return Err(AppError::SyncError(format!(
+                "row spec of '{entity_type}' names JSON column '{}' that {table} does not have.",
+                j.column
+            )));
+        }
+    }
     for listed in spec_refs
         .keys()
         .chain(values.iter())
@@ -322,8 +368,23 @@ async fn build_layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResu
         } else {
             Role::Value { key: name.to_string() }
         };
+        let mut json_refs = Vec::new();
+        for j in spec.json_refs.iter().filter(|j| j.column == name) {
+            if !matches!(role, Role::Value { .. }) || !is_text {
+                return Err(AppError::SyncError(format!(
+                    "{table}.{name}: JSON references need a text value column"
+                )));
+            }
+            let target = registry::require_entity(j.entity)?;
+            json_refs.push(JsonRef {
+                path: parse_json_path(j.path)?,
+                entity_type: target.entity_type,
+                table: target.table,
+            });
+        }
         columns.push(LayoutColumn {
             name: c.name.clone(),
+            json_refs,
             is_text,
             is_blob,
             role,

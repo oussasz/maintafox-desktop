@@ -4,10 +4,6 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{
-    StageOutboxItemInput, TrainingExpiryAlertEventSyncPayload, SYNC_ENTITY_TRAINING_EXPIRY_ALERT_EVENTS,
-};
-use crate::sync::queries::stage_outbox_item;
 
 use super::domain::{CertificationExpiryDrilldownRow, TrainingExpiryAlertEvent, TrainingExpiryAlertEventListFilter};
 
@@ -71,30 +67,6 @@ fn map_event(row: &sea_orm::QueryResult) -> AppResult<TrainingExpiryAlertEvent> 
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
     })
-}
-
-async fn stage_event(db: &impl ConnectionTrait, row: &TrainingExpiryAlertEvent) -> AppResult<()> {
-    let payload = TrainingExpiryAlertEventSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        certification_id: row.certification_id,
-        alert_dedupe_key: row.alert_dedupe_key.clone(),
-        fired_at: row.fired_at.clone(),
-        severity: row.severity.clone(),
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_TRAINING_EXPIRY_ALERT_EVENTS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
 }
 
 async fn get_event_by_id(db: &impl ConnectionTrait, id: i64) -> AppResult<Option<TrainingExpiryAlertEvent>> {
@@ -234,7 +206,6 @@ pub async fn scan_training_expiry_alerts(
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
         let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
         let row = get_event_by_id(&txn, new_id).await?.expect("row");
-        stage_event(&txn, &row).await?;
         created.push(row);
     }
 

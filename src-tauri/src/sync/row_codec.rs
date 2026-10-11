@@ -278,6 +278,120 @@ fn payload_key(layout: &EntityLayout, index: usize) -> AppResult<&str> {
     }
 }
 
+/// JSON pointers of the values a reference path selects.
+fn json_ref_pointers(value: &Value, path: &[crate::sync::row_layout::JsonSeg], base: String, out: &mut Vec<String>) {
+    use crate::sync::row_layout::JsonSeg;
+    match path.split_first() {
+        None => out.push(base),
+        Some((JsonSeg::Each, rest)) => {
+            if let Value::Array(items) = value {
+                for (i, item) in items.iter().enumerate() {
+                    json_ref_pointers(item, rest, format!("{base}/{i}"), out);
+                }
+            }
+        }
+        Some((JsonSeg::Key(k), rest)) => {
+            if let Some(inner) = value.get(k) {
+                let escaped = k.replace('~', "~0").replace('/', "~1");
+                json_ref_pointers(inner, rest, format!("{base}/{escaped}"), out);
+            }
+        }
+    }
+}
+
+fn parse_json_text(table: &str, column: &LayoutColumn, text: &Value) -> AppResult<Option<Value>> {
+    match text {
+        Value::Null => Ok(None),
+        Value::String(s) if s.trim().is_empty() => Ok(None),
+        Value::String(s) => serde_json::from_str(s)
+            .map(Some)
+            .map_err(|e| codec_err(table, format!("{} is not valid JSON: {e}", column.name))),
+        _ => Err(codec_err(table, format!("{} must hold JSON text", column.name))),
+    }
+}
+
+/// Replace the local ids inside a JSON column by sync ids (outbound).
+async fn translate_json_out(
+    conn: &impl ConnectionTrait,
+    table: &str,
+    column: &LayoutColumn,
+    text: Value,
+) -> AppResult<Value> {
+    let Some(mut doc) = parse_json_text(table, column, &text)? else {
+        return Ok(text);
+    };
+    for r in &column.json_refs {
+        let mut pointers = Vec::new();
+        json_ref_pointers(&doc, &r.path, String::new(), &mut pointers);
+        for pointer in pointers {
+            let Some(slot) = doc.pointer_mut(&pointer) else { continue };
+            let local_id = match slot {
+                Value::Null => continue,
+                Value::Number(n) => n.as_i64(),
+                Value::String(s) => s.trim().parse::<i64>().ok(),
+                _ => None,
+            }
+            .ok_or_else(|| codec_err(table, format!("{}{pointer} is not a local id", column.name)))?;
+            let sync_id = scalar_text(
+                conn,
+                &format!("SELECT entity_sync_id AS v FROM \"{}\" WHERE id = ?", r.table),
+                vec![local_id.into()],
+            )
+            .await?
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| {
+                codec_err(
+                    table,
+                    format!("{}{pointer} points to {} row {local_id}, which does not exist", column.name, r.table),
+                )
+            })?;
+            *slot = Value::String(sync_id);
+        }
+    }
+    Ok(Value::String(serde_json::to_string(&doc)?))
+}
+
+/// Replace the sync ids inside a JSON column by local ids (inbound); a target not received yet
+/// defers the row.
+async fn translate_json_in(
+    conn: &impl ConnectionTrait,
+    table: &str,
+    column: &LayoutColumn,
+    text: &Value,
+) -> AppResult<Result<Value, ApplyOutcome>> {
+    let Some(mut doc) = parse_json_text(table, column, text)? else {
+        return Ok(Ok(text.clone()));
+    };
+    for r in &column.json_refs {
+        let mut pointers = Vec::new();
+        json_ref_pointers(&doc, &r.path, String::new(), &mut pointers);
+        for pointer in pointers {
+            let Some(slot) = doc.pointer_mut(&pointer) else { continue };
+            let sync_id = match slot {
+                Value::Null => continue,
+                Value::String(s) => s.clone(),
+                _ => return Err(codec_err(table, format!("{}{pointer} must be a sync id", column.name))),
+            };
+            match scalar_id(
+                conn,
+                &format!("SELECT id AS v FROM \"{}\" WHERE entity_sync_id = ?", r.table),
+                vec![sync_id.clone().into()],
+            )
+            .await?
+            {
+                Some(id) => *slot = Value::Number(id.into()),
+                None => {
+                    return Ok(Err(ApplyOutcome::Deferred {
+                        code: DEFER_MISSING_PARENT.into(),
+                        message: format!("{} needs {} {sync_id}, not received yet", column.name, r.entity_type),
+                    }))
+                }
+            }
+        }
+    }
+    Ok(Ok(Value::String(serde_json::to_string(&doc)?)))
+}
+
 /// Canonical natural key of a natural-key row: `key=json` pairs in key order.
 pub(crate) fn natural_key_string(layout: &EntityLayout, payload: &Map<String, Value>) -> AppResult<String> {
     let Some(pk) = &layout.natural_pk else {
@@ -325,7 +439,13 @@ pub(crate) async fn load_row_payload(
                 };
             }
             Role::Value { key } => {
-                payload.insert(key.clone(), outbound_value(table, column, cell)?);
+                let value = outbound_value(table, column, cell)?;
+                let value = if column.json_refs.is_empty() {
+                    value
+                } else {
+                    translate_json_out(conn, table, column, value).await?
+                };
+                payload.insert(key.clone(), value);
             }
             Role::Ref {
                 key, target, history, ..
@@ -585,7 +705,14 @@ pub(crate) async fn apply_row(
             Role::LocalKey | Role::Identity | Role::LocalVersion | Role::DeviceLocal | Role::Derived { .. } => {}
             Role::Value { key } => {
                 if let Some(v) = payload.get(key) {
-                    assignments.push((column.name.clone(), inbound_value(table, column, v)?));
+                    if column.json_refs.is_empty() {
+                        assignments.push((column.name.clone(), inbound_value(table, column, v)?));
+                    } else {
+                        match translate_json_in(conn, table, column, v).await? {
+                            Ok(local) => assignments.push((column.name.clone(), inbound_value(table, column, &local)?)),
+                            Err(deferred) => return Ok(deferred),
+                        }
+                    }
                 }
             }
             Role::Ref { key, target, soft, .. } => {

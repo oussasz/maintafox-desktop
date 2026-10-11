@@ -4,10 +4,6 @@ use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
 use crate::permit::queries::get_work_permit_linked_to_work_order;
-use crate::sync::domain::{
-    PersonnelReadinessSnapshotSyncPayload, StageOutboxItemInput, SYNC_ENTITY_PERSONNEL_READINESS_SNAPSHOTS,
-};
-use crate::sync::queries::stage_outbox_item;
 use crate::wo::queries::get_work_order;
 
 use super::domain::{
@@ -279,28 +275,6 @@ async fn get_snapshot_by_id(db: &impl ConnectionTrait, id: i64) -> AppResult<Opt
     }
 }
 
-async fn stage_snapshot(db: &impl ConnectionTrait, row: &PersonnelReadinessSnapshot) -> AppResult<()> {
-    let payload = PersonnelReadinessSnapshotSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        period: row.period.clone(),
-        payload_json: row.payload_json.clone(),
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_PERSONNEL_READINESS_SNAPSHOTS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
 pub async fn list_personnel_readiness_snapshots(db: &DatabaseConnection) -> AppResult<Vec<PersonnelReadinessSnapshot>> {
     let rows = db
         .query_all(Statement::from_string(
@@ -371,7 +345,6 @@ pub async fn upsert_personnel_readiness_snapshot(
             ]));
         }
         let updated = get_snapshot_by_id(&txn, id).await?.expect("row");
-        stage_snapshot(&txn, &updated).await?;
         txn.commit().await?;
         return Ok(updated);
     }
@@ -393,7 +366,6 @@ pub async fn upsert_personnel_readiness_snapshot(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
     let created = get_snapshot_by_id(&txn, new_id).await?.expect("row");
-    stage_snapshot(&txn, &created).await?;
     txn.commit().await?;
     Ok(created)
 }

@@ -3,12 +3,6 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Transac
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{
-    CertificationTypeSyncPayload, PersonnelCertificationSyncPayload, QualificationRequirementProfileSyncPayload,
-    StageOutboxItemInput, SYNC_ENTITY_CERTIFICATION_TYPES, SYNC_ENTITY_PERSONNEL_CERTIFICATIONS,
-    SYNC_ENTITY_QUALIFICATION_REQUIREMENT_PROFILES,
-};
-use crate::sync::queries::stage_outbox_item;
 
 use super::domain::{
     CertificationType, CertificationTypeUpsertInput, PersonnelCertification, PersonnelCertificationListFilter,
@@ -136,87 +130,6 @@ fn map_personnel_cert(
     })
 }
 
-async fn stage_certification_type(db: &impl ConnectionTrait, row: &CertificationType) -> AppResult<()> {
-    let payload = CertificationTypeSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        code: row.code.clone(),
-        name: row.name.clone(),
-        default_validity_months: row.default_validity_months,
-        renewal_lead_days: row.renewal_lead_days,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_CERTIFICATION_TYPES.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn stage_personnel_certification(db: &impl ConnectionTrait, row: &PersonnelCertification) -> AppResult<()> {
-    let payload = PersonnelCertificationSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        personnel_id: row.personnel_id,
-        certification_type_id: row.certification_type_id,
-        issued_at: row.issued_at.clone(),
-        expires_at: row.expires_at.clone(),
-        issuing_body: row.issuing_body.clone(),
-        certificate_ref: row.certificate_ref.clone(),
-        verification_status: row.verification_status.clone(),
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_PERSONNEL_CERTIFICATIONS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn stage_qualification_profile(
-    db: &impl ConnectionTrait,
-    row: &QualificationRequirementProfile,
-) -> AppResult<()> {
-    let ids: Vec<i64> = serde_json::from_str(&row.required_certification_type_ids_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("required_certification_type_ids_json: {e}")]))?;
-    let codes: Vec<String> = serde_json::from_str(&row.applies_to_permit_type_codes_json)
-        .map_err(|e| AppError::ValidationFailed(vec![format!("applies_to_permit_type_codes_json: {e}")]))?;
-    let payload = QualificationRequirementProfileSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        profile_name: row.profile_name.clone(),
-        required_certification_type_ids: ids,
-        applies_to_permit_type_codes: codes,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_QUALIFICATION_REQUIREMENT_PROFILES.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
 fn validate_verification(s: &str) -> AppResult<()> {
     if VERIFICATION.contains(&s) {
         Ok(())
@@ -331,7 +244,6 @@ pub async fn upsert_certification_type(
             ]));
         }
         let updated = get_certification_type_by_id(&txn, id).await?.expect("row");
-        stage_certification_type(&txn, &updated).await?;
         txn.commit().await?;
         return Ok(updated);
     }
@@ -359,7 +271,6 @@ pub async fn upsert_certification_type(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
     let created = get_certification_type_by_id(&txn, new_id).await?.expect("row");
-    stage_certification_type(&txn, &created).await?;
     txn.commit().await?;
     Ok(created)
 }
@@ -483,7 +394,6 @@ pub async fn upsert_qualification_requirement_profile(
             ]));
         }
         let updated = get_profile_by_id(&txn, id).await?.expect("row");
-        stage_qualification_profile(&txn, &updated).await?;
         // Sync skills if provided
         if let Some(ref skill_ids) = input.skill_reference_value_ids {
             replace_profile_skills(&txn, id, skill_ids).await?;
@@ -519,7 +429,6 @@ pub async fn upsert_qualification_requirement_profile(
         replace_profile_skills(&txn, new_id, skill_ids).await?;
     }
     let created = get_profile_by_id(&txn, new_id).await?.expect("row");
-    stage_qualification_profile(&txn, &created).await?;
     txn.commit().await?;
     Ok(created)
 }
@@ -636,7 +545,6 @@ where
             ]));
         }
         let updated = get_personnel_cert_by_id(&txn, id).await?.expect("row");
-        stage_personnel_certification(&txn, &updated).await?;
         txn.commit().await?;
         return Ok(updated);
     }
@@ -668,7 +576,6 @@ where
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
     let created = get_personnel_cert_by_id(&txn, new_id).await?.expect("row");
-    stage_personnel_certification(&txn, &created).await?;
     txn.commit().await?;
     Ok(created)
 }

@@ -175,6 +175,8 @@ async fn registry_parents_cover_declared_foreign_keys() {
     }
 }
 
+/// Every synchronised entity is captured and applied by the generic engine (`sync::row_spec`);
+/// an entity is never staged without being applied, or the other way round.
 #[test]
 fn registry_flags_match_stager_and_materializer_dispatch() {
     for e in SYNC_ENTITIES {
@@ -182,26 +184,15 @@ fn registry_flags_match_stager_and_materializer_dispatch() {
         if generic {
             assert!(
                 e.has_stager && e.has_materializer,
-                "{} has a row spec (generic capture and apply): mark has_stager and has_materializer",
+                "{} has a row spec: mark has_stager and has_materializer",
                 e.entity_type
             );
+        } else {
+            // Entities still staged by a hand-written stager (until their Phase 2.4 domain step)
+            // are never applied: inbound rows of them wait as `deferred`.
             assert!(
-                !super::materialize::UPSERT_ENTITY_TYPES.contains(&e.entity_type),
-                "{} is applied by the generic engine and by a hand-written materializer",
-                e.entity_type
-            );
-            continue;
-        }
-        assert_eq!(
-            e.has_materializer,
-            super::materialize::UPSERT_ENTITY_TYPES.contains(&e.entity_type),
-            "has_materializer for {} disagrees with the materializer dispatch",
-            e.entity_type
-        );
-        if e.has_stager && e.has_materializer {
-            assert!(
-                super::conflicts::RESTAGEABLE_ENTITY_TYPES.contains(&e.entity_type),
-                "{} is synchronised both ways but cannot be restaged for 'keep mine'",
+                !e.has_materializer,
+                "{} is applied without a row spec",
                 e.entity_type
             );
         }

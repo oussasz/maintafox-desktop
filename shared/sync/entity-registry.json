@@ -174,7 +174,7 @@
         "cost_centers",
         "budget_versions"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "budget_alert_configs",
@@ -187,12 +187,12 @@
         "cost_centers",
         "budget_versions"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "budget_alert_events",
       "scope": "tenant",
-      "conflict_policy": "append_only",
+      "conflict_policy": "operator_review",
       "apply_priority": 6,
       "parents": [
         "user_accounts",
@@ -202,7 +202,7 @@
         "budget_versions",
         "budget_alert_configs"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "budget_commitments",
@@ -212,9 +212,10 @@
       "parents": [
         "work_orders",
         "cost_centers",
-        "budget_versions"
+        "budget_versions",
+        "purchase_orders"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "budget_erp_cost_center_master",
@@ -224,7 +225,7 @@
       "parents": [
         "cost_centers"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "budget_forecast_runs",
@@ -235,7 +236,7 @@
         "user_accounts",
         "budget_versions"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "budget_forecasts",
@@ -247,7 +248,7 @@
         "budget_versions",
         "budget_forecast_runs"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "budget_lines",
@@ -259,7 +260,7 @@
         "cost_centers",
         "budget_versions"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "budget_variance_reviews",
@@ -271,7 +272,7 @@
         "cost_centers",
         "budget_versions"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "budget_versions",
@@ -281,7 +282,7 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "capacity_rules",
@@ -292,7 +293,7 @@
         "teams",
         "org_nodes"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "certification_types",
@@ -300,7 +301,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "closeout_validation_policies",
@@ -321,7 +322,7 @@
         "user_accounts",
         "org_nodes"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "data_integrity_findings",
@@ -417,7 +418,7 @@
       "parents": [
         "personnel"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "equipment",
@@ -692,11 +693,13 @@
       "entity_type": "integration_exceptions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 1,
+      "apply_priority": 12,
       "parents": [
-        "posted_export_batches"
+        "posted_export_batches",
+        "budget_actuals",
+        "budget_forecasts"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "intervention_requests",
@@ -1184,7 +1187,7 @@
         "teams",
         "org_nodes"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "personnel_authorizations",
@@ -1192,9 +1195,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 6,
       "parents": [
-        "personnel"
+        "personnel",
+        "certification_types"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "personnel_availability_blocks",
@@ -1205,7 +1209,7 @@
         "user_accounts",
         "personnel"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "personnel_certifications",
@@ -1216,7 +1220,7 @@
         "certification_types",
         "personnel"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "personnel_rate_cards",
@@ -1224,17 +1228,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 6,
       "parents": [
-        "personnel"
+        "personnel",
+        "cost_centers"
       ],
-      "sync_status": "not_staged"
-    },
-    {
-      "entity_type": "personnel_readiness_snapshots",
-      "scope": "tenant",
-      "conflict_policy": "append_only",
-      "apply_priority": 0,
-      "parents": [],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "personnel_skills",
@@ -1245,7 +1242,7 @@
         "personnel",
         "reference_values"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "personnel_team_assignments",
@@ -1256,7 +1253,7 @@
         "teams",
         "personnel"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "planning_windows",
@@ -1266,7 +1263,7 @@
       "parents": [
         "org_nodes"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "pm_executions",
@@ -1278,7 +1275,7 @@
         "work_orders",
         "pm_occurrences"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "pm_findings",
@@ -1290,7 +1287,7 @@
         "intervention_requests",
         "pm_executions"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "pm_occurrence_transitions",
@@ -1301,7 +1298,7 @@
         "user_accounts",
         "pm_occurrences"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "pm_occurrences",
@@ -1332,7 +1329,8 @@
       "apply_priority": 5,
       "parents": [
         "lookup_values",
-        "teams"
+        "teams",
+        "equipment"
       ],
       "sync_status": "synced"
     },
@@ -1346,7 +1344,7 @@
         "pm_plan_versions",
         "pm_plans"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "policy_snapshots",
@@ -1382,7 +1380,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "procurement_requisition_lines",
@@ -1443,7 +1441,7 @@
         "reference_values",
         "qualification_requirement_profiles"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "qualification_requirement_profiles",
@@ -1453,7 +1451,7 @@
       "parents": [
         "certification_types"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "ram_advanced_guardrails",
@@ -1702,47 +1700,55 @@
       "entity_type": "schedule_break_ins",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 12,
+      "apply_priority": 14,
       "parents": [
         "personnel",
-        "schedule_commitments"
+        "schedule_commitments",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "schedule_candidates",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 10,
+      "apply_priority": 12,
       "parents": [
         "teams",
         "personnel",
         "urgency_levels",
-        "intervention_requests"
+        "intervention_requests",
+        "work_orders",
+        "pm_occurrences"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "schedule_change_log",
       "scope": "tenant",
       "conflict_policy": "append_only",
-      "apply_priority": 12,
+      "apply_priority": 14,
       "parents": [
-        "schedule_commitments"
+        "schedule_commitments",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "schedule_commitments",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 11,
+      "apply_priority": 13,
       "parents": [
         "personnel",
         "teams",
-        "schedule_candidates"
+        "schedule_candidates",
+        "work_orders",
+        "pm_occurrences",
+        "intervention_requests",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "schedule_details",
@@ -1752,17 +1758,7 @@
       "parents": [
         "reference_values"
       ],
-      "sync_status": "not_staged"
-    },
-    {
-      "entity_type": "scheduling_conflicts",
-      "scope": "tenant",
-      "conflict_policy": "operator_review",
-      "apply_priority": 11,
-      "parents": [
-        "schedule_candidates"
-      ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "settings_change_events",
@@ -1778,15 +1774,17 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "skill_definitions",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 0,
-      "parents": [],
-      "sync_status": "not_staged"
+      "apply_priority": 1,
+      "parents": [
+        "skill_categories"
+      ],
+      "sync_status": "synced"
     },
     {
       "entity_type": "stock_locations",
@@ -1817,9 +1815,12 @@
       "entity_type": "team_skill_requirements",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 0,
-      "parents": [],
-      "sync_status": "not_staged"
+      "apply_priority": 5,
+      "parents": [
+        "teams",
+        "skill_definitions"
+      ],
+      "sync_status": "synced"
     },
     {
       "entity_type": "teams",
@@ -1840,17 +1841,7 @@
         "personnel",
         "training_sessions"
       ],
-      "sync_status": "staged_only"
-    },
-    {
-      "entity_type": "training_expiry_alert_events",
-      "scope": "tenant",
-      "conflict_policy": "append_only",
-      "apply_priority": 7,
-      "parents": [
-        "personnel_certifications"
-      ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "training_sessions",
@@ -1861,7 +1852,7 @@
         "certification_types",
         "personnel"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "urgency_levels",
@@ -2156,12 +2147,14 @@
     "permissions": "app_catalog",
     "personnel_import_batches": "import_staging",
     "personnel_import_rows": "import_staging",
+    "personnel_readiness_snapshots": "derived_projection",
     "pm_generation_control": "job_queue",
     "pm_generation_runs": "job_queue",
     "reference_import_batches": "import_staging",
     "reference_import_rows": "import_staging",
     "report_artifacts": "job_queue",
     "report_runs": "job_queue",
+    "scheduling_conflicts": "derived_projection",
     "seaql_migrations": "sync_control",
     "secure_secret_refs": "secrets",
     "stock_balances": "derived_projection",
@@ -2181,6 +2174,7 @@
     "sync_replica_identity": "sync_control",
     "sync_transport_state": "sync_control",
     "system_config": "session_or_device",
+    "training_expiry_alert_events": "derived_projection",
     "trusted_devices": "session_or_device",
     "users": "legacy"
   }
