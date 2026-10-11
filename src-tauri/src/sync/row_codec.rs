@@ -192,10 +192,11 @@ fn verbatim_poly_value(layout: &EntityLayout, target: &Target, cell: &Cell, cell
     };
     let type_index = layout.columns.iter().position(|c| c.name == *type_column)?;
     let (_, _, target_table) = poly_target(targets, cell_text(cells.get(type_index)).as_deref())?;
-    if !target_table.is_empty() {
-        return None;
+    match *target_table {
+        crate::sync::row_spec::NOT_A_ROW => Some(cell_text(Some(cell)).map_or(Value::Null, Value::String)),
+        crate::sync::row_spec::LOCAL_ROW => Some(Value::Null),
+        _ => None,
     }
-    Some(cell_text(Some(cell)).map_or(Value::Null, Value::String))
 }
 
 /// Sync id (or catalog key) of the row a reference cell points to.
@@ -454,14 +455,18 @@ async fn translate_json_out(
                 vec![local_id.into()],
             )
             .await?
-            .filter(|v| !v.trim().is_empty())
-            .ok_or_else(|| {
-                codec_err(
-                    table,
-                    format!("{}{pointer} points to {} row {local_id}, which does not exist", column.name, r.table),
-                )
-            })?;
-            *slot = Value::String(sync_id);
+            .filter(|v| !v.trim().is_empty());
+            *slot = match sync_id {
+                Some(sync_id) => Value::String(sync_id),
+                // A history value outlives the row it mentions.
+                None if r.history => Value::Null,
+                None => {
+                    return Err(codec_err(
+                        table,
+                        format!("{}{pointer} points to {} row {local_id}, which does not exist", column.name, r.table),
+                    ))
+                }
+            };
         }
     }
     Ok(Value::String(serde_json::to_string(&doc)?))
@@ -675,9 +680,15 @@ async fn inbound_ref(
                     format!("{}: {type_column} {type_value:?} is not a mapped reference type", column.name),
                 ));
             };
-            if target_table.is_empty() {
+            if *target_table == crate::sync::row_spec::NOT_A_ROW {
                 // Not a row reference: stored as sent.
                 return Ok(Resolved::Local(key.into()));
+            }
+            if *target_table == crate::sync::row_spec::LOCAL_ROW {
+                return Err(codec_err(
+                    table,
+                    format!("{}: {type_column} {type_value:?} points to rows that are not synchronised", column.name),
+                ));
             }
             (
                 format!("SELECT id AS v FROM \"{target_table}\" WHERE entity_sync_id = ?"),

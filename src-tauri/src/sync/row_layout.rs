@@ -77,6 +77,8 @@ pub(crate) struct JsonRef {
     pub path: Vec<JsonSeg>,
     pub entity_type: &'static str,
     pub table: &'static str,
+    /// A target that no longer exists is sent empty (`row_spec::json_ref_hist`).
+    pub history: bool,
 }
 
 fn parse_json_path(path: &str) -> AppResult<Vec<JsonSeg>> {
@@ -325,8 +327,8 @@ async fn build_layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResu
                     }
                     let mut resolved = Vec::with_capacity(targets.len());
                     for (type_value, entity) in targets {
-                        if *entity == super::row_spec::NOT_A_ROW {
-                            resolved.push((*type_value, "", ""));
+                        if *entity == super::row_spec::NOT_A_ROW || *entity == super::row_spec::LOCAL_ROW {
+                            resolved.push((*type_value, *entity, *entity));
                             continue;
                         }
                         let def = registry::require_entity(entity)?;
@@ -399,6 +401,7 @@ async fn build_layout(conn: &impl ConnectionTrait, entity_type: &str) -> AppResu
                 path,
                 entity_type: target.entity_type,
                 table: target.table,
+                history: j.history,
             });
         }
         columns.push(LayoutColumn {

@@ -71,6 +71,22 @@ pub async fn parent_entity_sync_id(conn: &impl ConnectionTrait, table: &str, loc
     require_entity_sync_id(table, local_id, value)
 }
 
+/// Identity of a personal row that is unique per user and name (`UNIQUE(user_id, <key>)`): the
+/// same person saving the same name on two devices gives one row everywhere, not two rows that
+/// collide on that unique key. A user without a sync identity (capture not installed) gives a
+/// random id.
+pub async fn user_keyed_entity_sync_id(
+    conn: &impl ConnectionTrait,
+    entity_type: &str,
+    user_id: i64,
+    key: &str,
+) -> AppResult<String> {
+    Ok(match optional_entity_sync_id(conn, "user_accounts", user_id).await? {
+        Some(user) => seeded_entity_sync_id(entity_type, &format!("{user}|{key}")),
+        None => new_entity_sync_id(),
+    })
+}
+
 /// Sync id of a row when it has one. Rows always have one once sync capture is installed (the
 /// insert trigger gives one); a database without capture (tests, tools) may hold rows without.
 pub async fn optional_entity_sync_id(conn: &impl ConnectionTrait, table: &str, local_id: i64) -> AppResult<Option<String>> {

@@ -320,18 +320,26 @@ pub async fn save_activity_filter(payload: SaveFilterInput, state: State<'_, App
             .await?;
     }
 
+    let sync_id = crate::sync::identity::user_keyed_entity_sync_id(
+        &state.db,
+        "saved_activity_filters",
+        i64::from(user.user_id),
+        &payload.view_name,
+    )
+    .await?;
     state
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO saved_activity_filters
-                (user_id, view_name, filter_json, is_default)
-             VALUES (?, ?, ?, ?)
+                (entity_sync_id, user_id, view_name, filter_json, is_default)
+             VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(user_id, view_name)
              DO UPDATE SET
                 filter_json = excluded.filter_json,
                 is_default = excluded.is_default",
             [
+                sync_id.into(),
                 user.user_id.into(),
                 payload.view_name.into(),
                 payload.filter_json.to_string().into(),

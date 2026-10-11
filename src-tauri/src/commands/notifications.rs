@@ -425,13 +425,20 @@ pub async fn update_notification_preference(
         current_muted_until
     };
 
+    let sync_id = crate::sync::identity::user_keyed_entity_sync_id(
+        &state.db,
+        "notification_preferences",
+        i64::from(user.user_id),
+        &payload.category_code,
+    )
+    .await?;
     state
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "INSERT INTO notification_preferences
-                (user_id, category_code, in_app_enabled, os_enabled, email_enabled, sms_enabled, digest_mode, muted_until)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (entity_sync_id, user_id, category_code, in_app_enabled, os_enabled, email_enabled, sms_enabled, digest_mode, muted_until)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(user_id, category_code)
              DO UPDATE SET
                 in_app_enabled = excluded.in_app_enabled,
@@ -441,6 +448,7 @@ pub async fn update_notification_preference(
                 digest_mode = excluded.digest_mode,
                 muted_until = excluded.muted_until",
             [
+                sync_id.into(),
                 user.user_id.into(),
                 payload.category_code.into(),
                 in_app_enabled.into(),

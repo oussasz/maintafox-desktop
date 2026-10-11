@@ -168,6 +168,23 @@ fn natural_key_sql(layout: &EntityLayout, alias: &str) -> AppResult<String> {
 
 const NOT_SUPPRESSED: &str = "NOT EXISTS (SELECT 1 FROM sync_capture_suppression)";
 
+/// An update is a change to send only when a synchronised column changed: updates of device-local
+/// or derived columns (a login time, an SLA "notified" stamp, an org path) and of the local
+/// version counter alone stay on the device.
+fn replicated_change_sql(layout: &EntityLayout) -> String {
+    let changed: Vec<String> = layout
+        .columns
+        .iter()
+        .filter(|c| matches!(c.role, Role::Identity | Role::Value { .. } | Role::Ref { .. }))
+        .map(|c| format!("NEW.{0} IS NOT OLD.{0}", quote(&c.name)))
+        .collect();
+    if changed.is_empty() {
+        "0".to_string()
+    } else {
+        format!("({})", changed.join(" OR "))
+    }
+}
+
 fn trigger_sql(layout: &EntityLayout) -> AppResult<Vec<String>> {
     let table = quote(layout.table());
     let et = layout.def.entity_type;
@@ -191,7 +208,7 @@ fn trigger_sql(layout: &EntityLayout) -> AppResult<Vec<String>> {
             ),
             format!(
                 "CREATE TRIGGER {au} AFTER UPDATE ON {table}
-                 WHEN OLD.entity_sync_id IS NOT NULL AND trim(OLD.entity_sync_id) <> '' AND {NOT_SUPPRESSED}
+                 WHEN OLD.entity_sync_id IS NOT NULL AND trim(OLD.entity_sync_id) <> '' AND {changed} AND {NOT_SUPPRESSED}
                  BEGIN
                     {journal}
                     SELECT '{et}', NEW.entity_sync_id, NULL, 'upsert', {owner_new}
@@ -201,6 +218,7 @@ fn trigger_sql(layout: &EntityLayout) -> AppResult<Vec<String>> {
                      WHERE NEW.entity_sync_id IS NOT OLD.entity_sync_id AND {filter_old};
                  END",
                 au = name("au"),
+                changed = replicated_change_sql(layout),
                 owner_new = owner_sql(layout, "NEW"),
                 owner_old = owner_sql(layout, "OLD"),
                 filter_new = layout.filter_sql("NEW"),
@@ -234,7 +252,7 @@ fn trigger_sql(layout: &EntityLayout) -> AppResult<Vec<String>> {
             ),
             format!(
                 "CREATE TRIGGER {au} AFTER UPDATE ON {table}
-                 WHEN {NOT_SUPPRESSED}
+                 WHEN {changed} AND {NOT_SUPPRESSED}
                  BEGIN
                     {journal}
                     SELECT '{et}', NULL, {key_new}, 'upsert', {owner_new}
@@ -244,6 +262,7 @@ fn trigger_sql(layout: &EntityLayout) -> AppResult<Vec<String>> {
                      WHERE {key_new} IS NOT {key_old} AND {filter_old};
                  END",
                 au = name("au"),
+                changed = replicated_change_sql(layout),
                 owner_new = owner_sql(layout, "NEW"),
                 owner_old = owner_sql(layout, "OLD"),
                 filter_new = layout.filter_sql("NEW"),

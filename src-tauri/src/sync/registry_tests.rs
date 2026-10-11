@@ -179,23 +179,20 @@ async fn registry_parents_cover_declared_foreign_keys() {
 /// an entity is never staged without being applied, or the other way round.
 #[test]
 fn registry_flags_match_stager_and_materializer_dispatch() {
+    // Every synchronised entity is captured and applied by the generic engine (Phase 2.4): a
+    // registered type without a row spec would be neither sent nor applied.
+    let missing: Vec<&str> = SYNC_ENTITIES
+        .iter()
+        .filter(|e| super::row_spec::row_spec(e.entity_type).is_none())
+        .map(|e| e.entity_type)
+        .collect();
+    assert!(missing.is_empty(), "registered types without a row spec: {missing:?}");
     for e in SYNC_ENTITIES {
-        let generic = super::row_spec::row_spec(e.entity_type).is_some();
-        if generic {
-            assert!(
-                e.has_stager && e.has_materializer,
-                "{} has a row spec: mark has_stager and has_materializer",
-                e.entity_type
-            );
-        } else {
-            // Entities still staged by a hand-written stager (until their Phase 2.4 domain step)
-            // are never applied: inbound rows of them wait as `deferred`.
-            assert!(
-                !e.has_materializer,
-                "{} is applied without a row spec",
-                e.entity_type
-            );
-        }
+        assert!(
+            e.has_stager && e.has_materializer,
+            "{} has a row spec: mark has_stager and has_materializer",
+            e.entity_type
+        );
     }
 }
 
@@ -420,7 +417,7 @@ fn row_spec_references_are_registry_parents() {
                 super::row_spec::RefTarget::Poly { targets, .. } => targets
                     .iter()
                     .map(|(_, t)| *t)
-                    .filter(|t| *t != super::row_spec::NOT_A_ROW)
+                    .filter(|t| *t != super::row_spec::NOT_A_ROW && *t != super::row_spec::LOCAL_ROW)
                     .collect(),
                 _ => vec![],
             };

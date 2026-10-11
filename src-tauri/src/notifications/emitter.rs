@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
-use crate::notifications::{delivery, router, Result, SqlitePool};
+use crate::notifications::{delivery, router, Result};
+use crate::sync::identity::{new_entity_sync_id, optional_entity_sync_id, seeded_entity_sync_id};
 
 #[derive(Debug, Clone)]
 pub struct NotificationEventInput {
@@ -18,19 +19,99 @@ pub struct NotificationEventInput {
     pub action_url: Option<String>,
 }
 
-pub async fn emit_event(pool: &SqlitePool, input: NotificationEventInput) -> Result<()> {
+pub async fn emit_event(pool: &impl ConnectionTrait, input: NotificationEventInput) -> Result<()> {
     // Keep "disconnected pool" behavior visible to callers.
     pool.query_one(Statement::from_string(DbBackend::Sqlite, "SELECT 1".to_string()))
         .await?;
 
-    if let Err(err) = emit_event_inner(pool, input).await {
+    if let Err(err) = emit_event_inner(pool, input, None).await {
         tracing::error!(error = %err, "notifications::emit_event fire-and-log failure");
     }
 
     Ok(())
 }
 
-async fn emit_event_inner(pool: &SqlitePool, input: NotificationEventInput) -> Result<()> {
+/// An event that every device generates for itself from synchronised data (the PM scheduler's due
+/// occurrences, the DI SLA poller). The caller runs it with sync capture suppressed, so it is not
+/// sent; `identity` (built from sync ids) gives the event, and therefore its notifications, the
+/// same id on every device, so what a recipient does with a notification on one device (read,
+/// acknowledge, snooze) applies to the same notification on the others.
+pub async fn emit_device_event(
+    conn: &impl ConnectionTrait,
+    input: NotificationEventInput,
+    identity: Option<&str>,
+) -> Result<()> {
+    let event_sync_id = identity.map(|basis| seeded_entity_sync_id("notification_events", basis));
+    if let Err(err) = emit_event_inner(conn, input, event_sync_id).await {
+        tracing::error!(error = %err, "notifications::emit_device_event fire-and-log failure");
+    }
+    Ok(())
+}
+
+/// Identity of a notification: the same event, recipient and escalation level give the same id on
+/// every device. Rows without a sync identity (capture not installed) get a random one.
+async fn notification_sync_id(conn: &impl ConnectionTrait, event_id: i64, user_id: i64, level: i64) -> Result<String> {
+    let event = optional_entity_sync_id(conn, "notification_events", event_id).await?;
+    let user = optional_entity_sync_id(conn, "user_accounts", user_id).await?;
+    Ok(match (event, user) {
+        (Some(event), Some(user)) => seeded_entity_sync_id("notifications", &format!("{event}|{user}|{level}")),
+        _ => new_entity_sync_id(),
+    })
+}
+
+/// Creates the notification of `user_id` for an event at an escalation level; `None` when it
+/// already exists (received from another device of the recipient, or created earlier here).
+pub(crate) async fn insert_notification(
+    conn: &impl ConnectionTrait,
+    event_id: i64,
+    user_id: i64,
+    title: &str,
+    body: Option<&str>,
+    action_url: Option<&str>,
+    level: i64,
+) -> Result<Option<i64>> {
+    let sync_id = notification_sync_id(conn, event_id, user_id, level).await?;
+    let inserted = conn
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO notifications
+                (entity_sync_id, notification_event_id, recipient_user_id, delivery_state, title, body, action_url, created_at, escalation_level)
+             VALUES (?, ?, ?, 'pending', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?)
+             ON CONFLICT(entity_sync_id) DO NOTHING",
+            [
+                sync_id.clone().into(),
+                event_id.into(),
+                user_id.into(),
+                title.into(),
+                body.map(str::to_string).into(),
+                action_url.map(str::to_string).into(),
+                level.into(),
+            ],
+        ))
+        .await?;
+    if inserted.rows_affected() == 0 {
+        return Ok(None);
+    }
+    Ok(Some(row_id_of(conn, "notifications", &sync_id).await?))
+}
+
+async fn row_id_of(conn: &impl ConnectionTrait, table: &str, sync_id: &str) -> Result<i64> {
+    conn.query_one(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        format!("SELECT id FROM {table} WHERE entity_sync_id = ?"),
+        [sync_id.into()],
+    ))
+    .await?
+    .ok_or_else(|| crate::errors::AppError::Internal(anyhow::anyhow!("{table} row {sync_id} missing after insert")))?
+    .try_get::<i64>("", "id")
+    .map_err(Into::into)
+}
+
+async fn emit_event_inner(
+    pool: &impl ConnectionTrait,
+    input: NotificationEventInput,
+    event_sync_id: Option<String>,
+) -> Result<()> {
     if let Some(dedupe_key) = input.dedupe_key.as_deref() {
         let existing = pool
             .query_one(Statement::from_sql_and_values(
@@ -88,24 +169,26 @@ async fn emit_event_inner(pool: &SqlitePool, input: NotificationEventInput) -> R
         }
     }
 
-    let event_insert = pool
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO notification_events
-                (source_module, source_record_id, event_code, category_code, severity, dedupe_key, payload_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-                input.source_module.clone().into(),
-                input.source_record_id.clone().into(),
-                input.event_code.clone().into(),
-                input.category_code.clone().into(),
-                input.severity.clone().into(),
-                input.dedupe_key.clone().into(),
-                input.payload_json.clone().into(),
-            ],
-        ))
-        .await?;
-    let event_id = event_insert.last_insert_id() as i64;
+    let event_sync_id = event_sync_id.unwrap_or_else(new_entity_sync_id);
+    pool.execute(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO notification_events
+            (entity_sync_id, source_module, source_record_id, event_code, category_code, severity, dedupe_key, payload_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(entity_sync_id) DO NOTHING",
+        [
+            event_sync_id.clone().into(),
+            input.source_module.clone().into(),
+            input.source_record_id.clone().into(),
+            input.event_code.clone().into(),
+            input.category_code.clone().into(),
+            input.severity.clone().into(),
+            input.dedupe_key.clone().into(),
+            input.payload_json.clone().into(),
+        ],
+    ))
+    .await?;
+    let event_id = row_id_of(pool, "notification_events", &event_sync_id).await?;
 
     let rule = pool
         .query_one(Statement::from_sql_and_values(
@@ -159,22 +242,19 @@ async fn emit_event_inner(pool: &SqlitePool, input: NotificationEventInput) -> R
     }
 
     for user_id in recipient_users {
-        let notif_insert = pool
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO notifications
-                    (notification_event_id, recipient_user_id, delivery_state, title, body, action_url, created_at, escalation_level)
-                 VALUES (?, ?, 'pending', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), 0)",
-                [
-                    event_id.into(),
-                    user_id.into(),
-                    input.title.clone().into(),
-                    input.body.clone().into(),
-                    input.action_url.clone().into(),
-                ],
-            ))
-            .await?;
-        let notification_id = notif_insert.last_insert_id() as i64;
+        let Some(notification_id) = insert_notification(
+            pool,
+            event_id,
+            user_id,
+            &input.title,
+            input.body.as_deref(),
+            input.action_url.as_deref(),
+            0,
+        )
+        .await?
+        else {
+            continue;
+        };
 
         if let Err(err) = delivery::schedule_in_app_delivery(pool, notification_id).await {
             tracing::error!(

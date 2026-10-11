@@ -243,6 +243,21 @@ impl TestServer {
 const VALUE_OVERRIDES: &[(&str, &str, &str)] = &[
     // Movement types are an enumeration of the inventory commands (`inventory::ledger`).
     ("inventory_transactions", "movement_type", "'ADJUST_IN'"),
+    // The next run is computed from it on every device.
+    ("report_schedules", "cron_expr", "'0 0 8 * * *'"),
+    // Only tenant settings are synchronised (device settings stay on the device).
+    ("app_settings", "setting_scope", "'tenant'"),
+    // Notification categories are referenced by code (seeded on every device).
+    (
+        "notification_preferences",
+        "category_code",
+        "(SELECT code FROM notification_categories ORDER BY id LIMIT 1)",
+    ),
+    (
+        "notification_rules",
+        "category_code",
+        "(SELECT code FROM notification_categories ORDER BY id LIMIT 1)",
+    ),
 ];
 
 #[derive(Debug, Clone)]
@@ -455,6 +470,10 @@ impl RowFactory {
     }
 }
 
+fn is_row_target(entity: &str) -> bool {
+    entity != super::row_spec::NOT_A_ROW && entity != super::row_spec::LOCAL_ROW
+}
+
 #[derive(Debug, Clone)]
 enum FactoryKind {
     Skip,
@@ -508,8 +527,8 @@ async fn factory_columns(
                             // Prefer a target on the generic engine, so the parent travels too.
                             let (type_value, target, _) = targets
                                 .iter()
-                                .find(|(_, t, _)| !t.is_empty() && super::row_spec::row_spec(t).is_some())
-                                .or_else(|| targets.iter().find(|(_, t, _)| !t.is_empty()))
+                                .find(|(_, t, _)| is_row_target(t) && super::row_spec::row_spec(t).is_some())
+                                .or_else(|| targets.iter().find(|(_, t, _)| is_row_target(t)))
                                 .unwrap_or(&targets[0]);
                             FactoryKind::Poly {
                                 type_column: (*type_column).to_string(),
@@ -733,6 +752,7 @@ pub(crate) async fn editable_text_column(db: &DatabaseConnection, entity_type: &
                 && c.is_text
                 && !pk.contains(i)
                 && !checks.contains_key(&c.name.to_ascii_lowercase())
+                && !VALUE_OVERRIDES.iter().any(|(e, col, _)| *e == entity_type && *col == c.name)
                 && !unique_cols.contains(&c.name)
                 && !looks_like_time(&c.name)
                 && !c.name.ends_with("_json")

@@ -57,6 +57,8 @@ pub struct JsonRefSpec {
     pub column: &'static str,
     pub path: &'static str,
     pub entity: &'static str,
+    /// History value: a target that no longer exists is sent empty instead of failing.
+    pub history: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -182,7 +184,21 @@ const fn spec(entity_type: &'static str, refs: &'static [RefSpec]) -> RowSpec {
 }
 
 const fn json_ref(column: &'static str, path: &'static str, entity: &'static str) -> JsonRefSpec {
-    JsonRefSpec { column, path, entity }
+    JsonRefSpec {
+        column,
+        path,
+        entity,
+        history: false,
+    }
+}
+
+const fn json_ref_hist(column: &'static str, path: &'static str, entity: &'static str) -> JsonRefSpec {
+    JsonRefSpec {
+        column,
+        path,
+        entity,
+        history: true,
+    }
 }
 
 const USER: &str = "user_accounts";
@@ -190,6 +206,10 @@ const USER: &str = "user_accounts";
 /// Polymorphic target of a type whose value is not a row id (for example a role name): the value
 /// is sent unchanged.
 pub(crate) const NOT_A_ROW: &str = "";
+
+/// Polymorphic target of a type whose rows stay on each device (local-only tables): the
+/// reference is sent empty.
+pub(crate) const LOCAL_ROW: &str = "-";
 
 /// RBAC scope references: the org node (or team) a role assignment is limited to, stored as the
 /// local id in text form.
@@ -567,7 +587,9 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("budget_forecasts", &[]),
     spec("budget_variance_reviews", &[]),
     spec("budget_alert_configs", &[]),
-    spec("budget_alert_events", &[]),
+    // The alert's notification belongs to its recipient and reaches only that person's devices:
+    // elsewhere the link stays empty (completed if the notification arrives later).
+    spec("budget_alert_events", &[soft("notification_id", "notifications")]),
     spec("posted_export_batches", &[]),
     spec(
         "integration_exceptions",
@@ -720,6 +742,143 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     spec("data_integrity_repair_actions", &[]),
     spec("analytics_contract_versions", &[]),
+    // ── Settings, policies, retention ───────────────────────────────────────────────────────
+    RowSpec {
+        // Device settings (licence onboarding, bootstrap state, updater, diagnostics) stay here.
+        row_filter: Some("{row}.setting_scope = 'tenant'"),
+        // Secrets live in each device's key store: the reference to them is local.
+        device_local: &["secret_ref_id"],
+        ..spec("app_settings", &[r("last_modified_by_id", USER)])
+    },
+    spec("policy_snapshots", &[r("activated_by_id", USER)]),
+    spec("retention_policies", &[]),
+    // ── History logs (append-only) ──────────────────────────────────────────────────────────
+    spec(
+        "activity_events",
+        &[
+            hist("entity_scope_id", "org_nodes"),
+            hist("actor_id", USER),
+            poly_hist(
+                "source_record_id",
+                "source_record_type",
+                &[
+                    ("work_order", "work_orders"),
+                    ("intervention_request", "intervention_requests"),
+                    ("pm_occurrence", "pm_occurrences"),
+                    ("personnel", "personnel"),
+                    ("schedule_commitment", "schedule_commitments"),
+                    ("role_assignment", "user_scope_assignments"),
+                    // Archives and import batches are kept on the device that made them.
+                    ("archive_item", LOCAL_ROW),
+                    ("personnel_import_batch", LOCAL_ROW),
+                ],
+            ),
+        ],
+    ),
+    spec("audit_events", &[hist("actor_id", USER)]),
+    spec(
+        "admin_change_events",
+        &[
+            hist("actor_id", USER),
+            hist("target_user_id", USER),
+            hist("target_role_id", "roles"),
+        ],
+    ),
+    RowSpec {
+        // Changes the application makes by itself on each device (seeding at startup) stay local.
+        row_filter: Some("{row}.changed_by_id IS NOT NULL"),
+        ..spec("settings_change_events", &[hist("changed_by_id", USER)])
+    },
+    // ── Notifications ───────────────────────────────────────────────────────────────────────
+    spec("notification_categories", &[]),
+    spec("notification_escalation_policies", &[]),
+    spec(
+        "notification_rules",
+        &[r("escalation_policy_id", "notification_escalation_policies")],
+    ),
+    spec(
+        "notification_escalation_steps",
+        &[
+            r("escalation_policy_id", "notification_escalation_policies"),
+            poly(
+                "route_to_reference",
+                "route_to_type",
+                &[("role", NOT_A_ROW), ("team", "teams"), ("user", USER)],
+            ),
+        ],
+    ),
+    RowSpec {
+        // Ids the escalation routing reads from the payload (`notifications::router`).
+        json_refs: &[
+            json_ref_hist("payload_json", "$.team_id", "teams"),
+            json_ref_hist("payload_json", "$.assigned_team_id", "teams"),
+            json_ref_hist("payload_json", "$.org_node_id", "org_nodes"),
+            json_ref_hist("payload_json", "$.entity_id", "org_nodes"),
+            json_ref_hist("payload_json", "$.watcher_user_ids[*]", USER),
+        ],
+        ..spec(
+            "notification_events",
+            &[poly_hist(
+                "source_record_id",
+                "source_module",
+                &[
+                    ("di", "intervention_requests"),
+                    ("intervention_requests", "intervention_requests"),
+                    ("pm", "pm_occurrences"),
+                    ("personnel", "personnel"),
+                    ("planning", "schedule_commitments"),
+                    ("finance_budget", "budget_versions"),
+                ],
+            )],
+        )
+    },
+    RowSpec {
+        // Links to the record the notification is about (`/requests?openDi=12`).
+        json_refs: &[
+            json_ref_hist("action_url", "?openDi", "intervention_requests"),
+            json_ref_hist("action_url", "?di", "intervention_requests"),
+            json_ref_hist("action_url", "?occurrence", "pm_occurrences"),
+        ],
+        ..spec(
+            "notifications",
+            &[
+                r("notification_event_id", "notification_events"),
+                r("recipient_user_id", USER),
+                r("recipient_role_id", "roles"),
+            ],
+        )
+    },
+    spec(
+        "notification_acknowledgements",
+        &[r("notification_id", "notifications"), r("acknowledged_by_id", USER)],
+    ),
+    // ── Reports ─────────────────────────────────────────────────────────────────────────────
+    spec("report_templates", &[]),
+    RowSpec {
+        // Each device of the user runs the schedule with its own run times: the next run is
+        // computed from the cron expression on apply (`apply_hooks`), this device has not run it.
+        derived: &[
+            ("next_run_at", "strftime('%Y-%m-%dT%H:%M:%SZ','now')"),
+            ("last_run_at", "NULL"),
+        ],
+        ..spec(
+            "report_schedules",
+            &[r("user_id", USER), r("template_id", "report_templates")],
+        )
+    },
+    // ── Personal items (per user, only to that user's devices) ─────────────────────────────
+    spec("notification_preferences", &[r("user_id", USER)]),
+    RowSpec {
+        // Ids a saved activity filter narrows on (`commands::activity_feed::ActivityFilter`).
+        json_refs: &[
+            json_ref_hist("filter_json", "$.entity_scope_id", "org_nodes"),
+            json_ref_hist("filter_json", "$.actor_id", USER),
+        ],
+        ..spec("saved_activity_filters", &[r("user_id", USER)])
+    },
+    // Keyed by the user: one layout per person (widget ids only, no row ids).
+    spec("user_dashboard_layouts", &[r("user_id", USER)]),
+    spec("user_analytics_dashboard_layouts", &[r("user_id", USER)]),
     // ── Inventory and procurement ───────────────────────────────────────────────────────────
     spec("article_families", &[]),
     spec("articles", &[]),

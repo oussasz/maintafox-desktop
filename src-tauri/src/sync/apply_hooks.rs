@@ -6,7 +6,8 @@
 //!   (`inventory::ledger`);
 //! - `org_nodes`: `ancestor_path` / `depth` (paths of local ids) are recomputed for the node and
 //!   its subtree;
-//! - `user_dismissals`: `scope_key` (`<issue_code>:<local equipment id>`) is rebuilt.
+//! - `user_dismissals`: `scope_key` (`<issue_code>:<local equipment id>`) is rebuilt;
+//! - `report_schedules`: the next run of this device is computed from the cron expression.
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -50,8 +51,37 @@ pub(crate) async fn after_upsert(
             .await?;
             Ok(())
         }
+        "report_schedules" => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "schedule not found after apply"))?;
+            schedule_next_run(conn, id).await
+        }
         _ => Ok(()),
     }
+}
+
+async fn schedule_next_run(conn: &impl ConnectionTrait, schedule_id: i64) -> AppResult<()> {
+    use std::str::FromStr;
+    let cron_expr: String = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT cron_expr FROM report_schedules WHERE id = ?",
+            [schedule_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| hook_err("report_schedules", "schedule vanished"))?
+        .try_get("", "cron_expr")
+        .map_err(|e| hook_err("report_schedules", e))?;
+    let schedule = cron::Schedule::from_str(cron_expr.trim())
+        .map_err(|e| hook_err("report_schedules", format!("cron expression '{cron_expr}': {e}")))?;
+    conn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "UPDATE report_schedules SET next_run_at = ? WHERE id = ?",
+        [crate::reports::scheduler::next_run_rfc3339(&schedule).into(), schedule_id.into()],
+    ))
+    .await?;
+    Ok(())
 }
 
 /// After an inbound delete removed a row.

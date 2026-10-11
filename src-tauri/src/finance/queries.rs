@@ -3671,7 +3671,9 @@ pub async fn evaluate_budget_alerts(
                         (source_module, source_record_id, event_code, category_code, severity, dedupe_key, payload_json)
                      VALUES ('finance_budget', ?, ?, 'budget_control_alert', ?, ?, ?)",
                     [
-                        format!("{}:{}", row.budget_version_id, row.cost_center_id).into(),
+                        // The budget version (a synchronised row); the cost center and bucket are
+                        // in the dedupe key and the alert event.
+                        row.budget_version_id.to_string().into(),
                         config.alert_type.clone().into(),
                         if config.alert_type.contains("threshold") {
                             "warning".to_string()

@@ -11,7 +11,7 @@
         "user_accounts",
         "org_nodes"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "admin_change_events",
@@ -22,7 +22,7 @@
         "roles",
         "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "analytics_contract_versions",
@@ -36,42 +36,12 @@
       "entity_type": "app_settings",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 0,
-      "parents": [],
-      "sync_status": "not_staged",
-      "note": "Mixes device and tenant settings (setting_scope); step 2.4 must sync only tenant-scoped keys."
-    },
-    {
-      "entity_type": "archive_actions",
-      "scope": "tenant",
-      "conflict_policy": "append_only",
-      "apply_priority": 2,
-      "parents": [
-        "user_accounts",
-        "archive_items"
-      ],
-      "sync_status": "not_staged"
-    },
-    {
-      "entity_type": "archive_items",
-      "scope": "tenant",
-      "conflict_policy": "operator_review",
       "apply_priority": 1,
       "parents": [
-        "retention_policies",
         "user_accounts"
       ],
-      "sync_status": "not_staged"
-    },
-    {
-      "entity_type": "archive_payloads",
-      "scope": "tenant",
-      "conflict_policy": "operator_review",
-      "apply_priority": 2,
-      "parents": [
-        "archive_items"
-      ],
-      "sync_status": "not_staged"
+      "sync_status": "synced",
+      "note": "Mixes device and tenant settings (setting_scope); step 2.4 must sync only tenant-scoped keys."
     },
     {
       "entity_type": "article_cost_profiles",
@@ -157,7 +127,7 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "not_staged",
+      "sync_status": "synced",
       "note": "Device audit trail; step 2.4 decides between append-only sync and a dedicated audit channel."
     },
     {
@@ -471,14 +441,6 @@
         "equipment"
       ],
       "sync_status": "synced"
-    },
-    {
-      "entity_type": "event_links",
-      "scope": "tenant",
-      "conflict_policy": "operator_review",
-      "apply_priority": 0,
-      "parents": [],
-      "sync_status": "not_staged"
     },
     {
       "entity_type": "event_tree_models",
@@ -887,17 +849,6 @@
       "sync_status": "synced"
     },
     {
-      "entity_type": "library_documents",
-      "scope": "tenant",
-      "conflict_policy": "operator_review",
-      "apply_priority": 5,
-      "parents": [
-        "user_accounts",
-        "equipment"
-      ],
-      "sync_status": "not_staged"
-    },
-    {
       "entity_type": "lookup_domains",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -982,7 +933,7 @@
         "user_accounts",
         "notifications"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "notification_categories",
@@ -990,7 +941,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "notification_escalation_policies",
@@ -998,17 +949,19 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "notification_escalation_steps",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 1,
+      "apply_priority": 5,
       "parents": [
-        "notification_escalation_policies"
+        "notification_escalation_policies",
+        "teams",
+        "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "notification_events",
@@ -1016,7 +969,7 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "notification_preferences",
@@ -1027,7 +980,7 @@
         "notification_categories",
         "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "notification_rules",
@@ -1035,9 +988,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 1,
       "parents": [
-        "notification_categories"
+        "notification_categories",
+        "notification_escalation_policies"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "notifications",
@@ -1049,7 +1003,7 @@
         "user_accounts",
         "notification_events"
       ],
-      "sync_status": "not_staged",
+      "sync_status": "synced",
       "note": "Role-targeted rows (recipient_user_id NULL) have no owner; step 2.4 must fan them out per user or keep them tenant-wide."
     },
     {
@@ -1353,9 +1307,11 @@
       "entity_type": "policy_snapshots",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 0,
-      "parents": [],
-      "sync_status": "not_staged"
+      "apply_priority": 1,
+      "parents": [
+        "user_accounts"
+      ],
+      "sync_status": "synced"
     },
     {
       "entity_type": "position_change_events",
@@ -1626,7 +1582,7 @@
         "report_templates",
         "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "report_templates",
@@ -1634,7 +1590,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "retention_policies",
@@ -1642,7 +1598,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "role_permissions",
@@ -1690,7 +1646,7 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "schedule_break_ins",
@@ -1762,7 +1718,7 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "skill_categories",
@@ -1874,7 +1830,7 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "user_dashboard_layouts",
@@ -1884,7 +1840,7 @@
       "parents": [
         "user_accounts"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "user_dismissals",
@@ -2122,6 +2078,9 @@
   ],
   "local_only_tables": {
     "app_sessions": "session_or_device",
+    "archive_actions": "device_archive",
+    "archive_items": "device_archive",
+    "archive_payloads": "device_archive",
     "asset_import_batches": "import_staging",
     "asset_import_events": "import_staging",
     "asset_import_staging": "import_staging",
@@ -2132,8 +2091,10 @@
     "entitlement_cache_state": "licensing",
     "entitlement_envelopes": "licensing",
     "event_export_runs": "job_queue",
+    "event_links": "derived_projection",
     "inspection_offline_queue": "job_queue",
     "inspection_reliability_signals": "derived_projection",
+    "library_documents": "device_archive",
     "license_admin_actions": "licensing",
     "license_api_exchange_guard": "licensing",
     "license_enforcement_state": "licensing",

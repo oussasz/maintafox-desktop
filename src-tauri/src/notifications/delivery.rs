@@ -3,7 +3,7 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use crate::errors::AppError;
 use crate::notifications::{Result, SqlitePool};
 
-pub async fn schedule_in_app_delivery(pool: &SqlitePool, notification_id: i64) -> Result<()> {
+pub async fn schedule_in_app_delivery(pool: &impl ConnectionTrait, notification_id: i64) -> Result<()> {
     pool.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "INSERT INTO notification_deliveries

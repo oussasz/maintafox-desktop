@@ -217,7 +217,7 @@ async fn repeated_delivery_failures_dead_letter_with_a_conflict() {
 }
 
 #[tokio::test]
-async fn unknown_and_not_yet_materializable_types_stay_deferred() {
+async fn unknown_types_and_rows_missing_a_parent_stay_deferred() {
     let db = setup_db().await;
     queries::apply_sync_batch(
         &db,
@@ -225,7 +225,14 @@ async fn unknown_and_not_yet_materializable_types_stay_deferred() {
             "srv-def",
             "ckpt-def-1",
             vec![
-                inbound("work_permits", "permit-1", 1, serde_json::json!({ "status": "active" })),
+                inbound(
+                    "stock_locations",
+                    "loc-waiting",
+                    1,
+                    serde_json::json!({
+                        "_sync_format": FORMAT, "warehouse_sync_id": "wh-not-received", "code": "LOC-W", "name": "Bin W",
+                    }),
+                ),
                 inbound("future_entity", "future-1", 1, serde_json::json!({})),
             ],
         ),
@@ -513,4 +520,21 @@ async fn equal_version_with_different_content_is_a_conflict() {
     let echo = materialize_inbox_batch(&db, Some(10)).await.expect("materialize echo");
     assert_eq!(echo.skipped, 1);
     assert_eq!(echo.conflicts, 0);
+}
+
+#[tokio::test]
+async fn an_update_of_device_local_columns_only_is_not_captured() {
+    use super::test_support::{exec, scalar_i64 as count, started_db};
+    let db = started_db().await;
+    stage(&db).await;
+    let journal = "SELECT COUNT(*) FROM sync_capture_journal";
+    exec(
+        &db,
+        "UPDATE user_accounts SET last_login_at = '2026-10-11T08:00:00Z', failed_login_attempts = 2",
+        vec![],
+    )
+    .await;
+    assert_eq!(count(&db, journal, vec![]).await, 0, "a login on this device is not a change to send");
+    exec(&db, "UPDATE user_accounts SET display_name = 'Administrateur'", vec![]).await;
+    assert_eq!(count(&db, journal, vec![]).await, 1, "a change of a synchronised column is captured");
 }

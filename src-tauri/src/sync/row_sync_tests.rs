@@ -212,6 +212,34 @@ pub(crate) const RELIABILITY_TYPES: &[&str] = &[
     "analytics_contract_versions",
 ];
 
+/// Settings, history logs, notifications and reports.
+pub(crate) const CONFIG_NOTIFICATION_TYPES: &[&str] = &[
+    "app_settings",
+    "policy_snapshots",
+    "retention_policies",
+    "activity_events",
+    "audit_events",
+    "admin_change_events",
+    "settings_change_events",
+    "notification_categories",
+    "notification_escalation_policies",
+    "notification_rules",
+    "notification_escalation_steps",
+    "notification_events",
+    "notifications",
+    "notification_acknowledgements",
+    "report_templates",
+    "report_schedules",
+];
+
+/// Personal items of a user.
+pub(crate) const PERSONAL_TYPES: &[&str] = &[
+    "notification_preferences",
+    "saved_activity_filters",
+    "user_dashboard_layouts",
+    "user_analytics_dashboard_layouts",
+];
+
 async fn compare(
     a: &DatabaseConnection,
     b: &DatabaseConnection,
@@ -224,16 +252,56 @@ async fn compare(
     match (on_a, on_b) {
         (Ok(Some(pa)), Ok(Some(pb))) if pa == pb => {}
         (Ok(Some(pa)), Ok(Some(pb))) => {
+            let unreceived = personal_links_not_received(b, row.entity_type, &pa, &pb).await;
             let diff: Vec<String> = pa
                 .iter()
-                .filter(|(k, v)| pb.get(*k) != Some(*v))
+                .filter(|(k, v)| pb.get(*k) != Some(*v) && !unreceived.contains(*k))
                 .map(|(k, v)| format!("{k}: A={v} B={:?}", pb.get(k)))
                 .collect();
-            problems.push(format!("{} {stage}: rows differ: {}", row.entity_type, diff.join("; ")));
+            if !diff.is_empty() {
+                problems.push(format!("{} {stage}: rows differ: {}", row.entity_type, diff.join("; ")));
+            }
         }
         (Ok(Some(_)), Ok(None)) => problems.push(format!("{} {stage}: missing on B", row.entity_type)),
         (on_a, on_b) => problems.push(format!("{} {stage}: unexpected A={on_a:?} B={on_b:?}", row.entity_type)),
     }
+}
+
+/// Payload keys of soft links to another person's row (a user-scoped entity) that `b` has not
+/// received: such a link stays empty on devices of other users (`row_spec::soft`).
+async fn personal_links_not_received(
+    b: &DatabaseConnection,
+    entity_type: &str,
+    pa: &serde_json::Map<String, serde_json::Value>,
+    pb: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<String> {
+    let layout = row_layout::layout(b, entity_type).await.expect("layout");
+    let mut keys = Vec::new();
+    for column in &layout.columns {
+        let row_layout::Role::Ref {
+            key,
+            target: row_layout::Target::Entity { entity_type: target, table },
+            soft: true,
+            ..
+        } = &column.role
+        else {
+            continue;
+        };
+        let personal = registry::entity(target).is_some_and(|d| d.scope == SyncScope::User);
+        let (Some(serde_json::Value::String(sync_id)), Some(serde_json::Value::Null)) = (pa.get(key), pb.get(key)) else {
+            continue;
+        };
+        let present = scalar_i64(
+            b,
+            &format!("SELECT COUNT(*) FROM \"{table}\" WHERE entity_sync_id = ?"),
+            vec![sync_id.clone().into()],
+        )
+        .await;
+        if personal && present == 0 {
+            keys.push(key.clone());
+        }
+    }
+    keys
 }
 
 fn check_exchange(report: &ExchangeReport, stage: &str, problems: &mut Vec<String>) {
@@ -294,19 +362,35 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
         }
     }
     // Personal rows travel only to devices where their owner is signed in or trusted: they are
-    // given to the seeded administrator (same identity on A and B), who is trusted on B.
+    // given to the seeded administrator (same identity on A and B), who is trusted on B. All rows
+    // of personal tables move (a personal row's personal parent belongs to the same person); a
+    // table keyed by its owner moves only the created row.
     let admin = "SELECT id FROM user_accounts ORDER BY id LIMIT 1";
     let mut personal = false;
-    for row in &created {
+    for row in created.iter_mut() {
         let def = registry::entity(row.entity_type).expect("registered");
-        if let (SyncScope::User, Some(owner)) = (def.scope, def.owner_user_column) {
-            personal = true;
+        let (SyncScope::User, Some(owner)) = (def.scope, def.owner_user_column) else {
+            continue;
+        };
+        personal = true;
+        let layout = row_layout::layout(&a, row.entity_type).await.expect("layout");
+        if layout.natural_pk.is_some() {
             exec(
                 &a,
                 &format!("UPDATE \"{}\" SET \"{owner}\" = ({admin}) WHERE rowid = ?", def.table),
                 vec![row.rowid.into()],
             )
             .await;
+            let rowid = scalar_i64(
+                &a,
+                &format!("SELECT rowid FROM \"{}\" WHERE \"{owner}\" = ({admin})", def.table),
+                vec![],
+            )
+            .await;
+            *row = created_row(&a, row.entity_type, rowid).await.expect("personal row");
+        } else {
+            exec(&a, &format!("UPDATE \"{}\" SET \"{owner}\" = ({admin})", def.table), vec![]).await;
+            *row = created_row(&a, row.entity_type, row.rowid).await.expect("personal row");
         }
     }
     if personal {
@@ -405,6 +489,16 @@ async fn personnel_and_qualification_round_trip() {
 #[tokio::test]
 async fn inspections_and_permits_round_trip() {
     round_trip(INSPECTION_PERMIT_TYPES).await;
+}
+
+#[tokio::test]
+async fn config_and_notifications_round_trip() {
+    round_trip(CONFIG_NOTIFICATION_TYPES).await;
+}
+
+#[tokio::test]
+async fn personal_items_round_trip() {
+    round_trip(PERSONAL_TYPES).await;
 }
 
 #[tokio::test]
