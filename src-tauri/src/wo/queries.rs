@@ -663,7 +663,6 @@ pub async fn create_work_order(db: &DatabaseConnection, input: WoCreateInput) ->
     ))
     .await?;
 
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
     txn.commit().await?;
     Ok(wo)
 }
@@ -751,7 +750,6 @@ pub async fn update_wo_draft_fields(
 
     if sets.is_empty() {
         // Nothing to update — return current row
-        crate::wo::sync_stage::stage_work_order_by_id(&txn, current.id).await?;
         txn.commit().await?;
         return Ok(current);
     }
@@ -790,7 +788,6 @@ pub async fn update_wo_draft_fields(
             entity: "WorkOrder".into(),
             id: input.id.to_string(),
         })?;
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
     txn.commit().await?;
     Ok(wo)
 }
@@ -888,7 +885,6 @@ pub async fn cancel_work_order(db: &DatabaseConnection, input: super::domain::Wo
             entity: "WorkOrder".into(),
             id: input.id.to_string(),
         })?;
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
     txn.commit().await?;
     Ok(wo)
 }

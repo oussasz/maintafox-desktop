@@ -20,7 +20,6 @@ use crate::reliability::advanced_rams::queries as advanced_rams_queries;
 use crate::reliability::domain::RefreshReliabilityKpiSnapshotInput;
 use crate::reliability::queries as reliability_queries;
 use crate::wo::queries;
-use crate::wo::sync_stage;
 use crate::wo::time::now_utc_z;
 use chrono::{Duration, Utc};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
@@ -898,7 +897,6 @@ pub async fn save_verification(
             id: input.wo_id.to_string(),
         })?;
 
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
     txn.commit().await?;
     Ok((verification, wo))
 }
@@ -1400,8 +1398,6 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     .await?;
 
 
-    // The UPDATE above set closeout_validation_profile_id, so the staged row carries the profile.
-    sync_stage::stage_work_order_by_id(&txn, input.wo_id).await?;
 
     txn.commit().await?;
 
@@ -1543,7 +1539,6 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
     txn.commit().await?;
     Ok(wo)
 }

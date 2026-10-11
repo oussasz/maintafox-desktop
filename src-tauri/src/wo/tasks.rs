@@ -215,7 +215,6 @@ pub async fn add_task(db: &DatabaseConnection, input: AddTaskInput) -> AppResult
         None,
     )
     .await;
-    crate::wo::sync_stage::stage_work_order_task_sync(&txn, task.id).await?;
     txn.commit().await?;
     Ok(task)
 }
@@ -300,7 +299,6 @@ pub async fn complete_task(
         Some(actor_id),
     )
     .await;
-    crate::wo::sync_stage::stage_work_order_task_sync(&txn, task.id).await?;
     txn.commit().await?;
     Ok(task)
 }
@@ -368,7 +366,6 @@ pub async fn reopen_task(db: &DatabaseConnection, task_id: i64, _actor_id: i64) 
             id: task_id.to_string(),
         })?;
     let task = map_task(&updated)?;
-    crate::wo::sync_stage::stage_work_order_task_sync(&txn, task.id).await?;
     txn.commit().await?;
     Ok(task)
 }

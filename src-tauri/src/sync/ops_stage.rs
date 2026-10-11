@@ -5,8 +5,8 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
 use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{
-    InterventionRequestSyncPayload, PmOccurrenceSyncPayload, PmPlanSyncPayload, PmPlanVersionSyncPayload,
-    StageOutboxItemInput, SYNC_ENTITY_INTERVENTION_REQUESTS, SYNC_ENTITY_PM_OCCURRENCES, SYNC_ENTITY_PM_PLANS,
+    PmOccurrenceSyncPayload, PmPlanSyncPayload, PmPlanVersionSyncPayload,
+    StageOutboxItemInput, SYNC_ENTITY_PM_OCCURRENCES, SYNC_ENTITY_PM_PLANS,
     SYNC_ENTITY_PM_PLAN_VERSIONS,
 };
 use crate::sync::identity::{parent_entity_sync_id, require_entity_sync_id, require_parent_sync_id};
@@ -14,68 +14,6 @@ use crate::sync::queries::stage_outbox_item;
 
 async fn lookup_entity_sync_id(db: &impl ConnectionTrait, table: &str, id: i64) -> AppResult<Option<String>> {
     parent_entity_sync_id(db, table, id).await.map(Some)
-}
-
-pub async fn stage_intervention_request_sync(db: &impl ConnectionTrait, di_id: i64) -> AppResult<()> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT ir.entity_sync_id, ir.code, ir.title, ir.description, ir.status, ir.origin_type,
-                    ir.row_version, ir.updated_at, ir.equipment_id, ir.org_node_id, ir.submitter_id
-             FROM intervention_requests ir WHERE ir.id = ?",
-            [di_id.into()],
-        ))
-        .await?;
-    let Some(row) = row else {
-        return Ok(());
-    };
-    let code: String = row.try_get("", "code").unwrap_or_default();
-    let esid = require_entity_sync_id(
-        "intervention_requests",
-        di_id,
-        row.try_get::<Option<String>>("", "entity_sync_id")
-            .map_err(|e| AppError::SyncError(format!("intervention_requests.entity_sync_id: {e}")))?,
-    )?;
-    let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
-    let equipment_id: i64 = row.try_get("", "equipment_id").unwrap_or(0);
-    let org_node_id: i64 = row.try_get("", "org_node_id").unwrap_or(0);
-    let submitter_id: i64 = row.try_get("", "submitter_id").unwrap_or(0);
-    let payload = InterventionRequestSyncPayload {
-        entity_sync_id: esid.clone(),
-        row_version,
-        code,
-        title: row.try_get("", "title").unwrap_or_default(),
-        description: row.try_get("", "description").unwrap_or_default(),
-        status: row.try_get("", "status").unwrap_or_default(),
-        origin_type: row.try_get("", "origin_type").unwrap_or_default(),
-        equipment_entity_sync_id: if equipment_id > 0 {
-            lookup_entity_sync_id(db, "equipment", equipment_id).await?
-        } else {
-            None
-        },
-        org_node_entity_sync_id: if org_node_id > 0 {
-            lookup_entity_sync_id(db, "org_nodes", org_node_id).await?
-        } else {
-            None
-        },
-        submitter_entity_sync_id: if submitter_id > 0 {
-            lookup_entity_sync_id(db, "user_accounts", submitter_id).await?
-        } else {
-            None
-        },
-        updated_at: row.try_get("", "updated_at").ok(),
-    };
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_INTERVENTION_REQUESTS.to_string(),
-            entity_sync_id: esid,
-            operation: "upsert".to_string(),
-            payload_json: serde_json::to_string(&payload)?,
-        },
-    )
-    .await?;
-    Ok(())
 }
 
 pub async fn stage_pm_plan_sync(db: &impl ConnectionTrait, plan_id: i64) -> AppResult<()> {

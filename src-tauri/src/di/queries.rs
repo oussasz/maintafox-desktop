@@ -531,7 +531,6 @@ pub async fn create_intervention_request(
     ))
     .await?;
 
-    crate::sync::ops_stage::stage_intervention_request_sync(&txn, di.id).await?;
     txn.commit().await?;
     Ok(di)
 }
@@ -632,7 +631,6 @@ pub async fn update_di_draft_fields(
 
     if sets.is_empty() {
         // Nothing to update — return current row as-is
-        crate::sync::ops_stage::stage_intervention_request_sync(&txn, current.id).await?;
         txn.commit().await?;
         return Ok(current);
     }
@@ -671,7 +669,6 @@ pub async fn update_di_draft_fields(
             entity: "InterventionRequest".into(),
             id: input.id.to_string(),
         })?;
-    crate::sync::ops_stage::stage_intervention_request_sync(&txn, di.id).await?;
     txn.commit().await?;
     Ok(di)
 }
@@ -762,7 +759,6 @@ pub async fn triage_submitted_di(
             entity: "InterventionRequest".into(),
             id: input.di_id.to_string(),
         })?;
-    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated.id).await?;
     txn.commit().await?;
     super::notifications::notify_entered_in_review(db, &updated).await;
     Ok(updated)

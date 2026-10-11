@@ -1,11 +1,8 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use crate::errors::{AppError, AppResult};
-use crate::wo::domain::WorkOrder;
-use crate::wo::sync_stage::stage_work_order_sync;
 
-use super::domain::WorkPermit;
-use super::queries::{activation_ready, get_work_permit_linked_to_work_order, stage_work_permit};
+use super::queries::{activation_ready, get_work_permit_linked_to_work_order};
 
 pub async fn assert_in_progress_permit_gate(db: &DatabaseConnection, wo_id: i64) -> AppResult<()> {
     let row = db
@@ -44,30 +41,4 @@ pub async fn assert_in_progress_permit_gate(db: &DatabaseConnection, wo_id: i64)
     }
     activation_ready(db, p.id, p.permit_type_id).await?;
     Ok(())
-}
-
-pub async fn stage_wo_in_progress_sync_pair(
-    db: &impl ConnectionTrait,
-    wo: &WorkOrder,
-    permit: &WorkPermit,
-) -> AppResult<()> {
-    let status_code = wo
-        .status_code
-        .as_deref()
-        .ok_or_else(|| AppError::SyncError(format!("work_orders row {} has no status code.", wo.id)))?;
-    let type_code = wo
-        .type_code
-        .as_deref()
-        .ok_or_else(|| AppError::SyncError(format!("work_orders row {} has no type code.", wo.id)))?;
-    stage_work_order_sync(
-        db,
-        wo,
-        status_code,
-        type_code,
-        wo.closed_at.as_deref(),
-        wo.closeout_validation_profile_id,
-        wo.closeout_validation_passed,
-    )
-    .await?;
-    stage_work_permit(db, permit).await
 }

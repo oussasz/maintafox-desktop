@@ -15,7 +15,6 @@ pub mod priorities;
 pub mod queries;
 pub mod stats;
 pub mod statuses;
-pub mod sync_stage;
 pub mod tasks;
 pub mod time;
 pub mod tools;

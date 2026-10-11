@@ -247,7 +247,6 @@ pub async fn add_labor_entry(db: &DatabaseConnection, input: AddLaborInput) -> A
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to re-read labor entry after insert")))?;
     let mut entry = map_intervener(&row)?;
     entry.rate_source = rate_source;
-    crate::wo::sync_stage::stage_work_order_intervener_sync(&txn, entry.id).await?;
     txn.commit().await?;
     Ok(entry)
 }
@@ -318,7 +317,6 @@ pub async fn close_labor_entry(
             id: intervener_id.to_string(),
         })?;
     let entry = map_intervener(&updated)?;
-    crate::wo::sync_stage::stage_work_order_intervener_sync(&txn, entry.id).await?;
     txn.commit().await?;
     Ok(entry)
 }

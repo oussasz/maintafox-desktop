@@ -189,6 +189,8 @@ mod tests {
             "reason_code",
             "notes",
             "acted_at",
+            // Sync identity (migration 162).
+            "entity_sync_id",
         ];
 
         for expected in &expected_columns {

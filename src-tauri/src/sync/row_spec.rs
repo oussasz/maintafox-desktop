@@ -377,6 +377,115 @@ pub const ROW_SPECS: &[RowSpec] = &[
             hist("migrated_by_id", USER),
         ],
     ),
+    // ── Intervention requests (DI) ──────────────────────────────────────────────────────────
+    RowSpec {
+        // The SLA poller of each device notifies that device's users once and marks it here.
+        device_local: &["sla_response_breach_notified_at", "sla_resolution_breach_notified_at"],
+        ..spec(
+            "intervention_requests",
+            &[
+                r("equipment_id", "equipment"),
+                r("org_node_id", "org_nodes"),
+                r("symptom_code_id", "reference_values"),
+                r("classification_code_id", "reference_values"),
+                r("submitter_id", USER),
+                r("reviewer_id", USER),
+                r("closed_by_id", USER),
+                r("sla_rule_id", "di_sla_rules"),
+                r("related_di_id", "intervention_requests"),
+                r("recurrence_di_id", "intervention_requests"),
+                // A request converted to a work order points to it, and the work order points
+                // back to its source request.
+                soft("converted_to_wo_id", "work_orders"),
+            ],
+        )
+    },
+    spec(
+        "di_attachments",
+        &[r("di_id", "intervention_requests"), r("uploaded_by_id", USER)],
+    ),
+    spec(
+        "di_change_events",
+        &[hist("di_id", "intervention_requests"), hist("actor_id", USER)],
+    ),
+    spec(
+        "di_review_events",
+        &[
+            r("di_id", "intervention_requests"),
+            hist("actor_id", USER),
+            r("related_di_id", "intervention_requests"),
+        ],
+    ),
+    spec("di_sla_rules", &[]),
+    spec(
+        "di_state_transition_log",
+        &[hist("di_id", "intervention_requests"), hist("actor_id", USER)],
+    ),
+    // ── Work orders ─────────────────────────────────────────────────────────────────────────
+    spec("work_order_types", &[]),
+    spec("work_order_statuses", &[]),
+    spec("urgency_levels", &[]),
+    spec("delay_reason_codes", &[]),
+    spec("closeout_validation_policies", &[]),
+    spec(
+        "work_orders",
+        &[
+            r("type_id", "work_order_types"),
+            r("status_id", "work_order_statuses"),
+            r("equipment_id", "equipment"),
+            r("location_id", "org_nodes"),
+            r("entity_id", "org_nodes"),
+            r("requester_id", USER),
+            r("planner_id", USER),
+            r("primary_responsible_id", USER),
+            r("planning_approved_by_id", USER),
+            r("assigned_team_id", "teams"),
+            r("urgency_id", "urgency_levels"),
+            r("source_di_id", "intervention_requests"),
+            // Never written by any command yet: synchronised only while empty.
+            unmapped("component_id"),
+            unmapped("approver_id"),
+            unmapped("production_impact_id"),
+        ],
+    ),
+    spec("work_order_tasks", &[]),
+    spec("work_order_interveners", &[r("skill_id", "reference_values")]),
+    spec(
+        "work_order_parts",
+        &[
+            r("article_id", "articles"),
+            r("stock_location_id", "stock_locations"),
+            unmapped("cost_override_by_id"),
+        ],
+    ),
+    spec("work_order_tools", &[]),
+    spec("work_order_verifications", &[]),
+    spec("work_order_delay_segments", &[]),
+    spec("work_order_downtime_segments", &[]),
+    spec("work_order_failure_details", &[]),
+    spec(
+        "work_order_execution_events",
+        &[poly_hist(
+            "entity_id",
+            "entity_kind",
+            &[
+                ("downtime", "work_order_downtime_segments"),
+                ("part", "work_order_parts"),
+                ("task", "work_order_tasks"),
+                ("tool", "work_order_tools"),
+            ],
+        )],
+    ),
+    spec("work_order_attachments", &[]),
+    spec("wo_action_events", &[hist("actor_id", USER)]),
+    spec(
+        "wo_change_events",
+        &[hist("wo_id", "work_orders"), hist("actor_id", USER)],
+    ),
+    spec(
+        "wo_state_transition_log",
+        &[hist("wo_id", "work_orders"), hist("actor_id", USER)],
+    ),
     // ── Inventory and procurement ───────────────────────────────────────────────────────────
     spec("article_families", &[]),
     spec("articles", &[]),

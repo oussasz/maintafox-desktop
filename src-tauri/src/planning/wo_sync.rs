@@ -128,7 +128,6 @@ pub async fn sync_work_order_from_commitment(
     .await?;
 
     // Staged on the planning transaction so the WO outbox entry commits with the commitment.
-    crate::wo::sync_stage::stage_work_order_by_id(tx, wo_id).await?;
 
     Ok(WoSyncOutcome { wo_id })
 }

@@ -163,10 +163,6 @@ async fn local_id(conn: &impl ConnectionTrait, table: &str, entity_sync_id: &str
 /// Entity types `restage_entity` can stage from the local row (checked against the registry by a
 /// test: every `synced` entity must be restageable).
 pub(crate) const RESTAGEABLE_ENTITY_TYPES: &[&str] = &[
-    "intervention_requests",
-    "work_orders",
-    "work_order_tasks",
-    "work_order_interveners",
     "pm_plans",
     "pm_plan_versions",
     "pm_occurrences",
@@ -199,12 +195,7 @@ pub(crate) async fn restage_entity(
         return Ok(());
     };
     use crate::sync::ops_stage as o;
-    use crate::wo::sync_stage as w;
     match entity_type {
-        "intervention_requests" => o::stage_intervention_request_sync(conn, id).await,
-        "work_orders" => w::stage_work_order_by_id(conn, id).await,
-        "work_order_tasks" => w::stage_work_order_task_sync(conn, id).await,
-        "work_order_interveners" => w::stage_work_order_intervener_sync(conn, id).await,
         "pm_plans" => o::stage_pm_plan_sync(conn, id).await,
         "pm_plan_versions" => o::stage_pm_plan_version_sync(conn, id).await,
         "pm_occurrences" => o::stage_pm_occurrence_sync(conn, id).await,

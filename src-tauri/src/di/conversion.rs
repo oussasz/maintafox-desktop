@@ -437,8 +437,6 @@ pub async fn convert_di_to_work_order(
     let updated_di = map_intervention_request(&updated_row)?;
 
     // ── 9. Stage the new WO and the closed DI in the same transaction ─────
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo_id).await?;
-    crate::sync::ops_stage::stage_intervention_request_sync(&txn, updated_di.id).await?;
 
     txn.commit().await?;
 

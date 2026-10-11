@@ -53,7 +53,6 @@ pub async fn return_to_planning(db: &DatabaseConnection, input: WoReturnToPlanni
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
     txn.commit().await?;
     Ok(wo)
 }

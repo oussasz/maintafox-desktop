@@ -336,10 +336,9 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
                 input.wo_id
             ))
         })?;
-        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(&txn, &wo, &permit).await?;
+        crate::permit::queries::stage_work_permit(&txn, &permit).await?;
     }
 
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
     txn.commit().await?;
     Ok(wo)
 }
@@ -453,7 +452,6 @@ pub async fn pause_wo(db: &DatabaseConnection, input: WoPauseInput) -> AppResult
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
     txn.commit().await?;
     Ok(wo)
 }
@@ -559,10 +557,9 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
                 input.wo_id
             ))
         })?;
-        crate::permit::wo_gate::stage_wo_in_progress_sync_pair(&txn, &wo, &permit).await?;
+        crate::permit::queries::stage_work_permit(&txn, &permit).await?;
     }
 
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
     txn.commit().await?;
     Ok(wo)
 }
@@ -959,7 +956,6 @@ pub async fn complete_wo_mechanically(db: &DatabaseConnection, input: WoMechComp
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
     txn.commit().await?;
     Ok(wo)
 }

@@ -83,6 +83,35 @@ pub(crate) const INVENTORY_TYPES: &[&str] = &[
     "repairable_orders",
 ];
 
+/// Intervention requests and work orders with their details and history.
+pub(crate) const WORK_ORDER_TYPES: &[&str] = &[
+    "intervention_requests",
+    "di_attachments",
+    "di_change_events",
+    "di_review_events",
+    "di_sla_rules",
+    "di_state_transition_log",
+    "work_order_types",
+    "work_order_statuses",
+    "urgency_levels",
+    "delay_reason_codes",
+    "closeout_validation_policies",
+    "work_orders",
+    "work_order_tasks",
+    "work_order_interveners",
+    "work_order_parts",
+    "work_order_tools",
+    "work_order_verifications",
+    "work_order_delay_segments",
+    "work_order_downtime_segments",
+    "work_order_failure_details",
+    "work_order_execution_events",
+    "work_order_attachments",
+    "wo_action_events",
+    "wo_change_events",
+    "wo_state_transition_log",
+];
+
 async fn compare(
     a: &DatabaseConnection,
     b: &DatabaseConnection,
@@ -206,6 +235,11 @@ pub(crate) async fn round_trip(entity_types: &[&str]) {
 #[tokio::test]
 async fn foundation_entities_round_trip() {
     round_trip(FOUNDATION_TYPES).await;
+}
+
+#[tokio::test]
+async fn work_orders_and_requests_round_trip() {
+    round_trip(WORK_ORDER_TYPES).await;
 }
 
 #[tokio::test]

@@ -83,7 +83,6 @@ pub async fn submit_wo(db: &DatabaseConnection, input: WoSubmitInput) -> AppResu
             entity: "WorkOrder".into(),
             id: input.wo_id.to_string(),
         })?;
-    crate::wo::sync_stage::stage_work_order_by_id(&txn, wo.id).await?;
     txn.commit().await?;
     Ok(wo)
 }

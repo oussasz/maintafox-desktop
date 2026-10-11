@@ -310,7 +310,7 @@
       "parents": [
         "org_nodes"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "cost_centers",
@@ -350,7 +350,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "delegated_admin_policies",
@@ -368,9 +368,12 @@
       "entity_type": "di_attachments",
       "scope": "tenant",
       "conflict_policy": "operator_review",
-      "apply_priority": 0,
-      "parents": [],
-      "sync_status": "not_staged"
+      "apply_priority": 10,
+      "parents": [
+        "intervention_requests",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
     },
     {
       "entity_type": "di_change_events",
@@ -378,15 +381,17 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "di_review_events",
       "scope": "tenant",
-      "conflict_policy": "append_only",
-      "apply_priority": 0,
-      "parents": [],
-      "sync_status": "not_staged"
+      "conflict_policy": "operator_review",
+      "apply_priority": 10,
+      "parents": [
+        "intervention_requests"
+      ],
+      "sync_status": "synced"
     },
     {
       "entity_type": "di_sla_rules",
@@ -394,7 +399,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "di_state_transition_log",
@@ -402,7 +407,7 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "document_acknowledgements",
@@ -702,7 +707,9 @@
         "inspection_anomalies",
         "equipment",
         "org_nodes",
-        "user_accounts"
+        "user_accounts",
+        "reference_values",
+        "di_sla_rules"
       ],
       "sync_status": "synced"
     },
@@ -1862,7 +1869,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "user_accounts",
@@ -1942,7 +1949,7 @@
       "parents": [
         "work_orders"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "wo_change_events",
@@ -1950,7 +1957,7 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "wo_state_transition_log",
@@ -1958,7 +1965,7 @@
       "conflict_policy": "append_only",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "work_order_attachments",
@@ -1969,7 +1976,7 @@
         "user_accounts",
         "work_orders"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "work_order_delay_segments",
@@ -1981,7 +1988,7 @@
         "reference_values",
         "work_orders"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "work_order_downtime_segments",
@@ -1991,7 +1998,7 @@
       "parents": [
         "work_orders"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "work_order_execution_events",
@@ -2002,7 +2009,7 @@
         "user_accounts",
         "work_orders"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "work_order_failure_details",
@@ -2014,7 +2021,7 @@
         "reference_values",
         "work_orders"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "work_order_interveners",
@@ -2023,7 +2030,8 @@
       "apply_priority": 11,
       "parents": [
         "user_accounts",
-        "work_orders"
+        "work_orders",
+        "reference_values"
       ],
       "sync_status": "synced"
     },
@@ -2036,9 +2044,11 @@
         "reference_values",
         "lookup_values",
         "stock_reservations",
-        "work_orders"
+        "work_orders",
+        "articles",
+        "stock_locations"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "work_order_statuses",
@@ -2046,7 +2056,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "work_order_tasks",
@@ -2067,7 +2077,7 @@
       "parents": [
         "work_orders"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "work_order_types",
@@ -2075,7 +2085,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "work_order_verifications",
@@ -2086,7 +2096,7 @@
         "user_accounts",
         "work_orders"
       ],
-      "sync_status": "not_staged"
+      "sync_status": "synced"
     },
     {
       "entity_type": "work_orders",
@@ -2100,7 +2110,11 @@
         "inspection_anomalies",
         "equipment",
         "teams",
-        "intervention_requests"
+        "intervention_requests",
+        "work_order_types",
+        "work_order_statuses",
+        "org_nodes",
+        "urgency_levels"
       ],
       "sync_status": "synced"
     },
