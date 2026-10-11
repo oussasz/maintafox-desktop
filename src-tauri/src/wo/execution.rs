@@ -330,13 +330,12 @@ pub async fn start_wo(db: &DatabaseConnection, input: WoStartInput) -> AppResult
         })?;
 
     if wo.requires_permit {
-        let permit = linked_permit.ok_or_else(|| {
+        linked_permit.ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!(
                 "PTW gate passed but no linked permit for WO {}",
                 input.wo_id
             ))
         })?;
-        crate::permit::queries::stage_work_permit(&txn, &permit).await?;
     }
 
     txn.commit().await?;
@@ -551,13 +550,12 @@ pub async fn resume_wo(db: &DatabaseConnection, input: WoResumeInput) -> AppResu
         })?;
 
     if wo.requires_permit {
-        let permit = linked_permit.ok_or_else(|| {
+        linked_permit.ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!(
                 "PTW gate passed but no linked permit for WO {}",
                 input.wo_id
             ))
         })?;
-        crate::permit::queries::stage_work_permit(&txn, &permit).await?;
     }
 
     txn.commit().await?;

@@ -3,10 +3,6 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Transac
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{
-    InspectionReliabilitySignalSyncPayload, StageOutboxItemInput, SYNC_ENTITY_INSPECTION_RELIABILITY_SIGNALS,
-};
-use crate::sync::queries::stage_outbox_item;
 
 use super::domain::{
     InspectionReliabilitySignal, InspectionReliabilitySignalsFilter, RefreshInspectionReliabilitySignalsInput,
@@ -43,33 +39,6 @@ fn map_signal(row: &sea_orm::QueryResult) -> AppResult<InspectionReliabilitySign
             .try_get("", "row_version")
             .map_err(|e| decode_err("row_version", e))?,
     })
-}
-
-async fn stage_signal(db: &impl ConnectionTrait, row: &InspectionReliabilitySignal) -> AppResult<()> {
-    let payload = InspectionReliabilitySignalSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        equipment_id: row.equipment_id,
-        period_start: row.period_start.clone(),
-        period_end: row.period_end.clone(),
-        warning_count: row.warning_count,
-        fail_count: row.fail_count,
-        anomaly_open_count: row.anomaly_open_count,
-        checkpoint_coverage_ratio: row.checkpoint_coverage_ratio,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_INSPECTION_RELIABILITY_SIGNALS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
 }
 
 async fn count_i64(db: &impl ConnectionTrait, sql: &str, binds: Vec<sea_orm::Value>) -> AppResult<i64> {
@@ -231,7 +200,6 @@ pub async fn refresh_inspection_reliability_signals(
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("re-read signal")))?;
         let sig = map_signal(&row)?;
-        stage_signal(&txn, &sig).await?;
         out.push(sig);
     }
 

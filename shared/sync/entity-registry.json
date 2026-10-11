@@ -612,7 +612,7 @@
         "inspection_results",
         "inspection_rounds"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "inspection_checkpoints",
@@ -623,7 +623,7 @@
         "equipment",
         "inspection_template_versions"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "inspection_evidence",
@@ -633,29 +633,19 @@
       "parents": [
         "inspection_results"
       ],
-      "sync_status": "staged_only"
-    },
-    {
-      "entity_type": "inspection_reliability_signals",
-      "scope": "tenant",
-      "conflict_policy": "append_only",
-      "apply_priority": 5,
-      "parents": [
-        "equipment"
-      ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "inspection_results",
       "scope": "tenant",
-      "conflict_policy": "append_only",
+      "conflict_policy": "operator_review",
       "apply_priority": 7,
       "parents": [
         "personnel",
         "inspection_checkpoints",
         "inspection_rounds"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "inspection_rounds",
@@ -667,7 +657,7 @@
         "inspection_template_versions",
         "inspection_templates"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "inspection_template_versions",
@@ -677,7 +667,7 @@
       "parents": [
         "inspection_templates"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "inspection_templates",
@@ -687,7 +677,7 @@
       "parents": [
         "org_nodes"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "integration_exceptions",
@@ -936,9 +926,10 @@
       "apply_priority": 13,
       "parents": [
         "work_permits",
-        "permit_isolations"
+        "permit_isolations",
+        "user_accounts"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "markov_models",
@@ -1131,7 +1122,7 @@
       "parents": [
         "work_permits"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "permit_isolations",
@@ -1139,9 +1130,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 12,
       "parents": [
-        "work_permits"
+        "work_permits",
+        "user_accounts"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "permit_suspensions",
@@ -1149,9 +1141,10 @@
       "conflict_policy": "operator_review",
       "apply_priority": 12,
       "parents": [
-        "work_permits"
+        "work_permits",
+        "user_accounts"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "permit_types",
@@ -1159,7 +1152,7 @@
       "conflict_policy": "operator_review",
       "apply_priority": 0,
       "parents": [],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     },
     {
       "entity_type": "personnel",
@@ -2116,9 +2109,11 @@
       "apply_priority": 11,
       "parents": [
         "work_orders",
-        "permit_types"
+        "permit_types",
+        "equipment",
+        "org_nodes"
       ],
-      "sync_status": "staged_only"
+      "sync_status": "synced"
     }
   ],
   "local_only_tables": {
@@ -2134,6 +2129,7 @@
     "entitlement_envelopes": "licensing",
     "event_export_runs": "job_queue",
     "inspection_offline_queue": "job_queue",
+    "inspection_reliability_signals": "derived_projection",
     "license_admin_actions": "licensing",
     "license_api_exchange_guard": "licensing",
     "license_enforcement_state": "licensing",

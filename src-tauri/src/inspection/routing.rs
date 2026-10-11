@@ -4,7 +4,7 @@ use crate::di::queries::{create_intervention_request, DiCreateInput};
 use crate::errors::{AppError, AppResult};
 use crate::inspection::domain::InspectionAnomaly;
 use crate::inspection::queries::get_inspection_checkpoint_by_id;
-use crate::inspection::results::{map_anomaly, stage_inspection_anomaly};
+use crate::inspection::results::map_anomaly;
 use crate::wo::domain::WoCreateInput;
 use crate::wo::queries::create_work_order;
 
@@ -144,7 +144,6 @@ pub async fn route_inspection_anomaly_to_di(
     .await?;
 
     let updated = load_anomaly(&txn, anomaly_id).await?;
-    stage_inspection_anomaly(&txn, &updated).await?;
     txn.commit().await?;
     Ok((di, updated))
 }
@@ -249,7 +248,6 @@ pub async fn route_inspection_anomaly_to_wo(
     .await?;
 
     let updated = load_anomaly(&txn, anomaly_id).await?;
-    stage_inspection_anomaly(&txn, &updated).await?;
     txn.commit().await?;
     Ok((wo, updated))
 }
@@ -276,7 +274,6 @@ pub async fn defer_inspection_anomaly(
     ))
     .await?;
     let updated = load_anomaly(&txn, anomaly_id).await?;
-    stage_inspection_anomaly(&txn, &updated).await?;
     txn.commit().await?;
     Ok(updated)
 }

@@ -4,12 +4,6 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{
-    InspectionCheckpointSyncPayload, InspectionRoundSyncPayload, InspectionTemplateSyncPayload,
-    InspectionTemplateVersionSyncPayload, StageOutboxItemInput, SYNC_ENTITY_INSPECTION_CHECKPOINTS,
-    SYNC_ENTITY_INSPECTION_ROUNDS, SYNC_ENTITY_INSPECTION_TEMPLATES, SYNC_ENTITY_INSPECTION_TEMPLATE_VERSIONS,
-};
-use crate::sync::queries::stage_outbox_item;
 
 use super::domain::{
     CreateInspectionTemplateInput, InspectionCheckpoint, InspectionCheckpointDraft, InspectionCheckpointsFilter,
@@ -104,106 +98,6 @@ fn validate_drafts(drafts: &[InspectionCheckpointDraft]) -> AppResult<()> {
         }
         validate_check_type(&d.check_type)?;
     }
-    Ok(())
-}
-
-async fn stage_inspection_template(db: &impl ConnectionTrait, row: &InspectionTemplate) -> AppResult<()> {
-    let payload = InspectionTemplateSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        code: row.code.clone(),
-        name: row.name.clone(),
-        is_active: row.is_active,
-        current_version_id: row.current_version_id,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_INSPECTION_TEMPLATES.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn stage_inspection_template_version(
-    db: &impl ConnectionTrait,
-    row: &InspectionTemplateVersion,
-) -> AppResult<()> {
-    let payload = InspectionTemplateVersionSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        template_id: row.template_id,
-        version_no: row.version_no,
-        effective_from: row.effective_from.clone(),
-        checkpoint_package_json: row.checkpoint_package_json.clone(),
-        requires_review: row.requires_review,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_INSPECTION_TEMPLATE_VERSIONS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn stage_inspection_checkpoint(db: &impl ConnectionTrait, row: &InspectionCheckpoint) -> AppResult<()> {
-    let payload = InspectionCheckpointSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        template_version_id: row.template_version_id,
-        sequence_order: row.sequence_order,
-        checkpoint_code: row.checkpoint_code.clone(),
-        check_type: row.check_type.clone(),
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_INSPECTION_CHECKPOINTS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-pub(crate) async fn stage_inspection_round(db: &impl ConnectionTrait, row: &InspectionRound) -> AppResult<()> {
-    let payload = InspectionRoundSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        template_version_id: row.template_version_id,
-        scheduled_at: row.scheduled_at.clone(),
-        status: row.status.clone(),
-        assigned_to_id: row.assigned_to_id,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_INSPECTION_ROUNDS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
     Ok(())
 }
 
@@ -551,11 +445,6 @@ pub async fn create_inspection_template(
         .expect("row");
     let version = map_version(&version_row)?;
 
-    stage_inspection_template(&txn, &template).await?;
-    stage_inspection_template_version(&txn, &version).await?;
-    for c in &checkpoints_out {
-        stage_inspection_checkpoint(&txn, c).await?;
-    }
     txn.commit().await?;
     Ok((template, version, checkpoints_out))
 }
@@ -706,11 +595,6 @@ pub async fn publish_inspection_template_version(
         .expect("row");
     let version = map_version(&version_row)?;
 
-    stage_inspection_template(&txn, &template).await?;
-    stage_inspection_template_version(&txn, &version).await?;
-    for c in &checkpoints_out {
-        stage_inspection_checkpoint(&txn, c).await?;
-    }
     txn.commit().await?;
     Ok((template, version, checkpoints_out))
 }
@@ -777,7 +661,6 @@ pub async fn schedule_inspection_round(
         .await?
         .expect("row");
     let round = map_round(&out_row)?;
-    stage_inspection_round(&txn, &round).await?;
     txn.commit().await?;
     Ok(round)
 }

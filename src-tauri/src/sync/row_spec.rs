@@ -604,6 +604,67 @@ pub const ROW_SPECS: &[RowSpec] = &[
         value_columns: &["document_version_id"],
         ..spec("document_acknowledgements", &[])
     },
+    // ── Inspections ─────────────────────────────────────────────────────────────────────────
+    spec(
+        "inspection_templates",
+        // A template points to its current version, which points back to the template.
+        &[soft("current_version_id", "inspection_template_versions")],
+    ),
+    RowSpec {
+        // The checkpoint package lists the equipment of each checkpoint by local id.
+        json_refs: &[json_ref("checkpoint_package_json", "[*].asset_id", "equipment")],
+        ..spec("inspection_template_versions", &[])
+    },
+    // No command writes the checkpoint component yet: synchronised only while empty.
+    spec("inspection_checkpoints", &[unmapped("component_id")]),
+    spec("inspection_rounds", &[]),
+    spec("inspection_results", &[]),
+    spec("inspection_evidence", &[]),
+    spec(
+        "inspection_anomalies",
+        // Requests and work orders created from an anomaly point back to it.
+        &[
+            soft("linked_di_id", "intervention_requests"),
+            soft("linked_work_order_id", "work_orders"),
+        ],
+    ),
+    // ── Permits ─────────────────────────────────────────────────────────────────────────────
+    // The mandatory PPE list has no catalog table yet (seeded empty): sent as the value it is.
+    spec("permit_types", &[]),
+    spec(
+        "work_permits",
+        &[
+            r("linked_work_order_id", "work_orders"),
+            r("permit_type_id", "permit_types"),
+            r("asset_id", "equipment"),
+            r("entity_id", "org_nodes"),
+        ],
+    ),
+    spec("permit_handover_logs", &[r("permit_id", "work_permits")]),
+    spec(
+        "permit_isolations",
+        &[
+            r("permit_id", "work_permits"),
+            r("applied_by_id", USER),
+            r("verified_by_id", USER),
+        ],
+    ),
+    spec(
+        "permit_suspensions",
+        &[
+            r("permit_id", "work_permits"),
+            r("suspended_by_id", USER),
+            r("reinstated_by_id", USER),
+        ],
+    ),
+    spec(
+        "loto_card_print_jobs",
+        &[
+            r("permit_id", "work_permits"),
+            r("isolation_id", "permit_isolations"),
+            r("printed_by_id", USER),
+        ],
+    ),
     // ── Inventory and procurement ───────────────────────────────────────────────────────────
     spec("article_families", &[]),
     spec("articles", &[]),

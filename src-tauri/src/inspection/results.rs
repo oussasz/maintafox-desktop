@@ -5,11 +5,6 @@ use uuid::Uuid;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait};
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{
-    InspectionAnomalySyncPayload, InspectionEvidenceSyncPayload, InspectionResultSyncPayload, StageOutboxItemInput,
-    SYNC_ENTITY_INSPECTION_ANOMALIES, SYNC_ENTITY_INSPECTION_EVIDENCE, SYNC_ENTITY_INSPECTION_RESULTS,
-};
-use crate::sync::queries::stage_outbox_item;
 
 use super::domain::{
     AddInspectionEvidenceInput, EnqueueInspectionOfflineInput, InspectionAnomaliesFilter, InspectionAnomaly,
@@ -18,7 +13,6 @@ use super::domain::{
 };
 use super::queries::{
     get_inspection_checkpoint_by_id, get_inspection_round_by_id, get_inspection_template_version_by_id,
-    stage_inspection_round,
 };
 
 const RESULT_STATUSES: &[&str] = &["pass", "warning", "fail", "not_accessible", "not_done"];
@@ -196,88 +190,6 @@ async fn count_evidence(db: &impl ConnectionTrait, result_id: i64) -> AppResult<
     Ok(c)
 }
 
-async fn stage_inspection_result(db: &impl ConnectionTrait, row: &InspectionResult) -> AppResult<()> {
-    let payload = InspectionResultSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        round_id: row.round_id,
-        checkpoint_id: row.checkpoint_id,
-        result_status: row.result_status.clone(),
-        numeric_value: row.numeric_value,
-        text_value: row.text_value.clone(),
-        boolean_value: row.boolean_value,
-        recorded_at: row.recorded_at.clone(),
-        recorded_by_id: row.recorded_by_id,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_INSPECTION_RESULTS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn stage_inspection_evidence(db: &impl ConnectionTrait, row: &InspectionEvidence) -> AppResult<()> {
-    let payload = InspectionEvidenceSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        result_id: row.result_id,
-        evidence_type: row.evidence_type.clone(),
-        file_path_or_value: row.file_path_or_value.clone(),
-        captured_at: row.captured_at.clone(),
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_INSPECTION_EVIDENCE.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-pub(crate) async fn stage_inspection_anomaly(db: &impl ConnectionTrait, row: &InspectionAnomaly) -> AppResult<()> {
-    let payload = InspectionAnomalySyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        round_id: row.round_id,
-        result_id: row.result_id,
-        anomaly_type: row.anomaly_type.clone(),
-        severity: row.severity,
-        description: row.description.clone(),
-        linked_di_id: row.linked_di_id,
-        linked_work_order_id: row.linked_work_order_id,
-        requires_permit_review: row.requires_permit_review,
-        resolution_status: row.resolution_status.clone(),
-        routing_decision: row.routing_decision.clone(),
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_INSPECTION_ANOMALIES.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
 async fn maybe_bump_round(db: &impl ConnectionTrait, round: &InspectionRound) -> AppResult<()> {
     if round.status != "scheduled" && round.status != "released" {
         return Ok(());
@@ -293,8 +205,6 @@ async fn maybe_bump_round(db: &impl ConnectionTrait, round: &InspectionRound) ->
     if aff.rows_affected() == 0 {
         return Ok(());
     }
-    let updated = get_inspection_round_by_id(db, round.id).await?.expect("row");
-    stage_inspection_round(db, &updated).await?;
     Ok(())
 }
 
@@ -545,7 +455,6 @@ pub async fn record_inspection_result(
     };
 
     let result = map_result(&row)?;
-    stage_inspection_result(&txn, &result).await?;
 
     let ev_after = count_evidence(&txn, result.id).await?;
     let version = get_inspection_template_version_by_id(&txn, round.template_version_id)
@@ -620,25 +529,6 @@ async fn insert_auto_anomaly(
         ],
     ))
     .await?;
-    let id_row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
-    let aid: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let arow = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, round_id, result_id, anomaly_type, severity, description, linked_di_id, linked_work_order_id, \
-             requires_permit_review, resolution_status, routing_decision, entity_sync_id, row_version FROM inspection_anomalies WHERE id = ?",
-            [aid.into()],
-        ))
-        .await?
-        .expect("row");
-    let an = map_anomaly(&arow)?;
-    stage_inspection_anomaly(db, &an).await?;
     Ok(())
 }
 
@@ -711,7 +601,6 @@ pub async fn add_inspection_evidence(
         .await?
         .expect("row");
     let ev = map_evidence(&row)?;
-    stage_inspection_evidence(&txn, &ev).await?;
 
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -774,7 +663,6 @@ pub async fn update_inspection_anomaly(
         .await?
         .expect("row");
     let an = map_anomaly(&row)?;
-    stage_inspection_anomaly(&txn, &an).await?;
     txn.commit().await?;
     Ok(an)
 }

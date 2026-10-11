@@ -167,6 +167,23 @@ pub(crate) const PERSONNEL_TYPES: &[&str] = &[
     "document_acknowledgements",
 ];
 
+/// Inspections and work permits.
+pub(crate) const INSPECTION_PERMIT_TYPES: &[&str] = &[
+    "inspection_templates",
+    "inspection_template_versions",
+    "inspection_checkpoints",
+    "inspection_rounds",
+    "inspection_results",
+    "inspection_evidence",
+    "inspection_anomalies",
+    "permit_types",
+    "work_permits",
+    "permit_handover_logs",
+    "permit_isolations",
+    "permit_suspensions",
+    "loto_card_print_jobs",
+];
+
 async fn compare(
     a: &DatabaseConnection,
     b: &DatabaseConnection,
@@ -310,6 +327,11 @@ async fn finance_round_trip() {
 #[tokio::test]
 async fn personnel_and_qualification_round_trip() {
     round_trip(PERSONNEL_TYPES).await;
+}
+
+#[tokio::test]
+async fn inspections_and_permits_round_trip() {
+    round_trip(INSPECTION_PERMIT_TYPES).await;
 }
 
 #[tokio::test]

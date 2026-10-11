@@ -3,13 +3,6 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Transac
 use uuid::Uuid;
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{
-    LotoCardPrintJobSyncPayload, PermitHandoverLogSyncPayload, PermitIsolationSyncPayload, PermitSuspensionSyncPayload,
-    PermitTypeSyncPayload, StageOutboxItemInput, WorkPermitSyncPayload, SYNC_ENTITY_LOTO_CARD_PRINT_JOBS,
-    SYNC_ENTITY_PERMIT_HANDOVER_LOGS, SYNC_ENTITY_PERMIT_ISOLATIONS, SYNC_ENTITY_PERMIT_SUSPENSIONS,
-    SYNC_ENTITY_PERMIT_TYPES, SYNC_ENTITY_WORK_PERMITS,
-};
-use crate::sync::queries::stage_outbox_item;
 
 use super::domain::{
     LotoCardPrintInput, LotoCardPrintJob, LotoCardView, PermitComplianceKpi30d, PermitHandoverLog,
@@ -149,58 +142,6 @@ fn map_permit_isolation(row: &sea_orm::QueryResult) -> AppResult<PermitIsolation
     })
 }
 
-async fn stage_permit_type(db: &impl ConnectionTrait, row: &PermitType) -> AppResult<()> {
-    let payload = PermitTypeSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        code: row.code.clone(),
-        max_duration_hours: row.max_duration_hours,
-        mandatory_control_rules_json: row.mandatory_control_rules_json.clone(),
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_PERMIT_TYPES.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-pub(crate) async fn stage_work_permit(db: &impl ConnectionTrait, row: &WorkPermit) -> AppResult<()> {
-    let payload = WorkPermitSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        linked_work_order_id: row.linked_work_order_id,
-        permit_type_id: row.permit_type_id,
-        status: row.status.clone(),
-        requested_at: row.requested_at.clone(),
-        issued_at: row.issued_at.clone(),
-        activated_at: row.activated_at.clone(),
-        expires_at: row.expires_at.clone(),
-        closed_at: row.closed_at.clone(),
-        handed_back_at: row.handed_back_at.clone(),
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_WORK_PERMITS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
 pub async fn get_work_permit_linked_to_work_order(
     db: &impl ConnectionTrait,
     work_order_id: i64,
@@ -218,83 +159,6 @@ pub async fn get_work_permit_linked_to_work_order(
         Some(r) => Ok(Some(map_work_permit(&r)?)),
         None => Ok(None),
     }
-}
-
-async fn stage_permit_isolation(db: &impl ConnectionTrait, row: &PermitIsolation) -> AppResult<()> {
-    let payload = PermitIsolationSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-        permit_id: row.permit_id,
-        isolation_point: row.isolation_point.clone(),
-        energy_type: row.energy_type.clone(),
-        lock_number: row.lock_number.clone(),
-        verified_at: row.verified_at.clone(),
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_PERMIT_ISOLATIONS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn stage_permit_suspension(db: &impl ConnectionTrait, row: &PermitSuspension) -> AppResult<()> {
-    let payload = PermitSuspensionSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        permit_id: row.permit_id,
-        reason: row.reason.clone(),
-        suspended_by_id: row.suspended_by_id,
-        suspended_at: row.suspended_at.clone(),
-        reinstated_by_id: row.reinstated_by_id,
-        reinstated_at: row.reinstated_at.clone(),
-        reactivation_conditions: row.reactivation_conditions.clone(),
-        row_version: row.row_version,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_PERMIT_SUSPENSIONS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-async fn stage_permit_handover_log(db: &impl ConnectionTrait, row: &PermitHandoverLog) -> AppResult<()> {
-    let payload = PermitHandoverLogSyncPayload {
-        id: row.id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        permit_id: row.permit_id,
-        handed_from_role: row.handed_from_role.clone(),
-        handed_to_role: row.handed_to_role.clone(),
-        confirmation_note: row.confirmation_note.clone(),
-        signed_at: row.signed_at.clone(),
-        row_version: row.row_version,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_PERMIT_HANDOVER_LOGS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
 }
 
 fn map_permit_suspension(row: &sea_orm::QueryResult) -> AppResult<PermitSuspension> {
@@ -544,21 +408,6 @@ async fn finalize_open_suspension(
             "Concurrent update on permit_suspensions.".into(),
         ]));
     }
-    let updated = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "SELECT id, entity_sync_id, permit_id, reason, suspended_by_id, suspended_at, \
-             reinstated_by_id, reinstated_at, reactivation_conditions, row_version \
-             FROM permit_suspensions WHERE id = ?",
-            [sid.into()],
-        ))
-        .await?
-        .ok_or_else(|| AppError::NotFound {
-            entity: "PermitSuspension".into(),
-            id: sid.to_string(),
-        })?;
-    let susp = map_permit_suspension(&updated)?;
-    stage_permit_suspension(db, &susp).await?;
     Ok(())
 }
 
@@ -643,7 +492,6 @@ pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsert
             ]));
         }
         let updated = get_permit_type(&txn, id).await?.expect("row");
-        stage_permit_type(&txn, &updated).await?;
         txn.commit().await?;
         return Ok(updated);
     }
@@ -678,7 +526,6 @@ pub async fn upsert_permit_type(db: &DatabaseConnection, input: PermitTypeUpsert
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
     let created = get_permit_type(&txn, new_id).await?.expect("row");
-    stage_permit_type(&txn, &created).await?;
     txn.commit().await?;
     Ok(created)
 }
@@ -767,7 +614,6 @@ pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreate
     ))
     .await?;
     let created = get_work_permit(&txn, new_id).await?.expect("row");
-    stage_work_permit(&txn, &created).await?;
     txn.commit().await?;
     Ok(created)
 }
@@ -815,7 +661,6 @@ pub async fn update_work_permit(db: &DatabaseConnection, input: WorkPermitUpdate
         ]));
     }
     let updated = get_work_permit(&txn, input.id).await?.expect("row");
-    stage_work_permit(&txn, &updated).await?;
     txn.commit().await?;
     Ok(updated)
 }
@@ -908,7 +753,6 @@ pub async fn set_work_permit_status(db: &DatabaseConnection, input: WorkPermitSt
         ]));
     }
     let updated = get_work_permit(&txn, input.id).await?.expect("row");
-    stage_work_permit(&txn, &updated).await?;
     txn.commit().await?;
     Ok(updated)
 }
@@ -991,8 +835,6 @@ pub async fn suspend_work_permit(
         .expect("row");
     let suspension = map_permit_suspension(&susp_row)?;
     let wp = get_work_permit(&txn, input.permit_id).await?.expect("row");
-    stage_permit_suspension(&txn, &suspension).await?;
-    stage_work_permit(&txn, &wp).await?;
     txn.commit().await?;
     Ok((wp, suspension))
 }
@@ -1050,7 +892,6 @@ pub async fn append_permit_handover_log(
         .await?
         .expect("row");
     let log = map_permit_handover_log(&row)?;
-    stage_permit_handover_log(&txn, &log).await?;
     txn.commit().await?;
     Ok(log)
 }
@@ -1182,7 +1023,6 @@ pub async fn upsert_permit_isolation(
                 id: id.to_string(),
             })?;
         let out = map_permit_isolation(&updated)?;
-        stage_permit_isolation(&txn, &out).await?;
         txn.commit().await?;
         return Ok(out);
     }
@@ -1227,33 +1067,8 @@ pub async fn upsert_permit_isolation(
         .await?
         .expect("row");
     let created = map_permit_isolation(&row)?;
-    stage_permit_isolation(&txn, &created).await?;
     txn.commit().await?;
     Ok(created)
-}
-
-async fn stage_loto_card_print_job(db: &impl ConnectionTrait, row: &LotoCardPrintJob) -> AppResult<()> {
-    let payload = LotoCardPrintJobSyncPayload {
-        id: row.id,
-        permit_id: row.permit_id,
-        isolation_id: row.isolation_id,
-        printed_at: row.printed_at.clone(),
-        printed_by_id: row.printed_by_id,
-        entity_sync_id: row.entity_sync_id.clone(),
-        row_version: row.row_version,
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_LOTO_CARD_PRINT_JOBS.to_string(),
-            entity_sync_id: row.entity_sync_id.clone(),
-            operation: "upsert".to_string(),
-            payload_json,
-        },
-    )
-    .await?;
-    Ok(())
 }
 
 fn map_loto_card_print_job(row: &sea_orm::QueryResult) -> AppResult<LotoCardPrintJob> {
@@ -1384,7 +1199,6 @@ pub async fn record_loto_card_print(db: &DatabaseConnection, input: LotoCardPrin
         .await?
         .expect("row");
     let job = map_loto_card_print_job(&row)?;
-    stage_loto_card_print_job(&txn, &job).await?;
     txn.commit().await?;
     Ok(job)
 }
