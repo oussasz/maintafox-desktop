@@ -44,6 +44,7 @@ import { mfLayout } from "@/design-system/tokens";
 import { useWoStore } from "@/stores/wo-store";
 import { useWorkOrderPrioritiesCatalog } from "@/stores/work-order-priorities-catalog-store";
 import { useWorkOrderTypesCatalog } from "@/stores/work-order-types-catalog-store";
+import { toErrorMessage } from "@/utils/errors";
 import { formatDate } from "@/utils/format-date";
 import { STATUS_STYLE, statusToI18nKey } from "@/utils/wo-status";
 import type { WorkOrder } from "@shared/ipc-types";
@@ -133,6 +134,7 @@ export function WorkOrdersPage() {
   );
 
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [printError, setPrintError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
 
@@ -327,9 +329,12 @@ export function WorkOrdersPage() {
                 onEdit={(item) => openCreateForm(item)}
                 onStart={(item) => void openWo(item.id)}
                 onComplete={(item) => void openWo(item.id)}
-                onPrint={(item) =>
-                  void printWoFiche(item, t, i18n.resolvedLanguage || i18n.language || "fr")
-                }
+                onPrint={(item) => {
+                  setPrintError(null);
+                  printWoFiche(item, t, i18n.resolvedLanguage || i18n.language || "fr").catch(
+                    (err: unknown) => setPrintError(toErrorMessage(err)),
+                  );
+                }}
                 onCancel={(item) => setCancelTarget(item)}
               >
                 <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
@@ -347,6 +352,14 @@ export function WorkOrdersPage() {
 
   return (
     <div className={mfLayout.moduleRoot}>
+      {printError ? (
+        <p
+          role="alert"
+          className="mx-4 mt-2 rounded-md bg-status-danger/10 px-3 py-2 text-sm text-status-danger"
+        >
+          {t("print.failed", { message: printError })}
+        </p>
+      ) : null}
       {/* ── Page header ──────────────────────────────────────────────── */}
       <div className={mfLayout.moduleHeader}>
         <div className={mfLayout.moduleTitleRow}>

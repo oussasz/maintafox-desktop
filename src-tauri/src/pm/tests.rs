@@ -1472,6 +1472,13 @@ async fn wo_close_hook_completes_linked_occurrence_and_regens() {
     .await
     .expect("link wo");
 
+    // The WO analytics feed points back to the PM occurrence and its plan (Phase 6.4).
+    let snapshot = crate::wo::analytics::get_wo_analytics_snapshot(&db, wo_id)
+        .await
+        .expect("analytics snapshot");
+    assert_eq!(snapshot.pm_occurrence_id, Some(occ.id));
+    assert!(snapshot.pm_plan_code.is_some());
+
     // Refresh row_version after link update.
     let occ = queries::list_pm_occurrences(
         &db,

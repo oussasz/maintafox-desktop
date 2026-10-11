@@ -42,6 +42,8 @@ import type {
   WorkOrderStatusOption,
   WorkOrderTypeOption,
   WorkOrder,
+  WoBacklogHeatmap,
+  WoBacklogHeatmapInput,
 } from "@shared/ipc-types";
 
 // â”€â”€ Zod schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -533,6 +535,37 @@ const WoStatsSchema = z.object({
   daily_completed: z.array(z.object({ date: z.string(), count: z.number() })),
   by_entity: z.array(z.object({ entity: z.string(), count: z.number() })),
 });
+
+const WoBacklogBucketSchema = z.object({
+  wo_count: z.number(),
+  estimated_hours: z.number(),
+  unestimated_count: z.number(),
+});
+
+const WoBacklogHeatmapSchema = z.object({
+  start_date: z.string(),
+  days: z.array(
+    z.object({
+      date: z.string(),
+      planned_hours: z.number(),
+      wo_count: z.number(),
+      unestimated_count: z.number(),
+      capacity_hours: z.number().nullable(),
+      overloaded: z.boolean(),
+    }),
+  ),
+  capacity_configured: z.boolean(),
+  unscheduled: WoBacklogBucketSchema,
+  overdue: WoBacklogBucketSchema,
+  blocked: z.array(
+    z.object({ category: z.string(), wo_count: z.number(), waiting_hours: z.number() }),
+  ),
+});
+
+export async function getWoBacklogHeatmap(input: WoBacklogHeatmapInput): Promise<WoBacklogHeatmap> {
+  const raw = await invoke<unknown>("get_wo_backlog_heatmap", { input });
+  return WoBacklogHeatmapSchema.parse(raw);
+}
 
 export async function getWoStats(): Promise<WoStatsPayload> {
   const raw = await invoke<unknown>("get_wo_stats", {});

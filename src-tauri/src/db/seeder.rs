@@ -10,6 +10,8 @@ pub const SEED_SCHEMA_VERSION: i32 = 2;
 /// Tuple format: (`setting_key`, category, `setting_scope`, `setting_value_json`)
 const DEFAULT_SETTINGS: &[(&str, &str, &str, &str)] = &[
     ("ram.fmeca_rpn_critical_threshold", "reliability", "tenant", r"150"),
+    // PRD §6.5: a closed WO may be reopened within this many days of its closure.
+    ("wo.reopen_window_days", "work_orders", "tenant", r"30"),
     ("locale.primary_language", "localization", "tenant", r#""fr""#),
     ("locale.fallback_language", "localization", "tenant", r#""en""#),
     ("locale.date_format", "localization", "tenant", r#""DD/MM/YYYY""#),

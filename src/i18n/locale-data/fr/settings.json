@@ -17,7 +17,8 @@
     "system": "Système",
     "backup": "Sauvegarde",
     "reliability": "Fiabilité",
-    "documents": "Documents et identité visuelle"
+    "documents": "Documents et identité visuelle",
+    "work_orders": "Ordres de travail"
   },
   "table": {
     "key": "Clé",
@@ -69,7 +70,8 @@
     "backup.retention_monthly": "Rétention mensuelle (mois)",
     "diagnostics.log_retention_days": "Rétention des logs (jours)",
     "ram.fmeca_rpn_critical_threshold": "Seuil RPN critique FMECA",
-    "documents.default_header": "En-tête de document par défaut"
+    "documents.default_header": "En-tête de document par défaut",
+    "wo.reopen_window_days": "Délai de réouverture après clôture (jours)"
   },
   "documentHeader": {
     "title": "Documents et identité visuelle",

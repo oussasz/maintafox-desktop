@@ -599,6 +599,13 @@ async fn wo_gate_unblocks_only_with_active_verified_permit() {
     let wp = create_from_wo(&db, "loto", wo_id).await.expect("create from WO");
     assert_eq!(wp.asset_id, asset);
     assert!(wp.linked_work_order_code.is_some());
+    // The WO analytics feed lists the permit (Phase 6.4).
+    let links = crate::wo::analytics::load_permit_links(&db, wo_id)
+        .await
+        .expect("permit links");
+    assert_eq!(links.len(), 1);
+    assert_eq!((links[0].id, links[0].code.as_str()), (wp.id, wp.code.as_str()));
+    assert_eq!(links[0].permit_type_code.as_deref(), Some("loto"));
 
     // A second open permit on the same WO is refused.
     assert_validation(create_from_wo(&db, "loto", wo_id).await, "already has an open permit");

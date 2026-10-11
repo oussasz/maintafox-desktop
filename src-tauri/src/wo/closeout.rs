@@ -109,6 +109,41 @@ pub struct WoCloseInput {
     pub fmeca_parts_override_signer_password: Option<String>,
 }
 
+/// Tenant setting (`app_settings`, seeded): days after closure during which a closed WO may
+/// still be reopened (PRD §6.5 "configurable recurrence window").
+pub const SETTING_REOPEN_WINDOW_DAYS: &str = "wo.reopen_window_days";
+
+/// Reads the reopen window. A missing or malformed setting is an error: a closed WO is never
+/// reopened on a guessed window.
+pub async fn reopen_window_days(db: &impl ConnectionTrait) -> AppResult<i64> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT setting_value_json FROM app_settings WHERE setting_key = ? AND setting_scope = 'tenant'",
+            [SETTING_REOPEN_WINDOW_DAYS.into()],
+        ))
+        .await?
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![format!(
+                "Setting {SETTING_REOPEN_WINDOW_DAYS} is missing; a closed work order cannot be reopened."
+            )])
+        })?;
+    let raw: String = row
+        .try_get("", "setting_value_json")
+        .map_err(|e| decode_err("setting_value_json", e))?;
+    let days: i64 = serde_json::from_str(raw.trim()).map_err(|_| {
+        AppError::ValidationFailed(vec![format!(
+            "Setting {SETTING_REOPEN_WINDOW_DAYS} must be a whole number of days (got {raw})."
+        )])
+    })?;
+    if days < 0 {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "Setting {SETTING_REOPEN_WINDOW_DAYS} must not be negative."
+        )]));
+    }
+    Ok(days)
+}
+
 /// Input for reopening a recently closed WO.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WoReopenInput {
@@ -1449,10 +1484,13 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// D) reopen_wo — completed → in_progress or planning
+// D) reopen_wo — completed / recently closed → in_progress or planning
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Reopen a completed WO to execution (`in_progress`) or plan (`planning`).
+/// Reopen a WO to execution (`in_progress`) or plan (`planning`) — from `completed`, or from
+/// `closed` within the tenant reopen window. The original close-out evidence is kept: the
+/// verification and mechanical-completion stamps stay, the closure date moves to
+/// `last_closed_at`, and the transition log records who reopened it and why.
 pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResult<WorkOrder> {
     if input.reason.trim().is_empty() {
         return Err(AppError::ValidationFailed(vec![
@@ -1474,13 +1512,21 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
 
     let (from_code, current_status, _rv) = load_wo_status(&txn, input.wo_id).await?;
     use crate::wo::workflow::state_machine::{assert_action_allowed, WoAction};
-    assert_action_allowed(&current_status, WoAction::Reopen).map_err(|e| AppError::ValidationFailed(vec![e]))?;
-    if current_status != WoStatus::Completed {
-        return Err(AppError::ValidationFailed(vec![format!(
-            "Seuls les OT completed peuvent etre reouverts. Statut actuel : '{from_code}'."
-        )]));
+    match current_status {
+        WoStatus::Completed => {
+            assert_action_allowed(&current_status, WoAction::Reopen)
+                .map_err(|e| AppError::ValidationFailed(vec![e]))?;
+            guard_wo_transition(&current_status, &target).map_err(|e| AppError::ValidationFailed(vec![e]))?;
+        }
+        // Closed is terminal for every normal flow; reopening it is the supervisor exception
+        // of PRD §6.5, bounded by the reopen window.
+        WoStatus::Closed => ensure_within_reopen_window(&txn, input.wo_id).await?,
+        _ => {
+            return Err(AppError::ValidationFailed(vec![format!(
+                "Only completed or recently closed work orders can be reopened (current status '{from_code}')."
+            )]));
+        }
     }
-    guard_wo_transition(&current_status, &target).map_err(|e| AppError::ValidationFailed(vec![e]))?;
 
     let target_status_id = resolve_status_id(&txn, target.as_str()).await?;
     let now = now_utc_z();
@@ -1491,8 +1537,8 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
             "UPDATE work_orders SET \
                 status_id = ?, \
                 reopen_count = reopen_count + 1, \
-                mechanically_completed_at = NULL, \
-                technically_verified_at = NULL, \
+                last_closed_at = COALESCE(closed_at, last_closed_at), \
+                closed_at = NULL, \
                 actual_end = NULL, \
                 row_version = row_version + 1, \
                 updated_at = ? \
@@ -1539,6 +1585,38 @@ pub async fn reopen_wo(db: &DatabaseConnection, input: WoReopenInput) -> AppResu
         })?;
     txn.commit().await?;
     Ok(wo)
+}
+
+/// A closed WO may be reopened only while `closed_at` is within the tenant reopen window.
+async fn ensure_within_reopen_window(txn: &impl ConnectionTrait, wo_id: i64) -> AppResult<()> {
+    let window = reopen_window_days(txn).await?;
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT closed_at FROM work_orders WHERE id = ?",
+            [wo_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "WorkOrder".into(),
+            id: wo_id.to_string(),
+        })?;
+    let closed_at: Option<String> = row.try_get("", "closed_at").map_err(|e| decode_err("closed_at", e))?;
+    let closed = closed_at
+        .as_deref()
+        .and_then(|c| chrono::DateTime::parse_from_rfc3339(c).ok())
+        .ok_or_else(|| {
+            AppError::ValidationFailed(vec![
+                "The closure date of this work order is unknown; it cannot be reopened.".into(),
+            ])
+        })?;
+    let age_days = (chrono::Utc::now() - closed.with_timezone(&chrono::Utc)).num_seconds() as f64 / 86_400.0;
+    if age_days > window as f64 {
+        return Err(AppError::ValidationFailed(vec![format!(
+            "This work order was closed more than {window} day(s) ago (reopen window); create a new work order instead."
+        )]));
+    }
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

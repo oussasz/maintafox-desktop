@@ -10,6 +10,7 @@ import { AlertTriangle, CheckCircle2, ClipboardList, PlayCircle, RefreshCw } fro
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { WoBacklogHeatmap } from "@/components/wo/WoBacklogHeatmap";
 import { getWoStats } from "@/services/wo-service";
 import type { WoStatsPayload } from "@shared/ipc-types";
 
@@ -170,6 +171,8 @@ export function WoDashboardView() {
           </div>
         )}
       </div>
+
+      <WoBacklogHeatmap />
 
       {/* ── Row 4: Backlog by Entity ──────────────────────────────── */}
       <div className="rounded-lg border border-surface-border p-4">

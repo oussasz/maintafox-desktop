@@ -5138,6 +5138,43 @@ export interface WoDowntimeSegment {
   classification_code?: string | null;
 }
 
+/** Backlog heatmap (PRD §6.5): planned load per day vs crew capacity. */
+export interface WoBacklogHeatmapInput {
+  start_date?: string | null;
+  weeks: number;
+}
+
+export interface WoBacklogDay {
+  date: string;
+  planned_hours: number;
+  wo_count: number;
+  unestimated_count: number;
+  /** null when no capacity rule is configured. */
+  capacity_hours: number | null;
+  overloaded: boolean;
+}
+
+export interface WoBacklogBucket {
+  wo_count: number;
+  estimated_hours: number;
+  unestimated_count: number;
+}
+
+export interface WoBlockedCategory {
+  category: string;
+  wo_count: number;
+  waiting_hours: number;
+}
+
+export interface WoBacklogHeatmap {
+  start_date: string;
+  days: WoBacklogDay[];
+  capacity_configured: boolean;
+  unscheduled: WoBacklogBucket;
+  overdue: WoBacklogBucket;
+  blocked: WoBlockedCategory[];
+}
+
 export interface WoStatsPayload {
   total: number;
   in_progress: number;

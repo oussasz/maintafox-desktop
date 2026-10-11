@@ -12,7 +12,7 @@ import { InspectionRunner } from "../InspectionRunner";
 
 // Resolve keys against the real English catalogue so a missing key fails the test.
 function translate(key: string, opts?: Record<string, unknown>): string {
-  const count = typeof opts?.count === "number" ? opts.count : undefined;
+  const count = typeof opts?.["count"] === "number" ? opts["count"] : undefined;
   const lookup = (k: string) =>
     k
       .split(".")
@@ -25,7 +25,7 @@ function translate(key: string, opts?: Record<string, unknown>): string {
     value = lookup(`${key}_${count === 1 ? "one" : "other"}`);
   }
   if (typeof value !== "string") {
-    if (typeof opts?.defaultValue === "string") return opts.defaultValue;
+    if (typeof opts?.["defaultValue"] === "string") return opts["defaultValue"];
     throw new Error(`missing inspections i18n key: ${key}`);
   }
   return value.replace(/\{\{(\w+)\}\}/g, (_, name: string) => String(opts?.[name] ?? ""));
