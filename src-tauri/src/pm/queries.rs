@@ -2123,6 +2123,11 @@ async fn emit_pm_occurrence_activity(
         "linked_work_order_id": occurrence.linked_work_order_id,
     });
 
+    // Correlates the events of one occurrence on every device: by sync id, not the local id.
+    let correlation = crate::sync::identity::optional_entity_sync_id(db, "pm_occurrences", occurrence.id)
+        .await?
+        // Every row gets a sync id at insert; a row without one keeps a device-marked key.
+        .unwrap_or_else(|| format!("local-{}", occurrence.id));
     let _ = emit_activity_event(
         db,
         ActivityEventInput {
@@ -2139,7 +2144,7 @@ async fn emit_pm_occurrence_activity(
                 "info".to_string()
             },
             summary_json: Some(summary_json),
-            correlation_id: Some(format!("pm-occ-{}", occurrence.id)),
+            correlation_id: Some(format!("pm-occ-{correlation}")),
             visibility_scope: "entity".to_string(),
         },
     )

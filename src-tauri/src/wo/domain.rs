@@ -5,7 +5,7 @@
 //!   (+ Cancelled from any non-closed).
 
 use crate::errors::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, QueryResult};
 use serde::{Deserialize, Serialize};
 
 pub use crate::wo::workflow::{assert_action_allowed, guard_wo_transition, WoAction, WoStatus};
@@ -524,33 +524,14 @@ pub fn map_wo_transition_row(row: &QueryResult) -> AppResult<WoTransitionRow> {
 // WO code generator
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Generate the next unique WO code in the format `OT-NNNN`.
-///
-/// Reads the current max sequence from the database and increments.
+/// Generate the next unique WO code in the format `OT-<device>-NNNN` (`sync::device_code`):
+/// the sequence counts only this device's numbers, so two devices never hand out the same one.
+/// Codes made before device codes existed (`OT-NNNN`) are kept as they are.
 /// The code is never recycled after deletion or cancellation.
 ///
-/// Pass a transaction connection when allocating + inserting in one txn
-/// (same pattern as [`crate::personnel::domain::generate_personnel_code`]).
+/// Pass a transaction connection when allocating + inserting in one txn.
 pub async fn generate_wo_code(db: &impl ConnectionTrait) -> AppResult<String> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            // Only count canonical OT-<digits> codes so legacy/demo leftovers
-            // never poison the sequence (migration remaps those to OT-NNNN).
-            "SELECT COALESCE(MAX(CAST(SUBSTR(code, 4) AS INTEGER)), 0) + 1 AS next_seq \
-             FROM work_orders \
-             WHERE code GLOB 'OT-[0-9]*' \
-               AND SUBSTR(code, 4) GLOB '[0-9]*'"
-                .to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("WO code sequence query returned no rows")))?;
-
-    let next_seq: i64 = row
-        .try_get::<i64>("", "next_seq")
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("WO code decode error: {e}")))?;
-
-    Ok(format!("OT-{next_seq:04}"))
+    crate::sync::code_clash::WORK_ORDERS.next_number(db).await
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

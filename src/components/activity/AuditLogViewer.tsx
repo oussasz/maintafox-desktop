@@ -1,5 +1,6 @@
 import { Download, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ interface AuditLogViewerProps {
 }
 
 export function AuditLogViewer({ className }: AuditLogViewerProps) {
+  const { t: tShell } = useTranslation("shell");
   const { can } = usePermissions();
 
   const [items, setItems] = useState<AuditEventSummary[]>([]);
@@ -292,6 +294,14 @@ export function AuditLogViewer({ className }: AuditLogViewerProps) {
                       <span className="text-muted-foreground">target:</span>{" "}
                       {row.target_type ?? "—"} / {row.target_id ?? "—"}
                     </div>
+                    {row.from_other_device ? (
+                      <div
+                        className="text-muted-foreground"
+                        data-testid="history-from-other-device"
+                      >
+                        {tShell("sync.history.fromOtherDevice")}
+                      </div>
+                    ) : null}
                     <div>
                       <span className="text-muted-foreground">retention:</span>{" "}
                       {row.retention_class}

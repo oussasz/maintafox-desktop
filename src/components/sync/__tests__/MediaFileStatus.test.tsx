@@ -2,8 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  isMediaFileAvailable,
   MediaFileStateBadge,
+  isMediaFileAvailable,
   useMediaFileStates,
 } from "@/components/sync/MediaFileStatus";
 import type { MediaFileState } from "@shared/ipc-types";

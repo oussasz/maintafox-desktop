@@ -351,6 +351,10 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
         category: LocalOnlyCategory::SyncControl,
     },
     LocalOnlyTable {
+        table: "sync_history_foreign_rows",
+        category: LocalOnlyCategory::SyncControl,
+    },
+    LocalOnlyTable {
         table: "sync_capture_journal",
         category: LocalOnlyCategory::SyncControl,
     },

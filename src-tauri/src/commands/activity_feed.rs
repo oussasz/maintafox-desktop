@@ -42,6 +42,9 @@ pub struct ActivityEventSummary {
     pub summary_json: Option<serde_json::Value>,
     pub correlation_id: Option<String>,
     pub visibility_scope: String,
+    /// Received from another device before history ids travelled as sync ids: the ids inside
+    /// this row (target, scope, summary/detail ids) are that device's local ids, not this one's.
+    pub from_other_device: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,7 +125,8 @@ pub async fn list_activity_events(
             ae.severity,
             ae.summary_json,
             ae.correlation_id,
-            ae.visibility_scope
+            ae.visibility_scope,
+            EXISTS (SELECT 1 FROM sync_history_foreign_rows f WHERE f.entity_type = 'activity_events' AND f.entity_sync_id = ae.entity_sync_id) AS from_other_device
          FROM activity_events ae
          LEFT JOIN user_accounts ua ON ua.id = ae.actor_id
          WHERE 1=1",
@@ -214,7 +218,7 @@ pub async fn get_activity_event(event_id: i64, state: State<'_, AppState>) -> Ap
             "SELECT
                 ae.id, ae.event_class, ae.event_code, ae.source_module, ae.source_record_type,
                 ae.source_record_id, ae.entity_scope_id, ae.actor_id, ua.username AS actor_username,
-                ae.happened_at, ae.severity, ae.summary_json, ae.correlation_id, ae.visibility_scope
+                ae.happened_at, ae.severity, ae.summary_json, ae.correlation_id, ae.visibility_scope, EXISTS (SELECT 1 FROM sync_history_foreign_rows f WHERE f.entity_type = 'activity_events' AND f.entity_sync_id = ae.entity_sync_id) AS from_other_device
              FROM activity_events ae
              LEFT JOIN user_accounts ua ON ua.id = ae.actor_id
              WHERE ae.id = ?
@@ -245,7 +249,7 @@ pub async fn get_activity_event(event_id: i64, state: State<'_, AppState>) -> Ap
             "SELECT
                     ae.id, ae.event_class, ae.event_code, ae.source_module, ae.source_record_type,
                     ae.source_record_id, ae.entity_scope_id, ae.actor_id, ua.username AS actor_username,
-                    ae.happened_at, ae.severity, ae.summary_json, ae.correlation_id, ae.visibility_scope
+                    ae.happened_at, ae.severity, ae.summary_json, ae.correlation_id, ae.visibility_scope, EXISTS (SELECT 1 FROM sync_history_foreign_rows f WHERE f.entity_type = 'activity_events' AND f.entity_sync_id = ae.entity_sync_id) AS from_other_device
                  FROM activity_events ae
                  LEFT JOIN user_accounts ua ON ua.id = ae.actor_id
                  WHERE ae.correlation_id = ?
@@ -512,6 +516,7 @@ fn parse_activity_summary(row: &sea_orm::QueryResult) -> ActivityEventSummary {
         visibility_scope: row
             .try_get::<String>("", "visibility_scope")
             .unwrap_or_else(|_| "global".to_string()),
+        from_other_device: row.try_get::<bool>("", "from_other_device").unwrap_or(false),
     }
 }
 

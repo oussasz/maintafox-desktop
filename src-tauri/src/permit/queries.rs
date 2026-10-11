@@ -606,7 +606,8 @@ pub async fn create_work_permit(db: &DatabaseConnection, input: WorkPermitCreate
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid")))?;
     let new_id: i64 = id_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-    let code = format!("PTW-{}-{:06}", Utc::now().format("%Y"), new_id);
+    // `PTW-<year>-<device>-NNNNNN`: unique across devices (`sync::device_code`).
+    let code = crate::sync::code_clash::WORK_PERMITS.next_number(&txn).await?;
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE work_permits SET code = ? WHERE id = ?",

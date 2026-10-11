@@ -33,6 +33,9 @@ pub struct AuditEventSummary {
     pub result: String,
     pub happened_at: String,
     pub retention_class: String,
+    /// Received from another device before history ids travelled as sync ids: the ids inside
+    /// this row (target, scope, summary/detail ids) are that device's local ids, not this one's.
+    pub from_other_device: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -50,6 +53,9 @@ pub struct AuditEventDetail {
     pub happened_at: String,
     pub retention_class: String,
     pub details_json: Option<serde_json::Value>,
+    /// Received from another device before history ids travelled as sync ids: the ids inside
+    /// this row (target, scope, summary/detail ids) are that device's local ids, not this one's.
+    pub from_other_device: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -111,6 +117,7 @@ pub async fn list_audit_events(
             retention_class: row
                 .try_get::<String>("", "retention_class")
                 .unwrap_or_else(|_| "standard".to_string()),
+            from_other_device: row.try_get::<bool>("", "from_other_device").unwrap_or(false),
         });
     }
 
@@ -135,7 +142,7 @@ pub async fn get_audit_event(event_id: i64, state: State<'_, AppState>) -> AppRe
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT ae.id, ae.action_code, ae.target_type, ae.target_id, ae.actor_id, ua.username AS actor_username,
-                    ae.auth_context, ae.result, ae.before_hash, ae.after_hash, ae.happened_at, ae.retention_class, ae.details_json
+                    ae.auth_context, ae.result, ae.before_hash, ae.after_hash, ae.happened_at, ae.retention_class, ae.details_json, EXISTS (SELECT 1 FROM sync_history_foreign_rows f WHERE f.entity_type = 'audit_events' AND f.entity_sync_id = ae.entity_sync_id) AS from_other_device
              FROM audit_events ae
              LEFT JOIN user_accounts ua ON ua.id = ae.actor_id
              WHERE ae.id = ?
@@ -180,6 +187,7 @@ pub async fn get_audit_event(event_id: i64, state: State<'_, AppState>) -> AppRe
             .try_get::<String>("", "retention_class")
             .unwrap_or_else(|_| "standard".to_string()),
         details_json,
+        from_other_device: row.try_get::<bool>("", "from_other_device").unwrap_or(false),
     })
 }
 
@@ -300,13 +308,13 @@ fn build_audit_filter_query(filter: &AuditFilter, include_actor_username: bool) 
 
     let select = if include_actor_username {
         "SELECT ae.id, ae.action_code, ae.target_type, ae.target_id, ae.actor_id, ua.username AS actor_username,
-                ae.auth_context, ae.result, ae.before_hash, ae.after_hash, ae.happened_at, ae.retention_class, ae.details_json
+                ae.auth_context, ae.result, ae.before_hash, ae.after_hash, ae.happened_at, ae.retention_class, ae.details_json, EXISTS (SELECT 1 FROM sync_history_foreign_rows f WHERE f.entity_type = 'audit_events' AND f.entity_sync_id = ae.entity_sync_id) AS from_other_device
          FROM audit_events ae
          LEFT JOIN user_accounts ua ON ua.id = ae.actor_id"
             .to_string()
     } else {
         "SELECT ae.id, ae.action_code, ae.target_type, ae.target_id, ae.actor_id,
-                ae.auth_context, ae.result, ae.before_hash, ae.after_hash, ae.happened_at, ae.retention_class, ae.details_json
+                ae.auth_context, ae.result, ae.before_hash, ae.after_hash, ae.happened_at, ae.retention_class, ae.details_json, EXISTS (SELECT 1 FROM sync_history_foreign_rows f WHERE f.entity_type = 'audit_events' AND f.entity_sync_id = ae.entity_sync_id) AS from_other_device
          FROM audit_events ae"
             .to_string()
     };

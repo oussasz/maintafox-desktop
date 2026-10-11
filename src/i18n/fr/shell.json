@@ -46,16 +46,22 @@
     "versionUnknown": "inconnue",
     "deferredInbox": "{{count}} modification(s) reçue(s) attendent des données liées ou une version plus récente de l'application. Elles seront appliquées automatiquement.",
     "resolveFailed": "Le choix n'a pas pu être appliqué : {{message}}",
+    "codeClash": "Le numéro {{number}} est déjà utilisé sur cet appareil par un autre enregistrement (numéroté sur deux appareils avant les codes d'appareil, ou deux appareils partagent un code). Renuméroter donne à l'enregistrement de cet appareil un nouveau numéro de cet appareil ; l'enregistrement reçu garde {{number}}. Rien n'est renommé sans votre choix.",
+    "renumberLocal": "Renuméroter l'enregistrement de cet appareil",
     "conflictKind": {
       "CONCURRENT_EDIT": "Modifié sur cet appareil et sur un autre appareil",
       "SERVER_CONFLICT": "Le serveur possède déjà une version plus récente",
       "STALE_INBOUND": "Le serveur a envoyé une version plus ancienne que celle-ci",
       "EQUAL_VERSION_DIVERGENCE": "Même numéro de version avec un contenu différent",
+      "CODE_CLASH": "Le même numéro est déjà utilisé ici par un autre enregistrement",
       "MATERIALIZE_ERROR": "Une modification reçue n'a pas pu être appliquée",
       "INVALID_INBOUND_PAYLOAD": "Une modification reçue était invalide",
       "OUTBOX_DEAD_LETTER": "Une modification locale n'a pas pu être envoyée après plusieurs tentatives",
       "AUTHORITY_MISMATCH": "Le serveur a refusé une modification protégée",
       "other": "À examiner"
+    },
+    "history": {
+      "fromOtherDevice": "D'un autre appareil (enregistré avant cette version) : les numéros de cette entrée sont les identifiants de cet appareil et ne désignent pas les enregistrements d'ici."
     },
     "mediaFile": {
       "pending": "Pas encore téléchargé",
@@ -137,6 +143,7 @@
       "action": {
         "accept_local": "Garder la version de cet appareil",
         "accept_remote": "Prendre la version du serveur",
+        "renumber_local": "Renuméroter l'enregistrement de cet appareil",
         "retry_later": "Réessayer plus tard",
         "escalate": "Escalader",
         "dismiss": "Ignorer",

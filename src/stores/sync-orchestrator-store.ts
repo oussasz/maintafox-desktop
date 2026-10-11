@@ -263,7 +263,8 @@ export const useSyncOrchestratorStore = create<SyncOrchestratorState>()((set, ge
     }));
     await get().refreshInbox();
     // "Keep mine" re-stages the local version: send it without waiting for the next cycle.
-    if (input.action === "accept_local") {
+    // Renumbering also stages the local record's new number.
+    if (input.action === "accept_local" || input.action === "renumber_local") {
       await requestSyncNow().catch(() => {});
     }
   },

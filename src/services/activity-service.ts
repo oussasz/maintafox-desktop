@@ -17,6 +17,8 @@ const ActivityEventSummarySchema = z.object({
   summary_json: z.unknown().nullable(),
   correlation_id: z.string().nullable(),
   visibility_scope: z.string(),
+  /** Received from another device before history ids travelled as sync ids: ids in it are that device's. */
+  from_other_device: z.boolean().default(false),
 });
 
 const ActivityEventDetailSchema = z.object({
@@ -58,6 +60,8 @@ const AuditEventSummarySchema = z.object({
   result: z.string(),
   happened_at: z.string(),
   retention_class: z.string(),
+  /** Received from another device before history ids travelled as sync ids: ids in it are that device's. */
+  from_other_device: z.boolean().default(false),
 });
 
 const AuditEventDetailSchema = z.object({
@@ -74,6 +78,8 @@ const AuditEventDetailSchema = z.object({
   happened_at: z.string(),
   retention_class: z.string(),
   details_json: z.unknown().nullable(),
+  /** Received from another device before history ids travelled as sync ids: ids in it are that device's. */
+  from_other_device: z.boolean().default(false),
 });
 
 const ExportResultSchema = z.object({

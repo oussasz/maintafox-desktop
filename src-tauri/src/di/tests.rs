@@ -313,9 +313,10 @@ mod tests {
             .await
             .expect("create DI #3");
 
-        assert_eq!(di1.code, "DI-0001");
-        assert_eq!(di2.code, "DI-0002");
-        assert_eq!(di3.code, "DI-0003");
+        let dev = crate::sync::device_code::this_device_code(&db).await.expect("device code");
+        assert_eq!(di1.code, format!("DI-{dev}-0001"));
+        assert_eq!(di2.code, format!("DI-{dev}-0002"));
+        assert_eq!(di3.code, format!("DI-{dev}-0003"));
 
         let codes: std::collections::HashSet<&str> = [di1.code.as_str(), di2.code.as_str(), di3.code.as_str()]
             .into_iter()

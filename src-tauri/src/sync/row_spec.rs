@@ -456,10 +456,14 @@ pub const ROW_SPECS: &[RowSpec] = &[
         "di_attachments",
         &[r("di_id", "intervention_requests"), r("uploaded_by_id", USER)],
     ),
-    spec(
-        "di_change_events",
-        &[hist("di_id", "intervention_requests"), hist("actor_id", USER)],
-    ),
+    RowSpec {
+        // The work order a request was converted to (`commands::di`, conversion event).
+        json_refs: &[json_ref_hist("details_json", "$.wo_id", "work_orders")],
+        ..spec(
+            "di_change_events",
+            &[hist("di_id", "intervention_requests"), hist("actor_id", USER)],
+        )
+    },
     spec(
         "di_review_events",
         &[
@@ -570,7 +574,18 @@ pub const ROW_SPECS: &[RowSpec] = &[
         ],
     ),
     spec("schedule_break_ins", &[]),
-    spec("schedule_change_log", &[hist("actor_id", USER)]),
+    RowSpec {
+        // Ids inside the change details (`planning::scheduling`).
+        json_refs: &[
+            json_ref_hist("details_json", "$.personnel_id", "personnel"),
+            json_ref_hist("details_json", "$.break_in_id", "schedule_break_ins"),
+            json_ref_hist("details_json", "$.approved_by_user_id", USER),
+            json_ref_hist("details_json", "$.approved_by_personnel_id", "personnel"),
+            json_ref_hist("details_json", "$.schedule_candidate_id", "schedule_candidates"),
+            json_ref_hist("details_json", "$.team_id", "teams"),
+        ],
+        ..spec("schedule_change_log", &[hist("actor_id", USER)])
+    },
     spec("schedule_details", &[]),
     // ── Finance ─────────────────────────────────────────────────────────────────────────────
     spec("cost_centers", &[]),
@@ -756,37 +771,90 @@ pub const ROW_SPECS: &[RowSpec] = &[
     spec("policy_snapshots", &[r("activated_by_id", USER)]),
     spec("retention_policies", &[]),
     // ── History logs (append-only) ──────────────────────────────────────────────────────────
-    spec(
-        "activity_events",
-        &[
-            hist("entity_scope_id", "org_nodes"),
-            hist("actor_id", USER),
-            poly_hist(
-                "source_record_id",
-                "source_record_type",
-                &[
-                    ("work_order", "work_orders"),
-                    ("intervention_request", "intervention_requests"),
-                    ("pm_occurrence", "pm_occurrences"),
-                    ("personnel", "personnel"),
-                    ("schedule_commitment", "schedule_commitments"),
-                    ("role_assignment", "user_scope_assignments"),
-                    // Archives and import batches are kept on the device that made them.
-                    ("archive_item", LOCAL_ROW),
-                    ("personnel_import_batch", LOCAL_ROW),
-                ],
-            ),
+    RowSpec {
+        // Ids inside the event summary (`activity::emitter` callers: RBAC, planning, PM).
+        json_refs: &[
+            json_ref_hist("summary_json", "$.role_id", "roles"),
+            json_ref_hist("summary_json", "$.assignment_id", "user_scope_assignments"),
+            json_ref_hist("summary_json", "$.break_in_id", "schedule_break_ins"),
+            json_ref_hist("summary_json", "$.schedule_commitment_id", "schedule_commitments"),
+            json_ref_hist("summary_json", "$.impacted_assignee_id", "personnel"),
+            json_ref_hist("summary_json", "$.team_id", "teams"),
+            json_ref_hist("summary_json", "$.pm_occurrence_id", "pm_occurrences"),
+            json_ref_hist("summary_json", "$.pm_plan_id", "pm_plans"),
+            json_ref_hist("summary_json", "$.linked_work_order_id", "work_orders"),
         ],
-    ),
-    spec("audit_events", &[hist("actor_id", USER)]),
-    spec(
-        "admin_change_events",
-        &[
-            hist("actor_id", USER),
-            hist("target_user_id", USER),
-            hist("target_role_id", "roles"),
+        ..spec(
+            "activity_events",
+            &[
+                hist("entity_scope_id", "org_nodes"),
+                hist("actor_id", USER),
+                poly_hist(
+                    "source_record_id",
+                    "source_record_type",
+                    &[
+                        ("work_order", "work_orders"),
+                        ("intervention_request", "intervention_requests"),
+                        ("pm_occurrence", "pm_occurrences"),
+                        ("personnel", "personnel"),
+                        ("schedule_commitment", "schedule_commitments"),
+                        ("role_assignment", "user_scope_assignments"),
+                        // Archives and import batches are kept on the device that made them.
+                        ("archive_item", LOCAL_ROW),
+                        ("personnel_import_batch", LOCAL_ROW),
+                    ],
+                ),
+            ],
+        )
+    },
+    RowSpec {
+        // Ids inside the details (`audit::emit` wraps the caller's detail under `detail`).
+        json_refs: &[
+            json_ref_hist("details_json", "$.detail.role_id", "roles"),
+            json_ref_hist("details_json", "$.detail.assignment_id", "user_scope_assignments"),
+            json_ref_hist("details_json", "$.filter.actor_id", USER),
         ],
-    ),
+        ..spec(
+            "audit_events",
+            &[
+                hist("actor_id", USER),
+                poly_hist(
+                    "target_id",
+                    "target_type",
+                    &[
+                        ("user_account", USER),
+                        ("user_scope_assignment", "user_scope_assignments"),
+                        ("work_order", "work_orders"),
+                        // Device, licence, activation, export, repair and import records stay on
+                        // the device they belong to.
+                        ("trusted_device", LOCAL_ROW),
+                        ("machine_activation_contract", LOCAL_ROW),
+                        ("license_admin_action", LOCAL_ROW),
+                        ("licensing_trust_key", LOCAL_ROW),
+                        ("sync_repair_actions", LOCAL_ROW),
+                        ("sync_conflict", LOCAL_ROW),
+                        ("audit_events", LOCAL_ROW),
+                        ("personnel_import_batch", LOCAL_ROW),
+                    ],
+                ),
+            ],
+        )
+    },
+    RowSpec {
+        json_refs: &[
+            json_ref_hist("diff_json", "$.role_id", "roles"),
+            json_ref_hist("diff_json", "$.assignment_id", "user_scope_assignments"),
+        ],
+        ..spec(
+            "admin_change_events",
+            &[
+                hist("actor_id", USER),
+                hist("target_user_id", USER),
+                hist("target_role_id", "roles"),
+                poly_hist("scope_reference", "scope_type", SCOPE_TARGETS),
+            ],
+        )
+    },
     RowSpec {
         // Changes the application makes by itself on each device (seeding at startup) stay local.
         row_filter: Some("{row}.changed_by_id IS NOT NULL"),
@@ -818,7 +886,20 @@ pub const ROW_SPECS: &[RowSpec] = &[
             json_ref_hist("payload_json", "$.org_node_id", "org_nodes"),
             json_ref_hist("payload_json", "$.entity_id", "org_nodes"),
             json_ref_hist("payload_json", "$.watcher_user_ids[*]", USER),
+            // Ids the event texts and links read (`pm::queries`, `planning::scheduling`, finance).
+            json_ref_hist("payload_json", "$.pm_occurrence_id", "pm_occurrences"),
+            json_ref_hist("payload_json", "$.pm_plan_id", "pm_plans"),
+            json_ref_hist("payload_json", "$.di_id", "intervention_requests"),
+            json_ref_hist("payload_json", "$.break_in_id", "schedule_break_ins"),
+            json_ref_hist("payload_json", "$.schedule_commitment_id", "schedule_commitments"),
+            json_ref_hist("payload_json", "$.commitment_id", "schedule_commitments"),
+            json_ref_hist("payload_json", "$.impacted_assignee_id", "personnel"),
+            json_ref_hist("payload_json", "$.assignee_id", "personnel"),
         ],
+        // The de-duplication key is built from local ids (`di-…-<id>`, `planning.notify.<id>…`):
+        // received on another device it would suppress an unrelated event there. Each device keeps
+        // its own keys; received events carry none.
+        device_local: &["dedupe_key"],
         ..spec(
             "notification_events",
             &[poly_hist(
@@ -952,6 +1033,8 @@ pub const ROW_SPECS: &[RowSpec] = &[
                     ("purchase_order", "purchase_orders"),
                     ("repairable_order", "repairable_orders"),
                     ("requisition", "procurement_requisitions"),
+                    // Article creation and edits (`inventory::queries`).
+                    ("ARTICLE", "articles"),
                 ],
             ),
             hist("actor_id", USER),

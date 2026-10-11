@@ -36,7 +36,7 @@ async fn supersede_local_changes(
     Ok(())
 }
 
-async fn set_linked_inbox_status(
+pub(crate) async fn set_linked_inbox_status(
     conn: &impl ConnectionTrait,
     conflict: &SyncConflictRecord,
     status: &str,

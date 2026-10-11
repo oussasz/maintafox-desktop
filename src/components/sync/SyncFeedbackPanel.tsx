@@ -10,6 +10,7 @@ import type { ResolveSyncConflictInput, SyncConflictRecord } from "@shared/ipc-t
 const CONFLICT_ACTIONS: ResolveSyncConflictInput["action"][] = [
   "accept_local",
   "accept_remote",
+  "renumber_local",
   "retry_later",
   "escalate",
   "dismiss",

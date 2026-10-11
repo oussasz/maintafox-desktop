@@ -496,9 +496,10 @@ mod tests {
         let wo2 = create_wo_draft(&db, "WO-2").await;
         let wo3 = create_wo_draft(&db, "WO-3").await;
 
-        assert_eq!(wo1.code, "OT-0001");
-        assert_eq!(wo2.code, "OT-0002");
-        assert_eq!(wo3.code, "OT-0003");
+        let dev = crate::sync::device_code::this_device_code(&db).await.expect("device code");
+        assert_eq!(wo1.code, format!("OT-{dev}-0001"));
+        assert_eq!(wo2.code, format!("OT-{dev}-0002"));
+        assert_eq!(wo3.code, format!("OT-{dev}-0003"));
     }
 
     /// plan_wo validates dates before checking status — fires from draft.
@@ -1081,7 +1082,8 @@ mod tests {
         .expect("create_work_order from DI");
 
         assert_eq!(wo.status_code.as_deref(), Some("draft"));
-        assert_eq!(wo.code, "OT-0001");
+        let dev = crate::sync::device_code::this_device_code(&db).await.expect("device code");
+        assert_eq!(wo.code, format!("OT-{dev}-0001"));
         assert_eq!(wo.source_di_id, Some(di.id));
         assert_eq!(
             wo.source_di_code.as_deref(),

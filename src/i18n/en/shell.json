@@ -46,16 +46,22 @@
     "versionUnknown": "unknown",
     "deferredInbox": "{{count}} received change(s) are waiting for related data or a newer app version. They are applied automatically.",
     "resolveFailed": "The choice could not be applied: {{message}}",
+    "codeClash": "Number {{number}} is already used on this device by another record (numbered on two devices before device codes existed, or two devices share a code). Renumbering gives the record on this device a new number of this device; the received record keeps {{number}}. Nothing is renamed without your choice.",
+    "renumberLocal": "Renumber the record on this device",
     "conflictKind": {
       "CONCURRENT_EDIT": "Changed on this device and on another device",
       "SERVER_CONFLICT": "The server already holds a newer version",
       "STALE_INBOUND": "The server sent an older version than the one here",
       "EQUAL_VERSION_DIVERGENCE": "Same version number with different content",
+      "CODE_CLASH": "The same number is used here by another record",
       "MATERIALIZE_ERROR": "A received change could not be applied",
       "INVALID_INBOUND_PAYLOAD": "A received change was invalid",
       "OUTBOX_DEAD_LETTER": "A local change could not be sent after repeated attempts",
       "AUTHORITY_MISMATCH": "The server refused a protected change",
       "other": "Needs review"
+    },
+    "history": {
+      "fromOtherDevice": "From another device (recorded before this version): the numbers in this entry are that device's record ids and do not point to records here."
     },
     "mediaFile": {
       "pending": "Not downloaded yet",
@@ -137,6 +143,7 @@
       "action": {
         "accept_local": "Keep this device's version",
         "accept_remote": "Take the server's version",
+        "renumber_local": "Renumber the record on this device",
         "retry_later": "Retry later",
         "escalate": "Escalate",
         "dismiss": "Dismiss",

@@ -85,6 +85,7 @@ interface AdminAuditTimelineProps {
 
 export function AdminAuditTimeline({ filter }: AdminAuditTimelineProps) {
   const { t, i18n } = useTranslation("admin");
+  const { t: tShell } = useTranslation("shell");
   const [events, setEvents] = useState<AdminChangeEventDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -149,9 +150,12 @@ export function AdminAuditTimeline({ filter }: AdminAuditTimelineProps) {
         if (evt.scope_type) {
           subtitleParts.push(
             `${t("audit.scope", "Scope")}: ${evt.scope_type}${
-              evt.scope_reference ? ` / ${evt.scope_reference}` : ""
+              evt.scope_reference && !evt.from_other_device ? ` / ${evt.scope_reference}` : ""
             }`,
           );
+        }
+        if (evt.from_other_device) {
+          subtitleParts.push(tShell("sync.history.fromOtherDevice"));
         }
 
         return {
@@ -178,7 +182,7 @@ export function AdminAuditTimeline({ filter }: AdminAuditTimelineProps) {
           detailsLabel: t("audit.viewDiff", "Voir le diff"),
         };
       }),
-    [events, expandedDiffs, t],
+    [events, expandedDiffs, t, tShell],
   );
 
   return (

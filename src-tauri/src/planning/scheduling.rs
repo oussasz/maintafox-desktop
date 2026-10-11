@@ -1529,6 +1529,11 @@ pub async fn create_schedule_break_in(
         ),
     )
     .await;
+    // Correlates the events of one break-in on every device: by sync id, not the local id.
+    let correlation = crate::sync::identity::optional_entity_sync_id(db, "schedule_break_ins", break_in_id)
+        .await?
+        // Every row gets a sync id at insert; a row without one keeps a device-marked key.
+        .unwrap_or_else(|| format!("local-{break_in_id}"));
     let _ = activity::emitter::emit_activity_event(
         db,
         activity::emitter::ActivityEventInput {
@@ -1545,7 +1550,7 @@ pub async fn create_schedule_break_in(
                 "info".to_string()
             },
             summary_json: Some(payload),
-            correlation_id: Some(format!("planning-breakin-{break_in_id}")),
+            correlation_id: Some(format!("planning-breakin-{correlation}")),
             visibility_scope: "entity".to_string(),
         },
     )

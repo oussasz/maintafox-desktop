@@ -28,7 +28,20 @@ const KNOWN_CONFLICT_KINDS = new Set([
   "INVALID_INBOUND_PAYLOAD",
   "OUTBOX_DEAD_LETTER",
   "AUTHORITY_MISMATCH",
+  "CODE_CLASH",
 ]);
+
+/** The number a received record carries (`code` or `employee_code` in its `row.v1` payload). */
+function clashingNumber(c: SyncConflictRecord): string | null {
+  if (!c.inbound_payload_json) return null;
+  try {
+    const payload = JSON.parse(c.inbound_payload_json) as Record<string, unknown>;
+    const value = payload["code"] ?? payload["employee_code"];
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
 
 export function SyncCenterModal({ open, onOpenChange }: SyncCenterModalProps) {
   const { t } = useTranslation("shell");
@@ -123,30 +136,49 @@ export function SyncCenterModal({ open, onOpenChange }: SyncCenterModalProps) {
                   remote: versionLabel(c.inbound_row_version),
                 })}
               </p>
+              {c.conflict_type === "CODE_CLASH" ? (
+                <p className="mt-1 text-text-primary">
+                  {t("sync.codeClash", { number: clashingNumber(c) ?? "?" })}
+                </p>
+              ) : null}
               {errorById[c.id] ? (
                 <p className="mt-2 text-status-danger">
                   {t("sync.resolveFailed", { message: errorById[c.id] })}
                 </p>
               ) : null}
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={busyId === c.id}
-                  onClick={() => void resolve(c, "accept_local")}
-                >
-                  {t("sync.resolveLocal")}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={busyId === c.id || c.inbound_payload_json === null}
-                  onClick={() => void resolve(c, "accept_remote")}
-                >
-                  {t("sync.resolveRemote")}
-                </Button>
+                {c.conflict_type === "CODE_CLASH" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={busyId === c.id}
+                    onClick={() => void resolve(c, "renumber_local")}
+                  >
+                    {t("sync.renumberLocal")}
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={busyId === c.id}
+                      onClick={() => void resolve(c, "accept_local")}
+                    >
+                      {t("sync.resolveLocal")}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={busyId === c.id || c.inbound_payload_json === null}
+                      onClick={() => void resolve(c, "accept_remote")}
+                    >
+                      {t("sync.resolveRemote")}
+                    </Button>
+                  </>
+                )}
                 <Button
                   type="button"
                   size="sm"

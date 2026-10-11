@@ -4,7 +4,9 @@
 
 pub(crate) mod apply_hooks;
 pub mod capture;
+pub mod code_clash;
 pub mod conflicts;
+pub mod device_code;
 pub mod domain;
 pub mod identity;
 pub mod materialize;
@@ -23,6 +25,8 @@ mod convergence_tests;
 mod foundation_tests;
 #[cfg(test)]
 mod harness_tests;
+#[cfg(test)]
+mod history_ids_tests;
 #[cfg(test)]
 mod registry_tests;
 #[cfg(test)]

@@ -2136,6 +2136,7 @@
     "sync_checkpoint": "sync_control",
     "sync_conflicts": "sync_control",
     "sync_entity_state": "sync_control",
+    "sync_history_foreign_rows": "sync_control",
     "sync_inbox": "sync_control",
     "sync_media_downloads": "sync_control",
     "sync_media_uploads": "sync_control",

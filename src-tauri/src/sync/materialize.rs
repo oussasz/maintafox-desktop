@@ -184,6 +184,8 @@ async fn apply_inbox_row(db: &DatabaseConnection, item: &InboxRow) -> AppResult<
     let outcome = match evaluated {
         Ok(outcome @ (ApplyOutcome::Applied | ApplyOutcome::Unchanged)) => {
             mark_inbox(&tx, item.id, "applied", None, None).await?;
+            crate::sync::code_clash::close_outdated_clashes(&tx, &item.entity_type, &item.entity_sync_id, item.row_version)
+                .await?;
             record_synced_state(
                 &tx,
                 &item.entity_type,
@@ -313,6 +315,17 @@ async fn evaluate_and_apply(conn: &impl ConnectionTrait, item: &InboxRow) -> App
         });
     }
     if let Some(outcome) = concurrency_check(conn, def, item).await? {
+        return Ok(outcome);
+    }
+    if let Some(outcome) = crate::sync::code_clash::check_inbound(
+        conn,
+        &item.entity_type,
+        &item.entity_sync_id,
+        &item.operation,
+        &item.payload_json,
+    )
+    .await?
+    {
         return Ok(outcome);
     }
     apply_inbound_payload(

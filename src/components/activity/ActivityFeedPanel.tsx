@@ -1,5 +1,6 @@
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Timeline } from "@/components/timeline";
 import type { TimelineEntry, TimelineTone } from "@/components/timeline";
@@ -27,6 +28,7 @@ interface ActivityFeedPanelProps {
 }
 
 export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
+  const { t: tShell } = useTranslation("shell");
   const { can, isLoading: permissionsLoading } = usePermissions();
   const [items, setItems] = useState<ActivityEventSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -158,7 +160,9 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
         },
         { label: row.source_module, tone: "muted" },
       ],
-      description: row.summary_json ? JSON.stringify(row.summary_json) : "No summary payload",
+      description: `${row.summary_json ? JSON.stringify(row.summary_json) : "No summary payload"}${
+        row.from_other_device ? ` — ${tShell("sync.history.fromOtherDevice")}` : ""
+      }`,
       ...(row.source_record_id ? { link: { label: "Open source record", disabled: true } } : {}),
       details: expanded[row.id] ? (
         <pre className="whitespace-pre-wrap rounded bg-muted p-2 text-xs">{expanded[row.id]}</pre>
@@ -169,7 +173,7 @@ export function ActivityFeedPanel({ className }: ActivityFeedPanelProps) {
       onDetailsToggle: () => void handleExpand(row),
       detailsLabel: chainLoading[row.id] ? "Loading chain..." : "Correlation chain",
     }));
-  }, [items, expanded, chainLoading, handleExpand]);
+  }, [items, expanded, chainLoading, handleExpand, tShell]);
 
   const applyFilters = useCallback(() => {
     setOffset(0);

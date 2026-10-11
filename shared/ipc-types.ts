@@ -5587,6 +5587,8 @@ export interface AdminChangeEventDetail {
   diff_json: string | null;
   step_up_used: boolean;
   apply_result: string;
+  /** Received from another device before history ids travelled as sync ids. */
+  from_other_device: boolean;
 }
 
 // â”€â”€â”€ Activity Feed & Audit Log (SP07-F03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -9003,8 +9005,18 @@ export interface SyncConflictRecord {
 export interface ResolveSyncConflictInput {
   conflict_id: number;
   expected_row_version: number;
-  /** accept_local = keep this device's version; accept_remote = take the server's version. */
-  action: "accept_local" | "accept_remote" | "retry_later" | "escalate" | "dismiss";
+  /**
+   * accept_local = keep this device's version; accept_remote = take the server's version;
+   * renumber_local = number clash: give the record on this device a new number, then apply the
+   * received one.
+   */
+  action:
+    | "accept_local"
+    | "accept_remote"
+    | "renumber_local"
+    | "retry_later"
+    | "escalate"
+    | "dismiss";
   resolution_note?: string | null;
 }
 

@@ -84,6 +84,7 @@ fn conflict_policy(conflict_type: &str) -> (&'static str, bool, &'static str, &'
         "INVALID_INBOUND_PAYLOAD" | "MATERIALIZE_ERROR" => ("remote", true, "escalate", "manual_review_required"),
         "AUTHORITY_MISMATCH" => ("remote", true, "accept_remote", "manual_review_required"),
         "STALE_INBOUND" => ("local", true, "accept_local", "manual_review_required"),
+        "CODE_CLASH" => ("mixed", true, "renumber_local", "manual_review_required"),
         "OUTBOX_DEAD_LETTER" => ("local", true, "retry_later", "manual_review_required"),
         _ => ("mixed", true, "review", "manual_review_required"),
     }
@@ -96,6 +97,8 @@ fn map_resolution_to_status(action: &str) -> Option<&'static str> {
         "retry_later" => Some("triaged"),
         "escalate" => Some("escalated"),
         "dismiss" => Some("dismissed"),
+        // Number clash: the local record got a new number and the received one was applied.
+        "renumber_local" => Some("merged"),
         _ => None,
     }
 }
@@ -1798,7 +1801,10 @@ pub async fn resolve_sync_conflict(
         errors.push("expected_row_version must be > 0.".to_string());
     }
     if map_resolution_to_status(&input.action).is_none() {
-        errors.push("action must be one of: accept_local, accept_remote, retry_later, escalate, dismiss.".to_string());
+        errors.push(
+            "action must be one of: accept_local, accept_remote, renumber_local, retry_later, escalate, dismiss."
+                .to_string(),
+        );
     }
     if !errors.is_empty() {
         return Err(AppError::ValidationFailed(errors));
@@ -1836,9 +1842,11 @@ pub async fn resolve_sync_conflict(
     }
 
     // The person's choice is applied to the data in the same transaction as the status change.
+    let mut renumbered = None;
     match input.action.as_str() {
         "accept_local" => crate::sync::conflicts::keep_local_version(&tx, &conflict).await?,
         "accept_remote" => crate::sync::conflicts::take_remote_version(&tx, &conflict).await?,
+        "renumber_local" => renumbered = crate::sync::code_clash::renumber_local_record(&tx, &conflict).await?,
         _ => {}
     }
 
@@ -1867,6 +1875,31 @@ pub async fn resolve_sync_conflict(
     ))
     .await?;
     tx.commit().await?;
+
+    if let Some(change) = renumbered {
+        // History of the renumbering (the record's own change travels through the outbox).
+        crate::audit::writer::write_audit_event(
+            db,
+            crate::audit::writer::AuditEventInput {
+                action_code: "sync.code_clash.renumbered".to_string(),
+                target_type: Some("sync_conflict".to_string()),
+                target_id: Some(input.conflict_id.to_string()),
+                actor_id: Some(user_id),
+                auth_context: "session".to_string(),
+                result: "success".to_string(),
+                before_hash: None,
+                after_hash: None,
+                retention_class: "operations".to_string(),
+                details_json: Some(serde_json::json!({
+                    "entity_type": change.entity_type,
+                    "entity_sync_id": change.local_entity_sync_id,
+                    "old_number": change.old_number,
+                    "new_number": change.new_number,
+                })),
+            },
+        )
+        .await?;
+    }
 
     let row = db
         .query_one(Statement::from_sql_and_values(
