@@ -293,6 +293,19 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         info!("startup: notification scheduler started");
     }
 
+    // Phase 5a: notification emails through the control API (non-fatal; `notifications::email`)
+    {
+        let email_db = app_state.db.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::notifications::email::start_email_dispatcher(
+                email_db,
+                env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL").to_string(),
+            )
+            .await;
+        });
+        info!("startup: notification email dispatcher started");
+    }
+
     // Phase 5b: DI SLA breach poller (non-fatal)
     {
         let sla_db = app_state.db.clone();

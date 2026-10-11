@@ -150,7 +150,7 @@ async fn emit_event_inner(
             .await?;
 
             if state == "read" {
-                let _ = delivery::schedule_in_app_delivery(pool, notification_id).await;
+                let _ = delivery::schedule_deliveries(pool, notification_id).await;
             }
             return Ok(());
         }
@@ -256,7 +256,7 @@ async fn emit_event_inner(
             continue;
         };
 
-        if let Err(err) = delivery::schedule_in_app_delivery(pool, notification_id).await {
+        if let Err(err) = delivery::schedule_deliveries(pool, notification_id).await {
             tracing::error!(
                 notification_id,
                 error = %err,

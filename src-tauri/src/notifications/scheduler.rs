@@ -180,7 +180,7 @@ async fn run_escalation_sweep(pool: &impl ConnectionTrait) -> Result<()> {
             else {
                 continue;
             };
-            if let Err(err) = delivery::schedule_in_app_delivery(pool, new_notification_id).await {
+            if let Err(err) = delivery::schedule_deliveries(pool, new_notification_id).await {
                 tracing::error!(
                     notification_id = new_notification_id,
                     error = %err,

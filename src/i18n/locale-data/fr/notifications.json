@@ -1,1 +1,41 @@
-{}
+{
+  "bell": {
+    "title": "Notifications",
+    "aria": "Notifications ({{count}})",
+    "unread": "{{count}} non lue(s)"
+  },
+  "osToast": {
+    "summaryTitle_one": "{{count}} nouvelle notification",
+    "summaryTitle_other": "{{count}} nouvelles notifications",
+    "summaryBody_one": "{{first}}",
+    "summaryBody_other": "{{first}} et {{rest}} autre(s)"
+  },
+  "preferences": {
+    "title": "Préférences de notification",
+    "loading": "Chargement des préférences…",
+    "categories_one": "{{count}} catégorie",
+    "categories_other": "{{count}} catégories",
+    "systemManaged": "Géré par le système",
+    "col": {
+      "category": "Catégorie",
+      "inApp": "Dans l'application",
+      "os": "Notification système",
+      "email": "E-mail",
+      "sms": "SMS",
+      "digest": "Résumé",
+      "muteUntil": "Silence jusqu'au"
+    },
+    "digest": {
+      "instant": "Immédiat",
+      "daily_digest": "Résumé quotidien",
+      "off": "Désactivé"
+    },
+    "emailUnavailable": {
+      "server_endpoint_not_enabled": "L'e-mail n'est pas encore disponible : le serveur Maintafox n'a pas activé l'envoi d'e-mails pour votre organisation.",
+      "licence_blocked": "L'e-mail n'est pas disponible : votre licence ne l'autorise pas dans son état actuel.",
+      "device_not_activated": "L'e-mail n'est pas disponible : cet appareil n'est pas activé.",
+      "unknown": "L'e-mail n'est pas disponible : {{message}}"
+    },
+    "smsUnavailable": "Les SMS ne sont pas disponibles dans cette version."
+  }
+}

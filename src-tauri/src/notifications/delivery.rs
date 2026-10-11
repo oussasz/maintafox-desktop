@@ -25,6 +25,15 @@ pub async fn schedule_in_app_delivery(pool: &impl ConnectionTrait, notification_
     Ok(())
 }
 
+/// In-app delivery of a new notification, plus its email when the recipient enabled email for
+/// the category (`notifications::email`; the OS toast is claimed by the signed-in recipient's
+/// window, `notifications::os_toast`).
+pub async fn schedule_deliveries(pool: &impl ConnectionTrait, notification_id: i64) -> Result<()> {
+    schedule_in_app_delivery(pool, notification_id).await?;
+    crate::notifications::email::enqueue_email(pool, notification_id).await?;
+    Ok(())
+}
+
 pub async fn mark_as_read(pool: &SqlitePool, notification_id: i64, user_id: i64) -> Result<()> {
     ensure_recipient(pool, notification_id, user_id).await?;
 

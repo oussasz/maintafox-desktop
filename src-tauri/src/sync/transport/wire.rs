@@ -150,3 +150,31 @@ pub struct ErrorBody {
     pub message: Option<String>,
     pub details: Option<serde_json::Value>,
 }
+
+/// `POST /api/v1/notifications/email` body: the server sends one notification email to the
+/// recipient's address on record (the desktop never handles SMTP or addresses). Contract in
+/// `notifications::email`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct NotificationEmailRequest {
+    /// Idempotency key: the same notification gives the same id on every device, so the server
+    /// sends one email even when several devices hold (and dispatch) the notification.
+    pub request_id: String,
+    pub notification_sync_id: String,
+    pub recipient_user_sync_id: String,
+    pub category_code: String,
+    pub severity: String,
+    pub title: String,
+    pub body: Option<String>,
+    pub action_url: Option<String>,
+    pub occurred_at: String,
+    pub source_module: String,
+    pub source_record_id: Option<String>,
+}
+
+/// `202 Accepted` answer of `POST /api/v1/notifications/email`.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct NotificationEmailAccepted {
+    pub request_id: String,
+    /// `accepted` (queued for sending) or `duplicate` (this `request_id` was already accepted).
+    pub status: String,
+}

@@ -1,5 +1,6 @@
 import { Bell } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useOsToasts } from "@/hooks/use-os-toasts";
 import { isSessionActiveForBackgroundWork } from "@/lib/session-ready";
 import { getUnreadCount } from "@/services/notification-service";
 import { useSessionStore } from "@/store/session-store";
@@ -19,6 +21,8 @@ export function NotificationBell() {
   const intervalRef = useRef<number | null>(null);
   const authenticated = useSessionStore((s) => s.info?.is_authenticated === true);
   const locked = useSessionStore((s) => s.info?.is_locked === true);
+  const { t } = useTranslation("notifications");
+  useOsToasts(authenticated && !locked);
 
   const poll = useCallback(async () => {
     if (!isSessionActiveForBackgroundWork()) {
@@ -58,7 +62,7 @@ export function NotificationBell() {
         <Button
           variant="ghost"
           size="icon"
-          aria-label={`Notifications (${count})`}
+          aria-label={t("bell.aria", { count })}
           className="relative h-8 w-8"
         >
           <Bell className="h-4 w-4" />
@@ -71,8 +75,8 @@ export function NotificationBell() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" sideOffset={8} className="w-[34rem] p-3">
         <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Notifications</h3>
-          <span className="text-xs text-muted-foreground">{count} unread</span>
+          <h3 className="text-sm font-semibold">{t("bell.title")}</h3>
+          <span className="text-xs text-muted-foreground">{t("bell.unread", { count })}</span>
         </div>
         <NotificationInbox onChanged={() => void poll()} />
       </DropdownMenuContent>
