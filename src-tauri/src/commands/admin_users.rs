@@ -653,7 +653,6 @@ pub async fn create_user(input: CreateUserInput, app: AppHandle, state: State<'_
     ))
     .await?;
 
-    crate::sync::foundation_stage::stage_user_account_sync(&tx, new_id).await?;
     tx.commit().await?;
 
     notify_rbac_user_change(&app, &state, new_id, "user_created");
@@ -873,7 +872,6 @@ pub async fn update_user(input: UpdateUserInput, state: State<'_, AppState>) -> 
     tx.execute(Statement::from_sql_and_values(DbBackend::Sqlite, &sql, values))
         .await?;
 
-    crate::sync::foundation_stage::stage_user_account_sync(&tx, input.user_id).await?;
     tx.commit().await?;
 
     Ok(())
@@ -1382,7 +1380,6 @@ pub async fn create_role(input: CreateRoleInput, state: State<'_, AppState>) -> 
         .await?;
     }
 
-    crate::sync::foundation_stage::stage_role_sync(&tx, new_role_id).await?;
     tx.commit().await?;
 
     Ok(IdPayload { id: new_role_id })
@@ -1480,7 +1477,6 @@ pub async fn update_role(input: UpdateRoleInput, app: AppHandle, state: State<'_
         resolver::validate_hard_dependencies(&tx, &final_set).await?;
     }
 
-    crate::sync::foundation_stage::stage_role_sync(&tx, input.role_id).await?;
     tx.commit().await?;
 
     // Role permissions changed → invalidate all cached entries (any user may hold this role)

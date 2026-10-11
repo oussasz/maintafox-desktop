@@ -685,7 +685,7 @@ async fn inbox_ingest_is_pending_then_materialize_applies_equipment() {
             entity_sync_id: "eq-sync-mat-1".to_string(),
             operation: "upsert".to_string(),
             row_version: 1,
-            payload_json: r#"{"entity_sync_id":"eq-sync-mat-1","row_version":1,"asset_code":"EQ-MAT-1","asset_name":"Pump","status_code":"active_in_service"}"#.to_string(),
+            payload_json: r#"{"_sync_format":"row.v1","asset_id_code":"EQ-MAT-1","name":"Pump","lifecycle_status":"active_in_service","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_string(),
             ..Default::default()
         }],
         conflict_items: vec![],

@@ -998,7 +998,6 @@ pub async fn import_role_model(input: RoleImportPayload, state: State<'_, AppSta
             .await?;
         }
 
-        crate::sync::foundation_stage::stage_role_sync(&tx, new_role_id).await?;
         tx.commit().await?;
 
         // ── Audit event ──────────────────────────────────────────────────

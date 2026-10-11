@@ -227,8 +227,7 @@ pub async fn save_wo_attachment(
     ))
     .await?;
 
-    let payload = crate::sync::media::stage_media_bytes(
-        &txn,
+    let payload = crate::sync::media::build_media_attachment(
         env,
         &tenant_id,
         "work_orders",
@@ -238,8 +237,7 @@ pub async fn save_wo_attachment(
         &input.file_bytes,
         Some(relative_path.clone()),
         None,
-    )
-    .await?;
+    )?;
     crate::sync::media::upsert_media_attachment_row(&txn, &payload).await?;
 
     // ── Re-fetch the inserted row ─────────────────────────────────────────
@@ -310,7 +308,7 @@ pub async fn delete_wo_attachment_record(db: &DatabaseConnection, attachment_id:
         }
         let relative_path: String = row.try_get("", "relative_path").unwrap_or_default();
         let parent_esid: String = row.try_get("", "parent_entity_sync_id").unwrap_or_default();
-        crate::sync::media::stage_media_delete_if_found(
+        crate::sync::media::delete_media_attachment_if_found(
             &txn,
             Some("work_orders"),
             if parent_esid.is_empty() {

@@ -293,7 +293,6 @@ pub async fn create_team(db: &DatabaseConnection, input: TeamCreateInput) -> App
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("team insert missing id")))?;
     let id: i64 = id_row.try_get("", "id").unwrap_or_default();
     let team = get_team_by_id(&txn, id).await?;
-    crate::sync::foundation_stage::stage_team_sync(&txn, id).await?;
     txn.commit().await?;
     Ok(team)
 }
@@ -375,7 +374,6 @@ pub async fn update_team(db: &DatabaseConnection, input: TeamUpdateInput) -> App
         })?;
 
     let team = get_team_by_id(&txn, input.id).await?;
-    crate::sync::foundation_stage::stage_team_sync(&txn, input.id).await?;
     txn.commit().await?;
     Ok(team)
 }

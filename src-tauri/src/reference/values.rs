@@ -549,7 +549,6 @@ pub async fn create_operational_value(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("reference_values row missing after operational insert")))?;
 
     let created = map_value(&row)?;
-    crate::sync::foundation_stage::stage_reference_value_by_id(&txn, created.id).await?;
     txn.commit().await?;
 
     // Schedule details hang off the committed value; the helper runs on the pool connection.
@@ -621,7 +620,6 @@ pub async fn update_value(
         .await?;
 
     let updated = get_value_by_id(&txn, value_id).await?;
-    crate::sync::foundation_stage::stage_reference_value_by_id(&txn, updated.id).await?;
     txn.commit().await?;
     Ok(updated)
 }

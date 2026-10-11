@@ -74,6 +74,10 @@ async fn registered_tables_with_stagers_have_sync_identity_columns() {
     let db = migrated_db().await;
     for e in SYNC_ENTITIES.iter().filter(|e| e.has_stager || e.has_materializer) {
         let cols = columns(&db, e.table).await;
+        if super::row_spec::row_spec(e.entity_type).is_some() && !cols.iter().any(|c| c == "id") {
+            // Keyed by a natural primary key: identified by `seeded_entity_sync_id` of that key.
+            continue;
+        }
         assert!(
             cols.iter().any(|c| c == "entity_sync_id"),
             "{} is synchronised but has no entity_sync_id column",
@@ -174,6 +178,20 @@ async fn registry_parents_cover_declared_foreign_keys() {
 #[test]
 fn registry_flags_match_stager_and_materializer_dispatch() {
     for e in SYNC_ENTITIES {
+        let generic = super::row_spec::row_spec(e.entity_type).is_some();
+        if generic {
+            assert!(
+                e.has_stager && e.has_materializer,
+                "{} has a row spec (generic capture and apply): mark has_stager and has_materializer",
+                e.entity_type
+            );
+            assert!(
+                !super::materialize::UPSERT_ENTITY_TYPES.contains(&e.entity_type),
+                "{} is applied by the generic engine and by a hand-written materializer",
+                e.entity_type
+            );
+            continue;
+        }
         assert_eq!(
             e.has_materializer,
             super::materialize::UPSERT_ENTITY_TYPES.contains(&e.entity_type),
@@ -267,13 +285,16 @@ fn rust_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// Every raw-SQL insert into a synchronised table must set `entity_sync_id` at creation, so the
-/// row has its merge key from the first write (migrations and test fixtures are excluded).
+/// Every raw-SQL insert into a table staged by a hand-written stager must set `entity_sync_id` at
+/// creation, so the row has its merge key from the first write (migrations and test fixtures are
+/// excluded). Tables on the generic capture get their identity from the capture insert trigger in
+/// the same statement when the insert does not set one (`sync::capture`).
 #[test]
 fn inserts_into_synchronised_tables_set_entity_sync_id() {
     let synchronised: HashSet<&str> = SYNC_ENTITIES
         .iter()
         .filter(|e| e.has_stager || e.has_materializer)
+        .filter(|e| super::row_spec::row_spec(e.entity_type).is_none())
         .map(|e| e.table)
         .collect();
     // `[\s\\]*` also skips Rust string line continuations between the table name and `(`.
@@ -306,5 +327,118 @@ fn inserts_into_synchronised_tables_set_entity_sync_id() {
         violations.is_empty(),
         "Inserts into synchronised tables without entity_sync_id:\n{}",
         violations.join("\n")
+    );
+}
+
+/// Rows every device seeds itself (migrations and startup seeders) must have the same identity on
+/// every database, or two devices would hold two copies of the same catalog row; and none of them
+/// is queued for sync.
+#[tokio::test]
+async fn seeded_rows_have_the_same_identity_on_every_database() {
+    let a = super::test_support::started_db().await;
+    let b = super::test_support::started_db().await;
+    let mut mismatches = Vec::new();
+    for e in SYNC_ENTITIES {
+        if !columns(&a, e.table).await.iter().any(|c| c == "entity_sync_id") {
+            continue;
+        }
+        let ids = |db: &DatabaseConnection| {
+            let sql = format!("SELECT entity_sync_id FROM {} ORDER BY entity_sync_id", e.table);
+            let db = db.clone();
+            async move {
+                db.query_all(Statement::from_string(DatabaseBackend::Sqlite, sql))
+                    .await
+                    .expect("read ids")
+                    .iter()
+                    .map(|r| r.try_get::<Option<String>>("", "entity_sync_id").expect("id"))
+                    .collect::<Vec<_>>()
+            }
+        };
+        let (ids_a, ids_b) = (ids(&a).await, ids(&b).await);
+        if ids_a != ids_b {
+            mismatches.push(format!("{}: {} vs {} rows", e.table, ids_a.len(), ids_b.len()));
+            continue;
+        }
+        for id in ids_a {
+            match id {
+                Some(id) if id.as_bytes().get(14) == Some(&b'8') => {}
+                other => mismatches.push(format!("{}: seeded row without seeded identity ({other:?})", e.table)),
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "Seeded rows must use sync::seeded_identity / seeded_entity_sync_id:\n{}",
+        mismatches.join("\n")
+    );
+    let queued = super::capture::pending_capture_count(&a).await.expect("journal count");
+    assert_eq!(queued, 0, "seeded rows must not be queued for sync");
+}
+
+/// Every entity type on the generic engine has a valid column map (no unmapped local id column,
+/// no unknown table or column in its rules), and after installation every one of them has its
+/// three capture triggers.
+#[tokio::test]
+async fn every_row_spec_has_a_valid_layout_and_capture_triggers() {
+    let db = super::test_support::started_db().await;
+    let mut problems = Vec::new();
+    for spec in super::row_spec::ROW_SPECS {
+        if registry::entity(spec.entity_type).is_none() {
+            problems.push(format!("{}: row spec for an unregistered entity type", spec.entity_type));
+            continue;
+        }
+        if let Err(e) = super::row_layout::layout(&db, spec.entity_type).await {
+            problems.push(format!("{}: {e}", spec.entity_type));
+            continue;
+        }
+        let table = registry::entity(spec.entity_type).map(|e| e.table).unwrap_or_default();
+        let triggers = db
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                format!(
+                    "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{table}'
+                       AND name IN ('sync_cap_{table}_ai', 'sync_cap_{table}_au', 'sync_cap_{table}_ad')"
+                ),
+            ))
+            .await
+            .expect("triggers")
+            .and_then(|r| r.try_get::<i64>("", "n").ok())
+            .unwrap_or_default();
+        if triggers != 3 {
+            problems.push(format!("{}: {triggers} capture triggers installed", spec.entity_type));
+        }
+    }
+    assert!(problems.is_empty(), "row spec problems:\n{}", problems.join("\n"));
+}
+
+/// Undeclared references must be parents too, so the apply order puts their targets first (back
+/// edges of a cycle are declared `soft`; history links may point to rows applied later).
+#[test]
+fn row_spec_references_are_registry_parents() {
+    let mut missing = Vec::new();
+    for spec in super::row_spec::ROW_SPECS {
+        let Some(def) = registry::entity(spec.entity_type) else {
+            continue;
+        };
+        for r in spec.refs {
+            if r.soft || r.history {
+                continue;
+            }
+            let targets: Vec<&str> = match r.target {
+                super::row_spec::RefTarget::Entity(t) => vec![t],
+                super::row_spec::RefTarget::Poly { targets, .. } => targets.iter().map(|(_, t)| *t).collect(),
+                _ => vec![],
+            };
+            for t in targets {
+                if t != def.entity_type && !def.parents.contains(&t) {
+                    missing.push(format!("{} -> {t} ({})", def.entity_type, r.column));
+                }
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "add these targets to the registry parents (or mark the reference soft):\n{}",
+        missing.join("\n")
     );
 }

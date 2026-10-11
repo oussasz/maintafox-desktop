@@ -1,8 +1,7 @@
 use crate::errors::{AppError, AppResult};
 use crate::sync::domain::{
-    EquipmentSyncPayload, StageOutboxItemInput, WorkOrderIntervenerSyncPayload, WorkOrderSyncPayload,
-    WorkOrderTaskSyncPayload, SYNC_ENTITY_EQUIPMENT, SYNC_ENTITY_WORK_ORDERS, SYNC_ENTITY_WORK_ORDER_INTERVENERS,
-    SYNC_ENTITY_WORK_ORDER_TASKS,
+    StageOutboxItemInput, WorkOrderIntervenerSyncPayload, WorkOrderSyncPayload, WorkOrderTaskSyncPayload,
+    SYNC_ENTITY_WORK_ORDERS, SYNC_ENTITY_WORK_ORDER_INTERVENERS, SYNC_ENTITY_WORK_ORDER_TASKS,
 };
 use crate::sync::identity::{parent_entity_sync_id, require_entity_sync_id, require_parent_sync_id};
 use crate::sync::queries::stage_outbox_item;
@@ -192,57 +191,6 @@ pub async fn stage_work_order_intervener_sync(db: &impl ConnectionTrait, interve
             entity_sync_id: esid,
             operation: "upsert".to_string(),
             payload_json: serde_json::to_string(&payload)?,
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-pub async fn stage_equipment_sync(db: &impl ConnectionTrait, equipment_id: i64) -> AppResult<()> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "SELECT e.entity_sync_id, e.asset_id_code, e.name, e.lifecycle_status, e.row_version,
-                    e.manufacturer, e.model, e.serial_number, e.updated_at,
-                    o.entity_sync_id AS org_entity_sync_id
-             FROM equipment e
-             LEFT JOIN org_nodes o ON o.id = e.installed_at_node_id
-             WHERE e.id = ?",
-            [equipment_id.into()],
-        ))
-        .await?;
-    let Some(row) = row else {
-        return Ok(());
-    };
-    let esid = require_entity_sync_id(
-        "equipment",
-        equipment_id,
-        row.try_get::<Option<String>>("", "entity_sync_id")
-            .map_err(|e| AppError::SyncError(format!("equipment.entity_sync_id: {e}")))?,
-    )?;
-    let row_version: i64 = row.try_get("", "row_version").unwrap_or(1);
-    let payload = EquipmentSyncPayload {
-        entity_sync_id: esid.clone(),
-        row_version,
-        asset_code: row.try_get("", "asset_id_code").unwrap_or_default(),
-        asset_name: row.try_get("", "name").unwrap_or_default(),
-        status_code: row
-            .try_get("", "lifecycle_status")
-            .unwrap_or_else(|_| "active_in_service".into()),
-        org_node_entity_sync_id: row.try_get("", "org_entity_sync_id").ok(),
-        manufacturer: row.try_get("", "manufacturer").ok(),
-        model: row.try_get("", "model").ok(),
-        serial_number: row.try_get("", "serial_number").ok(),
-        updated_at: row.try_get("", "updated_at").ok(),
-    };
-    let payload_json = serde_json::to_string(&payload)?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_EQUIPMENT.to_string(),
-            entity_sync_id: esid,
-            operation: "upsert".to_string(),
-            payload_json,
         },
     )
     .await?;

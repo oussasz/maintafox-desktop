@@ -603,6 +603,25 @@ async fn latest_unsent_outbox_item(
 /// - restaging an unchanged payload while the previous change is still unsent returns that change;
 /// - every new envelope gets a fresh UUID idempotency key, unique per tenant forever.
 pub async fn stage_outbox_item(db: &impl ConnectionTrait, input: StageOutboxItemInput) -> AppResult<SyncOutboxItem> {
+    stage_outbox_item_inner(db, input, None).await
+}
+
+/// [`stage_outbox_item`] with the owner of a user-scoped entity given by the caller (the generic
+/// capture knows it from the row, including for a deleted row and for natural-key rows that have
+/// no `entity_sync_id` column to look the owner up by).
+pub(crate) async fn stage_outbox_item_with_owner(
+    db: &impl ConnectionTrait,
+    input: StageOutboxItemInput,
+    owner_user_sync_id: Option<String>,
+) -> AppResult<SyncOutboxItem> {
+    stage_outbox_item_inner(db, input, Some(owner_user_sync_id)).await
+}
+
+async fn stage_outbox_item_inner(
+    db: &impl ConnectionTrait,
+    input: StageOutboxItemInput,
+    owner_override: Option<Option<String>>,
+) -> AppResult<SyncOutboxItem> {
     validate_outbox_input(&input)?;
     let def = registry::require_entity(&input.entity_type)?;
     let payload_hash = hash_payload(&input.payload_json);
@@ -620,7 +639,18 @@ pub async fn stage_outbox_item(db: &impl ConnectionTrait, input: StageOutboxItem
             .map(|(version, _)| version),
     };
     let row_version = base_row_version.map_or(1, |base| base + 1);
-    let owner_user_sync_id = owner_user_sync_id_for(db, def, &input.entity_sync_id).await?;
+    let owner_user_sync_id = match owner_override {
+        Some(owner) => match def.scope {
+            SyncScope::Tenant => None,
+            SyncScope::User => Some(owner.filter(|o| !o.trim().is_empty()).ok_or_else(|| {
+                AppError::SyncError(format!(
+                    "{} {} is user-scoped but has no owning user.",
+                    def.entity_type, input.entity_sync_id
+                ))
+            })?),
+        },
+        None => owner_user_sync_id_for(db, def, &input.entity_sync_id).await?,
+    };
     let origin_machine_id = local_replica_id(db).await?;
     let idempotency_key = uuid::Uuid::new_v4().to_string();
 
@@ -792,6 +822,8 @@ pub async fn get_sync_push_payload(db: &DatabaseConnection, limit: Option<i64>) 
     // (`conflict`) is held back: its later changes were built on the refused one.
     let page_size = limit.unwrap_or(200).clamp(1, 1000);
     let tx = db.begin().await?;
+    // Changes captured by the table triggers become outbox envelopes first.
+    crate::sync::capture::drain_capture_journal(&tx).await?;
     let sql = format!(
         "SELECT {OUTBOX_COLUMNS} FROM sync_outbox o
          WHERE o.status IN {OUTBOX_UNSENT_STATUSES_SQL}
@@ -1635,7 +1667,10 @@ pub async fn get_sync_state_summary(db: &DatabaseConnection) -> AppResult<SyncSt
 
     let pending_outbox_count = count(
         db,
-        "SELECT COUNT(*) AS count FROM sync_outbox WHERE status = 'pending'",
+        // Captured changes not drained into the outbox yet are pending too (one per entity).
+        "SELECT (SELECT COUNT(*) FROM sync_outbox WHERE status = 'pending')
+              + (SELECT COUNT(DISTINCT entity_type || ':' || COALESCE(entity_sync_id, natural_key_json))
+                   FROM sync_capture_journal) AS count",
         "pending_outbox_count",
     )
     .await?;

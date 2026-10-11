@@ -626,6 +626,10 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         "Runtime reset table selection"
     );
 
+    // The wipe and the reseed below are local maintenance, not changes for other devices: capture
+    // is off until it is installed again at the end.
+    crate::sync::capture::suspend_capture(&state.db).await?;
+
     // SQLite ignores (or cannot toggle) foreign_keys inside an active transaction. Run OFF on the
     // connection first, then delete inside a transaction, then restore ON. Requires a single-connection
     // pool (see init_db) so this pragma applies to the same connection as `begin()`.
@@ -660,14 +664,21 @@ async fn reset_local_tenant_runtime_data_impl(state: &State<'_, AppState>) -> Ap
         );
     }
 
-    let wiped_rows_total = wipe_result?;
-
-    crate::db::seeder::seed_system_data(&state.db).await?;
-    // Without these rows every outbox staging (so every business write) and the sync worker fail.
-    crate::sync::queries::ensure_sync_control_rows(&state.db).await?;
-    // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
-    // reference_* catalogs that seed_system_data does not cover (lookup_* only).
-    crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db).await?;
+    let reseeded: AppResult<u64> = async {
+        let wiped_rows_total = wipe_result?;
+        crate::db::seeder::seed_system_data(&state.db).await?;
+        // Without these rows every outbox staging (so every business write) and the sync worker fail.
+        crate::sync::queries::ensure_sync_control_rows(&state.db).await?;
+        // Migrations are not re-run after wipe (seaql_migrations kept). Restore system
+        // reference_* catalogs that seed_system_data does not cover (lookup_* only).
+        crate::reference::system_catalog_integrity::ensure_system_reference_catalog_integrity(&state.db).await?;
+        Ok(wiped_rows_total)
+    }
+    .await;
+    // Capture comes back whatever happened above, so later business writes are never missed.
+    let installed = crate::sync::capture::install_capture(&state.db).await;
+    let wiped_rows_total = reseeded?;
+    installed?;
     tracing::warn!(
         event = "desktop_tenant_runtime_reset_complete",
         wiped_rows_total,

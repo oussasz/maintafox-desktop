@@ -1261,18 +1261,16 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
             [input.wo_id.into()],
         ))
         .await?;
-    let mut released_reservation_stages: Vec<(i64, Option<i64>)> = Vec::new();
     for row in reservation_rows {
         let reservation_id: i64 = row
             .try_get("", "reservation_id")
             .map_err(|e| decode_err("reservation_id", e))?;
-        let (released, movement_id) = inventory_queries::release_stock_reservation_with_connection(
+        inventory_queries::release_stock_reservation_with_connection(
             &txn,
             reservation_id,
             Some("WO closeout reservation release"),
         )
         .await?;
-        released_reservation_stages.push((released.id, movement_id));
     }
 
     // ── Compute final costs ───────────────────────────────────────────────
@@ -1401,12 +1399,6 @@ pub async fn close_wo(db: &DatabaseConnection, input: WoCloseInput) -> AppResult
     )
     .await?;
 
-    for (reservation_id, movement_id) in released_reservation_stages {
-        crate::sync::ops_stage::stage_stock_reservation_sync(&txn, reservation_id).await?;
-        if let Some(movement_id) = movement_id {
-            crate::sync::ops_stage::stage_stock_movement_sync(&txn, movement_id).await?;
-        }
-    }
 
     // The UPDATE above set closeout_validation_profile_id, so the staged row carries the profile.
     sync_stage::stage_work_order_by_id(&txn, input.wo_id).await?;

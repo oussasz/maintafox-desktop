@@ -295,8 +295,7 @@ pub async fn upload_asset_photo(
     ))
     .await?;
 
-    let media_payload = crate::sync::media::stage_media_bytes(
-        &txn,
+    let media_payload = crate::sync::media::build_media_attachment(
         crate::sync::media::resolve_media_deployment_env(),
         &tenant_id,
         "equipment",
@@ -308,8 +307,7 @@ pub async fn upload_asset_photo(
         caption
             .as_ref()
             .map(|c| serde_json::json!({ "caption": c }).to_string()),
-    )
-    .await?;
+    )?;
     crate::sync::media::upsert_media_attachment_row(&txn, &media_payload).await?;
 
     let id = last_insert_id(&txn).await?;
@@ -351,7 +349,7 @@ pub async fn delete_asset_photo(db: &DatabaseConnection, app_data_dir: &Path, ph
         .try_get("", "relative_path")
         .map_err(|e| decode_err("relative_path", e))?;
     let parent_esid = crate::sync::identity::require_parent_sync_id(&row, "parent_entity_sync_id")?;
-    crate::sync::media::stage_media_delete_if_found(
+    crate::sync::media::delete_media_attachment_if_found(
         &txn,
         Some("equipment"),
         Some(parent_esid.as_str()),

@@ -811,7 +811,6 @@ pub async fn receive_purchase_order_goods(
     }
 
     let tx = db.begin().await?;
-    let mut staged_movement_ids: Vec<i64> = Vec::new();
     let gr_number = next_doc_number("GR");
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -938,7 +937,7 @@ pub async fn receive_purchase_order_goods(
                 before.reserved,
             )
             .await?;
-            let movement_id = append_stock_event(
+            append_stock_event(
                 &tx,
                 line.article_id,
                 warehouse_id,
@@ -952,7 +951,6 @@ pub async fn receive_purchase_order_goods(
                 input.actor_id,
             )
             .await?;
-            staged_movement_ids.push(movement_id);
         }
     }
 
@@ -989,9 +987,6 @@ pub async fn receive_purchase_order_goods(
     )
     .await?;
 
-    for movement_id in staged_movement_ids {
-        crate::sync::ops_stage::stage_stock_movement_sync(&tx, movement_id).await?;
-    }
     tx.commit().await?;
 
     // Post-commit: handle fulfillment_action for WO-linked demand
@@ -1026,7 +1021,9 @@ pub async fn receive_purchase_order_goods(
                                 reservation_id,
                                 quantity: line.accepted_qty,
                                 source_type: Some("PO_GR".to_string()),
-                                source_id: Some(line.po_line_id),
+                                // A PO_GR movement points to its goods receipt, like the GR_ACCEPT
+                                // movement of the same receipt.
+                                source_id: Some(gr_id),
                                 source_ref: None,
                                 notes: Some(
                                     "Auto-issued on GR accept (fulfillment_action=ISSUE_TO_DEMAND)".to_string(),
@@ -1195,7 +1192,6 @@ pub async fn transition_repairable_order(
     let current_return_location_id: Option<i64> = row.try_get("", "return_location_id")?;
 
     let tx = db.begin().await?;
-    let mut staged_movement_ids: Vec<i64> = Vec::new();
     if input.next_status == "RELEASED" {
         let warehouse_id = ensure_location_active(&tx, source_location_id).await?;
         let before = get_balance_snapshot(&tx, article_id, warehouse_id, source_location_id).await?;
@@ -1213,7 +1209,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        let movement_id = append_stock_event(
+        append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1227,7 +1223,6 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
-        staged_movement_ids.push(movement_id);
     }
     if input.next_status == "RETURNED_FROM_REPAIR" {
         let target_location_id = input
@@ -1245,7 +1240,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        let movement_id = append_stock_event(
+        append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1259,7 +1254,6 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
-        staged_movement_ids.push(movement_id);
     }
 
     // Cancel / scrap stock legs branch on *current* status: the same next_status has
@@ -1280,7 +1274,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        let movement_id = append_stock_event(
+        append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1294,7 +1288,6 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
-        staged_movement_ids.push(movement_id);
     }
     if input.next_status == "SCRAPPED" && current_status == "RETURNED_FROM_REPAIR" {
         let target_location_id = input.return_location_id.or(current_return_location_id).ok_or_else(|| {
@@ -1318,7 +1311,7 @@ pub async fn transition_repairable_order(
             before.reserved,
         )
         .await?;
-        let movement_id = append_stock_event(
+        append_stock_event(
             &tx,
             article_id,
             warehouse_id,
@@ -1332,7 +1325,6 @@ pub async fn transition_repairable_order(
             input.actor_id,
         )
         .await?;
-        staged_movement_ids.push(movement_id);
     }
 
     // Dispatch/return timestamps are stamped once by the lifecycle so turnaround stays auditable
@@ -1381,9 +1373,6 @@ pub async fn transition_repairable_order(
         input.note.as_deref(),
     )
     .await?;
-    for movement_id in staged_movement_ids {
-        crate::sync::ops_stage::stage_stock_movement_sync(&tx, movement_id).await?;
-    }
     tx.commit().await?;
     get_repairable_order(db, input.order_id).await
 }

@@ -1,0 +1,790 @@
+//! Generic row payloads (Phase 2.4): build the payload of a local row, and apply an inbound
+//! payload to the local table.
+//!
+//! Payload (`row.v1`): a JSON object with every replicated column of the row, keys sorted.
+//! - value columns keep their column name and SQLite value (integer, real, text, NULL; BLOB as
+//!   base64);
+//! - references are sent as the target's `entity_sync_id` under `<column without _id>_sync_id`
+//!   (catalog references as the catalog key under `<column without _id>_key`);
+//! - `_sync_format: "row.v1"`.
+//!
+//! Applying never invents a value: a column missing from the payload is left as it is (update) or
+//! gets the table default (insert, which fails visibly when the column is required); a reference
+//! whose target is not here yet defers the row.
+
+use std::collections::BTreeMap;
+
+use base64::Engine as _;
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement, Value as SqlValue};
+use serde_json::{Map, Number, Value};
+
+use crate::errors::{AppError, AppResult};
+use crate::sync::identity::seeded_entity_sync_id;
+use crate::sync::materialize::{ApplyOutcome, DEFER_MISSING_PARENT};
+use crate::sync::registry::ConflictPolicy;
+use crate::sync::row_layout::{EntityLayout, LayoutColumn, Role, Target, PAYLOAD_FORMAT, PAYLOAD_FORMAT_KEY};
+
+fn codec_err(table: &str, msg: impl std::fmt::Display) -> AppError {
+    AppError::SyncError(format!("{table}: {msg}"))
+}
+
+/// Scalar read from SQLite with its storage class.
+#[derive(Debug, Clone)]
+enum Cell {
+    Null,
+    Int(i64),
+    Real(f64),
+    Text(String),
+    Blob(Vec<u8>),
+}
+
+/// How to find one row of a replicated table.
+#[derive(Debug, Clone)]
+pub(crate) enum RowLocator {
+    /// Tables keyed by `id`: the row's `entity_sync_id`.
+    Identity(String),
+    /// Tables keyed by a natural primary key: local values of the key columns, in key order.
+    Natural(Vec<(String, SqlValue)>),
+}
+
+impl RowLocator {
+    /// `WHERE` clause (columns qualified with `alias`, or bare when `alias` is empty) and values.
+    fn where_sql(&self, alias: &str) -> (String, Vec<SqlValue>) {
+        let q = |col: &str| {
+            if alias.is_empty() {
+                format!("\"{col}\"")
+            } else {
+                format!("{alias}.\"{col}\"")
+            }
+        };
+        match self {
+            RowLocator::Identity(id) => (format!("{} = ?", q("entity_sync_id")), vec![id.clone().into()]),
+            RowLocator::Natural(parts) => (
+                parts
+                    .iter()
+                    .map(|(col, _)| format!("{} = ?", q(col)))
+                    .collect::<Vec<_>>()
+                    .join(" AND "),
+                parts.iter().map(|(_, v)| v.clone()).collect(),
+            ),
+        }
+    }
+}
+
+/// A local row turned into a payload.
+#[derive(Debug, Clone)]
+pub(crate) struct RowPayload {
+    pub entity_sync_id: String,
+    pub payload: Map<String, Value>,
+    /// Owner of a user-scoped row (`owner_user_sync_id`).
+    pub owner_user_sync_id: Option<String>,
+}
+
+impl RowPayload {
+    pub fn payload_json(&self) -> AppResult<String> {
+        Ok(serde_json::to_string(&self.payload)?)
+    }
+}
+
+async fn read_cells(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    locator: &RowLocator,
+) -> AppResult<Option<Vec<Cell>>> {
+    let table = layout.table();
+    let select = layout
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(i, c)| format!("typeof(t.\"{0}\") AS \"t{i}\", t.\"{0}\" AS \"v{i}\"", c.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let (where_sql, values) = locator.where_sql("t");
+    let sql = format!(
+        "SELECT {select} FROM \"{table}\" t WHERE {where_sql} AND {} LIMIT 1",
+        layout.filter_sql("t")
+    );
+    let Some(row) = conn
+        .query_one(Statement::from_sql_and_values(DatabaseBackend::Sqlite, &sql, values))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let mut cells = Vec::with_capacity(layout.columns.len());
+    for (i, c) in layout.columns.iter().enumerate() {
+        let read = |e: sea_orm::DbErr| codec_err(table, format!("{}: {e}", c.name));
+        let kind: String = row.try_get("", &format!("t{i}")).map_err(read)?;
+        let v = format!("v{i}");
+        let cell = match kind.as_str() {
+            "null" => Cell::Null,
+            "integer" => Cell::Int(row.try_get::<i64>("", &v).map_err(read)?),
+            "real" => Cell::Real(row.try_get::<f64>("", &v).map_err(read)?),
+            "text" => Cell::Text(row.try_get::<String>("", &v).map_err(read)?),
+            "blob" => Cell::Blob(row.try_get::<Vec<u8>>("", &v).map_err(read)?),
+            other => return Err(codec_err(table, format!("{}: unexpected storage class {other}", c.name))),
+        };
+        cells.push(cell);
+    }
+    Ok(Some(cells))
+}
+
+/// Local id stored in a reference column (integer, or the text form used by text columns).
+fn local_ref_id(table: &str, column: &LayoutColumn, cell: &Cell) -> AppResult<Option<i64>> {
+    match cell {
+        Cell::Null => Ok(None),
+        Cell::Int(v) => Ok(Some(*v)),
+        Cell::Text(t) if t.trim().is_empty() => Ok(None),
+        Cell::Text(t) => t
+            .trim()
+            .parse::<i64>()
+            .map(Some)
+            .map_err(|_| codec_err(table, format!("{} holds '{t}', not a local id", column.name))),
+        Cell::Real(_) | Cell::Blob(_) => Err(codec_err(table, format!("{} is not a local id", column.name))),
+    }
+}
+
+async fn scalar_text(conn: &impl ConnectionTrait, sql: &str, values: Vec<SqlValue>) -> AppResult<Option<String>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, values))
+        .await?;
+    match row {
+        None => Ok(None),
+        Some(r) => r
+            .try_get::<Option<String>>("", "v")
+            .map_err(|e| AppError::SyncError(e.to_string())),
+    }
+}
+
+pub(crate) async fn scalar_id(conn: &impl ConnectionTrait, sql: &str, values: Vec<SqlValue>) -> AppResult<Option<i64>> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, values))
+        .await?;
+    match row {
+        None => Ok(None),
+        Some(r) => r
+            .try_get::<Option<i64>>("", "v")
+            .map_err(|e| AppError::SyncError(e.to_string())),
+    }
+}
+
+fn poly_target<'a>(
+    targets: &'a [(&'static str, &'static str, &'static str)],
+    type_value: Option<&str>,
+) -> Option<&'a (&'static str, &'static str, &'static str)> {
+    let type_value = type_value?;
+    targets.iter().find(|(t, _, _)| *t == type_value)
+}
+
+fn cell_text(cell: Option<&Cell>) -> Option<String> {
+    match cell {
+        Some(Cell::Text(t)) => Some(t.clone()),
+        Some(Cell::Int(i)) => Some(i.to_string()),
+        _ => None,
+    }
+}
+
+/// Sync id (or catalog key) of the row a reference cell points to.
+async fn outbound_ref(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    column: &LayoutColumn,
+    target: &Target,
+    history: bool,
+    cell: &Cell,
+    cells: &[Cell],
+) -> AppResult<Value> {
+    let table = layout.table();
+    let Some(local_id) = local_ref_id(table, column, cell)? else {
+        return Ok(Value::Null);
+    };
+    let (sql, what) = match target {
+        Target::Unmapped => {
+            return Err(codec_err(
+                table,
+                format!(
+                    "{} holds local id {local_id}, which has no synchronised meaning; it must be empty",
+                    column.name
+                ),
+            ))
+        }
+        Target::Entity { table: target_table, .. } => (
+            format!("SELECT entity_sync_id AS v FROM \"{target_table}\" WHERE id = ?"),
+            (*target_table).to_string(),
+        ),
+        Target::Catalog {
+            table: catalog,
+            key_column,
+        } => (
+            format!("SELECT \"{key_column}\" AS v FROM \"{catalog}\" WHERE id = ?"),
+            (*catalog).to_string(),
+        ),
+        Target::Poly { type_column, targets } => {
+            let type_index = layout
+                .columns
+                .iter()
+                .position(|c| c.name == *type_column)
+                .ok_or_else(|| codec_err(table, format!("type column {type_column} missing")))?;
+            let type_value = cell_text(cells.get(type_index));
+            let Some((_, _, target_table)) = poly_target(targets, type_value.as_deref()) else {
+                return Err(codec_err(
+                    table,
+                    format!(
+                        "{} = {local_id} with {type_column} = {:?}: this kind of reference is not mapped for sync",
+                        column.name, type_value
+                    ),
+                ));
+            };
+            (
+                format!("SELECT entity_sync_id AS v FROM \"{target_table}\" WHERE id = ?"),
+                (*target_table).to_string(),
+            )
+        }
+    };
+    match scalar_text(conn, &sql, vec![local_id.into()]).await? {
+        Some(v) if !v.trim().is_empty() => Ok(Value::String(v)),
+        // The event outlives the row it describes.
+        _ if history => Ok(Value::Null),
+        _ => Err(codec_err(
+            table,
+            format!(
+                "{} points to {what} row {local_id}, which does not exist or has no sync identity",
+                column.name
+            ),
+        )),
+    }
+}
+
+fn outbound_value(table: &str, column: &LayoutColumn, cell: &Cell) -> AppResult<Value> {
+    Ok(match cell {
+        Cell::Null => Value::Null,
+        Cell::Int(v) => Value::Number((*v).into()),
+        Cell::Real(v) => Value::Number(
+            Number::from_f64(*v).ok_or_else(|| codec_err(table, format!("{} is not a finite number", column.name)))?,
+        ),
+        Cell::Text(t) => Value::String(t.clone()),
+        Cell::Blob(b) => {
+            if !column.is_blob {
+                return Err(codec_err(table, format!("{} holds binary data", column.name)));
+            }
+            Value::String(base64::engine::general_purpose::STANDARD.encode(b))
+        }
+    })
+}
+
+fn payload_key(layout: &EntityLayout, index: usize) -> AppResult<&str> {
+    match &layout.columns[index].role {
+        Role::Value { key } | Role::Ref { key, .. } => Ok(key),
+        _ => Err(codec_err(layout.table(), "primary key column has no payload key")),
+    }
+}
+
+/// Canonical natural key of a natural-key row: `key=json` pairs in key order.
+pub(crate) fn natural_key_string(layout: &EntityLayout, payload: &Map<String, Value>) -> AppResult<String> {
+    let Some(pk) = &layout.natural_pk else {
+        return Err(codec_err(layout.table(), "not keyed by a natural key"));
+    };
+    let mut parts = Vec::with_capacity(pk.len());
+    for &i in pk {
+        let key = payload_key(layout, i)?;
+        let value = payload
+            .get(key)
+            .ok_or_else(|| codec_err(layout.table(), format!("natural key field {key} is missing")))?;
+        if value.is_null() {
+            return Err(codec_err(layout.table(), format!("natural key field {key} is empty")));
+        }
+        parts.push(format!("{key}={value}"));
+    }
+    Ok(parts.join("|"))
+}
+
+/// Identity of a natural-key row.
+pub(crate) fn natural_entity_sync_id(layout: &EntityLayout, payload: &Map<String, Value>) -> AppResult<String> {
+    Ok(seeded_entity_sync_id(layout.def.entity_type, &natural_key_string(layout, payload)?))
+}
+
+/// Payload of the current local row, or `None` when the row does not exist here (or is outside
+/// the entity's row filter).
+pub(crate) async fn load_row_payload(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    locator: &RowLocator,
+) -> AppResult<Option<RowPayload>> {
+    let Some(cells) = read_cells(conn, layout, locator).await? else {
+        return Ok(None);
+    };
+    let table = layout.table();
+    let mut payload: BTreeMap<String, Value> = BTreeMap::new();
+    let mut identity = None;
+    for (column, cell) in layout.columns.iter().zip(&cells) {
+        match &column.role {
+            Role::LocalKey | Role::LocalVersion | Role::DeviceLocal | Role::Derived { .. } => {}
+            Role::Identity => {
+                identity = match cell {
+                    Cell::Text(t) if !t.trim().is_empty() => Some(t.clone()),
+                    _ => return Err(codec_err(table, "row has no entity_sync_id")),
+                };
+            }
+            Role::Value { key } => {
+                payload.insert(key.clone(), outbound_value(table, column, cell)?);
+            }
+            Role::Ref {
+                key, target, history, ..
+            } => {
+                payload.insert(
+                    key.clone(),
+                    outbound_ref(conn, layout, column, target, *history, cell, &cells).await?,
+                );
+            }
+        }
+    }
+    payload.insert(PAYLOAD_FORMAT_KEY.to_string(), Value::String(PAYLOAD_FORMAT.to_string()));
+    let payload: Map<String, Value> = payload.into_iter().collect();
+    let entity_sync_id = match identity {
+        Some(id) => id,
+        None => natural_entity_sync_id(layout, &payload)?,
+    };
+    let owner_user_sync_id = match layout.owner_payload_key()? {
+        None => None,
+        Some(key) => Some(
+            payload
+                .get(&key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| codec_err(table, "user-scoped row has no owner"))?,
+        ),
+    };
+    Ok(Some(RowPayload {
+        entity_sync_id,
+        payload,
+        owner_user_sync_id,
+    }))
+}
+
+/// Payload of a delete: the format marker, plus the natural key for natural-key rows.
+pub(crate) fn delete_payload(layout: &EntityLayout, natural_key: Option<&Map<String, Value>>) -> Map<String, Value> {
+    let mut payload = Map::new();
+    if let (Some(pk), Some(key)) = (&layout.natural_pk, natural_key) {
+        for &i in pk {
+            if let Ok(k) = payload_key(layout, i) {
+                if let Some(v) = key.get(k) {
+                    payload.insert(k.to_string(), v.clone());
+                }
+            }
+        }
+    }
+    payload.insert(PAYLOAD_FORMAT_KEY.to_string(), Value::String(PAYLOAD_FORMAT.to_string()));
+    payload
+}
+
+/// Outcome of resolving an inbound reference.
+enum Resolved {
+    Local(SqlValue),
+    /// Target not here yet.
+    Missing { target_entity: &'static str, sync_id: String },
+}
+
+fn null_for(column: &LayoutColumn) -> SqlValue {
+    if column.is_text {
+        SqlValue::String(None)
+    } else {
+        SqlValue::BigInt(None)
+    }
+}
+
+async fn inbound_ref(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    column: &LayoutColumn,
+    target: &Target,
+    value: &Value,
+    payload: &Map<String, Value>,
+) -> AppResult<Resolved> {
+    let table = layout.table();
+    let key = match value {
+        Value::Null => return Ok(Resolved::Local(null_for(column))),
+        Value::String(s) if !s.trim().is_empty() => s.clone(),
+        _ => return Err(codec_err(table, format!("{}: reference must be a sync id string", column.name))),
+    };
+    let (sql, target_entity, target_table) = match target {
+        Target::Unmapped => {
+            return Err(codec_err(
+                table,
+                format!("{}: a value was sent for a reference that must stay empty", column.name),
+            ))
+        }
+        Target::Entity { entity_type, table } => (
+            format!("SELECT id AS v FROM \"{table}\" WHERE entity_sync_id = ?"),
+            Some(*entity_type),
+            *table,
+        ),
+        Target::Catalog {
+            table: catalog,
+            key_column,
+        } => (
+            format!("SELECT id AS v FROM \"{catalog}\" WHERE \"{key_column}\" = ?"),
+            None,
+            *catalog,
+        ),
+        Target::Poly { type_column, targets } => {
+            let type_value = payload.get(*type_column).and_then(Value::as_str);
+            let Some((_, entity, target_table)) = poly_target(targets, type_value) else {
+                return Err(codec_err(
+                    table,
+                    format!("{}: {type_column} {type_value:?} is not a mapped reference type", column.name),
+                ));
+            };
+            (
+                format!("SELECT id AS v FROM \"{target_table}\" WHERE entity_sync_id = ?"),
+                Some(*entity),
+                *target_table,
+            )
+        }
+    };
+    match (scalar_id(conn, &sql, vec![key.clone().into()]).await?, target_entity) {
+        (Some(id), _) if column.is_text => Ok(Resolved::Local(id.to_string().into())),
+        (Some(id), _) => Ok(Resolved::Local(id.into())),
+        (None, Some(target_entity)) => Ok(Resolved::Missing {
+            target_entity,
+            sync_id: key,
+        }),
+        // App catalogs ship with the application: a missing key means another app version.
+        (None, None) => Err(codec_err(
+            table,
+            format!("{}: {target_table} '{key}' does not exist in this version", column.name),
+        )),
+    }
+}
+
+fn inbound_value(table: &str, column: &LayoutColumn, value: &Value) -> AppResult<SqlValue> {
+    Ok(match value {
+        Value::Null => SqlValue::String(None),
+        Value::Bool(b) => SqlValue::BigInt(Some(i64::from(*b))),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                SqlValue::BigInt(Some(i))
+            } else if let Some(f) = n.as_f64() {
+                SqlValue::Double(Some(f))
+            } else {
+                return Err(codec_err(table, format!("{}: number out of range", column.name)));
+            }
+        }
+        Value::String(s) if column.is_blob => SqlValue::Bytes(Some(Box::new(
+            base64::engine::general_purpose::STANDARD
+                .decode(s)
+                .map_err(|e| codec_err(table, format!("{}: invalid base64: {e}", column.name)))?,
+        ))),
+        Value::String(s) => SqlValue::String(Some(Box::new(s.clone()))),
+        Value::Array(_) | Value::Object(_) => {
+            return Err(codec_err(table, format!("{}: payload values must be scalars", column.name)))
+        }
+    })
+}
+
+fn parse_payload(table: &str, payload_json: &str) -> AppResult<Map<String, Value>> {
+    let value: Value = serde_json::from_str(payload_json)
+        .map_err(|e| AppError::ValidationFailed(vec![format!("{table}: invalid payload_json: {e}")]))?;
+    let Value::Object(map) = value else {
+        return Err(codec_err(table, "payload is not a JSON object"));
+    };
+    match map.get(PAYLOAD_FORMAT_KEY).and_then(Value::as_str) {
+        Some(PAYLOAD_FORMAT) => Ok(map),
+        Some(other) => Err(codec_err(
+            table,
+            format!("payload format '{other}' is not supported by this version"),
+        )),
+        None => Err(codec_err(
+            table,
+            "payload has no _sync_format: it was written by a version before Phase 2.4",
+        )),
+    }
+}
+
+/// Natural-key locator from a payload (or a journal key in payload form), or `None` when a key
+/// target is not on this device (so the row cannot exist here either).
+pub(crate) async fn natural_locator(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    payload: &Map<String, Value>,
+) -> AppResult<Option<RowLocator>> {
+    let pk = layout
+        .natural_pk
+        .as_ref()
+        .ok_or_else(|| codec_err(layout.table(), "not keyed by a natural key"))?;
+    let mut parts = Vec::with_capacity(pk.len());
+    for &i in pk {
+        let column = &layout.columns[i];
+        let key = payload_key(layout, i)?;
+        let v = payload
+            .get(key)
+            .ok_or_else(|| codec_err(layout.table(), format!("natural key field {key} is missing")))?;
+        match &column.role {
+            Role::Ref { target, .. } => match inbound_ref(conn, layout, column, target, v, payload).await? {
+                Resolved::Local(local) => parts.push((column.name.clone(), local)),
+                Resolved::Missing { .. } => return Ok(None),
+            },
+            _ => parts.push((column.name.clone(), inbound_value(layout.table(), column, v)?)),
+        }
+    }
+    Ok(Some(RowLocator::Natural(parts)))
+}
+
+async fn row_exists(conn: &impl ConnectionTrait, layout: &EntityLayout, locator: &RowLocator) -> AppResult<bool> {
+    let (where_sql, values) = locator.where_sql("");
+    let sql = format!("SELECT 1 AS v FROM \"{}\" WHERE {where_sql} LIMIT 1", layout.table());
+    Ok(conn
+        .query_one(Statement::from_sql_and_values(DatabaseBackend::Sqlite, &sql, values))
+        .await?
+        .is_some())
+}
+
+fn is_delete(operation: &str) -> bool {
+    operation == "delete" || operation == "archive"
+}
+
+/// Apply an inbound row. Callers hold a transaction with capture suppressed.
+pub(crate) async fn apply_row(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
+    operation: &str,
+    payload_json: &str,
+) -> AppResult<ApplyOutcome> {
+    let table = layout.table();
+    let payload = parse_payload(table, payload_json)?;
+
+    let locator = if layout.natural_pk.is_some() {
+        if natural_entity_sync_id(layout, &payload)? != entity_sync_id {
+            return Err(codec_err(table, "entity_sync_id does not match the natural key of the payload"));
+        }
+        natural_locator(conn, layout, &payload).await?
+    } else {
+        Some(RowLocator::Identity(entity_sync_id.to_string()))
+    };
+
+    if is_delete(operation) {
+        let Some(locator) = locator else {
+            return Ok(ApplyOutcome::Unchanged);
+        };
+        let (where_sql, values) = locator.where_sql("");
+        let sql = format!("DELETE FROM \"{table}\" WHERE {where_sql}");
+        let result = conn
+            .execute(Statement::from_sql_and_values(DatabaseBackend::Sqlite, &sql, values))
+            .await?;
+        if result.rows_affected() == 0 {
+            return Ok(ApplyOutcome::Unchanged);
+        }
+        crate::sync::apply_hooks::after_delete(conn, layout, entity_sync_id).await?;
+        return Ok(ApplyOutcome::Applied);
+    }
+
+    let mut assignments: Vec<(String, SqlValue)> = Vec::new();
+    let mut unresolved_soft: Vec<(String, &'static str, String)> = Vec::new();
+    let mut resolved_soft: Vec<String> = Vec::new();
+    for column in &layout.columns {
+        match &column.role {
+            Role::LocalKey | Role::Identity | Role::LocalVersion | Role::DeviceLocal | Role::Derived { .. } => {}
+            Role::Value { key } => {
+                if let Some(v) = payload.get(key) {
+                    assignments.push((column.name.clone(), inbound_value(table, column, v)?));
+                }
+            }
+            Role::Ref { key, target, soft, .. } => {
+                let Some(v) = payload.get(key) else {
+                    continue;
+                };
+                match inbound_ref(conn, layout, column, target, v, &payload).await? {
+                    Resolved::Local(local) => {
+                        if *soft {
+                            resolved_soft.push(column.name.clone());
+                        }
+                        assignments.push((column.name.clone(), local));
+                    }
+                    Resolved::Missing {
+                        target_entity,
+                        sync_id,
+                    } if *soft => {
+                        unresolved_soft.push((column.name.clone(), target_entity, sync_id));
+                        assignments.push((column.name.clone(), null_for(column)));
+                    }
+                    Resolved::Missing {
+                        target_entity,
+                        sync_id,
+                    } => {
+                        return Ok(ApplyOutcome::Deferred {
+                            code: DEFER_MISSING_PARENT.into(),
+                            message: format!("{} needs {target_entity} {sync_id}, not received yet", column.name),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let existing = match &locator {
+        Some(l) if row_exists(conn, layout, l).await? => Some(l.clone()),
+        _ => None,
+    };
+    let (local_row, inserted) = if let Some(locator) = existing {
+        if layout.def.conflict_policy == ConflictPolicy::AppendOnly {
+            // History rows are never rewritten; a replayed row is a no-op.
+            return Ok(ApplyOutcome::Unchanged);
+        }
+        let mut sets: Vec<String> = assignments.iter().map(|(c, _)| format!("\"{c}\" = ?")).collect();
+        if layout.has_row_version {
+            // Open editors holding the previous version get a stale-version error instead of
+            // overwriting the change that just arrived.
+            sets.push("row_version = row_version + 1".to_string());
+        }
+        if !sets.is_empty() {
+            let (where_sql, where_values) = locator.where_sql("");
+            let sql = format!("UPDATE \"{table}\" SET {} WHERE {where_sql}", sets.join(", "));
+            let mut values: Vec<SqlValue> = assignments.into_iter().map(|(_, v)| v).collect();
+            values.extend(where_values);
+            conn.execute(Statement::from_sql_and_values(DatabaseBackend::Sqlite, &sql, values))
+                .await?;
+        }
+        (locator, false)
+    } else {
+        let mut cols: Vec<String> = assignments.iter().map(|(c, _)| format!("\"{c}\"")).collect();
+        let mut placeholders: Vec<String> = vec!["?".to_string(); cols.len()];
+        let mut values: Vec<SqlValue> = assignments.iter().map(|(_, v)| v.clone()).collect();
+        for column in &layout.columns {
+            if let Role::Derived { initial } = column.role {
+                cols.push(format!("\"{}\"", column.name));
+                placeholders.push(initial.to_string());
+            }
+        }
+        if layout.natural_pk.is_none() {
+            cols.push("entity_sync_id".into());
+            placeholders.push("?".into());
+            values.push(entity_sync_id.to_string().into());
+        }
+        if layout.has_row_version {
+            // The local optimistic-concurrency counter starts at 1, as for a row created here.
+            cols.push("row_version".into());
+            placeholders.push("?".into());
+            values.push(1_i64.into());
+        }
+        let sql = format!(
+            "INSERT INTO \"{table}\" ({}) VALUES ({})",
+            cols.join(", "),
+            placeholders.join(", ")
+        );
+        conn.execute(Statement::from_sql_and_values(DatabaseBackend::Sqlite, &sql, values))
+            .await?;
+        let located = match locator {
+            Some(l) => l,
+            None => natural_locator(conn, layout, &payload)
+                .await?
+                .ok_or_else(|| codec_err(table, "inserted row cannot be located"))?,
+        };
+        (located, true)
+    };
+
+    for column in resolved_soft {
+        conn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "DELETE FROM sync_pending_refs WHERE entity_type = ? AND entity_sync_id = ? AND column_name = ?",
+            [layout.def.entity_type.into(), entity_sync_id.into(), column.into()],
+        ))
+        .await?;
+    }
+    for (column, target_entity, target_sync_id) in unresolved_soft {
+        conn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "INSERT INTO sync_pending_refs (entity_type, entity_sync_id, column_name, target_entity_type, target_sync_id)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(entity_type, entity_sync_id, column_name) DO UPDATE SET
+                target_entity_type = excluded.target_entity_type,
+                target_sync_id = excluded.target_sync_id",
+            [
+                layout.def.entity_type.into(),
+                entity_sync_id.into(),
+                column.into(),
+                target_entity.into(),
+                target_sync_id.into(),
+            ],
+        ))
+        .await?;
+    }
+    complete_pending_refs_to(conn, layout.def.entity_type, entity_sync_id).await?;
+    crate::sync::apply_hooks::after_upsert(conn, layout, &local_row, inserted).await?;
+    Ok(ApplyOutcome::Applied)
+}
+
+/// Local primary key (`id`) of a located row, for hooks.
+pub(crate) async fn located_row_id(
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    locator: &RowLocator,
+) -> AppResult<Option<i64>> {
+    if layout.natural_pk.is_some() {
+        return Ok(None);
+    }
+    let (where_sql, values) = locator.where_sql("");
+    scalar_id(
+        conn,
+        &format!("SELECT id AS v FROM \"{}\" WHERE {where_sql}", layout.table()),
+        values,
+    )
+    .await
+}
+
+/// Fill the soft references that were waiting for the row just applied.
+async fn complete_pending_refs_to(
+    conn: &impl ConnectionTrait,
+    target_entity_type: &str,
+    target_sync_id: &str,
+) -> AppResult<()> {
+    let waiting = conn
+        .query_all(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT id, entity_type, entity_sync_id, column_name FROM sync_pending_refs
+             WHERE target_entity_type = ? AND target_sync_id = ?",
+            [target_entity_type.into(), target_sync_id.into()],
+        ))
+        .await?;
+    if waiting.is_empty() {
+        return Ok(());
+    }
+    let target = crate::sync::registry::require_entity(target_entity_type)?;
+    let target_id = scalar_id(
+        conn,
+        &format!("SELECT id AS v FROM \"{}\" WHERE entity_sync_id = ?", target.table),
+        vec![target_sync_id.into()],
+    )
+    .await?
+    .ok_or_else(|| AppError::SyncError(format!("{target_entity_type} {target_sync_id} vanished")))?;
+    let read = |e: sea_orm::DbErr| AppError::SyncError(format!("sync_pending_refs: {e}"));
+    for row in waiting {
+        let id: i64 = row.try_get("", "id").map_err(read)?;
+        let entity_type: String = row.try_get("", "entity_type").map_err(read)?;
+        let entity_sync_id: String = row.try_get("", "entity_sync_id").map_err(read)?;
+        let column_name: String = row.try_get("", "column_name").map_err(read)?;
+        let layout = crate::sync::row_layout::layout(conn, &entity_type).await?;
+        let column = layout
+            .column(&column_name)
+            .ok_or_else(|| AppError::SyncError(format!("{entity_type}.{column_name} no longer exists")))?;
+        let value: SqlValue = if column.is_text {
+            target_id.to_string().into()
+        } else {
+            target_id.into()
+        };
+        conn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            format!(
+                "UPDATE \"{}\" SET \"{column_name}\" = ? WHERE entity_sync_id = ?",
+                layout.table()
+            ),
+            [value, entity_sync_id.into()],
+        ))
+        .await?;
+        conn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "DELETE FROM sync_pending_refs WHERE id = ?",
+            [id.into()],
+        ))
+        .await?;
+    }
+    Ok(())
+}

@@ -149,6 +149,7 @@ mod m20261001_000035_archive_core;
 mod m20261010_000151_finance_approval_rights;
 mod m20261010_000160_sync_foundations_v2;
 mod m20261011_000161_sync_transport_v2;
+mod m20261011_000162_sync_capture_identity;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -310,6 +311,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261010_000151_finance_approval_rights::Migration),
             Box::new(m20261010_000160_sync_foundations_v2::Migration),
             Box::new(m20261011_000161_sync_transport_v2::Migration),
+            Box::new(m20261011_000162_sync_capture_identity::Migration),
             Box::new(m_test::Migration),
         ]
     }

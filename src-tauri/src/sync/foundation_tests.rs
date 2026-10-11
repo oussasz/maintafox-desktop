@@ -1,4 +1,6 @@
-//! Phase 2.2 behaviour: stable identity, versioning, deferred inbound, conflicts that act on data.
+//! Phase 2.2 behaviour (stable identity, versioning, deferred inbound, conflicts that act on data),
+//! exercised through the Phase 2.4 capture: business writes are captured by the table triggers and
+//! drained into the outbox.
 
 use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
 use sea_orm_migration::MigratorTrait;
@@ -7,15 +9,24 @@ use super::domain::{
     ApplySyncBatchInput, ResolveSyncConflictInput, SyncAckInput, SyncConflictFilter, SyncInboundItemInput,
     SYNC_PROTOCOL_VERSION_V1,
 };
-use super::foundation_stage::stage_team_sync;
+use super::capture::drain_capture_journal;
 use super::materialize::materialize_inbox_batch;
 use super::queries;
 
 async fn setup_db() -> DatabaseConnection {
     let db = Database::connect("sqlite::memory:").await.expect("in-memory sqlite");
     crate::migrations::Migrator::up(&db, None).await.expect("migrations");
+    super::capture::install_capture(&db).await.expect("install capture");
     db
 }
+
+/// Turn captured changes into outbox envelopes, as a push or an inbound apply does.
+async fn stage(db: &impl ConnectionTrait) {
+    let report = drain_capture_journal(db).await.expect("drain capture journal");
+    assert_eq!(report.failed, 0, "staging failed: {report:?}");
+}
+
+const FORMAT: &str = "row.v1";
 
 async fn exec(db: &impl ConnectionTrait, sql: &str, values: Vec<sea_orm::Value>) {
     db.execute(Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, values))
@@ -46,7 +57,7 @@ async fn insert_team(db: &impl ConnectionTrait, sync_id: Option<&str>, code: &st
         db,
         "INSERT INTO teams (entity_sync_id, code, name, team_type, status, row_version, created_at, updated_at)
          VALUES (?, ?, ?, 'maintenance', 'active', 1, '2026-10-10T00:00:00Z', '2026-10-10T00:00:00Z')",
-        // teams.entity_sync_id is NOT NULL: a blank id stands for "row without identity".
+        // A blank id stands for "row created without identity".
         vec![sync_id.unwrap_or("").into(), code.into(), name.into()],
     )
     .await;
@@ -82,16 +93,16 @@ async fn staging_keeps_the_row_identity_and_chains_versions() {
     let db = setup_db().await;
     let team_id = insert_team(&db, Some("team-sync-1"), "T-1", "Mechanics").await;
 
-    stage_team_sync(&db, team_id).await.expect("first stage");
-    // Same content again: no new envelope.
-    stage_team_sync(&db, team_id).await.expect("repeat stage");
+    stage(&db).await;
+    // Nothing changed: no new envelope.
+    stage(&db).await;
     exec(
         &db,
         "UPDATE teams SET name = 'Mechanics B' WHERE id = ?",
         vec![team_id.into()],
     )
     .await;
-    stage_team_sync(&db, team_id).await.expect("second stage");
+    stage(&db).await;
 
     let items = queries::list_outbox_items(&db, Default::default())
         .await
@@ -110,34 +121,33 @@ async fn staging_keeps_the_row_identity_and_chains_versions() {
 }
 
 #[tokio::test]
-async fn staging_never_invents_an_identity() {
+async fn a_row_created_without_identity_gets_one_at_insert() {
     let db = setup_db().await;
     let team_id = insert_team(&db, None, "T-NOID", "No identity").await;
-    let err = stage_team_sync(&db, team_id)
-        .await
-        .expect_err("a row without entity_sync_id cannot be staged");
-    assert!(err.to_string().contains("entity_sync_id"), "{err}");
-    let count = scalar_i64(&db, "SELECT COUNT(*) FROM sync_outbox", vec![]).await;
-    assert_eq!(count, 0);
+    let assigned = scalar_string(&db, "SELECT entity_sync_id FROM teams WHERE id = ?", vec![team_id.into()]).await;
+    assert!(uuid::Uuid::parse_str(&assigned).is_ok(), "{assigned}");
+    stage(&db).await;
+    let staged = scalar_string(&db, "SELECT entity_sync_id FROM sync_outbox", vec![]).await;
+    assert_eq!(staged, assigned, "staging uses the identity given at insert, never a new one");
 }
 
 #[tokio::test]
-async fn failed_stage_rolls_back_the_business_write_in_the_same_transaction() {
+async fn capture_belongs_to_the_business_transaction() {
     let db = setup_db().await;
     let tx = db.begin().await.expect("begin");
-    let team_id = insert_team(&tx, None, "T-TX", "Transactional").await;
-    let staged = stage_team_sync(&tx, team_id).await;
-    assert!(staged.is_err(), "staging must fail for a row without identity");
+    insert_team(&tx, Some("team-tx"), "T-TX", "Transactional").await;
+    let captured = scalar_i64(&tx, "SELECT COUNT(*) FROM sync_capture_journal", vec![]).await;
+    assert_eq!(captured, 1, "the write is captured in its own transaction");
     tx.rollback().await.expect("rollback");
-    let count = scalar_i64(&db, "SELECT COUNT(*) FROM teams WHERE code = 'T-TX'", vec![]).await;
-    assert_eq!(count, 0, "the business row must not survive a failed stage");
+    let teams = scalar_i64(&db, "SELECT COUNT(*) FROM teams WHERE code = 'T-TX'", vec![]).await;
+    let journal = scalar_i64(&db, "SELECT COUNT(*) FROM sync_capture_journal", vec![]).await;
+    assert_eq!((teams, journal), (0, 0), "a rolled-back write leaves nothing to send");
 }
 
 #[tokio::test]
 async fn push_marks_in_flight_and_ack_records_server_version() {
     let db = setup_db().await;
     let team_id = insert_team(&db, Some("team-sync-ack"), "T-ACK", "Ack").await;
-    stage_team_sync(&db, team_id).await.expect("stage");
 
     let push = queries::get_sync_push_payload(&db, Some(50))
         .await
@@ -173,7 +183,7 @@ async fn push_marks_in_flight_and_ack_records_server_version() {
         vec![team_id.into()],
     )
     .await;
-    stage_team_sync(&db, team_id).await.expect("stage after ack");
+    stage(&db).await;
     let pending = queries::list_outbox_items(
         &db,
         super::domain::ListOutboxFilter {
@@ -191,8 +201,7 @@ async fn push_marks_in_flight_and_ack_records_server_version() {
 #[tokio::test]
 async fn repeated_delivery_failures_dead_letter_with_a_conflict() {
     let db = setup_db().await;
-    let team_id = insert_team(&db, Some("team-sync-dl"), "T-DL", "Dead letter").await;
-    stage_team_sync(&db, team_id).await.expect("stage");
+    insert_team(&db, Some("team-sync-dl"), "T-DL", "Dead letter").await;
     let mut dead = 0;
     for _ in 0..queries::OUTBOX_MAX_DELIVERY_ATTEMPTS {
         let push = queries::get_sync_push_payload(&db, Some(10)).await.expect("push");
@@ -250,8 +259,9 @@ async fn child_received_before_its_parent_is_applied_when_the_parent_arrives() {
                 "loc-x",
                 1,
                 serde_json::json!({
-                    "entity_sync_id": "loc-x", "row_version": 1, "code": "LOC-X", "name": "Bin X",
-                    "warehouse_entity_sync_id": "wh-x", "is_active": true
+                    "_sync_format": FORMAT, "warehouse_sync_id": "wh-x", "code": "LOC-X", "name": "Bin X",
+                    "is_default": 0, "is_active": 1,
+                    "created_at": "2026-10-10T00:00:00Z", "updated_at": "2026-10-10T00:00:00Z"
                 }),
             )],
         ),
@@ -272,8 +282,8 @@ async fn child_received_before_its_parent_is_applied_when_the_parent_arrives() {
                 "wh-x",
                 1,
                 serde_json::json!({
-                    "entity_sync_id": "wh-x", "row_version": 1, "code": "WH-X", "name": "Warehouse X",
-                    "is_active": true
+                    "_sync_format": FORMAT, "code": "WH-X", "name": "Warehouse X", "is_active": 1,
+                    "created_at": "2026-10-10T00:00:00Z", "updated_at": "2026-10-10T00:00:00Z"
                 }),
             )],
         ),
@@ -307,7 +317,8 @@ async fn materialize_failures_are_listed_as_conflicts() {
                 "user_accounts",
                 "user-x",
                 1,
-                serde_json::json!({ "display_name": "No username" }),
+                // Required username missing: the insert fails and becomes a conflict, never a guess.
+                serde_json::json!({ "_sync_format": FORMAT, "display_name": "No username" }),
             )],
         ),
     )
@@ -333,8 +344,7 @@ async fn materialize_failures_are_listed_as_conflicts() {
 
 /// Local team edited (unsent) while the server sends another device's edit of the same team.
 async fn concurrent_team_edit(db: &DatabaseConnection) -> super::domain::SyncConflictRecord {
-    let team_id = insert_team(db, Some("team-conc"), "T-CONC", "Local name").await;
-    stage_team_sync(db, team_id).await.expect("stage local change");
+    insert_team(db, Some("team-conc"), "T-CONC", "Local name").await;
     queries::apply_sync_batch(
         db,
         batch(
@@ -345,8 +355,8 @@ async fn concurrent_team_edit(db: &DatabaseConnection) -> super::domain::SyncCon
                 "team-conc",
                 2,
                 serde_json::json!({
-                    "entity_sync_id": "team-conc", "row_version": 2, "code": "T-CONC",
-                    "name": "Remote name", "is_active": true
+                    "_sync_format": FORMAT, "code": "T-CONC", "name": "Remote name",
+                    "team_type": "maintenance", "status": "active"
                 }),
             )],
         ),
@@ -449,8 +459,7 @@ async fn keep_mine_restages_the_local_row_on_the_server_version() {
 #[tokio::test]
 async fn equal_version_with_different_content_is_a_conflict() {
     let db = setup_db().await;
-    let team_id = insert_team(&db, Some("team-eq"), "T-EQ", "Same").await;
-    stage_team_sync(&db, team_id).await.expect("stage");
+    insert_team(&db, Some("team-eq"), "T-EQ", "Same").await;
     let push = queries::get_sync_push_payload(&db, Some(10)).await.expect("push");
     let item = push.outbox_batch[0].clone();
     let mut ack = batch("srv-eq-ack", "ckpt-eq-1", vec![]);
@@ -472,7 +481,7 @@ async fn equal_version_with_different_content_is_a_conflict() {
                 "teams",
                 "team-eq",
                 1,
-                serde_json::json!({ "entity_sync_id": "team-eq", "row_version": 1, "code": "T-EQ", "name": "Other" }),
+                serde_json::json!({ "_sync_format": FORMAT, "code": "T-EQ", "name": "Other" }),
             )],
         ),
     )

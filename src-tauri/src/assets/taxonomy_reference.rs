@@ -5,7 +5,6 @@ use crate::errors::{AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde::Serialize;
-use uuid::Uuid;
 
 pub const DOMAIN_CLASS: &str = "EQUIPMENT.CLASS";
 pub const DOMAIN_CRITICALITY: &str = "EQUIPMENT.CRITICALITY";
@@ -434,7 +433,9 @@ pub async fn sync_equipment_classes_from_published_reference(db: &DatabaseConnec
             ))
             .await?;
         } else {
-            let entity_sync_id = Uuid::new_v4().to_string();
+            // Derived from the published catalog on every device: identity from the class code
+            // (`sync::seeded_identity`), so all devices agree.
+            let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("equipment_classes", &code);
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO equipment_classes \

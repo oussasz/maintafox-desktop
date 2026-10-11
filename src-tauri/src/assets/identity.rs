@@ -864,7 +864,6 @@ pub async fn create_asset(db: &DatabaseConnection, payload: CreateAssetPayload, 
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("asset {asset_id} not found after insert")))?;
     let asset = map_asset(&asset_row)?;
 
-    crate::wo::sync_stage::stage_equipment_sync(&txn, asset_id).await?;
     txn.commit().await?;
 
     tracing::info!(asset_id, "asset created");
@@ -1120,7 +1119,6 @@ pub async fn update_asset_identity(
         })?;
     let asset = map_asset(&asset_row)?;
 
-    crate::wo::sync_stage::stage_equipment_sync(&txn, asset_id).await?;
     txn.commit().await?;
 
     tracing::info!(asset_id, "asset identity updated");

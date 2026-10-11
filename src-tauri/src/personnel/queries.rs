@@ -714,7 +714,6 @@ pub async fn create_personnel(
     )
     .await?;
 
-    crate::sync::foundation_stage::stage_personnel_sync(&txn, new_id).await?;
     txn.commit().await?;
 
     emit_personnel_event(db, "personnel.created", new_id, Some(actor_id)).await?;
@@ -982,7 +981,6 @@ pub async fn update_personnel(
         ]));
     }
 
-    crate::sync::foundation_stage::stage_personnel_sync(&txn, input.id).await?;
     txn.commit().await?;
 
     emit_personnel_event(db, "personnel.updated", input.id, Some(actor_id)).await?;
@@ -1033,7 +1031,6 @@ pub async fn deactivate_personnel(
         ]));
     }
 
-    crate::sync::foundation_stage::stage_personnel_sync(&txn, id).await?;
     txn.commit().await?;
 
     emit_personnel_event(db, "personnel.deactivated", id, Some(actor_id)).await?;

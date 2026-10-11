@@ -5,9 +5,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::errors::{AppError, AppResult};
-use crate::sync::domain::{MediaAttachmentSyncPayload, StageOutboxItemInput, SYNC_ENTITY_MEDIA_ATTACHMENTS};
-use crate::sync::ops_stage::stage_media_attachment_sync;
-use crate::sync::queries::stage_outbox_item;
+use crate::sync::domain::MediaAttachmentSyncPayload;
 use crate::vps::object_storage::{build_tenant_media_object_key, DeploymentEnvironment, ObjectCategory};
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 
@@ -34,7 +32,8 @@ pub async fn resolve_media_tenant_id(db: &DatabaseConnection) -> String {
     }
 }
 
-/// Persist local media metadata row (outbox staging does not write this table).
+/// Persist the local media metadata row. The sync capture of `media_attachments` sends it (and the
+/// worker uploads the bytes it names); nothing else needs to be staged.
 pub async fn upsert_media_attachment_row(
     db: &impl ConnectionTrait,
     payload: &MediaAttachmentSyncPayload,
@@ -70,9 +69,10 @@ pub async fn upsert_media_attachment_row(
     Ok(())
 }
 
-/// Build a media sync envelope and stage it on the outbox.
-pub async fn stage_media_bytes(
-    db: &impl ConnectionTrait,
+/// Build the media metadata for file bytes stored under the app data dir (content hash and
+/// tenant object key). The caller writes it with [`upsert_media_attachment_row`] in its
+/// transaction.
+pub fn build_media_attachment(
     env: DeploymentEnvironment,
     tenant_id: &str,
     parent_entity_type: &str,
@@ -112,12 +112,12 @@ pub async fn stage_media_bytes(
         capture_meta_json,
         updated_at: Some(now),
     };
-    stage_media_attachment_sync(db, payload.clone()).await?;
     Ok(payload)
 }
 
-/// Stage a media delete when a `media_attachments` row can be resolved; otherwise warn and skip.
-pub async fn stage_media_delete_if_found(
+/// Delete the `media_attachments` row of a removed file when it can be resolved (the sync capture
+/// sends the delete); otherwise warn and skip.
+pub async fn delete_media_attachment_if_found(
     db: &impl ConnectionTrait,
     parent_entity_type: Option<&str>,
     parent_entity_sync_id: Option<&str>,
@@ -155,15 +155,11 @@ pub async fn stage_media_delete_if_found(
     };
 
     let esid: String = crate::sync::identity::require_parent_sync_id(&row, "entity_sync_id")?;
-    stage_outbox_item(
-        db,
-        StageOutboxItemInput {
-            entity_type: SYNC_ENTITY_MEDIA_ATTACHMENTS.to_string(),
-            entity_sync_id: esid.clone(),
-            operation: "delete".to_string(),
-            payload_json: serde_json::json!({ "entity_sync_id": esid }).to_string(),
-        },
-    )
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "DELETE FROM media_attachments WHERE entity_sync_id = ?",
+        [esid.into()],
+    ))
     .await?;
     Ok(())
 }

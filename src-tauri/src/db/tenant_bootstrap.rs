@@ -1,5 +1,5 @@
 use chrono::Utc;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TryGetable};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait, TryGetable};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -34,7 +34,14 @@ pub async fn bootstrap_from_activation_claim(db: &DatabaseConnection, changed_by
     // ALWAYS ensure local org integrity for vendor-console / activation tenants.
     // `is_initialized` must not skip model-scoping the root — that caused publish
     // failures when forks omitted unscoped live nodes.
-    let root_id = ensure_root_organization(db, tenant_id, &root_name, &now).await?;
+    // Every device of the tenant creates the same root organisation itself (seeded identities,
+    // `sync::seeded_identity`); it is not a change to send, so capture is suppressed while it is
+    // written, in one transaction.
+    let tx = db.begin().await?;
+    crate::sync::capture::begin_suppression(&tx).await?;
+    let root_id = ensure_root_organization(&tx, tenant_id, &root_name, &now).await?;
+    crate::sync::capture::end_suppression(&tx).await?;
+    tx.commit().await?;
     crate::org::model_scope::heal_null_structure_model_ids_onto_active(db).await?;
     crate::org::model_scope::assert_no_null_structure_model_ids(db).await?;
 
@@ -88,7 +95,7 @@ async fn load_bootstrap_state(db: &DatabaseConnection) -> AppResult<Option<Tenan
 }
 
 async fn ensure_root_organization(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     tenant_id: &str,
     tenant_name: &str,
     now: &str,
@@ -128,7 +135,7 @@ async fn ensure_root_organization(
              created_at, updated_at, row_version, structure_model_id)
           VALUES (?, ?, ?, ?, NULL, '/', 0, 'active', ?, ?, 1, ?)",
         [
-            Uuid::new_v4().to_string().into(),
+            crate::sync::identity::seeded_entity_sync_id("org_nodes", &root_code).into(),
             root_code.into(),
             tenant_name.into(),
             root_type_id.into(),
@@ -149,7 +156,7 @@ async fn ensure_root_organization(
     Ok(root_id)
 }
 
-async fn ensure_active_org_model(db: &DatabaseConnection, now: &str) -> AppResult<i64> {
+async fn ensure_active_org_model(db: &impl ConnectionTrait, now: &str) -> AppResult<i64> {
     let existing = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,
@@ -167,7 +174,7 @@ async fn ensure_active_org_model(db: &DatabaseConnection, now: &str) -> AppResul
             (entity_sync_id, version_number, status, description, activated_at, created_at, updated_at)
           VALUES (?, 1, 'active', ?, ?, ?, ?)",
         [
-            Uuid::new_v4().to_string().into(),
+            crate::sync::identity::seeded_entity_sync_id("org_structure_models", "bootstrap-model").into(),
             "Tenant activation bootstrap".into(),
             now.into(),
             now.into(),
@@ -178,7 +185,7 @@ async fn ensure_active_org_model(db: &DatabaseConnection, now: &str) -> AppResul
     last_insert_id(db).await
 }
 
-async fn ensure_root_node_type(db: &DatabaseConnection, model_id: i64, now: &str) -> AppResult<i64> {
+async fn ensure_root_node_type(db: &impl ConnectionTrait, model_id: i64, now: &str) -> AppResult<i64> {
     let existing = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -198,7 +205,7 @@ async fn ensure_root_node_type(db: &DatabaseConnection, model_id: i64, now: &str
              is_root_type, is_active, created_at, updated_at)
           VALUES (?, ?, 'ROOT', 'Root Organization', 1, 1, 1, 1, 1, 1, 1, ?, ?)",
         [
-            Uuid::new_v4().to_string().into(),
+            crate::sync::identity::seeded_entity_sync_id("org_node_types", "bootstrap-root-type").into(),
             model_id.into(),
             now.into(),
             now.into(),
@@ -664,7 +671,7 @@ async fn resolve_urgency_id(db: &DatabaseConnection, level: i64) -> AppResult<Op
     Ok(row.and_then(|r| i64::try_get(&r, "", "id").ok()))
 }
 
-async fn last_insert_id(db: &DatabaseConnection) -> AppResult<i64> {
+async fn last_insert_id(db: &impl ConnectionTrait) -> AppResult<i64> {
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Sqlite,

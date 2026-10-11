@@ -213,8 +213,7 @@ pub async fn save_di_attachment(
     ))
     .await?;
 
-    let payload = crate::sync::media::stage_media_bytes(
-        &txn,
+    let payload = crate::sync::media::build_media_attachment(
         crate::sync::media::resolve_media_deployment_env(),
         &tenant_id,
         "intervention_requests",
@@ -224,8 +223,7 @@ pub async fn save_di_attachment(
         &input.file_bytes,
         Some(relative_path.clone()),
         None,
-    )
-    .await?;
+    )?;
     crate::sync::media::upsert_media_attachment_row(&txn, &payload).await?;
 
     // ── Re-fetch the inserted row ─────────────────────────────────────────
@@ -430,7 +428,7 @@ pub async fn delete_di_attachment_record(db: &DatabaseConnection, attachment_id:
             .try_get("", "relative_path")
             .map_err(|e| decode_err("relative_path", e))?;
         let parent_esid = crate::sync::identity::require_parent_sync_id(&row, "parent_entity_sync_id")?;
-        crate::sync::media::stage_media_delete_if_found(
+        crate::sync::media::delete_media_attachment_if_found(
             &txn,
             Some("intervention_requests"),
             Some(parent_esid.as_str()),

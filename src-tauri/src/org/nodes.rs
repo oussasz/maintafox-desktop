@@ -502,7 +502,6 @@ pub async fn create_org_node(
     .await?;
 
     let node = fetch_node(&txn, node_id).await?;
-    crate::sync::foundation_stage::stage_org_node_sync(&txn, node_id).await?;
     txn.commit().await?;
 
     tracing::info!(node_id, "org node created");
@@ -609,7 +608,6 @@ pub async fn update_org_node_metadata(
     }
 
     let updated = fetch_node(&txn, payload.node_id).await?;
-    crate::sync::foundation_stage::stage_org_node_sync(&txn, payload.node_id).await?;
     txn.commit().await?;
     Ok(updated)
 }
@@ -765,11 +763,6 @@ pub async fn move_org_node(
     }
 
     let moved_node = fetch_node(&txn, payload.node_id).await?;
-    crate::sync::foundation_stage::stage_org_node_sync(&txn, payload.node_id).await?;
-    for desc_row in &descendants {
-        let desc_id: i64 = desc_row.try_get("", "id").map_err(|e| decode_err("id", e))?;
-        crate::sync::foundation_stage::stage_org_node_sync(&txn, desc_id).await?;
-    }
     txn.commit().await?;
 
     tracing::info!(node_id = payload.node_id, "org node moved");
@@ -876,7 +869,6 @@ pub async fn deactivate_org_node(
     }
 
     let deactivated = fetch_node(&txn, node_id).await?;
-    crate::sync::foundation_stage::stage_org_node_sync(&txn, node_id).await?;
     txn.commit().await?;
 
     tracing::info!(node_id, "org node deactivated");

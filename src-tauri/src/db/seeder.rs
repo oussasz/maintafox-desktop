@@ -1,7 +1,6 @@
 use crate::errors::{AppError, AppResult};
 use chrono::Utc;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
-use uuid::Uuid;
 
 /// Current version of the system seed data set.
 /// Increment this when adding new system domains or values in a release.
@@ -2427,7 +2426,8 @@ async fn seed_domain(
     is_extensible: bool,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    // Seeded on every device: identity from the natural key (`sync::seeded_identity`).
+    let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("lookup_domains", domain_key);
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT OR IGNORE INTO lookup_domains
@@ -2481,7 +2481,21 @@ async fn seed_value(
     is_system: bool,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    // Seeded on every device: identity from `domain_key:code` (`sync::seeded_identity`).
+    let domain_key: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT domain_key FROM lookup_domains WHERE id = ?",
+            [domain_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| AppError::NotFound {
+            entity: "lookup_domain".into(),
+            id: domain_id.to_string(),
+        })?
+        .try_get("", "domain_key")?;
+    let entity_sync_id =
+        crate::sync::identity::seeded_entity_sync_id("lookup_values", &format!("{domain_key}:{code}"));
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         r"INSERT OR IGNORE INTO lookup_values
@@ -2823,7 +2837,8 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
     let password_hash = hash_password("Admin#2026!")?;
 
     let now = Utc::now().to_rfc3339();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    // Every device seeds this account: identity from the username (`sync::seeded_identity`).
+    let entity_sync_id = crate::sync::identity::seeded_entity_sync_id("user_accounts", "admin");
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -2856,7 +2871,9 @@ async fn seed_admin_account(db: &DatabaseConnection) -> AppResult<()> {
 /// Idempotent — uses INSERT OR IGNORE.
 async fn ensure_admin_role_assignment(db: &DatabaseConnection) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let entity_sync_id = Uuid::new_v4().to_string();
+    // Every device seeds this assignment (`sync::seeded_identity`).
+    let entity_sync_id =
+        crate::sync::identity::seeded_entity_sync_id("user_scope_assignments", "admin:Administrator:tenant");
 
     // Resolve user_id for 'admin' and role_id for 'Administrator'
     let result = db

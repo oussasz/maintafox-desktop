@@ -2,6 +2,7 @@
 
 pub mod controls;
 pub mod domain;
+pub mod ledger;
 pub mod procurement;
 pub mod queries;
 pub mod suppliers;

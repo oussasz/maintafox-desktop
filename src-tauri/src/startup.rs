@@ -142,6 +142,15 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
     // Phase 2: schema migrations
     info!("startup: running migrations");
     let app_state = app.state::<crate::state::AppState>();
+    // Sync capture is off while migrations and the startup seeders run: rows every device seeds
+    // itself are never sent. It is installed again before the sync worker starts (Phase 4b).
+    if let Err(e) = crate::sync::capture::suspend_capture(&app_state.db).await {
+        let reason = format!("Sync capture could not be suspended before migrations: {e}");
+        error!("{reason}");
+        emit_event(&app, StartupEvent::Failed { reason });
+        window.show().ok();
+        return Err(e);
+    }
     match crate::db::run_migrations(&app_state.db).await {
         Ok(()) => {
             info!(
@@ -238,6 +247,23 @@ pub async fn run_startup_sequence(app: AppHandle) -> AppResult<()> {
         "startup::entitlement_cache_loaded"
     );
     emit_event(&app, StartupEvent::EntitlementCacheLoaded);
+
+    // Phase 4a: change capture for every synchronised table. Without it local changes would not
+    // reach the outbox, so a failure stops the startup.
+    match crate::sync::capture::install_capture(&app_state.db).await {
+        Ok(report) => info!(
+            entity_types = report.entity_types,
+            baseline_rows = report.baseline_rows,
+            "startup: sync capture installed"
+        ),
+        Err(e) => {
+            let reason = format!("Sync capture could not be installed: {e}");
+            error!("{reason}");
+            emit_event(&app, StartupEvent::Failed { reason });
+            window.show().ok();
+            return Err(e);
+        }
+    }
 
     // Phase 4b: sync worker (protocol v2), background task `sync`. Closing the main window only
     // hides it in the tray (window.rs), so the process and the worker keep running.

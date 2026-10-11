@@ -1,0 +1,496 @@
+//! Row sync rules per entity type (Phase 2.4).
+//!
+//! The generic capture/apply engine (`sync::capture`, `sync::row_codec`) sends every column of a
+//! replicated row. It reads the table shape from SQLite (columns, primary key, declared foreign
+//! keys) and this file adds what the schema cannot say:
+//!
+//! - references that are not declared as foreign keys (`refs`), including references whose target
+//!   depends on another column (`RefTarget::Poly`) and references to app catalogs that are not
+//!   replicated (`RefTarget::Catalog`, sent by natural key);
+//! - integer `*_id` columns that hold values, not references (`value_columns`);
+//! - columns that describe this device only and never travel (`device_local`);
+//! - a row filter for tables that mix replicated and device rows (`row_filter`).
+//!
+//! An entity type is synchronised by the generic engine exactly when it has a `RowSpec` here; the
+//! registry flags `has_stager` / `has_materializer` must agree (CI test).
+//!
+//! Local integer ids never travel: a reference is sent as the target's `entity_sync_id` (or its
+//! catalog key) and resolved back to a local id on the receiving device. A reference whose target
+//! has not arrived yet defers the row; `soft` references (back edges of a dependency cycle, such
+//! as a plan's current version) are written as NULL and completed when the target arrives.
+
+/// Where a reference column points.
+#[derive(Debug, Clone, Copy)]
+pub enum RefTarget {
+    /// A row of a replicated entity type, sent by its `entity_sync_id`.
+    Entity(&'static str),
+    /// A row of a local app catalog (not replicated), sent by the value of `key_column`.
+    Catalog { table: &'static str, key_column: &'static str },
+    /// The entity type is named by `type_column`: `(type value, entity type)`. A row whose type
+    /// is not listed must leave the reference NULL, otherwise staging fails visibly.
+    Poly {
+        type_column: &'static str,
+        targets: &'static [(&'static str, &'static str)],
+    },
+    /// A local id that has no replicated meaning yet: it must stay NULL to be synchronised (a
+    /// non-NULL value fails staging visibly instead of sending a local id).
+    Unmapped,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RefSpec {
+    pub column: &'static str,
+    pub target: RefTarget,
+    /// Back edge of a dependency cycle: written as NULL until the target arrives.
+    pub soft: bool,
+    /// Link of a history row (event, log): when the target no longer exists on this device the
+    /// event outlives it, and the link is sent as NULL instead of failing.
+    pub history: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RowSpec {
+    pub entity_type: &'static str,
+    /// References not declared as SQLite foreign keys, and overrides of declared ones.
+    pub refs: &'static [RefSpec],
+    /// Integer `*_id` columns that are values (external ids, counters), not references.
+    pub value_columns: &'static [&'static str],
+    /// Columns describing this device only (local file paths, login counters, cached paths).
+    /// Never sent; never overwritten by inbound rows.
+    pub device_local: &'static [&'static str],
+    /// SQL condition on the row (written with the `{row}` alias) limiting which rows replicate.
+    pub row_filter: Option<&'static str>,
+    /// Columns derived on each device from replicated data (for example a path of local ids):
+    /// never sent; written with the given SQL literal when a row is received, then recomputed by
+    /// `sync::apply_hooks` in the same transaction.
+    pub derived: &'static [(&'static str, &'static str)],
+    /// Natural-key table whose rows every device seeds itself: rows that exist when sync of the
+    /// type starts are not queued (id-keyed tables tell seeded rows apart by their identity).
+    pub skip_baseline: bool,
+}
+
+const fn r(column: &'static str, entity: &'static str) -> RefSpec {
+    RefSpec {
+        column,
+        target: RefTarget::Entity(entity),
+        soft: false,
+        history: false,
+    }
+}
+
+const fn soft(column: &'static str, entity: &'static str) -> RefSpec {
+    RefSpec {
+        column,
+        target: RefTarget::Entity(entity),
+        soft: true,
+        history: false,
+    }
+}
+
+/// Reference from a history row (see `RefSpec::history`).
+const fn hist(column: &'static str, entity: &'static str) -> RefSpec {
+    RefSpec {
+        column,
+        target: RefTarget::Entity(entity),
+        soft: false,
+        history: true,
+    }
+}
+
+const fn poly(
+    column: &'static str,
+    type_column: &'static str,
+    targets: &'static [(&'static str, &'static str)],
+) -> RefSpec {
+    RefSpec {
+        column,
+        target: RefTarget::Poly { type_column, targets },
+        soft: false,
+        history: false,
+    }
+}
+
+const fn poly_hist(
+    column: &'static str,
+    type_column: &'static str,
+    targets: &'static [(&'static str, &'static str)],
+) -> RefSpec {
+    RefSpec {
+        column,
+        target: RefTarget::Poly { type_column, targets },
+        soft: false,
+        history: true,
+    }
+}
+
+/// Polymorphic back edge (see `RefSpec::soft`).
+const fn poly_soft(
+    column: &'static str,
+    type_column: &'static str,
+    targets: &'static [(&'static str, &'static str)],
+) -> RefSpec {
+    RefSpec {
+        column,
+        target: RefTarget::Poly { type_column, targets },
+        soft: true,
+        history: false,
+    }
+}
+
+const fn catalog(column: &'static str, table: &'static str, key_column: &'static str) -> RefSpec {
+    RefSpec {
+        column,
+        target: RefTarget::Catalog { table, key_column },
+        soft: false,
+        history: false,
+    }
+}
+
+const fn unmapped(column: &'static str) -> RefSpec {
+    RefSpec {
+        column,
+        target: RefTarget::Unmapped,
+        soft: false,
+        history: false,
+    }
+}
+
+const fn spec(entity_type: &'static str, refs: &'static [RefSpec]) -> RowSpec {
+    RowSpec {
+        entity_type,
+        refs,
+        value_columns: &[],
+        device_local: &[],
+        row_filter: None,
+        derived: &[],
+        skip_baseline: false,
+    }
+}
+
+const USER: &str = "user_accounts";
+
+/// RBAC scope references: the org node (or team) a role assignment is limited to, stored as the
+/// local id in text form.
+const SCOPE_TARGETS: &[(&str, &str)] = &[
+    ("entity", "org_nodes"),
+    ("org_node", "org_nodes"),
+    ("site", "org_nodes"),
+    ("team", "teams"),
+];
+
+/// Sources of stock movements and reservations (`source_type` → entity of `source_id`).
+const STOCK_SOURCE_TARGETS: &[(&str, &str)] = &[
+    ("WO", "work_orders"),
+    ("PM_WO", "work_orders"),
+    ("PO_GR", "goods_receipts"),
+    ("COUNT_SESSION", "inventory_count_sessions"),
+    ("REPAIRABLE_ORDER", "repairable_orders"),
+];
+
+/// Sources of stock reservations: work orders (corrective or preventive). Manual reservations
+/// carry no source id.
+const RESERVATION_SOURCE_TARGETS: &[(&str, &str)] = &[("WO", "work_orders"), ("PM_WO", "work_orders")];
+
+/// Procurement demand sources (`demand_source_type` → entity of `demand_source_id`). A repairable
+/// order can itself point to a purchase order line, so the link is completed once the source
+/// arrives (`poly_soft`).
+const DEMAND_SOURCE_TARGETS: &[(&str, &str)] = &[
+    ("WORK_ORDER", "work_orders"),
+    ("WORK_ORDER_PART", "work_orders"),
+    ("RESERVATION", "stock_reservations"),
+    ("REPAIRABLE", "repairable_orders"),
+];
+
+pub const ROW_SPECS: &[RowSpec] = &[
+    // ── Identity, access and organisation ───────────────────────────────────────────────────
+    spec("roles", &[]),
+    spec("role_templates", &[]),
+    RowSpec {
+        // Every device seeds the baseline grants itself.
+        skip_baseline: true,
+        ..spec(
+            "role_permissions",
+            &[
+                r("role_id", "roles"),
+                catalog("permission_id", "permissions", "name"),
+                r("granted_by_id", USER),
+            ],
+        )
+    },
+    RowSpec {
+        skip_baseline: true,
+        ..spec("rbac_settings", &[])
+    },
+    RowSpec {
+        // Sign-in state of this device; the password hash travels (SYNC_STRATEGY §7).
+        device_local: &[
+            "pin_hash",
+            "failed_login_attempts",
+            "locked_until",
+            "last_login_at",
+            "last_seen_at",
+            "consecutive_lockouts",
+        ],
+        // Users exist before the personnel records they are later linked to (and personnel
+        // reference org data that references users): the link is completed when it arrives.
+        ..spec("user_accounts", &[soft("personnel_id", "personnel")])
+    },
+    spec(
+        "user_scope_assignments",
+        &[
+            r("user_id", USER),
+            r("role_id", "roles"),
+            r("assigned_by_id", USER),
+            poly("scope_reference", "scope_type", SCOPE_TARGETS),
+        ],
+    ),
+    spec(
+        "delegated_admin_policies",
+        &[poly("managed_scope_reference", "managed_scope_type", SCOPE_TARGETS)],
+    ),
+    spec("org_structure_models", &[r("activated_by_id", USER)]),
+    spec("org_node_types", &[r("structure_model_id", "org_structure_models")]),
+    spec(
+        "org_type_relationship_rules",
+        &[
+            r("structure_model_id", "org_structure_models"),
+            r("parent_type_id", "org_node_types"),
+            r("child_type_id", "org_node_types"),
+        ],
+    ),
+    RowSpec {
+        device_local: &["last_synced_checkpoint"],
+        // Paths of local ids, recomputed by `apply_hooks` from the parent chain.
+        derived: &[("ancestor_path", "'/'"), ("depth", "0")],
+        ..spec(
+            "org_nodes",
+            &[r("node_type_id", "org_node_types"), r("parent_id", "org_nodes")],
+        )
+    },
+    spec(
+        "org_node_responsibilities",
+        &[
+            r("node_id", "org_nodes"),
+            r("person_id", "personnel"),
+            r("team_id", "teams"),
+        ],
+    ),
+    spec("org_entity_bindings", &[r("node_id", "org_nodes")]),
+    spec(
+        "org_change_events",
+        &[
+            poly_hist(
+                "entity_id",
+                "entity_kind",
+                &[
+                    ("structure_model", "org_structure_models"),
+                    ("org_node", "org_nodes"),
+                    ("org_node_responsibility", "org_node_responsibilities"),
+                    ("org_entity_binding", "org_entity_bindings"),
+                ],
+            ),
+            hist("changed_by_id", USER),
+        ],
+    ),
+    spec("teams", &[r("primary_node_id", "org_nodes")]),
+    spec("personnel", &[r("supervisor_id", "personnel")]),
+    spec(
+        "positions",
+        &[r("requirement_profile_id", "qualification_requirement_profiles")],
+    ),
+    spec("position_change_events", &[hist("changed_by_id", USER)]),
+    spec("external_companies", &[]),
+    spec("external_company_contacts", &[]),
+    // ── Assets ──────────────────────────────────────────────────────────────────────────────
+    RowSpec {
+        device_local: &["last_synced_checkpoint"],
+        ..spec(
+            "equipment",
+            &[
+                r("class_id", "equipment_classes"),
+                r("criticality_value_id", "lookup_values"),
+                r("installed_at_node_id", "org_nodes"),
+                r("functional_position_node_id", "org_nodes"),
+            ],
+        )
+    },
+    spec("equipment_classes", &[r("parent_id", "equipment_classes")]),
+    spec(
+        "equipment_hierarchy",
+        &[r("parent_equipment_id", "equipment"), r("child_equipment_id", "equipment")],
+    ),
+    spec("equipment_meters", &[r("equipment_id", "equipment")]),
+    spec(
+        "asset_meter_readings",
+        &[r("meter_id", "equipment_meters"), r("created_by_id", USER)],
+    ),
+    spec(
+        "equipment_lifecycle_events",
+        &[
+            hist("equipment_id", "equipment"),
+            hist("performed_by_id", USER),
+            hist("from_node_id", "org_nodes"),
+            hist("to_node_id", "org_nodes"),
+            hist("related_work_order_id", "work_orders"),
+            hist("related_asset_id", "equipment"),
+            hist("approved_by_id", USER),
+        ],
+    ),
+    spec(
+        "asset_document_links",
+        &[r("asset_id", "equipment"), r("created_by_id", USER)],
+    ),
+    spec("asset_external_ids", &[r("asset_id", "equipment")]),
+    spec("asset_photos", &[]),
+    RowSpec {
+        // Where the file is stored on this device; the bytes travel through the media upload.
+        device_local: &["relative_path"],
+        ..spec("media_attachments", &[])
+    },
+    // ── Reference catalogs ──────────────────────────────────────────────────────────────────
+    spec("lookup_domains", &[r("published_by_id", USER)]),
+    spec(
+        "lookup_values",
+        &[r("domain_id", "lookup_domains"), r("parent_value_id", "lookup_values")],
+    ),
+    spec("lookup_value_aliases", &[r("value_id", "lookup_values")]),
+    spec("reference_domains", &[]),
+    spec(
+        "reference_sets",
+        &[r("domain_id", "reference_domains"), r("created_by_id", USER)],
+    ),
+    spec(
+        "reference_values",
+        &[r("set_id", "reference_sets"), r("parent_id", "reference_values")],
+    ),
+    spec("reference_aliases", &[r("reference_value_id", "reference_values")]),
+    spec(
+        "reference_validation_reports",
+        &[r("set_id", "reference_sets"), r("validated_by_id", USER)],
+    ),
+    spec(
+        "reference_value_migrations",
+        &[
+            hist("domain_id", "reference_domains"),
+            hist("from_value_id", "reference_values"),
+            hist("to_value_id", "reference_values"),
+            hist("migrated_by_id", USER),
+        ],
+    ),
+    // ── Inventory and procurement ───────────────────────────────────────────────────────────
+    spec("article_families", &[]),
+    spec("articles", &[]),
+    spec("article_cost_profiles", &[]),
+    spec("warehouses", &[]),
+    spec("stock_locations", &[]),
+    spec(
+        "stock_reservations",
+        &[
+            poly("source_id", "source_type", RESERVATION_SOURCE_TARGETS),
+            r("created_by_id", USER),
+        ],
+    ),
+    spec(
+        "inventory_transactions",
+        &[
+            poly("source_id", "source_type", STOCK_SOURCE_TARGETS),
+            r("performed_by_id", USER),
+        ],
+    ),
+    spec("inventory_article_equivalents", &[]),
+    spec(
+        "inventory_count_sessions",
+        &[
+            r("opened_by_id", USER),
+            r("submitted_by_id", USER),
+            r("posted_by_id", USER),
+            r("reversed_by_id", USER),
+        ],
+    ),
+    spec("inventory_count_lines", &[r("approved_by_id", USER)]),
+    spec(
+        "inventory_document_links",
+        &[
+            poly(
+                "entity_id",
+                "entity_type",
+                &[
+                    ("SUPPLIER", "inventory_suppliers"),
+                    ("PURCHASE_ORDER", "purchase_orders"),
+                    ("REPAIRABLE_ORDER", "repairable_orders"),
+                    ("ARTICLE", "articles"),
+                ],
+            ),
+            r("created_by_id", USER),
+        ],
+    ),
+    spec(
+        "inventory_mutation_audit_links",
+        &[
+            poly(
+                "source_entity_id",
+                "source_entity_type",
+                &[("inventory_count_line", "inventory_count_lines")],
+            ),
+            r("reviewer_id", USER),
+        ],
+    ),
+    spec("inventory_reconciliation_runs", &[r("checked_by_id", USER)]),
+    spec("inventory_reconciliation_findings", &[]),
+    spec(
+        "inventory_state_events",
+        &[
+            poly_hist(
+                "entity_id",
+                "entity_type",
+                &[
+                    ("purchase_order", "purchase_orders"),
+                    ("repairable_order", "repairable_orders"),
+                    ("requisition", "procurement_requisitions"),
+                ],
+            ),
+            hist("actor_id", USER),
+        ],
+    ),
+    spec("inventory_supplier_article_sources", &[]),
+    spec("inventory_supplier_contacts", &[]),
+    spec(
+        "inventory_supplier_prices",
+        &[
+            r("currency_value_id", "lookup_values"),
+            r("price_unit_value_id", "lookup_values"),
+        ],
+    ),
+    spec(
+        "inventory_suppliers",
+        &[
+            r("currency_value_id", "lookup_values"),
+            r("default_buyer_person_id", "personnel"),
+        ],
+    ),
+    spec("inventory_valuation_policies", &[]),
+    spec(
+        "procurement_requisitions",
+        &[
+            poly_soft("demand_source_id", "demand_source_type", DEMAND_SOURCE_TARGETS),
+            r("requested_by_id", USER),
+        ],
+    ),
+    spec("procurement_requisition_lines", &[unmapped("demand_source_line_id")]),
+    spec("purchase_orders", &[r("ordered_by_id", USER), r("approved_by_id", USER)]),
+    spec(
+        "purchase_order_lines",
+        &[
+            poly_soft("demand_source_id", "demand_source_type", DEMAND_SOURCE_TARGETS),
+            unmapped("demand_source_line_id"),
+        ],
+    ),
+    spec("goods_receipts", &[r("received_by_id", USER)]),
+    spec("goods_receipt_lines", &[]),
+    spec("repairable_orders", &[r("created_by_id", USER)]),
+];
+
+/// Rules of an entity type synchronised by the generic engine.
+pub fn row_spec(entity_type: &str) -> Option<&'static RowSpec> {
+    ROW_SPECS.iter().find(|s| s.entity_type == entity_type)
+}
