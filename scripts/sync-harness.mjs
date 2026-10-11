@@ -12,7 +12,11 @@
  *      dependencies, or `TEST_DATABASE_ADMIN_URL`) and the API on 127.0.0.1 only;
  *   3. creates a tenant and a licence, activates three machines (devices A, B and C);
  *   4. serves a small control endpoint on 127.0.0.1 for actions only an operator can do
- *      (revoking a machine needs a step-up token);
+ *      (revoking a machine needs a step-up token) and for the object store below;
+ *   4b. runs a minimal S3-compatible object store on 127.0.0.1 (path-style bucket, presigned PUT
+ *      and GET: the URL must carry the AWS SigV4 query, the access key and an unexpired date; the
+ *      signature itself is not recomputed). The API presigns against it like against MinIO. It
+ *      can refuse uploads on request, to test a file whose upload is late;
  *   5. runs the Rust scenarios: `cargo test --lib -- --ignored sync::harness_tests`
  *      (src-tauri/src/sync/harness_tests.rs), which reads the connection details from the file
  *      named by `MAINTAFOX_SYNC_HARNESS_CONFIG`;
@@ -38,6 +42,9 @@ const apiDir = join(vendorRoot, "api");
 const skipApiBuild = process.argv.includes("--skip-api-build");
 
 const ADMIN_EMAIL = "admin@maintafox.systems";
+const S3_ACCESS_KEY = "harness-access-key";
+const S3_SECRET_KEY = "harness-secret-key-not-a-real-one";
+const S3_BUCKET = "maintafox-tenant-media";
 const ADMIN_PASSWORD = "HarnessAdminPassw0rd!";
 const DEVICES = [
   { name: "A", fingerprint: "fp-harness-device-a" },
@@ -77,6 +84,72 @@ async function json(res, what) {
   return JSON.parse(text);
 }
 
+/**
+ * Minimal S3-compatible object store for the harness: HEAD/PUT bucket, presigned PUT/GET object.
+ * Objects live in memory. `blockPuts` makes uploads answer 503 (a late upload).
+ */
+function startObjectStore() {
+  const objects = new Map();
+  const state = { blockPuts: false, puts: 0, gets: 0 };
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const [bucket, ...keyParts] = url.pathname.replace(/^\//, "").split("/");
+    const key = keyParts.map(decodeURIComponent).join("/");
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      if (bucket !== S3_BUCKET) {
+        res.writeHead(404, { "Content-Type": "application/xml" }).end("<Error><Code>NoSuchBucket</Code></Error>");
+        return;
+      }
+      if (!key) {
+        // HeadBucket / CreateBucket from the API (signed headers, not a presigned URL).
+        res.writeHead(200).end();
+        return;
+      }
+      const q = url.searchParams;
+      const credential = q.get("X-Amz-Credential") ?? "";
+      const issued = q.get("X-Amz-Date") ?? "";
+      const expires = Number(q.get("X-Amz-Expires") ?? "0");
+      const issuedAt = Date.parse(
+        issued.replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, "$1-$2-$3T$4:$5:$6Z"),
+      );
+      const presigned =
+        q.get("X-Amz-Algorithm") === "AWS4-HMAC-SHA256" &&
+        q.get("X-Amz-Signature") &&
+        credential.startsWith(`${S3_ACCESS_KEY}/`) &&
+        Number.isFinite(issuedAt) &&
+        Date.now() <= issuedAt + expires * 1000;
+      if (!presigned) {
+        res.writeHead(403, { "Content-Type": "application/xml" }).end("<Error><Code>AccessDenied</Code></Error>");
+        return;
+      }
+      if (req.method === "PUT") {
+        if (state.blockPuts) {
+          res.writeHead(503, { "Content-Type": "application/xml" }).end("<Error><Code>SlowDown</Code></Error>");
+          return;
+        }
+        objects.set(key, Buffer.concat(chunks));
+        state.puts += 1;
+        res.writeHead(200, { ETag: `"${state.puts}"` }).end();
+        return;
+      }
+      if (req.method === "GET") {
+        const body = objects.get(key);
+        if (!body) {
+          res.writeHead(404, { "Content-Type": "application/xml" }).end("<Error><Code>NoSuchKey</Code></Error>");
+          return;
+        }
+        state.gets += 1;
+        res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": body.length }).end(body);
+        return;
+      }
+      res.writeHead(405).end();
+    });
+  });
+  return { server, state };
+}
+
 async function main() {
   if (!existsSync(join(apiDir, "package.json"))) {
     throw new Error(
@@ -112,6 +185,12 @@ async function main() {
     cleanups.push(() => pg.stop());
     const databaseUrl = await pg.createDatabase();
 
+    const store = startObjectStore();
+    const storePort = await freePort();
+    await new Promise((r) => store.server.listen(storePort, "127.0.0.1", r));
+    cleanups.push(() => new Promise((r) => store.server.close(() => r())));
+    log(`object store on http://127.0.0.1:${storePort}`);
+
     const apiPort = await freePort();
     const baseUrl = `http://127.0.0.1:${apiPort}`;
     log(`starting the control API on ${baseUrl}`);
@@ -131,6 +210,11 @@ async function main() {
         SEED_BEHAVIOR: "safe",
         NODE_ENV: "production",
         CORS_ORIGIN: "http://localhost:5174",
+        S3_ENDPOINT: `http://127.0.0.1:${storePort}`,
+        S3_ACCESS_KEY,
+        S3_SECRET_KEY,
+        S3_BUCKET,
+        S3_FORCE_PATH_STYLE: "true",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -197,9 +281,16 @@ async function main() {
     }
     log(`tenant ${tenant.id}: devices ${devices.map((d) => d.name).join(", ")} activated`);
 
-    // Operator actions the scenarios need (POST /machines/<fingerprint>/revoke).
+    // Operator actions the scenarios need (POST /machines/<fingerprint>/revoke) and object store
+    // switches (POST /object-store/block-puts | allow-puts).
     let opCounter = 0;
     const control = createServer(async (req, res) => {
+      const storeSwitch = /^\/object-store\/(block|allow)-puts$/.exec(req.url ?? "");
+      if (req.method === "POST" && storeSwitch) {
+        store.state.blockPuts = storeSwitch[1] === "block";
+        res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(store.state));
+        return;
+      }
       const match = /^\/machines\/([^/]+)\/(revoke|restore)$/.exec(req.url ?? "");
       if (req.method !== "POST" || !match) {
         res.writeHead(404).end();

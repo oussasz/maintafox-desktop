@@ -26,6 +26,8 @@ pub struct AssetPhoto {
     pub file_name: String,
     /// Absolute path on disk (primary storage). UI may load via IPC instead of `convertFileSrc`.
     pub file_path: String,
+    /// Storage location under the app data directory (the key of the file's sync state).
+    pub relative_path: String,
     pub mime_type: String,
     pub file_size_bytes: i64,
     pub caption: Option<String>,
@@ -70,6 +72,7 @@ fn map_row(row: &QueryResult, app_data_dir: &Path) -> AppResult<AssetPhoto> {
         asset_id: row.try_get("", "asset_id").map_err(|e| decode_err("asset_id", e))?,
         file_name: row.try_get("", "file_name").map_err(|e| decode_err("file_name", e))?,
         file_path,
+        relative_path,
         mime_type: row.try_get("", "mime_type").map_err(|e| decode_err("mime_type", e))?,
         file_size_bytes: row
             .try_get("", "file_size_bytes")
@@ -82,17 +85,6 @@ fn map_row(row: &QueryResult, app_data_dir: &Path) -> AppResult<AssetPhoto> {
             .map_err(|e| decode_err("created_by_id", e))?,
         created_at: row.try_get("", "created_at").map_err(|e| decode_err("created_at", e))?,
     })
-}
-
-async fn last_insert_id(db: &impl ConnectionTrait) -> AppResult<i64> {
-    let row = db
-        .query_one(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT last_insert_rowid() AS id".to_string(),
-        ))
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("last_insert_rowid missing")))?;
-    row.try_get("", "id").map_err(|e| decode_err("id", e))
 }
 
 fn extension_mime(path: &Path) -> Option<&'static str> {
@@ -290,7 +282,7 @@ pub async fn upload_asset_photo(
                 .unwrap_or_else(|| sea_orm::Value::from(None::<String>)),
             created_by_id.into(),
             now.clone().into(),
-            photo_entity_sync_id.into(),
+            photo_entity_sync_id.clone().into(),
         ],
     ))
     .await?;
@@ -310,14 +302,14 @@ pub async fn upload_asset_photo(
     )?;
     crate::sync::media::upsert_media_attachment_row(&txn, &media_payload).await?;
 
-    let id = last_insert_id(&txn).await?;
+    // By sync id: `last_insert_rowid()` now names the media row inserted after the photo.
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Sqlite,
             "SELECT id, asset_id, file_name, relative_path, mime_type, file_size_bytes, \
                         caption, created_by_id, created_at \
-                 FROM asset_photos WHERE id = ?",
-            [id.into()],
+                 FROM asset_photos WHERE entity_sync_id = ?",
+            [photo_entity_sync_id.into()],
         ))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("asset_photos insert not found")))?;

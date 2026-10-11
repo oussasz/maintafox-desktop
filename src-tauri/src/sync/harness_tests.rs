@@ -17,7 +17,10 @@
 //!    exchange after a restart and nothing is applied twice;
 //! 8. backup restore: B returns to a state before its own latest change; after the reset startup
 //!    does for a restored database (`store::forget_server_position`), the snapshot brings it back;
-//! 9. revoked device: C is revoked by the operator; it is refused and its new row reaches no one.
+//! 9. files: a library document added on A is uploaded to object storage and downloaded on B
+//!    (size and hash checked); a second one whose upload is held back shows "not downloaded yet"
+//!    on B and arrives once A could upload it;
+//! 10. revoked device: C is revoked by the operator; it is refused and its new row reaches no one.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -45,6 +48,7 @@ const CONFIG_ENV: &str = "MAINTAFOX_SYNC_HARNESS_CONFIG";
 struct HarnessConfig {
     api_base_url: String,
     control_url: String,
+    tenant_id: String,
     devices: Vec<DeviceConfig>,
 }
 
@@ -85,19 +89,19 @@ struct Device {
     token: String,
     db: DatabaseConnection,
     factory: RowFactory,
+    /// The device's app data directory (attachments, photos, library files).
+    media_root: std::path::PathBuf,
 }
 
 impl Device {
     /// One worker cycle against `base_url`, by a worker created for it (as after a restart).
     async fn cycle(&self, base_url: &str) -> CycleOutcome {
-        let media_root = std::env::temp_dir().join(format!("mfx-sync-harness-{}-{}", self.name, uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&media_root).expect("media root");
         let worker = SyncWorker::new(
             self.db.clone(),
             SyncWorkerHandle::new(),
             SyncWorkerConfig {
                 api_base_url: base_url.to_string(),
-                media_root,
+                media_root: self.media_root.clone(),
                 timing: SyncTiming::production(),
             },
             Arc::new(ActivationToken(self.token.clone())),
@@ -200,6 +204,13 @@ impl Device {
         .unwrap_or_else(|e| panic!("device {}: resolve {action}: {e}", self.name));
     }
 
+    async fn file_state(&self, relative_path: &str) -> crate::sync::media::MediaFileState {
+        crate::sync::media::media_file_states(&self.db, &self.media_root, &[relative_path.to_string()])
+            .await
+            .expect("file state")
+            .remove(0)
+    }
+
     /// Signs `user_sync_id` in on this device (trusted device), so its personal rows come here.
     async fn trust(&self, user_sync_id: &str) {
         let user_id = scalar_i64(
@@ -220,6 +231,16 @@ impl Device {
         )
         .await;
     }
+}
+
+/// Operator / test-infrastructure action on the harness control endpoint.
+async fn operator(control_url: &str, action: &str) {
+    let response = reqwest::Client::new()
+        .post(format!("{control_url}/{action}"))
+        .send()
+        .await
+        .expect("control endpoint");
+    assert!(response.status().is_success(), "{action}: HTTP {}", response.status());
 }
 
 async fn assert_same(a: &Device, b: &Device, row: &CreatedRow, stage: &str) {
@@ -328,12 +349,20 @@ async fn multi_device_harness() {
     let api = config.api_base_url.as_str();
     let mut devices = Vec::new();
     for (index, d) in (1_i64..).zip(config.devices) {
+        let db = started_db().await;
+        // Activated for the harness tenant, as after a real activation (tenant-scoped media keys).
+        crate::commands::product_license::record_activation_claim_for_tests(&db, &config.tenant_id, &d.fingerprint, &d.token)
+            .await
+            .expect("activation claim");
+        let media_root = std::env::temp_dir().join(format!("mfx-sync-harness-{}-{}", d.name, uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&media_root).expect("media root");
         devices.push(Device {
             name: d.name,
             fingerprint: d.fingerprint,
             token: d.token,
-            db: started_db().await,
+            db,
             factory: RowFactory::for_device(index),
+            media_root,
         });
     }
     let [mut a, mut b, mut c]: [Device; 3] = devices
@@ -503,7 +532,53 @@ async fn multi_device_harness() {
     assert_same(&a, &b, &after_backup, "8. after restore").await;
     println!("[harness] 8. after a backup restore, B got its own later change back from the snapshot");
 
-    // 9. Revoked device.
+    // 9. Files travel through object storage.
+    let person = scalar_i64(&a.db, "SELECT id FROM user_accounts ORDER BY id LIMIT 1", vec![]).await;
+    let document = |name: &str, bytes: &[u8]| crate::library_documents::LibraryDocumentUploadInput {
+        category: "sops".to_string(),
+        equipment_id: None,
+        title: format!("Harness {name}"),
+        file_name: name.to_string(),
+        file_bytes: bytes.to_vec(),
+        mime_type: "application/pdf".to_string(),
+        notes: None,
+        uploaded_by_id: person,
+    };
+    let pdf = b"%PDF-1.7 harness standard operating procedure".to_vec();
+    let sop = crate::library_documents::save_library_document(&a.db, &a.media_root, document("sop.pdf", &pdf))
+        .await
+        .expect("document on A");
+    a.synced(api).await;
+    b.synced(api).await;
+    assert_eq!(
+        std::fs::read(b.media_root.join(&sop.relative_path)).expect("document file on B"),
+        pdf,
+        "the file reached B with the same content"
+    );
+    assert_eq!(b.file_state(&sop.relative_path).await.state, "available");
+
+    operator(&config.control_url, "object-store/block-puts").await;
+    let late_pdf = b"%PDF-1.7 harness procedure uploaded late".to_vec();
+    let late = crate::library_documents::save_library_document(&a.db, &a.media_root, document("late.pdf", &late_pdf))
+        .await
+        .expect("second document on A");
+    a.synced(api).await;
+    b.synced(api).await;
+    let waiting = b.file_state(&late.relative_path).await;
+    assert_eq!(waiting.state, "pending", "B shows the file as not downloaded yet");
+    assert!(!b.media_root.join(&late.relative_path).exists());
+    operator(&config.control_url, "object-store/allow-puts").await;
+    a.synced(api).await;
+    // The next attempt is normally scheduled 30 s later; the harness does not wait for it.
+    exec(&b.db, "UPDATE sync_media_downloads SET next_attempt_at = NULL", vec![]).await;
+    b.synced(api).await;
+    assert_eq!(
+        std::fs::read(b.media_root.join(&late.relative_path)).expect("late file on B"),
+        late_pdf
+    );
+    println!("[harness] 9. library files reached B through object storage, also after a delayed upload");
+
+    // 10. Revoked device.
     let response = reqwest::Client::new()
         .post(format!("{}/machines/{}/revoke", config.control_url, c.fingerprint))
         .send()
@@ -521,5 +596,5 @@ async fn multi_device_harness() {
         a.payload(&after_revoke).await.is_none(),
         "nothing from the revoked device reaches A"
     );
-    println!("[harness] 9. revoked device C was refused; its change reached no one");
+    println!("[harness] 10. revoked device C was refused; its change reached no one");
 }

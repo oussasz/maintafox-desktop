@@ -157,6 +157,15 @@ export function SyncWorkerStatusCard() {
           })}
         </p>
       ) : null}
+      {worker &&
+      (worker.media_download_pending_count > 0 || worker.media_download_failed_count > 0) ? (
+        <p className="text-text-muted">
+          {t("sync.worker.mediaDownloads", {
+            pending: worker.media_download_pending_count,
+            failed: worker.media_download_failed_count,
+          })}
+        </p>
+      ) : null}
       {worker && worker.dead_letter_outbox_count > 0 ? (
         <p className="text-status-danger">
           {t("sync.worker.deadLetter", { count: worker.dead_letter_outbox_count })}

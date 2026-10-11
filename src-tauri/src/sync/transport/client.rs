@@ -8,12 +8,19 @@ use std::time::Duration;
 use reqwest::header::{HeaderMap, ACCEPT, CONTENT_TYPE, RETRY_AFTER, USER_AGENT};
 use serde::de::DeserializeOwned;
 
-use super::wire::{ErrorBody, ExchangeResponse, PresignPutRequest, PresignResponse, SnapshotRequest, SnapshotResponse};
+use super::wire::{
+    ErrorBody, ExchangeResponse, PresignGetRequest, PresignPutRequest, PresignResponse, SnapshotRequest,
+    SnapshotResponse,
+};
 use crate::sync::domain::SYNC_PROTOCOL_VERSION_V2;
 
 /// Longest `Retry-After` the worker honours; a larger value is treated as this one so a
 /// misconfigured proxy cannot park sync for days.
 pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(60 * 60);
+
+/// Error code of a presigned GET answered 404: the device that owns the file has not uploaded it
+/// yet (or it was removed from object storage).
+pub const OBJECT_NOT_FOUND: &str = "object_not_found";
 
 /// Why a request did not produce a usable answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,14 +72,15 @@ impl TransportError {
 pub struct ClientTimeouts {
     pub connect: Duration,
     pub request: Duration,
-    pub media_upload: Duration,
+    /// Whole-request limit for one media upload or download (object storage).
+    pub media_transfer: Duration,
 }
 
 #[derive(Debug, Clone)]
 pub struct ControlPlaneClient {
     http: reqwest::Client,
     base_url: String,
-    media_upload_timeout: Duration,
+    media_transfer_timeout: Duration,
 }
 
 /// `https://…`, or `http://` only for a server on this machine (local development and tests): the
@@ -160,7 +168,7 @@ impl ControlPlaneClient {
         Ok(Self {
             http,
             base_url,
-            media_upload_timeout: timeouts.media_upload,
+            media_transfer_timeout: timeouts.media_transfer,
         })
     }
 
@@ -232,12 +240,52 @@ impl ControlPlaneClient {
         self.post_json("/api/v1/sync/media/presign-put", token, body).await
     }
 
+    /// `POST /api/v1/sync/media/presign-get`.
+    pub async fn presign_get(
+        &self,
+        token: &str,
+        request: &PresignGetRequest<'_>,
+    ) -> Result<PresignResponse, TransportError> {
+        let body = serde_json::to_string(request).map_err(|e| TransportError::Contract(e.to_string()))?;
+        self.post_json("/api/v1/sync/media/presign-get", token, body).await
+    }
+
+    /// Start a download from a presigned object storage URL (no bearer token: the URL is the
+    /// credential). The caller reads the body in chunks (`reqwest::Response::chunk`) so a file is
+    /// never held whole in memory and an oversized answer can be cut off.
+    pub async fn get_object(&self, url: &str) -> Result<reqwest::Response, TransportError> {
+        let response = self
+            .http
+            .get(url)
+            .header(ACCEPT, "*/*")
+            .timeout(self.media_transfer_timeout)
+            .send()
+            .await
+            .map_err(|e| map_send_error(&e))?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
+        }
+        let retry_after = parse_retry_after(response.headers());
+        let text = response.text().await.unwrap_or_default();
+        Err(TransportError::Http {
+            status: status.as_u16(),
+            code: Some(if status.as_u16() == 404 {
+                OBJECT_NOT_FOUND.to_string()
+            } else {
+                "object_storage_get_failed".to_string()
+            }),
+            message: text.chars().take(800).collect(),
+            retry_after,
+        })
+    }
+
     /// Upload bytes to a presigned object storage URL (no bearer token: the URL is the credential).
     pub async fn put_object(&self, url: &str, bytes: Vec<u8>) -> Result<(), TransportError> {
         let response = self
             .http
             .put(url)
-            .timeout(self.media_upload_timeout)
+            .timeout(self.media_transfer_timeout)
             .body(bytes)
             .send()
             .await

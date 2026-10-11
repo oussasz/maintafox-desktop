@@ -849,6 +849,17 @@
       "sync_status": "synced"
     },
     {
+      "entity_type": "library_documents",
+      "scope": "tenant",
+      "conflict_policy": "operator_review",
+      "apply_priority": 5,
+      "parents": [
+        "equipment",
+        "user_accounts"
+      ],
+      "sync_status": "synced"
+    },
+    {
       "entity_type": "lookup_domains",
       "scope": "tenant",
       "conflict_policy": "operator_review",
@@ -2094,7 +2105,6 @@
     "event_links": "derived_projection",
     "inspection_offline_queue": "job_queue",
     "inspection_reliability_signals": "derived_projection",
-    "library_documents": "device_archive",
     "license_admin_actions": "licensing",
     "license_api_exchange_guard": "licensing",
     "license_enforcement_state": "licensing",
@@ -2127,6 +2137,7 @@
     "sync_conflicts": "sync_control",
     "sync_entity_state": "sync_control",
     "sync_inbox": "sync_control",
+    "sync_media_downloads": "sync_control",
     "sync_media_uploads": "sync_control",
     "sync_outbox": "sync_control",
     "sync_pending_refs": "sync_control",

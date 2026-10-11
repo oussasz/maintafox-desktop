@@ -57,6 +57,17 @@
       "AUTHORITY_MISMATCH": "Le serveur a refusé une modification protégée",
       "other": "À examiner"
     },
+    "mediaFile": {
+      "pending": "Pas encore téléchargé",
+      "pendingHint": "Ce fichier a été ajouté sur un autre poste. Il est téléchargé automatiquement lors de la synchronisation.",
+      "failed": "Échec du téléchargement",
+      "failedHint": "Le fichier n'a pas pu être téléchargé : {{message}}",
+      "missing": "Fichier absent de ce poste",
+      "missingHint": "Ce fichier n'est pas enregistré sur ce poste et aucun téléchargement n'est prévu.",
+      "retry": "Réessayer",
+      "retryQueued": "Téléchargement relancé.",
+      "retryNothing": "Rien à télécharger pour ce fichier."
+    },
     "worker": {
       "title": "Synchronisation",
       "runsInBackground": "La synchronisation continue quand la fenêtre est fermée (Maintafox reste dans la zone de notification).",
@@ -85,6 +96,7 @@
       "pending": "Modifications en attente d'envoi",
       "conflicts": "Conflits à examiner",
       "media": "Fichiers en attente d'envoi : {{pending}} · en échec : {{failed}}",
+      "mediaDownloads": "Fichiers d'autres postes en attente de téléchargement : {{pending}} · en échec : {{failed}}",
       "deadLetter": "{{count}} modification(s) n'ont pas pu être envoyées après plusieurs tentatives : voir les conflits.",
       "lastError": "Dernière erreur : {{message}}",
       "syncNow": "Synchroniser maintenant",

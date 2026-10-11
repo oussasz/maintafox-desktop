@@ -323,6 +323,8 @@ pub fn run() {
             commands::sync::get_sync_observability_report,
             commands::sync::get_sync_worker_status,
             commands::sync::run_sync_now,
+            commands::sync::get_media_file_states,
+            commands::sync::retry_media_download,
             commands::sync::pause_sync,
             commands::sync::resume_sync,
             commands::sync::report_network_online,

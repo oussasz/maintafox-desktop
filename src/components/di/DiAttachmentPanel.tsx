@@ -18,6 +18,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { MediaFileStateBadge, useMediaFileStates } from "@/components/sync/MediaFileStatus";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import {
@@ -84,6 +85,9 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { states: fileStates, refresh: refreshFileStates } = useMediaFileStates(
+    attachments.map((a) => a.relative_path),
+  );
 
   const loadAttachments = useCallback(async () => {
     try {
@@ -112,6 +116,19 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
       setLoading(false);
     }
   }, [diId]);
+
+  // A picture downloaded from another device after the list was loaded: load its preview.
+  useEffect(() => {
+    const arrived = attachments.some(
+      (a) =>
+        (a.attachment_type === "photo" || a.mime_type.startsWith("image/")) &&
+        previews[a.id] === undefined &&
+        fileStates.get(a.relative_path)?.state === "available",
+    );
+    if (arrived) void loadAttachments();
+    // Only a change of the file states can make a picture arrive.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileStates]);
 
   useEffect(() => {
     void loadAttachments();
@@ -396,6 +413,10 @@ export function DiAttachmentPanel({ diId, canUpload, canDelete }: DiAttachmentPa
                       year: "numeric",
                     })}
                   </p>
+                  <MediaFileStateBadge
+                    state={fileStates.get(att.relative_path)}
+                    onRetried={() => void refreshFileStates()}
+                  />
                 </div>
 
                 {canDelete && (

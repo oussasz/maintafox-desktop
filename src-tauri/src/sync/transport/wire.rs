@@ -130,6 +130,12 @@ pub struct PresignPutRequest<'a> {
     pub object_key: &'a str,
 }
 
+/// `POST /api/v1/sync/media/presign-get` body (server `SyncMediaPresignGetBody`).
+#[derive(Debug, Serialize)]
+pub struct PresignGetRequest<'a> {
+    pub object_key: &'a str,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PresignResponse {
     pub url: String,

@@ -11,6 +11,9 @@
 //!      transaction), then the stored request is cleared and the inbox materialized;
 //!    - users in `user_snapshot_required` get a scope `user` snapshot.
 //! 4. Media announced in the manifest is uploaded before each exchange (failures never block it).
+//! 5. Media received from other devices (`sync_media_downloads`) is downloaded at the end of a
+//!    cycle that synced: presigned GET, streamed to a temporary file, size and SHA-256 checked,
+//!    then moved into place; failures are retried per file with backoff and never block sync.
 //!
 //! Failures: no connection → `offline`, retried with backoff and woken by the webview `online`
 //! event; 5xx / interrupted → retried with the same key and counted as a delivery attempt
@@ -32,10 +35,10 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::client::{ClientTimeouts, ControlPlaneClient, TransportError};
-use super::store::{self, PendingExchange, PendingMediaUpload};
+use super::client::{ClientTimeouts, ControlPlaneClient, TransportError, OBJECT_NOT_FOUND};
+use super::store::{self, PendingExchange, PendingMediaDownload, PendingMediaUpload};
 use super::wire::{
-    ExchangeOutboxItem, ExchangeRequest, PresignPutRequest, SnapshotRequest, StoredExchangeRequest,
+    ExchangeOutboxItem, ExchangeRequest, PresignGetRequest, PresignPutRequest, SnapshotRequest, StoredExchangeRequest,
     DEVICE_CLASS_DESKTOP, MAX_CURRENT_USER_SYNC_IDS, SNAPSHOT_SCOPE_ALL, SNAPSHOT_SCOPE_USER,
 };
 use crate::errors::{AppError, AppResult};
@@ -68,8 +71,8 @@ pub const SYNC_NETWORK_WAKE_MIN_SPACING: Duration = Duration::from_secs(5);
 pub const SYNC_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// Whole-request limit for exchange and snapshot calls (same as the previous webview transport).
 pub const SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
-/// Whole-request limit for one media upload to object storage.
-pub const SYNC_MEDIA_UPLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Whole-request limit for one media upload or download to/from object storage.
+pub const SYNC_MEDIA_TRANSFER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 // ── Sizes ───────────────────────────────────────────────────────────────────────────────────
 
@@ -86,6 +89,12 @@ pub const SYNC_MAX_MATERIALIZE_PASSES: usize = 20;
 pub const SYNC_MAX_SNAPSHOT_RESTARTS: u32 = 3;
 /// Media uploads tried per exchange.
 pub const SYNC_MEDIA_UPLOADS_PER_CYCLE: u32 = 20;
+/// Media downloads tried per cycle.
+pub const SYNC_MEDIA_DOWNLOADS_PER_CYCLE: u32 = 20;
+/// First retry delay of a failed media download; doubles per attempt of that file.
+pub const SYNC_MEDIA_RETRY_BASE_DELAY: Duration = Duration::from_secs(30);
+/// Longest retry delay of a media download.
+pub const SYNC_MEDIA_RETRY_MAX_DELAY: Duration = Duration::from_secs(60 * 60);
 /// Longest operator pause (same bound as the previous Sync Center pause).
 pub const SYNC_MAX_PAUSE_MINUTES: u32 = 24 * 60;
 
@@ -104,6 +113,9 @@ pub struct SyncTiming {
     pub retry_max: Duration,
     pub blocked_recheck: Duration,
     pub network_wake_min_spacing: Duration,
+    /// Per-file retry delays of media downloads.
+    pub media_retry_base: Duration,
+    pub media_retry_max: Duration,
     pub timeouts: ClientTimeouts,
 }
 
@@ -115,10 +127,12 @@ impl SyncTiming {
             retry_max: SYNC_RETRY_MAX_DELAY,
             blocked_recheck: SYNC_BLOCKED_RECHECK_INTERVAL,
             network_wake_min_spacing: SYNC_NETWORK_WAKE_MIN_SPACING,
+            media_retry_base: SYNC_MEDIA_RETRY_BASE_DELAY,
+            media_retry_max: SYNC_MEDIA_RETRY_MAX_DELAY,
             timeouts: ClientTimeouts {
                 connect: SYNC_CONNECT_TIMEOUT,
                 request: SYNC_REQUEST_TIMEOUT,
-                media_upload: SYNC_MEDIA_UPLOAD_TIMEOUT,
+                media_transfer: SYNC_MEDIA_TRANSFER_TIMEOUT,
             },
         }
     }
@@ -127,11 +141,20 @@ impl SyncTiming {
 /// Delay before retry number `failures` (1 = first retry): exponential, capped, with jitter.
 /// `jitter` is a random value in `[0, 1)`.
 pub fn retry_delay(failures: u32, timing: &SyncTiming, jitter: f64) -> Duration {
+    backoff(failures, timing.retry_base, timing.retry_max, jitter)
+}
+
+/// Delay before attempt number `attempts + 1` of one media download.
+pub fn media_retry_delay(attempts: u32, timing: &SyncTiming, jitter: f64) -> Duration {
+    backoff(attempts, timing.media_retry_base, timing.media_retry_max, jitter)
+}
+
+fn backoff(failures: u32, base: Duration, max: Duration, jitter: f64) -> Duration {
     let exponent = failures.saturating_sub(1).min(20);
-    let exponential = timing.retry_base.saturating_mul(1_u32 << exponent);
-    let capped = exponential.min(timing.retry_max);
+    let exponential = base.saturating_mul(1_u32 << exponent);
+    let capped = exponential.min(max);
     let factor = 1.0 + SYNC_RETRY_JITTER_RATIO * (2.0 * jitter.clamp(0.0, 1.0) - 1.0);
-    capped.mul_f64(factor).max(timing.retry_base.min(capped))
+    capped.mul_f64(factor).max(base.min(capped))
 }
 
 #[derive(Debug, Clone)]
@@ -219,6 +242,9 @@ pub struct SyncWorkerStatus {
     pub unresolved_conflict_count: i64,
     pub media_pending_count: i64,
     pub media_failed_count: i64,
+    /// Files received from other devices and not stored here yet / given up.
+    pub media_download_pending_count: i64,
+    pub media_download_failed_count: i64,
     pub consecutive_failures: i64,
     pub last_error: Option<SyncWorkerError>,
 }
@@ -237,6 +263,8 @@ impl SyncWorkerStatus {
             unresolved_conflict_count: 0,
             media_pending_count: 0,
             media_failed_count: 0,
+            media_download_pending_count: 0,
+            media_download_failed_count: 0,
             consecutive_failures: 0,
             last_error: None,
         }
@@ -453,7 +481,12 @@ enum Step {
 }
 
 enum MediaFailure {
+    /// Nothing more can be transferred now (no connection, or the control API refuses this
+    /// device); not counted as an attempt.
     Offline,
+    /// The file is not on object storage yet (its device has not uploaded it): retried with
+    /// backoff, never given up automatically.
+    NotYetAvailable(String),
     Retry(String),
     Permanent(String),
 }
@@ -626,6 +659,7 @@ impl SyncWorker {
         };
         let summary = queries::get_sync_state_summary(&self.db).await?;
         let (media_pending, media_failed) = store::media_counts(&self.db).await?;
+        let (download_pending, download_failed) = store::media_download_counts(&self.db).await?;
         let next_attempt_at = chrono::Duration::from_std(wait)
             .ok()
             .map(|d| (chrono::Utc::now() + d).format("%Y-%m-%dT%H:%M:%SZ").to_string());
@@ -653,6 +687,8 @@ impl SyncWorker {
             unresolved_conflict_count: summary.unresolved_conflict_count,
             media_pending_count: media_pending,
             media_failed_count: media_failed,
+            media_download_pending_count: download_pending,
+            media_download_failed_count: download_failed,
             consecutive_failures: state.consecutive_failures,
             last_error,
         });
@@ -716,14 +752,21 @@ impl SyncWorker {
             snapshot_done = true;
         }
 
+        let mut more_work = true;
         for _ in 0..SYNC_MAX_EXCHANGES_PER_CYCLE {
             match self.exchange_once(&token, &token_hash, &mut snapshot_done).await? {
                 Step::Continue => {}
-                Step::Done => return Ok(CycleOutcome::Synced { more_work: false }),
+                Step::Done => {
+                    more_work = false;
+                    break;
+                }
                 Step::Stop(outcome) => return Ok(outcome),
             }
         }
-        Ok(CycleOutcome::Synced { more_work: true })
+        let more_downloads = self.download_pending_media(&token).await?;
+        Ok(CycleOutcome::Synced {
+            more_work: more_work || more_downloads,
+        })
     }
 
     /// Scope `all` snapshot; stores the delta checkpoint on its last page. `Some(outcome)` stops the
@@ -1028,7 +1071,7 @@ impl SyncWorker {
                 Ok(()) => store::mark_media_uploaded(&self.db, &upload.object_key).await?,
                 // Nothing more can be uploaded now; not counted as an attempt.
                 Err(MediaFailure::Offline) => break,
-                Err(MediaFailure::Retry(message)) => {
+                Err(MediaFailure::Retry(message) | MediaFailure::NotYetAvailable(message)) => {
                     let give_up = upload.attempt_count + 1 >= OUTBOX_MAX_DELIVERY_ATTEMPTS;
                     warn!(target: "maintafox::sync", object_key = upload.object_key.as_str(), give_up, "media upload failed: {message}");
                     store::mark_media_failed(&self.db, &upload.object_key, &message, give_up).await?;
@@ -1097,6 +1140,163 @@ impl SyncWorker {
             .put_object(&presigned.url, bytes)
             .await
             .map_err(media_failure)
+    }
+
+    /// Download due files received from other devices. Returns whether more downloads are due
+    /// than one cycle takes.
+    async fn download_pending_media(&self, token: &str) -> AppResult<bool> {
+        let due = store::list_due_media_downloads(&self.db, SYNC_MEDIA_DOWNLOADS_PER_CYCLE).await?;
+        let full = u32::try_from(due.len()).unwrap_or(u32::MAX) >= SYNC_MEDIA_DOWNLOADS_PER_CYCLE;
+        for download in due {
+            let attempts = u32::try_from(download.attempt_count + 1).unwrap_or(u32::MAX);
+            let next_attempt = || {
+                let delay = media_retry_delay(attempts, &self.timing, rand::thread_rng().gen::<f64>());
+                chrono::Duration::from_std(delay)
+                    .ok()
+                    .map(|d| (chrono::Utc::now() + d).format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            };
+            let id = download.entity_sync_id.as_str();
+            match self.download_one(token, &download).await {
+                Ok(()) => store::mark_media_downloaded(&self.db, id).await?,
+                Err(MediaFailure::Offline) => return Ok(false),
+                Err(MediaFailure::NotYetAvailable(message)) => {
+                    store::mark_media_download_failed(&self.db, id, &message, false, next_attempt().as_deref()).await?;
+                }
+                Err(MediaFailure::Retry(message)) => {
+                    let give_up = download.attempt_count + 1 >= OUTBOX_MAX_DELIVERY_ATTEMPTS;
+                    warn!(target: "maintafox::sync", object_key = download.object_key.as_str(), give_up, "media download failed: {message}");
+                    let next = if give_up { None } else { next_attempt() };
+                    store::mark_media_download_failed(&self.db, id, &message, give_up, next.as_deref()).await?;
+                }
+                Err(MediaFailure::Permanent(message)) => {
+                    warn!(target: "maintafox::sync", object_key = download.object_key.as_str(), "media download impossible: {message}");
+                    store::mark_media_download_failed(&self.db, id, &message, true, None).await?;
+                }
+            }
+        }
+        Ok(full)
+    }
+
+    async fn download_one(&self, token: &str, download: &PendingMediaDownload) -> Result<(), MediaFailure> {
+        let Some(relative_path) = download.relative_path.as_deref() else {
+            return Err(MediaFailure::Permanent(
+                "the storage location of this file was not received (sent by an older app version)".to_string(),
+            ));
+        };
+        let Some(relative) = crate::sync::media::media_storage_path(relative_path) else {
+            return Err(MediaFailure::Permanent(format!(
+                "media path '{relative_path}' is not inside a media directory"
+            )));
+        };
+        let expected_size = u64::try_from(download.byte_size)
+            .map_err(|_| MediaFailure::Permanent(format!("invalid byte size {}", download.byte_size)))?;
+        let target = self.media_root.join(relative);
+
+        // Already here (stored before, or uploaded from this device): never overwrite a file.
+        match tokio::fs::read(&target).await {
+            Ok(bytes) => {
+                return crate::sync::media::verify_content_hash(&bytes, &download.content_sha256).map_err(|_| {
+                    MediaFailure::Permanent(format!(
+                        "another file with different content already exists at '{relative_path}'"
+                    ))
+                });
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(MediaFailure::Retry(format!("cannot read '{relative_path}': {e}"))),
+        }
+
+        let presigned = self
+            .client
+            .presign_get(
+                token,
+                &PresignGetRequest {
+                    object_key: &download.object_key,
+                },
+            )
+            .await
+            .map_err(|e| match (e.code(), classify(&e)) {
+                ("object_key_tenant_mismatch", _) => MediaFailure::Permanent(e.message()),
+                (_, FailureKind::Offline | FailureKind::ActivationRefused | FailureKind::TenantMismatch) => {
+                    MediaFailure::Offline
+                }
+                (_, FailureKind::Permanent) => MediaFailure::Permanent(e.message()),
+                _ => MediaFailure::Retry(e.message()),
+            })?;
+        if !presigned.method.eq_ignore_ascii_case("GET") || presigned.object_key != download.object_key {
+            return Err(MediaFailure::Permanent(format!(
+                "presign answered {} {} for {}",
+                presigned.method, presigned.object_key, download.object_key
+            )));
+        }
+        let mut response = self.client.get_object(&presigned.url).await.map_err(|e| {
+            if e.code() == OBJECT_NOT_FOUND {
+                MediaFailure::NotYetAvailable(
+                    "the file is not on the server yet (the device that added it has not sent it)".to_string(),
+                )
+            } else if matches!(classify(&e), FailureKind::Offline) {
+                MediaFailure::Offline
+            } else {
+                MediaFailure::Retry(e.message())
+            }
+        })?;
+        if let Some(announced) = response.content_length().filter(|len| *len != expected_size) {
+            return Err(MediaFailure::Retry(format!(
+                "object storage announced {announced} bytes, expected {expected_size}"
+            )));
+        }
+
+        let parent = target
+            .parent()
+            .ok_or_else(|| MediaFailure::Permanent(format!("media path '{relative_path}' has no directory")))?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| MediaFailure::Retry(format!("cannot create the folder of '{relative_path}': {e}")))?;
+        let part = parent.join(format!(".download-{}.part", uuid::Uuid::new_v4()));
+        let write_error = |e: std::io::Error| MediaFailure::Retry(format!("cannot write '{relative_path}': {e}"));
+        let result = async {
+            use sha2::Digest;
+            use tokio::io::AsyncWriteExt;
+            let mut file = tokio::fs::File::create(&part).await.map_err(write_error)?;
+            let mut hasher = sha2::Sha256::new();
+            let mut received: u64 = 0;
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|e| MediaFailure::Retry(format!("download interrupted: {e}")))?
+            {
+                received += chunk.len() as u64;
+                if received > expected_size {
+                    return Err(MediaFailure::Retry(format!(
+                        "object storage sent more than the expected {expected_size} bytes"
+                    )));
+                }
+                hasher.update(&chunk);
+                file.write_all(&chunk).await.map_err(write_error)?;
+            }
+            file.flush().await.map_err(write_error)?;
+            file.sync_all().await.map_err(write_error)?;
+            drop(file);
+            if received != expected_size {
+                return Err(MediaFailure::Retry(format!(
+                    "received {received} bytes, expected {expected_size}"
+                )));
+            }
+            let actual = format!("{:x}", hasher.finalize());
+            if actual != download.content_sha256.trim().to_ascii_lowercase() {
+                return Err(MediaFailure::Retry(format!(
+                    "content hash mismatch: expected {}, got {actual}",
+                    download.content_sha256
+                )));
+            }
+            tokio::fs::rename(&part, &target)
+                .await
+                .map_err(|e| MediaFailure::Retry(format!("cannot move the file into '{relative_path}': {e}")))
+        }
+        .await;
+        if result.is_err() {
+            let _ = tokio::fs::remove_file(&part).await;
+        }
+        result
     }
 }
 

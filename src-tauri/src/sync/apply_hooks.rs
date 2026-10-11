@@ -7,7 +7,9 @@
 //! - `org_nodes`: `ancestor_path` / `depth` (paths of local ids) are recomputed for the node and
 //!   its subtree;
 //! - `user_dismissals`: `scope_key` (`<issue_code>:<local equipment id>`) is rebuilt;
-//! - `report_schedules`: the next run of this device is computed from the cron expression.
+//! - `report_schedules`: the next run of this device is computed from the cron expression;
+//! - `media_attachments`: the file is queued for download from object storage
+//!   (`sync_media_downloads`, worked by the sync worker); a deleted row drops a pending download.
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
@@ -57,8 +59,42 @@ pub(crate) async fn after_upsert(
                 .ok_or_else(|| hook_err(layout.table(), "schedule not found after apply"))?;
             schedule_next_run(conn, id).await
         }
+        "media_attachments" if inserted => {
+            let id = located_row_id(conn, layout, row)
+                .await?
+                .ok_or_else(|| hook_err(layout.table(), "media row not found after insert"))?;
+            queue_received_media(conn, id).await
+        }
         _ => Ok(()),
     }
+}
+
+async fn queue_received_media(conn: &impl ConnectionTrait, media_id: i64) -> AppResult<()> {
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT entity_sync_id, object_key, content_sha256, byte_size, relative_path
+             FROM media_attachments WHERE id = ?",
+            [media_id.into()],
+        ))
+        .await?
+        .ok_or_else(|| hook_err("media_attachments", "media row vanished"))?;
+    let text = |c: &str| row.try_get::<String>("", c).map_err(|e| hook_err("media_attachments", e));
+    let relative_path: Option<String> = row
+        .try_get("", "relative_path")
+        .map_err(|e| hook_err("media_attachments", e))?;
+    let byte_size: i64 = row
+        .try_get("", "byte_size")
+        .map_err(|e| hook_err("media_attachments", e))?;
+    crate::sync::media::queue_media_download(
+        conn,
+        &text("entity_sync_id")?,
+        &text("object_key")?,
+        &text("content_sha256")?,
+        byte_size,
+        relative_path.as_deref(),
+    )
+    .await
 }
 
 async fn schedule_next_run(conn: &impl ConnectionTrait, schedule_id: i64) -> AppResult<()> {
@@ -86,11 +122,14 @@ async fn schedule_next_run(conn: &impl ConnectionTrait, schedule_id: i64) -> App
 
 /// After an inbound delete removed a row.
 pub(crate) async fn after_delete(
-    _conn: &impl ConnectionTrait,
-    _layout: &EntityLayout,
-    _entity_sync_id: &str,
+    conn: &impl ConnectionTrait,
+    layout: &EntityLayout,
+    entity_sync_id: &str,
 ) -> AppResult<()> {
-    Ok(())
+    match layout.def.entity_type {
+        "media_attachments" => crate::sync::media::forget_media_download(conn, entity_sync_id).await,
+        _ => Ok(()),
+    }
 }
 
 async fn apply_movement_to_balance(conn: &impl ConnectionTrait, movement_id: i64) -> AppResult<()> {

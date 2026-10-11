@@ -19,6 +19,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { MediaFileStateBadge, useMediaFileStates } from "@/components/sync/MediaFileStatus";
 import { Button } from "@/components/ui";
 import {
   Dialog,
@@ -252,6 +253,9 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
   // ── Grouped display ────────────────────────────────────────────────
 
   const grouped = groupByPhase(attachments);
+  const { states: fileStates, refresh: refreshFileStates } = useMediaFileStates(
+    attachments.map((a) => a.relative_path),
+  );
 
   // ── Render ──────────────────────────────────────────────────────────
 
@@ -341,6 +345,10 @@ export function WoAttachmentPanel({ woId, canUpload, canDelete }: WoAttachmentPa
                           year: "numeric",
                         })}
                       </p>
+                      <MediaFileStateBadge
+                        state={fileStates.get(att.relative_path)}
+                        onRetried={() => void refreshFileStates()}
+                      />
                     </div>
 
                     {canDelete && (

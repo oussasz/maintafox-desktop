@@ -396,6 +396,11 @@ async fn start_sync_worker(app: &AppHandle, state: &crate::state::AppState) {
             return;
         }
     };
+    match crate::sync::media::backfill_library_document_media(&state.db, &media_root).await {
+        Ok(0) => {}
+        Ok(added) => tracing::info!(added, "startup: library documents queued for file sync"),
+        Err(e) => warn!("startup: library documents could not be queued for file sync: {e}"),
+    }
     let config = SyncWorkerConfig {
         api_base_url: env!("MAINTAFOX_CONTROL_PLANE_API_BASE_URL").to_string(),
         media_root,

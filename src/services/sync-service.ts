@@ -20,6 +20,7 @@ import type {
   SyncReplayRun,
   SyncStateSummary,
   SyncWorkerStatus,
+  MediaFileState,
 } from "@shared/ipc-types";
 import { P } from "@shared/rbac/permissions.generated";
 
@@ -390,6 +391,8 @@ export const SyncWorkerStatusSchema = z.object({
   unresolved_conflict_count: z.number(),
   media_pending_count: z.number(),
   media_failed_count: z.number(),
+  media_download_pending_count: z.number(),
+  media_download_failed_count: z.number(),
   consecutive_failures: z.number(),
   last_error: SyncWorkerErrorSchema.nullable(),
 });
@@ -404,6 +407,29 @@ export async function getSyncWorkerStatus(): Promise<SyncWorkerStatus> {
   } catch (err) {
     throw formatDecodeError("get_sync_worker_status", err);
   }
+}
+
+export const MediaFileStateSchema = z.object({
+  relativePath: z.string(),
+  state: z.enum(["available", "pending", "failed", "missing"]),
+  lastError: z.string().nullable(),
+  attemptCount: z.number(),
+});
+
+/** Whether the files at these paths are on this device or still coming from another device. */
+export async function getMediaFileStates(relativePaths: string[]): Promise<MediaFileState[]> {
+  if (relativePaths.length === 0) return [];
+  try {
+    const result = await invokeSilent<unknown>("get_media_file_states", { relativePaths });
+    return z.array(MediaFileStateSchema).parse(result) as MediaFileState[];
+  } catch (err) {
+    throw formatDecodeError("get_media_file_states", err);
+  }
+}
+
+/** Queue a failed download again; returns how many downloads were queued (0: nothing to do). */
+export async function retryMediaDownload(relativePath: string): Promise<number> {
+  return z.number().parse(await invoke<unknown>("retry_media_download", { relativePath }));
 }
 
 /** Ask the worker to sync now (it resets its retry delay). */

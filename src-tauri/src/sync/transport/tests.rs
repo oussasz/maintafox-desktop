@@ -50,6 +50,8 @@ enum Reply {
         body: Value,
         headers: Vec<(&'static str, String)>,
     },
+    /// Raw bytes (object storage answer to a presigned GET).
+    Bytes { status: u16, body: Vec<u8> },
     /// Close the connection without answering (the server may have processed the request).
     Drop,
 }
@@ -143,6 +145,15 @@ async fn serve_connection(mut socket: TcpStream, state: Arc<StubState>) {
     state.requests.lock().expect("requests").push(recorded);
     match reply {
         Reply::Drop => {}
+        Reply::Bytes { status, body } => {
+            let head = format!(
+                "HTTP/1.1 {status} STUB\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = socket.write_all(head.as_bytes()).await;
+            let _ = socket.write_all(&body).await;
+            let _ = socket.shutdown().await;
+        }
         Reply::Json { status, body, headers } => {
             let body = body.to_string();
             let mut response = format!(
@@ -275,10 +286,12 @@ fn test_timing() -> SyncTiming {
         retry_max: Duration::from_millis(200),
         blocked_recheck: Duration::from_millis(50),
         network_wake_min_spacing: Duration::from_millis(10),
+        media_retry_base: Duration::from_millis(20),
+        media_retry_max: Duration::from_millis(200),
         timeouts: ClientTimeouts {
             connect: Duration::from_secs(2),
             request: Duration::from_secs(5),
-            media_upload: Duration::from_secs(5),
+            media_transfer: Duration::from_secs(5),
         },
     }
 }
@@ -1094,4 +1107,130 @@ async fn control_rows_are_recreated_after_a_local_data_wipe() {
     stage_team(&db, "team-after-reset").await;
     let state = store::load_state(&db).await.expect("state");
     assert!(state.pending.is_none() && state.paused_until.is_none());
+}
+
+#[tokio::test]
+async fn received_media_is_downloaded_verified_and_retried() {
+    let db = setup_db().await;
+    seed_checkpoint(&db, "v2.start").await;
+    let bytes = b"%PDF report from device A".to_vec();
+    let sha = crate::sync::media::content_sha256_hex(&bytes);
+    let object_key = format!("prod/media/tenant-1/work_orders/wo-1/{sha}");
+    let relative = "wo_attachments/7/0b7c-report.pdf".to_string();
+    crate::sync::media::queue_media_download(
+        &db,
+        "media-in-1",
+        &object_key,
+        &sha,
+        i64::try_from(bytes.len()).expect("size"),
+        Some(&relative),
+    )
+    .await
+    .expect("queue");
+    // A row whose storage location would leave the media directories is never written.
+    crate::sync::media::queue_media_download(&db, "media-in-2", &object_key, &sha, 3, Some("maintafox.db"))
+        .await
+        .expect("queue");
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let get_url = format!("{base}/object-storage/get-1");
+    let key_for_stub = object_key.clone();
+    // Object storage answers: not uploaded yet, then wrong bytes, then the file.
+    let answers = Arc::new(Mutex::new(vec![
+        Reply::Bytes { status: 200, body: bytes.clone() },
+        Reply::Bytes { status: 200, body: b"%PDF REPORT from device A".to_vec() },
+        Reply::Bytes { status: 404, body: b"<Error><Code>NoSuchKey</Code></Error>".to_vec() },
+    ]));
+    let stub = start_stub_on(listener, move |req| match req.path.as_str() {
+        "/api/v1/sync/media/presign-get" => ok(json!({
+            "url": get_url,
+            "method": "GET",
+            "bucket": "media",
+            "object_key": key_for_stub,
+            "expires_in_seconds": 900,
+        })),
+        "/object-storage/get-1" => answers.lock().expect("answers").pop().expect("an answer"),
+        "/api/v1/sync/exchange" => ok(exchange_answer("v2.after", vec![], vec![], false)),
+        _ => status(404, json!({ "error": "not_found" })),
+    })
+    .await;
+    let root = media_root();
+    let handle = SyncWorkerHandle::new();
+    let worker = SyncWorker::new(
+        db.clone(),
+        handle.clone(),
+        SyncWorkerConfig {
+            api_base_url: stub.base_url.clone(),
+            media_root: root.clone(),
+            timing: test_timing(),
+        },
+        FixedAccess::new(TOKEN),
+    )
+    .expect("worker");
+    let file_state = |db: DatabaseConnection, root: PathBuf, path: String| async move {
+        crate::sync::media::media_file_states(&db, &root, &[path])
+            .await
+            .expect("states")
+            .remove(0)
+    };
+    let due_now = || exec(&db, "UPDATE sync_media_downloads SET next_attempt_at = NULL", vec![]);
+
+    // 1. Not on object storage yet: stays pending, retried later, never given up.
+    let (outcome, _) = worker.cycle_once().await;
+    assert_eq!(outcome, CycleOutcome::Synced { more_work: false });
+    let state = file_state(db.clone(), root.clone(), relative.clone()).await;
+    assert_eq!(state.state, "pending");
+    assert!(state.last_error.as_deref().unwrap_or_default().contains("not on the server yet"));
+    let next: Option<String> = scalar(
+        &db,
+        "SELECT next_attempt_at FROM sync_media_downloads WHERE entity_sync_id = 'media-in-1'",
+        vec![],
+    )
+    .await;
+    assert!(next.is_some(), "a retry is scheduled");
+    let bad: String = scalar(
+        &db,
+        "SELECT status FROM sync_media_downloads WHERE entity_sync_id = 'media-in-2'",
+        vec![],
+    )
+    .await;
+    assert_eq!(bad, "failed", "a path outside the media directories is refused");
+    assert!(!root.join("maintafox.db").exists());
+    assert_eq!(handle.status().media_download_pending_count, 1);
+    assert_eq!(handle.status().media_download_failed_count, 1);
+
+    // 2. Wrong content: refused, nothing left on disk.
+    due_now().await;
+    worker.cycle_once().await;
+    let state = file_state(db.clone(), root.clone(), relative.clone()).await;
+    assert_eq!(state.state, "pending");
+    assert!(state.last_error.as_deref().unwrap_or_default().contains("content hash mismatch"));
+    let leftovers = std::fs::read_dir(root.join("wo_attachments/7")).expect("dir").count();
+    assert_eq!(leftovers, 0, "a refused download leaves no file");
+
+    // 3. The file: stored at its place, verified.
+    due_now().await;
+    worker.cycle_once().await;
+    assert_eq!(std::fs::read(root.join(&relative)).expect("file"), bytes);
+    let state = file_state(db.clone(), root.clone(), relative.clone()).await;
+    assert_eq!(state.state, "available");
+    assert_eq!(stub.requests_to("/object-storage/get-1").len(), 3);
+    for get in stub.requests_to("/object-storage/get-1") {
+        assert_eq!(get.header("authorization"), None, "the presigned URL is the credential");
+    }
+    assert_eq!(handle.status().media_download_pending_count, 0);
+
+    // 4. A failed download can be queued again by a person.
+    assert_eq!(
+        crate::sync::media::retry_media_download(&db, "maintafox.db").await.expect("retry"),
+        1
+    );
+    let again: String = scalar(
+        &db,
+        "SELECT status FROM sync_media_downloads WHERE entity_sync_id = 'media-in-2'",
+        vec![],
+    )
+    .await;
+    assert_eq!(again, "pending");
 }

@@ -294,3 +294,50 @@ pub async fn report_network_online(state: State<'_, AppState>) -> AppResult<()> 
     state.sync_worker.send(SyncCommand::NetworkOnline);
     Ok(())
 }
+
+/// Most file states asked for in one call (an attachment list or a photo gallery).
+const MAX_MEDIA_FILE_STATES: usize = 500;
+
+fn media_root(app: &tauri::AppHandle) -> AppResult<std::path::PathBuf> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("app_data_dir: {e}")))
+}
+
+/// Whether the files of attachment rows are on this device (`available`), still coming from
+/// another device (`pending`), given up (`failed`, with the reason) or unknown (`missing`). Only a
+/// session is needed: the answer names no content, and every list that shows the paths already
+/// checked the module permission.
+#[tauri::command]
+pub async fn get_media_file_states(
+    relative_paths: Vec<String>,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::sync::media::MediaFileState>> {
+    let _user = require_session!(state);
+    if relative_paths.len() > MAX_MEDIA_FILE_STATES {
+        return Err(crate::errors::AppError::ValidationFailed(vec![format!(
+            "At most {MAX_MEDIA_FILE_STATES} files can be checked at once."
+        )]));
+    }
+    crate::sync::media::media_file_states(&state.db, &media_root(&app)?, &relative_paths).await
+}
+
+/// Queue the download of a file received from another device again (after it failed), then wake
+/// the sync worker.
+#[tauri::command]
+pub async fn retry_media_download(relative_path: String, state: State<'_, AppState>) -> AppResult<u64> {
+    let user = require_session!(state);
+    let queued = crate::sync::media::retry_media_download(&state.db, &relative_path).await?;
+    if queued > 0 {
+        state.sync_worker.send(SyncCommand::RunNow);
+    }
+    tracing::info!(
+        event = "desktop_sync_media_download_retry",
+        user_id = user.user_id,
+        queued,
+        "Media download retry requested"
+    );
+    Ok(queued)
+}

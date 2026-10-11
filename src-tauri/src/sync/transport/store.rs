@@ -302,3 +302,108 @@ pub async fn media_counts(db: &impl ConnectionTrait) -> AppResult<(i64, i64)> {
         row.try_get("", "failed").map_err(|e| decode("failed", e))?,
     ))
 }
+
+// ── Media downloads ──────────────────────────────────────────────────────────
+
+/// A media file received from another device that this device has not stored yet
+/// (`sync_media_downloads`, queued by the inbound apply of `media_attachments`).
+#[derive(Debug, Clone)]
+pub struct PendingMediaDownload {
+    pub entity_sync_id: String,
+    pub object_key: String,
+    pub content_sha256: String,
+    pub byte_size: i64,
+    /// Where the file goes under the media root; `None` for a row sent by an app version that did
+    /// not send the storage location.
+    pub relative_path: Option<String>,
+    pub attempt_count: i64,
+}
+
+/// Pending downloads whose next attempt is due, oldest first.
+pub async fn list_due_media_downloads(db: &DatabaseConnection, limit: u32) -> AppResult<Vec<PendingMediaDownload>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT entity_sync_id, object_key, content_sha256, byte_size, relative_path, attempt_count
+             FROM sync_media_downloads
+             WHERE status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+             ORDER BY created_at ASC, entity_sync_id ASC
+             LIMIT ?",
+            [now_utc().into(), i64::from(limit).into()],
+        ))
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(PendingMediaDownload {
+                entity_sync_id: r
+                    .try_get("", "entity_sync_id")
+                    .map_err(|e| decode("entity_sync_id", e))?,
+                object_key: r.try_get("", "object_key").map_err(|e| decode("object_key", e))?,
+                content_sha256: r
+                    .try_get("", "content_sha256")
+                    .map_err(|e| decode("content_sha256", e))?,
+                byte_size: r.try_get("", "byte_size").map_err(|e| decode("byte_size", e))?,
+                relative_path: opt(r, "relative_path")?,
+                attempt_count: r.try_get("", "attempt_count").map_err(|e| decode("attempt_count", e))?,
+            })
+        })
+        .collect()
+}
+
+pub async fn mark_media_downloaded(db: &impl ConnectionTrait, entity_sync_id: &str) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "UPDATE sync_media_downloads
+         SET status = 'downloaded', last_error = NULL, next_attempt_at = NULL,
+             downloaded_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         WHERE entity_sync_id = ?",
+        [entity_sync_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Record a failed download. `give_up` moves it to `failed` (shown with a retry action, never
+/// retried automatically); otherwise it stays `pending` until `next_attempt_at`.
+pub async fn mark_media_download_failed(
+    db: &impl ConnectionTrait,
+    entity_sync_id: &str,
+    error: &str,
+    give_up: bool,
+    next_attempt_at: Option<&str>,
+) -> AppResult<()> {
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Sqlite,
+        "UPDATE sync_media_downloads
+         SET status = CASE WHEN ? THEN 'failed' ELSE 'pending' END,
+             last_error = ?, attempt_count = attempt_count + 1, next_attempt_at = ?,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+         WHERE entity_sync_id = ?",
+        [
+            give_up.into(),
+            error.into(),
+            next_attempt_at.map(str::to_string).into(),
+            entity_sync_id.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// `(pending, failed)` media downloads.
+pub async fn media_download_counts(db: &impl ConnectionTrait) -> AppResult<(i64, i64)> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending,
+                    COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+             FROM sync_media_downloads",
+            [],
+        ))
+        .await?
+        .ok_or_else(|| AppError::SyncError("media download counts unavailable".into()))?;
+    Ok((
+        row.try_get("", "pending").map_err(|e| decode("pending", e))?,
+        row.try_get("", "failed").map_err(|e| decode("failed", e))?,
+    ))
+}

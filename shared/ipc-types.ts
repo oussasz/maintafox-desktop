@@ -4295,6 +4295,8 @@ export interface AssetPhoto {
   asset_id: number;
   file_name: string;
   file_path: string;
+  /** Storage location under the app data directory (key of the file's sync state). */
+  relative_path: string;
   mime_type: string;
   file_size_bytes: number;
   caption: string | null;
@@ -8946,8 +8948,19 @@ export interface SyncWorkerStatus {
   unresolved_conflict_count: number;
   media_pending_count: number;
   media_failed_count: number;
+  /** Files received from other devices not stored here yet / given up. */
+  media_download_pending_count: number;
+  media_download_failed_count: number;
   consecutive_failures: number;
   last_error: SyncWorkerError | null;
+}
+
+/** Availability of a synchronised file on this device (`get_media_file_states`). */
+export interface MediaFileState {
+  relativePath: string;
+  state: "available" | "pending" | "failed" | "missing";
+  lastError: string | null;
+  attemptCount: number;
 }
 
 export interface SyncConflictFilter {

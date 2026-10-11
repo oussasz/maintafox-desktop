@@ -107,8 +107,10 @@ Local INTEGER PKs are device-local. Rename legacy `sync_id` → `entity_sync_id`
   The server keeps v1 for desktops that are not updated; nothing in this app speaks v1 any more
   (`apply_sync_batch` still accepts v1 input for the replay/repair tools and old fixtures).
 - **Exchange:** `POST /api/v1/sync/exchange`; **bootstrap:** `POST /api/v1/sync/snapshot` (paged);
-  **media:** `POST /api/v1/sync/media/presign-put` then `PUT` to the presigned URL. All with
-  `Authorization: Bearer <activation token>`.
+  **media:** `POST /api/v1/sync/media/presign-put` then `PUT` to the presigned URL (upload),
+  `POST /api/v1/sync/media/presign-get` then `GET` (download). Control API calls carry
+  `Authorization: Bearer <activation token>`; the presigned URL is the only credential for object
+  storage.
 - **Envelope:** `entity_type`, `entity_sync_id`, `operation` (`create`\|`update`\|`delete`\|`upsert`\|`archive`), `row_version`, `base_row_version` (explicit `null` for a create), `owner_user_sync_id` (user scope), `payload_json`, `payload_hash` (SHA-256 hex)
 - **Checkpoint:** signed and opaque (`v2.…`); stored by `apply_sync_batch` in the same transaction
   that writes the answer to the outbox/inbox, i.e. only once the answer is durable. A v1 token
@@ -147,6 +149,8 @@ One cycle:
 4. Media: before each exchange, objects recorded from earlier manifests (`sync_media_uploads`) are
    uploaded: local file under the app data dir, hash verified, presign, `PUT`. Failures never block the
    exchange; they are retried and give up after `OUTBOX_MAX_DELIVERY_ATTEMPTS` (shown in the status).
+5. At the end of a cycle that synced, files received from other devices (`sync_media_downloads`)
+   are downloaded (§6).
 
 Failures (`classify` in `worker.rs`):
 
@@ -228,14 +232,41 @@ Resolution acts on data in the same transaction that closes the conflict:
 
 ## 6. Media
 
-- Entity type: `media_attachments`
-- Envelope fields: `entity_type`, `parent_entity_sync_id`, `content_sha256`, `mime_type`, `byte_size`, `object_key`, `capture_meta`
-- Object store category: `TenantMedia` under tenant-scoped prefix
-- JSON outbox MUST NOT carry file bytes
-- Desktop stores files under app data; the worker uploads them through the presigned flow
-  (`sync_media_uploads` tracks pending / uploaded / failed). Download of media received from other
-  devices (`presign-get`) is not implemented yet: another device receives the attachment row
-  (metadata) but not the file. Open after Phase 2.5.
+- Entity type: `media_attachments` (one row per stored file; parent = the record it belongs to:
+  equipment photo, WO/DI attachment, library document)
+- Columns that travel: parent type and sync id, `content_sha256`, `mime_type`, `byte_size`,
+  `object_key` (`{env}/media/{tenant}/{parent type}/{parent sync id}/{sha256}`), `file_name`,
+  `relative_path`, `capture_meta_json`. `relative_path` is the file's place under the app data
+  directory (`wo_attachments/…`, `di_attachments/…`, `asset_photos/…`, `library_documents/…`, unique
+  by a UUID); the attachment row names the same path, so the file resolves on every device.
+- JSON outbox never carries file bytes.
+- **Upload** (device that stored the file): the media row is announced in the exchange's
+  `media_manifest` (`sync_media_uploads`), the worker uploads the bytes through `presign-put`.
+- **Download** (every other device, Phase 2 leftover 1, migration 165): applying an inbound
+  `media_attachments` row queues it in `sync_media_downloads` (`apply_hooks`). At the end of a cycle
+  that synced, the worker takes up to `SYNC_MEDIA_DOWNLOADS_PER_CYCLE` due files: `presign-get`,
+  `GET` streamed to a temporary file next to the target, size and SHA-256 checked while reading
+  (more bytes than announced stops the download), then the file is moved into place. A file that
+  is already present with the right hash counts as downloaded; a different file at that place is
+  never overwritten (`failed`). Only paths inside the four media directories are written
+  (`media::media_storage_path`).
+- **Failures:** no connection or a refused activation → stop, nothing counted; object not on the
+  server yet (404: the other device has not uploaded it) → `pending`, retried with backoff
+  (`SYNC_MEDIA_RETRY_BASE_DELAY` 30 s doubling to `SYNC_MEDIA_RETRY_MAX_DELAY` 1 h), never given up;
+  other errors (5xx, interrupted, size or hash mismatch) → retried with the same backoff and
+  `failed` after `OUTBOX_MAX_DELIVERY_ATTEMPTS`; impossible cases (path outside the media
+  directories, no storage location from an older app version) → `failed` at once.
+- **UI** (`components/sync/MediaFileStatus.tsx`, FR/EN): attachment lists, the photo gallery and
+  the document library show "not downloaded yet", "download failed" with the reason and a retry
+  button (`retry_media_download`), or "file not on this device", instead of a broken file
+  (`get_media_file_states`). The Sync Center status shows the download counts.
+- **Document library** syncs since this change (`library_documents` row + its media row; existing
+  documents get their media row at startup, `media::backfill_library_document_media`).
+  **Archives** (`archive_*`) stay device-local: no production code writes them yet and their
+  snapshots hold local ids.
+- Harness: the multi-device harness runs a local S3-compatible object store (path-style bucket,
+  presigned PUT/GET; it checks the SigV4 query fields, the access key and the expiry, but does not
+  recompute the signature). Real MinIO is used only on the server.
 
 ## 7. Coverage (Phase 2.4)
 
@@ -259,9 +290,8 @@ Every table in the registry syncs; the rules are in `row_spec.rs`, in this order
 `LOCAL_ONLY_TABLES` in `registry.rs`, by category: sync machinery and the capture tables; sessions,
 trusted devices, device configuration; backups; licence and entitlement state; secrets and
 connection profiles; import staging; job queues, report runs and artifacts, notification
-deliveries; derived projections (§2.2); app catalogs; legacy stubs; archives and library files
-(`archive_*`, `library_documents`, `event_links`: no transfer path for archived snapshots and
-files yet).
+deliveries; derived projections (§2.2); app catalogs; legacy stubs; archives and event links
+(`archive_*`, `event_links`: no production writer yet; their snapshots and links hold local ids).
 
 ## 9. Client vs VPS ownership
 
@@ -285,13 +315,14 @@ See also: [`VPS_SYNC_EXCHANGE.md`](./VPS_SYNC_EXCHANGE.md) for the frozen Fastif
   three machines, and runs `sync::harness_tests` (three desktop databases, real worker, real HTTP):
   create, concurrent edit resolved both ways, offline then reconnect, per-user rows, delete,
   snapshot bootstrap of a new device, lost answer then resend applied once, backup restore then
-  snapshot, revoked device. A few minutes with a warm Rust build (`--skip-api-build` reuses the API
+  snapshot, library files through object storage (also after a delayed upload), revoked device. A few minutes with a warm Rust build (`--skip-api-build` reuses the API
   build).
 - Golden fixtures: `src-tauri/src/sync/fixtures/exchange_request_v1.json`, `exchange_response_v1.json`
 - `cargo check`, `pnpm typecheck`, `cargo test --lib sync::` / `vps::`
 - Transport: `cargo test --lib -- sync::transport` (worker against an in-process HTTP stub: push/pull,
   paging, crash resend, 409, checkpoint refusal → snapshot, conflicts, 429/5xx backoff, offline →
-  resume, refused activation, dead letter, per-user fields, pause, media upload)
+  resume, refused activation, dead letter, per-user fields, pause, media upload, media download
+  with not-yet-uploaded / wrong-content / outside-path cases)
 
 ## 11. Backup restore
 

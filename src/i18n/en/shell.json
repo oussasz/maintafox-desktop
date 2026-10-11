@@ -57,6 +57,17 @@
       "AUTHORITY_MISMATCH": "The server refused a protected change",
       "other": "Needs review"
     },
+    "mediaFile": {
+      "pending": "Not downloaded yet",
+      "pendingHint": "This file was added on another device. It is downloaded automatically when sync runs.",
+      "failed": "Download failed",
+      "failedHint": "The file could not be downloaded: {{message}}",
+      "missing": "File not on this device",
+      "missingHint": "This file is not stored on this device and no download is known for it.",
+      "retry": "Retry",
+      "retryQueued": "Download queued again.",
+      "retryNothing": "Nothing to download for this file."
+    },
     "worker": {
       "title": "Synchronization",
       "runsInBackground": "Sync keeps running when the window is closed (Maintafox stays in the notification area).",
@@ -85,6 +96,7 @@
       "pending": "Changes waiting to be sent",
       "conflicts": "Conflicts to review",
       "media": "Files waiting to upload: {{pending}} · failed: {{failed}}",
+      "mediaDownloads": "Files from other devices waiting to download: {{pending}} · failed: {{failed}}",
       "deadLetter": "{{count}} change(s) could not be sent after repeated attempts: see the conflicts.",
       "lastError": "Last error: {{message}}",
       "syncNow": "Sync now",

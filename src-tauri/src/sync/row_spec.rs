@@ -391,11 +391,14 @@ pub const ROW_SPECS: &[RowSpec] = &[
     ),
     spec("asset_external_ids", &[r("asset_id", "equipment")]),
     spec("asset_photos", &[]),
-    RowSpec {
-        // Where the file is stored on this device; the bytes travel through the media upload.
-        device_local: &["relative_path"],
-        ..spec("media_attachments", &[])
-    },
+    spec(
+        "library_documents",
+        &[r("equipment_id", "equipment"), r("uploaded_by_id", USER)],
+    ),
+    // `relative_path` travels: it names the file's place under the app data directory (unique by a
+    // UUID) on every device, the same value the attachment row carries; the bytes travel through
+    // object storage (upload by the sync worker, download queued by the apply hook).
+    spec("media_attachments", &[]),
     // ── Reference catalogs ──────────────────────────────────────────────────────────────────
     spec("lookup_domains", &[r("published_by_id", USER)]),
     spec(

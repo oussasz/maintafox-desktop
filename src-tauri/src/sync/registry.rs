@@ -183,6 +183,7 @@ pub const SYNC_ENTITIES: &[SyncEntityDef] = &[
     SyncEntityDef { entity_type: "inventory_suppliers", table: "inventory_suppliers", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["external_companies", "lookup_values", "personnel"], note: None },
     SyncEntityDef { entity_type: "inventory_transactions", table: "inventory_transactions", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::AppendOnly, parents: &["lookup_values", "stock_reservations", "stock_locations", "warehouses", "articles", "work_orders", "goods_receipts", "inventory_count_sessions", "repairable_orders", "user_accounts"], note: Some("Materializer inserts movements but does not update stock_balances (derived); step 2.4 must rebuild balances on apply.") },
     SyncEntityDef { entity_type: "inventory_valuation_policies", table: "inventory_valuation_policies", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["lookup_values", "articles", "article_families", "warehouses"], note: None },
+    SyncEntityDef { entity_type: "library_documents", table: "library_documents", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["equipment", "user_accounts"], note: None },
     SyncEntityDef { entity_type: "lookup_domains", table: "lookup_domains", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["user_accounts"], note: None },
     SyncEntityDef { entity_type: "lookup_value_aliases", table: "lookup_value_aliases", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["lookup_values"], note: None },
     SyncEntityDef { entity_type: "lookup_values", table: "lookup_values", scope: SyncScope::Tenant, owner_user_column: None, has_stager: true, has_materializer: true, conflict_policy: ConflictPolicy::OperatorReview, parents: &["lookup_domains"], note: None },
@@ -343,6 +344,10 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
     },
     LocalOnlyTable {
         table: "sync_media_uploads",
+        category: LocalOnlyCategory::SyncControl,
+    },
+    LocalOnlyTable {
+        table: "sync_media_downloads",
         category: LocalOnlyCategory::SyncControl,
     },
     LocalOnlyTable {
@@ -525,12 +530,6 @@ pub const LOCAL_ONLY_TABLES: &[LocalOnlyTable] = &[
     LocalOnlyTable {
         table: "event_links",
         category: LocalOnlyCategory::DerivedProjection,
-    },
-    // Library files are stored on the device that uploaded them; the bytes have no transfer
-    // path yet, so the rows would describe files other devices cannot open.
-    LocalOnlyTable {
-        table: "library_documents",
-        category: LocalOnlyCategory::DeviceArchive,
     },
     // Computed per equipment and period on the device that runs the analysis or closes the work
     // order (`reliability::queries`); each device computes its own.

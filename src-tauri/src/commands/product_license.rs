@@ -1617,3 +1617,38 @@ mod lifecycle_tests {
         assert!(view.pending_online_validation, "must keep retrying when back online");
     }
 }
+
+/// Tests and the multi-device harness: record a complete activation claim for `tenant_id`, as a
+/// successful activation does, so tenant scoping (media object keys, `tenant_config`) is real.
+#[cfg(test)]
+pub(crate) async fn record_activation_claim_for_tests(
+    db: &DatabaseConnection,
+    tenant_id: &str,
+    machine_fingerprint: &str,
+    activation_token: &str,
+) -> AppResult<()> {
+    let record = serde_json::json!({
+        "schema_version": 1,
+        "key_sha256": "test",
+        "submitted_at": Utc::now().to_rfc3339(),
+        "status": "active",
+        "pending_online_validation": false,
+        "activation_claim": {
+            "tenant_id": tenant_id,
+            "license_id": "test-licence",
+            "machine_fingerprint": machine_fingerprint,
+            "activation_token": activation_token,
+        },
+        "reconciliation": { "retry_attempt": 0 },
+        "diagnostics": [],
+    });
+    settings::set_setting(
+        db,
+        PRODUCT_LICENSE_ONBOARDING_KEY,
+        PRODUCT_LICENSE_SCOPE,
+        &record.to_string(),
+        None,
+        "test activation",
+    )
+    .await
+}
