@@ -178,3 +178,34 @@ export async function exportAuditLog(payload: ExportAuditInput): Promise<ExportR
   const raw = await invoke<ExportResult>("export_audit_log", { payload });
   return ExportResultSchema.parse(raw);
 }
+
+const AuditChainReportSchema = z.object({
+  checked_at: z.string(),
+  chains: z.array(
+    z.object({
+      origin: z.string(),
+      device_code: z.string(),
+      is_this_device: z.boolean(),
+      events: z.number(),
+      last_seq: z.number(),
+      intact: z.boolean(),
+      first_problem: z
+        .object({
+          chain_seq: z.number(),
+          audit_event_id: z.number(),
+          kind: z.enum(["hash_mismatch", "prev_mismatch", "missing_positions"]),
+        })
+        .nullable(),
+    }),
+  ),
+  unchained_events: z.number(),
+  intact: z.boolean(),
+});
+
+export type AuditChainReport = z.infer<typeof AuditChainReportSchema>;
+
+/** Verifies the hash chain of every device's audit trail held in this database. */
+export async function verifyAuditChain(): Promise<AuditChainReport> {
+  const raw = await invoke<unknown>("verify_audit_chain");
+  return AuditChainReportSchema.parse(raw);
+}

@@ -160,6 +160,7 @@ mod m20261011_000169_permit_isolation_removal_verifier;
 mod m20261011_000170_reliability_censoring_and_availability;
 mod m20261012_000171_inspection_field_runner;
 mod m20261012_000172_rcm_fmeca_pm_loop;
+mod m20261012_000173_audit_hash_chain;
 mod m20261101_000036_activity_audit_log;
 mod m20261201_000037_observability_permissions;
 mod m_test;
@@ -332,6 +333,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261011_000170_reliability_censoring_and_availability::Migration),
             Box::new(m20261012_000171_inspection_field_runner::Migration),
             Box::new(m20261012_000172_rcm_fmeca_pm_loop::Migration),
+            Box::new(m20261012_000173_audit_hash_chain::Migration),
             Box::new(m_test::Migration),
         ]
     }

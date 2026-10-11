@@ -397,3 +397,16 @@ async fn ensure_log_view_access(state: &State<'_, AppState>, user_id: i32) -> Ap
         ))
     }
 }
+
+/// Verifies the hash chain of every device's audit trail held in this database (`audit::chain`).
+#[tauri::command]
+pub async fn verify_audit_chain(state: State<'_, AppState>) -> AppResult<crate::audit::chain::AuditChainReport> {
+    let user = require_session!(state);
+    require_permission!(
+        state,
+        &user,
+        crate::rbac::permissions::ADM_AUDIT,
+        PermissionScope::Global
+    );
+    crate::audit::chain::verify_audit_chain(&state.db).await
+}

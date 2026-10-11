@@ -420,29 +420,26 @@ pub async fn apply_import_batch(
     ))
     .await?;
 
-    txn.execute(Statement::from_sql_and_values(
-        DbBackend::Sqlite,
-        "INSERT INTO audit_events (
-            action_code, target_type, target_id, actor_id, auth_context, result,
-            retention_class, details_json, happened_at
-         ) VALUES (
-            'personnel.import.apply', 'personnel_import_batch', ?, ?, 'step_up', 'success',
-            'standard', ?, ?
-         )",
-        [
-            batch_id.to_string().into(),
-            actor_id.into(),
-            serde_json::json!({
+    crate::audit::writer::write_audit_event_in(
+        &txn,
+        crate::audit::writer::AuditEventInput {
+            action_code: "personnel.import.apply".to_string(),
+            target_type: Some("personnel_import_batch".to_string()),
+            target_id: Some(batch_id.to_string()),
+            actor_id,
+            auth_context: "step_up".to_string(),
+            result: "success".to_string(),
+            before_hash: None,
+            after_hash: None,
+            retention_class: "standard".to_string(),
+            details_json: Some(serde_json::json!({
                 "created": created,
                 "updated": updated,
                 "skipped": skipped,
                 "protected_ignored": protected_ignored
-            })
-            .to_string()
-            .into(),
-            now.into(),
-        ],
-    ))
+            })),
+        },
+    )
     .await?;
 
     txn.commit().await?;
